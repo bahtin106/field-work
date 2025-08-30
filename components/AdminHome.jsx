@@ -1,9 +1,10 @@
 // AdminHome.jsx
-import React, { useRef, useState } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native'
-import { supabase } from '../lib/supabase'
-import { useTheme } from '../theme/ThemeProvider'
-import { router, useLocalSearchParams } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router';
+import React, { useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../theme/ThemeProvider';
 
 /**
  * Эта версия экрана принципиально НЕ делает никаких сетевых запросов
@@ -15,32 +16,32 @@ import { router, useLocalSearchParams } from 'expo-router'
 let __ADMIN_HOME_CACHE__ = {
   stats: { total: 0, inWork: 0, done: 0, free: 0 },
   ts: 0,
-}
+};
 
 export default function AdminHome({ fullName }) {
-  const { theme, setMode, mode } = useTheme()
-  const params = useLocalSearchParams()
+  const { theme, setMode, mode } = useTheme();
+  const params = useLocalSearchParams();
 
   // 1) Мгновенный рендер из кэша (или из параметров навигации, если передали)
   const initial = (() => {
     if (params?.stats) {
       try {
-        const parsed = JSON.parse(params.stats)
+        const parsed = JSON.parse(params.stats);
         if (parsed && typeof parsed === 'object') {
-          __ADMIN_HOME_CACHE__ = { stats: parsed, ts: Date.now() }
+          __ADMIN_HOME_CACHE__ = { stats: parsed, ts: Date.now() };
         }
       } catch {}
     }
-    return __ADMIN_HOME_CACHE__.stats
-  })()
+    return __ADMIN_HOME_CACHE__.stats;
+  })();
 
-  const [stats] = useState(initial)
-  const renderedOnce = useRef(true) // просто флаг, на будущее
+  const [stats] = useState(initial);
+  const renderedOnce = useRef(true); // просто флаг, на будущее
 
   const logout = async () => {
-    await supabase.auth.signOut()
-    router.replace('/login')
-  }
+    await supabase.auth.signOut();
+    router.replace('/login');
+  };
 
   return (
     <ScrollView
@@ -113,14 +114,34 @@ export default function AdminHome({ fullName }) {
         />
       </View>
 
-      <PrimaryButton title="Все заявки" style={styles.buttonAllOrders} onPress={() => router.push('/all-orders')} />
-      <PrimaryButton title="Статистика" style={styles.buttonStats} onPress={() => router.push('/stats')} />
-      <PrimaryButton title="Сотрудники" style={styles.buttonUsers} onPress={() => router.push('/users')} />
-      <PrimaryButton title="Настройка форм" style={styles.buttonSettings} onPress={() => router.push('/admin/form-builder')} />
-      <PrimaryButton title="Создать заявку" style={styles.buttonPrimary} onPress={() => router.push('/create-order')} />
+      <PrimaryButton
+        title="Все заявки"
+        style={styles.buttonAllOrders}
+        onPress={() => router.push('/all-orders')}
+      />
+      <PrimaryButton
+        title="Статистика"
+        style={styles.buttonStats}
+        onPress={() => router.push('/stats')}
+      />
+      <PrimaryButton
+        title="Сотрудники"
+        style={styles.buttonUsers}
+        onPress={() => router.push('/users')}
+      />
+      <PrimaryButton
+        title="Настройка форм"
+        style={styles.buttonSettings}
+        onPress={() => router.push('/admin/form-builder')}
+      />
+      <PrimaryButton
+        title="Создать заявку"
+        style={styles.buttonPrimary}
+        onPress={() => router.push('/create-order')}
+      />
       <PrimaryButton title="Выйти из профиля" style={styles.buttonLogout} onPress={logout} />
     </ScrollView>
-  )
+  );
 }
 
 function StatCard({ theme, label, value, onPress }) {
@@ -129,7 +150,7 @@ function StatCard({ theme, label, value, onPress }) {
       <Text style={[styles.statLabel, { color: theme.text.muted.color }]}>{label}</Text>
       <Text style={[styles.statValue, { color: theme.colors.text }]}>{value}</Text>
     </TouchableOpacity>
-  )
+  );
 }
 
 function PrimaryButton({ title, onPress, style }) {
@@ -137,7 +158,7 @@ function PrimaryButton({ title, onPress, style }) {
     <TouchableOpacity style={[styles.button, style]} onPress={onPress}>
       <Text style={styles.buttonText}>{title}</Text>
     </TouchableOpacity>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
@@ -209,4 +230,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginRight: 8,
   },
-})
+});

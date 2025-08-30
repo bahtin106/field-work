@@ -1,3 +1,4 @@
+import { useRouter, useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -13,7 +14,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useFocusEffect } from 'expo-router';
+
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -99,7 +100,7 @@ export default function UsersIndex() {
       return () => {
         active = false;
       };
-    }, [fetchUsers])
+    }, [fetchUsers]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -116,9 +117,7 @@ export default function UsersIndex() {
       const roleRu = (ROLE_LABELS[u.role] || '').toLowerCase();
       // Ищем только по имени и роли (по-русски тоже), ID исключен
       return (
-        name.includes(debouncedQ) ||
-        roleCode.includes(debouncedQ) ||
-        roleRu.includes(debouncedQ)
+        name.includes(debouncedQ) || roleCode.includes(debouncedQ) || roleRu.includes(debouncedQ)
       );
     });
   }, [debouncedQ, list]);
@@ -127,7 +126,7 @@ export default function UsersIndex() {
     (id) => {
       router.push(`/users/${id}`);
     },
-    [router]
+    [router],
   );
 
   const rolePillStyle = (role) => {
@@ -169,7 +168,7 @@ export default function UsersIndex() {
         </TouchableOpacity>
       );
     },
-    [goToUser]
+    [goToUser],
   );
 
   const keyExtractor = useCallback((item) => item.id, []);

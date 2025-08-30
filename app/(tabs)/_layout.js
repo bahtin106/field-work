@@ -1,8 +1,27 @@
 import { Tabs } from 'expo-router';
+import { View } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 
+const DEFAULT_THEME = {
+  colors: {
+    card: '#FFFFFF',
+    border: '#E5E5EA',
+    text: '#111111',
+    background: '#FFFFFF',
+  },
+  text: { muted: { color: '#8E8E93' } },
+};
+
 export default function TabLayout() {
-  const { theme } = useTheme();
+  // Защита от падения, если ThemeProvider ещё не смонтирован
+  let theme = DEFAULT_THEME;
+  try {
+    const ctx = useTheme?.();
+    if (ctx?.theme) theme = ctx.theme;
+  } catch {
+    // ignore, используем DEFAULT_THEME
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -17,32 +36,31 @@ export default function TabLayout() {
         tabBarItemStyle: {
           justifyContent: 'center',
         },
-        tabBarLabelPosition: 'beside-icon', // ⬅ важно для центрирования текста
-        sceneContainerStyle: { backgroundColor: theme.colors.background },}}
+        sceneContainerStyle: { backgroundColor: theme.colors.background },
+      }}
     >
       <Tabs.Screen
         name="index"
         options={{
           title: 'Главная',
-          tabBarIcon: () => null, // ⬅ чтобы не было сдвига влево
+          tabBarIcon: () => <View style={{ width: 0, height: 0 }} />,
         }}
       />
       <Tabs.Screen
         name="orders"
         options={{
           title: 'Мои заявки',
-          tabBarIcon: () => null,
+          tabBarIcon: () => <View style={{ width: 0, height: 0 }} />,
         }}
       />
-    
-<Tabs.Screen
-  name="calendar"
-  options={{ title: 'Календарь', tabBarIcon: () => null }}
-/>
-<Tabs.Screen
-  name="all-orders"
-  options={{ href: null }}
-/>
+      <Tabs.Screen
+        name="calendar"
+        options={{
+          title: 'Календарь',
+          tabBarIcon: () => <View style={{ width: 0, height: 0 }} />,
+        }}
+      />
+      <Tabs.Screen name="all-orders" options={{ href: null }} />
     </Tabs>
   );
 }

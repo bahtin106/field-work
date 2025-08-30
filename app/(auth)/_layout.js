@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { useCallback, useEffect, useMemo } from 'react';
 
 // Держим сплэш, пока не отрисуется первый экран логина (без «вспышки»)
 SplashScreen.preventAutoHideAsync().catch(() => {});

@@ -1,3 +1,4 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -10,11 +11,9 @@ import {
   Text,
   View,
 } from 'react-native';
+import { FlatList, Modal, TextInput } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { FlatList, Modal, TextInput } from 'react-native';
-
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import DynamicOrderCard from '../../components/DynamicOrderCard'; // ✅ новая карточка
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';

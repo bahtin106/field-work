@@ -1,3 +1,4 @@
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
   View,
@@ -13,52 +14,60 @@ import {
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import { supabase } from '../../lib/supabase';
+
 import DynamicOrderCard from '../../components/DynamicOrderCard'; // ✅ новое подключение карточки
+import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 
 export default function MyOrdersScreen() {
   const { theme } = useTheme();
-  
-  
-  const styles = useMemo(() => StyleSheet.create({
-  filterContainer: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
-  chip: { paddingVertical: 8, paddingHorizontal: 14, backgroundColor: '#e0e0e0', borderRadius: 20 },
-  chipActive: { backgroundColor: theme.colors.primary },
-  chipText: { fontSize: 14, color: theme.colors.text },
-  chipTextActive: { color: '#fff', fontWeight: '600' },
-  container: { padding: 16, paddingBottom: 40, backgroundColor: theme.colors.bg },
-  searchInput: {
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    backgroundColor: '#f9f9f9',
-    marginBottom: 12,
-  },
-  emptyText: {
-    textAlign: 'center',
-    marginTop: 32,
-    fontSize: 16,
-    color: theme.text.muted.color,
-  },
-}), [theme]);
 
-const router = useRouter();
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        filterContainer: { flexDirection: 'row', gap: 8, marginBottom: 16, flexWrap: 'wrap' },
+        chip: {
+          paddingVertical: 8,
+          paddingHorizontal: 14,
+          backgroundColor: '#e0e0e0',
+          borderRadius: 20,
+        },
+        chipActive: { backgroundColor: theme.colors.primary },
+        chipText: { fontSize: 14, color: theme.colors.text },
+        chipTextActive: { color: '#fff', fontWeight: '600' },
+        container: { padding: 16, paddingBottom: 40, backgroundColor: theme.colors.bg },
+        searchInput: {
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          borderRadius: 12,
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          fontSize: 15,
+          backgroundColor: '#f9f9f9',
+          marginBottom: 12,
+        },
+        emptyText: {
+          textAlign: 'center',
+          marginTop: 32,
+          fontSize: 16,
+          color: theme.text.muted.color,
+        },
+      }),
+    [theme],
+  );
 
-// Shared caches
-const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
-LIST_CACHE.my ||= {};
-const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+  const router = useRouter();
+
+  // Shared caches
+  const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
+  LIST_CACHE.my ||= {};
+  const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(() => {
-  const key = (typeof filter === 'string' ? filter : 'all') || 'all';
-  return LIST_CACHE.my[key] ? false : true;
-});
+    const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+    return LIST_CACHE.my[key] ? false : true;
+  });
   const [filter, setFilter] = useState('feed');
   const [userId, setUserId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -69,8 +78,10 @@ const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
     if (seedOnceRef.current) return;
     seedOnceRef.current = true;
     /* seed from cache */
-    const k = (typeof seedFilter === 'string' && seedFilter.length ? seedFilter : (filter||'all'));
-    if (LIST_CACHE.my[k]) { setOrders(LIST_CACHE.my[k]); }
+    const k = typeof seedFilter === 'string' && seedFilter.length ? seedFilter : filter || 'all';
+    if (LIST_CACHE.my[k]) {
+      setOrders(LIST_CACHE.my[k]);
+    }
     if (typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
     if (typeof seedSearch === 'string') setSearchQuery(seedSearch);
   }, [seedFilter, seedSearch]);
@@ -81,53 +92,52 @@ const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
     } catch (e) {}
   }, [filter, searchQuery]);
 
-  
-useEffect(() => {
-  const fetchUserAndOrders = async () => {
-    const key = (typeof filter === 'string' ? filter : 'all') || 'all';
-    // If cache exists, show it immediately and refresh silently
-    if (LIST_CACHE.my[key]) {
-      setOrders(LIST_CACHE.my[key]);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const uid = sessionData?.session?.user?.id;
-    if (!uid) {
-      setOrders([]);
-      setLoading(false);
-      return;
-    }
-    setUserId(uid);
-
-    let query = supabase.from('orders_read_masked').select('*');
-    if (key === 'feed') {
-      query = query.is('assigned_to', null);
-    } else if (key === 'all') {
-      query = query.eq('assigned_to', uid);
-    } else {
-      query = query.eq('assigned_to', uid);
-      if (key === 'new') {
-        query = query.or('status.is.null,status.eq.Новый');
-      } else if (key === 'progress') {
-        query = query.eq('status', 'В работе');
-      } else if (key === 'done') {
-        query = query.eq('status', 'Завершённая');
+  useEffect(() => {
+    const fetchUserAndOrders = async () => {
+      const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+      // If cache exists, show it immediately and refresh silently
+      if (LIST_CACHE.my[key]) {
+        setOrders(LIST_CACHE.my[key]);
+        setLoading(false);
+      } else {
+        setLoading(true);
       }
-    }
 
-    const { data, error } = await query.order('datetime', { ascending: false });
-    if (!error && Array.isArray(data)) {
-      setOrders(data);
-      LIST_CACHE.my[key] = data; // update cache
-    }
-    setLoading(false);
-  };
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id;
+      if (!uid) {
+        setOrders([]);
+        setLoading(false);
+        return;
+      }
+      setUserId(uid);
 
-  fetchUserAndOrders();
-}, [filter]);
+      let query = supabase.from('orders_read_masked').select('*');
+      if (key === 'feed') {
+        query = query.is('assigned_to', null);
+      } else if (key === 'all') {
+        query = query.eq('assigned_to', uid);
+      } else {
+        query = query.eq('assigned_to', uid);
+        if (key === 'new') {
+          query = query.or('status.is.null,status.eq.Новый');
+        } else if (key === 'progress') {
+          query = query.eq('status', 'В работе');
+        } else if (key === 'done') {
+          query = query.eq('status', 'Завершённая');
+        }
+      }
+
+      const { data, error } = await query.order('datetime', { ascending: false });
+      if (!error && Array.isArray(data)) {
+        setOrders(data);
+        LIST_CACHE.my[key] = data; // update cache
+      }
+      setLoading(false);
+    };
+
+    fetchUserAndOrders();
+  }, [filter]);
 
   const filteredOrders = (orders || []).filter((o) => {
     const q = searchQuery.trim().toLowerCase();
@@ -149,7 +159,10 @@ useEffect(() => {
   });
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg }}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
@@ -164,12 +177,12 @@ useEffect(() => {
                     {key === 'feed'
                       ? 'Лента'
                       : key === 'all'
-                      ? 'Все'
-                      : key === 'new'
-                      ? 'Новые'
-                      : key === 'progress'
-                      ? 'В работе'
-                      : 'Завершённые'}
+                        ? 'Все'
+                        : key === 'new'
+                          ? 'Новые'
+                          : key === 'progress'
+                            ? 'В работе'
+                            : 'Завершённые'}
                   </Text>
                 </Pressable>
               ))}
@@ -197,7 +210,10 @@ useEffect(() => {
                       pathname: `/order-details/${order.id}`,
                       params: {
                         returnTo: '/(tabs)/orders',
-                        returnParams: JSON.stringify({ seedFilter: filter, seedSearch: searchQuery }),
+                        returnParams: JSON.stringify({
+                          seedFilter: filter,
+                          seedSearch: searchQuery,
+                        }),
                       },
                     })
                   }
@@ -210,4 +226,3 @@ useEffect(() => {
     </KeyboardAvoidingView>
   );
 }
-

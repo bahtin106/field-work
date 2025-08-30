@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -8,15 +9,14 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 
 // Используем надёжный хелпер: роль берём из public.profiles (а не из JWT)
+import AdminHome from '../../components/AdminHome';
+import DispatcherHome from '../../components/DispatcherHome';
+import WorkerHome from '../../components/WorkerHome';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
 
 // Подключаем ролевые компоненты
-import WorkerHome from '../../components/WorkerHome';
-import DispatcherHome from '../../components/DispatcherHome';
-import AdminHome from '../../components/AdminHome';
 
 export default function IndexScreen() {
   const [fullName, setFullName] = useState('');

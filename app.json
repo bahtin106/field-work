@@ -34,14 +34,14 @@
       "expo-splash-screen"
     ],
     "androidNavigationBar": {
-      "backgroundColor": "#00000000",
+      "backgroundColor": "#FFFFFF",
       "barStyle": "dark-content",
-      "visible": "immersive"
+      "visible": "visible"
     },
     "androidStatusBar": {
-      "backgroundColor": "#00000000",
+      "backgroundColor": "#f2f6fa",
       "barStyle": "dark-content",
-      "translucent": true
+      "translucent": false
     }
   }
 }

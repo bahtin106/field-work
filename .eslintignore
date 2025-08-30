@@ -1,0 +1,23 @@
+# каталоги, которые не линтим
+node_modules/
+.android/
+.ios/
+android/
+ios/
+.expo/
+.expo-shared/
+dist/
+build/
+coverage/
+web-build/
+.cache/
+.tmp/
+
+# артефакты и конфиги
+*.log
+*.lock
+*.min.js
+*.map
+babel.config.js
+metro.config.js
+jest.config.js

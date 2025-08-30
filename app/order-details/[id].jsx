@@ -1,21 +1,49 @@
-
 // app/order-details/[id].jsx
+import { AntDesign, Feather } from '@expo/vector-icons';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { useFocusEffect } from '@react-navigation/native';
+import { decode } from 'base64-arraybuffer';
+import { format } from 'date-fns';
+import { ru } from 'date-fns/locale';
+import { BlurView } from 'expo-blur';
+import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { StyleSheet, Platform, View, Text, Image, Pressable, ScrollView, BackHandler, ActivityIndicator, TextInput, Linking, KeyboardAvoidingView, Keyboard, TouchableWithoutFeedback, ToastAndroid, findNodeHandle, UIManager, Dimensions, InteractionManager } from 'react-native';
+import {
+  StyleSheet,
+  Platform,
+  View,
+  Text,
+  Image,
+  Pressable,
+  ScrollView,
+  BackHandler,
+  ActivityIndicator,
+  TextInput,
+  Linking,
+  KeyboardAvoidingView,
+  Keyboard,
+  TouchableWithoutFeedback,
+  ToastAndroid,
+  findNodeHandle,
+  UIManager,
+  Dimensions,
+  InteractionManager,
+} from 'react-native';
 import { Animated as RNAnimated } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 
-
-import { useFocusEffect } from '@react-navigation/native';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import Modal from 'react-native-modal';
-import { AntDesign, Feather } from '@expo/vector-icons';
 import { MaskedTextInput } from 'react-native-mask-text';
-import { BlurView } from 'expo-blur';
 
 // gestures + reanimated for smooth, Xiaomi-like viewer
-import { TapGestureHandler, PanGestureHandler, PinchGestureHandler, State } from 'react-native-gesture-handler';
+import {
+  TapGestureHandler,
+  PanGestureHandler,
+  PinchGestureHandler,
+  State,
+} from 'react-native-gesture-handler';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -26,13 +54,10 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { supabase } from '../../lib/supabase';
-import { format } from 'date-fns';
-import { ru } from 'date-fns/locale';
-import * as Clipboard from 'expo-clipboard';
-import * as ImagePicker from 'expo-image-picker';
+
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
-import { decode } from 'base64-arraybuffer';
+
 import { useTheme } from '../../theme/ThemeProvider';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
@@ -45,7 +70,12 @@ const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 // --- FIXED AppButton ---
 function AppButton({ label, onPress, type = 'primary', disabled = false }) {
   const s = StyleSheet.create({
-    appButton: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center' },
+    appButton: {
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+    },
     appButtonText: { fontSize: 16 },
     btnPrimary: { backgroundColor: '#007AFF' },
     btnPrimaryText: { color: '#fff', fontWeight: '600' },
@@ -72,7 +102,11 @@ function AppButton({ label, onPress, type = 'primary', disabled = false }) {
   if (disabled) base.push({ opacity: 0.6 });
 
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={({ pressed }) => [base, pressed && { opacity: 0.9 }]}>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [base, pressed && { opacity: 0.9 }]}
+    >
       <Text style={text}>{label}</Text>
     </Pressable>
   );
@@ -81,240 +115,332 @@ function AppButton({ label, onPress, type = 'primary', disabled = false }) {
 
 export default function OrderDetails() {
   const { theme } = useTheme();
-  
-  
-  const styles = useMemo(() => StyleSheet.create({
-  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-  toggle: { width: 42, height: 26, borderRadius: 13, backgroundColor: '#d1d1d6', padding: 2, justifyContent: 'center' },
-  toggleOn: { backgroundColor: '#FF3B30' },
-  knob: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.colors.card, alignSelf: 'flex-start' },
-  knobOn: { alignSelf: 'flex-end' },
-  toggleLabel: { fontSize: 14, color: theme.colors.text },
-  container: { padding: 16, paddingBottom: 60, backgroundColor: '#F5F6F8' },
 
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.card },
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+        toggle: {
+          width: 42,
+          height: 26,
+          borderRadius: 13,
+          backgroundColor: '#d1d1d6',
+          padding: 2,
+          justifyContent: 'center',
+        },
+        toggleOn: { backgroundColor: '#FF3B30' },
+        knob: {
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          backgroundColor: theme.colors.card,
+          alignSelf: 'flex-start',
+        },
+        knobOn: { alignSelf: 'flex-end' },
+        toggleLabel: { fontSize: 14, color: theme.colors.text },
+        container: { padding: 16, paddingBottom: 60, backgroundColor: '#F5F6F8' },
 
-  // Top
-  topBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  backText: { color: theme.colors.primary, fontSize: 16 },
-  editBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: '#EEF0F3' },
-  editBtnText: { color: theme.colors.text, fontWeight: '600' },
+        centered: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: theme.colors.card,
+        },
 
-  // Header
-  headerCard: {
-    backgroundColor: theme.colors.card,
-    borderRadius: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: theme.colors.text, marginBottom: 8, letterSpacing: 0.2 },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  urgentPill: { backgroundColor: '#FF3B30', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-  urgentPillText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  statusChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-  statusChipText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+        // Top
+        topBar: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 12,
+        },
+        backText: { color: theme.colors.primary, fontSize: 16 },
+        editBtn: {
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+          borderRadius: 10,
+          backgroundColor: '#EEF0F3',
+        },
+        editBtnText: { color: theme.colors.text, fontWeight: '600' },
 
-  // Info card
-  cardBlock: {
-    backgroundColor: theme.colors.card,
-    borderRadius: 16,
-    paddingVertical: 4,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  row: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  rowLabel: { fontSize: 15, color: '#6B7280', flexShrink: 0 },
-  rowValue: { fontSize: 16, color: theme.colors.text, textAlign: 'right', flex: 1 },
-  linkText: { color: theme.colors.primary, textDecorationLine: 'underline' },
-  muted: { color: '#8E8E93' },
-  separator: { height: 1, backgroundColor: '#F1F2F4' },
+        // Header
+        headerCard: {
+          backgroundColor: theme.colors.card,
+          borderRadius: 16,
+          padding: 16,
+          shadowColor: '#000',
+          shadowOpacity: 0.06,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 3,
+          marginBottom: 12,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        headerTitle: {
+          fontSize: 22,
+          fontWeight: '800',
+          color: theme.colors.text,
+          marginBottom: 8,
+          letterSpacing: 0.2,
+        },
+        metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        urgentPill: {
+          backgroundColor: '#FF3B30',
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 999,
+        },
+        urgentPillText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+        statusChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+        statusChipText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
 
-  // Description card
-  descCard: {
-    marginTop: 12,
-    backgroundColor: theme.colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  descTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
-  descText: { fontSize: 16, color: theme.colors.text, lineHeight: 22 },
-  descToggle: { marginTop: 8, color: theme.colors.primary, fontWeight: '600' },
+        // Info card
+        cardBlock: {
+          backgroundColor: theme.colors.card,
+          borderRadius: 16,
+          paddingVertical: 4,
+          overflow: 'hidden',
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          shadowColor: '#000',
+          shadowOpacity: 0.05,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 2,
+        },
+        row: {
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        },
+        rowLabel: { fontSize: 15, color: '#6B7280', flexShrink: 0 },
+        rowValue: { fontSize: 16, color: theme.colors.text, textAlign: 'right', flex: 1 },
+        linkText: { color: theme.colors.primary, textDecorationLine: 'underline' },
+        muted: { color: '#8E8E93' },
+        separator: { height: 1, backgroundColor: '#F1F2F4' },
 
-  // Photos (horizontal rows)
-  photosBlock: {
-    marginTop: 16,
-    backgroundColor: theme.colors.card,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingVertical: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-  },
-  photosHeader: { paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  photosTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
-  addChip: { backgroundColor: '#F0F7FF', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999 },
-  addChipText: { color: theme.colors.primary, fontWeight: '600', fontSize: 13 },
+        // Description card
+        descCard: {
+          marginTop: 12,
+          backgroundColor: theme.colors.card,
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+          shadowColor: '#000',
+          shadowOpacity: 0.05,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 2,
+        },
+        descTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
+        descText: { fontSize: 16, color: theme.colors.text, lineHeight: 22 },
+        descToggle: { marginTop: 8, color: theme.colors.primary, fontWeight: '600' },
 
-  hRow: { paddingHorizontal: 10, paddingBottom: 8 },
-  hItem: { position: 'relative', marginRight: 10 },
-  imagePressable: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  hImage: { width: 116, height: 116, borderRadius: 12 },
-  deletePhoto: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: '#FF3B30',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 5,
-    elevation: 5,
-  },
-  deleteText: { color: '#fff', fontWeight: '700', fontSize: 16, lineHeight: 18 },
+        // Photos (horizontal rows)
+        photosBlock: {
+          marginTop: 16,
+          backgroundColor: theme.colors.card,
+          borderRadius: 16,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          paddingVertical: 8,
+          shadowColor: '#000',
+          shadowOpacity: 0.05,
+          shadowRadius: 10,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 2,
+        },
+        photosHeader: {
+          paddingHorizontal: 16,
+          paddingVertical: 8,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        photosTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
+        addChip: {
+          backgroundColor: '#F0F7FF',
+          paddingVertical: 6,
+          paddingHorizontal: 12,
+          borderRadius: 999,
+        },
+        addChipText: { color: theme.colors.primary, fontWeight: '600', fontSize: 13 },
 
-  // Buttons
-  finishButton: { marginTop: 18, backgroundColor: theme.colors.primary, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
-  finishButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+        hRow: { paddingHorizontal: 10, paddingBottom: 8 },
+        hItem: { position: 'relative', marginRight: 10 },
+        imagePressable: {
+          borderRadius: 12,
+          overflow: 'hidden',
+          shadowColor: '#000',
+          shadowOpacity: 0.08,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: 3,
+        },
+        hImage: { width: 116, height: 116, borderRadius: 12 },
+        deletePhoto: {
+          position: 'absolute',
+          top: 4,
+          right: 4,
+          backgroundColor: '#FF3B30',
+          width: 24,
+          height: 24,
+          borderRadius: 12,
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 5,
+          elevation: 5,
+        },
+        deleteText: { color: '#fff', fontWeight: '700', fontSize: 16, lineHeight: 18 },
 
-  appButton: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center' },
-  appButtonText: { fontSize: 16 },
-  btnPrimary: { backgroundColor: theme.colors.primary },
-  btnPrimaryText: { color: '#fff', fontWeight: '600' },
-  btnSecondary: { backgroundColor: '#d1d1d6' },
-  btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
-  btnDestructive: { backgroundColor: '#FF3B30' },
-  btnDestructiveText: { color: '#fff', fontWeight: '700' },
+        // Buttons
+        finishButton: {
+          marginTop: 18,
+          backgroundColor: theme.colors.primary,
+          paddingVertical: 14,
+          borderRadius: 14,
+          alignItems: 'center',
+        },
+        finishButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 
-  // Modals
-  modalContainer: { backgroundColor: theme.colors.card, borderRadius: 12, padding: 20 },
-  modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
-  modalText: { fontSize: 15, color: theme.text.muted.color, marginBottom: 20 },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-  assigneeOption: { paddingVertical: 10 },
-  assigneeText: { fontSize: 16, color: theme.colors.text },
+        appButton: {
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          borderRadius: 12,
+          alignItems: 'center',
+        },
+        appButtonText: { fontSize: 16 },
+        btnPrimary: { backgroundColor: theme.colors.primary },
+        btnPrimaryText: { color: '#fff', fontWeight: '600' },
+        btnSecondary: { backgroundColor: '#d1d1d6' },
+        btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
+        btnDestructive: { backgroundColor: '#FF3B30' },
+        btnDestructiveText: { color: '#fff', fontWeight: '700' },
 
-  // Edit sheet
-  editSheet: { backgroundColor: theme.colors.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '92%' },
-  sheetHeader: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fafafa',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  sheetTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text, letterSpacing: 0.3 },
+        // Modals
+        modalContainer: { backgroundColor: theme.colors.card, borderRadius: 12, padding: 20 },
+        modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
+        modalText: { fontSize: 15, color: theme.text.muted.color, marginBottom: 20 },
+        modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+        assigneeOption: { paddingVertical: 10 },
+        assigneeText: { fontSize: 16, color: theme.colors.text },
 
-  // iOS banner toast
-  banner: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 24,
-    backgroundcolor: theme.colors.text,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-  },
-  bannerText: { color: '#fff', textAlign: 'center', fontWeight: '600' },
+        // Edit sheet
+        editSheet: {
+          backgroundColor: theme.colors.card,
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+          maxHeight: '92%',
+        },
+        sheetHeader: {
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 20,
+          paddingVertical: 16,
+          backgroundColor: '#fafafa',
+          borderTopLeftRadius: 20,
+          borderTopRightRadius: 20,
+        },
+        sheetTitle: {
+          fontSize: 20,
+          fontWeight: '700',
+          color: theme.colors.text,
+          letterSpacing: 0.3,
+        },
 
-  card: { backgroundColor: theme.colors.card, borderRadius: 12, padding: 12, borderColor: theme.colors.border, borderWidth: 1, marginBottom: 12 },
-  section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
-  label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
-  input: { borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.card, borderRadius: 10, padding: 10 },
-  selectInput: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 10,
-    backgroundColor: theme.colors.card,
-    padding: 12,
-    marginTop: 4,
-  },
-  selectInputText: { fontSize: 16, color: theme.colors.text },
+        // iOS banner toast
+        banner: {
+          position: 'absolute',
+          left: 16,
+          right: 16,
+          bottom: 24,
+          backgroundcolor: theme.colors.text,
+          borderRadius: 12,
+          paddingVertical: 12,
+          paddingHorizontal: 16,
+          shadowColor: '#000',
+          shadowOpacity: 0.15,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 6 },
+        },
+        bannerText: { color: '#fff', textAlign: 'center', fontWeight: '600' },
 
-  // Viewer
-  viewerTopBar: {
-    position: 'absolute',
-    top: 16,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-  },
-  counterPill: {
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  counterText: { color: '#fff', fontWeight: '700' },
-  closeBtn: {
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-}), [theme]);
+        card: {
+          backgroundColor: theme.colors.card,
+          borderRadius: 12,
+          padding: 12,
+          borderColor: theme.colors.border,
+          borderWidth: 1,
+          marginBottom: 12,
+        },
+        section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
+        label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
+        input: {
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.card,
+          borderRadius: 10,
+          padding: 10,
+        },
+        selectInput: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          borderRadius: 10,
+          backgroundColor: theme.colors.card,
+          padding: 12,
+          marginTop: 4,
+        },
+        selectInputText: { fontSize: 16, color: theme.colors.text },
 
-const { id, returnTo, returnParams } = useLocalSearchParams();
-  const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnTo) : '/(tabs)/orders';
+        // Viewer
+        viewerTopBar: {
+          position: 'absolute',
+          top: 16,
+          left: 0,
+          right: 0,
+          zIndex: 10,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+        },
+        counterPill: {
+          backgroundColor: 'rgba(0,0,0,0.55)',
+          borderRadius: 999,
+          paddingHorizontal: 12,
+          paddingVertical: 6,
+        },
+        counterText: { color: '#fff', fontWeight: '700' },
+        closeBtn: {
+          backgroundColor: 'rgba(0,0,0,0.55)',
+          width: 36,
+          height: 36,
+          borderRadius: 18,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+      }),
+    [theme],
+  );
+
+  const { id, returnTo, returnParams } = useLocalSearchParams();
+  const backTargetPath =
+    typeof returnTo === 'string' && returnTo ? String(returnTo) : '/(tabs)/orders';
   let backParams = {};
-  try { backParams = returnParams ? JSON.parse(returnParams) : {}; } catch (e) { backParams = {}; }
+  try {
+    backParams = returnParams ? JSON.parse(returnParams) : {};
+  } catch (e) {
+    backParams = {};
+  }
 
   const router = useRouter();
   const navigation = useNavigation();
@@ -329,21 +455,31 @@ const { id, returnTo, returnParams } = useLocalSearchParams();
   const deriveExecutorNameInstant = (o) => {
     if (!o) return null;
     // from cache by id
-    if (o.assigned_to && EXECUTOR_NAME_CACHE.has(o.assigned_to)) return EXECUTOR_NAME_CACHE.get(o.assigned_to);
+    if (o.assigned_to && EXECUTOR_NAME_CACHE.has(o.assigned_to))
+      return EXECUTOR_NAME_CACHE.get(o.assigned_to);
     // from common fields
-    const fromFields = [o.assigned_to_name, o.executor_name, o.assignee_name, o.worker_name, o.assigned_name].find(v => typeof v === 'string' && v.trim());
+    const fromFields = [
+      o.assigned_to_name,
+      o.executor_name,
+      o.assignee_name,
+      o.worker_name,
+      o.assigned_name,
+    ].find((v) => typeof v === 'string' && v.trim());
     if (fromFields) return String(fromFields).trim();
     // from nested objects
     const join = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
-      const s = [obj.last_name, obj.first_name, obj.middle_name].filter(Boolean).join(' ').trim() || obj.full_name || obj.name;
+      const s =
+        [obj.last_name, obj.first_name, obj.middle_name].filter(Boolean).join(' ').trim() ||
+        obj.full_name ||
+        obj.name;
       return s ? String(s).trim() : null;
     };
-    const nested = join(o.assigned_to_profile) || join(o.executor_profile) || join(o.assignee_profile);
+    const nested =
+      join(o.assigned_to_profile) || join(o.executor_profile) || join(o.assignee_profile);
     if (nested) return nested;
     return null;
   };
-
 
   // toast banner (iOS)
   const [bannerMessage, setBannerMessage] = useState('');
@@ -374,11 +510,10 @@ const { id, returnTo, returnParams } = useLocalSearchParams();
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
 
-  
   // — финансы
   const [amount, setAmount] = useState('');
   const [gsm, setGsm] = useState('');
-const [cancelVisible, setCancelVisible] = useState(false);
+  const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const showWarning = (message) => {
@@ -396,10 +531,11 @@ const [cancelVisible, setCancelVisible] = useState(false);
   // ===== UI state for description collapse (MUST be before any early return) =====
   const [descExpanded, setDescExpanded] = useState(false);
 
-
   // helpers: money formatting/parsing
   const parseMoney = (s) => {
-    const v = String(s ?? '').replace(/[^0-9.,]/g, '').replace(',', '.');
+    const v = String(s ?? '')
+      .replace(/[^0-9.,]/g, '')
+      .replace(',', '.');
     const n = parseFloat(v);
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
   };
@@ -414,7 +550,9 @@ const [cancelVisible, setCancelVisible] = useState(false);
 
   const makeSnapshotFromOrder = (o) => {
     if (!o) return '';
-    const phoneDigits = ((o.phone ?? o.phone_visible) || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
+    const phoneDigits = ((o.phone ?? o.phone_visible) || '')
+      .replace(/\D/g, '')
+      .replace(/^8(\d{10})$/, '7$1');
     return JSON.stringify({
       title: o.title || '',
       comment: o.comment || '',
@@ -477,23 +615,23 @@ const [cancelVisible, setCancelVisible] = useState(false);
   };
 
   const goBack = () => {
-  if (editMode) {
-    requestCloseEdit();
-    return;
-  }
+    if (editMode) {
+      requestCloseEdit();
+      return;
+    }
 
-  if (returnTo && !isNavigatingRef.current) {
-    isNavigatingRef.current = true;
-    router.replace({ pathname: backTargetPath, params: backParams });
-    return;
-  }
+    if (returnTo && !isNavigatingRef.current) {
+      isNavigatingRef.current = true;
+      router.replace({ pathname: backTargetPath, params: backParams });
+      return;
+    }
 
-  if (navigation?.canGoBack?.()) {
-    navigation.goBack();
-  } else {
-    router.replace('/(tabs)/orders');
-  }
-};
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+    } else {
+      router.replace('/(tabs)/orders');
+    }
+  };
 
   // ===== Back handlers with confirm =====
   useEffect(() => {
@@ -508,24 +646,24 @@ const [cancelVisible, setCancelVisible] = useState(false);
     return () => sub.remove();
   }, [editMode]);
 
-    useEffect(() => {
-  const sub = navigation.addListener('beforeRemove', (e) => {
-    // если редактирование — показываем подтверждение
-    if (editMode) {
-      e.preventDefault();
-      requestCloseEdit();
-      return;
-    }
-    // если пришли из списка/календаря — один раз делаем replace с фильтрами
-    if (returnTo && !isNavigatingRef.current) {
-      e.preventDefault();
-      isNavigatingRef.current = true;
-      router.replace({ pathname: backTargetPath, params: backParams });
-    }
-  });
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e) => {
+      // если редактирование — показываем подтверждение
+      if (editMode) {
+        e.preventDefault();
+        requestCloseEdit();
+        return;
+      }
+      // если пришли из списка/календаря — один раз делаем replace с фильтрами
+      if (returnTo && !isNavigatingRef.current) {
+        e.preventDefault();
+        isNavigatingRef.current = true;
+        router.replace({ pathname: backTargetPath, params: backParams });
+      }
+    });
 
-  return sub;
-}, [navigation, editMode, returnTo, backTargetPath]);
+    return sub;
+  }, [navigation, editMode, returnTo, backTargetPath]);
 
   const scrollToDateField = () => {
     const node = dateFieldRef.current;
@@ -536,7 +674,7 @@ const [cancelVisible, setCancelVisible] = useState(false);
         node,
         scrollNode,
         () => {},
-        (_x, y) => detailsScrollRef.current?.scrollTo?.({ y, animated: true })
+        (_x, y) => detailsScrollRef.current?.scrollTo?.({ y, animated: true }),
       );
     } catch {}
   };
@@ -576,7 +714,7 @@ const [cancelVisible, setCancelVisible] = useState(false);
         return true;
       });
       return () => subscription.remove();
-    }, [editMode])
+    }, [editMode]),
   );
 
   // ===== Ensure photos come only from Supabase (avoid stale local cache) =====
@@ -645,85 +783,103 @@ const [cancelVisible, setCancelVisible] = useState(false);
           setRole(profile?.role || null);
         }
 
-        const { data: fetchedOrder, error } = await supabase.from('orders_read_masked').select('*').eq('id', id).single();
+        const { data: fetchedOrder, error } = await supabase
+          .from('orders_read_masked')
+          .select('*')
+          .eq('id', id)
+          .single();
         if (error) throw error;
 
         // cache latest
         ORDER_CACHE.set(id, fetchedOrder);
 
         // сразу показываем статус "В работе", если исполнитель впервые открыл заявку
-    if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
-      setOrder({ ...fetchedOrder, status: 'В работе' }); // моментально в UI
-      supabase.from('orders').update({ status: 'В работе' }).eq('id', id); // тихий апдейт
-    } else {
-      setOrder(fetchedOrder);
-    }
-
-    // unblock UI immediately after first paint
-    setLoading(false);
-
-                InteractionManager.runAfterInteractions(async () => {
-          try {
-// Server-only photos
-        try {
-          const fresh = await fetchServerPhotos(fetchedOrder.id);
-          if (fresh) {
-            setOrder((prev) => ({
-              ...prev,
-              contract_file: fresh.contract_file,
-              photo_before: fresh.photo_before,
-              photo_after: fresh.photo_after,
-              act_file: fresh.act_file,
-            }));
-          }
-        } catch (e) {
-          console.warn(e);
-        }
-// Prefill edit form
-        initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
-        const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.phone_visible) || '').replace(/\D/g, '');
-        setTitle(fetchedOrder.title || '');
-        setDescription(fetchedOrder.comment || '');
-        setRegion(fetchedOrder.region || '');
-        setCity(fetchedOrder.city || '');
-        setStreet(fetchedOrder.street || '');
-        setHouse(fetchedOrder.house || '');
-        setCustomerName(fetchedOrder.fio || '');
-        setPhone(rawDigits || '');
-        setDepartureDate(fetchedOrder.datetime ? new Date(fetchedOrder.datetime) : null);
-        setAssigneeId(fetchedOrder.assigned_to || null);
-        setToFeed(!fetchedOrder.assigned_to);
-        setUrgent(!!fetchedOrder.urgent);
-
-        
-        // финансы
-        setAmount(fetchedOrder.price !== null && fetchedOrder.price !== undefined ? String(fetchedOrder.price) : '');
-        setGsm(fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined ? String(fetchedOrder.fuel_cost) : '');
-// Executor name
-        if (fetchedOrder.assigned_to) {
-          const { data: executorProfile } = await supabase
-            .from('profiles')
-            .select('first_name, last_name')
-            .eq('id', fetchedOrder.assigned_to)
-            .single();
-          if (executorProfile) {
-            const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
-            EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
-            setExecutorName(full);
-          } else {
-            setExecutorName(null);
-          }
+        if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
+          setOrder({ ...fetchedOrder, status: 'В работе' }); // моментально в UI
+          supabase.from('orders').update({ status: 'В работе' }).eq('id', id); // тихий апдейт
         } else {
-          // keep previous value to avoid flicker
+          setOrder(fetchedOrder);
         }
-    // (removed duplicate 'Новый'→'В работе' block)
+
+        // unblock UI immediately after first paint
+        setLoading(false);
+
+        InteractionManager.runAfterInteractions(async () => {
+          try {
+            // Server-only photos
+            try {
+              const fresh = await fetchServerPhotos(fetchedOrder.id);
+              if (fresh) {
+                setOrder((prev) => ({
+                  ...prev,
+                  contract_file: fresh.contract_file,
+                  photo_before: fresh.photo_before,
+                  photo_after: fresh.photo_after,
+                  act_file: fresh.act_file,
+                }));
+              }
+            } catch (e) {
+              console.warn(e);
+            }
+            // Prefill edit form
+            initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
+            const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.phone_visible) || '').replace(
+              /\D/g,
+              '',
+            );
+            setTitle(fetchedOrder.title || '');
+            setDescription(fetchedOrder.comment || '');
+            setRegion(fetchedOrder.region || '');
+            setCity(fetchedOrder.city || '');
+            setStreet(fetchedOrder.street || '');
+            setHouse(fetchedOrder.house || '');
+            setCustomerName(fetchedOrder.fio || '');
+            setPhone(rawDigits || '');
+            setDepartureDate(fetchedOrder.datetime ? new Date(fetchedOrder.datetime) : null);
+            setAssigneeId(fetchedOrder.assigned_to || null);
+            setToFeed(!fetchedOrder.assigned_to);
+            setUrgent(!!fetchedOrder.urgent);
+
+            // финансы
+            setAmount(
+              fetchedOrder.price !== null && fetchedOrder.price !== undefined
+                ? String(fetchedOrder.price)
+                : '',
+            );
+            setGsm(
+              fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined
+                ? String(fetchedOrder.fuel_cost)
+                : '',
+            );
+            // Executor name
+            if (fetchedOrder.assigned_to) {
+              const { data: executorProfile } = await supabase
+                .from('profiles')
+                .select('first_name, last_name')
+                .eq('id', fetchedOrder.assigned_to)
+                .single();
+              if (executorProfile) {
+                const full =
+                  `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
+                EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
+                setExecutorName(full);
+              } else {
+                setExecutorName(null);
+              }
+            } else {
+              // keep previous value to avoid flicker
+            }
+            // (removed duplicate 'Новый'→'В работе' block)
           } catch (e) {
             console.warn(e);
           }
         });
-// Prefill edit form
+        // Prefill edit form
         initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
-        const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.phone_visible) || '').replace(/\D/g, '');
+        const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.phone_visible) || '').replace(
+          /\D/g,
+          '',
+        );
         setTitle(fetchedOrder.title || '');
         setDescription(fetchedOrder.comment || '');
         setRegion(fetchedOrder.region || '');
@@ -737,11 +893,18 @@ const [cancelVisible, setCancelVisible] = useState(false);
         setToFeed(!fetchedOrder.assigned_to);
         setUrgent(!!fetchedOrder.urgent);
 
-        
         // финансы
-        setAmount(fetchedOrder.price !== null && fetchedOrder.price !== undefined ? String(fetchedOrder.price) : '');
-        setGsm(fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined ? String(fetchedOrder.fuel_cost) : '');
-// Executor name
+        setAmount(
+          fetchedOrder.price !== null && fetchedOrder.price !== undefined
+            ? String(fetchedOrder.price)
+            : '',
+        );
+        setGsm(
+          fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined
+            ? String(fetchedOrder.fuel_cost)
+            : '',
+        );
+        // Executor name
         if (fetchedOrder.assigned_to) {
           const { data: executorProfile } = await supabase
             .from('profiles')
@@ -749,7 +912,8 @@ const [cancelVisible, setCancelVisible] = useState(false);
             .eq('id', fetchedOrder.assigned_to)
             .single();
           if (executorProfile) {
-            const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
+            const full =
+              `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
             EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
             setExecutorName(full);
           } else {
@@ -758,8 +922,8 @@ const [cancelVisible, setCancelVisible] = useState(false);
         } else {
           // keep previous value to avoid flicker
         }
-    // (removed duplicate 'Новый'→'В работе' block)
-// Executors list
+        // (removed duplicate 'Новый'→'В работе' block)
+        // Executors list
         const { data: execList } = await supabase
           .from('profiles')
           .select('id, first_name, last_name, role')
@@ -782,7 +946,8 @@ const [cancelVisible, setCancelVisible] = useState(false);
   const canSeePhone = () => Boolean(order?.phone_visible);
 
   const handlePhonePress = () => {
-    if (canSeePhone() && order?.phone_visible) Linking.openURL(`tel:${formatPhoneE164(order.phone_visible)}`);
+    if (canSeePhone() && order?.phone_visible)
+      Linking.openURL(`tel:${formatPhoneE164(order.phone_visible)}`);
   };
 
   const handlePhoneLongPress = async () => {
@@ -795,7 +960,9 @@ const [cancelVisible, setCancelVisible] = useState(false);
   };
 
   const openInYandex = () => {
-    const fullAddress = [order?.region, order?.city, order?.street, order?.house].filter(Boolean).join(', ');
+    const fullAddress = [order?.region, order?.city, order?.street, order?.house]
+      .filter(Boolean)
+      .join(', ');
     if (!fullAddress) return;
 
     const url = `yandexnavi://map_search?text=${encodeURIComponent(fullAddress)}`;
@@ -820,20 +987,24 @@ const [cancelVisible, setCancelVisible] = useState(false);
       const manipulated = await ImageManipulator.manipulateAsync(
         result.assets[0].uri,
         [{ resize: { width: 1280 } }],
-        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
       );
 
       const fileName = `${Date.now()}.jpg`;
       const path = `orders/${order.id}/${category}/${fileName}`;
 
-      const base64 = await FileSystem.readAsStringAsync(manipulated.uri, { encoding: FileSystem.EncodingType.Base64 });
+      const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
       const arrayBuffer = decode(base64);
 
-      const { error: uploadError } = await supabase.storage.from('orders-photos').upload(path, arrayBuffer, {
-        cacheControl: '3600',
-        upsert: true,
-        contentType: 'image/jpeg',
-      });
+      const { error: uploadError } = await supabase.storage
+        .from('orders-photos')
+        .upload(path, arrayBuffer, {
+          cacheControl: '3600',
+          upsert: true,
+          contentType: 'image/jpeg',
+        });
 
       if (uploadError) {
         console.warn(uploadError);
@@ -846,7 +1017,10 @@ const [cancelVisible, setCancelVisible] = useState(false);
 
       const updated = [...(order[category] || []), publicUrl];
 
-      const { error: updateError } = await supabase.from('orders').update({ [category]: updated }).eq('id', order.id);
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({ [category]: updated })
+        .eq('id', order.id);
 
       if (updateError) {
         console.warn(updateError);
@@ -872,7 +1046,10 @@ const [cancelVisible, setCancelVisible] = useState(false);
       await supabase.storage.from('orders-photos').remove([relativePath]);
     }
 
-    const { error } = await supabase.from('orders').update({ [category]: updated }).eq('id', order.id);
+    const { error } = await supabase
+      .from('orders')
+      .update({ [category]: updated })
+      .eq('id', order.id);
 
     if (!error) {
       setOrder({ ...order, [category]: updated });
@@ -891,17 +1068,24 @@ const [cancelVisible, setCancelVisible] = useState(false);
 
   const handleFinishOrder = async () => {
     const missing = [];
-    if (!Array.isArray(order.contract_file) || order.contract_file.length === 0) missing.push('фото договора');
-    if (!Array.isArray(order.photo_before) || order.photo_before.length === 0) missing.push('фото ДО');
-    if (!Array.isArray(order.photo_after) || order.photo_after.length === 0) missing.push('фото ПОСЛЕ');
-    if (!Array.isArray(order.act_file) || order.act_file.length === 0) missing.push('акт выполненных работ');
+    if (!Array.isArray(order.contract_file) || order.contract_file.length === 0)
+      missing.push('фото договора');
+    if (!Array.isArray(order.photo_before) || order.photo_before.length === 0)
+      missing.push('фото ДО');
+    if (!Array.isArray(order.photo_after) || order.photo_after.length === 0)
+      missing.push('фото ПОСЛЕ');
+    if (!Array.isArray(order.act_file) || order.act_file.length === 0)
+      missing.push('акт выполненных работ');
 
     if (missing.length > 0) {
       showToast(`Добавьте: ${missing.join(', ')}`);
       return;
     }
 
-    const { error } = await supabase.from('orders').update({ status: 'Завершённая' }).eq('id', order.id);
+    const { error } = await supabase
+      .from('orders')
+      .update({ status: 'Завершённая' })
+      .eq('id', order.id);
     if (error) {
       showToast('Ошибка при завершении');
       return;
@@ -924,8 +1108,8 @@ const [cancelVisible, setCancelVisible] = useState(false);
       }
       if (data === true) {
         // Update local state: assign to me && set status
-        const me = (users || []).find(u => u.id === userId);
-        setOrder(prev => ({ ...(prev || {}), assigned_to: userId, status: 'В работе' }));
+        const me = (users || []).find((u) => u.id === userId);
+        setOrder((prev) => ({ ...(prev || {}), assigned_to: userId, status: 'В работе' }));
         setExecutorName(me ? `${me.first_name || ''} ${me.last_name || ''}`.trim() : null);
         setAssigneeId(userId);
         setToFeed(false);
@@ -937,7 +1121,6 @@ const [cancelVisible, setCancelVisible] = useState(false);
       showToast('Ошибка сети');
     }
   };
-
 
   // ===== Save edits =====
   const handleSubmitEdit = async () => {
@@ -956,9 +1139,7 @@ const [cancelVisible, setCancelVisible] = useState(false);
       return showWarning('Введите корректный номер телефона формата +7 (9__) ___-__-__');
     }
 
-    const nextStatus = toFeed
-      ? 'В ленте'
-      : (order.status === 'В ленте' ? 'В работе' : order.status);
+    const nextStatus = toFeed ? 'В ленте' : order.status === 'В ленте' ? 'В работе' : order.status;
 
     const payload = {
       title,
@@ -976,7 +1157,7 @@ const [cancelVisible, setCancelVisible] = useState(false);
       price: parseMoney(amount),
       fuel_cost: parseMoney(gsm),
     };
-const { data, error } = await supabase
+    const { data, error } = await supabase
       .from('orders')
       .update(payload)
       .eq('id', id)
@@ -987,7 +1168,7 @@ const { data, error } = await supabase
       showToast(error.message || 'Ошибка сохранения');
     } else {
       setOrder(data);
-            // Sync all form fields from saved row so the editor re-opens with fresh values
+      // Sync all form fields from saved row so the editor re-opens with fresh values
       try {
         const rawDigitsSaved = (data.phone || '').replace(/\D/g, '');
         setTitle(data.title || '');
@@ -1003,9 +1184,11 @@ const { data, error } = await supabase
         setToFeed(!data.assigned_to);
         setUrgent(!!data.urgent);
         setAmount(data.price !== null && data.price !== undefined ? String(data.price) : '');
-        setGsm(data.fuel_cost !== null && data.fuel_cost !== undefined ? String(data.fuel_cost) : '');
+        setGsm(
+          data.fuel_cost !== null && data.fuel_cost !== undefined ? String(data.fuel_cost) : '',
+        );
       } catch {}
-initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
+      initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
       {
         const sel = (users || []).find((u) => u.id === data.assigned_to);
         if (sel) {
@@ -1018,7 +1201,9 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
                 .select('first_name, last_name')
                 .eq('id', data.assigned_to)
                 .single();
-              setExecutorName(exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null);
+              setExecutorName(
+                exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null,
+              );
             };
             fetchExec();
           } catch {}
@@ -1030,7 +1215,6 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
       showToast('Сохранено');
     }
   };
-
 
   const updateStatus = async (next) => {
     if (!canEdit()) return;
@@ -1053,10 +1237,7 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
         return;
       }
 
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: next })
-        .eq('id', order.id);
+      const { error } = await supabase.from('orders').update({ status: next }).eq('id', order.id);
       if (error) {
         showToast('Не удалось сменить статус');
         return;
@@ -1068,7 +1249,6 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
       showToast('Ошибка сети');
     }
   };
-
 
   const confirmCancel = () => {
     setCancelVisible(false);
@@ -1087,11 +1267,13 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
       setAssigneeId(order.assigned_to || null);
       setToFeed(!order.assigned_to);
       setUrgent(!!order.urgent);
-    
+
       // финансы
       setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
-      setGsm(order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '');
-}
+      setGsm(
+        order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '',
+      );
+    }
     setEditMode(false);
   };
 
@@ -1125,7 +1307,11 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
       }
 
       // 3) удалить запись
-      const { data, error: delErr } = await supabase.from('orders').delete().eq('id', order.id).select('id');
+      const { data, error: delErr } = await supabase
+        .from('orders')
+        .delete()
+        .eq('id', order.id)
+        .select('id');
 
       if (delErr) {
         console.warn(delErr);
@@ -1153,8 +1339,18 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
   useEffect(() => {
     if (!loading) {
       RNAnimated.parallel([
-        RNAnimated.timing(viewFade, { toValue: 1, duration: 260, delay: 40, useNativeDriver: true }),
-        RNAnimated.spring(viewTranslate, { toValue: 0, bounciness: 6, speed: 12, useNativeDriver: true }),
+        RNAnimated.timing(viewFade, {
+          toValue: 1,
+          duration: 260,
+          delay: 40,
+          useNativeDriver: true,
+        }),
+        RNAnimated.spring(viewTranslate, {
+          toValue: 0,
+          bounciness: 6,
+          speed: 12,
+          useNativeDriver: true,
+        }),
       ]).start();
     }
   }, [loading, viewFade, viewTranslate]);
@@ -1275,12 +1471,15 @@ initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
   }
 
   const statusMeta = getStatusMeta(order.status);
-const selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
-const isFree = !order.assigned_to;
-const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← добавили
+  const selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
+  const isFree = !order.assigned_to;
+  const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← добавили
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.bg }}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
@@ -1290,7 +1489,12 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
           >
             {/* Top bar */}
             <View style={styles.topBar}>
-              <Pressable onPress={() => (editMode ? requestCloseEdit() : goBack())} hitSlop={16} accessibilityRole="button" accessibilityLabel="Назад">
+              <Pressable
+                onPress={() => (editMode ? requestCloseEdit() : goBack())}
+                hitSlop={16}
+                accessibilityRole="button"
+                accessibilityLabel="Назад"
+              >
                 <Text style={styles.backText}>← Назад</Text>
               </Pressable>
 
@@ -1309,37 +1513,57 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
             </View>
 
             {/* Header Card (title on its own line, meta chips below) */}
-            <RNAnimated.View style={[styles.headerCard, { opacity: viewFade, transform: [{ translateY: viewTranslate }] }]}>
-              <Text style={styles.headerTitle} numberOfLines={1}>{order.title}</Text>
+            <RNAnimated.View
+              style={[
+                styles.headerCard,
+                { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
+              ]}
+            >
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {order.title}
+              </Text>
 
               <View style={styles.metaRow}>
                 {order.urgent && (
-  <View style={styles.urgentPill}>
-    <Text style={styles.urgentPillText}>Срочная</Text>
-  </View>
-)}
+                  <View style={styles.urgentPill}>
+                    <Text style={styles.urgentPillText}>Срочная</Text>
+                  </View>
+                )}
 
-{canChangeStatus ? (
-  <Pressable
-    onPress={() => setStatusModalVisible(true)}
-    style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
-  >
-    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>{order.status}</Text>
-  </Pressable>
-) : (
-  <View style={[styles.statusChip, { backgroundColor: statusMeta.bg, opacity: 0.6 }]}>
-    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>{order.status}</Text>
-  </View>
-)}
+                {canChangeStatus ? (
+                  <Pressable
+                    onPress={() => setStatusModalVisible(true)}
+                    style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
+                  >
+                    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                      {order.status}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <View
+                    style={[styles.statusChip, { backgroundColor: statusMeta.bg, opacity: 0.6 }]}
+                  >
+                    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                      {order.status}
+                    </Text>
+                  </View>
+                )}
               </View>
             </RNAnimated.View>
 
             {/* Info Card (now includes Executor as a uniform row at the top) */}
-            <RNAnimated.View style={[styles.cardBlock, { opacity: viewFade, transform: [{ translateY: viewTranslate }] }]}>
+            <RNAnimated.View
+              style={[
+                styles.cardBlock,
+                { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
+              ]}
+            >
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>👷 Исполнитель</Text>
-                {(deriveExecutorNameInstant(order) || executorName) ? (
-                  <Text style={styles.rowValue}>{deriveExecutorNameInstant(order) || executorName}</Text>
+                {deriveExecutorNameInstant(order) || executorName ? (
+                  <Text style={styles.rowValue}>
+                    {deriveExecutorNameInstant(order) || executorName}
+                  </Text>
                 ) : (
                   <Text style={[styles.rowValue, styles.muted]}>не назначен</Text>
                 )}
@@ -1354,7 +1578,9 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
               <Pressable style={styles.row} onPress={openInYandex}>
                 <Text style={styles.rowLabel}>📍 Адрес</Text>
                 <Text style={[styles.rowValue, styles.linkText]} numberOfLines={2}>
-                  {[order.region, order.city, order.street, order.house].filter(Boolean).join(', ') || 'Адрес не указан'}
+                  {[order.region, order.city, order.street, order.house]
+                    .filter(Boolean)
+                    .join(', ') || 'Адрес не указан'}
                 </Text>
               </Pressable>
               <View style={styles.separator} />
@@ -1362,14 +1588,26 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
               <Pressable
                 style={styles.row}
                 onPress={() => {
-                  const dateStr = order.datetime ? new Date(order.datetime).toISOString().slice(0, 10) : undefined;
+                  const dateStr = order.datetime
+                    ? new Date(order.datetime).toISOString().slice(0, 10)
+                    : undefined;
                   const assignee = order.assigned_to || undefined;
-                  router.push({ pathname: '/(tabs)/calendar', params: { selectedDate: dateStr, selectedUserId: assignee, returnTo: `/order-details/${order.id}`, returnParams: JSON.stringify({}) } });
+                  router.push({
+                    pathname: '/(tabs)/calendar',
+                    params: {
+                      selectedDate: dateStr,
+                      selectedUserId: assignee,
+                      returnTo: `/order-details/${order.id}`,
+                      returnParams: JSON.stringify({}),
+                    },
+                  });
                 }}
               >
                 <Text style={styles.rowLabel}>🗓️ Дата выезда</Text>
                 <Text style={[styles.rowValue, styles.linkText]}>
-                  {order.datetime ? format(new Date(order.datetime), 'd MMMM yyyy', { locale: ru }) : 'не указана'}
+                  {order.datetime
+                    ? format(new Date(order.datetime), 'd MMMM yyyy', { locale: ru })
+                    : 'не указана'}
                 </Text>
               </Pressable>
               <View style={styles.separator} />
@@ -1377,7 +1615,9 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
                 <Text style={styles.rowLabel}>📞 Телефон</Text>
                 {canSeePhone() ? (
                   <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
-                    <Text style={[styles.rowValue, styles.linkText]}>{formatPhoneDisplay(order.phone_visible)}</Text>
+                    <Text style={[styles.rowValue, styles.linkText]}>
+                      {formatPhoneDisplay(order.phone_visible)}
+                    </Text>
                   </Pressable>
                 ) : (
                   <Text style={[styles.rowValue, styles.muted]}>Скрыт</Text>
@@ -1393,18 +1633,24 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
                 <Text style={styles.rowLabel}>⛽ ГСМ</Text>
                 <Text style={styles.rowValue}>{formatMoney(order.fuel_cost)}</Text>
               </View>
-
             </RNAnimated.View>
 
             {/* Description — отдельная карточка с разворотом */}
-            <RNAnimated.View style={[styles.descCard, { opacity: viewFade, transform: [{ translateY: viewTranslate }] }]}>
+            <RNAnimated.View
+              style={[
+                styles.descCard,
+                { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
+              ]}
+            >
               <Text style={styles.descTitle}>📝 Описание</Text>
               <Text style={styles.descText} numberOfLines={descExpanded ? undefined : 4}>
                 {order.comment?.trim() ? order.comment : '—'}
               </Text>
               {order.comment?.length > 120 && (
-                <Pressable onPress={() => setDescExpanded(v => !v)} hitSlop={8}>
-                  <Text style={styles.descToggle}>{descExpanded ? 'Свернуть' : 'Показать полностью'}</Text>
+                <Pressable onPress={() => setDescExpanded((v) => !v)} hitSlop={8}>
+                  <Text style={styles.descToggle}>
+                    {descExpanded ? 'Свернуть' : 'Показать полностью'}
+                  </Text>
                 </Pressable>
               )}
             </RNAnimated.View>
@@ -1418,16 +1664,17 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
             {/* Actions */}
 
             {/* Accept button for workers when order is free */}
-            {(!order.assigned_to && (role === 'worker' || role === 'admin' || role === 'dispatcher')) && (
-  <Pressable
-    style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
-    onPress={onAcceptOrder}
-  >
-    <Text style={styles.finishButtonText}>Принять заявку</Text>
-  </Pressable>
-)}
+            {!order.assigned_to &&
+              (role === 'worker' || role === 'admin' || role === 'dispatcher') && (
+                <Pressable
+                  style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
+                  onPress={onAcceptOrder}
+                >
+                  <Text style={styles.finishButtonText}>Принять заявку</Text>
+                </Pressable>
+              )}
 
-{order.status !== 'Завершённая' && !isFree && (
+            {order.status !== 'Завершённая' && !isFree && (
               <Pressable
                 style={({ pressed }) => [
                   styles.finishButton,
@@ -1441,7 +1688,15 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
             )}
 
             {(role === 'admin' || role === 'dispatcher') && (
-              <Pressable onPress={() => setDeleteModalVisible(true)} style={({ pressed }) => [styles.appButton, styles.btnDestructive, { marginTop: 12 }, pressed && { opacity: 0.9 }]}>
+              <Pressable
+                onPress={() => setDeleteModalVisible(true)}
+                style={({ pressed }) => [
+                  styles.appButton,
+                  styles.btnDestructive,
+                  { marginTop: 12 },
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
                 <Text style={[styles.appButtonText, styles.btnDestructiveText]}>Удалить</Text>
               </Pressable>
             )}
@@ -1467,12 +1722,20 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
         <View style={StyleSheet.absoluteFill}>
           {/* Blurred backdrop of the underlying screen */}
           <BlurView intensity={50} tint="dark" style={[StyleSheet.absoluteFill]} />
-          <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.65)' }, animatedBackdropStyle]} />
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: 'rgba(0,0,0,0.65)' },
+              animatedBackdropStyle,
+            ]}
+          />
 
           {/* Header: counter + close */}
           <View style={styles.viewerTopBar}>
             <View style={styles.counterPill}>
-              <Text style={styles.counterText}>{viewerPhotos.length ? `${viewerIndex + 1}/${viewerPhotos.length}` : ''}</Text>
+              <Text style={styles.counterText}>
+                {viewerPhotos.length ? `${viewerIndex + 1}/${viewerPhotos.length}` : ''}
+              </Text>
             </View>
             <Pressable onPress={closeViewer} hitSlop={12} style={styles.closeBtn}>
               <Feather name="x" size={24} color="#fff" />
@@ -1507,18 +1770,22 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
                   setViewerIndex(idx);
                 }}
                 renderItem={({ item }) => (
-                  <View style={{ width: SCREEN_W + GAP, height: SCREEN_H, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' }}>
+                  <View
+                    style={{
+                      width: SCREEN_W + GAP,
+                      height: SCREEN_H,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      backgroundColor: '#000',
+                    }}
+                  >
                     <PinchGestureHandler
                       ref={pinchRef}
                       onGestureEvent={pinchHandler}
                       onHandlerStateChange={pinchHandler}
                     >
                       <Animated.View style={[StyleSheet.absoluteFill]}>
-                        <TapGestureHandler
-                          ref={tapRef}
-                          numberOfTaps={2}
-                          onActivated={onDoubleTap}
-                        >
+                        <TapGestureHandler ref={tapRef} numberOfTaps={2} onActivated={onDoubleTap}>
                           <Animated.View style={[StyleSheet.absoluteFill]}>
                             <PanGestureHandler
                               ref={panRef}
@@ -1539,7 +1806,12 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
                               >
                                 <Image
                                   source={{ uri: item }}
-                                  style={{ width: SCREEN_W, height: SCREEN_H, resizeMode: 'contain', backgroundColor: '#000' }}
+                                  style={{
+                                    width: SCREEN_W,
+                                    height: SCREEN_H,
+                                    resizeMode: 'contain',
+                                    backgroundColor: '#000',
+                                  }}
                                 />
                               </Animated.View>
                             </PanGestureHandler>
@@ -1568,7 +1840,10 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Редактирование заявки</Text>
           </View>
-          <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+            keyboardShouldPersistTaps="handled"
+          >
             {/* SECTIONED FORM START (copied from create-order UI) */}
             <View style={styles.card}>
               <Text style={styles.section}>Основное</Text>
@@ -1645,21 +1920,37 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
               <Text style={styles.section}>Планирование</Text>
 
               <View style={styles.toggleRow}>
-                <Pressable onPress={() => setUrgent(prev => !prev)} style={[styles.toggle, urgent && styles.toggleOn]}>
+                <Pressable
+                  onPress={() => setUrgent((prev) => !prev)}
+                  style={[styles.toggle, urgent && styles.toggleOn]}
+                >
                   <View style={[styles.knob, urgent && styles.knobOn]} />
                 </Pressable>
                 <Text style={styles.toggleLabel}>Срочная</Text>
               </View>
 
               <Text style={styles.label}>Дата выезда *</Text>
-              <View ref={(ref) => { if (ref) dateFieldRef.current = findNodeHandle(ref); }}>
+              <View
+                ref={(ref) => {
+                  if (ref) dateFieldRef.current = findNodeHandle(ref);
+                }}
+              >
                 <Pressable
                   ref={dateFieldRef}
-                  onPress={() => { setShowDatePicker(true); setTimeout(scrollToDateField, 200); }}
+                  onPress={() => {
+                    setShowDatePicker(true);
+                    setTimeout(scrollToDateField, 200);
+                  }}
                   style={styles.selectInput}
                 >
                   <Text style={styles.selectInputText}>
-                    {departureDate ? departureDate.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }) : 'Выберите дату'}
+                    {departureDate
+                      ? departureDate.toLocaleDateString('ru-RU', {
+                          day: '2-digit',
+                          month: 'long',
+                          year: 'numeric',
+                        })
+                      : 'Выберите дату'}
                   </Text>
                   <AntDesign name="calendar" size={16} color="#666" />
                 </Pressable>
@@ -1680,7 +1971,13 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
 
               <View style={[styles.toggleRow, { marginTop: 12 }]}>
                 <Pressable
-                  onPress={() => setToFeed(prev => { const nv = !prev; if (nv) setAssigneeId(null); return nv; })}
+                  onPress={() =>
+                    setToFeed((prev) => {
+                      const nv = !prev;
+                      if (nv) setAssigneeId(null);
+                      return nv;
+                    })
+                  }
                   style={[styles.toggle, toFeed && styles.toggleOn]}
                 >
                   <View style={[styles.knob, toFeed && styles.knobOn]} />
@@ -1696,8 +1993,12 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
               >
                 <Text style={styles.selectInputText}>
                   {selectedAssignee
-                    ? [selectedAssignee.first_name, selectedAssignee.last_name].filter(Boolean).join(' ')
-                    : (toFeed ? 'В общую ленту' : 'Выберите исполнителя...')}
+                    ? [selectedAssignee.first_name, selectedAssignee.last_name]
+                        .filter(Boolean)
+                        .join(' ')
+                    : toFeed
+                      ? 'В общую ленту'
+                      : 'Выберите исполнителя...'}
                 </Text>
                 <AntDesign name="down" size={16} color="#666" />
               </Pressable>
@@ -1728,12 +2029,17 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
             <View style={{ height: 12 }} />
             <AppButton label="Отмена" onPress={requestCloseEdit} type="secondary" />
             {/* SECTIONED FORM END */}
-</ScrollView>
+          </ScrollView>
         </View>
       </Modal>
 
       {/* Cancel confirm */}
-      <Modal isVisible={cancelVisible} onBackdropPress={() => setCancelVisible(false)} useNativeDriver backdropOpacity={0.3}>
+      <Modal
+        isVisible={cancelVisible}
+        onBackdropPress={() => setCancelVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+      >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Отменить редактирование?</Text>
           <Text style={styles.modalText}>Все изменения будут потеряны. Вы уверены?</Text>
@@ -1745,7 +2051,12 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
       </Modal>
 
       {/* Assignee modal */}
-      <Modal isVisible={assigneeModalVisible} onBackdropPress={() => setAssigneeModalVisible(false)} useNativeDriver backdropOpacity={0.3}>
+      <Modal
+        isVisible={assigneeModalVisible}
+        onBackdropPress={() => setAssigneeModalVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+      >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Выберите исполнителя</Text>
           <Pressable
@@ -1767,32 +2078,58 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
                 setToFeed(false);
                 setAssigneeModalVisible(false);
               }}
-              style={({ pressed }) => [styles.assigneeOption, pressed && { backgroundColor: '#eee' }]}
+              style={({ pressed }) => [
+                styles.assigneeOption,
+                pressed && { backgroundColor: '#eee' },
+              ]}
             >
-              <Text style={styles.assigneeText}>{[user.first_name, user.last_name].filter(Boolean).join(' ')}</Text>
+              <Text style={styles.assigneeText}>
+                {[user.first_name, user.last_name].filter(Boolean).join(' ')}
+              </Text>
             </Pressable>
           ))}
         </View>
       </Modal>
 
       {/* Status picker */}
-      <Modal isVisible={statusModalVisible} onBackdropPress={() => setStatusModalVisible(false)} useNativeDriver backdropOpacity={0.3}>
+      <Modal
+        isVisible={statusModalVisible}
+        onBackdropPress={() => setStatusModalVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+      >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Изменить статус</Text>
           {['В ленте', 'Новый', 'В работе', 'Завершённая'].map((s) => (
-            <Pressable key={s} onPress={() => updateStatus(s)} style={({ pressed }) => [styles.assigneeOption, pressed && { backgroundColor: '#eee' }]}>
+            <Pressable
+              key={s}
+              onPress={() => updateStatus(s)}
+              style={({ pressed }) => [
+                styles.assigneeOption,
+                pressed && { backgroundColor: '#eee' },
+              ]}
+            >
               <Text style={styles.assigneeText}>
                 {s} {order.status === s ? '✓' : ''}
               </Text>
             </Pressable>
           ))}
           <View style={[styles.modalActions, { marginTop: 8 }]}>
-            <AppButton label="Отмена" onPress={() => setStatusModalVisible(false)} type="secondary" />
+            <AppButton
+              label="Отмена"
+              onPress={() => setStatusModalVisible(false)}
+              type="secondary"
+            />
           </View>
         </View>
       </Modal>
 
-      <Modal isVisible={warningVisible} onBackdropPress={() => setWarningVisible(false)} useNativeDriver backdropOpacity={0.3}>
+      <Modal
+        isVisible={warningVisible}
+        onBackdropPress={() => setWarningVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+      >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Внимание</Text>
           <Text style={styles.modalText}>{warningMessage}</Text>
@@ -1812,10 +2149,18 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
       >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Удалить заявку?</Text>
-          <Text style={styles.modalText}>Если удалить, все данные и фотографии будут стерты безвозвратно. Восстановить будет невозможно.</Text>
+          <Text style={styles.modalText}>
+            Если удалить, все данные и фотографии будут стерты безвозвратно. Восстановить будет
+            невозможно.
+          </Text>
           <View style={styles.modalActions}>
             <AppButton label="Остаться" onPress={() => setDeleteModalVisible(false)} />
-            <AppButton label={deleteEnabled ? 'Удалить' : `Удалить (${deleteCountdown})`} onPress={deleteOrderCompletely} disabled={!deleteEnabled} type="destructive" />
+            <AppButton
+              label={deleteEnabled ? 'Удалить' : `Удалить (${deleteCountdown})`}
+              onPress={deleteOrderCompletely}
+              disabled={!deleteEnabled}
+              type="destructive"
+            />
           </View>
         </View>
       </Modal>
@@ -1829,16 +2174,26 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
       <View style={styles.photosBlock}>
         <View style={styles.photosHeader}>
           <Text style={styles.photosTitle}>{titleText}</Text>
-          <Pressable style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]} onPress={() => compressAndUpload(category)}>
+          <Pressable
+            style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
+            onPress={() => compressAndUpload(category)}
+          >
             <Text style={styles.addChipText}>Добавить</Text>
           </Pressable>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hRow}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.hRow}
+        >
           {photos.map((url, index) => (
             <View key={index} style={styles.hItem}>
               <Pressable
-                style={({ pressed }) => [styles.imagePressable, pressed && { transform: [{ scale: 0.98 }] }]}
+                style={({ pressed }) => [
+                  styles.imagePressable,
+                  pressed && { transform: [{ scale: 0.98 }] },
+                ]}
                 onPress={() => openViewer(photos, index)}
               >
                 <Image source={{ uri: url }} style={styles.hImage} />
@@ -1868,7 +2223,8 @@ const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← д
   function formatPhoneDisplay(phone) {
     const digitsRaw = (phone || '').replace(/\D/g, '');
     // Normalize: treat leading '8' as '7' (Russia), expect 11 digits
-    const digits = digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
+    const digits =
+      digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
     if (digits.length !== 11 || !digits.startsWith('7')) return phone || '';
     return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
   }

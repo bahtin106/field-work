@@ -1,7 +1,16 @@
 // providers/SettingsProvider.js
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from 'react';
+import { AppState } from 'react-native';
+
 import { supabase } from '../lib/supabase';
 
 const STORAGE_KEY = 'active_settings_v1';
@@ -44,18 +53,25 @@ export default function SettingsProvider({ children }) {
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEY);
       if (raw) setSettings(JSON.parse(raw));
-    } catch {}
+    } catch (e) {
+      void e; // intentionally ignore
+    }
   }, []);
+
   const saveToCache = useCallback(async (obj) => {
     try {
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(obj || {}));
-    } catch {}
+    } catch (e) {
+      void e; // intentionally ignore
+    }
   }, []);
+
   const fetchRemote = useCallback(async () => {
     const { data, error } = await supabase.rpc('get_active_settings');
     if (error) throw error;
     return data || null;
   }, []);
+
   const refreshSettings = useCallback(async () => {
     try {
       const data = await fetchRemote();
@@ -64,7 +80,8 @@ export default function SettingsProvider({ children }) {
         await saveToCache(data);
       }
     } catch (e) {
-      console.warn('get_active_settings failed:', e?.message || e);
+      // safe console access to avoid eslint no-undef
+      globalThis?.console?.warn?.('get_active_settings failed:', e?.message || e);
     }
   }, [fetchRemote, saveToCache]);
 
@@ -79,7 +96,7 @@ export default function SettingsProvider({ children }) {
           await saveToCache(data);
         }
       } catch (e) {
-        console.warn('Initial fetch failed:', e?.message || e);
+        globalThis?.console?.warn?.('Initial fetch failed:', e?.message || e);
       } finally {
         if (mounted) setReady(true);
       }
@@ -99,26 +116,50 @@ export default function SettingsProvider({ children }) {
   useEffect(() => {
     const ch = supabase
       .channel('settings_versions_active')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings_versions' }, () => refreshSettings())
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'app_settings_versions' },
+        () => refreshSettings(),
+      )
       .subscribe();
     return () => {
       try {
         supabase.removeChannel(ch);
-      } catch {}
+      } catch (e) {
+        void e; // intentionally ignore
+      }
     };
   }, [refreshSettings]);
 
-  const fields = useMemo(() => Array.isArray(settings?.fields) ? settings.fields : [], [settings]);
-  const mediaRequirements = useMemo(() => Array.isArray(settings?.media) ? settings.media : [], [settings]);
-  const presets = useMemo(() => Array.isArray(settings?.presets) ? settings.presets : [], [settings]);
+  const fields = useMemo(
+    () => (Array.isArray(settings?.fields) ? settings.fields : []),
+    [settings],
+  );
+  const mediaRequirements = useMemo(
+    () => (Array.isArray(settings?.media) ? settings.media : []),
+    [settings],
+  );
+  const presets = useMemo(
+    () => (Array.isArray(settings?.presets) ? settings.presets : []),
+    [settings],
+  );
 
-  const getFieldByKey = useCallback((key) => fields.find((f) => f.field_key === key) || null, [fields]);
-  const isFieldVisible = useCallback((key, ctx) => !!getFieldByKey(key)?.visibility?.[ctx], [getFieldByKey]);
+  const getFieldByKey = useCallback(
+    (key) => fields.find((f) => f.field_key === key) || null,
+    [fields],
+  );
+  const isFieldVisible = useCallback(
+    (key, ctx) => !!getFieldByKey(key)?.visibility?.[ctx],
+    [getFieldByKey],
+  );
   const isFieldRequired = useCallback((key) => !!getFieldByKey(key)?.required, [getFieldByKey]);
-  const presetsByContext = useCallback((ctx) => {
-    const p = presets.find((x) => x.context === ctx);
-    return p || { fields: [], pills: [], secondary: [] };
-  }, [presets]);
+  const presetsByContext = useCallback(
+    (ctx) => {
+      const p = presets.find((x) => x.context === ctx);
+      return p || { fields: [], pills: [], secondary: [] };
+    },
+    [presets],
+  );
 
   // ===== ADMIN HELPERS (form fields) =====
   const columnsRef = useRef({ present: new Set(), map: {}, supports: {} });
@@ -147,10 +188,10 @@ export default function SettingsProvider({ children }) {
       mode: row[map.mode],
       key: row[map.fieldKey],
       label: row[map.label] ?? '',
-      placeholder: map.placeholder ? row[map.placeholder] ?? '' : '',
-      help_text: map.help ? row[map.help] ?? '' : '',
-      type: map.type ? row[map.type] ?? 'text' : 'text',
-      options: map.options ? row[map.options] ?? null : null,
+      placeholder: map.placeholder ? (row[map.placeholder] ?? '') : '',
+      help_text: map.help ? (row[map.help] ?? '') : '',
+      type: map.type ? (row[map.type] ?? 'text') : 'text',
+      options: map.options ? (row[map.options] ?? null) : null,
       is_visible: map.visible ? !!row[map.visible] : true,
       is_required: map.required ? !!row[map.required] : false,
       sort_order: map.order ? Number(row[map.order] ?? 0) : 0,
@@ -182,8 +223,8 @@ export default function SettingsProvider({ children }) {
   const _group = (rows) => {
     const by = { create: [], edit: [] };
     rows.forEach((r) => (r.mode === 'edit' ? by.edit.push(r) : by.create.push(r)));
-    by.create.sort((a,b)=>a.sort_order-b.sort_order || a.label.localeCompare(b.label));
-    by.edit.sort((a,b)=>a.sort_order-b.sort_order || a.label.localeCompare(b.label));
+    by.create.sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label));
+    by.edit.sort((a, b) => a.sort_order - b.sort_order || a.label.localeCompare(b.label));
     return by;
   };
   const reloadFormFields = async () => _group(await _fetch());
@@ -207,21 +248,31 @@ export default function SettingsProvider({ children }) {
         is_required: false,
         sort_order: next,
       };
-      const { error } = await supabase.from('app_form_fields').upsert(decanon(c), { onConflict: columnsRef.current.map.id });
+      const { error } = await supabase
+        .from('app_form_fields')
+        .upsert(decanon(c), { onConflict: columnsRef.current.map.id });
       if (error) throw error;
       await refreshSettings();
       return c;
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
+
   const updateField = async (row) => {
     setSaving(true);
     try {
-      const { error } = await supabase.from('app_form_fields').upsert(decanon(row), { onConflict: columnsRef.current.map.id });
+      const { error } = await supabase
+        .from('app_form_fields')
+        .upsert(decanon(row), { onConflict: columnsRef.current.map.id });
       if (error) throw error;
       await refreshSettings();
       return row;
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
+
   const deleteField = async (id) => {
     setSaving(true);
     try {
@@ -229,8 +280,11 @@ export default function SettingsProvider({ children }) {
       const { error } = await supabase.from('app_form_fields').delete().eq(map.id, id);
       if (error) throw error;
       await refreshSettings();
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
+
   const moveField = async (id, dir, mode = 'create') => {
     setSaving(true);
     try {
@@ -241,19 +295,46 @@ export default function SettingsProvider({ children }) {
       if (swap < 0 || swap >= list.length) return;
       const a = { ...list[idx], sort_order: list[swap].sort_order };
       const b = { ...list[swap], sort_order: list[idx].sort_order };
-      await supabase.from('app_form_fields').upsert([decanon(a), decanon(b)], { onConflict: columnsRef.current.map.id });
+      await supabase
+        .from('app_form_fields')
+        .upsert([decanon(a), decanon(b)], { onConflict: columnsRef.current.map.id });
       await refreshSettings();
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const value = useMemo(() => ({
-    ready, settings, refreshSettings,
-    getFieldByKey, isFieldVisible, isFieldRequired,
-    mediaRequirements, presetsByContext,
-    // admin
-    fieldsByMode, reloadFormFields, addField, updateField, deleteField, moveField, saving,
-  }), [ready, settings, refreshSettings, getFieldByKey, isFieldVisible, isFieldRequired,
-      mediaRequirements, presetsByContext, saving]);
+  const value = useMemo(
+    () => ({
+      ready,
+      settings,
+      refreshSettings,
+      getFieldByKey,
+      isFieldVisible,
+      isFieldRequired,
+      mediaRequirements,
+      presetsByContext,
+      // admin
+      fieldsByMode,
+      reloadFormFields,
+      addField,
+      updateField,
+      deleteField,
+      moveField,
+      saving,
+    }),
+    [
+      ready,
+      settings,
+      refreshSettings,
+      getFieldByKey,
+      isFieldVisible,
+      isFieldRequired,
+      mediaRequirements,
+      presetsByContext,
+      saving,
+    ],
+  );
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }

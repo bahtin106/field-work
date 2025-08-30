@@ -1,1 +1,1 @@
-export { default } from 'expo-router'
+export { default } from 'expo-router';
