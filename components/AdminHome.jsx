@@ -323,7 +323,7 @@ export default function AdminHome({ fullName }) {
         <PrimaryButton
           title="Все заявки"
           style={styles.buttonPrimary}
-          onPress={() => router.push('/all-orders')}
+          onPress={() => router.push('orders/all-orders')}
         />
       )}
       <PrimaryButton
@@ -349,7 +349,7 @@ export default function AdminHome({ fullName }) {
         <PrimaryButton
           title="Создать заявку"
           style={styles.buttonPrimary}
-          onPress={() => router.push('/create-order')}
+          onPress={() => router.push('/orders/create-order')}
         />
       )}
       <PrimaryButton title="Выйти из профиля" style={styles.buttonLogout} onPress={logout} />

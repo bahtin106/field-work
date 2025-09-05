@@ -1,4 +1,4 @@
-// app/(tabs)/(stack)/_layout.js
+// app/orders/_layout.js
 import { Stack } from 'expo-router';
 
 export default function TabsStackLayout() {

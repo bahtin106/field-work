@@ -127,7 +127,7 @@ export default function LoginScreen() {
     }
 
     setLoading(false);
-    router.replace('/');
+    router.replace('/orders');
   };
 
   const isDisabled = !email || !password || loading;

@@ -1,4 +1,4 @@
-// apps/field-work/app/(tabs)/all-orders.jsx
+// app/orders/all-orders.jsx
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
@@ -13,13 +13,13 @@ import {ActivityIndicator,
 import { Modal } from 'react-native';
 
 
-import Screen from '../../../components/layout/Screen';
-import UIButton from '../../../components/ui/Button';
-import TextField from '../../../components/ui/TextField';
-import DynamicOrderCard from '../../../components/DynamicOrderCard'; 
-import { supabase } from '../../../lib/supabase';
-import { useTheme } from '../../../theme/ThemeProvider';
-import { usePermissions } from '../../../lib/permissions';
+import Screen from '../../components/layout/Screen';
+import UIButton from '../../components/ui/Button';
+import TextField from '../../components/ui/TextField';
+import DynamicOrderCard from '../../components/DynamicOrderCard'; 
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../theme/ThemeProvider';
+import { usePermissions } from '../../lib/permissions';
 
 
 function mapStatusToDB(key) {
@@ -697,9 +697,9 @@ export default function AllOrdersScreen() {
                 context="all_orders"
                 onPress={() =>
                   router.push({
-                    pathname: `/order-details/${order.id}`,
+                    pathname: `/orders/${order.id}`,
                     params: {
-                      returnTo: '/(tabs)/all-orders',
+                      returnTo: '/orders/all-orders',
                       returnParams: JSON.stringify({
                         filter: statusFilter,
                         executor: executorFilter,

@@ -130,8 +130,6 @@ export default function OrderDetails() {
   const { theme } = useTheme();
   const { has } = usePermissions();
 
-
-  // Keep Android nav bar consistent with theme (like in calendar)
   const applyNavBar = useCallback(async () => {
     try {
       await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
@@ -457,7 +455,7 @@ useEffect(() => {
   );
 const { id, returnTo, returnParams } = useLocalSearchParams();
   const backTargetPath =
-    typeof returnTo === 'string' && returnTo ? String(returnTo) : '/(tabs)/orders';
+    typeof returnTo === 'string' && returnTo ? String(returnTo) : '/orders/orders';
   let backParams = {};
   try {
     backParams = returnParams ? JSON.parse(returnParams) : {};
@@ -748,7 +746,7 @@ const [departments, setDepartments] = useState([]);
     if (navigation?.canGoBack?.()) {
       navigation.goBack();
     } else {
-      router.replace('/(tabs)/orders');
+      router.replace('/orders/orders');
     }
   };
 
@@ -1436,7 +1434,7 @@ if (!canEdit()) return;
       showToast('Заявка удалена');
       setDeleteModalVisible(false);
       if (navigation?.canGoBack?.()) navigation.goBack();
-      else router.replace('/(tabs)/orders');
+      else router.replace('/orders/orders');
     } catch (e) {
       console.warn(e);
       showToast('Ошибка удаления');
@@ -1711,7 +1709,7 @@ if (!canEdit()) return;
                     : undefined;
                   const assignee = order.assigned_to || undefined;
                   router.push({
-                    pathname: '/(tabs)/calendar',
+                    pathname: '/orders/calendar',
                     params: {
                       selectedDate: dateStr,
                       selectedUserId: assignee,

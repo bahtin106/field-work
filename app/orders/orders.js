@@ -12,12 +12,12 @@ import {
   Platform,
 } from 'react-native';
 
-import DynamicOrderCard from '../../../components/DynamicOrderCard'; 
-import { supabase } from '../../../lib/supabase';
-import { useTheme } from '../../../theme/ThemeProvider';
-import { usePermissions } from '../../../lib/permissions';
-import Screen from '../../../components/layout/Screen';
-import TextField from '../../../components/ui/TextField';
+import DynamicOrderCard from '../../components/DynamicOrderCard'; 
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../theme/ThemeProvider';
+import { usePermissions } from '../../lib/permissions';
+import Screen from '../../components/layout/Screen';
+import TextField from '../../components/ui/TextField';
 
 export default function MyOrdersScreen() {
   const { theme } = useTheme();
@@ -255,7 +255,7 @@ export default function MyOrdersScreen() {
                 context="my_orders"
                 onPress={() =>
                   router.push({
-                    pathname: `/order-details/${order.id}`,
+                    pathname: `/orders/${order.id}`,
                     params: {
                       returnTo: '/(tabs)/orders',
                       returnParams: JSON.stringify({

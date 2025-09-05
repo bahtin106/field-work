@@ -19,10 +19,10 @@ import { MaskedTextInput } from 'react-native-mask-text';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { usePermissions } from '../lib/permissions';
-import { buildCustomPayload, fetchFormSchema } from '../lib/settings';
-import { supabase } from '../lib/supabase';
-import { useTheme } from '../theme/ThemeProvider';
+import { usePermissions } from '../../lib/permissions';
+import { buildCustomPayload, fetchFormSchema } from '../../lib/settings';
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../theme/ThemeProvider';
 
 export default function CreateOrderScreen() {
   /* PERMISSIONS GUARD: create-order */
