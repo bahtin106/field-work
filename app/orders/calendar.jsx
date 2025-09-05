@@ -25,17 +25,17 @@ import { InteractionManager } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import * as NavigationBar from 'expo-navigation-bar';
 
-import DynamicOrderCard from '../../../components/DynamicOrderCard';
-import { supabase } from '../../../lib/supabase';
+import DynamicOrderCard from '../../components/DynamicOrderCard';
+import { supabase } from '../../lib/supabase';
 
 const CACHE_TTL_MS = 45000;
 const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
 LIST_CACHE.calendar ||= null;
-import { useTheme } from '../../../theme/ThemeProvider';
+import { useTheme } from '../../theme/ThemeProvider';
 
-import Screen from '../../../components/layout/Screen';
-import Button from '../../../components/ui/Button';
-import TextField from '../../../components/ui/TextField';
+import Screen from '../../components/layout/Screen';
+import Button from '../../components/ui/Button';
+import TextField from '../../components/ui/TextField';
 
 /* ===== Color helper: safe alpha for hex/rgb and dynamic colors ===== */
 function withAlpha(color, a) {
@@ -1052,7 +1052,7 @@ const getDateKey = (v) => {
               usersMap={usersMap}
               onPress={() =>
                 router.push({
-                  pathname: `/order-details/${item.id}`,
+                  pathname: `/orders/${item.id}`,
                   params: {
                     returnTo: '/(tabs)/calendar',
                     returnParams: JSON.stringify({ selectedDate, selectedUserId }),

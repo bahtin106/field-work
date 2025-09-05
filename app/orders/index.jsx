@@ -1,15 +1,15 @@
-// app/(tabs)/index.jsx
+// app/orders/index.jsx
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import React from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import Screen from '../../../components/layout/Screen';
-import { useTheme } from '../../../theme';
+import Screen from '../../components/layout/Screen';
+import { useTheme } from '../../theme';
 
-import AdminHome from '../../../components/AdminHome';
-import DispatcherHome from '../../../components/DispatcherHome';
-import WorkerHome from '../../../components/WorkerHome';
-import { getUserRole, subscribeAuthRole } from '../../../lib/getUserRole';
+import AdminHome from '../../components/AdminHome';
+import DispatcherHome from '../../components/DispatcherHome';
+import WorkerHome from '../../components/WorkerHome';
+import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
 
 export default function IndexScreen() {
   const { theme } = useTheme();
@@ -31,7 +31,7 @@ export default function IndexScreen() {
       }
     })();
 
-    const unsub = subscribeAuthRole((r) => setRole(r));
+    const unsub = subscribeAuthRole((r) => mounted && setRole(r));
     return () => {
       mounted = false;
       unsub && unsub();
@@ -40,30 +40,30 @@ export default function IndexScreen() {
 
   useEffect(() => {
     if (!loading && role === null) {
-      router.replace('/login');
+      router.replace('/(auth)/login');
     }
   }, [loading, role]);
 
-  if (loading) {
-    return (
-      <Screen>
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>Загружаем профиль…</Text>
-        </View>
-      </Screen>
-    );
-  }
+  const ready = role === 'worker' || role === 'dispatcher' || role === 'admin';
 
-  if (role === null) return null;
-
+if (loading || !ready) {
   return (
     <Screen>
-      {role === 'worker' && <WorkerHome fullName={fullName} />}
-      {role === 'dispatcher' && <DispatcherHome fullName={fullName} />}
-      {role === 'admin' && <AdminHome fullName={fullName} />}
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>Загружаем профиль…</Text>
+      </View>
     </Screen>
   );
+}
+
+return (
+  <Screen>
+    {role === 'worker' && <WorkerHome fullName={fullName} />}
+    {role === 'dispatcher' && <DispatcherHome fullName={fullName} />}
+    {role === 'admin' && <AdminHome fullName={fullName} />}
+  </Screen>
+);
 }
 
 const styles = StyleSheet.create({

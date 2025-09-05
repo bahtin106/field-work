@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
 import { ThemeProvider } from '../theme/ThemeProvider';
 import { PermissionsProvider } from '../lib/permissions';
+import BottomNav from '../components/navigation/BottomNav';
 
 function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -69,21 +70,25 @@ function RootLayoutInner() {
               <ActivityIndicator size="large" />
             </View>
           ) : (
-            <Stack
-              initialRouteName="(auth)"
-              screenOptions={{
-                headerShown: false,
-                animation: 'simple_push',
-                gestureEnabled: true,
-                fullScreenGestureEnabled: true,
-                animationTypeForReplace: 'push',
-                gestureDirection: 'horizontal',
-              }}
-            >
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-          )}
+  <View style={{ flex: 1 }}>
+    <Stack
+      initialRouteName="(auth)"
+      screenOptions={{
+        headerShown: false,
+        animation: 'simple_push',
+        gestureEnabled: true,
+        fullScreenGestureEnabled: true,
+        animationTypeForReplace: 'push',
+        gestureDirection: 'horizontal',
+      }}
+    >
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="(tabs)" />
+    </Stack>
+
+    <BottomNav />
+  </View>
+)}
         </SettingsProvider>
       </PermissionsProvider>
     </GestureHandlerRootView>
