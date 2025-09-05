@@ -1,0 +1,18 @@
+# Node / Expo
+node_modules/
+.expo/
+.expo-shared/
+dist/
+# RN/Android/iOS
+android/app/build/
+android/build/
+ios/build/
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+# EAS/секреты
+.eas/
+.easlrc
+.env
+.env.*
