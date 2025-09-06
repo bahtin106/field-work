@@ -14,7 +14,7 @@ import { Modal } from 'react-native';
 
 
 import Screen from '../../components/layout/Screen';
-import UIButton from '../../components/ui/Button';
+import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
 import DynamicOrderCard from '../../components/DynamicOrderCard'; 
 import { supabase } from '../../lib/supabase';
@@ -553,7 +553,7 @@ export default function AllOrdersScreen() {
             style={{ marginBottom: 12 }}
           />
 
-          <UIButton variant="secondary" onPress={() => { setTmpWorkType(workTypeFilter || null); setTmpMaterials(materialsFilter || []); setFilterModalVisible(true); }} style={{ marginBottom: 16 }} title={workTypeFilter || (materialsFilter?.length ? `Материалы: ${materialsFilter.length}` : 'Фильтры')} />
+          <Button variant="secondary" onPress={() => { setTmpWorkType(workTypeFilter || null); setTmpMaterials(materialsFilter || []); setFilterModalVisible(true); }} style={{ marginBottom: 16 }} title={workTypeFilter || (materialsFilter?.length ? `Материалы: ${materialsFilter.length}` : 'Фильтры')} />
 
 <Modal
   visible={filterModalVisible}
@@ -595,7 +595,7 @@ export default function AllOrdersScreen() {
     )}
   </ScrollView>
 </View>
-<UIButton variant="secondary" onPress={() => setExecutorFilter(null)} title="Сбросить исполнителя" style={{ marginTop: 12 }} />
+<Button variant="secondary" onPress={() => setExecutorFilter(null)} title="Сбросить исполнителя" style={{ marginTop: 12 }} />
 
                 <View style={styles.separator} />
 
@@ -624,7 +624,7 @@ export default function AllOrdersScreen() {
     )}
   </ScrollView>
 </View>
-<UIButton variant="secondary" onPress={() => setDepartmentFilter(null)} title="Сбросить отдел" style={{ marginTop: 12 }} />
+<Button variant="secondary" onPress={() => setDepartmentFilter(null)} title="Сбросить отдел" style={{ marginTop: 12 }} />
 
                 <View style={styles.separator} />
 
@@ -662,9 +662,9 @@ export default function AllOrdersScreen() {
                   );
                 })}
 
-                <UIButton variant="secondary" onPress={() => { setTmpWorkType(null); setTmpMaterials([]); }} title="Сбросить тип и материалы" style={{ marginTop: 12 }} />
+                <Button variant="secondary" onPress={() => { setTmpWorkType(null); setTmpMaterials([]); }} title="Сбросить тип и материалы" style={{ marginTop: 12 }} />
 
-                <UIButton
+                <Button
                   style={{ marginTop: 10 }}
                   onPress={() => {
                     setWorkTypeFilter(tmpWorkType || null);

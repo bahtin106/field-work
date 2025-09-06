@@ -10,7 +10,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Pressable as Button,
+  Pressable,
   BackHandler,
   StyleSheet,
   Animated,
@@ -21,6 +21,7 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Button from '../../components/ui/Button';
 
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider'; // <-- use app theme preference
@@ -421,7 +422,7 @@ const createStyles = (theme) =>
       alignSelf: 'center',
       maxWidth: 440,
     },
-    toastText: { color: theme.colors.success || '#34C759', fontWeight: '600' },
+    toastText: { fontWeight: '600' },
 
     modalContainer: {
       backgroundColor: theme.colors.surface,
@@ -1027,9 +1028,9 @@ export default function NewUser() {
           >
             {/* Top AppBar with back arrow */}
             <View style={styles.appBar}>
-              <Button onPress={() => (isDirty ? setCancelVisible(true) : router.back())} hitSlop={12} style={styles.appBarBack}>
+              <Pressable onPress={() => (isDirty ? setCancelVisible(true) : router.back())} hitSlop={12} style={styles.appBarBack}>
                 <AntDesign name="arrowleft" size={22} color={THEME.textPrimary} />
-              </Button>
+              </Pressable>
               <Text style={[styles.appBarTitle, { color: THEME.textPrimary }]}>
                 Новый сотрудник
               </Text>
@@ -1052,7 +1053,7 @@ export default function NewUser() {
               ]}
             >
               <View style={styles.headerRow}>
-                <Button
+                <Pressable
                   style={styles.avatar}
                   onPress={() => setAvatarSheet(true)}
                   accessibilityLabel="Добавить фото профиля"
@@ -1067,7 +1068,7 @@ export default function NewUser() {
                       </View>
                     </>
                   )}
-                </Button>
+                </Pressable>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.nameTitle, { color: THEME.textPrimary }]}>
                     {firstName || lastName ? `${firstName} ${lastName}`.trim() : 'Без имени'}
@@ -1266,7 +1267,7 @@ export default function NewUser() {
                 Дата рождения (необязательно)
               </Text>
               <View style={styles.dateRow}>
-                <Button
+                <Pressable
                   style={[
                     styles.selectInput,
                     { flex: 1, backgroundColor: THEME.inputBg, borderColor: THEME.border },
@@ -1285,15 +1286,15 @@ export default function NewUser() {
                       : 'Выберите дату'}
                   </Text>
                   <AntDesign name="calendar" size={16} color={theme.colors.textSecondary} />
-                </Button>
+                </Pressable>
                 {birthdate ? (
-                  <Button
+                  <Pressable
                     onPress={() => setBirthdate(null)}
                     style={styles.dateClearBtn}
                     accessibilityLabel="Удалить дату"
                   >
                     <AntDesign name="minuscircle" size={22} color={theme.colors.danger} />
-                  </Button>
+                  </Pressable>
                 ) : null}
               </View>
             </View>
@@ -1301,7 +1302,7 @@ export default function NewUser() {
             <View style={[styles.card, { backgroundColor: THEME.card, borderColor: THEME.border }]}>
               <Text style={[styles.section, { color: THEME.textPrimary }]}>Права</Text>
               <Text style={[styles.label, { color: THEME.textSecondary }]}>Роль</Text>
-              <Button
+              <Pressable
                 style={[
                   styles.selectInput,
                   { backgroundColor: THEME.inputBg, borderColor: THEME.border },
@@ -1312,7 +1313,7 @@ export default function NewUser() {
                   {ROLE_LABELS[role] || '—'}
                 </Text>
                 <AntDesign name="down" size={16} color={theme.colors.textSecondary} />
-              </Button>
+              </Pressable>
             </View>
 
             <View style={[styles.card, { backgroundColor: THEME.card, borderColor: THEME.border }]}>
@@ -1344,13 +1345,13 @@ export default function NewUser() {
                     setTPwd(true);
                   }}
                 />
-                <Button
+                <Pressable
                   onPress={() => setShowPassword((v) => !v)}
                   style={styles.inputIcon}
                   accessibilityLabel={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
                 >
                   <AntDesign name={showPassword ? 'eye' : 'eyeo'} size={20} color={theme.colors.textSecondary} />
-                </Button>
+                </Pressable>
               </View>
               {tPwd && password.length > 0 && !passwordValid && (
                 <Text style={styles.helperError}>Минимум 6 символов</Text>
@@ -1382,13 +1383,13 @@ export default function NewUser() {
                     setTPwd2(true);
                   }}
                 />
-                <Button
+                <Pressable
                   onPress={() => setShowPassword((v) => !v)}
                   style={styles.inputIcon}
                   accessibilityLabel={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
                 >
                   <AntDesign name={showPassword ? 'eye' : 'eyeo'} size={20} color={theme.colors.textSecondary} />
-                </Button>
+                </Pressable>
               </View>
               {tPwd2 && !passwordsMatch && (
                 <Text style={styles.helperError}>Пароли не совпадают</Text>
@@ -1403,32 +1404,8 @@ export default function NewUser() {
               { backgroundColor: THEME.card, borderTopColor: THEME.border },
             ]}
           >
-            <Button
-              onPress={() => (isDirty ? setCancelVisible(true) : router.back())}
-              style={({ pressed }) => [
-                styles.appButton,
-                styles.btnSecondary,
-                styles.actionBarBtn,
-                pressed && { transform: [{ scale: 0.98 }] },
-              ]}
-            >
-              <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отменить</Text>
-            </Button>
-            <Button
-              disabled={!canSubmit || submitting}
-              onPress={handleCreate}
-              style={({ pressed }) => [
-                styles.appButton,
-                styles.btnPrimary,
-                styles.actionBarBtn,
-                (!canSubmit || submitting) && { opacity: 0.6 },
-                pressed && { transform: [{ scale: 0.98 }] },
-              ]}
-            >
-              <Text style={[styles.appButtonText, styles.btnPrimaryText]}>
-                {submitting ? 'Создаю…' : 'Создать'}
-              </Text>
-            </Button>
+            <Button variant="secondary" onPress={() => (isDirty ? setCancelVisible(true) : router.back())} style={styles.actionBarBtn}>Отменить</Button>
+            <Button variant="primary" onPress={handleCreate} disabled={!canSubmit || submitting} style={styles.actionBarBtn}>{submitting ? 'Создаю…' : 'Создать'}</Button>
           </View>
         </View>
 
@@ -1452,16 +1429,8 @@ export default function NewUser() {
               Всё введённое будет потеряно. Вы уверены?
             </Text>
             <View style={[styles.modalActions]}>
-              <Button
-                onPress={() => setCancelVisible(false)}
-                style={[styles.appButton, styles.btnSecondary, styles.modalBtn]}
-              >
-                <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <Button
-                onPress={confirmCancel}
-                style={[styles.appButton, styles.btnDestructive, styles.modalBtn]}
-               title="Выйти" />
+              <Button variant="secondary" onPress={() => setCancelVisible(false)} style={styles.modalBtn}>Отмена</Button>
+              <Button variant="destructive" onPress={confirmCancel} style={styles.modalBtn}>Выйти</Button>
             </View>
           </View>
         </Modal>
@@ -1481,12 +1450,7 @@ export default function NewUser() {
             <Text style={[styles.modalTitle, { color: THEME.textPrimary }]}>Внимание</Text>
             <Text style={[styles.modalText, { color: THEME.textPrimary }]}>{warningMessage}</Text>
             <View style={[styles.modalActions]}>
-              <Button
-                onPress={() => setWarningVisible(false)}
-                style={[styles.appButton, styles.btnPrimary, styles.modalBtn]}
-              >
-                <Text style={[styles.appButtonText, styles.btnPrimaryText]}>Ок</Text>
-              </Button>
+              <Button variant="primary" onPress={() => setWarningVisible(false)} style={styles.modalBtn}>Ок</Button>
             </View>
           </View>
         </Modal>
@@ -1507,47 +1471,14 @@ export default function NewUser() {
           >
             <Text style={[styles.modalTitle, { color: THEME.textPrimary }]}>Фото профиля</Text>
             <View style={{ gap: 10 }}>
-              <Button
-                onPress={() => {
-                  setAvatarSheet(false);
-                  pickFromCamera();
-                }}
-                style={[styles.appButton, styles.btnPrimary]}
-              >
-                <Text style={[styles.appButtonText, styles.btnPrimaryText]}>Сделать фото</Text>
-              </Button>
-              <Button
-                onPress={() => {
-                  setAvatarSheet(false);
-                  pickFromLibrary();
-                }}
-                style={[styles.appButton, styles.btnSecondary]}
-              >
-                <Text style={[styles.appButtonText, styles.btnSecondaryText]}>
-                  Выбрать из галереи
-                </Text>
-              </Button>
+              <Button variant="primary" onPress={() => { setAvatarSheet(false); pickFromCamera(); }}>Сделать фото</Button>
+              <Button variant="secondary" onPress={() => { setAvatarSheet(false); pickFromLibrary(); }}>Выбрать из галереи</Button>
               {!!avatarUri && (
-                <Button
-                  onPress={() => {
-                    setAvatarSheet(false);
-                    setAvatarUri(null);
-                  }}
-                  style={[styles.appButton, styles.btnDestructive]}
-                >
-                  <Text style={[styles.appButtonText, styles.btnDestructiveText]}>
-                    Удалить фото
-                  </Text>
-                </Button>
+                <Button variant="destructive" onPress={() => { setAvatarSheet(false); setAvatarUri(null); }}>Удалить фото</Button>
               )}
             </View>
             <View style={[styles.modalActions, { marginTop: 12 }]}>
-              <Button
-                onPress={() => setAvatarSheet(false)}
-                style={[styles.appButton, styles.btnSecondary, { flex: 1 }]}
-              >
-                <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Закрыть</Text>
-              </Button>
+              <Button variant="secondary" onPress={() => setAvatarSheet(false)} style={{ flex: 1 }}>Закрыть</Button>
             </View>
           </View>
         </Modal>
@@ -1569,7 +1500,7 @@ export default function NewUser() {
             <Text style={[styles.modalTitle, { color: THEME.textPrimary }]}>Выбор роли</Text>
             <View style={{ gap: 10 }}>
               {ROLES.map((r) => (
-                <Button
+                <Pressable
                   key={r}
                   onPress={() => {
                     setRole(r);
@@ -1590,7 +1521,7 @@ export default function NewUser() {
                     size={20}
                     color={role === r ? theme.colors.primary : theme.colors.textSecondary}
                   />
-                </Button>
+                </Pressable>
               ))}
             </View>
           </View>
@@ -1653,16 +1584,8 @@ export default function NewUser() {
               <Switch value={withYear} onValueChange={setWithYear} />
             </View>
             <View style={styles.pickerActions}>
-              <Button
-                onPress={() => setShowDatePicker(false)}
-                style={[styles.appButton, styles.btnSecondary, styles.actionBtn]}
-              >
-                <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <Button
-                onPress={applyPicker}
-                style={[styles.appButton, styles.btnPrimary, styles.actionBtn]}
-               title="ОК" />
+              <Button variant="secondary" onPress={() => setShowDatePicker(false)} style={styles.actionBtn}>Отмена</Button>
+              <Button variant="primary" onPress={applyPicker} style={styles.actionBtn}>ОК</Button>
             </View>
           </View>
         </Modal>

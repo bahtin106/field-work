@@ -25,10 +25,12 @@
       "backgroundColor": "#f2f6fa"
     },
     "extra": {
-      "eas": {
-        "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
-      }
-    },
+  "supabaseUrl": "https://fopalcvzdkftsvhqszcx.supabase.co",
+  "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvcGFsY3Z6ZGtmdHN2aHFzemN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyOTk5OTIsImV4cCI6MjA2OTg3NTk5Mn0.GJ7W9E_Oap78oBtDTl_ATpb1zcz3UI-dl7x9Ujv9QlY",
+  "eas": {
+    "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
+  }
+},
     "plugins": [
       "expo-router",
       "expo-splash-screen"

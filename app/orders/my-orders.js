@@ -257,7 +257,7 @@ export default function MyOrdersScreen() {
                   router.push({
                     pathname: `/orders/${order.id}`,
                     params: {
-                      returnTo: '/(tabs)/orders',
+                      returnTo: '/orders/my-orders',
                       returnParams: JSON.stringify({
                         seedFilter: filter,
                         seedSearch: searchQuery,

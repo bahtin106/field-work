@@ -1,4 +1,4 @@
-// apps/field-work/app/(tabs)/calendar.jsx
+// app/orders/calendar.jsx
 
 import { format, parseISO, isSameDay, startOfMonth } from 'date-fns';
 import { ru as dfnsRu } from 'date-fns/locale';
@@ -1151,8 +1151,8 @@ const getDateKey = (v) => {
                           style={[
                             styles.rolePill,
                             {
-                              borderColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.2),
-                              backgroundColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.13),
+                              borderColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.2, theme),
+                              backgroundColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.13, theme),
                             },
                           ]}
                         >

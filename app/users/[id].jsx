@@ -14,7 +14,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
-  Pressable as Button,
+  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -1300,9 +1300,9 @@ const reassignOrders = async (fromUserId, toUserId) => {
           >
             {/* Top AppBar with back arrow */}
             <View style={styles.appBar}>
-              <Button onPress={() => router.back()} hitSlop={12} style={styles.appBarBack}>
+              <Pressable onPress={() => router.back()} hitSlop={12} style={styles.appBarBack}>
                 <AntDesign name="arrowleft" size={22} color={theme.colors.text} />
-              </Button>
+              </Pressable>
               <Text style={styles.appBarTitle}>Редактирование сотрудника</Text>
               <View style={{ width: 22 }} />
             </View>
@@ -1316,7 +1316,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
               ]}
             >
               <View style={styles.headerRow}>
-                <Button
+                <Pressable
                   style={styles.avatar}
                   onPress={() => setAvatarSheet(true)}
                   accessibilityLabel="Изменить фото профиля"
@@ -1331,7 +1331,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                       </View>
                     </>
                   )}
-                </Button>
+                </Pressable>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.nameTitle}>{headerName}</Text>
                   <View
@@ -1343,14 +1343,14 @@ const reassignOrders = async (fromUserId, toUserId) => {
                       flexWrap: 'wrap',
                     }}
                   >
-                    <Button
+                    <Pressable
                       onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
                       style={[styles.badge, isSuspended ? styles.badgeRed : styles.badgeGreen]}
                     >
                       <Text style={[styles.badgeText, { color: '#fff' }]}>
                         {isSuspended ? 'Отстранён' : 'Активен'}
                       </Text>
-                    </Button>
+                    </Pressable>
                     {role === 'admin' ? (
                       <View
                         style={[
@@ -1367,7 +1367,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                       </View>
                     ) : (
                       !isSelfAdmin && (
-                        <Button
+                        <Pressable
                           onPress={() => setShowRoles(true)}
                           style={[
                             styles.rolePillHeader,
@@ -1382,7 +1382,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                           <Text style={[styles.rolePillHeaderText, { color: roleColor(role) }]}>
                             {ROLE_LABELS[role] || role}
                           </Text>
-                        </Button>
+                        </Pressable>
                       )
                     )}
                   </View>
@@ -1469,14 +1469,14 @@ const reassignOrders = async (fromUserId, toUserId) => {
               ) : null}
 
               <Text style={styles.label}>Отдел</Text>
-              <Button style={{ marginHorizontal: 16, marginBottom: 10 }} onPress={() => setDeptModalVisible(true)}>
+              <Pressable style={{ marginHorizontal: 16, marginBottom: 10 }} onPress={() => setDeptModalVisible(true)}>
                 <Text style={styles.selectInputText}>{activeDeptName || 'Выберите отдел'}</Text>
                 <AntDesign name="down" size={16} color="#666" />
-              </Button>
+              </Pressable>
 
               <Text style={styles.label}>Дата рождения</Text>
               <View style={styles.dateRow}>
-                <Button style={[styles.selectInput, { flex: 1 }]} onPress={openPicker}>
+                <Pressable style={[styles.selectInput, { flex: 1 }]} onPress={openPicker}>
                   <Text style={styles.selectInputText}>
                     {birthdate
                       ? withYear
@@ -1489,15 +1489,15 @@ const reassignOrders = async (fromUserId, toUserId) => {
                       : 'Выберите дату'}
                   </Text>
                   <AntDesign name="calendar" size={16} color="#666" />
-                </Button>
+                </Pressable>
                 {birthdate ? (
-                  <Button
+                  <Pressable
                     onPress={() => setBirthdate(null)}
                     style={styles.dateClearBtn}
                     accessibilityLabel="Удалить дату"
                   >
                     <AntDesign name="minuscircle" size={22} color={theme.colors.danger} />
-                  </Button>
+                  </Pressable>
                 ) : null}
               </View>
             </View>
@@ -1505,7 +1505,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
             {!isSelfAdmin && (
               <View style={styles.card}>
                 <View style={{ flexDirection: 'row' }}>
-                  <Button
+                  <Pressable
                     onPress={onAskDelete}
                     style={({ pressed }) => [
                       styles.appButton,
@@ -1515,7 +1515,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                     ]}
                   >
                     <Text style={[styles.appButtonText, styles.btnDestructiveText]}>Удалить</Text>
-                  </Button>
+                  </Pressable>
                 </View>
               </View>
             )}
@@ -1541,16 +1541,16 @@ const reassignOrders = async (fromUserId, toUserId) => {
                     onFocus={() => setFocusPwd(true)}
                     onBlur={() => setFocusPwd(false)}
                   />
-                  <Button
+                  <Pressable
                     onPress={() => setShowPassword((v) => !v)}
                     style={styles.inputIcon}
                     accessibilityLabel={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
                   >
                     <AntDesign name={showPassword ? 'eye' : 'eyeo'} size={20} color="#8E8E93" />
-                  </Button>
+                  </Pressable>
                 </View>
 
-                <Button
+                <Pressable
                   onPress={async () => {
                     await Clipboard.setStringAsync(newPassword || '');
                     showWarning('Пароль скопирован');
@@ -1564,7 +1564,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                   ]}
                 >
                   <Text style={styles.copyBtnText}>Скопировать</Text>
-                </Button>
+                </Pressable>
               </View>
 
               {newPassword.length > 0 && !passwordValid && (
@@ -1579,8 +1579,8 @@ const reassignOrders = async (fromUserId, toUserId) => {
 
           {/* Sticky bottom action bar */}
           <View style={styles.actionBar}>
-            <UIButton variant="secondary" size="md" onPress={handleCancelPress} style={{flex:1}} title="Отменить" />
-            <UIButton variant="primary" size="md" onPress={handleSave} style={{flex:1}}  variant="primary"  title={saving ? 'Сохранение…' : 'Сохранить'} size="md" />
+            <UIButton variant="secondary" size="md" onPress={handleCancelPress} style={{flex:1}}>'Отменить'</UIButton>
+            <UIButton size="md" variant="primary" onPress={handleSave} style={{flex:1}}>saving ? 'Сохранение…' : 'Сохранить'</UIButton>
           </View>
         </View>
 
@@ -1594,13 +1594,13 @@ const reassignOrders = async (fromUserId, toUserId) => {
             <Text style={styles.modalTitle}>Выйти без сохранения?</Text>
             <Text style={styles.modalText}>Все изменения будут потеряны. Вы уверены?</Text>
             <View style={styles.modalActions}>
-              <Button
+              <Pressable
                 onPress={() => setCancelVisible(false)}
                 style={[styles.appButton, styles.btnPrimary]}
               >
                 <Text style={[styles.appButtonText, styles.btnPrimaryText]}>Остаться</Text>
-              </Button>
-              <UIButton variant="destructive" size="md" onPress={confirmCancel} title="Выйти"  />
+              </Pressable>
+              <UIButton variant="destructive" size="md" onPress={confirmCancel}>'Выйти'</UIButton>
             </View>
           </View>
         </Modal>
@@ -1615,12 +1615,12 @@ const reassignOrders = async (fromUserId, toUserId) => {
             <Text style={styles.modalTitle}>Внимание</Text>
             <Text style={styles.modalText}>{warningMessage}</Text>
             <View style={styles.modalActions}>
-              <Button
+              <Pressable
                 onPress={() => setWarningVisible(false)}
                 style={[styles.appButton, styles.btnPrimary]}
               >
                 <Text style={[styles.appButtonText, styles.btnPrimaryText]}>Ок</Text>
-              </Button>
+              </Pressable>
             </View>
           </View>
         </Modal>
@@ -1635,7 +1635,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
             <Text style={styles.modalTitle}>Обновить пароль пользователя?</Text>
             <Text style={styles.modalText}>Вы изменяете пароль. Сохранить изменения?</Text>
             <View style={styles.modalActions}>
-              <Button
+              <Pressable
                 onPress={() => {
                   setConfirmPwdVisible(false);
                   setPendingSave(false);
@@ -1643,8 +1643,8 @@ const reassignOrders = async (fromUserId, toUserId) => {
                 style={[styles.appButton, styles.btnSecondary]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <Button
+              </Pressable>
+              <Pressable
                 disabled={pendingSave && saving}
                 onPress={() => proceedSave()}
                 style={[styles.appButton, styles.btnPrimary]}
@@ -1652,7 +1652,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                 <Text style={[styles.appButtonText, styles.btnPrimaryText]}>
                   {saving ? 'Сохраняю…' : 'Сохранить'}
                 </Text>
-              </Button>
+              </Pressable>
             </View>
           </View>
         </Modal>
@@ -1709,13 +1709,13 @@ const reassignOrders = async (fromUserId, toUserId) => {
               <Switch value={withYear} onValueChange={setWithYear} />
             </View>
             <View style={styles.pickerActions}>
-              <Button
+              <Pressable
                 onPress={() => setShowDatePicker(false)}
                 style={[styles.appButton, styles.btnSecondary, styles.actionBtn]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <UIButton variant="primary" size="md" onPress={applyPicker} title="ОК"  />
+              </Pressable>
+              <UIButton variant="primary" size="md" onPress={applyPicker}>'ОК'</UIButton>
             </View>
           </View>
         </Modal>
@@ -1733,7 +1733,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
             <Text style={styles.modalTitle}>Отстранить сотрудника?</Text>
             <Text style={styles.modalText}>Выберите, что сделать с его заявками.</Text>
             <View style={styles.radioRow}>
-              <Button
+              <Pressable
                 onPress={() => {
                   setOrdersAction('keep');
                   setSuccessorError('');
@@ -1748,8 +1748,8 @@ const reassignOrders = async (fromUserId, toUserId) => {
                   />
                 </View>
                 <Text style={styles.radioLabel}>Оставить как есть</Text>
-              </Button>
-              <Button
+              </Pressable>
+              <Pressable
                 onPress={() => {
                   setOrdersAction('reassign');
                 }}
@@ -1769,12 +1769,12 @@ const reassignOrders = async (fromUserId, toUserId) => {
                   />
                 </View>
                 <Text style={styles.radioLabel}>Переназначить на сотрудника</Text>
-              </Button>
+              </Pressable>
             </View>
             {ordersAction === 'reassign' && (
               <View>
                 <Text style={[styles.label, { marginTop: 8 }]}>Правопреемник</Text>
-                <Button
+                <Pressable
                   onPress={openSuccessorPickerFromSuspend}
                   style={[styles.selectInput, successorError && { borderColor: '#FF453A' }]}
                 >
@@ -1782,18 +1782,18 @@ const reassignOrders = async (fromUserId, toUserId) => {
                     {successor?.name || 'Выберите сотрудника'}
                   </Text>
                   <AntDesign name="search1" size={16} color="#666" />
-                </Button>
+                </Pressable>
                 {!!successorError && <Text style={styles.helperError}>{successorError}</Text>}
               </View>
             )}
             <View style={[styles.modalActions, { marginTop: 16 }]}>
-              <Button
+              <Pressable
                 onPress={() => setSuspendVisible(false)}
                 style={[styles.appButton, styles.btnSecondary]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <UIButton variant="primary" size="md" onPress={onConfirmSuspend} title="{saving ? 'Применяю…' : 'Отстранить'}"  />
+              </Pressable>
+              <UIButton variant="primary" size="md" onPress={onConfirmSuspend}>"{saving ? 'Применяю…' : 'Отстранить'}"</UIButton>
             </View>
           </View>
         </Modal>
@@ -1811,13 +1811,13 @@ const reassignOrders = async (fromUserId, toUserId) => {
             <Text style={styles.modalTitle}>Снять отстранение?</Text>
             <Text style={styles.modalText}>Сотрудник снова сможет пользоваться приложением.</Text>
             <View style={styles.modalActions}>
-              <Button
+              <Pressable
                 onPress={() => setUnsuspendVisible(false)}
                 style={[styles.appButton, styles.btnSecondary]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <UIButton variant="primary" size="md" onPress={onConfirmUnsuspend} title="{saving ? 'Применяю…' : 'Подтверждаю'}"  />
+              </Pressable>
+              <UIButton variant="primary" size="md" onPress={onConfirmUnsuspend}>"{saving ? 'Применяю…' : 'Подтверждаю'}"</UIButton>
             </View>
           </View>
         </Modal>
@@ -1837,22 +1837,22 @@ const reassignOrders = async (fromUserId, toUserId) => {
               Необходимо выбрать правопреемника, чтобы переназначить все его заявки.
             </Text>
             <Text style={[styles.label, { marginTop: 8 }]}>Правопреемник *</Text>
-            <Button
+            <Pressable
               onPress={openSuccessorPickerFromDelete}
               style={[styles.selectInput, successorError && { borderColor: '#FF453A' }]}
             >
               <Text style={styles.selectInputText}>{successor?.name || 'Выберите сотрудника'}</Text>
               <AntDesign name="search1" size={16} color="#666" />
-            </Button>
+            </Pressable>
             {!!successorError && <Text style={styles.helperError}>{successorError}</Text>}
             <View style={[styles.modalActions, { marginTop: 16 }]}>
-              <Button
+              <Pressable
                 onPress={() => setDeleteVisible(false)}
                 style={[styles.appButton, styles.btnSecondary]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
-              <UIButton variant="primary" size="md" onPress={onConfirmDelete} title="{saving ? 'Удаляю…' : 'Удалить'}"  />
+              </Pressable>
+              <UIButton variant="primary" size="md" onPress={onConfirmDelete}>"{saving ? 'Удаляю…' : 'Удалить'}"</UIButton>
             </View>
           </View>
         </Modal>
@@ -1908,7 +1908,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                   <View style={{ height: 1, backgroundColor: theme.colors.border }} />
                 )}
                 renderItem={({ item }) => (
-                  <Button
+                  <Pressable
                     onPress={() => {
                       setSuccessor({ id: item.id, name: item.name, role: item.role });
                       setSuccessorError('');
@@ -1926,7 +1926,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                     <Text style={{ fontSize: 12, color: theme.colors.textSecondary }}>
                       {ROLE_LABELS[item.role] || item.role}
                     </Text>
-                  </Button>
+                  </Pressable>
                 )}
                 ListEmptyComponent={
                   <Text style={{ textAlign: 'center', color: theme.colors.textSecondary, paddingVertical: 16 }}>
@@ -1936,7 +1936,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
               />
             )}
             <View style={[styles.modalActions, { marginTop: 10 }]}>
-              <Button
+              <Pressable
                 onPress={() => {
                   setPickerVisible(false);
                   if (pickerReturn === 'delete') setDeleteVisible(true);
@@ -1946,7 +1946,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                 style={[styles.appButton, styles.btnSecondary, { flex: 1 }]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Закрыть</Text>
-              </Button>
+              </Pressable>
             </View>
           </View>
         </Modal>
@@ -1961,7 +1961,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Фото профиля</Text>
             <View style={{ gap: 10 }}>
-              <Button
+              <Pressable
                 onPress={() => {
                   setAvatarSheet(false);
                   pickFromCamera();
@@ -1969,8 +1969,8 @@ const reassignOrders = async (fromUserId, toUserId) => {
                 style={[styles.appButton, styles.btnPrimary]}
               >
                 <Text style={[styles.appButtonText, styles.btnPrimaryText]}>Сделать фото</Text>
-              </Button>
-              <Button
+              </Pressable>
+              <Pressable
                 onPress={() => {
                   setAvatarSheet(false);
                   pickFromLibrary();
@@ -1980,9 +1980,9 @@ const reassignOrders = async (fromUserId, toUserId) => {
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>
                   Выбрать из галереи
                 </Text>
-              </Button>
+              </Pressable>
               {!!avatarUrl && (
-                <Button
+                <Pressable
                   onPress={() => {
                     setAvatarSheet(false);
                     deleteAvatar();
@@ -1992,16 +1992,16 @@ const reassignOrders = async (fromUserId, toUserId) => {
                   <Text style={[styles.appButtonText, styles.btnDestructiveText]}>
                     Удалить фото
                   </Text>
-                </Button>
+                </Pressable>
               )}
             </View>
             <View style={[styles.modalActions, { marginTop: 12 }]}>
-              <Button
+              <Pressable
                 onPress={() => setAvatarSheet(false)}
                 style={[styles.appButton, styles.btnSecondary, { flex: 1 }]}
               >
                 <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-              </Button>
+              </Pressable>
             </View>
           </View>
         </Modal>
@@ -2017,16 +2017,16 @@ const reassignOrders = async (fromUserId, toUserId) => {
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Выбор отдела</Text>
             <View style={{ gap: 10, maxHeight: 320 }}>
-              <Button
+              <Pressable
                 onPress={() => { setDepartmentId(null); setDeptModalVisible(false); }}
                 style={({ pressed }) => [styles.roleItem, pressed && { opacity: 0.85 }]}
               >
                 <Text style={styles.roleTitle}>Без отдела</Text>
-              </Button>
+              </Pressable>
             </View>
             <ScrollView style={{ maxHeight: 280 }}>
               {(departments || []).map((d) => (
-                <Button
+                <Pressable
                   key={String(d.id)}
                   onPress={() => { setDepartmentId(d.id); setDeptModalVisible(false); }}
                   style={({ pressed }) => [
@@ -2043,7 +2043,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                     size={20}
                     color={String(departmentId) === String(d.id) ? theme.colors.primary : '#C7C7CC'}
                   />
-                </Button>
+                </Pressable>
               ))}
             </ScrollView>
           </View>
@@ -2061,7 +2061,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
             <Text style={styles.modalTitle}>Выбор роли</Text>
             <View style={{ gap: 10 }}>
               {ROLES.map((r) => (
-                <Button
+                <Pressable
                   key={r}
                   onPress={() => {
                     setRole(r);
@@ -2082,7 +2082,7 @@ const reassignOrders = async (fromUserId, toUserId) => {
                     size={20}
                     color={role === r ? theme.colors.primary : '#C7C7CC'}
                   />
-                </Button>
+                </Pressable>
               ))}
             </View>
           </View>

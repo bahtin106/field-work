@@ -2,8 +2,7 @@
 import React from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { useNavigation } from '@react-navigation/native';
-import { HeaderBackButton } from '@react-navigation/elements';
-import { Platform, View } from 'react-native';
+import { Platform, View, Pressable, Text } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const FALLBACK = {
@@ -18,26 +17,30 @@ function BackButton() {
   const theme = ctx?.theme ?? FALLBACK;
   const canGoBack = navigation.canGoBack();
 
+  const size = theme?.sizes?.icon ?? 22; // fallback if theme doesn't specify
+  const color = theme?.colors?.accent ?? theme?.colors?.text ?? '#111111';
+
   return (
-    <View
-      style={{
-        width: 40,
-        height: 40,
-        borderRadius: 20,      // круг
-        overflow: 'hidden',    // чтобы ripрle был круглый
-        marginLeft: 8,         // выравнивание с карточками
-        justifyContent: 'center',
-        alignItems: 'center',
-      }}
+    <Pressable
+      onPress={() => (canGoBack ? navigation.goBack() : router.replace('/(tabs)'))}
+      android_ripple={{ color: (theme?.colors?.border ?? '#000000') + '1F', borderless: true }}
+      style={({ pressed }) => ([
+        {
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          marginLeft: 8,
+          justifyContent: 'center',
+          alignItems: 'center',
+          opacity: pressed ? 0.7 : 1,
+        },
+      ])}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel="Назад"
     >
-      <HeaderBackButton
-        labelVisible={false}
-        tintColor={theme.colors.accent}
-        onPress={() => (canGoBack ? navigation.goBack() : router.replace('/(tabs)'))}
-        pressColor="rgba(0,0,0,0.12)"           // эффект нажатия
-        style={{ marginLeft: -2 }}              // чуть левее сам chevron
-      />
-    </View>
+      <Text style={{ fontSize: size, color, fontWeight: '600' }}>{'‹'}</Text>
+    </Pressable>
   );
 }
 
@@ -55,11 +58,6 @@ export default function Layout() {
         headerBackTitleVisible: false,
         headerLargeTitle: false, // без раздутой "полосы"
         contentStyle: { backgroundColor: theme.colors.bg },
-        animation: Platform.select({
-          ios: 'slide_from_right',
-          android: 'slide_from_right',
-          default: 'slide_from_right',
-        }),
         gestureEnabled: true,
       }}
     >

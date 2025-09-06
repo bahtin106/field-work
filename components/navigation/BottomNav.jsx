@@ -8,7 +8,7 @@ import { useTheme } from '../../theme/ThemeProvider'; // ← из вашей т�
 // ПРАВЬТЕ пути под ваши экраны при необходимости
 const PATHS = {
   home: '/orders/',
-  orders: '/orders/orders',
+  orders: '/orders/my-orders',
   calendar: '/orders/calendar',
 };
 

@@ -13,10 +13,10 @@ import {
   Platform,
   Modal,
   ScrollView,
-  Pressable as Button,
+  Pressable,
+  
   Alert
 } from 'react-native';
-import { Pressable } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,6 +40,7 @@ function withAlpha(color, a) {
 
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
+import Button from '../../components/ui/Button';
 
 const ROLE_LABELS = {
   admin: 'Администратор',
@@ -139,10 +140,6 @@ const router = useRouter();
       alignItems: 'center',
       justifyContent: 'center',
       ...((theme.shadows && theme.shadows.level1 && theme.shadows.level1[Platform.OS]) || {}),
-    },
-    primaryBtnText: {
-      color: c.onPrimary,
-      fontWeight: '700',
     },
     metaRow: {
       marginTop: 8,
@@ -460,8 +457,8 @@ const router = useRouter();
     ({ item }) => {
       const stylesPill = rolePillStyle(item.role);
       return (
-        <Button
-          onPress={() => goToUser(item.id)}
+        <Pressable
+          android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => goToUser(item.id)}
           activeOpacity={0.7}
           style={styles.card}
           accessibilityRole="button"
@@ -476,8 +473,7 @@ const router = useRouter();
             <View style={stylesPill.container}>
               <Text style={stylesPill.text}>{ROLE_LABELS[item.role] || '—'}</Text>
             </View>
-          </View>
-        </Button>
+          </View></Pressable>
       );
     },
     [goToUser],
@@ -580,49 +576,37 @@ if (loading) {
                   style={styles.searchInput}
                 />
                 {!!q && (
-                  <Button
-                    onPress={() => setQ('')}
+                  <Pressable
+                    android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => setQ('')}
                     activeOpacity={0.8}
                     style={styles.clearBtn}
                     accessibilityRole="button"
                     accessibilityLabel="Очистить поиск"
                   >
-                    <Text style={styles.clearBtnText}>×</Text>
-                  </Button>
+                    <Text style={styles.clearBtnText}>×</Text></Pressable>
                 )}
               </View>
 
-              <Button
-                onPress={() => router.push('/users/new')}
-                activeOpacity={0.7}
-                style={styles.primaryBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Создать сотрудника"
-              >
-                <Text style={styles.primaryBtnText}>Создать</Text>
-              </Button>
+              <Button title="Создать" onPress={() => router.push("/users/new")} variant="primary" size="md" />
             </View>
 
             {/* Department filter + Manage */}
             <View style={styles.toolbarRow}>
-              <Button
+              <Pressable android_ripple={{ borderless: false, color: (theme.colors.border + '22') }}
                 onPress={() => setDeptPickerVisible(true)}
                 style={styles.chip}
-                activeOpacity={0.8}
               >
                 <Text style={styles.chipText}>
                   {activeDeptName ? `Отдел: ${activeDeptName}` : 'Все отделы'}
                 </Text>
-                <Text style={styles.chipHint}>Выбрать</Text>
-              </Button>
+                <Text style={styles.chipHint}>Выбрать</Text></Pressable>
 
-              <Button
-                onPress={() => { resetDeptForm(); setDeptManagerVisible(true); }}
+              <Pressable
+                android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => { resetDeptForm(); setDeptManagerVisible(true); }}
                 style={styles.manageBtn}
                 activeOpacity={0.8}
               >
-                <Text style={styles.manageBtnText}>Отделы</Text>
-              </Button>
+                <Text style={styles.manageBtnText}>Отделы</Text></Pressable>
             </View>
 
             <View className="metaRow" style={styles.metaRow}>
@@ -665,25 +649,22 @@ if (loading) {
                 </View>
                 <View style={styles.divider} />
                 <ScrollView keyboardShouldPersistTaps="handled">
-                  <Button style={styles.row} onPress={() => { setDeptFilter(null); setDeptPickerVisible(false); }}>
+                  <Pressable style={styles.row} android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => { setDeptFilter(null); setDeptPickerVisible(false); }}>
                     <Text style={[styles.rowText, styles.muted]}>Все отделы</Text>
-                    {deptFilter == null && <Text>✓</Text>}
-                  </Button>
+                    {deptFilter == null && <Text>✓</Text>}</Pressable>
                   {departments.map((d) => (
-                    <Button
+                    <Pressable
                       key={String(d.id)}
                       style={styles.row}
-                      onPress={() => { setDeptFilter(prev => String(prev)===String(d.id) ? null : String(d.id)); setDeptPickerVisible(false); }}
+                      android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => { setDeptFilter(prev => String(prev)===String(d.id) ? null : String(d.id)); setDeptPickerVisible(false); }}
                     >
                       <Text style={styles.rowText}>{d.name}</Text>
-                      {String(deptFilter) === String(d.id) && <Text>✓</Text>}
-                    </Button>
+                      {String(deptFilter) === String(d.id) && <Text>✓</Text>}</Pressable>
                   ))}
                 </ScrollView>
                 <View style={styles.applyBar}>
-                  <Button onPress={() => setDeptPickerVisible(false)} style={styles.ghostBtn}>
-                    <Text style={styles.manageBtnText}>Закрыть</Text>
-                  </Button>
+                  <Pressable android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => setDeptPickerVisible(false)} style={styles.ghostBtn}>
+                    <Text style={styles.manageBtnText}>Закрыть</Text></Pressable>
                 </View>
               </View>
             </View>
@@ -707,9 +688,7 @@ if (loading) {
                   returnKeyType="done"
                 />
                 <View style={[styles.row, {justifyContent:'flex-end'}]}>
-                  <Button onPress={saveDept} style={styles.primarySolid}>
-                    <Text style={styles.primarySolidText}>{editingDeptId ? 'Сохранить' : 'Добавить'}</Text>
-                  </Button>
+                  <Pressable android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={saveDept} style={styles.primarySolid}><Text style={styles.primarySolidText}>{editingDeptId ? 'Сохранить' : 'Добавить'}</Text></Pressable>
                 </View>
 
                 <View style={styles.divider} />
@@ -721,21 +700,18 @@ if (loading) {
                     <View key={String(d.id)} style={styles.row}>
                       <Text style={styles.rowText}>{d.name}</Text>
                       <View style={styles.rowActions}>
-                        <Button onPress={() => startEditDept(d)} style={styles.action}>
-                          <Text style={styles.actionText}>Изм.</Text>
-                        </Button>
-                        <Button onPress={() => removeDept(d)} style={styles.action}>
-                          <Text style={[styles.actionText, {color: theme.colors.danger}]}>Удал.</Text>
-                        </Button>
+                        <Pressable android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => startEditDept(d)} style={styles.action}>
+                          <Text style={styles.actionText}>Изм.</Text></Pressable>
+                        <Pressable android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => removeDept(d)} style={styles.action}>
+                          <Text style={[styles.actionText, {color: theme.colors.danger}]}>Удал.</Text></Pressable>
                       </View>
                     </View>
                   ))}
                 </ScrollView>
 
                 <View style={styles.applyBar}>
-                  <Button onPress={() => { setDeptManagerVisible(false); }} style={styles.ghostBtn}>
-                    <Text style={styles.manageBtnText}>Закрыть</Text>
-                  </Button>
+                  <Pressable android_ripple={{ borderless: false, color: (theme.colors.border + '22') }} onPress={() => { setDeptManagerVisible(false); }} style={styles.ghostBtn}>
+                    <Text style={styles.manageBtnText}>Закрыть</Text></Pressable>
                 </View>
               </View>
             </View>

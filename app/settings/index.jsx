@@ -1,6 +1,6 @@
 // app/settings/index.jsx
 import React from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
@@ -19,21 +19,21 @@ export default function SettingsIndex() {
 
   return (
     <Screen background="background" edges={['top','bottom']}>
-      <View style={{ flex: 1, justifyContent: 'flex-start', paddingHorizontal: theme?.spacing?.md ?? 16 }}>
-        <View style={{ backgroundColor: theme?.colors?.surface, borderRadius: theme?.radius?.xl ?? 16, overflow: 'hidden', marginTop: theme?.spacing?.xs ?? 8, borderWidth: 1, borderColor: theme?.colors?.border }}>
+      <View style={({ pressed }) => ([{ flex: 1, justifyContent: 'flex-start', paddingHorizontal: theme?.spacing?.md ?? 16 } , pressed ? { opacity: 0.8 } : null])}>
+        <View style={({ pressed }) => ([{ backgroundColor: theme?.colors?.surface, borderRadius: theme?.radius?.xl ?? 16, overflow: 'hidden', marginTop: theme?.spacing?.xs ?? 8, borderWidth: 1, borderColor: theme?.colors?.border } , pressed ? { opacity: 0.8 } : null])}>
           {items.map((item, idx) => (
-            <TouchableOpacity
+            <Pressable
               key={item.route}
               onPress={() => router.push(item.route)}
-              style={{
+              style={({ pressed }) => ([{
                 paddingVertical: 16,
                 paddingHorizontal: 16,
                 borderBottomWidth: idx === items.length - 1 ? 0 : 1,
                 borderBottomColor: theme?.colors?.border,
-              }}
+              } , pressed ? { opacity: 0.8 } : null])}
             >
-              <Text style={{ ...(theme?.typography?.body ?? {}), fontSize: (theme?.typography?.body?.fontSize ?? 16) }}>{item.title}</Text>
-            </TouchableOpacity>
+              <Text style={({ pressed }) => ([{ ...(theme?.typography?.body ?? {}), fontSize: (theme?.typography?.body?.fontSize ?? 16) } , pressed ? { opacity: 0.8 } : null])}>{item.title}</Text>
+            </Pressable>
           ))}
         </View>
       </View>
