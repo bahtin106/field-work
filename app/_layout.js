@@ -9,49 +9,82 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // NOTE: paths are relative to app/
 import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
-import { ThemeProvider } from '../theme/ThemeProvider';
+import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
+import { getUserRole } from '../lib/getUserRole';
+
+// Держим сплэш до полной готовности
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [role, setRole] = useState(null);
   const [booted, setBooted] = useState(false);
+  // Wait until Supabase client has an access token (avoid anon fetches)
+  async function waitForSession({ tries = 20, delay = 100 } = {}) {
+    for (let i = 0; i < tries; i++) {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) return session;
+      } catch {}
+      await new Promise(r => setTimeout(r, delay));
+    }
+    return null;
+  }
 
-  // Скрываем сплэш сразу после маунта и на всякий случай при смене стейта
-  useEffect(() => {
-    // скрыть сразу после первого кадра
-    const t = setTimeout(() => {
-      SplashScreen.hideAsync().catch(() => {});
-    }, 0);
-    return () => clearTimeout(t);
-  }, []);
 
-  useEffect(() => {
-    if (booted) SplashScreen.hideAsync().catch(() => {});
-  }, [booted]);
-
-  useEffect(() => {
+  
+  const theme = useTheme();
+useEffect(() => {
     let mounted = true;
 
     const boot = async () => {
       try {
         const { data } = await supabase.auth.getSession();
         const session = data?.session;
-        if (mounted) setIsLoggedIn(!!session?.user);
+        const logged = !!session?.user;
+        if (mounted) setIsLoggedIn(logged);
+
+        if (logged) {
+          try {
+            await waitForSession();
+            const r = await getUserRole();
+            if (mounted) setRole(r);
+          } catch {
+            if (mounted) setRole(null);
+          }
+        } else {
+          if (mounted) setRole(null);
+        }
       } finally {
         if (mounted) setBooted(true);
       }
     };
+
     boot();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_, session) => {
-      if (!mounted) return;
-      setIsLoggedIn(!!session?.user);
+    const { data: authListener } = supabase.auth.onAuthStateChange(async (_, session) => {
+      const logged = !!session?.user;
+      setIsLoggedIn(logged);
+      if (logged && session?.user?.id) {
+  try {
+    await waitForSession();
+    const r = await getUserRole();
+    setRole(r);
+  } catch {
+    setRole(null);
+  }
+} else {
+  setRole(null);
+}
       setBooted(true);
     });
 
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') SplashScreen.hideAsync().catch(() => {});
+      if (state === 'active' && booted && (isLoggedIn ? role : true)) {
+        SplashScreen.hideAsync().catch(() => {});
+      }
     });
 
     return () => {
@@ -59,36 +92,46 @@ function RootLayoutInner() {
       authListener?.subscription?.unsubscribe();
       sub?.remove?.();
     };
-  }, []);
+  }, [booted]);
+
+  // Скрываем сплэш только когда всё готово:
+  useEffect(() => {
+    const ready = booted && (isLoggedIn ? !!role : true);
+    if (ready) SplashScreen.hideAsync().catch(() => {});
+  }, [booted, isLoggedIn, role]);
+
+  const ready = booted && (isLoggedIn ? !!role : true);
+
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: 'transparent' }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme?.colors?.background }}>
       <PermissionsProvider>
         <SettingsProvider>
-          {!booted ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <ActivityIndicator size="large" />
-            </View>
-          ) : (
-  <View style={{ flex: 1 }}>
-    <Stack
-      initialRouteName="(auth)"
-      screenOptions={{
-        headerShown: false,
-        animation: 'simple_push',
-        gestureEnabled: true,
-        fullScreenGestureEnabled: true,
-        animationTypeForReplace: 'push',
-        gestureDirection: 'horizontal',
-      }}
-    >
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+          <View style={{ flex: 1 }}>
+            <Stack
+              initialRouteName={isLoggedIn ? 'orders' : '(auth)'}
+              screenOptions={{
+                headerShown: false,
+                animation: 'simple_push',
+                gestureEnabled: true,
+                fullScreenGestureEnabled: true,
+                animationTypeForReplace: 'push',
+                gestureDirection: 'horizontal',
+              }}
+            >
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="orders" />
+            </Stack>
 
-    <BottomNav />
-  </View>
-)}
+            {isLoggedIn && <BottomNav />}
+          </View>
         </SettingsProvider>
       </PermissionsProvider>
     </GestureHandlerRootView>

@@ -1,6 +1,6 @@
 // app/settings/sections/RoleAccessSettings.jsx
 import React, { useEffect, useMemo, useState } from 'react';
-import { useTheme, tokens } from '../../../theme/ThemeProvider';
+import { useTheme } from '../../../theme/ThemeProvider';
 import { View, Text, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Platform } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 
@@ -165,7 +165,7 @@ export default function RoleAccessSettings() {
 
   const Header = () => (
     <View style={{ marginBottom: 12 }}>
-      <Text style={{ fontSize: 18, fontWeight: '700' }}>Доступы и роли</Text>
+      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.text }}>Доступы и роли</Text>
       <Text style={{ color: theme.colors.textSecondary, marginTop: 6 }}>
         Текущий пользователь: {fullName || '—'}
       </Text>
@@ -206,7 +206,7 @@ export default function RoleAccessSettings() {
       }}
     >
       <View
-        style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.onPrimary, ...(tokens?.shadows?.level1?.[Platform.OS] || {}) }}
+        style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: theme.colors.onPrimary, ...(theme?.shadows?.level1?.[Platform.OS] || {}) }}
       />
     </TouchableOpacity>
   );
@@ -236,7 +236,7 @@ export default function RoleAccessSettings() {
               alignItems: 'center',
             }}
           >
-            <Text style={{ flex: 1.4, fontSize: 15 }}>{perm.label}</Text>
+            <Text style={{ flex: 1.4, fontSize: 15, color: theme.colors.text }}>{perm.label}</Text>
             {ROLES.map((r) => (
               <View key={`${r}-${perm.key}`} style={{ flex: 0.8, alignItems: 'center' }}>
                 <Toggle

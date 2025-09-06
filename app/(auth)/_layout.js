@@ -1,5 +1,5 @@
 // app/(auth)/_layout.js
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect } from 'react';
 

@@ -7,7 +7,7 @@ export default function ProfileSettings() {
   return (
     <View style={{ flex: 1, backgroundColor: theme.colors.background, padding: 16 }}>
       <View style={{ backgroundColor: theme.colors.surface, borderRadius: 16, padding: 16 }}>
-        <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8 }}>Настройки профиля</Text>
+        <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Настройки профиля</Text>
         <Text style={{ fontSize: 14, color: theme.colors.textSecondary }}>
           Экран-заглушка. Здесь позже добавим поля и логику.
         </Text>

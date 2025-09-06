@@ -1,8 +1,11 @@
+import { useMemo } from 'react';
 import { router } from 'expo-router';
-import { View, Text, Button, StyleSheet } from 'react-native';
+import { View, Text,  StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { useTheme } from '../theme/ThemeProvider';
+import Button from '../../components/ui/Button';
+
+import { useTheme } from '../../theme/ThemeProvider';
 
 export default function OrderSuccessScreen() {
   const { theme } = useTheme();
@@ -30,7 +33,7 @@ export default function OrderSuccessScreen() {
           fontWeight: 'bold',
           marginBottom: 20,
           textAlign: 'center',
-          color: '#28a745',
+          color: theme.colors.success,
         },
       }),
     [theme],

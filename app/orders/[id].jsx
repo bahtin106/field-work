@@ -1,4 +1,4 @@
-// app/order-details/[id].jsx
+// app/orders/[id].jsx
 
 import { AntDesign, Feather } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -17,7 +17,7 @@ import {
   View,
   Text,
   Image,
-  Pressable as Button,
+  Pressable,
   ScrollView,
   BackHandler,
   ActivityIndicator,
@@ -65,6 +65,7 @@ import { useTheme, tokens } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
 import { usePermissions } from '../../lib/permissions';
 import TextField from '../../components/ui/TextField';
+import Button from '../../components/ui/Button';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -73,53 +74,7 @@ const ORDER_CACHE = (globalThis.ORDER_CACHE ||= new Map());
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
 // ---------------- helpers: UI ----------------
-// --- FIXED AppButton ---
-function AppButton({ label, onPress, type = 'primary', disabled = false }) {
-  const { theme } = useTheme();
-  const { has, role } = usePermissions();
-  const s = StyleSheet.create({
-    appButton: {
-      paddingVertical: 12,
-      paddingHorizontal: 16,
-      borderRadius: 12,
-      alignItems: 'center',
-    },
-    appButtonText: { fontSize: 16 },
-    btnPrimary: { backgroundColor: theme.colors.primary },
-    btnPrimaryText: { color: theme.colors.onPrimary, fontWeight: '600' },
-    btnSecondary: { backgroundColor: (theme.colors.inputBg || theme.colors.surface), borderWidth: 1, borderColor: theme.colors.border },
-    btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
-    btnDestructive: { backgroundColor: theme.colors.danger },
-    btnDestructiveText: { color: theme.colors.onPrimary, fontWeight: '700' },
-  });
 
-  const base = [s.appButton];
-  let text = [s.appButtonText];
-
-  if (type === 'secondary') {
-    base.push(s.btnSecondary);
-    text.push(s.btnSecondaryText);
-  } else if (type === 'destructive') {
-    base.push(s.btnDestructive);
-    text.push(s.btnDestructiveText);
-  } else {
-    base.push(s.btnPrimary);
-    text.push(s.btnPrimaryText);
-  }
-
-  if (disabled) base.push({ opacity: 0.6 });
-
-  return (
-    <Button
-      onPress={onPress}
-      disabled={disabled}
-      style={({ pressed }) => [base, pressed && { opacity: 0.9 }]}
-    >
-      <Text style={text}>{label}</Text>
-    </Button>
-  );
-}
-// --- /FIXED AppButton ---
 
 
   // Permissions-aware phone visibility (role + policy)
@@ -455,7 +410,7 @@ useEffect(() => {
   );
 const { id, returnTo, returnParams } = useLocalSearchParams();
   const backTargetPath =
-    typeof returnTo === 'string' && returnTo ? String(returnTo) : '/orders/orders';
+    typeof returnTo === 'string' && returnTo ? String(returnTo) : '/orders/my-orders';
   let backParams = {};
   try {
     backParams = returnParams ? JSON.parse(returnParams) : {};
@@ -746,7 +701,7 @@ const [departments, setDepartments] = useState([]);
     if (navigation?.canGoBack?.()) {
       navigation.goBack();
     } else {
-      router.replace('/orders/orders');
+      router.replace('/orders/my-orders');
     }
   };
 
@@ -1597,17 +1552,17 @@ if (!canEdit()) return;
           >
             {/* Top bar */}
             <View style={styles.topBar}>
-              <Button
+              <Pressable
                 onPress={() => (editMode ? requestCloseEdit() : goBack())}
                 hitSlop={16}
                 accessibilityRole="button"
                 accessibilityLabel="Назад"
               >
                 <View style={{flexDirection:'row',alignItems:'center',gap:6}}><AntDesign name="arrowleft" size={18} color={theme.colors.primary} /><Text style={styles.backText}>Назад</Text></View>
-              </Button>
+              </Pressable>
 
               {canEdit() && !editMode && (
-                <Button
+                <Pressable
                   onPress={() => {
                     initialFormSnapshotRef.current = makeSnapshotFromState();
                     setEditMode(true);
@@ -1616,7 +1571,7 @@ if (!canEdit()) return;
                   style={styles.editBtn}
                 >
                   <Text style={styles.editBtnText}>Редактировать</Text>
-                </Button>
+                </Pressable>
               )}
 
             </View>
@@ -1640,14 +1595,14 @@ if (!canEdit()) return;
               )}
 
                 {canChangeStatus ? (
-                  <Button
+                  <Pressable
                     onPress={() => setStatusModalVisible(true)}
                     style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
                   >
                     <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
                       {order.status}
                     </Text>
-                  </Button>
+                  </Pressable>
                 ) : (
                   <View
                     style={[styles.statusChip, { backgroundColor: statusMeta.bg, opacity: 0.6 }]}
@@ -1684,13 +1639,13 @@ if (!canEdit()) return;
                 <Text style={styles.rowValue}>{order.fio || order.customer_name || '—'}</Text>
               </SafeRow>
               <View style={styles.separator} />
-              <Button style={styles.row} onPress={openInYandex}>
+              <Pressable style={styles.row} onPress={openInYandex}>
                 <Text style={styles.rowLabel}>📍 Адрес</Text>
                 <Text style={[styles.rowValue, styles.linkText]} numberOfLines={2}>
                   {[order.address, order.region, order.city, order.street, order.house].filter(Boolean)
                     .join(', ') || 'Адрес не указан'}
                 </Text>
-              </Button>
+              </Pressable>
               <View style={styles.separator} />
 
               
@@ -1701,7 +1656,7 @@ if (!canEdit()) return;
                 </Text>
               </SafeRow>
               <View style={styles.separator} />
-<Button
+<Pressable
                 style={styles.row}
                 onPress={() => {
                   const dateStr = order.datetime
@@ -1725,7 +1680,7 @@ if (!canEdit()) return;
                     ? format(new Date(order.datetime), 'd MMMM yyyy, HH:mm', { locale: ru })
                     : 'не указана'}
                 </Text>
-              </Button>
+              </Pressable>
               <View style={styles.separator} />
               
               {(() => { 
@@ -1741,11 +1696,11 @@ if (!canEdit()) return;
     const masked = order?.customer_phone_masked;
     if (visiblePhone) {
       return (
-        <Button onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
+        <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
           <Text style={[styles.rowValue, styles.linkText]}>
             {formatPhoneDisplay(visiblePhone)}
           </Text>
-        </Button>
+        </Pressable>
       );
     }
     return <Text style={[styles.rowValue, styles.muted]}>{masked || 'Скрыт'}</Text>;
@@ -1777,11 +1732,11 @@ if (!canEdit()) return;
                 {order.comment?.trim() ? order.comment : '—'}
               </Text>
               {order.comment?.length > 120 && (
-                <Button onPress={() => setDescExpanded((v) => !v)} hitSlop={8}>
+                <Pressable onPress={() => setDescExpanded((v) => !v)} hitSlop={8}>
                   <Text style={styles.descToggle}>
                     {descExpanded ? 'Свернуть' : 'Показать полностью'}
                   </Text>
-                </Button>
+                </Pressable>
               )}
             </RNAnimated.View>
 )}
@@ -1797,16 +1752,16 @@ if (!canEdit()) return;
             {/* Accept button for workers when order is free */}
             {!order.assigned_to &&
   (role === 'worker' || has('canAssignExecutors')) && (
-                <Button
+                <Pressable
                   style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
                   onPress={onAcceptOrder}
                 >
                   <Text style={styles.finishButtonText}>Принять заявку</Text>
-                </Button>
+                </Pressable>
               )}
 
             {order.status !== 'Завершённая' && !isFree && (
-             <Button
+             <Pressable
   style={({ pressed }) => [
     styles.finishButton,
     !canFinishOrder() && styles.finishButtonDisabled,
@@ -1815,11 +1770,11 @@ if (!canEdit()) return;
   onPress={onFinishPress}
 >
   <Text style={styles.finishButtonText}>Завершить заявку</Text>
-</Button>
+</Pressable>
             )}
 
             {has('canDeleteOrders') && (
-              <Button
+              <Pressable
                 onPress={() => setDeleteModalVisible(true)}
                 style={({ pressed }) => [
                   styles.appButton,
@@ -1829,7 +1784,7 @@ if (!canEdit()) return;
                 ]}
               >
                 <Text style={[styles.appButtonText, styles.btnDestructiveText]}>Удалить</Text>
-              </Button>
+              </Pressable>
             )}
           </ScrollView>
         </TouchableWithoutFeedback>
@@ -1869,9 +1824,9 @@ if (!canEdit()) return;
                 {viewerPhotos.length ? `${viewerIndex + 1}/${viewerPhotos.length}` : ''}
               </Text>
             </View>
-            <Button onPress={closeViewer} hitSlop={12} style={styles.closeBtn}>
+            <Pressable onPress={closeViewer} hitSlop={12} style={styles.closeBtn}>
               <Feather name="x" size={24} color={theme.colors.onPrimary} />
-            </Button>
+            </Pressable>
           </View>
 
           {/* Horizontal pager with small gap between photos */}
@@ -2070,12 +2025,12 @@ if (!canEdit()) return;
 
               {hasField('urgent') && (
               <View style={styles.toggleRow}>
-                <Button
+                <Pressable
                   onPress={() => setUrgent((prev) => !prev)}
                   style={[styles.toggle, urgent && styles.toggleOn]}
                 >
                   <View style={[styles.knob, urgent && styles.knobOn]} />
-                </Button>
+                </Pressable>
                 <Text style={styles.toggleLabel}>Срочная</Text>
               </View>
 )}
@@ -2085,7 +2040,7 @@ if (!canEdit()) return;
                   if (ref) dateFieldRef.current = findNodeHandle(ref);
                 }}
               >
-                <Button
+                <Pressable
                   ref={dateFieldRef}
                   onPress={() => {
                     setShowDatePicker(true);
@@ -2103,7 +2058,7 @@ if (!canEdit()) return;
                       : 'Выберите дату'}
                   </Text>
                   <AntDesign name="calendar" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-                </Button>
+                </Pressable>
               </View>
 
               
@@ -2124,7 +2079,7 @@ if (!canEdit()) return;
               
               {/* Время выезда (если админ включил время — отображаем и редактируем) */}
               <Text style={styles.label}>Время выезда</Text>
-              <Button
+              <Pressable
                 style={styles.selectInput}
                 onPress={() => {
                   if (!departureDate) {
@@ -2142,7 +2097,7 @@ if (!canEdit()) return;
                     : 'Сначала выберите дату'}
                 </Text>
                 <AntDesign name="clockcircleo" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-              </Button>
+              </Pressable>
 
               {showTimePicker && departureDate && (
                 <DateTimePicker
@@ -2171,7 +2126,7 @@ if (!canEdit()) return;
               {hasField('assigned_to') && (
   <>
     <View style={[styles.toggleRow, { marginTop: 12 }]}>
-      <Button
+      <Pressable
         onPress={() =>
           setToFeed((prev) => {
             const nv = !prev;
@@ -2182,7 +2137,7 @@ if (!canEdit()) return;
         style={[styles.toggle, toFeed && styles.toggleOn]}
       >
         <View style={[styles.knob, toFeed && styles.knobOn]} />
-      </Button>
+      </Pressable>
       <Text style={styles.toggleLabel}>Отправить в ленту</Text>
     </View>
   </>
@@ -2193,7 +2148,7 @@ if (!canEdit()) return;
             {getField('department_id') && (
               <>
                 <Text style={styles.label}>Отдел</Text>
-                <Button
+                <Pressable
                   style={styles.selectInput}
                   onPress={() => setDepartmentModalVisible(true)}
                 >
@@ -2201,11 +2156,11 @@ if (!canEdit()) return;
                     {departments.find(d => d.id === departmentId)?.name || 'Не выбран'}
                   </Text>
                   <AntDesign name="down" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-                </Button>
+                </Pressable>
               </>
             )}
  {getField('assigned_to') && (<><Text style={styles.label}>Исполнитель*</Text>
-              <Button
+              <Pressable
                 onPress={() => { if (toFeed) setToFeed(false); setAssigneeModalVisible(true); }}
                 style={styles.selectInput}
               >
@@ -2219,7 +2174,7 @@ if (!canEdit()) return;
                       : 'Выберите исполнителя...'}
                 </Text>
                 <AntDesign name="down" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-              </Button></>)}
+              </Pressable></>)}
             </View>
 )}
             {/* Финансы */}
@@ -2249,9 +2204,9 @@ if (!canEdit()) return;
 )}
 
             <View style={{ height: 16 }} />
-            <AppButton label="Сохранить" onPress={handleSubmitEdit}  type="primary" />
+            <Button title="Сохранить" onPress={handleSubmitEdit}  variant="primary" />
             <View style={{ height: 12 }} />
-            <AppButton label="Отмена" onPress={requestCloseEdit} type="secondary" />
+            <Button title="Отмена" onPress={requestCloseEdit} variant="secondary" />
             {/* SECTIONED FORM END */}
           </ScrollView>
         </View>
@@ -2269,8 +2224,8 @@ if (!canEdit()) return;
           <Text style={styles.modalTitle}>Отменить редактирование?</Text>
           <Text style={styles.modalText}>Все изменения будут потеряны. Вы уверены?</Text>
           <View style={styles.modalActions}>
-            <AppButton label="Остаться" onPress={() => setCancelVisible(false)} type="primary" />
-            <AppButton label="Выйти" onPress={confirmCancel} type="destructive" />
+            <Button title="Остаться" onPress={() => setCancelVisible(false)} variant="primary" />
+            <Button title="Выйти" onPress={confirmCancel} variant="destructive" />
           </View>
         </View>
       </Modal>
@@ -2290,7 +2245,7 @@ if (!canEdit()) return;
       >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Выберите исполнителя</Text>
-          <Button
+          <Pressable
             onPress={() => {
               setToFeed(true);
               setAssigneeId(null);
@@ -2299,10 +2254,10 @@ if (!canEdit()) return;
             style={({ pressed }) => [styles.assigneeOption, pressed && { backgroundColor: (theme.colors.inputBg || theme.colors.surface) }]}
           >
             <Text style={styles.assigneeText}>В общую ленту</Text>
-          </Button>
+          </Pressable>
           <View style={{ height: 8 }} />
           {users.map((user) => (
-            <Button
+            <Pressable
               key={user.id}
               onPress={() => {
                 setAssigneeId(user.id);
@@ -2318,7 +2273,7 @@ if (!canEdit()) return;
               <Text style={styles.assigneeText}>
                 {[user.first_name, user.last_name].filter(Boolean).join(' ')}
               </Text>
-            </Button>
+            </Pressable>
           ))}
         </View>
       </Modal>
@@ -2338,7 +2293,7 @@ if (!canEdit()) return;
           <Text style={styles.modalTitle}>Выберите отдел</Text>
           {Array.isArray(departments) && departments.length > 0 ? (
             departments.map((d) => (
-              <Button
+              <Pressable
                 key={d.id}
                 onPress={() => {
                   setDepartmentId(d.id);
@@ -2347,13 +2302,13 @@ if (!canEdit()) return;
                 style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.7 }]}
               >
                 <Text style={styles.assigneeText}>{d.name}</Text>
-              </Button>
+              </Pressable>
             ))
           ) : (
             <Text style={styles.modalText}>Нет отделов</Text>
           )}
           <View style={[styles.modalActions, { marginTop: 8 }]}>
-            <AppButton label="Отмена" onPress={() => setDepartmentModalVisible(false)} type="secondary" />
+            <Button title="Отмена" onPress={() => setDepartmentModalVisible(false)} variant="secondary" />
           </View>
         </View>
       </Modal>
@@ -2371,7 +2326,7 @@ if (!canEdit()) return;
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Изменить статус</Text>
           {['В ленте', 'Новый', 'В работе', 'Завершённая'].map((s) => (
-            <Button
+            <Pressable
               key={s}
               onPress={() => updateStatus(s)}
               style={({ pressed }) => [
@@ -2382,13 +2337,13 @@ if (!canEdit()) return;
               <Text style={styles.assigneeText}>
                 {s} {order.status === s ? '✓' : ''}
               </Text>
-            </Button>
+            </Pressable>
           ))}
           <View style={[styles.modalActions, { marginTop: 8 }]}>
-            <AppButton
-              label="Отмена"
+            <Button
+              title="Отмена"
               onPress={() => setStatusModalVisible(false)}
-              type="secondary"
+              variant="secondary"
             />
           </View>
         </View>
@@ -2405,7 +2360,7 @@ if (!canEdit()) return;
           <Text style={styles.modalTitle}>Внимание</Text>
           <Text style={styles.modalText}>{warningMessage}</Text>
           <View style={styles.modalActions}>
-            <AppButton label="Ок" onPress={() => setWarningVisible(false)} />
+            <Button title="Ок" onPress={() => setWarningVisible(false)} />
           </View>
         </View>
       </Modal>
@@ -2426,12 +2381,12 @@ if (!canEdit()) return;
             невозможно.
           </Text>
           <View style={styles.modalActions}>
-            <AppButton label="Остаться" onPress={() => setDeleteModalVisible(false)} type="primary" />
-            <AppButton
-              label={deleteEnabled ? 'Удалить' : `Удалить (${deleteCountdown})`}
+            <Button title="Остаться" onPress={() => setDeleteModalVisible(false)} variant="primary" />
+            <Button
+              title={deleteEnabled ? 'Удалить' : `Удалить (${deleteCountdown})`}
               onPress={deleteOrderCompletely}
               disabled={!deleteEnabled}
-              type="destructive"
+              variant="destructive"
             />
           </View>
         </View>
@@ -2446,12 +2401,12 @@ if (!canEdit()) return;
       <View style={styles.photosBlock}>
         <View style={styles.photosHeader}>
           <Text style={styles.photosTitle}>{titleText}</Text>
-          <Button
+          <Pressable
             style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
             onPress={() => compressAndUpload(category)}
           >
             <Text style={styles.addChipText}>Добавить</Text>
-          </Button>
+          </Pressable>
         </View>
 
         <ScrollView
@@ -2461,7 +2416,7 @@ if (!canEdit()) return;
         >
           {photos.map((url, index) => (
             <View key={index} style={styles.hItem}>
-              <Button
+              <Pressable
                 style={({ pressed }) => [
                   styles.imagePressable,
                   pressed && { transform: [{ scale: 0.98 }] },
@@ -2469,10 +2424,10 @@ if (!canEdit()) return;
                 onPress={() => openViewer(photos, index)}
               >
                 <Image source={{ uri: url }} style={styles.hImage} />
-              </Button>
-              <Button style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
+              </Pressable>
+              <Pressable style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
                 <Text style={styles.deleteText}>×</Text>
-              </Button>
+              </Pressable>
             </View>
           ))}
         </ScrollView>

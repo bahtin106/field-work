@@ -1,12 +1,4 @@
 // app/admin/form-builder.jsx
-// Admin Form Builder — redesigned in an iOS/Apple style (no extra deps).
-// - Large title header, segmented tabs, soft cards, chips, sticky Save bar
-// - Inline Required/Active toggles, quick actions (Edit / Duplicate / Delete)
-// - Key sanitizer, de-dup validation, optimistic notices
-// - SafeArea + KeyboardAvoidingView
-// - Supabase integration unchanged (RPC get_form_schema fallback to table app_form_fields)
-//
-// IMPORTANT: JS only (no TS generics). Keeps existing backend contract intact.
 
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -81,18 +73,18 @@ export default function FormBuilderScreen() {
   const { theme } = useTheme();
   const colors = {
     bg: theme?.colors?.background,
-    card: theme?.colors?.surface ?? theme?.colors?.card ?? '#FFFFFF',
-    card2: theme?.colors?.surfaceAlt ?? theme?.colors?.card2 ?? (theme?.mode==='dark' ? '#1A1A1A' : '#F8F9FB'),
+    card: theme?.colors?.surface ?? theme?.colors?.card,
+    card2: theme?.colors?.surfaceAlt ?? theme?.colors?.card2,
     text: theme?.colors?.text,
-    sub: theme?.colors?.textSecondary ?? theme?.text?.muted?.color ?? '#6B7280',
+    sub: theme?.colors?.textSecondary ?? theme?.text?.muted?.color,
     border: theme?.colors?.border,
     tint: theme?.colors?.primary,
-    onPrimary: theme?.colors?.primaryTextOn ?? theme?.colors?.onPrimary ?? '#FFFFFF',
-    danger: theme?.colors?.danger ?? '#FF3B30',
-    success: theme?.colors?.success ?? '#34C759',
-    inputBg: theme?.colors?.inputBg ?? theme?.colors?.surfaceAlt ?? '#F5F6F8',
-    overlay: theme?.colors?.overlay ?? 'rgba(0,0,0,0.4)',
-    textSecondary: theme?.colors?.textSecondary ?? '#6B7280',
+    onPrimary: theme?.colors?.primaryTextOn ?? theme?.colors?.onPrimary,
+    danger: theme?.colors?.danger,
+    success: theme?.colors?.success,
+    inputBg: theme?.colors?.inputBg ?? theme?.colors?.surfaceAlt,
+    overlay: theme?.colors?.overlay,
+    textSecondary: theme?.colors?.textSecondary,
   };
   const router = useRouter();
 
@@ -857,7 +849,7 @@ function ToggleChip({ label, value, onToggle, colors }) {
         opacity: pressed ? 0.86 : 1,
       })}
     >
-      <Text style={{ color: value ? '#fff' : colors.text, fontSize: 12, fontWeight: '600' }}>
+      <Text style={{ color: value ? colors.onPrimary : colors.text, fontSize: 12, fontWeight: '600' }}>
         {label}
       </Text>
     </Button>

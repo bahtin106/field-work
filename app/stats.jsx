@@ -1,27 +1,26 @@
 // app/stats.jsx
-import { AntDesign, Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, router } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  SafeAreaView,
   View,
-  Text,
-  ActivityIndicator,
-  Pressable,
-  Modal,
-  TextInput as RNTextInput,
-  FlatList,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-} from 'react-native';
+ Text,
+ ActivityIndicator,
+ Pressable,
+ Modal,
+ TextInput as RNTextInput,
+ FlatList,
+ RefreshControl,
+ ScrollView,
+ StyleSheet } from 'react-native';
 
 import { TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import { Calendar } from 'react-native-calendars';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeProvider';
+import AppHeader from '../components/navigation/AppHeader';
 
 // ------- Periods -------
 const PERIODS = [
@@ -125,7 +124,7 @@ export default function StatsScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: { flex: 1, backgroundColor: TOK.BG, paddingTop: insets.top },
+        container: { flex: 1, backgroundColor: TOK.BG },
         appBar: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -777,14 +776,8 @@ const onRefresh = useCallback(async () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.appBar}>
-        <Pressable onPress={() => router.back()} hitSlop={HIT} style={styles.appBarBack}>
-          <AntDesign name="arrowleft" size={22} color={TOK.TEXT} />
-        </Pressable>
-        <Text style={styles.appBarTitle}>Статистика</Text>
-        <View style={{ width: 22 }} />
-      </View>
+            <AppHeader options={{ title: 'Статистика' }} back />
+
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}

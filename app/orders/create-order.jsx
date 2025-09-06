@@ -1,3 +1,5 @@
+// apps/field-work/app/orders/create-order.jsx
+
 import { AntDesign } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { router, useFocusEffect } from 'expo-router';
@@ -18,6 +20,7 @@ import {
 import { MaskedTextInput } from 'react-native-mask-text';
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Button from '../../components/ui/Button';
 
 import { usePermissions } from '../../lib/permissions';
 import { buildCustomPayload, fetchFormSchema } from '../../lib/settings';
@@ -97,21 +100,6 @@ export default function CreateOrderScreen() {
         marginTop: 4,
       },
       selectInputText: { fontSize: 16, color: palette.text },
-
-      appButton: {
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 8,
-        alignItems: 'center',
-      },
-      appButtonText: { fontSize: 16 },
-      btnPrimary: { backgroundColor: palette.primary },
-      btnPrimaryText: { color: palette.onPrimary, fontWeight: '600' },
-      btnSecondary: { backgroundColor: palette.secondary },
-      btnSecondaryText: { color: palette.text, fontWeight: '500' },
-      btnDestructive: { backgroundColor: palette.destructive },
-      btnDestructiveText: { color: palette.onPrimary, fontWeight: '600' },
-
       modalContainer: { backgroundColor: palette.card, borderRadius: 12, padding: 20 },
       modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: palette.text },
       modalText: { fontSize: 15, color: palette.textMuted, marginBottom: 20 },
@@ -268,34 +256,6 @@ export default function CreateOrderScreen() {
     return `+7${digits.slice(1)}`;
   };
 
-  const Button = ({ title, onPress, variant = 'primary' }) => (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.appButton,
-        variant === 'destructive'
-          ? styles.btnDestructive
-          : variant === 'secondary'
-            ? styles.btnSecondary
-            : styles.btnPrimary,
-        pressed && { transform: [{ scale: 0.96 }] },
-      ]}
-    >
-      <Text
-        style={[
-          styles.appButtonText,
-          variant === 'destructive'
-            ? styles.btnDestructiveText
-            : variant === 'secondary'
-              ? styles.btnSecondaryText
-              : styles.btnPrimaryText,
-        ]}
-      >
-        {title}
-      </Text>
-    </Pressable>
-  );
-
   const TextField = ({
     label,
     placeholder,
@@ -437,7 +397,7 @@ export default function CreateOrderScreen() {
     if (error) {
       showWarning(error.message);
     } else {
-      router.replace('/order-success');
+      router.replace('/orders/order-success');
     }
   };
 

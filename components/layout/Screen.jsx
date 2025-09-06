@@ -7,7 +7,7 @@ import { useTheme } from "../../theme";
 export default function Screen({ children, style }) {
   const { theme } = useTheme();
   return (
-    <SafeAreaView style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}>
+    <SafeAreaView edges={['top','left','right']} style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         {children}
       </KeyboardAvoidingView>

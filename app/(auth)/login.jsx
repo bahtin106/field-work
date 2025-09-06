@@ -85,6 +85,16 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const passwordRef = useRef(null);
+  // Ensure we have a session token before first DB queries
+  async function waitForSession({ tries = 15, delay = 120 } = {}) {
+    for (let i = 0; i < tries; i++) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) return session;
+      await new Promise(r => setTimeout(r, delay));
+    }
+    return null;
+  }
+
 
   const handleLogin = async () => {
     if (!email || !password || loading) return;
@@ -98,37 +108,9 @@ export default function LoginScreen() {
       return;
     }
 
-    const { data: sessData } = await supabase.auth.getSession();
-    const uid = sessData?.session?.user?.id || null;
-
-    const { error: pErr } = await supabase
-      .from('profiles')
-      .select('id, role')
-      .eq('id', uid)
-      .single();
-    if (pErr) {
-      setLoading(false);
-      Alert.alert('Ошибка доступа', `[profiles] ${pErr.code || ''} ${pErr.message}`);
-      return;
-    }
-
-    const { error: s1 } = await supabase.from('app_settings_versions').select('id').limit(1);
-    if (s1) {
-      setLoading(false);
-      Alert.alert('Ошибка доступа', `[app_settings_versions] ${s1.code || ''} ${s1.message}`);
-      return;
-    }
-
-    const { error: s2 } = await supabase.from('app_form_fields').select('id').limit(1);
-    if (s2) {
-      setLoading(false);
-      Alert.alert('Ошибка доступа', `[app_form_fields] ${s2.code || ''} ${s2.message}`);
-      return;
-    }
-
+    await waitForSession();
     setLoading(false);
-    router.replace('/orders');
-  };
+};
 
   const isDisabled = !email || !password || loading;
 
@@ -182,14 +164,13 @@ export default function LoginScreen() {
                 {error ? <Text style={styles.error}>{error}</Text> : null}
 
                 <View style={{ opacity: isDisabled ? 0.5 : 1 }}>
-                  <Button
+                  <Button title="Войти"
                     variant="primary"
                     size="lg"
                     onPress={handleLogin}
                     disabled={isDisabled}
                     loading={loading}
-                    title="Войти"
-                  />
+                   />
                 </View>
               </View>
             </View>
