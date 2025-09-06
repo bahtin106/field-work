@@ -16,7 +16,9 @@ export default function TextField({
   multiline,
   numberOfLines,
   style,
-}) {
+  maxLength,
+})
+ {
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
   const s = styles(theme, !!error, focused);
@@ -27,18 +29,19 @@ export default function TextField({
       <View style={s.wrap}>
         {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
         <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={theme.colors.inputPlaceholder}
-          keyboardType={keyboardType}
-          secureTextEntry={secureTextEntry}
-          multiline={multiline}
-          numberOfLines={numberOfLines}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          style={s.input}
-        />
+  value={value}
+  onChangeText={onChangeText}
+  placeholder={placeholder}
+  placeholderTextColor={theme.colors.inputPlaceholder}
+  keyboardType={keyboardType}
+  secureTextEntry={secureTextEntry}
+  multiline={multiline}
+  numberOfLines={numberOfLines}
+  onFocus={() => setFocused(true)}
+  onBlur={() => setFocused(false)}
+  maxLength={maxLength}
+  style={s.input}
+/>
         {rightSlot ? <View style={s.slot}>{rightSlot}</View> : null}
       </View>
       {!!error && <Text style={s.error}>{error}</Text>}
