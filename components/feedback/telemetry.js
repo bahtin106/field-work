@@ -27,6 +27,8 @@ function derr(...a) { try { console.error('[telemetry]', ...a); } catch {} }
 
 function supabaseHeaders() {
   return {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
     apikey: _cfg.supabaseAnonKey || '',
     Authorization: _cfg.supabaseAnonKey ? `Bearer ${_cfg.supabaseAnonKey}` : '',
     Prefer: 'return=representation',
@@ -36,6 +38,8 @@ function supabaseHeaders() {
 async function postJSON(url, body, headers = {}) {
   try {
     const res = await fetch(url, {
+      redirect: 'follow',
+      credentials: 'omit',
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify(body),
@@ -85,6 +89,8 @@ export function initTelemetry(cfg = {}) {
   }
 }
 
+export function setDebug(v) { _cfg.debug = !!v; dlog('debug', { enabled: _cfg.debug }); }
+
 export function setUser(userId) {
   _cfg.userId = userId || null;
   dlog('setUser', { userId: _cfg.userId });
@@ -119,7 +125,10 @@ async function insertWithREST(table, row) {
   const url = `${base}/rest/v1/${encodeURIComponent(table)}`;
   const res = await postJSON(url, row, supabaseHeaders());
   if (!res.ok) {
-    derr('REST insert failed', { table, status: res.status, body: res.body });
+    const hint = res.status === 401
+      ? 'Unauthorized (401): проверь supabaseAnonKey и URL, ключ должен быть anon public.'
+      : (String(res.body||'').includes('row level security') ? 'RLS: нужна политика INSERT для anon на эту таблицу.' : undefined);
+    derr('REST insert failed', { table, status: res.status, body: res.body, hint });
   }
   return res;
 }

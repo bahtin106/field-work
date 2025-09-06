@@ -37,8 +37,6 @@ import { Animated as RNAnimated } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 
 import Modal from 'react-native-modal';
-import { MaskedTextInput } from 'react-native-mask-text';
-
 // gestures + reanimated for smooth, Xiaomi-like viewer
 import {
   TapGestureHandler,
@@ -65,6 +63,7 @@ import { useTheme, tokens } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
 import { usePermissions } from '../../lib/permissions';
 import TextField from '../../components/ui/TextField';
+import PhoneInput from '../../components/ui/PhoneInput';
 import Button from '../../components/ui/Button';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
@@ -2008,14 +2007,10 @@ if (!canEdit()) return;
                 onChangeText={setCustomerName}
               placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} /></>)}
               {getField('phone') && (<><Text style={styles.label}>Телефон *</Text>
-<MaskedTextInput
-  mask="+7 (999) 999-99-99"
-  keyboardType="phone-pad"
+<PhoneInput
   value={phone}
-  onChangeText={(text, rawText) => setPhone(rawText)}
+  onChangeText={(val, meta) => setPhone(val)}
   style={styles.input}
-  placeholder="+7 (___) ___-__-__"
-  placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary}
 /></>)}
             </View>
 

@@ -23,10 +23,8 @@ import {
   View,
   Image,
 } from 'react-native';
-import { MaskedTextInput } from 'react-native-mask-text';
+import PhoneInput from '../../components/ui/PhoneInput';
 import Modal from 'react-native-modal';
-
-
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
@@ -1447,27 +1445,22 @@ const reassignOrders = async (fromUserId, toUserId) => {
                 <Text style={styles.helperError}>Укажите корректный имейл</Text>
               ) : null}
 
-              <Text style={styles.label}>Телефон *</Text>
-              <MaskedTextInput
-                style={[
-                  styles.input,
-                  focusPhone && styles.inputFocused,
-                  !phoneValid && styles.inputError,
-                ]}
-                mask="+7 (999) 999-99-99"
-                keyboardType="phone-pad"
-                placeholder="+7 (___) ___-__-__"
-                value={phone}
-                editable={true}
-                onChangeText={(text, rawText) => setPhone(rawText)}
-                onFocus={() => setFocusPhone(true)}
-                onBlur={() => setFocusPhone(false)}
-              />
-              
-              {!phoneValid ? (
-                <Text style={styles.helperError}>Укажите корректный номер</Text>
-              ) : null}
-
+              <PhoneInput
+  value={phone}
+  onChangeText={(val, meta) => {
+    // храним e164 "+7XXXXXXXXXX" либо пусто
+    setPhone(val);
+  }}
+  error={!phoneValid ? 'Укажите корректный номер' : undefined}
+  style={[
+    styles.input,
+    focusPhone && styles.inputFocused,
+    !phoneValid && styles.inputError,
+  ]}
+  onFocus={() => setFocusPhone(true)}
+  onBlur={() => setFocusPhone(false)}
+/>
+         
               <Text style={styles.label}>Отдел</Text>
               <Pressable style={{ marginHorizontal: 16, marginBottom: 10 }} onPress={() => setDeptModalVisible(true)}>
                 <Text style={styles.selectInputText}>{activeDeptName || 'Выберите отдел'}</Text>

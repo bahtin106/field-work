@@ -22,6 +22,7 @@ import {
 import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../../components/ui/Button';
+import PhoneInput from '../../components/ui/PhoneInput'; // ← ЕДИНЫЙ КОМПОНЕНТ ТЕЛЕФОНА
 
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider'; // <-- use app theme preference
@@ -94,51 +95,6 @@ function isValidEmailStrict(raw) {
   const tld = labels[labels.length - 1];
   if (tld.length < 2 || tld.length > 24) return false;
   return true;
-}
-const onlyDigits = (s) => String(s || '').replace(/\D/g, '');
-
-// Normalize any user input to 10 national digits for Russia.
-function normalizePhoneInput(srcText) {
-  const src = String(srcText || '');
-  let d = src.replace(/\D/g, '');
-  const startsWithPlus7 = /^\s*\+?7/.test(src);
-  if (startsWithPlus7 && d.startsWith('7')) d = d.slice(1);
-  if (d.length === 11 && (d.startsWith('7') || d.startsWith('8'))) d = d.slice(1);
-  if (d.length > 10) {
-    // Prefer first 10 after possible trunk removal
-    d = d.slice(0, 10);
-  }
-  // If user typed only trunk '7' or '8' -> treat as empty
-  if (d === '7' || d === '8') d = '';
-  return d;
-}
-
-function formatRuPhoneMasked(nat10) {
-  const d = String(nat10 || '');
-  if (!d) return '';
-  const a = d.slice(0, 3);
-  const b = d.slice(3, 6);
-  const c = d.slice(6, 8);
-  const e = d.slice(8, 10);
-  let out = '+7 (' + a;
-  if (d.length <= 3) return out;
-  out += ')';
-  if (b) out += ' ' + b;
-  if (c) out += '-' + c;
-  if (e) out += '-' + e;
-  return out;
-}
-
-// Dynamic mask with placeholders like +7 (___) ___-__-__
-function formatRuPhoneMaskedWithSlots(nat10) {
-  const d = String(nat10 || '');
-  const a = (d.slice(0, 3) + '___').slice(0, 3);
-  const b = (d.slice(3, 6) + '___').slice(0, 3);
-  const c = (d.slice(6, 8) + '__').slice(0, 2);
-  const e = (d.slice(8, 10) + '__').slice(0, 2);
-  let out = '+7 (' + a + ')';
-  out += ' ' + b + '-' + c + '-' + e;
-  return out;
 }
 
 function daysInMonth(monthIdx, yearNullable) {
@@ -571,37 +527,12 @@ export default function NewUser() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [focusPwd2, setFocusPwd2] = useState(false);
   const [tPwd2, setTPwd2] = useState(false);
-  // Телефон: 10 цифр национального формата
-  const [phoneDigits, setPhoneDigits] = useState('');
-  const [showRuPrefix, setShowRuPrefix] = useState(false);
 
-  // --- Phone mask helpers (caret-aware) ---
-  const PHONE_MASK_TEMPLATE = formatRuPhoneMaskedWithSlots('');
-  const SLOT_POS = useMemo(() => {
-    const arr = [];
-    for (let i = 0; i < PHONE_MASK_TEMPLATE.length; i++) {
-      if (PHONE_MASK_TEMPLATE[i] === '_') arr.push(i);
-    }
-    return arr;
-  }, []);
-  const digitIndexFromCaret = useCallback(
-    (pos) => {
-      let k = 0;
-      for (let i = 0; i < SLOT_POS.length; i++) if (SLOT_POS[i] < pos) k++;
-      return k;
-    },
-    [SLOT_POS],
-  );
-  const caretFromDigitIndex = useCallback(
-    (k) => {
-      if (k <= 0) return SLOT_POS[0] ?? 0;
-      if (k >= SLOT_POS.length) return PHONE_MASK_TEMPLATE.length;
-      return SLOT_POS[k - 1] + 1;
-    },
-    [SLOT_POS, PHONE_MASK_TEMPLATE],
-  );
-  const [phoneSel, setPhoneSel] = useState({ start: 0, end: 0 });
-  const phoneSelLockRef = useRef(false);
+  // Телефон: храним e164 "+7XXXXXXXXXX" или пусто
+  const [phone, setPhone] = useState('');
+  const [phoneValid, setPhoneValid] = useState(true);
+  const [tPhone, setTPhone] = useState(false);
+
   // Birthdate
   const [birthdate, setBirthdate] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -662,12 +593,10 @@ export default function NewUser() {
   const [focusFirst, setFocusFirst] = useState(false);
   const [focusLast, setFocusLast] = useState(false);
   const [focusEmail, setFocusEmail] = useState(false);
-  const [focusPhone, setFocusPhone] = useState(false);
   const [focusPwd, setFocusPwd] = useState(false);
   const [tFirst, setTFirst] = useState(false);
   const [tLast, setTLast] = useState(false);
   const [tEmail, setTEmail] = useState(false);
-  const [tPhone, setTPhone] = useState(false);
   const [tPwd, setTPwd] = useState(false);
 
   const toastAnim = useRef(new Animated.Value(0)).current;
@@ -693,12 +622,6 @@ export default function NewUser() {
     () => !password || password === confirmPassword,
     [password, confirmPassword],
   );
-  const phoneValid = useMemo(() => {
-    if (!phoneDigits) return true;
-    if (phoneDigits.length !== 10) return false;
-    if (phoneDigits[0] !== '9') return false;
-    return true;
-  }, [phoneDigits]);
   const roleValid = useMemo(() => ROLES.includes(role), [role]);
 
   // initials for avatar placeholder
@@ -725,14 +648,14 @@ export default function NewUser() {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
-      phone: phoneDigits,
+      phone,
       role,
       password: password.length > 0,
       birthdate: birthdate ? birthdate.toISOString().slice(0, 10) : null,
       avatar: !!avatarUri,
     });
     return snap !== initialSnapRef.current;
-  }, [firstName, lastName, email, phoneDigits, role, password, birthdate, avatarUri]);
+  }, [firstName, lastName, email, phone, role, password, birthdate, avatarUri]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -925,7 +848,7 @@ export default function NewUser() {
     setSubmitting(true);
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
-      const phoneNormalized = phoneDigits ? `+7${phoneDigits}` : null;
+      const phoneNormalized = phone || null;
 
       await checkDuplicates(email.trim().toLowerCase(), fullName, phoneNormalized);
 
@@ -994,7 +917,7 @@ export default function NewUser() {
     email,
     password,
     role,
-    phoneDigits,
+    phone,
     emailValid,
     passwordValid,
     roleValid,
@@ -1089,7 +1012,6 @@ export default function NewUser() {
                     borderColor: THEME.border,
                     color: THEME.textPrimary,
                   },
-                  /* focus styles are dynamic below */
                 ]}
                 value={firstName}
                 onChangeText={setFirstName}
@@ -1115,7 +1037,6 @@ export default function NewUser() {
                     borderColor: THEME.border,
                     color: THEME.textPrimary,
                   },
-                  /* focus styles are dynamic below */
                 ]}
                 value={lastName}
                 onChangeText={setLastName}
@@ -1160,108 +1081,18 @@ export default function NewUser() {
               <Text style={[styles.label, { color: THEME.textSecondary }]}>
                 Телефон (необязательно)
               </Text>
-              <TextField
-                style={[
-                  styles.input,
-                  {
-                    backgroundColor: THEME.inputBg,
-                    borderColor: THEME.border,
-                    color: THEME.textPrimary,
-                  },
-                  tPhone && !phoneValid && styles.inputError,
-                ]}
-                keyboardType="phone-pad"
-                placeholderTextColor={THEME.textSecondary}
-                placeholder="+7 (___) ___-__-__"
-                value={
-                  focusPhone || showRuPrefix || phoneDigits
-                    ? formatRuPhoneMaskedWithSlots(phoneDigits)
-                    : ''
-                }
-                maxLength={PHONE_MASK_TEMPLATE.length}
-                selection={phoneSel}
-                onSelectionChange={(e) => {
-                  if (phoneSelLockRef.current) return;
-                  const sel = e?.nativeEvent?.selection;
-                  if (sel && typeof sel.start === 'number' && typeof sel.end === 'number') {
-                    setPhoneSel(sel);
-                  }
+              <PhoneInput
+                value={phone}
+                onChangeText={(val, meta) => {
+                  // meta.masked - текущая маска; meta.e164 - "+7XXXXXXXXXX" или null; meta.valid - флаг валидации
+                  setPhone(val);
+                  const hasAnyDigits = /\d/.test(meta.masked || '');
+                  setPhoneValid(meta.valid || !hasAnyDigits); // пустое поле — валидно, иначе проверяем маску
                 }}
-                onChangeText={(text) => {
-                  const prevDigits = String(phoneDigits || '');
-                  const prevSel = phoneSel || { start: 0, end: 0 };
-                  const caretIdx = digitIndexFromCaret(prevSel.start);
-                  const raw = String(text || '');
-                  let nd = raw.replace(/\D/g, '');
-
-                  if (!prevDigits && (nd.startsWith('7') || nd.startsWith('8'))) nd = nd.slice(1);
-
-                  let nextDigits = prevDigits;
-                  if (nd.length === prevDigits.length + 1) {
-                    const inserted = nd[nd.length - 1];
-                    const insAt = Math.max(0, Math.min(10, caretIdx));
-                    nextDigits = (
-                      prevDigits.slice(0, insAt) +
-                      inserted +
-                      prevDigits.slice(insAt)
-                    ).slice(0, 10);
-                    const nextCaret = caretFromDigitIndex(insAt + 1);
-                    phoneSelLockRef.current = true;
-                    setPhoneDigits(nextDigits);
-                    setShowRuPrefix(true);
-                    setPhoneSel({ start: nextCaret, end: nextCaret });
-                    setTimeout(() => {
-                      phoneSelLockRef.current = false;
-                    }, 0);
-                    return;
-                  } else if (nd.length === prevDigits.length - 1) {
-                    const delAt = Math.max(0, Math.min(prevDigits.length, caretIdx)) - 1;
-                    if (delAt >= 0) {
-                      nextDigits = prevDigits.slice(0, delAt) + prevDigits.slice(delAt + 1);
-                    } else {
-                      nextDigits = prevDigits;
-                    }
-                    const nextCaret = caretFromDigitIndex(Math.max(0, caretIdx - 1));
-                    phoneSelLockRef.current = true;
-                    setPhoneDigits(nextDigits);
-                    setShowRuPrefix(true);
-                    setPhoneSel({ start: nextCaret, end: nextCaret });
-                    setTimeout(() => {
-                      phoneSelLockRef.current = false;
-                    }, 0);
-                    return;
-                  } else {
-                    nextDigits = nd.slice(0, 10);
-                    const nextCaret = caretFromDigitIndex(nextDigits.length);
-                    phoneSelLockRef.current = true;
-                    setPhoneDigits(nextDigits);
-                    setShowRuPrefix(true);
-                    setPhoneSel({ start: nextCaret, end: nextCaret });
-                    setTimeout(() => {
-                      phoneSelLockRef.current = false;
-                    }, 0);
-                    return;
-                  }
-                }}
-                onFocus={() => {
-                  setFocusPhone(true);
-                  setShowRuPrefix(true);
-                  const p = caretFromDigitIndex(String(phoneDigits || '').length);
-                  phoneSelLockRef.current = true;
-                  setPhoneSel({ start: p, end: p });
-                  setTimeout(() => {
-                    phoneSelLockRef.current = false;
-                  }, 0);
-                }}
-                onBlur={() => {
-                  setFocusPhone(false);
-                  setTPhone(true);
-                  if (!phoneDigits) setShowRuPrefix(false);
-                }}
+                error={tPhone && !phoneValid ? 'Укажите корректный номер' : undefined}
+                style={{ marginTop: 4 }}
               />
-              {tPhone && !phoneValid ? (
-                <Text style={styles.helperError}>Укажите корректный номер</Text>
-              ) : null}
+              {/* Выводить доп. текст ошибки не нужно: его показывает сам PhoneInput */}
 
               <Text style={[styles.label, { color: THEME.textSecondary }]}>
                 Дата рождения (необязательно)
