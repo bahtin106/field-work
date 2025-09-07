@@ -1,10 +1,10 @@
+// apps/field-work/app/orders/order-success.jsx
 import { useMemo } from 'react';
 import { router } from 'expo-router';
-import { View, Text,  StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
-
 import { useTheme } from '../../theme/ThemeProvider';
 
 export default function OrderSuccessScreen() {
@@ -17,10 +17,10 @@ export default function OrderSuccessScreen() {
           flex: 1,
           justifyContent: 'center',
           padding: 24,
-          backgroundColor: theme.colors.bg,
+          backgroundColor: theme.colors.background,   // was theme.colors.bg
         },
         messageBox: {
-          backgroundColor: theme.colors.card,
+          backgroundColor: theme.colors.surface,      // was theme.colors.card
           padding: 32,
           borderRadius: 12,
           shadowColor: '#000',
@@ -39,11 +39,16 @@ export default function OrderSuccessScreen() {
     [theme],
   );
 
+  const goHome = () => {
+    // Your app's "home" lives under /orders (see _layout initialRouteName and BottomNav PATHS)
+    router.replace('/orders');
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.messageBox}>
         <Text style={styles.successText}>Заявка успешно создана</Text>
-        <Button title="На главную" onPress={() => router.replace('/')} />
+        <Button title="На главную" onPress={goHome} />
       </View>
     </SafeAreaView>
   );

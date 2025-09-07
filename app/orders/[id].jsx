@@ -55,6 +55,7 @@ import Animated, {
 
 import { supabase } from '../../lib/supabase';
 import { fetchFormSchema } from '../../lib/settings';
+import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
 
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -73,8 +74,6 @@ const ORDER_CACHE = (globalThis.ORDER_CACHE ||= new Map());
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
 // ---------------- helpers: UI ----------------
-
-
 
   // Permissions-aware phone visibility (role + policy)
 // Админ/диспетчер — всегда; воркер — по окну в часах (по умолчанию 24),
@@ -407,7 +406,34 @@ useEffect(() => {
       )}
     </View>
   );
-const { id, returnTo, returnParams } = useLocalSearchParams();
+// Read route params from expo-router safely.  Avoid spreading the Proxy returned by
+// useLocalSearchParams, since Hermes will throw if we touch missing keys.
+const __params = useLocalSearchParams();
+let id = null;
+let returnTo = undefined;
+let returnParams = undefined;
+try {
+  // Only access properties if they exist.  Reflect.has/get lets us avoid
+  // triggering getters on undefined keys.  Wrap in try/catch in case the
+  // proxy implementation throws for other reasons.
+  if (Reflect.has(__params, 'id')) {
+    const val = Reflect.get(__params, 'id');
+    if (val != null) id = String(val);
+  }
+  if (Reflect.has(__params, 'returnTo')) {
+    returnTo = Reflect.get(__params, 'returnTo');
+  }
+  if (Reflect.has(__params, 'returnParams')) {
+    returnParams = Reflect.get(__params, 'returnParams');
+  }
+} catch (_err) {
+  // If anything goes wrong, fall back to safe defaults.  Do not rethrow here
+  // because we want to allow the component to render normally.
+  id = null;
+  returnTo = undefined;
+  returnParams = undefined;
+}
+
   const backTargetPath =
     typeof returnTo === 'string' && returnTo ? String(returnTo) : '/orders/my-orders';
   let backParams = {};
@@ -568,7 +594,37 @@ const [description, setDescription] = useState('');
 
   
 const [departmentId, setDepartmentId] = useState(null);
+
+const [companyId, setCompanyId] = useState(null);
+const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+const [workTypes, setWorkTypes] = useState([]);
+const [workTypeId, setWorkTypeId] = useState(null);
+const [workTypeIdView, setWorkTypeIdView] = useState(null);
+const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+
 const [departments, setDepartments] = useState([]);
+
+// workTypes bootstrap: load companyId and list (top-level)
+useEffect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      const cid = await getMyCompanyId();
+      if (!alive) return;
+      setCompanyId(cid);
+      if (cid) {
+        const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+        if (!alive) return;
+        setUseWorkTypesFlag(!!flag);
+        setWorkTypes(types || []);
+      }
+    } catch (e) {
+      console.warn('workTypes bootstrap', e?.message || e);
+    }
+  })();
+  return () => { alive = false; };
+}, []);
+
 // — финансы
   
     const [amount, setAmount] = useState('');
@@ -757,7 +813,6 @@ const [departments, setDepartments] = useState([]);
       const bucket = 'orders-photos';
       const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
 
-
       const next = { ...order };
       for (const cat of cats) {
         const folder = `orders/${order.id}/${cat}`;
@@ -834,8 +889,8 @@ const [departments, setDepartments] = useState([]);
   }, [deleteModalVisible]);
 
   // ===== Fetch order + role + users =====
-  useEffect(() => {
-    const fetchData = async () => {
+  const fetchData = async () => {
+  if (!id) { setLoading(false); return; }
       // Instant paint from cache
       const cached = ORDER_CACHE.get(id);
       if (cached) {
@@ -929,6 +984,7 @@ const [departments, setDepartments] = useState([]);
 
             
             setDepartmentId(fetchedOrder.department_id || null);
+            setWorkTypeId(fetchedOrder.work_type_id || null);
 // финансы
             setAmount(
               fetchedOrder.price !== null && fetchedOrder.price !== undefined
@@ -984,9 +1040,11 @@ const [departments, setDepartments] = useState([]);
       }
     };
 
-    fetchData();
-  }, [id, syncPhotosFromStorage]);
+    useEffect(() => {
 
+      fetchData();
+
+    }, [id, syncPhotosFromStorage]);
   const canEdit = () => has('canEditOrders');
 
   // ===== Phone visibility rules =====
@@ -1211,6 +1269,7 @@ if (!canEdit()) return;
       urgent: urgent,
       department_id: departmentId || null,
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
+      ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
     const { data, error } = await supabase
       .from('orders')
@@ -1244,6 +1303,8 @@ if (!canEdit()) return;
         );
       
         setDepartmentId(data.department_id || null);
+        setWorkTypeId(data.work_type_id || null);
+        setWorkTypeIdView(data.work_type_id || null);
 } catch {}
       initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
       {
@@ -1333,6 +1394,9 @@ if (!canEdit()) return;
 
     // финансы
     setDepartmentId(order.department_id || null);
+
+    setWorkTypeId(order.work_type_id || null);
+    setWorkTypeIdView(order.work_type_id || null);
 
     setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
     setGsm(order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '');
@@ -1562,10 +1626,7 @@ if (!canEdit()) return;
 
               {canEdit() && !editMode && (
                 <Pressable
-                  onPress={() => {
-                    initialFormSnapshotRef.current = makeSnapshotFromState();
-                    setEditMode(true);
-                  }}
+                  onPress={() => router.push(`/orders/edit/${order?.id || id}`)}
                   hitSlop={10}
                   style={styles.editBtn}
                 >
@@ -1648,13 +1709,22 @@ if (!canEdit()) return;
               <View style={styles.separator} />
 
               
-              <SafeRow style={styles.row}>
-                <Text style={styles.rowLabel}>🏷️ Отдел</Text>
-                <Text style={styles.rowValue}>
-                  {(departments.find(d => d.id === (order.department_id || departmentId))?.name) || '—'}
-                </Text>
-              </SafeRow>
-              <View style={styles.separator} />
+              
+{useWorkTypes && (
+  <>
+    <SafeRow style={styles.row}>
+      <Text style={styles.rowLabel}>🏷️ Тип работ</Text>
+      <Text style={styles.rowValue}>
+        {(() => {
+          const t = workTypes.find(w => w.id === ((order.work_type_id ?? null) ?? workTypeIdView));
+          return t ? t.name : 'не выбран';
+        })()}
+      </Text>
+    </SafeRow>
+    <View style={styles.separator} />
+  </>
+)}
+
 <Pressable
                 style={styles.row}
                 onPress={() => {
@@ -1796,6 +1866,34 @@ if (!canEdit()) return;
         )}
       </Screen>
 
+      {/* WORK TYPE SELECT MODAL */}
+      <Modal
+        isVisible={workTypeModalVisible}
+        onBackdropPress={() => setWorkTypeModalVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+      >
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>Выберите тип работ</Text>
+          {workTypes.length === 0 ? (
+            <Text style={styles.modalText}>Список пуст. Добавьте типы работ в настройках компании.</Text>
+          ) : (
+            workTypes.map((t) => (
+              <Pressable
+                key={t.id}
+                onPress={() => {
+                  setWorkTypeId(t.id);
+                  setWorkTypeModalVisible(false);
+                }}
+                style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={styles.assigneeText}>{t.name}</Text>
+              </Pressable>
+            ))
+          )}
+        </View>
+      </Modal>
+
       {/* PHOTO VIEWER MODAL */}
       <Modal
         isVisible={viewerVisible}
@@ -1913,300 +2011,6 @@ if (!canEdit()) return;
         </View>
       </Modal>
 
-      {/* EDIT SHEET MODAL (RESTORED) */}
-      <Modal
-        isVisible={editMode}
-        onBackdropPress={requestCloseEdit}
-        onBackButtonPress={requestCloseEdit}
-        style={{ justifyContent: 'flex-end', margin: 0 }}
-        useNativeDriver
-        animationIn="slideInUp"
-        animationOut="slideOutDown"
-        animationInTiming={200}
-        animationOutTiming={200}
-        backdropTransitionInTiming={160}
-        backdropTransitionOutTiming={200}
-        hideModalContentWhileAnimating
-        useNativeDriverForBackdrop
-        coverScreen={true}
-        navigationBarTranslucent={true}
-        statusBarTranslucent={true}
-        onModalHide={applyNavBar}
-        propagateSwipe
-      >
-        <View style={styles.editSheet}>
-          <View style={styles.sheetHeader}>
-            <Text style={styles.sheetTitle}>Редактирование заявки</Text>
-          </View>
-          <ScrollView
-            contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* SECTIONED FORM START (copied from create-order UI) */}
-            <View style={styles.card}>
-              <Text style={styles.section}>Основное</Text>
-              {getField('title') && (<><Text style={styles.label}>Название заявки *</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: Обрезка деревьев"
-                value={title}
-                onChangeText={setTitle}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} />
-              </>)}
-              {getField('comment') && (<>
-              <Text style={styles.label}>Описание</Text>
-              <TextField
-                style={[styles.input, { height: 100, textAlignVertical: 'top' }]}
-                placeholder="Подробности (если есть)"
-                value={description}
-                onChangeText={setDescription}
-                multiline
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} />
-              </>)}
-            </View>
-
-            <View style={styles.card}>
-              <Text style={styles.section}>Адрес</Text>
-              {getField('region') && (<><Text style={styles.label}>Район или область</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: Саратовская область"
-                value={region}
-                onChangeText={setRegion}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} /></>)}
-              {getField('city') && (<><Text style={styles.label}>Город или населённый пункт</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: Энгельс"
-                value={city}
-                onChangeText={setCity}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} /></>)}
-              {getField('street') && (<><Text style={styles.label}>Улица или СНТ</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: ул. Центральная"
-                value={street}
-                onChangeText={setStreet}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} /></>)}
-              {getField('house') && (<><Text style={styles.label}>Дом или участок</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: 15А"
-                value={house}
-                onChangeText={setHouse}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} /></>)}
-            </View>
-
-            <View style={styles.card}>
-              <Text style={styles.section}>Заказчик</Text>
-              {getField('fio') && (<><Text style={styles.label}>Имя заказчика *</Text>
-              <TextField
-                style={styles.input}
-                placeholder="ФИО или просто имя"
-                value={customerName}
-                onChangeText={setCustomerName}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} /></>)}
-              {getField('phone') && (<><Text style={styles.label}>Телефон *</Text>
-<PhoneInput
-  value={phone}
-  onChangeText={(val, meta) => setPhone(val)}
-  style={styles.input}
-/></>)}
-            </View>
-
-            {hasAny(['urgent','datetime','assigned_to']) && (
-<View style={styles.card}>
-              <Text style={styles.section}>Планирование</Text>
-
-              {hasField('urgent') && (
-              <View style={styles.toggleRow}>
-                <Pressable
-                  onPress={() => setUrgent((prev) => !prev)}
-                  style={[styles.toggle, urgent && styles.toggleOn]}
-                >
-                  <View style={[styles.knob, urgent && styles.knobOn]} />
-                </Pressable>
-                <Text style={styles.toggleLabel}>Срочная</Text>
-              </View>
-)}
-
-              {getField('datetime') && (<><View
-                ref={(ref) => {
-                  if (ref) dateFieldRef.current = findNodeHandle(ref);
-                }}
-              >
-                <Pressable
-                  ref={dateFieldRef}
-                  onPress={() => {
-                    setShowDatePicker(true);
-                    setTimeout(scrollToDateField, 200);
-                  }}
-                  style={styles.selectInput}
-                >
-                  <Text style={styles.selectInputText}>
-                    {departureDate
-                      ? departureDate.toLocaleDateString('ru-RU', {
-                          day: '2-digit',
-                          month: 'long',
-                          year: 'numeric',
-                        })
-                      : 'Выберите дату'}
-                  </Text>
-                  <AntDesign name="calendar" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-                </Pressable>
-              </View>
-
-              
-{showDatePicker && (
-  <DateTimePicker
-    value={departureDate || new Date()}
-    mode="date"
-    display={Platform.OS === 'ios' ? 'inline' : 'default'}
-    minimumDate={new Date()}
-    onChange={(event, selected) => {
-      if (Platform.OS === 'android') setShowDatePicker(false);
-      if (selected) setDepartureDate(selected);
-    }}
-  />
-)}
-
-
-              
-              {/* Время выезда (если админ включил время — отображаем и редактируем) */}
-              <Text style={styles.label}>Время выезда</Text>
-              <Pressable
-                style={styles.selectInput}
-                onPress={() => {
-                  if (!departureDate) {
-                    setShowDatePicker(true);
-                    setTimeout(scrollToDateField, 200);
-                    return;
-                  }
-                  setShowTimePicker(true);
-                  setTimeout(scrollToDateField, 200);
-                }}
-              >
-                <Text style={styles.selectInputText}>
-                  {departureDate
-                    ? departureDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-                    : 'Сначала выберите дату'}
-                </Text>
-                <AntDesign name="clockcircleo" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-              </Pressable>
-
-              {showTimePicker && departureDate && (
-                <DateTimePicker
-                  value={departureDate}
-                  mode="time"
-                  is24Hour
-                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                  onChange={(event, selected) => {
-                    if (Platform.OS === 'android') setShowTimePicker(false);
-                    if (selected) {
-                      setDepartureDate((prev) => {
-                        const base = prev || new Date();
-                        const d = new Date(base);
-                        d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-                        return d;
-                      });
-                    }
-                  }}
-                />
-              )}
-
-              {/* close datetime fragment */}
-              </>
-              )}
-
-              {hasField('assigned_to') && (
-  <>
-    <View style={[styles.toggleRow, { marginTop: 12 }]}>
-      <Pressable
-        onPress={() =>
-          setToFeed((prev) => {
-            const nv = !prev;
-            if (nv) setAssigneeId(null);
-            return nv;
-          })
-        }
-        style={[styles.toggle, toFeed && styles.toggleOn]}
-      >
-        <View style={[styles.knob, toFeed && styles.knobOn]} />
-      </Pressable>
-      <Text style={styles.toggleLabel}>Отправить в ленту</Text>
-    </View>
-  </>
-)}
-
-              
-            {/* Отдел */}
-            {getField('department_id') && (
-              <>
-                <Text style={styles.label}>Отдел</Text>
-                <Pressable
-                  style={styles.selectInput}
-                  onPress={() => setDepartmentModalVisible(true)}
-                >
-                  <Text style={styles.selectInputText}>
-                    {departments.find(d => d.id === departmentId)?.name || 'Не выбран'}
-                  </Text>
-                  <AntDesign name="down" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-                </Pressable>
-              </>
-            )}
- {getField('assigned_to') && (<><Text style={styles.label}>Исполнитель*</Text>
-              <Pressable
-                onPress={() => { if (toFeed) setToFeed(false); setAssigneeModalVisible(true); }}
-                style={styles.selectInput}
-              >
-                <Text style={styles.selectInputText}>
-                  {selectedAssignee
-                    ? [selectedAssignee.first_name, selectedAssignee.last_name]
-                        .filter(Boolean)
-                        .join(' ')
-                    : toFeed
-                      ? 'В общую ленту'
-                      : 'Выберите исполнителя...'}
-                </Text>
-                <AntDesign name="down" size={16} color={theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary} />
-              </Pressable></>)}
-            </View>
-)}
-            {/* Финансы */}
-            { (canEditFinances || hasAny(['price','fuel_cost'])) && (<View style={styles.card}>
-              <Text style={styles.section}>Финансы</Text>
-              <Text style={styles.label}>Сумма (₽)</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: 5 000"
-                keyboardType="numeric"
-                value={amount}
-                onChangeText={setAmount}
-                editable={canEditFinances}
-                selectTextOnFocus={canEditFinances}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} />
-              <Text style={styles.label}>ГСМ (₽)</Text>
-              <TextField
-                style={styles.input}
-                placeholder="Например: 700"
-                keyboardType="numeric"
-                value={gsm}
-                onChangeText={setGsm}
-                editable={canEditFinances}
-                selectTextOnFocus={canEditFinances}
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary} />
-            </View>
-)}
-
-            <View style={{ height: 16 }} />
-            <Button title="Сохранить" onPress={handleSubmitEdit}  variant="primary" />
-            <View style={{ height: 12 }} />
-            <Button title="Отмена" onPress={requestCloseEdit} variant="secondary" />
-            {/* SECTIONED FORM END */}
-          </ScrollView>
-        </View>
-      </Modal>
-
       {/* Cancel confirm */}
       <Modal
         isVisible={cancelVisible}
@@ -2307,7 +2111,6 @@ if (!canEdit()) return;
           </View>
         </View>
       </Modal>
-
 
       {/* Status picker */}
       <Modal
@@ -2475,3 +2278,11 @@ if (!canEdit()) return;
   }
 }
 }
+
+  // Refetch fresh data whenever screen gains focus (after editing)
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+      return () => {};
+    }, [id])
+  );
