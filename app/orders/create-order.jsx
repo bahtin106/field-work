@@ -26,6 +26,7 @@ import { usePermissions } from '../../lib/permissions';
 import { buildCustomPayload, fetchFormSchema } from '../../lib/settings';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
+import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
 
 export default function CreateOrderScreen() {
   /* PERMISSIONS GUARD: create-order */
@@ -155,6 +156,13 @@ export default function CreateOrderScreen() {
   const [warningMessage, setWarningMessage] = useState('');
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [toFeed, setToFeed] = useState(false);
+  // Виды работ (по компании)
+  const [companyId, setCompanyId] = useState(null);
+  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+  const [workTypes, setWorkTypes] = useState([]);
+  const [workTypeId, setWorkTypeId] = useState(null);
+  const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+
 
   const scrollRef = useRef(null);
   const dateFieldRef = useRef(null);
@@ -242,7 +250,32 @@ export default function CreateOrderScreen() {
     };
   }, []);
 
-  const getField = useCallback(
+  
+  // Загрузка companyId и списка видов работ
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cid = await getMyCompanyId();
+        if (!alive) return;
+        setCompanyId(cid);
+        if (cid) {
+          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+          if (!alive) return;
+          setUseWorkTypesFlag(!!flag);
+          setWorkTypes(types || []);
+          if (!flag) setWorkTypeId(null);
+        }
+      } catch (e) {
+        console.warn('workTypes bootstrap failed:', e?.message || e);
+      }
+    })();
+    return () => {
+      alive = false
+    }
+  }, []);
+
+const getField = useCallback(
     (key) => (schema.fields || []).find((f) => f.field_key === key) || null,
     [schema],
   );
@@ -365,6 +398,7 @@ export default function CreateOrderScreen() {
       return;
     }
     const title = (form.title || '').trim();
+    if (useWorkTypes && !workTypeId) return showWarning('Выберите вид работ');
     if (!title) return showWarning('Укажите название заявки');
     if (!departureDate) return showWarning('Укажите дату выезда');
     if (!toFeed && !assigneeId) return showWarning('Выберите исполнителя или отправьте в ленту');
@@ -379,6 +413,7 @@ export default function CreateOrderScreen() {
     const custom = buildCustomPayload(schema.fields, form);
     const payload = {
       title: form.title ?? '',
+      work_type_id: useWorkTypes ? workTypeId : null,
       comment: description,
       region: form.region || '',
       city: form.city || '',
@@ -433,9 +468,27 @@ export default function CreateOrderScreen() {
                 onChangeText={setDescription}
                 multiline
               />
-            </View>
 
-            {/* АДРЕС */}
+              {/* WORK TYPE SELECTOR (показываем только если включено в компании) */}
+              {useWorkTypes && (
+                <View>
+                  <Text style={styles.label}>Вид работ *</Text>
+                  <Pressable
+                    style={styles.selectInput}
+                    onPress={() => setWorkTypeModalVisible(true)}
+                  >
+                    <Text style={styles.selectInputText}>
+                      {workTypeId
+                        ? (workTypes.find((w) => w.id === workTypeId)?.name || 'Выбран вид работ')
+                        : 'Выберите вид работ...'}
+                    </Text>
+                    <AntDesign name="down" size={16} color={palette.icon} />
+                  </Pressable>
+                </View>
+              )}
+</View>
+
+{/* АДРЕС */}
             <View style={styles.card}>
               <Text style={styles.section}>Адрес</Text>
               {renderTextInput('region', 'Например: Саратовская область')}
@@ -640,6 +693,36 @@ export default function CreateOrderScreen() {
             </View>
           </View>
         </Modal>
+
+
+        <Modal
+          isVisible={workTypeModalVisible}
+          onBackdropPress={() => setWorkTypeModalVisible(false)}
+          useNativeDriver
+          backdropOpacity={0.3}
+        >
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>Выберите вид работ</Text>
+            {workTypes.length === 0 ? (
+              <Text style={styles.modalText}>Список пуст. Добавьте виды работ в настройках компании.</Text>
+            ) : (
+              workTypes.map((t) => (
+                <Pressable
+                  key={t.id}
+                  onPress={() => {
+                    setWorkTypeId(t.id);
+                    setWorkTypeModalVisible(false);
+                  }}
+                  style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.8 }]}
+                >
+                  <Text style={styles.assigneeText}>{t.name}</Text>
+                </Pressable>
+              ))
+            )}
+          </View>
+        </Modal>
+
+
 
         <Modal
           isVisible={assigneeModalVisible}

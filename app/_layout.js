@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
+import ToastProvider from '../components/ui/ToastProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
@@ -164,7 +165,9 @@ useEffect(() => {
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <RootLayoutInner />
+    <ToastProvider>
+       <RootLayoutInner />
+     </ToastProvider>  
     </ThemeProvider>
   );
 }
