@@ -795,6 +795,14 @@ export default function EditUser() {
       return () => sub.remove();
     }, [isDirty]),
   );
+  useFocusEffect(
+    useCallback(() => {
+      // подгружаем отделы при возврате на экран
+      fetchDepartments();
+      return () => {};
+    }, [fetchDepartments]),
+  );
+
 
   const allowLeaveRef = useRef(false);
 
@@ -843,7 +851,16 @@ const handleCancelPress = () => {
 
 const handleSave = async () => {
   setErr('');
-  // simple validations consistent with memoized flags
+  // required fields
+  if (!firstName.trim()) {
+    showWarning('Укажите имя');
+    return;
+  }
+  if (!lastName.trim()) {
+    showWarning('Укажите фамилию');
+    return;
+  }
+// simple validations consistent with memoized flags
   if (!emailValid) {
     showWarning('Введите корректный e‑mail');
     return;
@@ -879,11 +896,15 @@ const proceedSave = async () => {
       birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null,
       department_id: departmentId || null,
     };
-    const { error: updProfileErr } = await supabase
+    const { data: updRows, error: updProfileErr } = await supabase
       .from('profiles')
       .update(payload)
-      .eq('id', userId);
+      .eq('id', userId)
+      .select('id'); // force returning rows to verify success
     if (updProfileErr) throw updProfileErr;
+    if (!Array.isArray(updRows) || updRows.length === 0) {
+      throw new Error('Запись профиля не обновлена (возможно, RLS запрещает обновление)');
+    }
 
     // Update auth-level fields (email / password / role) via edge function if available
     try {
@@ -897,7 +918,7 @@ const proceedSave = async () => {
           password: newPassword && newPassword.length ? newPassword : undefined,
           role,
         };
-        await fetch(FN_URL, {
+        const res = await fetch(FN_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -906,6 +927,12 @@ const proceedSave = async () => {
           },
           body: JSON.stringify(body),
         });
+        if (!res.ok) {
+          try {
+            const j = await res.json();
+            console.warn('Edge update_user failed:', j);
+          } catch {}
+        }
       }
     } 
 catch (e) {}
@@ -967,7 +994,20 @@ useEffect(() => {
     return true;
   }, [rawPhone]);
 
-  const fetchMe = useCallback(async () => {
+  
+  const fetchDepartments = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('id, name')
+        .order('name', { ascending: true });
+      if (error) throw error;
+      setDepartments(Array.isArray(data) ? data : []);
+    } catch (e) {
+      // молча игнорируем ошибки, чтобы не блокировать экран редактирования
+    }
+  }, []);
+const fetchMe = useCallback(async () => {
     const { data: authUser } = await supabase.auth.getUser();
     const uid = authUser?.user?.id;
     if (!uid) return;
@@ -1036,7 +1076,21 @@ useEffect(() => {
   useEffect(() => {
     fetchMe();
     fetchUser();
-  }, [fetchMe, fetchUser]);
+    fetchDepartments();
+  }, [fetchMe, fetchUser, fetchDepartments]);
+  // Realtime: refresh this profile when someone updates it elsewhere
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel(`rt-user-${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` }, () => {
+        fetchUser();
+        fetchDepartments();
+      })
+      .subscribe();
+    return () => { try { channel.unsubscribe(); } catch {} };
+  }, [userId, fetchUser, fetchDepartments]);
+
 const reassignOrders = async (fromUserId, toUserId) => {
     const { error } = await supabase
       .from('orders')

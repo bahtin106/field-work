@@ -9,7 +9,7 @@ import { ru } from 'date-fns/locale';
 import { BlurView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import { useLocalSearchParams, useRouter, useNavigation, usePathname } from 'expo-router';
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
@@ -406,36 +406,45 @@ useEffect(() => {
       )}
     </View>
   );
-// Read route params from expo-router safely.  Avoid spreading the Proxy returned by
-// useLocalSearchParams, since Hermes will throw if we touch missing keys.
-const __params = useLocalSearchParams();
-let id = null;
-let returnTo = undefined;
-let returnParams = undefined;
-try {
-  // Only access properties if they exist.  Reflect.has/get lets us avoid
-  // triggering getters on undefined keys.  Wrap in try/catch in case the
-  // proxy implementation throws for other reasons.
-  if (Reflect.has(__params, 'id')) {
-    const val = Reflect.get(__params, 'id');
-    if (val != null) id = String(val);
+// Read route params. For 'id' specifically we avoid touching useLocalSearchParams()
+  // because Expo Router wraps it in a Proxy that throws if a missing dynamic segment is read.
+  // Instead, parse the id from the current pathname.
+  const pathname = usePathname();
+  const id = useMemo(() => {
+    try {
+      const path = String(pathname || '');
+      const clean = path.split('?')[0];
+      const parts = clean.split('/').filter(Boolean);
+      // Expect .../orders/:id
+      return parts.length ? parts[parts.length - 1] : null;
+    } catch {
+      return null;
+    }
+  }, [pathname]);
+
+  // Other optional params (do not crash if absent)
+  const __params = useLocalSearchParams();
+  let returnTo = undefined;
+  let returnParams = undefined;
+  try {
+    if (Reflect.has(__params, 'returnTo')) {
+      returnTo = Reflect.get(__params, 'returnTo');
+    }
+    if (Reflect.has(__params, 'returnParams')) {
+      returnParams = Reflect.get(__params, 'returnParams');
+    }
+  } catch (_err) {
+    returnTo = undefined;
+    returnParams = undefined;
   }
-  if (Reflect.has(__params, 'returnTo')) {
-    returnTo = Reflect.get(__params, 'returnTo');
-  }
-  if (Reflect.has(__params, 'returnParams')) {
-    returnParams = Reflect.get(__params, 'returnParams');
-  }
-} catch (_err) {
-  // If anything goes wrong, fall back to safe defaults.  Do not rethrow here
-  // because we want to allow the component to render normally.
-  id = null;
-  returnTo = undefined;
-  returnParams = undefined;
-}
 
   const backTargetPath =
     typeof returnTo === 'string' && returnTo ? String(returnTo) : '/orders/my-orders';
+  // Prevent no-op replace when target equals current screen
+  const safeBackTargetPath = (String(backTargetPath || '') === String(pathname || ''))
+    ? '/orders/my-orders'
+    : backTargetPath;
+
   let backParams = {};
   try {
     backParams = returnParams ? JSON.parse(returnParams) : {};
@@ -747,9 +756,9 @@ useEffect(() => {
       return;
     }
 
-    if (returnTo && !isNavigatingRef.current) {
+    if (returnTo && !isNavigatingRef.current && String(backTargetPath || '') !== String(pathname || '')) {
       isNavigatingRef.current = true;
-      router.replace({ pathname: backTargetPath, params: backParams });
+      router.replace({ pathname: safeBackTargetPath, params: backParams });
       return;
     }
 
@@ -782,10 +791,10 @@ useEffect(() => {
         return;
       }
       // если пришли из списка/календаря — один раз делаем replace с фильтрами
-      if (returnTo && !isNavigatingRef.current) {
+      if (returnTo && !isNavigatingRef.current && String(backTargetPath || '') !== String(pathname || '')) {
         e.preventDefault();
         isNavigatingRef.current = true;
-        router.replace({ pathname: backTargetPath, params: backParams });
+        router.replace({ pathname: safeBackTargetPath, params: backParams });
       }
     });
 
@@ -916,19 +925,34 @@ useEffect(() => {
           .select('*')
           .eq('id', id)
           .single();
-        // Fallback: if orders_secure view doesn't expose department_id, fetch it from base table
-        if (typeof fetchedOrder.department_id === 'undefined') {
-          try {
-            const { data: depRow } = await supabase
-              .from('orders')
-              .select('department_id')
-              .eq('id', id)
-              .single();
-            if (depRow) {
-              fetchedOrder.department_id = depRow.department_id || null;
-            }
-          } catch {}
-        }
+// Fallback: if orders_secure view doesn't expose department_id, fetch it from base table
+if (typeof fetchedOrder.department_id === 'undefined') {
+  try {
+    const { data: depRow } = await supabase
+      .from('orders')
+      .select('department_id')
+      .eq('id', id)
+      .single();
+    if (depRow) {
+      fetchedOrder.department_id = depRow.department_id || null;
+    }
+  } catch {}
+}
+
+// Fallback: if orders_secure view doesn't expose work_type_id, fetch it from base table
+if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_id === null) {
+  try {
+    const { data: wtRow } = await supabase
+      .from('orders')
+      .select('work_type_id')
+      .eq('id', id)
+      .single();
+    if (wtRow) {
+      fetchedOrder.work_type_id = wtRow.work_type_id ?? null;
+    }
+  } catch {}
+}
+
 
         if (error) throw error;
 
@@ -1271,10 +1295,13 @@ if (!canEdit()) return;
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
+    const targetId = order?.id ?? id;
+    if (!targetId) { showToast('Id заявки не найден'); return; }
+
     const { data, error } = await supabase
       .from('orders')
       .update(payload)
-      .eq('id', id)
+      .eq('id', targetId)
       .select()
       .single();
 
@@ -1626,7 +1653,7 @@ if (!canEdit()) return;
 
               {canEdit() && !editMode && (
                 <Pressable
-                  onPress={() => router.push(`/orders/edit/${order?.id || id}`)}
+                  onPress={() => { if (order?.id) router.push(`/orders/edit/${order.id}`); }}
                   hitSlop={10}
                   style={styles.editBtn}
                 >
@@ -2278,11 +2305,3 @@ if (!canEdit()) return;
   }
 }
 }
-
-  // Refetch fresh data whenever screen gains focus (after editing)
-  useFocusEffect(
-    useCallback(() => {
-      fetchData();
-      return () => {};
-    }, [id])
-  );

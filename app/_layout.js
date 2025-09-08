@@ -15,32 +15,12 @@ import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
 import Constants from 'expo-constants';
-import { initTelemetry, installGlobalHandlers, logEvent, pingTelemetry } from '../components/feedback/telemetry';
-
+// telemetry disabled (import removed)
 // Держим сплэш до полной готовности
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 
-// === Telemetry bootstrap ===
-const EXTRA = Constants.expoConfig?.extra || Constants.manifest?.extra || {};
-initTelemetry({
-  supabaseUrl: EXTRA.supabaseUrl,
-  supabaseAnonKey: EXTRA.supabaseAnonKey,
-  eventsTable: 'events',
-  errorsTable: 'error_logs',
-  appVersion: Constants.expoConfig?.version || Constants.manifest?.version,
-  environment: __DEV__ ? 'development' : 'production',
-});
-if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-  installGlobalHandlers();
-}
-pingTelemetry().catch(() => {});
-logEvent('self_test', { ts: Date.now(), source: '_layout' })
-  .then(() => globalThis?.console?.log?.('[telemetry] self_test inserted'))
-  .catch((e) => globalThis?.console?.error?.('[telemetry] self_test failed', e?.message || e));
-// ===========================
-
-
+// Telemetry disabled
 function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);

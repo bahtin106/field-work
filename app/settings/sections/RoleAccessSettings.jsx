@@ -91,7 +91,8 @@ export default function RoleAccessSettings() {
             const acc = { admin: {}, dispatcher: {}, worker: {} };
             for (const r of rows) {
               if (!acc[r.role]) acc[r.role] = {};
-              acc[r.role][r.key] = !!r.value;
+              const toBool = (v) => v === true || v === 1 || v === '1' || v === 'true' || v === 't';
+acc[r.role][r.key] = toBool(r.value);
             }
             setPermMatrix(mergeWithDefaults(acc));
           } else {
@@ -155,7 +156,15 @@ export default function RoleAccessSettings() {
         .upsert(flat, { onConflict: 'company_id,role,key' });
       if (error) throw error;
 
-      Alert.alert('Сохранено', 'Права обновлены в базе данных.');
+      
+      // Realtime: notify all clients that permissions changed
+      try {
+        const ch = supabase.channel('permissions');
+        await ch.subscribe();
+        await ch.send({ type: 'broadcast', event: 'perm_changed', payload: { company_id: companyId, ts: Date.now() } });
+        setTimeout(() => { try { supabase.removeChannel(ch); } catch(_){} }, 250);
+      } catch (_) {}
+    Alert.alert('Сохранено', 'Права обновлены в базе данных.');
     } catch (e) {
       Alert.alert('Ошибка сохранения', e?.message || 'Не удалось сохранить права.');
     } finally {
