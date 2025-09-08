@@ -18,8 +18,35 @@ import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
 import DynamicOrderCard from '../../components/DynamicOrderCard'; 
 import { supabase } from '../../lib/supabase';
+import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
 import { useTheme } from '../../theme/ThemeProvider';
 import { usePermissions } from '../../lib/permissions';
+
+
+// ===== HARD PERMISSION GUARD (independent from usePermissions) =====
+async function checkCanViewAll() {
+  try {
+    // 1) get current user's role from profiles
+    const { data: me, error: e1 } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', (await supabase.auth.getUser()).data?.user?.id || '00000000-0000-0000-0000-000000000000')
+      .single();
+    if (e1 || !me?.role) return false;
+    // 2) check role permission
+    const { data: perm, error: e2 } = await supabase
+      .from('app_role_permissions')
+      .select('value')
+      .eq('role', me.role)
+      .eq('key', 'canViewAllOrders')
+      .eq('value', true)
+      .maybeSingle();
+    if (e2) return false;
+    return !!perm?.value === true;
+  } catch {
+    return false;
+  }
+}
 
 
 function mapStatusToDB(key) {
@@ -36,6 +63,17 @@ function mapStatusToDB(key) {
 }
 
 export default function AllOrdersScreen() {
+  // local, definitive permission flag
+  const [allowed, setAllowed] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const ok = await checkCanViewAll();
+      if (alive) setAllowed(ok);
+    })();
+    return () => { alive = false; };
+  }, []);
+
   const { theme } = useTheme();
     const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
   const { has } = usePermissions();
@@ -254,17 +292,6 @@ export default function AllOrdersScreen() {
 
   const router = useRouter();
 
-  /* PERMISSIONS GUARD: all-orders */
-  if (!has('canViewAllOrders')) {
-    return (
-      <Screen>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ fontSize: 16, color: theme.colors.textSecondary }}>Недостаточно прав для просмотра всех заявок</Text>
-        </View>
-      </Screen>
-    );
-  }
-
   // Global cache with TTL
   const CACHE_TTL_MS = 45000;
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
@@ -297,17 +324,48 @@ export default function AllOrdersScreen() {
   const [departmentSearch, setDepartmentSearch] = useState('');
   const [departmentFilterInit] = useState(department ? Number(department) : null);
   useEffect(() => { if (departmentFilterInit != null && !Number.isNaN(departmentFilterInit)) setDepartmentFilter(Number(departmentFilterInit)); }, []);
-  const [workTypeFilter, setWorkTypeFilter] = useState(work_type || null);
+  const [workTypeFilter, setWorkTypeFilter] = useState(
+    work_type ? String(work_type).split(',').map(s=>Number(s)).filter(n=>!Number.isNaN(n)) : []
+  );
   const [materialsFilter, setMaterialsFilter] = useState(
     materials ? String(materials).split(',').map(s => s.trim()).filter(Boolean) : []
   );
   const [searchQuery, setSearchQuery] = useState(String(search || '').trim());
 
+
+// Work types bootstrap
+const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+const [workTypes, setWorkTypes] = useState([]);
+useEffect(() => {
+  let alive = true;
+  (async () => {
+    try {
+      const cid = await getMyCompanyId();
+      if (!alive) return;
+      if (cid) {
+        const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+        if (!alive) return;
+        setUseWorkTypesFlag(!!flag);
+        setWorkTypes(types || []);
+      } else {
+        setUseWorkTypesFlag(false);
+        setWorkTypes([]);
+      }
+    } catch {
+      setUseWorkTypesFlag(false);
+      setWorkTypes([]);
+    }
+  })();
+  return () => { alive = false; };
+}, []);
+
+
   // ✅ FIX: missing states causing ReferenceError
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [filterOptions, setFilterOptions] = useState({ work_type: [], materials: [] });
-  const [tmpWorkType, setTmpWorkType] = useState(workTypeFilter || null);
+  const [tmpWorkType, setTmpWorkType] = useState(workTypeFilter || []);
   const [tmpMaterials, setTmpMaterials] = useState(materialsFilter || []);
+  const [tmpExecutor, setTmpExecutor] = useState(executorFilter || null);
   const [executors, setExecutors] = useState([]);
   const [executorSearch, setExecutorSearch] = useState('');
 
@@ -336,10 +394,7 @@ export default function AllOrdersScreen() {
     return list.filter(e => ([e.first_name, e.last_name].filter(Boolean).join(' ') || '').toLowerCase().includes(q));
   }, [executors, executorSearch, departmentFilter]);
 
-  const cacheKey = useMemo(
-    () => JSON.stringify({ status: statusFilter, ex: executorFilter || null, dept: departmentFilter || null }),
-    [statusFilter, executorFilter, departmentFilter],
-  );
+  const cacheKey = useMemo(() => JSON.stringify({ status: statusFilter, ex: executorFilter || null, dept: departmentFilter || null, wt: (workTypeFilter||[]).join(',') }), [statusFilter, executorFilter, departmentFilter, workTypeFilter], );
 
 // Ensure executor selection is consistent with selected department
   useEffect(() => {
@@ -398,6 +453,22 @@ export default function AllOrdersScreen() {
     loadFilterOptions();
   }, []);
 
+
+// Helper: resolve order IDs by work types from base table if secure view lacks work_type_id
+const getOrderIdsByWorkTypes = async (types) => {
+  try {
+    if (!Array.isArray(types) || types.length === 0) return [];
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id')
+      .in('work_type_id', types)
+      .limit(2000);
+    if (error) return [];
+    return (data || []).map(r => r.id).filter(Boolean);
+  } catch { return []; }
+};
+
+
   // Auto refresh by TTL (background, no spinner if cache exists)
   useEffect(() => {
     let alive = true;
@@ -405,14 +476,15 @@ export default function AllOrdersScreen() {
       const cached = LIST_CACHE.all[cacheKey];
       const freshNeeded = !cached || Date.now() - (cached.ts || 0) > CACHE_TTL_MS;
       if (!freshNeeded) {
-      // Serve from cache immediately to reflect UI change
-      if (cached) {
-        setOrders(cached.data || []);
+        // Serve from cache immediately to reflect UI change
+        if (cached) {
+          setOrders(cached.data || []);
+        }
+        setLoading(false);
+        return;
       }
-      setLoading(false);
-      return;
-    }
-      // refresh silently
+
+      // Build base query
       let query = supabase.from('orders_secure').select('*');
       if (statusFilter === 'feed') {
         query = query.is('assigned_to', null);
@@ -422,6 +494,20 @@ export default function AllOrdersScreen() {
         if (executorFilter) query = query.eq('assigned_to', executorFilter);
       }
       if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
+
+      // Work types: secure view may not expose work_type_id -> filter by ids from base table
+      if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
+        const ids = await getOrderIdsByWorkTypes(workTypeFilter);
+        if (!ids.length) {
+          if (!alive) return;
+          setOrders([]);
+          LIST_CACHE.all[cacheKey] = { data: [], ts: Date.now() };
+          setLoading(false);
+          return;
+        }
+        query = query.in('id', ids);
+      }
+
       const { data, error } = await query.order('datetime', { ascending: false });
       if (!alive) return;
       if (!error) {
@@ -437,31 +523,42 @@ export default function AllOrdersScreen() {
       clearInterval(id);
     };
   }, [cacheKey]);
-  const onRefresh = async () => {
-    try {
-      setRefreshing(true);
-      setLoading(true);
-      let query = supabase.from('orders_secure').select('*');
-      if (statusFilter === 'feed') {
-        query = query.is('assigned_to', null);
-      } else {
-        const statusValue = mapStatusToDB(statusFilter);
-        if (statusValue) query = query.eq('status', statusValue);
-        if (executorFilter) query = query.eq('assigned_to', executorFilter);
-      }
-      if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
-      const { data, error } = await query.order('datetime', { ascending: false });
-      if (!error) {
-        setOrders(data || []);
-        LIST_CACHE.all[cacheKey] = { data: data || [], ts: Date.now() };
-      }
-    } finally {
-      setRefreshing(false);
-      setLoading(false);
+  
+const onRefresh = async () => {
+  try {
+    setRefreshing(true);
+    setLoading(true);
+    let query = supabase.from('orders_secure').select('*');
+    if (statusFilter === 'feed') {
+      query = query.is('assigned_to', null);
+    } else {
+      const statusValue = mapStatusToDB(statusFilter);
+      if (statusValue) query = query.eq('status', statusValue);
+      if (executorFilter) query = query.eq('assigned_to', executorFilter);
     }
-  };
+    if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
 
-  const getStatusLabel = (key) => {
+    if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
+      const ids = await getOrderIdsByWorkTypes(workTypeFilter);
+      if (!ids.length) {
+        setOrders([]);
+        LIST_CACHE.all[cacheKey] = { data: [], ts: Date.now() };
+        return;
+      }
+      query = query.in('id', ids);
+    }
+    const { data, error } = await query.order('datetime', { ascending: false });
+    if (!error) {
+      setOrders(data || []);
+      LIST_CACHE.all[cacheKey] = { data: data || [], ts: Date.now() };
+    }
+  } finally {
+    setRefreshing(false);
+    setLoading(false);
+  }
+};
+
+const getStatusLabel = (key) => {
     switch (key) {
       case 'feed':
         return 'Лента';
@@ -522,6 +619,17 @@ export default function AllOrdersScreen() {
 
   return (
     <Screen>
+      {allowed === null ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      ) : !allowed ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 16, color: theme.colors.textSecondary, textAlign: 'center', paddingHorizontal: 24 }}>
+            Админ вашей компании отключил доступ ко всем заявкам
+          </Text>
+        </View>
+      ) : (
       <ScrollView
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           style={{ backgroundColor: theme.colors.background }}
@@ -553,7 +661,8 @@ export default function AllOrdersScreen() {
             style={{ marginBottom: 12 }}
           />
 
-          <Button variant="secondary" onPress={() => { setTmpWorkType(workTypeFilter || null); setTmpMaterials(materialsFilter || []); setFilterModalVisible(true); }} style={{ marginBottom: 16 }} title={workTypeFilter || (materialsFilter?.length ? `Материалы: ${materialsFilter.length}` : 'Фильтры')} />
+          <Button variant="secondary" onPress={() => { setTmpWorkType(workTypeFilter || []); setTmpMaterials([]); setTmpExecutor(executorFilter || null); setFilterModalVisible(true); }} style={{ marginBottom: 16 }} title={useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length ? `Виды работ: ${workTypeFilter.length}` : (executorFilter ? 'Сотрудник выбран' : 'Фильтры')} />
+
 
 <Modal
   visible={filterModalVisible}
@@ -565,123 +674,99 @@ export default function AllOrdersScreen() {
   hardwareAccelerated={true}
   onRequestClose={() => setFilterModalVisible(false)}
 >
-            <View style={styles.modalOverlay}>
-              
-               <View style={styles.modalContent}>
-                <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true} keyboardDismissMode="on-drag" contentContainerStyle={{paddingBottom: 12}}>
-                {/* Исполнитель */}
-                <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Исполнитель</Text>
-                <TextField
-                  placeholder="Поиск исполнителя..."
-                  value={executorSearch}
-                  onChangeText={setExecutorSearch}
-                  style={styles.searchInput}
-                />
-                
-<View style={{maxHeight:220}}>
-  <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
-    {filteredExecutors && filteredExecutors.length > 0 ? (
-      filteredExecutors.map((item) => (
-        <Pressable key={String(item.id)} style={styles.executorOption}
-          onPress={() => setExecutorFilter(prev => prev===item.id ? null : item.id)}>
-          <View style={styles.executorRow}>
-            <Text style={styles.executorText}>{[item.first_name, item.last_name].filter(Boolean).join(' ')}</Text>
-            {executorFilter === item.id && <Text style={styles.checkmark}>✓</Text>}
-          </View>
-        </Pressable>
-      ))
-    ) : (
-      <Text style={[styles.executorText,{textAlign:'center', opacity:0.6, paddingVertical:8}]}>Ничего не найдено</Text>
-    )}
-  </ScrollView>
-</View>
-<Button variant="secondary" onPress={() => setExecutorFilter(null)} title="Сбросить исполнителя" style={{ marginTop: 12 }} />
-
-                <View style={styles.separator} />
-
-                {/* Отдел */}
-                <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Отдел</Text>
-                <TextField
-                  placeholder="Поиск отдела..."
-                  value={departmentSearch}
-                  onChangeText={setDepartmentSearch}
-                  style={styles.searchInput}
-                />
-                
-<View style={{maxHeight:220}}>
-  <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true}>
-    {(departmentSearch.trim()==='' ? departments : departments.filter(d => (d.name||'').toLowerCase().includes(departmentSearch.toLowerCase()))).length > 0 ? (
-      (departmentSearch.trim()==='' ? departments : departments.filter(d => (d.name||'').toLowerCase().includes(departmentSearch.toLowerCase()))).map((item) => (
-        <Pressable key={String(item.id)} style={styles.executorOption} onPress={() => setDepartmentFilter(prev => Number(prev)===Number(item.id) ? null : Number(item.id))}>
-          <View style={styles.executorRow}>
-            <Text style={styles.executorText}>{item.name}</Text>
-            {Number(departmentFilter) === Number(item.id) && <Text style={styles.checkmark}>✓</Text>}
-          </View>
-        </Pressable>
-      ))
-    ) : (
-      <Text style={[styles.executorText,{textAlign:'center', opacity:0.6, paddingVertical:8}]}>Отделы не найдены</Text>
-    )}
-  </ScrollView>
-</View>
-<Button variant="secondary" onPress={() => setDepartmentFilter(null)} title="Сбросить отдел" style={{ marginTop: 12 }} />
-
-                <View style={styles.separator} />
-
-                {/* Тип работ */}
-                <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Тип работ</Text>
-                {sortedWorkTypes.map((opt) => (
-                  <Pressable key={opt} style={styles.executorOption} onPress={() => setTmpWorkType(opt)}>
+  <View style={styles.modalOverlay}>
+    <View style={styles.modalContent}>
+      <ScrollView keyboardShouldPersistTaps="handled" nestedScrollEnabled={true} contentContainerStyle={{paddingBottom: 12}}>
+        {/* Work types block is shown only if feature enabled */}
+        {useWorkTypes && (
+          <View>
+            <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Виды работ</Text>
+            {Array.isArray(workTypes) && workTypes.length ? (
+              workTypes.map((t) => {
+                const active = (tmpWorkType || []).includes(t.id);
+                return (
+                  <Pressable key={String(t.id)} style={styles.executorOption}
+                    onPress={() => {
+                      setTmpWorkType((prev) => {
+                        const set = new Set(prev || []);
+                        if (set.has(t.id)) set.delete(t.id); else set.add(t.id);
+                        return Array.from(set);
+                      });
+                    }}>
                     <View style={styles.executorRow}>
-                      <Text style={styles.executorText}>{opt}</Text>
-                      {tmpWorkType === opt && <Text style={styles.checkmark}>✓</Text>}
+                      <Text style={styles.executorText}>{t.name}</Text>
+                      {active && <Text style={styles.checkmark}>✓</Text>}
                     </View>
                   </Pressable>
-                ))}
+                );
+              })
+            ) : null}
 
-                <View style={styles.separator} />
+            <Button
+              style={{ marginTop: 12 }}
+              variant="secondary"
+              onPress={() => setTmpWorkType([])}
+              title="Сбросить виды работ"
+            />
 
-                {/* Материалы */}
-                <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Материалы</Text>
-                {sortedMaterials.map((opt) => {
-                  const active = (tmpMaterials || []).includes(opt);
-                  return (
-                    <Pressable key={opt} style={styles.executorOption}
-                      onPress={() => {
-                        setTmpMaterials((prev) => {
-                          const set = new Set(prev || []);
-                          if (set.has(opt)) set.delete(opt); else set.add(opt);
-                          return Array.from(set);
-                        });
-                      }}>
-                      <View style={styles.executorRow}>
-                        <Text style={styles.executorText}>{opt}</Text>
-                        {active && <Text style={styles.checkmark}>✓</Text>}
-                      </View>
-                    </Pressable>
-                  );
-                })}
+            <View style={{ height: 12 }} />
+          </View>
+        )}
 
-                <Button variant="secondary" onPress={() => { setTmpWorkType(null); setTmpMaterials([]); }} title="Сбросить тип и материалы" style={{ marginTop: 12 }} />
+        <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>Сотрудник</Text>
+        <TextField
+          placeholder="Поиск сотрудника..."
+          value={executorSearch}
+          onChangeText={setExecutorSearch}
+          style={{ marginBottom: 8 }}
+        />
+        {filteredExecutors.length ? (
+          filteredExecutors.map((ex) => {
+            const name = [ex.first_name, ex.last_name].filter(Boolean).join(' ').trim() || 'Без имени';
+            const active = tmpExecutor === ex.id;
+            return (
+              <Pressable
+                key={String(ex.id)}
+                style={styles.executorOption}
+                onPress={() => setTmpExecutor(active ? null : ex.id)}
+              >
+                <View style={styles.executorRow}>
+                  <Text style={styles.executorText}>{name}</Text>
+                  {active && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+              </Pressable>
+            );
+          })
+        ) : (
+          <Text style={[styles.executorText,{opacity:0.6, textAlign:'center', paddingVertical:8}]}>Сотрудники не найдены</Text>
+        )}
 
-                <Button
-                  style={{ marginTop: 10 }}
-                  onPress={() => {
-                    setWorkTypeFilter(tmpWorkType || null);
-                    setMaterialsFilter(tmpMaterials || []);
-                    setFilterModalVisible(false);
-                    router.setParams({
-                      work_type: tmpWorkType || undefined,
-                      materials: (tmpMaterials || []).length ? (tmpMaterials || []).join(',') : undefined,
-                      executor: executorFilter || undefined,
-                      department: (departmentFilter != null ? String(departmentFilter) : undefined),
-                    });
-                  }}
-                  title="Применить"
-                />
-              </ScrollView></View>
-            </View>
-          </Modal>
+        <Button
+          style={{ marginTop: 12 }}
+          variant="secondary"
+          onPress={() => { setTmpExecutor(null); }}
+          title="Сбросить сотрудника"
+        />
+
+        <Button
+          style={{ marginTop: 10 }}
+          onPress={() => {
+            setWorkTypeFilter(Array.isArray(tmpWorkType) ? tmpWorkType : []);
+            setExecutorFilter(tmpExecutor || null);
+            setFilterModalVisible(false);
+            // Only pass work_type param when feature enabled
+            router.setParams({
+              ...(useWorkTypes && Array.isArray(tmpWorkType) && tmpWorkType.length ? { work_type: tmpWorkType.join(',') } : {}),
+              executor: tmpExecutor || undefined,
+            });
+          }}
+          title="Применить"
+        />
+      </ScrollView>
+    </View>
+  </View>
+</Modal>
+
 
 
 
@@ -713,6 +798,7 @@ export default function AllOrdersScreen() {
             ))
           )}
         </ScrollView>
+        )}
       </Screen>
   );
 }

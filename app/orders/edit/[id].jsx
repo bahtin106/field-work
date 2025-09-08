@@ -1,7 +1,7 @@
 // apps/field-work/app/orders/edit/[id].jsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, Platform, ScrollView, KeyboardAvoidingView, ToastAndroid } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { AntDesign } from '@expo/vector-icons';
 import Modal from 'react-native-modal';
 import { format } from 'date-fns';
@@ -18,11 +18,16 @@ import Button from '../../../components/ui/Button';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 export default function EditOrderScreen() {
-  const __params = useLocalSearchParams();
-// avoid Hermes Proxy traps by cloning to a plain object
-const params = React.useMemo(() => ({ ...(__params || {}) }), [__params]);
-const hasId = Object.prototype.hasOwnProperty.call(params, 'id');
-const id = hasId ? String(params.id) : null;
+  const pathname = usePathname();
+  // derive id from pathname to avoid Proxy traps from useLocalSearchParams()
+  const id = React.useMemo(() => {
+    try {
+      const path = String(pathname || '');
+      const clean = path.split('?')[0];
+      const parts = clean.split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : null;
+    } catch { return null; }
+  }, [pathname]);
   const router = useRouter();
   const { theme } = useTheme();
 
@@ -202,7 +207,7 @@ if (!mounted) return;
       return;
     }
     showToast('Сохранено');
-    router.replace(`/orders/${id}`); // вернуться к деталям
+    router.back(); // вернуться к деталям без дубликата в стеке
   };
 
   if (loading) {
