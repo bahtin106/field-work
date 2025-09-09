@@ -109,7 +109,8 @@ export default function LoginScreen() {
     }
 
     await waitForSession();
-    setLoading(false);
+setLoading(false);
+router.replace('/orders');
 };
 
   const isDisabled = !email || !password || loading;

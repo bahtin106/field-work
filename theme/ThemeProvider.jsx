@@ -13,6 +13,7 @@ function buildTheme(mode) {
 
   const colors = {
     background: base.colors.background ?? base.colors.bg ?? '#FFFFFF',
+    // Prefer explicit "card" color if provided, otherwise fall back to "surface"
     surface: base.colors.surface ?? base.colors.card ?? '#FFFFFF',
     text: base.colors.text ?? '#0A0A0A',
     textSecondary: base.colors.textSecondary ?? base.text?.muted?.color ?? '#6B7280',
@@ -29,15 +30,17 @@ function buildTheme(mode) {
     warning: base.colors.warning,
     danger: base.colors.danger,
     worker: base.colors.worker ?? '#5856D6',
-    // legacy aliases
+    // legacy / extra aliases
     bg: base.colors.background ?? base.colors.bg,
-    card: base.colors.surface ?? base.colors.card,
+    // Prefer card if present, else use surface so components relying on `t.colors.card` can differ from background
+    card: (base.colors.card ?? base.colors.surface) ?? '#FFFFFF',
     accent: base.colors.primary ?? base.colors.accent,
     accentTextOn: base.colors.onPrimary ?? base.colors.primaryTextOn,
     navbar: base.colors.navbar ?? base.colors.surface,
+    ripple: base.colors.ripple ?? (effective === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
   };
 
-  // shadows: ensure card.ios / card.android exists for Button styles
+  // shadows: ensure card.ios / card.android exists
   const normalizedShadows = {
     card:
       base.shadows?.card ??
@@ -68,15 +71,17 @@ function buildTheme(mode) {
     },
   };
 
-  // radii defaults
+  // radii defaults — include xs and xl so `t.radii.xl` works
   const radii = {
-    sm: base.radii?.sm ?? 6,
-    md: base.radii?.md ?? 10,
-    lg: base.radii?.lg ?? 14,
+    xs: base.radii?.xs ?? 6,
+    sm: base.radii?.sm ?? 8,
+    md: base.radii?.md ?? 12,
+    lg: base.radii?.lg ?? 16,
+    xl: base.radii?.xl ?? 24,
     pill: base.radii?.pill ?? 999,
   };
 
-  // spacing requested by Button (pad)
+  // spacing
   const spacing = {
     xs: base.spacing?.xs ?? 6,
     sm: base.spacing?.sm ?? 8,

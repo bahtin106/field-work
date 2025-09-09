@@ -2,6 +2,9 @@
 import React, { useEffect, useState } from 'react';
 import {Pressable, ScrollView, Text, TextInput, View} from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
+import Screen from '../../../components/layout/Screen';
+import { useNavigation } from 'expo-router';
+import { useRoute } from '@react-navigation/native';
 import Button from '../../../components/ui/Button';
 import { supabase } from '../../../lib/supabase';
 import Card from '../../../components/ui/Card';
@@ -16,6 +19,8 @@ import {
 } from '../../../lib/workTypes';
 
 export default function AdvancedSettings() {
+  const nav = useNavigation();
+  const route = useRoute();
   const { theme } = useTheme();
   const toast = useToast();
   const [companyId, setCompanyId] = useState(null);
@@ -244,8 +249,8 @@ if (loading) {
   }
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: theme.colors.background }} contentContainerStyle={{ padding: 16 }}>
-      <Card>
+    <Screen>
+      <ScrollView style={{ flex: 1, backgroundColor: theme.colors.background }} contentContainerStyle={{ padding: 16 }}><Card>
         <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>
           Виды работ
         </Text>
@@ -470,5 +475,6 @@ if (loading) {
       </Card>
 
     </ScrollView>
+        </Screen>
   );
 }

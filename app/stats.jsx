@@ -776,13 +776,12 @@ const onRefresh = useCallback(async () => {
 
   return (
     <SafeAreaView style={styles.container}>
-            <AppHeader options={{ title: 'Статистика' }} back />
-
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentInsetAdjustmentBehavior="automatic"
       >
+        <AppHeader options={{ title: 'Статистика' }} back />
         {isManager && (
           <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
             <Pressable onPress={openPicker} style={styles.picker} hitSlop={HIT}>
