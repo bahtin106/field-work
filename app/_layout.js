@@ -3,10 +3,9 @@ import 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View, AppState } from 'react-native';
+import {ActivityIndicator, View, AppState, Platform} from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-// NOTE: paths are relative to app/
 import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
@@ -14,18 +13,20 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
-import Constants from 'expo-constants';
-// telemetry disabled (import removed)
-// Держим сплэш до полной готовности
+
+import {SafeAreaProvider, SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-
-// Telemetry disabled
 function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);
   const [booted, setBooted] = useState(false);
-  // Wait until Supabase client has an access token (avoid anon fetches)
+  const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
+// Adaptive top safe area: keep top padding only on iOS or Android devices with a real cutout/notch
+const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','right'] : ['left','right'];
+
   async function waitForSession({ tries = 20, delay = 100 } = {}) {
     for (let i = 0; i < tries; i++) {
       try {
@@ -37,10 +38,7 @@ function RootLayoutInner() {
     return null;
   }
 
-
-  
-  const theme = useTheme();
-useEffect(() => {
+  useEffect(() => {
     let mounted = true;
 
     const boot = async () => {
@@ -72,16 +70,16 @@ useEffect(() => {
       const logged = !!session?.user;
       setIsLoggedIn(logged);
       if (logged && session?.user?.id) {
-  try {
-    await waitForSession();
-    const r = await getUserRole();
-    setRole(r);
-  } catch {
-    setRole(null);
-  }
-} else {
-  setRole(null);
-}
+        try {
+          await waitForSession();
+          const r = await getUserRole();
+          setRole(r);
+        } catch {
+          setRole(null);
+        }
+      } else {
+        setRole(null);
+      }
       setBooted(true);
     });
 
@@ -98,7 +96,6 @@ useEffect(() => {
     };
   }, [booted]);
 
-  // Скрываем сплэш только когда всё готово:
   useEffect(() => {
     const ready = booted && (isLoggedIn ? !!role : true);
     if (ready) SplashScreen.hideAsync().catch(() => {});
@@ -108,17 +105,21 @@ useEffect(() => {
 
   if (!ready) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" />
-      </View>
+      <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }}>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" />
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme?.colors?.background }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <PermissionsProvider>
         <SettingsProvider>
-          <View style={{ flex: 1 }}>
+          {/* Глобальный safe area: верх/лево/право.
+              Низ не трогаем — им занимается BottomNav через insets.bottom */}
+          <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }}>
             <Stack
               initialRouteName={isLoggedIn ? 'orders' : '(auth)'}
               screenOptions={{
@@ -128,14 +129,16 @@ useEffect(() => {
                 fullScreenGestureEnabled: true,
                 animationTypeForReplace: 'push',
                 gestureDirection: 'horizontal',
+                headerStyle: { backgroundColor: '#fff' },
+                contentStyle: { backgroundColor: theme.colors.background },
               }}
             >
-              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
               <Stack.Screen name="orders" />
             </Stack>
 
             {isLoggedIn && <BottomNav />}
-          </View>
+          </SafeAreaView>
         </SettingsProvider>
       </PermissionsProvider>
     </GestureHandlerRootView>
@@ -145,9 +148,11 @@ useEffect(() => {
 export default function RootLayout() {
   return (
     <ThemeProvider>
-    <ToastProvider>
-       <RootLayoutInner />
-     </ToastProvider>  
+      <ToastProvider>
+        <SafeAreaProvider>
+          <RootLayoutInner />
+        </SafeAreaProvider>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

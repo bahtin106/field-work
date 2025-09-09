@@ -4,9 +4,13 @@ import { View, Text, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
+import { useNavigation } from 'expo-router';
+import { useRoute } from '@react-navigation/native';
 
 
 export default function SettingsIndex() {
+  const nav = useNavigation();
+  const route = useRoute();
   const { theme } = useTheme();
   const router = useRouter();
   const items = [
@@ -18,9 +22,8 @@ export default function SettingsIndex() {
   ];
 
   return (
-    <Screen background="background" edges={['top','bottom']}>
-      <View style={({ pressed }) => ([{ flex: 1, justifyContent: 'flex-start', paddingHorizontal: theme?.spacing?.md ?? 16 } , pressed ? { opacity: 0.8 } : null])}>
-        <View style={({ pressed }) => ([{ backgroundColor: theme?.colors?.surface, borderRadius: theme?.radius?.xl ?? 16, overflow: 'hidden', marginTop: theme?.spacing?.xs ?? 8, borderWidth: 1, borderColor: theme?.colors?.border } , pressed ? { opacity: 0.8 } : null])}>
+    <Screen background="background" edges={['top','bottom']}><View style={{ flex: 1, justifyContent: 'flex-start', paddingHorizontal: theme?.spacing?.md ?? 16 }}>
+        <View style={{ backgroundColor: theme?.colors?.surface, borderRadius: theme?.radii?.xl ?? 24, overflow: 'hidden', marginTop: theme?.spacing?.xs ?? 8, borderWidth: 1, borderColor: theme?.colors?.border }}>
           {items.map((item, idx) => (
             <Pressable
               key={item.route}
