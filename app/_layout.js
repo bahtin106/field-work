@@ -3,8 +3,10 @@ import 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
-import {ActivityIndicator, View, AppState, Platform} from 'react-native';
+import { ActivityIndicator, View, AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { LinearTransition, FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
@@ -13,8 +15,7 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
-
-import {SafeAreaProvider, SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import { registerForPushTokensAsync, attachNotificationLogs } from '../lib/push';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -24,8 +25,8 @@ function RootLayoutInner() {
   const [booted, setBooted] = useState(false);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-// Adaptive top safe area: keep top padding only on iOS or Android devices with a real cutout/notch
-const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','right'] : ['left','right'];
+
+  const safeEdges = Platform.OS === 'ios' || insets.top >= 28 ? ['top','left','right'] : ['left','right'];
 
   async function waitForSession({ tries = 20, delay = 100 } = {}) {
     for (let i = 0; i < tries; i++) {
@@ -40,7 +41,6 @@ const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','r
 
   useEffect(() => {
     let mounted = true;
-
     const boot = async () => {
       try {
         const { data } = await supabase.auth.getSession();
@@ -53,9 +53,7 @@ const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','r
             await waitForSession();
             const r = await getUserRole();
             if (mounted) setRole(r);
-          } catch {
-            if (mounted) setRole(null);
-          }
+          } catch { if (mounted) setRole(null); }
         } else {
           if (mounted) setRole(null);
         }
@@ -63,23 +61,15 @@ const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','r
         if (mounted) setBooted(true);
       }
     };
-
     boot();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_, session) => {
       const logged = !!session?.user;
       setIsLoggedIn(logged);
       if (logged && session?.user?.id) {
-        try {
-          await waitForSession();
-          const r = await getUserRole();
-          setRole(r);
-        } catch {
-          setRole(null);
-        }
-      } else {
-        setRole(null);
-      }
+        try { await waitForSession(); const r = await getUserRole(); setRole(r); }
+        catch { setRole(null); }
+      } else { setRole(null); }
       setBooted(true);
     });
 
@@ -101,6 +91,22 @@ const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','r
     if (ready) SplashScreen.hideAsync().catch(() => {});
   }, [booted, isLoggedIn, role]);
 
+
+useEffect(() => {
+  let detach;
+  (async () => {
+    try {
+      const token = await registerForPushTokensAsync();
+      console.log('✅ Expo push token:', token);
+      detach = attachNotificationLogs();
+    } catch (e) {
+      console.warn('Push init error:', e?.message || e);
+    }
+  })();
+  return () => detach?.();
+}, []);
+
+
   const ready = booted && (isLoggedIn ? !!role : true);
 
   if (!ready) {
@@ -117,27 +123,28 @@ const safeEdges = (Platform.OS === 'ios' || insets.top >= 28) ? ['top','left','r
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <PermissionsProvider>
         <SettingsProvider>
-          {/* Глобальный safe area: верх/лево/право.
-              Низ не трогаем — им занимается BottomNav через insets.bottom */}
           <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }}>
-            <Stack
-              initialRouteName={isLoggedIn ? 'orders' : '(auth)'}
-              screenOptions={{
-                headerShown: false,
-                animation: 'simple_push',
-                gestureEnabled: true,
-                fullScreenGestureEnabled: true,
-                animationTypeForReplace: 'push',
-                gestureDirection: 'horizontal',
-                headerStyle: { backgroundColor: '#fff' },
-                contentStyle: { backgroundColor: theme.colors.background },
-              }}
-            >
-              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-              <Stack.Screen name="orders" />
-            </Stack>
-
-            {isLoggedIn && <BottomNav />}
+            <Animated.View
+  layout={LinearTransition.duration(220)}
+  style={{ flex: 1 }}
+>
+              <Stack
+                initialRouteName={isLoggedIn ? 'orders/index' : '(auth)'}
+                screenOptions={{
+                  headerShown: false,
+                  animation: 'simple_push',
+                  gestureEnabled: true,
+                  fullScreenGestureEnabled: true,
+                  animationTypeForReplace: 'push',
+                  gestureDirection: 'horizontal',
+                  contentStyle: { backgroundColor: theme.colors.background },
+                }}
+              >
+                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                <Stack.Screen name="orders/index" />
+              </Stack>
+              {isLoggedIn && <BottomNav />}
+            </Animated.View>
           </SafeAreaView>
         </SettingsProvider>
       </PermissionsProvider>
@@ -149,9 +156,7 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <ToastProvider>
-        <SafeAreaProvider>
-          <RootLayoutInner />
-        </SafeAreaProvider>
+        <RootLayoutInner />
       </ToastProvider>
     </ThemeProvider>
   );

@@ -5,6 +5,7 @@ import { usePathname, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { supabase } from '../../lib/supabase';
+import { useToast } from '../ui/ToastProvider';
 
 // -------- helpers --------
 async function fetchMyProfile() {
@@ -71,6 +72,7 @@ function BottomNavInner() {
   const pathname = usePathname() || '';
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { setAnchorOffset } = useToast();
   const [canAll, setCanAll] = useState(false);
   const pollTimer = useRef(null);
   const appStateRef = useRef(AppState.currentState);
@@ -198,7 +200,7 @@ function BottomNavInner() {
       ]}
     >
       {/* гарантированный ремоунт при смене canAll */}
-      <View key={`variant-${Number(canAll)}`} style={styles.bar}>
+      <View key={`variant-${Number(canAll)}`} style={styles.bar} onLayout={(e) => { const h = e.nativeEvent.layout.height; if (setAnchorOffset) setAnchorOffset(h + 24); }}>
         <TabButton
           key="tab-home"
           label="Главная"

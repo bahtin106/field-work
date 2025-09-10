@@ -5,23 +5,21 @@ const light = {
     surface: "#FFFFFF",
     text: "#0A0A0A",
     textSecondary: "#6B7280",
-    muted: "#6B7280",             // ← добавлено: используется в лэйаутах/табах
+    muted: "#6B7280",
     primary: "#007AFF",
-    onPrimary: "#FFFFFF",           // фирменная голубая
+    onPrimary: "#FFFFFF",
     primaryTextOn: "#FFFFFF",
     border: "#E5E7EB",
     success: "#22C55E",
     warning: "#F59E0B",
-    worker: "#5856D6",    // фиолетовый для рабочих
+    worker: "#5856D6",
     danger: "#FF3B30",
     overlay: "rgba(0,0,0,0.35)",
     inputBg: "#FFFFFF",
     inputPlaceholder: "#9CA3AF",
     inputBorder: "#E5E7EB",
     cardShadow: "rgba(0,0,0,0.06)",
-  
-    // === Added explicit tokens for components ===
-    // Buttons
+
     button: {
       primaryBg: "#007AFF",
       primaryText: "#FFFFFF",
@@ -30,19 +28,15 @@ const light = {
       dangerBg: "#FF3B30",
       dangerText: "#FFFFFF"
     },
-    // Status badges
     status: {
       feed:     { bg: "#FFF7CC", fg: "#8A6D1F" },
       new:      { bg: "#E8F0FE", fg: "#0A84FF" },
       progress: { bg: "#E9F7EF", fg: "#34C759" },
       done:     { bg: "#F2F2F7", fg: "#6B7280" }
     },
-    // Chips and badges
     chipBg: "#E6F0FF",
     badgeBg: "#EEF1F6",
-    // Disabled state for primary
     primaryDisabled: "#9DC6FF",
-    // Navigation and banners
     navigationBarBg: "#FFFFFF",
     bannerBg: "#E6F0FF"
 },
@@ -70,14 +64,13 @@ const dark = {
     text: "#F3F4F6",
     textSecondary: "#A3A3A3",
     muted: "#A3A3A3",
-    worker: "#7C7CF0",    // фиолетовый для рабочих (тёмная тема)             // ← добавлено под тёмную тему
+    worker: "#7C7CF0",
     border: "#23252B",
     inputBg: "#161823",
     inputBorder: "#262A34",
     cardShadow: "rgba(0,0,0,0.5)",
     overlay: "rgba(0,0,0,0.6)",
-  
-    // === Added explicit tokens for components (dark) ===
+
     button: {
       primaryBg: "#2F6FFF",
       primaryText: "#FFFFFF",

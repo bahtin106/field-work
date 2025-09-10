@@ -7,7 +7,7 @@ import AppHeader from "../navigation/AppHeader";
 import { useNavigation, usePathname } from "expo-router";
 import { useRoute } from "@react-navigation/native";
 
-export default function Screen({ children, style }) {
+export default function Screen({ children, style, scroll = true }) {
   const { theme } = useTheme();
   const nav = useNavigation();
   const route = useRoute();
@@ -17,17 +17,31 @@ export default function Screen({ children, style }) {
 
   return (
     <SafeAreaView edges={['left','right']} style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}>
-      <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
-        {showHeader && (
-          <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
-        )}
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={{ flex: 1 }}
-        >
-          {children}
-        </KeyboardAvoidingView>
-      </ScrollView>
+      {scroll ? (
+  <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+    {showHeader && (
+      <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
+    )}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={{ flex: 1 }}
+    >
+      {children}
+    </KeyboardAvoidingView>
+  </ScrollView>
+) : (
+  <>
+    {showHeader && (
+      <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
+    )}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      style={{ flex: 1 }}
+    >
+      {children}
+    </KeyboardAvoidingView>
+  </>
+)}
     </SafeAreaView>
   );
 }

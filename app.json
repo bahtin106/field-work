@@ -33,7 +33,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      "expo-notifications"
     ],
     "androidNavigationBar": {
       "backgroundColor": "#FFFFFF",
@@ -44,6 +45,7 @@
       "backgroundColor": "#f2f6fa",
       "barStyle": "dark-content",
       "translucent": false
-    }
+    },
+    "owner": "bahtin106"
   }
 }
