@@ -900,7 +900,7 @@ const getDateKey = (v) => {
   };
 
   return (
-    <Screen style={styles.safeArea}>
+  <Screen style={styles.safeArea} scroll={false}>
       <View style={styles.container}>
         <Animated.View style={{ transform: [{ translateX: monthTrans }], opacity: monthOpacity }}>
           <Calendar

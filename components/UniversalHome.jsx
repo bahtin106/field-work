@@ -126,13 +126,13 @@ export default function UniversalHome({ role }) {
   const openCreateOrder = () => router.push('/orders/create-order');
 
   const handleLogout = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch (_e) {
-    } finally {
-      router.replace('/(auth)/login');
-    }
-  };
+  try {
+    await supabase.auth.signOut();
+    // редирект выполнит RootLayout через onAuthStateChange
+  } catch (_e) {
+    // можно показать тост об ошибке, если нужно
+  }
+};
 
   // Маппа статусов в роуты
   const openOrdersWithFilter = (key) => {
