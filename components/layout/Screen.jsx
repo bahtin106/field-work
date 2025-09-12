@@ -12,13 +12,16 @@ export default function Screen({ children, style, scroll = true }) {
   const nav = useNavigation();
   const route = useRoute();
   const pathname = usePathname() || "";
-  const showHeader = !pathname.startsWith("/(auth)");
+  const isAuthScreen = (pathname.startsWith("/(auth)")) || route?.name === "login";
+  const showHeader = !isAuthScreen;
+  const useScroll = (scroll !== false) && !isAuthScreen;
   const title = route?.name ?? "";
+  const edges = isAuthScreen ? ['top','left','right','bottom'] : ['left','right'];
 
   return (
-    <SafeAreaView edges={['left','right']} style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}>
-      {scroll ? (
-  <ScrollView contentContainerStyle={{ flexGrow: 1 }}>
+    <SafeAreaView edges={edges} style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}>
+      {useScroll ? (
+  <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
     {showHeader && (
       <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
     )}

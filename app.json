@@ -7,7 +7,8 @@
     "orientation": "portrait",
     "scheme": "workorders",
     "platforms": [
-      "android"
+      "android",
+      "ios"
     ],
     "jsEngine": "hermes",
     "userInterfaceStyle": "automatic",
@@ -22,7 +23,11 @@
     "android": {
       "softwareKeyboardLayoutMode": "resize",
       "package": "com.bahtin106.workordersapp",
-      "backgroundColor": "#f2f6fa"
+      "backgroundColor": "#f2f6fa",
+      "googleServicesFile": "./google-services.json"
+    },
+    "ios": {
+      "bundleIdentifier": "com.bahtin106.workordersapp"
     },
     "extra": {
       "supabaseUrl": "https://fopalcvzdkftsvhqszcx.supabase.co",
