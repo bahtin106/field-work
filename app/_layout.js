@@ -2,6 +2,7 @@
 import 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Notifications from 'expo-notifications';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View, AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -15,9 +16,50 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
-import { registerForPushTokensAsync, attachNotificationLogs } from '../lib/push';
+import { registerAndSavePushToken, attachNotificationLogs } from '../lib/push';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// --- React Query: cache + offline persist (RN) ---
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,      // 5 минут не считаем устаревшими
+      gcTime: 24 * 60 * 60 * 1000,   // храним кэш сутки
+      retry: 1,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
+    },
+  },
+});
+
+const persister = createAsyncStoragePersister({ storage: AsyncStorage });
+
+// сетевое состояние и фокус для RN
+onlineManager.setEventListener((setOnline) =>
+  NetInfo.addEventListener((state) => setOnline(!!state.isConnected))
+);
+
+focusManager.setEventListener((handleFocus) => {
+  const sub = AppState.addEventListener('change', (s) => handleFocus(s === 'active'));
+  return () => sub.remove();
+});
+// Expo Notifications handler: без deprecated shouldShowAlert
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,   // iOS: heads-up баннер
+    shouldShowList: true,     // iOS: в Notification Center
+    shouldPlaySound: true,    // iOS/Android: звук если разрешён
+    priority: Notifications.AndroidNotificationPriority.MAX,
+  }),
+});
 
 function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -93,19 +135,19 @@ function RootLayoutInner() {
 
 
 useEffect(() => {
+  if (!isLoggedIn) return;
   let detach;
   (async () => {
     try {
-      const token = await registerForPushTokensAsync();
-      console.log('✅ Expo push token:', token);
+      const token = await registerAndSavePushToken();
+      console.log('✅ Expo push token (saved):', token);
       detach = attachNotificationLogs();
     } catch (e) {
       console.warn('Push init error:', e?.message || e);
     }
   })();
   return () => detach?.();
-}, []);
-
+}, [isLoggedIn]);
 
   const ready = booted && (isLoggedIn ? !!role : true);
 
@@ -154,10 +196,12 @@ useEffect(() => {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <ToastProvider>
-        <RootLayoutInner />
-      </ToastProvider>
-    </ThemeProvider>
+    <PersistQueryClientProvider client={queryClient} persistOptions={{ persister, maxAge: 7 * 24 * 60 * 60 * 1000 }}>
+      <ThemeProvider>
+        <ToastProvider>
+          <RootLayoutInner />
+        </ToastProvider>
+      </ThemeProvider>
+    </PersistQueryClientProvider>
   );
 }

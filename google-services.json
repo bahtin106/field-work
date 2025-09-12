@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1099455383518",
+    "project_id": "workordersapp-1bb29",
+    "storage_bucket": "workordersapp-1bb29.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1099455383518:android:66e1255518576a4dc93f4f",
+        "android_client_info": {
+          "package_name": "com.bahtin106.workordersapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyByqmpUknf-8BjrR7fyojdJsS8OG07dxrw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
