@@ -1,4 +1,5 @@
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
   View,
@@ -10,6 +11,7 @@ import {
   Keyboard,
   TouchableWithoutFeedback,
   Platform,
+  BackHandler,
 } from 'react-native';
 
 import DynamicOrderCard from '../../components/DynamicOrderCard'; 
@@ -78,6 +80,15 @@ export default function MyOrdersScreen() {
 
   const router = useRouter();
 
+  // Из вкладки «Мои» кнопка Назад ведёт на Главную
+  useFocusEffect(React.useCallback(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/orders');
+      return true;
+    });
+    return () => sub.remove();
+  }, []));
+
   function __canSeePhone(o) {
     try {
       return Boolean(o && o.customer_phone_visible);
@@ -100,6 +111,8 @@ export default function MyOrdersScreen() {
   });
   const [userId, setUserId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const hydratedRef = useRef(false);
+  const [bgRefreshing, setBgRefreshing] = useState(false);
 
   const { seedFilter, seedSearch } = useLocalSearchParams();
   const seedOnceRef = useRef(false);
@@ -113,6 +126,7 @@ export default function MyOrdersScreen() {
         : filter || 'all';
     if (LIST_CACHE.my[k]) {
       setOrders(LIST_CACHE.my[k]);
+      hydratedRef.current = true;
     }
     if (typeof seedFilter === 'string' && seedFilter.length)
       setFilter(seedFilter);
@@ -128,10 +142,12 @@ export default function MyOrdersScreen() {
   useEffect(() => {
     const fetchUserAndOrders = async () => {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
-      // If cache exists, show it immediately and refresh silently
-      if (LIST_CACHE.my[key]) {
-        setOrders(LIST_CACHE.my[key]);
+      const cached = LIST_CACHE.my[key];
+      if (cached && cached.length) {
+        setOrders(cached);
+        hydratedRef.current = true;
         setLoading(false);
+        setBgRefreshing(true);
       } else {
         setLoading(true);
       }
@@ -165,7 +181,9 @@ export default function MyOrdersScreen() {
       if (!error && Array.isArray(data)) {
         setOrders(data);
         LIST_CACHE.my[key] = data; // update cache
+        hydratedRef.current = true;
       }
+      setBgRefreshing(false);
       setLoading(false);
     };
 
@@ -239,7 +257,7 @@ export default function MyOrdersScreen() {
             style={styles.searchInput}
           />
 
-          {loading ? (
+          {(loading && !hydratedRef.current) ? (
             <ActivityIndicator
               size="large"
               color={theme.colors.primary}

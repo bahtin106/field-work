@@ -12,9 +12,8 @@ import {
  FlatList,
  RefreshControl,
  ScrollView,
- StyleSheet } from 'react-native';
+ StyleSheet, TouchableOpacity } from 'react-native';
 
-import { TouchableOpacity as GHTouchableOpacity } from 'react-native-gesture-handler';
 import { Calendar } from 'react-native-calendars';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -309,6 +308,11 @@ export default function StatsScreen() {
           borderColor: TOK.OUTLINE,
         },
         checkText: { color: TOK.TEXT, fontWeight: '600' },
+        rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
+        metricTiny: { fontSize: 13, color: TOK.isDark ? '#D1D1D6' : '#444444' },
+        separator: { height: 1, backgroundColor: TOK.OUTLINE, marginVertical: 6 },
+        muted: { color: TOK.SUBTEXT },
+
       }),
     [TOK, insets.top],
   );
@@ -316,15 +320,16 @@ export default function StatsScreen() {
 
   // ---- Unified components (local) ----
   const Button = ({ title, onPress, style, textStyle, disabled, hitSlop }) => (
-    <Pressable
+    <TouchableOpacity
       onPress={onPress}
       disabled={disabled}
       hitSlop={hitSlop}
-      style={({ pressed }) => [style, pressed && { opacity: 0.85 }]}
+      activeOpacity={0.85}
+      style={[style, disabled && { opacity: 0.6 }]}
       accessibilityRole="button"
     >
       <Text style={textStyle}>{title}</Text>
-    </Pressable>
+    </TouchableOpacity>
   );
 
   const TextField = ({
@@ -764,9 +769,9 @@ const onRefresh = useCallback(async () => {
   // ---------- Render ----------
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color={TOK.PRIMARY} />
-      </SafeAreaView>
+      </View>
     );
     }
 
@@ -775,136 +780,45 @@ const onRefresh = useCallback(async () => {
     : me?.full_name || 'Я';
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
       >
         <AppHeader options={{ title: 'Статистика' }} back />
-        {isManager && (
-          <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
-            <Pressable onPress={openPicker} style={styles.picker} hitSlop={HIT}>
-              <Ionicons name="person-circle-outline" size={22} color={TOK.SUBTEXT} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pickerText}>{headerName}</Text>
-                <Text style={styles.pickerHint}>
-                  Нажми, чтобы выбрать пользователя или “Все сотрудники”
-                </Text>
+        
+      {isManager && (
+        <View style={styles.section}>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Разрез по статусам</Text>
+            {(financeByStatus && financeByStatus.length > 0) ? (
+              <View style={{ gap: 10 }}>
+                {financeByStatus.map((row, idx) => (
+                  <View key={idx} style={styles.rowBetween}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.metricLabel}>{row.bucket}</Text>
+                    </View>
+                    <View style={{ flex: 2, alignItems: 'flex-end' }}>
+                      <Text style={styles.metricTiny}>Стоимость: {fRUB(row.total_price)}</Text>
+                      <Text style={styles.metricTiny}>ГСМ: {fRUB(row.total_fuel_cost)}</Text>
+                      <Text style={styles.metricTiny}>Итого: {fRUB(row.net_income)}</Text>
+                    </View>
+                  </View>
+                ))}
+                <View style={styles.separator} />
+                <View style={styles.rowBetween}>
+                  <Text style={styles.metricLabel}>Итого</Text>
+                  <Text style={styles.metricValue}>{fRUB(finance.net_income || 0)}</Text>
+                </View>
               </View>
-              <Ionicons name="chevron-down" size={18} color={TOK.SUBTEXT} />
-            </Pressable>
-          </View>
-        )}
-
-        {/* Period chips */}
-        <View style={styles.chipRow}>
-          {PERIODS.map((p) => {
-            const active = p.key === period;
-            const isCustom = p.key === 'custom';
-            return (
-              <Button
-                key={p.key}
-                onPress={() => (isCustom ? openCustom() : setPeriod(p.key))}
-                style={[styles.chip, active && styles.chipActive]}
-                hitSlop={HIT}
-                textStyle={[styles.chipText, active && styles.chipTextActive]}
-                title={isCustom && period === 'custom' ? `${fmt(customFrom)} → ${fmt(customTo)}` : p.label}
-              />
-            );
-          })}
-        </View>
-
-        {/* Summary: заявки */}
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              Заявки ·{' '}
-              {period === 'custom'
-                ? `${fmt(customFrom)} → ${fmt(customTo)}`
-                : PERIODS.find((p) => p.key === period)?.label || '—'}
-            </Text>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Всего</Text>
-              <Text style={styles.metricValue}>{computed.totals.all}</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Новые</Text>
-              <Text style={styles.metricValue}>{computed.totals.new}</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>В работе</Text>
-              <Text style={styles.metricValue}>{computed.totals.inProgress}</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Завершённые</Text>
-              <Text style={styles.metricValue}>{computed.totals.done}</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Summary: финансы */}
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              Финансы · {isManager ? headerName : 'Вы'} ·{' '}
-              {period === 'custom'
-                ? `${fmt(customFrom)} → ${fmt(customTo)}`
-                : PERIODS.find((p) => p.key === period)?.label || '—'}
-            </Text>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Начислено</Text>
-              <Text style={styles.metricValue}>{fRUB(finance.total_price || computed.money.payout)}</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>Возмещение топлива</Text>
-              <Text style={styles.metricValue}>{fRUB(finance.total_fuel_cost || computed.money.fuel)}</Text>
-            </View>
-            <View style={styles.metricRow}>
-              <Text style={styles.metricLabel}>К выплате</Text>
-              <Text style={styles.metricValue}>{fRUB(finance.net_income || (computed.money.payout - computed.money.fuel))}</Text>
-            </View>
-            {(finance.total_price === 0 && computed.money.payout === 0) && (
-              <Text style={{ color: TOK.SUBTEXT, marginTop: 8 }}>
-                Нет данных по выплатам за выбранный период или нет доступа к представлению
-                <Text style={{ fontWeight: '700' }}> order_payouts</Text>.
-              </Text>
+            ) : (
+              <Text style={styles.muted}>Нет данных за выбранный период</Text>
             )}
           </View>
         </View>
-
-      {/* Разрез по статусам */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Разрез по статусам</Text>
-        {
-          (financeByStatus && financeByStatus.length > 0) ? (
-            <View style={{ gap: 10 }}>
-              {financeByStatus.map((row, idx) => (
-                <View key={idx} style={styles.rowBetween}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.metricLabel}>{row.bucket}</Text>
-                  </View>
-                  <View style={{ flex: 2, alignItems: 'flex-end' }}>
-                    <Text style={styles.metricTiny}>Стоимость: {fRUB(row.total_price)}</Text>
-                    <Text style={styles.metricTiny}>ГСМ: {fRUB(row.total_fuel_cost)}</Text>
-                    <Text style={styles.metricTiny}>Итого: {fRUB(row.net_income)}</Text>
-                  </View>
-                </View>
-              ))}
-              <View style={styles.separator} />
-              <View style={styles.rowBetween}>
-                <Text style={styles.metricLabel}>Итого</Text>
-                <Text style={styles.metricValue}>{fRUB(finance.net_income || 0)}</Text>
-              </View>
-            </View>
-          ) : (
-            <Text style={styles.muted}>Нет данных за выбранный период</Text>
-          )
-        }
-
-      </View>
-
-      {/* Показатели */}
+      )}
+/* Показатели */}}
       <View style={styles.section}>
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Показатели</Text>
@@ -1110,6 +1024,6 @@ const onRefresh = useCallback(async () => {
           </SafeAreaView>
         </Modal>
       )}
-    </SafeAreaView>
+    </View>
   );
 }

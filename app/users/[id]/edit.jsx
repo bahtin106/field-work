@@ -760,12 +760,8 @@ const proceedSave = async () => {
     setSaving(true);
     setErr('');
     setOk('');
-    const payload = {
-      first_name: firstName.trim(),
-      last_name: lastName.trim(),
-      phone: String(phone || '').replace(/\D/g, '') || null,
-      birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null,
-      department_id: departmentId || null };
+    const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: meIsAdmin ? role : undefined };
+    Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
     const { data: updRows, error: updProfileErr } = await supabase
       .from('profiles')
       .update(payload)
@@ -784,7 +780,7 @@ const proceedSave = async () => {
           user_id: userId,
           email: String(email || '').trim() || undefined,
           password: newPassword && newPassword.length ? newPassword : undefined,
-          role };
+          role: meIsAdmin ? role : undefined };
         const res = await fetch(FN_URL, {
           method: 'POST',
           headers: {
@@ -876,21 +872,25 @@ const fetchMe = useCallback(async () => {
     const name = n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || 'Без имени';
     return name;
   };
-  const fetchUser = useCallback(async () => {
-  setLoading(true);
+  const fetchUser = useCallback(async () => {  setLoading(true);
   try {
-    const { data, error } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
-    if (error) throw error;
-    const row = Array.isArray(data) ? data[0] : data;
-    setEmail(row?.email || '');
-    setRole(row?.user_role || 'worker');
-    if (row?.birthdate) {
-      const d = new Date(row.birthdate);
-      setBirthdate(!isNaN(d.getTime()) ? d : null);
-    } else setBirthdate(null);
+    if (meIsAdmin) {
+      const { data, error } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      setEmail(row?.email || '');
+      setRole(row?.user_role || 'worker');
+      if (row?.birthdate) {
+        const d = new Date(row.birthdate);
+        setBirthdate(!isNaN(d.getTime()) ? d : null);
+      } else setBirthdate(null);
+    } else {
+      const { data: auth } = await supabase.auth.getUser();
+      if (auth?.user?.id === userId) setEmail(auth?.user?.email || '');
+    }
     const { data: prof } = await supabase
       .from('profiles')
-      .select('first_name, last_name, full_name, phone, is_suspended, suspended_at, avatar_url, department_id')
+      .select('first_name, last_name, full_name, phone, is_suspended, suspended_at, avatar_url, department_id, role, birthdate')
       .eq('id', userId)
       .maybeSingle();
     if (prof) {
@@ -901,23 +901,28 @@ const fetchMe = useCallback(async () => {
       if (typeof prof.avatar_url !== 'undefined') setAvatarUrl(prof.avatar_url || null);
       if (typeof prof.phone !== 'undefined') setPhone(String(prof.phone || '').replace(/\D/g, ''));
       setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
+      if (!meIsAdmin && prof?.birthdate) {
+        const d = new Date(prof.birthdate);
+        setBirthdate(!isNaN(d.getTime()) ? d : null);
+      }
+      if (!meIsAdmin) setRole(prof.role || 'worker');
     }
     setInitialSnap(JSON.stringify({
       firstName: (prof?.first_name || '').trim(),
       lastName: (prof?.last_name || '').trim(),
-      email: (row?.email || '').trim(),
+      email: (meIsAdmin ? (row?.email || '') : email).trim?.() || '',
       phone: String(prof?.phone || '').replace(/\D/g, '') || '',
-      birthdate: row?.birthdate ? String(row?.birthdate) : null,
-      role: row?.user_role || 'worker',
+      birthdate: (meIsAdmin ? row?.birthdate : (prof?.birthdate || null)) ? String(meIsAdmin ? row?.birthdate : prof?.birthdate) : null,
+      role: meIsAdmin ? (row?.user_role || 'worker') : (prof?.role || 'worker'),
       newPassword: null,
       departmentId: (prof?.department_id ?? null),
-      isSuspended: !!(prof?.is_suspended || prof?.suspended_at) }));
+      isSuspended: !!(prof?.is_suspended || prof?.suspended_at)
+    }));
   } catch (e) {
     setErr(e?.message || 'Не удалось загрузить пользователя');
   } finally {
     setLoading(false);
-  }
-}, [userId]);
+  }}, [userId]);
   useEffect(() => {
     fetchMe();
     fetchUser();
@@ -1345,7 +1350,8 @@ const { error: updErr } = await supabase
             )}
             <View style={styles.card}>
               
-            <View style={styles.card}>
+            {meIsAdmin && (
+<View style={styles.card}>
               <Text style={styles.section}>Роль в компании</Text>
               
               <Text style={styles.label}>Отдел</Text>
@@ -1371,6 +1377,7 @@ const { error: updErr } = await supabase
                 <AntDesign name={isSuspended ? 'pausecircle' : 'checkcircle'} size={16} color={isSuspended ? theme.colors.danger : theme.colors.success} />
               </Pressable>
             </View>
+)}
 <Text style={styles.section}>Пароль</Text>
               <Text style={styles.label}>Новый пароль (мин. 6 символов)</Text>
               <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>

@@ -2,6 +2,7 @@
 import { Stack, router } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect } from 'react';
+import { View } from 'react-native'; // ← добавили
 
 // Держим сплэш, пока не отрисуется первый экран логина
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -17,12 +18,10 @@ export default function AuthLayout() {
   }, []);
 
   return (
-    <Stack
-      screenOptions={{ headerShown: false }}
-      initialRouteName="login"
-      onLayout={onLayoutRootView}
-    >
-      <Stack.Screen name="login" />
-    </Stack>
+    <View style={{ flex: 1 }} onLayout={onLayoutRootView}> {/* ← перенесли onLayout сюда */}
+      <Stack screenOptions={{ headerShown: false }} initialRouteName="login">
+        <Stack.Screen name="login" />
+      </Stack>
+    </View>
   );
 }

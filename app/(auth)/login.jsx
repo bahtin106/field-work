@@ -21,6 +21,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
+import { Feather } from '@expo/vector-icons';
 
 export default function LoginScreen() {
   const { theme } = useTheme();
@@ -154,8 +155,8 @@ router.replace('/orders');
                     style={styles.eyeToggle}
                     accessibilityLabel={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
                   >
-                    <AntDesign
-                      name={showPassword ? 'eye' : 'eyeo'}
+                    <Feather
+                      name={showPassword ? 'eye-off' : 'eye'}
                       size={20}
                       color={theme?.colors?.textSecondary ?? theme?.colors?.text}
                     />

@@ -22,7 +22,7 @@ export default function ToastProvider({ children }) {
   const [anchorOffset, setAnchorOffset] = useState(120);
 
   const timerRef = useRef(null);
-  const mountedRef = useRef(true);
+  const mounted = useSharedValue(true);
   const visibleRef = useRef(false);
 
   // Reanimated shared values
@@ -31,7 +31,7 @@ export default function ToastProvider({ children }) {
 
   useEffect(() => {
     return () => {
-      mountedRef.current = false;
+      mounted.value = false;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
@@ -42,7 +42,7 @@ export default function ToastProvider({ children }) {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     // плавное скрытие вниз + фейд
     ty.value = withTiming(20, { duration: 200, easing: Easing.in(Easing.quad) });
-    op.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, (finished) => { if (!mountedRef.current) return; runOnJS(endHide)(); });
+    op.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, (finished) => { if (!mounted.value) return; runOnJS(endHide)(); });
   }, [ty, op]);
 
   const show = useCallback((text, type = "info") => {

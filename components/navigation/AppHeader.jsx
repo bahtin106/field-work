@@ -19,26 +19,33 @@ const TITLE_MAP = {
 };
 
 function resolveTitle(options, route, pathnameRaw) {
-  // 1) явный заголовок из options имеет приоритет
-  const direct = options?.title ?? options?.headerTitle;
-  if (direct) return direct;
+  // 1) Явный заголовок: params -> options
+  const directRaw = route?.params?.title ?? route?.params?.headerTitle ?? options?.title ?? options?.headerTitle;
+  // Важно: различаем undefined и пустую строку/плейсхолдер
+  if (directRaw !== undefined) {
+    const v = String(directRaw ?? '');
+    if (!v || v === 'Без имени') return '';
+    return v;
+  }
 
-  const name = route?.name || "";
-  const pathname = pathnameRaw || "";
+  const name = route?.name || '';
+  const pathname = pathnameRaw || '';
+
+  // Для страниц сотрудника скрываем автозаголовок до прихода данных
+  if (pathname.startsWith('/users/')) return '';
 
   // 2) по имени роута
   if (TITLE_MAP[name]) return TITLE_MAP[name];
 
   // 3) по пути
-  if (pathname.startsWith("/orders/calendar")) return "Календарь";
-  if (pathname.startsWith("/orders/all-orders")) return "Все заявки";
-  if (pathname.startsWith("/orders/my-orders")) return "Мои заявки";
-  if (pathname.startsWith("/orders")) return "Заявки";
-  if (pathname.startsWith("/users/")) return "Пользователь";
-  if (pathname.startsWith("/users")) return "Сотрудники";
+  if (pathname.startsWith('/orders/calendar')) return 'Календарь';
+  if (pathname.startsWith('/orders/all-orders')) return 'Все заявки';
+  if (pathname.startsWith('/orders/my-orders')) return 'Мои заявки';
+  if (pathname.startsWith('/orders')) return 'Заявки';
+  if (pathname.startsWith('/users')) return 'Сотрудники';
 
   // 4) дефолт: имя роута или пусто
-  return name || "";
+  return name || '';
 }
 
 export default function AppHeader({ options = {}, back, route }) {

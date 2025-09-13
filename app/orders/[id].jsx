@@ -1,7 +1,4 @@
-// app/orders/[id].jsx
-
 import { AntDesign, Feather } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { useFocusEffect } from '@react-navigation/native';
 import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
@@ -21,7 +18,6 @@ import {
   ScrollView,
   BackHandler,
   ActivityIndicator,
-  
   Linking,
   KeyboardAvoidingView,
   Keyboard,
@@ -37,7 +33,6 @@ import { Animated as RNAnimated } from 'react-native';
 import * as NavigationBar from 'expo-navigation-bar';
 
 import Modal from 'react-native-modal';
-// gestures + reanimated for smooth, Xiaomi-like viewer
 import {
   TapGestureHandler,
   PanGestureHandler,
@@ -50,7 +45,6 @@ import Animated, {
   withTiming,
   withSpring,
   runOnJS,
-  useAnimatedGestureHandler,
 } from 'react-native-reanimated';
 
 import { supabase } from '../../lib/supabase';
@@ -63,25 +57,17 @@ import * as ImageManipulator from 'expo-image-manipulator';
 import { useTheme, tokens } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
 import { usePermissions } from '../../lib/permissions';
-import TextField from '../../components/ui/TextField';
-import PhoneInput from '../../components/ui/PhoneInput';
 import Button from '../../components/ui/Button';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
-// Shared lightweight caches (persist while app lives)
 const ORDER_CACHE = (globalThis.ORDER_CACHE ||= new Map());
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
-
-// ---------------- helpers: UI ----------------
-
-  // Permissions-aware phone visibility (role + policy)
-// Админ/диспетчер — всегда; воркер — по окну в часах (по умолчанию 24),
-// плюс учитываем бэкендовый флаг phone_visible.
 
 export default function OrderDetails() {
   const { theme } = useTheme();
   const { has } = usePermissions();
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const applyNavBar = useCallback(async () => {
     try {
@@ -89,388 +75,110 @@ export default function OrderDetails() {
     } catch {}
   }, [theme]);
 
-  useEffect(() => {
-  let mounted = true;
-  (async () => {
-    try {
-      const data = await fetchFormSchema('edit');
-      if (mounted && data && Array.isArray(data.fields)) setSchemaEdit(data);
-    } catch (e) {
-      // silent fallback
-    }
-  })();
-  return () => { mounted = false; };
-}, []);
-useEffect(() => {
-    applyNavBar();
-  }, [applyNavBar]);
-
-  
-
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-        toggle: {
-          width: 42,
-          height: 26,
-          borderRadius: 13,
-          backgroundColor: theme.colors.inputBg,
-          padding: 2,
-          justifyContent: 'center',
-        },
-        toggleOn: { backgroundColor: theme.colors.danger },
-        knob: {
-          width: 22,
-          height: 22,
-          borderRadius: 11,
-          backgroundColor: theme.colors.surface,
-          alignSelf: 'flex-start',
-        },
-        knobOn: { alignSelf: 'flex-end' },
-        toggleLabel: { fontSize: 14, color: theme.colors.text },
-        container: { padding: 16, paddingBottom: 60, backgroundColor: theme.colors.background },
-
-        centered: {
-          flex: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-          backgroundColor: theme.colors.surface,
-        },
-
-        // Top
-        topBar: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 12,
-        },
-        backText: { color: theme.colors.primary || theme.colors.primary, fontSize: 16 },
-        editBtn: {
-          paddingHorizontal: 12,
-          paddingVertical: 6,
-          borderRadius: 10,
-          backgroundColor: theme.colors.surface,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-        },
-        editBtnText: { color: theme.colors.text, fontWeight: '600' },
-
-        // Header
-        headerCard: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 16,
-          padding: 16,
-          ...(tokens?.shadows?.level1?.[Platform.OS] || {}), marginBottom: 12,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-        },
-        headerTitle: {
-          fontSize: 22,
-          fontWeight: '800',
-          color: theme.colors.text,
-          marginBottom: 8,
-          letterSpacing: 0.2,
-        },
-        metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-        urgentPill: {
-          backgroundColor: theme.colors.danger,
-          paddingHorizontal: 10,
-          paddingVertical: 6,
-          borderRadius: 999,
-        },
-        urgentPillText: { color: theme.colors.onPrimary, fontWeight: '700', fontSize: 12 },
-        statusChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-        statusChipText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
-
-        // Info card
-        cardBlock: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 16,
-          paddingVertical: 4,
-          overflow: 'hidden',
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          ...(tokens?.shadows?.level1?.[Platform.OS] || {}), },
-        row: {
-          paddingHorizontal: 16,
-          paddingVertical: 14,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 12,
-        },
-        rowLabel: { fontSize: 15, color: theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary, flexShrink: 0 },
-        rowValue: { fontSize: 16, color: theme.colors.text, textAlign: 'right', flex: 1 },
-        linkText: { color: theme.colors.primary, textDecorationLine: 'underline' },
-        muted: { color: theme.colors.textSecondary },
-        separator: { height: 1, backgroundColor: theme.colors.border },
-
-        // Description card
-        descCard: {
-          marginTop: 12,
-          backgroundColor: theme.colors.surface,
-          borderRadius: 16,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          paddingHorizontal: 16,
-          paddingVertical: 14,
-          ...(tokens?.shadows?.level1?.[Platform.OS] || {}), },
-        descTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
-        descText: { fontSize: 16, color: theme.colors.text, lineHeight: 22 },
-        descToggle: { marginTop: 8, color: theme.colors.primary, fontWeight: '600' },
-
-        // Photos (horizontal rows)
-        photosBlock: {
-          marginTop: 16,
-          backgroundColor: theme.colors.surface,
-          borderRadius: 16,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          paddingVertical: 8,
-          ...(tokens?.shadows?.level1?.[Platform.OS] || {}), },
-        photosHeader: {
-          paddingHorizontal: 16,
-          paddingVertical: 8,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        },
-        photosTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
-        addChip: {
-  backgroundColor: (theme.colors.chipBg || theme?._raw?.colors?.chipBg || theme.colors.inputBg || theme.colors.surface),
-          paddingVertical: 6,
-          paddingHorizontal: 12,
-          borderRadius: 999,
-        },
-        addChipText: { color: theme.colors.primary, fontWeight: '600', fontSize: 13 },
-
-        hRow: { paddingHorizontal: 10, paddingBottom: 8 },
-        hItem: { position: 'relative', marginRight: 10 },
-        imagePressable: {
-          borderRadius: 12,
-          overflow: 'hidden',
-          ...(tokens?.shadows?.level1?.[Platform.OS] || {}), },
-        hImage: { width: 116, height: 116, borderRadius: 12 },
-        deletePhoto: {
-          position: 'absolute',
-          top: 4,
-          right: 4,
-          backgroundColor: theme.colors.danger,
-          width: 24,
-          height: 24,
-          borderRadius: 12,
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 5,
-          },
-        deleteText: { color: theme.colors.onPrimary, fontWeight: '700', fontSize: 16, lineHeight: 18 },
-
-        // Buttons
-        finishButton: {
-          marginTop: 18,
-          backgroundColor: theme.colors.primary,
-          paddingVertical: 14,
-          borderRadius: 14,
-          alignItems: 'center',
-        },
-        finishButtonText: { color: theme.colors.onPrimary, fontSize: 16, fontWeight: '700' },
-        finishButtonDisabled: { backgroundColor: theme.colors.primaryDisabled || theme.colors.primary, opacity: 0.6 },
-
-        appButton: {
-          paddingVertical: 12,
-          paddingHorizontal: 16,
-          borderRadius: 12,
-          alignItems: 'center',
-        },
-        appButtonText: { fontSize: 16 },
-        btnPrimary: { backgroundColor: theme.colors.primary },
-        btnPrimaryText: { color: theme.colors.onPrimary, fontWeight: '600' },
-        btnSecondary: { backgroundColor: (theme.colors.inputBg || theme.colors.surface), borderWidth: 1, borderColor: theme.colors.border },
-        btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
-        btnDestructive: { backgroundColor: theme.colors.danger },
-        btnDestructiveText: { color: theme.colors.onPrimary, fontWeight: '700' },
-
-        // Modals
-        modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
-        modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
-        modalText: { fontSize: 15, color: theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary, marginBottom: 20 },
-        modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-        assigneeOption: { paddingVertical: 10 },
-        assigneeText: { fontSize: 16, color: theme.colors.text },
-
-        // Edit sheet
-        editSheet: {
-          backgroundColor: theme.colors.surface,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          maxHeight: '92%',
-        },
-        sheetHeader: {
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: 20,
-          paddingVertical: 16,
-          backgroundColor: theme.colors.surface,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-        },
-        sheetTitle: {
-          fontSize: 20,
-          fontWeight: '700',
-          color: theme.colors.text,
-          letterSpacing: 0.3,
-        },
-
-        // iOS banner toast
-        banner: {
-          position: 'absolute',
-          left: 16,
-          right: 16,
-          bottom: 24,
-          backgroundColor: (theme.colors.bannerBg || theme.colors.text),
-          borderRadius: 12,
-          paddingVertical: 12,
-          paddingHorizontal: 16,
-          ...(tokens?.shadows?.level1?.[Platform.OS] || {}), },
-        bannerText: { color: theme.colors.onPrimary, textAlign: 'center', fontWeight: '600' },
-
-        card: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 12,
-          padding: 12,
-          borderColor: theme.colors.border,
-          borderWidth: 1,
-          marginBottom: 12,
-        },
-        section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
-        label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
-        input: {
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          backgroundColor: theme.colors.surface,
-          borderRadius: 10,
-          padding: 10,
-          color: theme.colors.text,
-        },
-        selectInput: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: 10,
-          backgroundColor: theme.colors.surface,
-          padding: 12,
-          marginTop: 4,
-        },
-        selectInputText: { fontSize: 16, color: theme.colors.text },
-
-        // Viewer
-        viewerTopBar: {
-          position: 'absolute',
-          top: 16,
-          left: 0,
-          right: 0,
-          zIndex: 10,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: 16,
-        },
-        counterPill: {
-          backgroundColor: theme.colors.overlay,
-          borderRadius: 999,
-          paddingHorizontal: 12,
-          paddingVertical: 6,
-        },
-        counterText: { color: theme.colors.onPrimary, fontWeight: '700' },
-        closeBtn: {
-          backgroundColor: theme.colors.overlay,
-          width: 36,
-          height: 36,
-          borderRadius: 18,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-      }),
-    [theme],
-  );
-
-  
-  // Safe container: wraps any accidental string children into <Text>
-  const SafeRow = ({ children, ...rest }) => (
-    <View {...rest}>
-      {React.Children.map(children, (ch) =>
-        typeof ch === 'string' ? <Text style={styles.rowValue}>{ch}</Text> : ch
-      )}
-    </View>
-  );
-// Read route params. For 'id' specifically we avoid touching useLocalSearchParams()
-  // because Expo Router wraps it in a Proxy that throws if a missing dynamic segment is read.
-  // Instead, parse the id from the current pathname.
   const pathname = usePathname();
   const id = useMemo(() => {
-    try {
-      const path = String(pathname || '');
-      const clean = path.split('?')[0];
-      const parts = clean.split('/').filter(Boolean);
-      // Expect .../orders/:id
-      return parts.length ? parts[parts.length - 1] : null;
-    } catch {
-      return null;
-    }
+    const path = String(pathname || '');
+    const clean = path.split('?')[0];
+    const parts = clean.split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : null;
   }, [pathname]);
 
-  // Other optional params (do not crash if absent)
   const __params = useLocalSearchParams();
-  let returnTo = undefined;
-  let returnParams = undefined;
-  try {
-    if (Reflect.has(__params, 'returnTo')) {
-      returnTo = Reflect.get(__params, 'returnTo');
+  const returnTo = useMemo(() => {
+    try {
+      return Reflect.has(__params, 'returnTo') ? String(__params.returnTo) : '/orders/my-orders';
+    } catch {
+      return '/orders/my-orders';
     }
-    if (Reflect.has(__params, 'returnParams')) {
-      returnParams = Reflect.get(__params, 'returnParams');
+  }, [__params]);
+
+  const returnParams = useMemo(() => {
+    try {
+      return Reflect.has(__params, 'returnParams') ? JSON.parse(String(__params.returnParams)) : {};
+    } catch {
+      return {};
     }
-  } catch (_err) {
-    returnTo = undefined;
-    returnParams = undefined;
-  }
+  }, [__params]);
 
-  const backTargetPath =
-    typeof returnTo === 'string' && returnTo ? String(returnTo) : '/orders/my-orders';
-  // Prevent no-op replace when target equals current screen
-  const safeBackTargetPath = (String(backTargetPath || '') === String(pathname || ''))
-    ? '/orders/my-orders'
-    : backTargetPath;
-
-  let backParams = {};
-  try {
-    backParams = returnParams ? JSON.parse(returnParams) : {};
-  } catch (e) {
-    backParams = {};
-  }
-
+  const backTargetPath = returnTo === pathname ? '/orders/my-orders' : returnTo;
   const router = useRouter();
   const navigation = useNavigation();
   const isNavigatingRef = useRef(false);
 
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
+  const hydratedRef = useRef(false);
   const [role, setRole] = useState(null);
-  
-  // Политика видимости телефона: берём из настроек, дефолт 24ч для worker; admin/dispatcher — всегда
-  
-const [userId, setUserId] = useState(null);
+  const [userId, setUserId] = useState(null);
   const [executorName, setExecutorName] = useState(null);
-  // Derive executor name instantly to avoid flicker
-  const deriveExecutorNameInstant = (o) => {
+  const [bannerMessage, setBannerMessage] = useState('');
+  const [editMode, setEditMode] = useState(false);
+  const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
+
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [region, setRegion] = useState('');
+  const [city, setCity] = useState('');
+  const [street, setStreet] = useState('');
+  const [house, setHouse] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [departureDate, setDepartureDate] = useState(null);
+  const [assigneeId, setAssigneeId] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [toFeed, setToFeed] = useState(false);
+  const [urgent, setUrgent] = useState(false);
+  const [departmentId, setDepartmentId] = useState(null);
+  const [companyId, setCompanyId] = useState(null);
+  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+  const [workTypes, setWorkTypes] = useState([]);
+  const [workTypeId, setWorkTypeId] = useState(null);
+  const [departments, setDepartments] = useState([]);
+  const [amount, setAmount] = useState('');
+  const [gsm, setGsm] = useState('');
+  const canEditFinances = role === 'admin' || role === 'dispatcher';
+  const [cancelVisible, setCancelVisible] = useState(false);
+  const [warningVisible, setWarningVisible] = useState(false);
+  const [warningMessage, setWarningMessage] = useState('');
+  const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
+  const [departmentModalVisible, setDepartmentModalVisible] = useState(false);
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteCountdown, setDeleteCountdown] = useState(5);
+  const [deleteEnabled, setDeleteEnabled] = useState(false);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerPhotos, setViewerPhotos] = useState([]);
+  const [viewerIndex, setViewerIndex] = useState(0);
+  const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+
+  const initialFormSnapshotRef = useRef('');
+  const detailsScrollRef = useRef(null);
+  const dateFieldRef = useRef(null);
+  const viewFade = useRef(new RNAnimated.Value(0)).current;
+  const viewTranslate = useRef(new RNAnimated.Value(8)).current;
+  const scale = useSharedValue(1);
+  const translateX = useSharedValue(0);
+  const translateY = useSharedValue(0);
+  const bgOpacity = useSharedValue(1);
+  const panRef = useRef(null);
+  const tapRef = useRef(null);
+  const pinchRef = useRef(null);
+
+  const showToast = useCallback((msg) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
+    } else {
+      setBannerMessage(msg);
+      setTimeout(() => setBannerMessage(''), 2000);
+    }
+  }, []);
+
+  const deriveExecutorNameInstant = useCallback((o) => {
     if (!o) return null;
-    // from cache by id
     if (o.assigned_to && EXECUTOR_NAME_CACHE.has(o.assigned_to))
       return EXECUTOR_NAME_CACHE.get(o.assigned_to);
-    // from common fields
+    
     const fromFields = [
       o.assigned_to_name,
       o.executor_name,
@@ -479,217 +187,104 @@ const [userId, setUserId] = useState(null);
       o.assigned_name,
     ].find((v) => typeof v === 'string' && v.trim());
     if (fromFields) return String(fromFields).trim();
-    // from nested objects
+    
     const join = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
-      const s =
-        [obj.last_name, obj.first_name, obj.middle_name].filter(Boolean).join(' ').trim() ||
-        obj.full_name ||
-        obj.name;
+      const s = [obj.last_name, obj.first_name, obj.middle_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim() || obj.full_name || obj.name;
       return s ? String(s).trim() : null;
     };
-    const nested =
-      join(o.assigned_to_profile) || join(o.executor_profile) || join(o.assignee_profile);
-    if (nested) return nested;
-    return null;
-  };
+    
+    return join(o.assigned_to_profile) || join(o.executor_profile) || join(o.assignee_profile);
+  }, []);
 
-  // toast banner (iOS)
-  const [bannerMessage, setBannerMessage] = useState('');
-  const showToast = (msg) => {
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(msg, ToastAndroid.SHORT);
-    } else {
-      setBannerMessage(msg);
-      setTimeout(() => setBannerMessage(''), 2000);
+  const getValueForField = useCallback((key) => {
+    switch (key) {
+      case 'title': return (title || '').trim();
+      case 'comment': return (description || '').trim();
+      case 'fio': return (customerName || '').trim();
+      case 'customer_name': return (customerName || '').trim();
+      case 'phone': return (phone || '').trim();
+      case 'region': return (region || '').trim();
+      case 'city': return (city || '').trim();
+      case 'street': return (street || '').trim();
+      case 'house': return (house || '').trim();
+      case 'datetime': return departureDate;
+      case 'assigned_to': return toFeed ? null : assigneeId;
+      case 'price': return canEditFinances ? amount : (amount || '');
+      case 'fuel_cost': return canEditFinances ? gsm : (gsm || '');
+      case 'department_id': return departmentId;
+      default: return null;
     }
-  };
+  }, [title, description, customerName, phone, region, city, street, house, departureDate, assigneeId, toFeed, amount, gsm, canEditFinances, departmentId]);
 
-  // ===== Edit mode =====
-  const [editMode, setEditMode] = useState(false);
+  const getField = useCallback((key) => {
+    const arr = schemaEdit?.fields || [];
+    const found = arr.find((f) => f.field_key === key);
+    if (found) return found;
+    if (key === 'datetime' || key === 'assigned_to' || key === 'status' || key === 'department_id') 
+      return { field_key: key };
+    if (arr.length === 0) return { field_key: key };
+    return null;
+  }, [schemaEdit]);
 
-  const [title, setTitle] = useState('');
-  
-// Enabled fields (edit context)
-const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
-// Map schema keys to state values in edit form
-const getValueForField = useCallback((key) => {
-  switch (key) {
-    case 'title': return (title || '').trim();
-    case 'comment': return (description || '').trim();
-    case 'fio': return (customerName || '').trim();
-    case 'customer_name': return (customerName || '').trim();
-    case 'phone': return (phone || '').trim();
-    case 'region': return (region || '').trim();
-    case 'city': return (city || '').trim();
-    case 'street': return (street || '').trim();
-    case 'house': return (house || '').trim();
-    case 'datetime': return departureDate; // Date or null
-    case 'assigned_to': return toFeed ? null : assigneeId; // respect 'to feed' toggle
-    case 'price': return (
-    canEditFinances ? amount : (amount || '')
-    ).trim();
-    case 'fuel_cost': return (
-    canEditFinances ? gsm : (gsm || '')
-    ).trim();    case 'department_id': return departmentId;
+  const hasField = useCallback((key) => !!getField(key), [getField]);
 
-    default:
-      return null; // unknown keys (custom) are ignored here to avoid breaking UI
-  }
-}, [title, description, customerName, phone, region, city, street, house, departureDate, assigneeId, toFeed, amount, gsm]);
-
-function validateRequiredBySchemaEdit() {
-  try {
-    const arr = (schemaEdit?.fields || []).filter((f) => f?.required);
-    if (!arr.length) return { ok: true };
-    const missing = [];
-    for (const f of arr) {
-      const k = f.field_key;
-      const val = getValueForField(k);
-      // rules by type
-      if (k === 'phone') {
-        const raw = String(val || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
-        if (!(raw.length === 11 && raw.startsWith('7'))) missing.push(f.label || k);
-      } else if (k === 'datetime') {
-        if (!val) missing.push(f.label || k);
-      } else if (k === 'assigned_to') {
-        // required only if NOT sending to feed
-        if (!toFeed && !val) missing.push(f.label || k);
-      } else {
-        if (val === null || val === undefined || String(val).trim() === '') {
+  const validateRequiredBySchemaEdit = useCallback(() => {
+    try {
+      const arr = (schemaEdit?.fields || []).filter((f) => f?.required);
+      if (!arr.length) return { ok: true };
+      
+      const missing = [];
+      for (const f of arr) {
+        const k = f.field_key;
+        const val = getValueForField(k);
+        
+        if (k === 'phone') {
+          const raw = String(val || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
+          if (!(raw.length === 11 && raw.startsWith('7'))) missing.push(f.label || k);
+        } else if (k === 'datetime') {
+          if (!val) missing.push(f.label || k);
+        } else if (k === 'assigned_to') {
+          if (!toFeed && !val) missing.push(f.label || k);
+        } else if (val === null || val === undefined || String(val).trim() === '') {
           missing.push(f.label || k);
         }
       }
+      
+      return missing.length ? 
+        { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` } : 
+        { ok: true };
+    } catch {
+      return { ok: true };
     }
-    if (missing.length) {
-      return { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: true };
-  }
-}
-const getField = useCallback(
-  (key) => {
-    const arr = schemaEdit?.fields || [];
-    const found = arr.find((f) => f.field_key === key);
-if (found) return found;
-    // Always allow critical planning fields in edit mode even if schema excludes them
-    if (key === 'datetime' || key === 'assigned_to' || key === 'status' || key === 'department_id') return { field_key: key };
-    // Fallback: until schema loads, keep old UI visible
-    if (arr.length === 0) return { field_key: key };
-    return null;
-  },
-  [schemaEdit],
-);
-const hasField = useCallback((key) => !!getField(key), [getField]);
-const hasAny = useCallback((keys) => Array.isArray(keys) && keys.some((k) => !!getField(k)), [getField]);
+  }, [schemaEdit, getValueForField, toFeed]);
 
-const [description, setDescription] = useState('');
-  const [region, setRegion] = useState('');
-  const [city, setCity] = useState('');
-  const [street, setStreet] = useState('');
-  const [house, setHouse] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [phone, setPhone] = useState(''); // raw digits (11)
-  const [departureDate, setDepartureDate] = useState(null);
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
-  const [tempDate, setTempDate] = useState(null);
-  const [assigneeId, setAssigneeId] = useState(null);
-  const [users, setUsers] = useState([]);
-  const [toFeed, setToFeed] = useState(false);
-  const [urgent, setUrgent] = useState(false);
-
-  
-const [departmentId, setDepartmentId] = useState(null);
-
-const [companyId, setCompanyId] = useState(null);
-const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
-const [workTypes, setWorkTypes] = useState([]);
-const [workTypeId, setWorkTypeId] = useState(null);
-const [workTypeIdView, setWorkTypeIdView] = useState(null);
-const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
-
-const [departments, setDepartments] = useState([]);
-
-// workTypes bootstrap: load companyId and list (top-level)
-useEffect(() => {
-  let alive = true;
-  (async () => {
-    try {
-      const cid = await getMyCompanyId();
-      if (!alive) return;
-      setCompanyId(cid);
-      if (cid) {
-        const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
-        if (!alive) return;
-        setUseWorkTypesFlag(!!flag);
-        setWorkTypes(types || []);
-      }
-    } catch (e) {
-      console.warn('workTypes bootstrap', e?.message || e);
-    }
-  })();
-  return () => { alive = false; };
-}, []);
-
-// — финансы
-  
-    const [amount, setAmount] = useState('');
-    
-    const [gsm, setGsm] = useState('');
-    const canEditFinances = role === 'admin' || role === 'dispatcher';
-    
-
-    
-    
-  
-    
-    
-    
-  const [cancelVisible, setCancelVisible] = useState(false);
-  const [warningVisible, setWarningVisible] = useState(false);
-  const [warningMessage, setWarningMessage] = useState('');
-  const showWarning = (message) => {
-    setWarningMessage(message);
-    setWarningVisible(true);
-  };
-
-  const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
-  const [departmentModalVisible, setDepartmentModalVisible] = useState(false);
-
-  // Canonical snapshot of the edit form to detect real changes
-  const initialFormSnapshotRef = useRef('');
-  const detailsScrollRef = useRef(null);
-  const dateFieldRef = useRef(null); // <-- ref used for scroll calculations
-
-  // ===== UI state for description collapse (MUST be before any early return) =====
-  const [descExpanded, setDescExpanded] = useState(false);
-
-  // helpers: money formatting/parsing
-  const parseMoney = (s) => {
-    const v = String(s ?? '')
-      .replace(/[^0-9.,]/g, '')
-      .replace(',', '.');
+  const parseMoney = useCallback((s) => {
+    const v = String(s ?? '').replace(/[^0-9.,]/g, '').replace(',', '.');
     const n = parseFloat(v);
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
-  };
-  const formatMoney = (v) => {
+  }, []);
+
+  const formatMoney = useCallback((v) => {
     if (v === null || v === undefined || v === '') return '—';
     const n = typeof v === 'string' ? parseFloat(v) : Number(v);
     if (!Number.isFinite(n)) return '—';
     const parts = n.toFixed(2).split('.');
     parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
     return `${parts[0]}.${parts[1]} ₽`;
-  };
+  }, []);
 
-  const makeSnapshotFromOrder = (o) => {
+  const makeSnapshotFromOrder = useCallback((o) => {
     if (!o) return '';
     const phoneDigits = ((o.phone ?? o.phone_visible) || '')
       .replace(/\D/g, '')
       .replace(/^8(\d{10})$/, '7$1');
-    return JSON.stringify({ title: o.title || '',
+      
+    return JSON.stringify({
+      title: o.title || '',
       comment: o.comment || '',
       region: o.region || '',
       city: o.city || '',
@@ -703,9 +298,9 @@ useEffect(() => {
       price: o.price ?? null,
       fuel_cost: o.fuel_cost ?? null,
     });
-  };
+  }, []);
 
-  const makeSnapshotFromState = () => {
+  const makeSnapshotFromState = useCallback(() => {
     const phoneDigits = (phone || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
     return JSON.stringify({
       title: title || '',
@@ -721,17 +316,9 @@ useEffect(() => {
       department_id: departmentId || null,
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
     });
-  };
+  }, [title, description, region, city, street, house, customerName, phone, departureDate, assigneeId, departmentId, canEditFinances, amount, gsm, parseMoney]);
 
-  const [statusModalVisible, setStatusModalVisible] = useState(false);
-
-  // ===== Delete controls =====
-  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
-  const [deleteCountdown, setDeleteCountdown] = useState(5);
-  const [deleteEnabled, setDeleteEnabled] = useState(false);
-
-  // ===== Dirty check for edit form =====
-  const formIsDirty = () => {
+  const formIsDirty = useCallback(() => {
     if (!order) return false;
     try {
       const current = makeSnapshotFromState();
@@ -740,93 +327,18 @@ useEffect(() => {
     } catch {
       return false;
     }
-  };
+  }, [order, makeSnapshotFromState, makeSnapshotFromOrder]);
 
-  const requestCloseEdit = () => {
-    if (formIsDirty()) {
-      setCancelVisible(true);
-    } else {
-      setEditMode(false);
-    }
-  };
-
-  const goBack = () => {
-    if (editMode) {
-      requestCloseEdit();
-      return;
-    }
-
-    if (returnTo && !isNavigatingRef.current && String(backTargetPath || '') !== String(pathname || '')) {
-      isNavigatingRef.current = true;
-      router.replace({ pathname: safeBackTargetPath, params: backParams });
-      return;
-    }
-
-    if (navigation?.canGoBack?.()) {
-      navigation.goBack();
-    } else {
-      router.replace('/orders/my-orders');
-    }
-  };
-
-  // ===== Back handlers with confirm =====
-  useEffect(() => {
-    const onHardwareBack = () => {
-      if (editMode) {
-        requestCloseEdit();
-        return true;
-      }
-      return false;
-    };
-    const sub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
-    return () => sub.remove();
-  }, [editMode]);
-
-  useEffect(() => {
-    const sub = navigation.addListener('beforeRemove', (e) => {
-      // если редактирование — показываем подтверждение
-      if (editMode) {
-        e.preventDefault();
-        requestCloseEdit();
-        return;
-      }
-      // если пришли из списка/календаря — один раз делаем replace с фильтрами
-      if (returnTo && !isNavigatingRef.current && String(backTargetPath || '') !== String(pathname || '')) {
-        e.preventDefault();
-        isNavigatingRef.current = true;
-        router.replace({ pathname: safeBackTargetPath, params: backParams });
-      }
-    });
-
-    return sub;
-  }, [navigation, editMode, returnTo, backTargetPath]);
-
-  const scrollToDateField = () => {
-    const node = dateFieldRef.current;
-    const scrollNode = findNodeHandle(detailsScrollRef.current);
-    if (!node || !scrollNode) return;
-    try {
-      UIManager.measureLayout(
-        node,
-        scrollNode,
-        () => {},
-        (_x, y) => detailsScrollRef.current?.scrollTo?.({ y, animated: true }),
-      );
-    } catch {}
-  };
-
-  // Keep photos in sync with Supabase storage (server truth)
   const syncPhotosFromStorage = useCallback(async () => {
     if (!order?.id) return;
     try {
       const bucket = 'orders-photos';
       const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-
       const next = { ...order };
+
       for (const cat of cats) {
         const folder = `orders/${order.id}/${cat}`;
-        const { data: files, error } = await supabase.storage.from(bucket).list(folder);
-        if (error) continue;
+        const { data: files } = await supabase.storage.from(bucket).list(folder);
         const urls = (files || []).map((f) => {
           const path = `${folder}/${f.name}`;
           const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -836,30 +348,16 @@ useEffect(() => {
       }
       setOrder(next);
     } catch (e) {
-      console.warn(e);
+      console.warn('Sync photos error:', e);
     }
   }, [order?.id]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (editMode) {
-          requestCloseEdit();
-          return true;
-        }
-        goBack();
-        return true;
-      });
-      return () => subscription.remove();
-    }, [editMode]),
-  );
-
-  // ===== Ensure photos come only from Supabase (avoid stale local cache) =====
-  const fetchServerPhotos = async (orderId) => {
+  const fetchServerPhotos = useCallback(async (orderId) => {
     try {
       const bucket = 'orders-photos';
       const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
       const result = {};
+
       for (const cat of cats) {
         const list = await supabase.storage.from(bucket).list(`orders/${orderId}/${cat}`);
         const files = list?.data || [];
@@ -873,223 +371,171 @@ useEffect(() => {
       }
       return result;
     } catch (e) {
-      console.warn('fetchServerPhotos error', e);
+      console.warn('Fetch server photos error:', e);
       return null;
     }
-  };
+  }, []);
 
-  // ===== Modal-internal countdown (start fresh every open) =====
-  useEffect(() => {
-    let t;
-    if (deleteModalVisible) {
-      setDeleteEnabled(false);
-      setDeleteCountdown(5);
-      let c = 5;
-      t = setInterval(() => {
-        c -= 1;
-        setDeleteCountdown(c);
-        if (c <= 0) {
-          clearInterval(t);
-          setDeleteEnabled(true);
-        }
-      }, 1000);
+  const fetchData = useCallback(async () => {
+    if (!id) {
+      setLoading(false);
+      return;
     }
-    return () => clearInterval(t);
-  }, [deleteModalVisible]);
 
-  // ===== Fetch order + role + users =====
-  const fetchData = async () => {
-  if (!id) { setLoading(false); return; }
-      // Instant paint from cache
-      const cached = ORDER_CACHE.get(id);
-      if (cached) {
-        setOrder(cached);
-        setLoading(false);
-      }
-      try {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const uid = sessionData?.session?.user?.id || null;
-        setUserId(uid);
-
-        if (uid) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', uid)
-            .single();
-          setRole(profile?.role || null);
-        }
-
-        const { data: fetchedOrder, error } = await supabase
-          .from('orders_secure')
-          .select('*')
-          .eq('id', id)
-          .single();
-// Fallback: if orders_secure view doesn't expose department_id, fetch it from base table
-if (typeof fetchedOrder.department_id === 'undefined') {
-  try {
-    const { data: depRow } = await supabase
-      .from('orders')
-      .select('department_id')
-      .eq('id', id)
-      .single();
-    if (depRow) {
-      fetchedOrder.department_id = depRow.department_id || null;
+    const cached = ORDER_CACHE.get(id);
+    if (cached) {
+      setOrder(cached);
+      hydratedRef.current = true;
+      setLoading(false);
     }
-  } catch {}
-}
 
-// Fallback: if orders_secure view doesn't expose work_type_id, fetch it from base table
-if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_id === null) {
-  try {
-    const { data: wtRow } = await supabase
-      .from('orders')
-      .select('work_type_id')
-      .eq('id', id)
-      .single();
-    if (wtRow) {
-      fetchedOrder.work_type_id = wtRow.work_type_id ?? null;
-    }
-  } catch {}
-}
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id || null;
+      setUserId(uid);
 
-
-        if (error) throw error;
-
-        // cache latest
-        ORDER_CACHE.set(id, fetchedOrder);
-
-        // сразу показываем статус "В работе", если исполнитель впервые открыл заявку
-        if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
-          setOrder({ ...fetchedOrder, status: 'В работе' }); // моментально в UI
-          supabase.from('orders').update({ status: 'В работе' }).eq('id', id); // тихий апдейт
-        } else {
-          setOrder(fetchedOrder);
-        }
-
-        // unblock UI immediately after first paint
-        setLoading(false);
-
-        InteractionManager.runAfterInteractions(async () => {
-          try {
-            // Server-only photos
-            try {
-              const fresh = await fetchServerPhotos(fetchedOrder.id);
-              if (fresh) {
-                setOrder((prev) => ({
-                  ...prev,
-                  contract_file: fresh.contract_file,
-                  photo_before: fresh.photo_before,
-                  photo_after: fresh.photo_after,
-                  act_file: fresh.act_file,
-                }));
-              }
-            } catch (e) {
-              console.warn(e);
-            }
-            // Prefill edit form
-            initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
-            const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.customer_phone_visible ?? fetchedOrder.phone_visible) || '').replace(
-              /\D/g,
-              '',
-            );
-            setTitle(fetchedOrder.title || '');
-            setDescription(fetchedOrder.comment || '');
-            setRegion(fetchedOrder.region || '');
-            setCity(fetchedOrder.city || '');
-            setStreet(fetchedOrder.street || '');
-            setHouse(fetchedOrder.house || '');
-            setCustomerName(fetchedOrder.fio || fetchedOrder.customer_name || '');
-            setPhone(rawDigits || '');
-            setDepartureDate(fetchedOrder.datetime ? new Date(fetchedOrder.datetime) : null);
-            setAssigneeId(fetchedOrder.assigned_to || null);
-            setToFeed(!fetchedOrder.assigned_to);
-            setUrgent(!!fetchedOrder.urgent);
-
-            
-            setDepartmentId(fetchedOrder.department_id || null);
-            setWorkTypeId(fetchedOrder.work_type_id || null);
-// финансы
-            setAmount(
-              fetchedOrder.price !== null && fetchedOrder.price !== undefined
-                ? String(fetchedOrder.price)
-                : '',
-            );
-            setGsm(
-              fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined
-                ? String(fetchedOrder.fuel_cost)
-                : '',
-            );
-            // Executor name
-            if (fetchedOrder.assigned_to) {
-              const { data: executorProfile } = await supabase
-                .from('profiles')
-                .select('first_name, last_name')
-                .eq('id', fetchedOrder.assigned_to)
-                .single();
-              if (executorProfile) {
-                const full =
-                  `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
-                EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
-                setExecutorName(full);
-              } else {
-                setExecutorName(null);
-              }
-            } else {
-              // keep previous value to avoid flicker
-            }
-            // (removed duplicate 'Новый'→'В работе' block)
-          } catch (e) {
-            console.warn(e);
-          }
-        });
-        // Prefill edit form
-        // Executors list
-        const { data: execList } = await supabase
+      if (uid) {
+        const { data: profile } = await supabase
           .from('profiles')
-          .select('id, first_name, last_name, role')
-          .in('role', ['worker', 'dispatcher', 'admin'])
-          .order('last_name', { ascending: true });
-        setUsers(execList || []);
-      
-        const { data: deptList } = await supabase
-          .from('departments')
-          .select('id, name')
-          .order('name', { ascending: true });
-        setDepartments(deptList || []);
-} catch (e) {
-        console.warn(e);
-      } finally {
-        setLoading(false);
+          .select('role')
+          .eq('id', uid)
+          .single();
+        setRole(profile?.role || null);
       }
-    };
 
-    useEffect(() => {
+      const { data: fetchedOrder, error } = await supabase
+        .from('orders_secure')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-      fetchData();
+      if (error) throw error;
 
-    }, [id, syncPhotosFromStorage]);
-  const canEdit = () => has('canEditOrders');
+      if (typeof fetchedOrder.department_id === 'undefined') {
+        try {
+          const { data: depRow } = await supabase
+            .from('orders')
+            .select('department_id')
+            .eq('id', id)
+            .single();
+          if (depRow) {
+            fetchedOrder.department_id = depRow.department_id || null;
+          }
+        } catch {}
+      }
 
-  // ===== Phone visibility rules =====
-  // replaced by permissions-aware helper
-// const canSeePhone = () => Boolean(order?.phone_visible);
+      if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_id === null) {
+        try {
+          const { data: wtRow } = await supabase
+            .from('orders')
+            .select('work_type_id')
+            .eq('id', id)
+            .single();
+          if (wtRow) {
+            fetchedOrder.work_type_id = wtRow.work_type_id ?? null;
+          }
+        } catch {}
+      }
 
-  const handlePhonePress = () => {
-  const p = order?.customer_phone_visible;
-  if (p) Linking.openURL(`tel:${formatPhoneE164(p)}`);
-};
+      ORDER_CACHE.set(id, fetchedOrder);
 
-  const handlePhoneLongPress = async () => {
-  const p = order?.customer_phone_visible;
-  if (!p) return;
-  try {
-    await Clipboard.setStringAsync(p);
-    showToast('Телефон скопирован');
-  } catch {}
-};
+      if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
+        setOrder({ ...fetchedOrder, status: 'В работе' });
+        supabase.from('orders').update({ status: 'В работе' }).eq('id', id);
+      } else {
+        setOrder(fetchedOrder);
+      }
 
-  const openInYandex = () => {
+      setLoading(false);
+
+      InteractionManager.runAfterInteractions(async () => {
+        try {
+          const fresh = await fetchServerPhotos(fetchedOrder.id);
+          if (fresh) {
+            setOrder((prev) => ({
+              ...prev,
+              contract_file: fresh.contract_file,
+              photo_before: fresh.photo_before,
+              photo_after: fresh.photo_after,
+              act_file: fresh.act_file,
+            }));
+          }
+
+          initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
+          const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.customer_phone_visible ?? fetchedOrder.phone_visible) || '')
+            .replace(/\D/g, '');
+            
+          setTitle(fetchedOrder.title || '');
+          setDescription(fetchedOrder.comment || '');
+          setRegion(fetchedOrder.region || '');
+          setCity(fetchedOrder.city || '');
+          setStreet(fetchedOrder.street || '');
+          setHouse(fetchedOrder.house || '');
+          setCustomerName(fetchedOrder.fio || fetchedOrder.customer_name || '');
+          setPhone(rawDigits || '');
+          setDepartureDate(fetchedOrder.datetime ? new Date(fetchedOrder.datetime) : null);
+          setAssigneeId(fetchedOrder.assigned_to || null);
+          setToFeed(!fetchedOrder.assigned_to);
+          setUrgent(!!fetchedOrder.urgent);
+          setDepartmentId(fetchedOrder.department_id || null);
+          setWorkTypeId(fetchedOrder.work_type_id || null);
+          setAmount(fetchedOrder.price !== null && fetchedOrder.price !== undefined ? String(fetchedOrder.price) : '');
+          setGsm(fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined ? String(fetchedOrder.fuel_cost) : '');
+
+          if (fetchedOrder.assigned_to) {
+            const { data: executorProfile } = await supabase
+              .from('profiles')
+              .select('first_name, last_name')
+              .eq('id', fetchedOrder.assigned_to)
+              .single();
+            if (executorProfile) {
+              const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
+              EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
+              setExecutorName(full);
+            } else {
+              setExecutorName(null);
+            }
+          }
+        } catch (e) {
+          console.warn('Interaction error:', e);
+        }
+      });
+
+      const { data: execList } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name, role')
+        .in('role', ['worker', 'dispatcher', 'admin'])
+        .order('last_name', { ascending: true });
+      setUsers(execList || []);
+
+      const { data: deptList } = await supabase
+        .from('departments')
+        .select('id, name')
+        .order('name', { ascending: true });
+      setDepartments(deptList || []);
+    } catch (e) {
+      console.warn('Fetch data error:', e);
+      setLoading(false);
+    }
+  }, [id, fetchServerPhotos, makeSnapshotFromOrder]);
+
+  const canEdit = useCallback(() => has('canEditOrders'), [has]);
+
+  const handlePhonePress = useCallback(() => {
+    const p = order?.customer_phone_visible;
+    if (p) Linking.openURL(`tel:${formatPhoneE164(p)}`);
+  }, [order]);
+
+  const handlePhoneLongPress = useCallback(async () => {
+    const p = order?.customer_phone_visible;
+    if (!p) return;
+    try {
+      await Clipboard.setStringAsync(p);
+      showToast('Телефон скопирован');
+    } catch {}
+  }, [order, showToast]);
+
+  const openInYandex = useCallback(() => {
     const fullAddress = [order?.region, order?.city, order?.street, order?.house]
       .filter(Boolean)
       .join(', ');
@@ -1100,10 +546,9 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
       const fallback = `https://yandex.ru/maps/?text=${encodeURIComponent(fullAddress)}`;
       Linking.openURL(fallback);
     });
-  };
+  }, [order]);
 
-  // ===== Photos =====
-  const compressAndUpload = async (category) => {
+  const compressAndUpload = useCallback(async (category) => {
     try {
       const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
       if (!permissionResult.granted) {
@@ -1137,7 +582,6 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
         });
 
       if (uploadError) {
-        console.warn(uploadError);
         showToast('Ошибка загрузки фото');
         return;
       }
@@ -1153,7 +597,6 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
         .eq('id', order.id);
 
       if (updateError) {
-        console.warn(updateError);
         showToast('Ошибка сохранения ссылки');
         return;
       }
@@ -1162,12 +605,12 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
       showToast('Фото загружено');
       await syncPhotosFromStorage();
     } catch (e) {
-      console.warn(e);
+      console.warn('Upload error:', e);
       showToast('Ошибка загрузки');
     }
-  };
+  }, [order, showToast, syncPhotosFromStorage]);
 
-  const removePhoto = async (category, index) => {
+  const removePhoto = useCallback(async (category, index) => {
     const updated = [...(order[category] || [])];
     const [removed] = updated.splice(index, 1);
 
@@ -1188,15 +631,14 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
     } else {
       showToast('Ошибка удаления');
     }
-  };
+  }, [order, showToast, syncPhotosFromStorage]);
 
-  // ===== Finish order =====
-  const canFinishOrder = () => {
+  const canFinishOrder = useCallback(() => {
     const required = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
     return required.every((cat) => Array.isArray(order[cat]) && order[cat].length > 0);
-  };
+  }, [order]);
 
-  const handleFinishOrder = async () => {
+  const handleFinishOrder = useCallback(async () => {
     const missing = [];
     if (!Array.isArray(order.contract_file) || order.contract_file.length === 0)
       missing.push('фото договора');
@@ -1216,19 +658,19 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
       .from('orders')
       .update({ status: 'Завершённая' })
       .eq('id', order.id);
+      
     if (error) {
       showToast('Ошибка при завершении');
       return;
     }
+    
     setOrder({ ...order, status: 'Завершённая' });
     showToast('Заявка завершена');
-  };
+  }, [order, showToast]);
 
-  const onFinishPress = async () => {
-    await handleFinishOrder();
-  };
-  // ===== Accept order from feed (worker takes free job) =====
-  const onAcceptOrder = async () => {
+  const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
+
+  const onAcceptOrder = useCallback(async () => {
     try {
       if (!order?.id) return;
       const { data, error } = await supabase.rpc('accept_order', { p_order_id: order.id });
@@ -1237,7 +679,6 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
         return;
       }
       if (data === true) {
-        // Update local state: assign to me && set status
         const me = (users || []).find((u) => u.id === userId);
         setOrder((prev) => ({ ...(prev || {}), assigned_to: userId, status: 'В работе' }));
         setExecutorName(me ? `${me.first_name || ''} ${me.last_name || ''}`.trim() : null);
@@ -1250,18 +691,15 @@ if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_i
     } catch (e) {
       showToast('Ошибка сети');
     }
-  };
+  }, [order, users, userId, showToast]);
 
-  // ===== Save edits =====
-  const handleSubmitEdit = async () => {
-    
-// Validate required fields defined in admin Form Builder (edit schema)
-const reqCheck = validateRequiredBySchemaEdit();
-if (!reqCheck.ok) {
-  showWarning(reqCheck.msg);
-  return;
-}
-if (!canEdit()) return;
+  const handleSubmitEdit = useCallback(async () => {
+    const reqCheck = validateRequiredBySchemaEdit();
+    if (!reqCheck.ok) {
+      showWarning(reqCheck.msg);
+      return;
+    }
+    if (!canEdit()) return;
 
     if (!title.trim()) return showWarning('Укажите название заявки');
     if (!region && !city && !street && !house) return showWarning('Укажите хотя бы часть адреса');
@@ -1271,7 +709,6 @@ if (!canEdit()) return;
     if (!assigneeId && !toFeed) return showWarning('Выберите исполнителя или отправьте в ленту');
 
     const rawPhone = phone.replace(/\D/g, '');
-    // Требования: 11 цифр, начинается на 7, второй символ 9 (мобильный)
     if (rawPhone.length !== 11 || rawPhone[0] !== '7' || rawPhone[1] !== '9') {
       return showWarning('Введите корректный номер телефона формата +7 (9__) ___-__-__');
     }
@@ -1295,8 +732,12 @@ if (!canEdit()) return;
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
+    
     const targetId = order?.id ?? id;
-    if (!targetId) { showToast('Id заявки не найден'); return; }
+    if (!targetId) {
+      showToast('Id заявки не найден');
+      return;
+    }
 
     const { data, error } = await supabase
       .from('orders')
@@ -1309,59 +750,48 @@ if (!canEdit()) return;
       showToast(error.message || 'Ошибка сохранения');
     } else {
       setOrder(data);
-      // Sync all form fields from saved row so the editor re-opens with fresh values
-      try {
-        const rawDigitsSaved = (data.phone || '').replace(/\D/g, '');
-        setTitle(data.title || '');
-        setDescription(data.comment || '');
-        setRegion(data.region || '');
-        setCity(data.city || '');
-        setStreet(data.street || '');
-        setHouse(data.house || '');
-        setCustomerName(data.fio || '');
-        setPhone(rawDigitsSaved || '');
-        setDepartureDate(data.datetime ? new Date(data.datetime) : null);
-        setAssigneeId(data.assigned_to || null);
-        setToFeed(!data.assigned_to);
-        setUrgent(!!data.urgent);
-        setAmount(data.price !== null && data.price !== undefined ? String(data.price) : '');
-        setGsm(
-          data.fuel_cost !== null && data.fuel_cost !== undefined ? String(data.fuel_cost) : '',
-        );
-      
-        setDepartmentId(data.department_id || null);
-        setWorkTypeId(data.work_type_id || null);
-        setWorkTypeIdView(data.work_type_id || null);
-} catch {}
+      const rawDigitsSaved = (data.phone || '').replace(/\D/g, '');
+      setTitle(data.title || '');
+      setDescription(data.comment || '');
+      setRegion(data.region || '');
+      setCity(data.city || '');
+      setStreet(data.street || '');
+      setHouse(data.house || '');
+      setCustomerName(data.fio || '');
+      setPhone(rawDigitsSaved || '');
+      setDepartureDate(data.datetime ? new Date(data.datetime) : null);
+      setAssigneeId(data.assigned_to || null);
+      setToFeed(!data.assigned_to);
+      setUrgent(!!data.urgent);
+      setAmount(data.price !== null && data.price !== undefined ? String(data.price) : '');
+      setGsm(data.fuel_cost !== null && data.fuel_cost !== undefined ? String(data.fuel_cost) : '');
+      setDepartmentId(data.department_id || null);
+      setWorkTypeId(data.work_type_id || null);
+
       initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
-      {
+      
+      if (data.assigned_to) {
         const sel = (users || []).find((u) => u.id === data.assigned_to);
         if (sel) {
           setExecutorName(`${sel.first_name || ''} ${sel.last_name || ''}`.trim());
-        } else if (data.assigned_to) {
-          try {
-            const fetchExec = async () => {
-              const { data: exec } = await supabase
-                .from('profiles')
-                .select('first_name, last_name')
-                .eq('id', data.assigned_to)
-                .single();
-              setExecutorName(
-                exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null,
-              );
-            };
-            fetchExec();
-          } catch {}
         } else {
-          // keep previous value to avoid flicker
+          try {
+            const { data: exec } = await supabase
+              .from('profiles')
+              .select('first_name, last_name')
+              .eq('id', data.assigned_to)
+              .single();
+            setExecutorName(exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null);
+          } catch {}
         }
       }
+      
       setEditMode(false);
       showToast('Сохранено');
     }
-  };
+  }, [validateRequiredBySchemaEdit, canEdit, title, region, city, street, house, customerName, phone, departureDate, assigneeId, toFeed, order, urgent, departmentId, canEditFinances, amount, gsm, parseMoney, useWorkTypes, workTypeId, id, users, makeSnapshotFromOrder, showToast, showWarning]);
 
-  const updateStatus = async (next) => {
+  const updateStatus = useCallback(async (next) => {
     if (!canEdit()) return;
     try {
       if (next === 'В ленте') {
@@ -1390,53 +820,45 @@ if (!canEdit()) return;
       setOrder((prev) => ({ ...(prev || {}), status: next }));
       setStatusModalVisible(false);
       showToast('Статус обновлён');
-    } catch (_e) {
+    } catch {
       showToast('Ошибка сети');
     }
-  };
+  }, [canEdit, order, showToast]);
 
-  const confirmCancel = () => {
-  // Сначала закрываем лист редактирования — иначе на Android остаётся нижний overlay
-  setEditMode(false);
-  setCancelVisible(false);
+  const confirmCancel = useCallback(() => {
+    setEditMode(false);
+    setCancelVisible(false);
+    setTimeout(applyNavBar, 10);
 
-  // Восстановить цвет системной навигационной панели после закрытия обоих модалок
-  setTimeout(applyNavBar, 10);
+    if (order) {
+      initialFormSnapshotRef.current = makeSnapshotFromOrder(order);
+      const rawDigits = ((order.phone ?? order.customer_phone_visible ?? order.phone_visible) || '')
+        .replace(/\D/g, '');
+        
+      setTitle(order.title || '');
+      setDescription(order.comment || '');
+      setRegion(order.region || '');
+      setCity(order.city || '');
+      setStreet(order.street || '');
+      setHouse(order.house || '');
+      setCustomerName(order.fio || '');
+      setPhone(rawDigits || '');
+      setDepartureDate(order.datetime ? new Date(order.datetime) : null);
+      setAssigneeId(order.assigned_to || null);
+      setToFeed(!order.assigned_to);
+      setUrgent(!!order.urgent);
+      setDepartmentId(order.department_id || null);
+      setWorkTypeId(order.work_type_id || null);
+      setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
+      setGsm(order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '');
+    }
+  }, [order, makeSnapshotFromOrder, applyNavBar]);
 
-  if (order) {
-    initialFormSnapshotRef.current = makeSnapshotFromOrder(order);
-    const rawDigits = ((order.phone ?? order.customer_phone_visible ?? order.phone_visible) || '').replace(/\D/g, '');
-    setTitle(order.title || '');
-    setDescription(order.comment || '');
-    setRegion(order.region || '');
-    setCity(order.city || '');
-    setStreet(order.street || '');
-    setHouse(order.house || '');
-    setCustomerName(order.fio || '');
-    setPhone(rawDigits || '');
-    setDepartureDate(order.datetime ? new Date(order.datetime) : null);
-    setAssigneeId(order.assigned_to || null);
-    setToFeed(!order.assigned_to);
-    setUrgent(!!order.urgent);
-
-    // финансы
-    setDepartmentId(order.department_id || null);
-
-    setWorkTypeId(order.work_type_id || null);
-    setWorkTypeIdView(order.work_type_id || null);
-
-    setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
-    setGsm(order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '');
-  }
-};
-
-  // ===== Delete order =====
-  const deleteOrderCompletely = async () => {
+  const deleteOrderCompletely = useCallback(async () => {
     try {
       const bucket = 'orders-photos';
       const categories = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
 
-      // 1) удалить всё из папок orders/{id}/{category}
       for (const cat of categories) {
         const listRes = await supabase.storage.from(bucket).list(`orders/${order.id}/${cat}`);
         const files = listRes?.data || [];
@@ -1446,7 +868,6 @@ if (!canEdit()) return;
         }
       }
 
-      // 2) удаление по URL (на случай расхождений путей)
       const allUrls = []
         .concat(order?.contract_file || [])
         .concat(order?.photo_before || [])
@@ -1459,7 +880,6 @@ if (!canEdit()) return;
         await supabase.storage.from(bucket).remove(relPaths);
       }
 
-      // 3) удалить запись
       const { data, error: delErr } = await supabase
         .from('orders')
         .delete()
@@ -1467,7 +887,6 @@ if (!canEdit()) return;
         .select('id');
 
       if (delErr) {
-        console.warn(delErr);
         showToast('Ошибка удаления');
         return;
       }
@@ -1481,14 +900,286 @@ if (!canEdit()) return;
       if (navigation?.canGoBack?.()) navigation.goBack();
       else router.replace('/orders/orders');
     } catch (e) {
-      console.warn(e);
+      console.warn('Delete error:', e);
       showToast('Ошибка удаления');
     }
-  };
+  }, [order, navigation, router, showToast]);
 
-  // ===== pretty view entrance animation (RN Animated) =====
-  const viewFade = useRef(new RNAnimated.Value(0)).current;
-  const viewTranslate = useRef(new RNAnimated.Value(8)).current;
+  const goBack = useCallback(() => {
+    if (editMode) {
+      requestCloseEdit();
+      return;
+    }
+
+    if (returnTo && !isNavigatingRef.current && backTargetPath !== pathname) {
+      isNavigatingRef.current = true;
+      router.replace({ pathname: backTargetPath, params: returnParams });
+      return;
+    }
+
+    if (navigation?.canGoBack?.()) {
+      navigation.goBack();
+    } else {
+      router.replace('/orders/my-orders');
+    }
+  }, [editMode, returnTo, backTargetPath, pathname, router, returnParams, navigation]);
+
+  const requestCloseEdit = useCallback(() => {
+    if (formIsDirty()) {
+      setCancelVisible(true);
+    } else {
+      setEditMode(false);
+    }
+  }, [formIsDirty]);
+
+  const showWarning = useCallback((message) => {
+    setWarningMessage(message);
+    setWarningVisible(true);
+  }, []);
+
+  const scrollToDateField = useCallback(() => {
+    const node = dateFieldRef.current;
+    const scrollNode = findNodeHandle(detailsScrollRef.current);
+    if (!node || !scrollNode) return;
+    try {
+      UIManager.measureLayout(
+        node,
+        scrollNode,
+        () => {},
+        (_x, y) => detailsScrollRef.current?.scrollTo?.({ y, animated: true }),
+      );
+    } catch {}
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    scale.value = withTiming(1, { duration: 180 });
+    translateX.value = withTiming(0, { duration: 180 });
+    translateY.value = withTiming(0, { duration: 180 });
+  }, [scale, translateX, translateY]);
+
+  const closeViewer = useCallback(() => {
+    setViewerVisible(false);
+    scale.value = 1;
+    translateX.value = 0;
+    translateY.value = 0;
+    bgOpacity.value = 1;
+  }, [scale, translateX, translateY, bgOpacity]);
+
+  const onDoubleTap = useCallback((e) => {
+    const { x, y } = e.nativeEvent;
+    const nextScale = scale.value > 1 ? 1 : 2.5;
+    if (nextScale === 1) {
+      scale.value = withTiming(1, { duration: 180 });
+      translateX.value = withTiming(0, { duration: 180 });
+      translateY.value = withTiming(0, { duration: 180 });
+    } else {
+      const dx = (SCREEN_W / 2 - x) * (nextScale - 1);
+      const dy = (SCREEN_H / 2 - y) * (nextScale - 1);
+      scale.value = withTiming(nextScale, { duration: 200 });
+      translateX.value = withTiming(dx, { duration: 200 });
+      translateY.value = withTiming(dy, { duration: 200 });
+    }
+  }, [scale, translateX, translateY]);
+
+  const onVerticalPan = useCallback(({ nativeEvent }) => {
+    if (scale.value > 1.01) return;
+    const { translationY, velocityY, state } = nativeEvent;
+    translateY.value = translationY;
+    bgOpacity.value = 1 - Math.min(Math.abs(translationY) / 300, 0.8);
+
+    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
+      const shouldClose = Math.abs(translationY) > 120 || Math.abs(velocityY) > 600;
+      if (shouldClose) {
+        bgOpacity.value = withTiming(0, { duration: 160 }, () => runOnJS(closeViewer)());
+      } else {
+        translateY.value = withSpring(0);
+        bgOpacity.value = withTiming(1, { duration: 160 });
+      }
+    }
+  }, [scale, bgOpacity, translateY, closeViewer]);
+
+  const openViewer = useCallback((photos, index) => {
+    setViewerPhotos(photos);
+    setViewerIndex(index);
+    setViewerVisible(true);
+    scale.value = 1;
+    translateX.value = 0;
+    translateY.value = 0;
+    bgOpacity.value = 1;
+  }, [scale, translateX, translateY, bgOpacity]);
+
+  const onPinchGestureEvent = useCallback((e) => {
+    const s = (e?.nativeEvent?.scale ?? 1);
+    scale.value = s;
+  }, [scale]);
+
+  const onPinchStateChange = useCallback((e) => {
+    const st = e?.nativeEvent?.state;
+    if (st === State.END || st === State.CANCELLED || st === State.FAILED) {
+      const next = Math.max(1, Math.min(3, scale.value));
+      scale.value = withTiming(next, { duration: 150 });
+      if (next === 1) {
+        translateX.value = withTiming(0, { duration: 150 });
+        translateY.value = withTiming(0, { duration: 150 });
+      }
+    }
+  }, [scale, translateX, translateY]);
+
+  const animatedImageStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: translateX.value },
+      { translateY: translateY.value },
+      { scale: scale.value },
+    ],
+  }));
+
+  const animatedBackdropStyle = useAnimatedStyle(() => ({
+    opacity: bgOpacity.value,
+  }));
+
+  const formatPhoneE164 = useCallback((phone) => {
+    const digits = (phone || '').replace(/\D/g, '');
+    if (digits.length === 11 && digits.startsWith('7')) {
+      return `+7${digits.slice(1)}`;
+    }
+    if (digits.length === 11 && digits.startsWith('8')) {
+      return `+7${digits.slice(1)}`;
+    }
+    return (phone || '').replace(/\s+/g, '');
+  }, []);
+
+  const formatPhoneDisplay = useCallback((phone) => {
+    const digitsRaw = (phone || '').replace(/\D/g, '');
+    const digits = digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
+    if (digits.length !== 11 || !digits.startsWith('7')) return phone || '';
+    return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
+  }, []);
+
+  const getStatusMeta = useCallback((status) => {
+    const statusSet = theme?.colors?.status || theme?._raw?.colors?.status;
+    switch (status) {
+      case 'В ленте': {
+        const c = statusSet?.feed;
+        return { 
+          bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface, 
+          fg: c?.fg ?? theme.colors.warning ?? theme.colors.primary 
+        };
+      }
+      case 'Новый': {
+        const c = statusSet?.new;
+        return { 
+          bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface, 
+          fg: c?.fg ?? theme.colors.primary 
+        };
+      }
+      case 'В работе': {
+        const c = statusSet?.progress;
+        return { 
+          bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface, 
+          fg: c?.fg ?? theme.colors.success ?? theme.colors.primary 
+        };
+      }
+      case 'Завершённая': {
+        const c = statusSet?.done;
+        return { 
+          bg: c?.bg ?? theme.colors.surface, 
+          fg: c?.fg ?? theme.colors.textSecondary 
+        };
+      }
+      default:
+        return { bg: theme.colors.surface, fg: theme.colors.text };
+    }
+  }, [theme]);
+
+  const renderPhotoRow = useCallback((titleText, category) => {
+    const photos = order[category] || [];
+    return (
+      <View style={styles.photosBlock}>
+        <View style={styles.photosHeader}>
+          <Text style={styles.photosTitle}>{titleText}</Text>
+          <Pressable
+            style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
+            onPress={() => compressAndUpload(category)}
+          >
+            <Text style={styles.addChipText}>Добавить</Text>
+          </Pressable>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.hRow}
+        >
+          {photos.map((url, index) => (
+            <View key={index} style={styles.hItem}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.imagePressable,
+                  pressed && { transform: [{ scale: 0.98 }] },
+                ]}
+                onPress={() => openViewer(photos, index)}
+              >
+                <Image source={{ uri: url }} style={styles.hImage} />
+              </Pressable>
+              <Pressable style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
+                <Text style={styles.deleteText}>×</Text>
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }, [order, styles, compressAndUpload, openViewer, removePhoto]);
+
+  const SafeRow = useCallback(({ children, ...rest }) => (
+    <View {...rest}>
+      {React.Children.map(children, (ch) =>
+        typeof ch === 'string' ? <Text style={styles.rowValue}>{ch}</Text> : ch
+      )}
+    </View>
+  ), [styles]);
+
+  useEffect(() => {
+    applyNavBar();
+  }, [applyNavBar]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await fetchFormSchema('edit');
+        if (mounted && data && Array.isArray(data.fields)) setSchemaEdit(data);
+      } catch (e) {
+        // silent fallback
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [id, fetchData]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cid = await getMyCompanyId();
+        if (!alive) return;
+        setCompanyId(cid);
+        if (cid) {
+          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+          if (!alive) return;
+          setUseWorkTypesFlag(!!flag);
+          setWorkTypes(types || []);
+        }
+      } catch (e) {
+        console.warn('workTypes bootstrap', e?.message || e);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   useEffect(() => {
     if (!loading) {
       RNAnimated.parallel([
@@ -1508,114 +1199,73 @@ if (!canEdit()) return;
     }
   }, [loading, viewFade, viewTranslate]);
 
-  // ======== PHOTO VIEWER (fullscreen, Xiaomi-like) ========
-  const [viewerVisible, setViewerVisible] = useState(false);
-  const [viewerPhotos, setViewerPhotos] = useState([]);
-  const [viewerIndex, setViewerIndex] = useState(0);
-
-  // shared values for gesture
-  const scale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const bgOpacity = useSharedValue(1);
-  // refs для координации жестов
-  const panRef = useRef(null);
-  const tapRef = useRef(null);
-  const pinchRef = useRef(null);
-
-  // pinch (щипок) масштабирование
-  const pinchHandler = useAnimatedGestureHandler({
-    onActive: (event) => {
-      // live scale during gesture
-      scale.value = event.scale;
-    },
-    onEnd: () => {
-      const next = Math.max(1, Math.min(3, scale.value));
-      scale.value = withTiming(next, { duration: 150 });
-      if (next === 1) {
-        translateX.value = withTiming(0, { duration: 150 });
-        translateY.value = withTiming(0, { duration: 150 });
-      }
-    },
-  });
-
-  const resetZoom = () => {
-    scale.value = withTiming(1, { duration: 180 });
-    translateX.value = withTiming(0, { duration: 180 });
-    translateY.value = withTiming(0, { duration: 180 });
-  };
-
-  const closeViewer = () => {
-    setViewerVisible(false);
-    scale.value = 1;
-    translateX.value = 0;
-    translateY.value = 0;
-    bgOpacity.value = 1;
-  };
-
-  const animatedImageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
-
-  const animatedBackdropStyle = useAnimatedStyle(() => ({
-    opacity: bgOpacity.value,
-  }));
-
-  const onDoubleTap = (e) => {
-    const { x, y } = e.nativeEvent;
-    const nextScale = scale.value > 1 ? 1 : 2.5;
-    if (nextScale === 1) {
-      scale.value = withTiming(1, { duration: 180 });
-      translateX.value = withTiming(0, { duration: 180 });
-      translateY.value = withTiming(0, { duration: 180 });
-    } else {
-      // center the tapped point
-      const dx = (SCREEN_W / 2 - x) * (nextScale - 1);
-      const dy = (SCREEN_H / 2 - y) * (nextScale - 1);
-      scale.value = withTiming(nextScale, { duration: 200 });
-      translateX.value = withTiming(dx, { duration: 200 });
-      translateY.value = withTiming(dy, { duration: 200 });
+  useEffect(() => {
+    let t;
+    if (deleteModalVisible) {
+      setDeleteEnabled(false);
+      setDeleteCountdown(5);
+      let c = 5;
+      t = setInterval(() => {
+        c -= 1;
+        setDeleteCountdown(c);
+        if (c <= 0) {
+          clearInterval(t);
+          setDeleteEnabled(true);
+        }
+      }, 1000);
     }
-  };
+    return () => clearInterval(t);
+  }, [deleteModalVisible]);
 
-  const onVerticalPan = ({ nativeEvent }) => {
-    if (scale.value > 1.01) return; // don't close while zoomed
-    const { translationY, velocityY, state } = nativeEvent;
-    // follow finger
-    translateY.value = translationY;
-    bgOpacity.value = 1 - Math.min(Math.abs(translationY) / 300, 0.8);
-
-    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
-      const shouldClose = Math.abs(translationY) > 120 || Math.abs(velocityY) > 600;
-      if (shouldClose) {
-        bgOpacity.value = withTiming(0, { duration: 160 }, () => runOnJS(closeViewer)());
-      } else {
-        translateY.value = withSpring(0);
-        bgOpacity.value = withTiming(1, { duration: 160 });
+  useEffect(() => {
+    const onHardwareBack = () => {
+      if (editMode) {
+        requestCloseEdit();
+        return true;
       }
-    }
-  };
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+    return () => sub.remove();
+  }, [editMode, requestCloseEdit]);
 
-  const openViewer = (photos, index) => {
-    setViewerPhotos(photos);
-    setViewerIndex(index);
-    setViewerVisible(true);
-    scale.value = 1;
-    translateX.value = 0;
-    translateY.value = 0;
-    bgOpacity.value = 1;
-  };
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e) => {
+    
+const actionType = e?.data?.action?.type;
+if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType !== 'POP_TO_TOP') {
+  // allow explicit navigations (e.g., bottom bar tabs using router.replace)
+  return;
+}
 
-  // sync zoom reset on index change
+      if (returnTo && !isNavigatingRef.current && backTargetPath !== pathname) {
+        e.preventDefault();
+        isNavigatingRef.current = true;
+        router.replace({ pathname: backTargetPath, params: returnParams });
+      }
+    });
+    return sub;
+  }, [navigation, editMode, returnTo, backTargetPath, pathname, router, returnParams, requestCloseEdit]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (editMode) {
+          requestCloseEdit();
+          return true;
+        }
+        goBack();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [editMode, requestCloseEdit, goBack]),
+  );
+
   useEffect(() => {
     resetZoom();
-  }, [viewerIndex]);
+  }, [viewerIndex, resetZoom]);
 
-  if (loading || !order) {
+  if ((loading && !hydratedRef.current) || !order) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -1626,7 +1276,7 @@ if (!canEdit()) return;
   const statusMeta = getStatusMeta(order.status);
   const selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
-  const canChangeStatus = canEdit() && order.status !== 'В ленте'; // ← добавили
+  const canChangeStatus = canEdit() && order.status !== 'В ленте';
 
   return (
     <KeyboardAvoidingView
@@ -1640,7 +1290,6 @@ if (!canEdit()) return;
             contentContainerStyle={styles.container}
             keyboardShouldPersistTaps="handled"
           >
-            {/* Top bar */}
             <View style={styles.topBar}>
               <Pressable
                 onPress={() => (editMode ? requestCloseEdit() : goBack())}
@@ -1648,7 +1297,10 @@ if (!canEdit()) return;
                 accessibilityRole="button"
                 accessibilityLabel="Назад"
               >
-                <View style={{flexDirection:'row',alignItems:'center',gap:6}}><AntDesign name="arrowleft" size={18} color={theme.colors.primary} /><Text style={styles.backText}>Назад</Text></View>
+                <View style={{flexDirection:'row',alignItems:'center',gap:6}}>
+                  <AntDesign name="left" size={18} color={theme.colors.primary} />
+                  <Text style={styles.backText}>Назад</Text>
+                </View>
               </Pressable>
 
               {canEdit() && !editMode && (
@@ -1660,10 +1312,8 @@ if (!canEdit()) return;
                   <Text style={styles.editBtnText}>Редактировать</Text>
                 </Pressable>
               )}
-
             </View>
 
-            {/* Header Card (title on its own line, meta chips below) */}
             <RNAnimated.View
               style={[
                 styles.headerCard,
@@ -1679,7 +1329,7 @@ if (!canEdit()) return;
                   <View style={styles.urgentPill}>
                     <Text style={styles.urgentPillText}>Срочная</Text>
                   </View>
-              )}
+                )}
 
                 {canChangeStatus ? (
                   <Pressable
@@ -1702,7 +1352,6 @@ if (!canEdit()) return;
               </View>
             </RNAnimated.View>
 
-            {/* Info Card (now includes Executor as a uniform row at the top) */}
             <RNAnimated.View
               style={[
                 styles.cardBlock,
@@ -1726,33 +1375,30 @@ if (!canEdit()) return;
                 <Text style={styles.rowValue}>{order.fio || order.customer_name || '—'}</Text>
               </SafeRow>
               <View style={styles.separator} />
+              
               <Pressable style={styles.row} onPress={openInYandex}>
                 <Text style={styles.rowLabel}>📍 Адрес</Text>
                 <Text style={[styles.rowValue, styles.linkText]} numberOfLines={2}>
-                  {[order.address, order.region, order.city, order.street, order.house].filter(Boolean)
+                  {[order.address, order.region, order.city, order.street, order.house]
+                    .filter(Boolean)
                     .join(', ') || 'Адрес не указан'}
                 </Text>
               </Pressable>
               <View style={styles.separator} />
 
-              
-              
-{useWorkTypes && (
-  <>
-    <SafeRow style={styles.row}>
-      <Text style={styles.rowLabel}>🏷️ Тип работ</Text>
-      <Text style={styles.rowValue}>
-        {(() => {
-          const t = workTypes.find(w => w.id === ((order.work_type_id ?? null) ?? workTypeIdView));
-          return t ? t.name : 'не выбран';
-        })()}
-      </Text>
-    </SafeRow>
-    <View style={styles.separator} />
-  </>
-)}
+              {useWorkTypes && (
+                <>
+                  <SafeRow style={styles.row}>
+                    <Text style={styles.rowLabel}>🏷️ Тип работ</Text>
+                    <Text style={styles.rowValue}>
+                      {workTypes.find(w => w.id === (order.work_type_id ?? null))?.name || 'не выбран'}
+                    </Text>
+                  </SafeRow>
+                  <View style={styles.separator} />
+                </>
+              )}
 
-<Pressable
+              <Pressable
                 style={styles.row}
                 onPress={() => {
                   const dateStr = order.datetime
@@ -1779,94 +1425,84 @@ if (!canEdit()) return;
               </Pressable>
               <View style={styles.separator} />
               
-              {(() => { 
-  const isAdmin = role === 'admin' || role === 'dispatcher';
-  const visiblePhone = order?.customer_phone_visible || (isAdmin ? order?.phone : null);
-  const masked = order?.customer_phone_masked;
-  return (
-    <SafeRow style={styles.row}>
-  <Text style={styles.rowLabel}>📞 Телефон</Text>
-  {(() => {
-    const isAdmin = role === 'admin' || role === 'dispatcher';
-    const visiblePhone = order?.customer_phone_visible || (isAdmin ? order?.phone : null);
-    const masked = order?.customer_phone_masked;
-    if (visiblePhone) {
-      return (
-        <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
-          <Text style={[styles.rowValue, styles.linkText]}>
-            {formatPhoneDisplay(visiblePhone)}
-          </Text>
-        </Pressable>
-      );
-    }
-    return <Text style={[styles.rowValue, styles.muted]}>{masked || 'Скрыт'}</Text>;
-  })()}
-</SafeRow>
-  );
-})()}
-<View style={styles.separator} />
-<SafeRow style={styles.row}>
+              <SafeRow style={styles.row}>
+                <Text style={styles.rowLabel}>📞 Телефон</Text>
+                {(() => {
+                  const isAdmin = role === 'admin' || role === 'dispatcher';
+                  const visiblePhone = order?.customer_phone_visible || (isAdmin ? order?.phone : null);
+                  const masked = order?.customer_phone_masked;
+                  if (visiblePhone) {
+                    return (
+                      <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
+                        <Text style={[styles.rowValue, styles.linkText]}>
+                          {formatPhoneDisplay(visiblePhone)}
+                        </Text>
+                      </Pressable>
+                    );
+                  }
+                  return <Text style={[styles.rowValue, styles.muted]}>{masked || 'Скрыт'}</Text>;
+                })()}
+              </SafeRow>
+              <View style={styles.separator} />
+              
+              <SafeRow style={styles.row}>
                 <Text style={styles.rowLabel}>💰 Сумма</Text>
                 <Text style={styles.rowValue}>{formatMoney(order.price)}</Text>
               </SafeRow>
               <View style={styles.separator} />
+              
               <SafeRow style={styles.row}>
-  <Text style={styles.rowLabel}>⛽ ГСМ</Text>
-  <Text style={styles.rowValue}>{formatMoney(order.fuel_cost)}</Text>
-</SafeRow>
+                <Text style={styles.rowLabel}>⛽ ГСМ</Text>
+                <Text style={styles.rowValue}>{formatMoney(order.fuel_cost)}</Text>
+              </SafeRow>
             </RNAnimated.View>
 
             {hasField('comment') && (
-<RNAnimated.View
-              style={[
-                styles.descCard,
-                { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
-              ]}
-            >
-              <Text style={styles.descTitle}>📝 Описание</Text>
-              <Text style={styles.descText} numberOfLines={descExpanded ? undefined : 4}>
-                {order.comment?.trim() ? order.comment : '—'}
-              </Text>
-              {order.comment?.length > 120 && (
-                <Pressable onPress={() => setDescExpanded((v) => !v)} hitSlop={8}>
-                  <Text style={styles.descToggle}>
-                    {descExpanded ? 'Свернуть' : 'Показать полностью'}
-                  </Text>
-                </Pressable>
-              )}
-            </RNAnimated.View>
-)}
+              <RNAnimated.View
+                style={[
+                  styles.descCard,
+                  { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
+                ]}
+              >
+                <Text style={styles.descTitle}>📝 Описание</Text>
+                <Text style={styles.descText} numberOfLines={descExpanded ? undefined : 4}>
+                  {order.comment?.trim() ? order.comment : '—'}
+                </Text>
+                {order.comment && order.comment.length > 120 && (
+                  <Pressable onPress={() => setDescExpanded((v) => !v)} hitSlop={8}>
+                    <Text style={styles.descToggle}>
+                      {descExpanded ? 'Свернуть' : 'Показать полностью'}
+                    </Text>
+                  </Pressable>
+                )}
+              </RNAnimated.View>
+            )}
 
-            {/* Photos - one row with horizontal scroll per section */}
             {!isFree && renderPhotoRow('Фото договора', 'contract_file')}
             {!isFree && renderPhotoRow('Фото ДО', 'photo_before')}
             {!isFree && renderPhotoRow('Фото ПОСЛЕ', 'photo_after')}
             {!isFree && renderPhotoRow('Акт выполненных работ', 'act_file')}
 
-            {/* Actions */}
-
-            {/* Accept button for workers when order is free */}
-            {!order.assigned_to &&
-  (role === 'worker' || has('canAssignExecutors')) && (
-                <Pressable
-                  style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
-                  onPress={onAcceptOrder}
-                >
-                  <Text style={styles.finishButtonText}>Принять заявку</Text>
-                </Pressable>
-              )}
+            {!order.assigned_to && (role === 'worker' || has('canAssignExecutors')) && (
+              <Pressable
+                style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
+                onPress={onAcceptOrder}
+              >
+                <Text style={styles.finishButtonText}>Принять заявку</Text>
+              </Pressable>
+            )}
 
             {order.status !== 'Завершённая' && !isFree && (
-             <Pressable
-  style={({ pressed }) => [
-    styles.finishButton,
-    !canFinishOrder() && styles.finishButtonDisabled,
-    pressed && canFinishOrder() && { opacity: 0.9 },
-  ]}
-  onPress={onFinishPress}
->
-  <Text style={styles.finishButtonText}>Завершить заявку</Text>
-</Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.finishButton,
+                  !canFinishOrder() && styles.finishButtonDisabled,
+                  pressed && canFinishOrder() && { opacity: 0.9 },
+                ]}
+                onPress={onFinishPress}
+              >
+                <Text style={styles.finishButtonText}>Завершить заявку</Text>
+              </Pressable>
             )}
 
             {has('canDeleteOrders') && (
@@ -1885,7 +1521,6 @@ if (!canEdit()) return;
           </ScrollView>
         </TouchableWithoutFeedback>
 
-        {/* iOS toast banner */}
         {Platform.OS === 'ios' && !!bannerMessage && (
           <View pointerEvents="none" style={styles.banner}>
             <Text style={styles.bannerText}>{bannerMessage}</Text>
@@ -1893,7 +1528,6 @@ if (!canEdit()) return;
         )}
       </Screen>
 
-      {/* WORK TYPE SELECT MODAL */}
       <Modal
         isVisible={workTypeModalVisible}
         onBackdropPress={() => setWorkTypeModalVisible(false)}
@@ -1921,17 +1555,15 @@ if (!canEdit()) return;
         </View>
       </Modal>
 
-      {/* PHOTO VIEWER MODAL */}
       <Modal
         isVisible={viewerVisible}
-        backdropOpacity={0} // we'll control opacity with blur + animated overlay
+        backdropOpacity={0}
         style={{ margin: 0 }}
         onBackButtonPress={() => setViewerVisible(false)}
         useNativeDriver
         onModalHide={applyNavBar}
       >
         <View style={StyleSheet.absoluteFill}>
-          {/* Blurred backdrop of the underlying screen */}
           <BlurView intensity={50} tint="dark" style={[StyleSheet.absoluteFill]} />
           <Animated.View
             style={[
@@ -1941,7 +1573,6 @@ if (!canEdit()) return;
             ]}
           />
 
-          {/* Header: counter + close */}
           <View style={styles.viewerTopBar}>
             <View style={styles.counterPill}>
               <Text style={styles.counterText}>
@@ -1953,9 +1584,8 @@ if (!canEdit()) return;
             </Pressable>
           </View>
 
-          {/* Horizontal pager with small gap between photos */}
           {(() => {
-            const GAP = 16; // зазор между фотографиями
+            const GAP = 16;
             return (
               <RNAnimated.FlatList
                 style={{ backgroundColor: theme.colors.background }}
@@ -1992,8 +1622,8 @@ if (!canEdit()) return;
                   >
                     <PinchGestureHandler
                       ref={pinchRef}
-                      onGestureEvent={pinchHandler}
-                      onHandlerStateChange={pinchHandler}
+                      onGestureEvent={onPinchGestureEvent}
+                      onHandlerStateChange={onPinchStateChange}
                     >
                       <Animated.View style={[StyleSheet.absoluteFill]}>
                         <TapGestureHandler ref={tapRef} numberOfTaps={2} onActivated={onDoubleTap}>
@@ -2038,7 +1668,6 @@ if (!canEdit()) return;
         </View>
       </Modal>
 
-      {/* Cancel confirm */}
       <Modal
         isVisible={cancelVisible}
         onBackdropPress={() => setCancelVisible(false)}
@@ -2056,7 +1685,6 @@ if (!canEdit()) return;
         </View>
       </Modal>
 
-      {/* Assignee modal */}
       <Modal
         isVisible={assigneeModalVisible}
         onBackdropPress={() => setAssigneeModalVisible(false)}
@@ -2065,7 +1693,6 @@ if (!canEdit()) return;
         animationOut="slideOutDown"
         animationInTiming={200}
         animationOutTiming={200}
-
         backdropOpacity={0.3}
         onModalHide={applyNavBar}
       >
@@ -2077,7 +1704,7 @@ if (!canEdit()) return;
               setAssigneeId(null);
               setAssigneeModalVisible(false);
             }}
-            style={({ pressed }) => [styles.assigneeOption, pressed && { backgroundColor: (theme.colors.inputBg || theme.colors.surface) }]}
+            style={({ pressed }) => [styles.assigneeOption, pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface }]}
           >
             <Text style={styles.assigneeText}>В общую ленту</Text>
           </Pressable>
@@ -2093,7 +1720,7 @@ if (!canEdit()) return;
               }}
               style={({ pressed }) => [
                 styles.assigneeOption,
-                pressed && { backgroundColor: (theme.colors.inputBg || theme.colors.surface) },
+                pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
               ]}
             >
               <Text style={styles.assigneeText}>
@@ -2103,7 +1730,7 @@ if (!canEdit()) return;
           ))}
         </View>
       </Modal>
-      {/* Department modal */}
+
       <Modal
         isVisible={departmentModalVisible}
         onBackdropPress={() => setDepartmentModalVisible(false)}
@@ -2117,7 +1744,7 @@ if (!canEdit()) return;
       >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Выберите отдел</Text>
-          {Array.isArray(departments) && departments.length > 0 ? (
+          {departments.length > 0 ? (
             departments.map((d) => (
               <Pressable
                 key={d.id}
@@ -2139,7 +1766,6 @@ if (!canEdit()) return;
         </View>
       </Modal>
 
-      {/* Status picker */}
       <Modal
         isVisible={statusModalVisible}
         onBackdropPress={() => setStatusModalVisible(false)}
@@ -2156,7 +1782,7 @@ if (!canEdit()) return;
               onPress={() => updateStatus(s)}
               style={({ pressed }) => [
                 styles.assigneeOption,
-                pressed && { backgroundColor: (theme.colors.inputBg || theme.colors.surface) },
+                pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
               ]}
             >
               <Text style={styles.assigneeText}>
@@ -2190,7 +1816,6 @@ if (!canEdit()) return;
         </View>
       </Modal>
 
-      {/* Delete confirm */}
       <Modal
         isVisible={deleteModalVisible}
         onBackButtonPress={() => setDeleteModalVisible(false)}
@@ -2218,90 +1843,286 @@ if (!canEdit()) return;
       </Modal>
     </KeyboardAvoidingView>
   );
-
-  // ===== helpers/render =====
-  function renderPhotoRow(titleText, category) {
-    const photos = order[category] || [];
-    return (
-      <View style={styles.photosBlock}>
-        <View style={styles.photosHeader}>
-          <Text style={styles.photosTitle}>{titleText}</Text>
-          <Pressable
-            style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
-            onPress={() => compressAndUpload(category)}
-          >
-            <Text style={styles.addChipText}>Добавить</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.hRow}
-        >
-          {photos.map((url, index) => (
-            <View key={index} style={styles.hItem}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.imagePressable,
-                  pressed && { transform: [{ scale: 0.98 }] },
-                ]}
-                onPress={() => openViewer(photos, index)}
-              >
-                <Image source={{ uri: url }} style={styles.hImage} />
-              </Pressable>
-              <Pressable style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
-                <Text style={styles.deleteText}>×</Text>
-              </Pressable>
-            </View>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  }
-
-  // ===== pure helpers =====
-  function formatPhoneE164(phone) {
-    const digits = (phone || '').replace(/\D/g, '');
-    if (digits.length === 11 && digits.startsWith('7')) {
-      return `+7${digits.slice(1)}`;
-    }
-    if (digits.length === 11 && digits.startsWith('8')) {
-      return `+7${digits.slice(1)}`; // NOTE: not used
-    }
-    return (phone || '').replace(/\s+/g, '');
-  }
-
-  function formatPhoneDisplay(phone) {
-    const digitsRaw = (phone || '').replace(/\D/g, '');
-    // Normalize: treat leading '8' as '7' (Russia), expect 11 digits
-    const digits =
-      digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
-    if (digits.length !== 11 || !digits.startsWith('7')) return phone || '';
-    return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
-  }
-
-  function getStatusMeta(status) {
-  const statusSet = (theme?.colors?.status) || (theme?._raw?.colors?.status);
-  switch (status) {
-    case 'В ленте': {
-      const c = statusSet?.feed;
-      return { bg: c?.bg ?? (theme.colors.inputBg || theme.colors.surface), fg: c?.fg ?? (theme.colors.warning || theme.colors.primary) };
-    }
-    case 'Новый': {
-      const c = statusSet?.new;
-      return { bg: c?.bg ?? (theme.colors.inputBg || theme.colors.surface), fg: c?.fg ?? theme.colors.primary };
-    }
-    case 'В работе': {
-      const c = statusSet?.progress;
-      return { bg: c?.bg ?? (theme.colors.inputBg || theme.colors.surface), fg: c?.fg ?? (theme.colors.success || theme.colors.primary) };
-    }
-    case 'Завершённая': {
-      const c = statusSet?.done;
-      return { bg: c?.bg ?? theme.colors.surface, fg: c?.fg ?? theme.colors.textSecondary };
-    }
-    default:
-      return { bg: theme.colors.surface, fg: theme.colors.text };
-  }
 }
+
+function createStyles(theme) {
+  return StyleSheet.create({
+    toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+    toggle: {
+      width: 42,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: theme.colors.inputBg,
+      padding: 2,
+      justifyContent: 'center',
+    },
+    toggleOn: { backgroundColor: theme.colors.danger },
+    knob: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: theme.colors.surface,
+      alignSelf: 'flex-start',
+    },
+    knobOn: { alignSelf: 'flex-end' },
+    toggleLabel: { fontSize: 14, color: theme.colors.text },
+    container: { padding: 16, paddingBottom: 60, backgroundColor: theme.colors.background },
+    centered: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.colors.surface,
+    },
+    topBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    backText: { color: theme.colors.primary, fontSize: 16 },
+    editBtn: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 10,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    editBtnText: { color: theme.colors.text, fontWeight: '600' },
+    headerCard: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      padding: 16,
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    headerTitle: {
+      fontSize: 22,
+      fontWeight: '800',
+      color: theme.colors.text,
+      marginBottom: 8,
+      letterSpacing: 0.2,
+    },
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    urgentPill: {
+      backgroundColor: theme.colors.danger,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+    },
+    urgentPillText: { color: theme.colors.onPrimary, fontWeight: '700', fontSize: 12 },
+    statusChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+    statusChipText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+    cardBlock: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      paddingVertical: 4,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+    },
+    row: {
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    rowLabel: { 
+      fontSize: 15, 
+      color: theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary, 
+      flexShrink: 0 
+    },
+    rowValue: { fontSize: 16, color: theme.colors.text, textAlign: 'right', flex: 1 },
+    linkText: { color: theme.colors.primary, textDecorationLine: 'underline' },
+    muted: { color: theme.colors.textSecondary },
+    separator: { height: 1, backgroundColor: theme.colors.border },
+    descCard: {
+      marginTop: 12,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+    },
+    descTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
+    descText: { fontSize: 16, color: theme.colors.text, lineHeight: 22 },
+    descToggle: { marginTop: 8, color: theme.colors.primary, fontWeight: '600' },
+    photosBlock: {
+      marginTop: 16,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingVertical: 8,
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+    },
+    photosHeader: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    photosTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
+    addChip: {
+      backgroundColor: theme.colors.chipBg || theme.colors.inputBg || theme.colors.surface,
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+    },
+    addChipText: { color: theme.colors.primary, fontWeight: '600', fontSize: 13 },
+    hRow: { paddingHorizontal: 10, paddingBottom: 8 },
+    hItem: { position: 'relative', marginRight: 10 },
+    imagePressable: {
+      borderRadius: 12,
+      overflow: 'hidden',
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+    },
+    hImage: { width: 116, height: 116, borderRadius: 12 },
+    deletePhoto: {
+      position: 'absolute',
+      top: 4,
+      right: 4,
+      backgroundColor: theme.colors.danger,
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 5,
+    },
+    deleteText: { color: theme.colors.onPrimary, fontWeight: '700', fontSize: 16, lineHeight: 18 },
+    finishButton: {
+      marginTop: 18,
+      backgroundColor: theme.colors.primary,
+      paddingVertical: 14,
+      borderRadius: 14,
+      alignItems: 'center',
+    },
+    finishButtonText: { color: theme.colors.onPrimary, fontSize: 16, fontWeight: '700' },
+    finishButtonDisabled: { backgroundColor: theme.colors.primaryDisabled || theme.colors.primary, opacity: 0.6 },
+    appButton: {
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 12,
+      alignItems: 'center',
+    },
+    appButtonText: { fontSize: 16 },
+    btnPrimary: { backgroundColor: theme.colors.primary },
+    btnPrimaryText: { color: theme.colors.onPrimary, fontWeight: '600' },
+    btnSecondary: { 
+      backgroundColor: theme.colors.inputBg || theme.colors.surface, 
+      borderWidth: 1, 
+      borderColor: theme.colors.border 
+    },
+    btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
+    btnDestructive: { backgroundColor: theme.colors.danger },
+    btnDestructiveText: { color: theme.colors.onPrimary, fontWeight: '700' },
+    modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
+    modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
+    modalText: { 
+      fontSize: 15, 
+      color: theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary, 
+      marginBottom: 20 
+    },
+    modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+    assigneeOption: { paddingVertical: 10 },
+    assigneeText: { fontSize: 16, color: theme.colors.text },
+    editSheet: {
+      backgroundColor: theme.colors.surface,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      maxHeight: '92%',
+    },
+    sheetHeader: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: theme.colors.surface,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+    },
+    sheetTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: theme.colors.text,
+      letterSpacing: 0.3,
+    },
+    banner: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      bottom: 24,
+      backgroundColor: theme.colors.bannerBg || theme.colors.text,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+    },
+    bannerText: { color: theme.colors.onPrimary, textAlign: 'center', fontWeight: '600' },
+    card: {
+      backgroundColor: theme.colors.surface,
+      borderRadius: 12,
+      padding: 12,
+      borderColor: theme.colors.border,
+      borderWidth: 1,
+      marginBottom: 12,
+    },
+    section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
+    label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
+    input: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 10,
+      padding: 10,
+      color: theme.colors.text,
+    },
+    selectInput: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 10,
+      backgroundColor: theme.colors.surface,
+      padding: 12,
+      marginTop: 4,
+    },
+    selectInputText: { fontSize: 16, color: theme.colors.text },
+    viewerTopBar: {
+      position: 'absolute',
+      top: 16,
+      left: 0,
+      right: 0,
+      zIndex: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+    },
+    counterPill: {
+      backgroundColor: theme.colors.overlay,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    counterText: { color: theme.colors.onPrimary, fontWeight: '700' },
+    closeBtn: {
+      backgroundColor: theme.colors.overlay,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });
 }

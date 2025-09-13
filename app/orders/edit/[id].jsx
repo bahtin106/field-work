@@ -223,7 +223,7 @@ if (!mounted) return;
       <Screen background="background" edges={['top', 'bottom']}>
         <View style={styles.topBar}>
           <Pressable onPress={() => router.back()} hitSlop={16} style={{flexDirection:'row',alignItems:'center',gap:6}}>
-            <AntDesign name="arrowleft" size={18} color={theme.colors.primary} />
+            <AntDesign name="left" size={18} color={theme.colors.primary} />
             <Text style={styles.backText}>Назад</Text>
           </Pressable>
           <Button title="Сохранить" onPress={handleSave} />

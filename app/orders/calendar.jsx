@@ -3,6 +3,7 @@
 import { format, parseISO, isSameDay, startOfMonth } from 'date-fns';
 import { ru as dfnsRu } from 'date-fns/locale';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
   View,
@@ -412,7 +413,16 @@ const getDateKey = (v) => {
 
   const router = useRouter();
 
-  const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnTo) : null;
+  
+// Из календаря аппаратная "Назад" всегда ведёт на Главную
+useFocusEffect(React.useCallback(() => {
+  const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+    try { router.replace('/orders'); } catch {}
+    return true;
+  });
+  return () => sub.remove();
+}, [])); /* __CALENDAR_BACK_TO_HOME__ */
+const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnTo) : null;
   let backParams = {};
   try {
     backParams = returnParams ? JSON.parse(returnParams) : {};
@@ -501,7 +511,7 @@ const getDateKey = (v) => {
   // Load profile and users
   useEffect(() => {
     async function loadProfile() {
-      setLoading(true);
+      if (!LIST_CACHE.calendar) setLoading(true);
       const {
         data: { session },
       } = await supabase.auth.getSession();
