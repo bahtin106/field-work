@@ -1,7 +1,8 @@
 // app/orders/all-orders.jsx
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {ActivityIndicator,
   Platform,
   RefreshControl,
@@ -9,7 +10,7 @@ import {ActivityIndicator,
   StyleSheet,
   Text,
   View,
-  Pressable} from 'react-native';
+  Pressable, BackHandler } from 'react-native';
 import { Modal } from 'react-native';
 
 
@@ -22,6 +23,9 @@ import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
 import { useTheme } from '../../theme/ThemeProvider';
 import { usePermissions } from '../../lib/permissions';
 
+
+const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
+const PERM_TTL_MS = 10 * 60 * 1000;
 
 // ===== HARD PERMISSION GUARD (independent from usePermissions) =====
 async function checkCanViewAll() {
@@ -64,12 +68,19 @@ function mapStatusToDB(key) {
 
 export default function AllOrdersScreen() {
   // local, definitive permission flag
-  const [allowed, setAllowed] = useState(null);
+  const [allowed, setAllowed] = useState(() => {
+  const rec = PERM_CACHE.canViewAll;
+  return rec && (Date.now() - (rec.ts || 0) < PERM_TTL_MS) ? rec.value : null;
+});
   useEffect(() => {
     let alive = true;
     (async () => {
-      const ok = await checkCanViewAll();
-      if (alive) setAllowed(ok);
+      try {
+        const ok = await checkCanViewAll();
+        if (!alive) return;
+        setAllowed(ok);
+        PERM_CACHE.canViewAll = { value: ok, ts: Date.now() };
+      } catch {}
     })();
     return () => { alive = false; };
   }, []);
@@ -291,6 +302,15 @@ export default function AllOrdersScreen() {
   );
 
   const router = useRouter();
+
+  // Из вкладки «Все» аппаратная Назад ведёт на Главную
+  useFocusEffect(useCallback(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/orders');
+      return true;
+    });
+    return () => sub.remove();
+  }, []));
 
   // Global cache with TTL
   const CACHE_TTL_MS = 45000;
@@ -766,9 +786,6 @@ const getStatusLabel = (key) => {
     </View>
   </View>
 </Modal>
-
-
-
 
           {loading ? (
             <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginTop: 40 }} />

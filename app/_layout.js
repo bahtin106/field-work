@@ -2,12 +2,11 @@
 import 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import * as Notifications from 'expo-notifications';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View, AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { LinearTransition, FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
@@ -16,8 +15,7 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
-import { registerAndSavePushToken, attachNotificationLogs } from '../lib/push';
-
+// ---- React Query: cache + offline persist (Expo Managed, AsyncStorage) ----
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
@@ -26,23 +24,28 @@ import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persi
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// --- React Query: cache + offline persist (RN) ---
+// Единый QueryClient с SWR-поведением (мгновенный кэш + тихий рефетч)
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 5 * 60 * 1000,      // 5 минут не считаем устаревшими
-      gcTime: 24 * 60 * 60 * 1000,   // храним кэш сутки
+      // Критично для UX: оставляем предыдущие данные вместо спиннера
+      keepPreviousData: true,
+      placeholderData: (prev) => prev,
+      // Дефолтные тайминги (перепишем на экранах при необходимости)
+      staleTime: 5 * 60 * 1000,      // 5 минут
+      gcTime: 24 * 60 * 60 * 1000,   // сутки
       retry: 1,
       refetchOnMount: false,
-      refetchOnWindowFocus: false,
+      refetchOnWindowFocus: false,   // в RN нет окна, управляем focusManager
       refetchOnReconnect: true,
     },
   },
 });
 
+// Persist кэша в AsyncStorage (Expo-friendly)
 const persister = createAsyncStoragePersister({ storage: AsyncStorage });
 
-// сетевое состояние и фокус для RN
+// Сетевое состояние и фокус для RN
 onlineManager.setEventListener((setOnline) =>
   NetInfo.addEventListener((state) => setOnline(!!state.isConnected))
 );
@@ -50,15 +53,6 @@ onlineManager.setEventListener((setOnline) =>
 focusManager.setEventListener((handleFocus) => {
   const sub = AppState.addEventListener('change', (s) => handleFocus(s === 'active'));
   return () => sub.remove();
-});
-// Expo Notifications handler: без deprecated shouldShowAlert
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,   // iOS: heads-up баннер
-    shouldShowList: true,     // iOS: в Notification Center
-    shouldPlaySound: true,    // iOS/Android: звук если разрешён
-    priority: Notifications.AndroidNotificationPriority.MAX,
-  }),
 });
 
 function RootLayoutInner() {
@@ -68,6 +62,30 @@ function RootLayoutInner() {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
 
+
+// Init notifications handler lazily and skip in Expo Go
+useEffect(() => {
+  let mounted = true
+  ;(async () => {
+    try {
+      const { default: Constants } = await import('expo-constants');
+      if (Constants?.appOwnership === 'expo') return;
+      const Notifications = await import('expo-notifications');
+      if (!mounted) return;
+      Notifications.setNotificationHandler?.({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          priority: Notifications.AndroidNotificationPriority?.MAX,
+        }),
+      });
+    } catch (e) {
+      console.warn('Notif handler init error:', e?.message || e);
+    }
+  })();
+  return () => { mounted = false }
+}, []);
   const safeEdges = Platform.OS === 'ios' || insets.top >= 28 ? ['top','left','right'] : ['left','right'];
 
   async function waitForSession({ tries = 20, delay = 100 } = {}) {
@@ -133,21 +151,24 @@ function RootLayoutInner() {
     if (ready) SplashScreen.hideAsync().catch(() => {});
   }, [booted, isLoggedIn, role]);
 
-
-useEffect(() => {
-  if (!isLoggedIn) return;
-  let detach;
-  (async () => {
-    try {
-      const token = await registerAndSavePushToken();
-      console.log('✅ Expo push token (saved):', token);
-      detach = attachNotificationLogs();
-    } catch (e) {
-      console.warn('Push init error:', e?.message || e);
-    }
-  })();
-  return () => detach?.();
-}, [isLoggedIn]);
+  // Push init (только для залогиненного пользователя, пропускаем в Expo Go)
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    let detach;
+    (async () => {
+      try {
+        const { default: Constants } = await import('expo-constants');
+        if (Constants?.appOwnership === 'expo') return;
+        const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
+        const token = await registerAndSavePushToken();
+        console.log('✅ Expo push token (saved):', token);
+        detach = attachNotificationLogs();
+      } catch (e) {
+        console.warn('Push init error:', e?.message || e);
+      }
+    })();
+    return () => detach?.();
+  }, [isLoggedIn]);
 
   const ready = booted && (isLoggedIn ? !!role : true);
 
@@ -166,10 +187,7 @@ useEffect(() => {
       <PermissionsProvider>
         <SettingsProvider>
           <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }}>
-            <Animated.View
-  layout={LinearTransition.duration(220)}
-  style={{ flex: 1 }}
->
+            <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }}>
               <Stack
                 initialRouteName={isLoggedIn ? 'orders/index' : '(auth)'}
                 screenOptions={{
@@ -183,7 +201,7 @@ useEffect(() => {
                 }}
               >
                 <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-                <Stack.Screen name="orders/index" />
+                <Stack.Screen name="orders/index" options={{ gestureEnabled: false }} />
               </Stack>
               {isLoggedIn && <BottomNav />}
             </Animated.View>

@@ -1,23 +1,29 @@
 // components/navigation/BottomNav.jsx
 import React, { memo, useMemo, useEffect, useState, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, AppState } from 'react-native';
+import { View, Text, Pressable, StyleSheet, AppState, Animated, Easing } from 'react-native';
 import { usePathname, router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
 import { supabase } from '../../lib/supabase';
+import { getUserRole } from '../../lib/getUserRole';
 import { useToast } from '../ui/ToastProvider';
+import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 
 // -------- helpers --------
 async function fetchMyProfile() {
   const { data: ures } = await supabase.auth.getUser();
   const uid = ures?.user?.id;
-  if (!uid) return null;
-  const { data: prof } = await supabase
-    .from('profiles')
-    .select('role, company_id')
-    .eq('id', uid)
-    .maybeSingle();
-  return prof || null;
+  if (!uid) return null; // <--- добавлена проверка: не трогаем profiles без юзера
+  try {
+    const { data: prof } = await supabase
+      .from('profiles')
+      .select('role, company_id')
+      .eq('id', uid)
+      .maybeSingle();
+    return prof || null;
+  } catch {
+    return null;
+  }
 }
 
 function toBool(v) {
@@ -73,30 +79,51 @@ function BottomNavInner() {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const { setAnchorOffset } = useToast();
-  const [canAll, setCanAll] = useState(false);
+  const qc = useQueryClient();
+  const { data: role, isLoading: roleLoading } = useQuery({ queryKey: ['userRole'], queryFn: getUserRole,staleTime: 5 * 60 * 1000, refetchOnMount: false, placeholderData: (p) => p });
+  const { data: canAll, isLoading: canAllLoading } = useQuery({ queryKey: ['perm-canViewAll'], queryFn: __fetchCanViewAll, staleTime: 5 * 60 * 1000, refetchOnMount: false, placeholderData: (p) => p, enabled: !!role });
+  const isFetching = useIsFetching();
+  const [navVisible, setNavVisible] = React.useState(false);
+  const appear = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (navVisible) {
+      Animated.timing(appear, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+    } else {
+      appear.setValue(0);
+    }
+  }, [navVisible, appear]);
   const pollTimer = useRef(null);
+  // Тайминги в унисон с главным экраном
+  const navStartRef = useRef(Date.now());
+  const MIN_SPLASH_MS = 600;
+  const NET_IDLE_GRACE_MS = 280;
+
+  const colors = useMemo(() => {
+    const bg =
+      theme?.colors?.backgroundSecondary ??
+      theme?.colors?.card ??
+      theme?.colors?.background ??
+      '#121212';
+    const border = theme?.colors?.border ?? 'rgba(0,0,0,0.12)';
+    const active = theme?.colors?.primary ?? '#4F8EF7';
+    const inactive =
+      theme?.colors?.textSecondary ?? (theme?.mode === 'dark' ? '#A0A0A0' : '#606060');
+    return { bg, border, active, inactive };
+  }, [theme]);
+
   const appStateRef = useRef(AppState.currentState);
 
-  const doRefresh = async () => {
-    const ok = await __fetchCanViewAll();
-    setCanAll(ok);
-  };
+  const doRefresh = async () => { try { await qc.invalidateQueries({ queryKey: ['perm-canViewAll'] }); } catch {} };
 
   // «страховочный» короткий пуллинг после события (5 раз по 2с)
   const kickoffSafetyPoll = () => {
-    if (pollTimer.current) {
-      clearInterval(pollTimer.current);
-      pollTimer.current = null;
-    }
+    if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
     let ticks = 0;
     pollTimer.current = setInterval(async () => {
       ticks += 1;
       await doRefresh();
-      if (ticks >= 5) {
-        clearInterval(pollTimer.current);
-        pollTimer.current = null;
-      }
-    }, 2000);
+      if (ticks >= 5) { clearInterval(pollTimer.current); pollTimer.current = null; }
+    }, 1200);
   };
 
   useEffect(() => {
@@ -161,8 +188,26 @@ function BottomNavInner() {
     };
   }, []);
 
+  // Показать нижний бар строго синхронно с главным экраном (с тем же grace):
+  useEffect(() => {
+    if (navVisible) return; // показали — больше не прячем
+    const ready = !roleLoading && !canAllLoading;
+    let t;
+    if (ready && isFetching === 0) {
+      const elapsed = Date.now() - navStartRef.current;
+      const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
+      const delay = Math.max(waitMin, NET_IDLE_GRACE_MS);
+      t = setTimeout(() => setNavVisible(true), delay);
+    }
+    return () => { if (t) clearTimeout(t); };
+  }, [navVisible, roleLoading, canAllLoading, isFetching]);
+
   // скрываем бар на экранах авторизации
   if (pathname.startsWith('/(auth)')) return null;
+
+  // до первой готовности — не рендерим вообще (чтобы не появлялся раньше главной)
+  if (!navVisible) return null;
+
 
   const activeKey =
     pathname === PATHS.home || pathname === `${PATHS.home}/`
@@ -175,21 +220,8 @@ function BottomNavInner() {
       ? 'orders'
       : null;
 
-  const colors = useMemo(() => {
-    const bg =
-      theme?.colors?.backgroundSecondary ??
-      theme?.colors?.card ??
-      theme?.colors?.background ??
-      '#121212';
-    const border = theme?.colors?.border ?? 'rgba(0,0,0,0.12)';
-    const active = theme?.colors?.primary ?? '#4F8EF7';
-    const inactive =
-      theme?.colors?.textSecondary ?? (theme?.mode === 'dark' ? '#A0A0A0' : '#606060');
-    return { bg, border, active, inactive };
-  }, [theme]);
-
   return (
-    <View
+    <Animated.View
       style={[
         styles.container,
         {
@@ -200,12 +232,12 @@ function BottomNavInner() {
       ]}
     >
       {/* гарантированный ремоунт при смене canAll */}
-      <View key={`variant-${Number(canAll)}`} style={styles.bar} onLayout={(e) => { const h = e.nativeEvent.layout.height; if (setAnchorOffset) setAnchorOffset(h + 24); }}>
+      <View key={`variant-${Number(!!canAll)}`} style={styles.bar} onLayout={(e) => { const h = e.nativeEvent.layout.height; if (setAnchorOffset) setAnchorOffset(h + 24); }}>
         <TabButton
           key="tab-home"
           label="Главная"
           active={activeKey === 'home'}
-          onPress={() => router.push(PATHS.home)}
+          onPress={() => { if (activeKey !== 'home') router.replace(PATHS.home); }}
           colors={colors}
         />
 
@@ -215,14 +247,14 @@ function BottomNavInner() {
               key="tab-orders"
               label="Мои"
               active={activeKey === 'orders'}
-              onPress={() => router.push(PATHS.orders)}
+              onPress={() => { if (activeKey !== 'orders') router.replace(PATHS.orders); }}
               colors={colors}
             />
             <TabButton
               key="tab-all"
               label="Все"
               active={activeKey === 'all'}
-              onPress={() => router.push(PATHS.all)}
+              onPress={() => { if (activeKey !== 'all') router.replace(PATHS.all); }}
               colors={colors}
             />
           </>
@@ -231,7 +263,7 @@ function BottomNavInner() {
             key="tab-orders-only"
             label="Мои заявки"
             active={activeKey === 'orders'}
-            onPress={() => router.push(PATHS.orders)}
+            onPress={() => { if (activeKey !== 'orders') router.replace(PATHS.orders); }}
             colors={colors}
           />
         )}
@@ -240,11 +272,11 @@ function BottomNavInner() {
           key="tab-calendar"
           label="Календарь"
           active={activeKey === 'calendar'}
-          onPress={() => router.push(PATHS.calendar)}
+          onPress={() => { if (activeKey !== 'calendar') router.replace(PATHS.calendar); }}
           colors={colors}
         />
       </View>
-    </View>
+    </Animated.View>
   );
 }
 

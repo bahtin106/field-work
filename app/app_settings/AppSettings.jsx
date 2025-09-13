@@ -1,4 +1,3 @@
-// app/app_settings/AppSettings.jsx
 import React, { useMemo, useState , useEffect} from "react";
 import {
   View,
@@ -11,7 +10,7 @@ import {
   Platform,
 } from "react-native";
 import { Linking } from "react-native";
-import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { SafeAreaView } from "react-native-safe-area-context";
 import AppHeader from "../../components/navigation/AppHeader";
@@ -50,6 +49,21 @@ export default function AppSettings() {
   // Запрос разрешений на уведомления + создание Android-канала, возврат токена (если получилось)
   async function ensurePushPermission() {
     try {
+      // Expo Go: полностью пропускаем импорт expo-notifications, чтобы не срабатывала авто-регистрация токена
+      const isExpoGo = Constants?.appOwnership === 'expo';
+      
+      // Для Expo Go показываем системные настройки уведомлений
+      if (isExpoGo) {
+        try {
+          await Linking.openSettings();
+        } catch (error) {
+          console.log("Не удалось открыть настройки:", error);
+        }
+        return { granted: false, token: null };
+      }
+      
+      // Динамически импортируем модуль (без сайд-эффектов на старте приложения)
+      const Notifications = await import('expo-notifications');
       // 1) Запрос/проверка прав
       const { status: existing } = await Notifications.getPermissionsAsync();
       let finalStatus = existing;
@@ -63,12 +77,12 @@ export default function AppSettings() {
         try {
           await Notifications.setNotificationChannelAsync('default', {
             name: 'default',
-            importance: Notifications.AndroidImportance.MAX,
+            importance: (await import('expo-notifications')).AndroidImportance.MAX,
             sound: 'default',
           });
         } catch {}
       }
-      // 3) Пытаемся получить Expo push token (может не получиться в Expo Go)
+      // 3) Получаем Expo push token (в dev/прод билде)
       let token = null;
       try {
         const resp = await Notifications.getExpoPushTokenAsync();
@@ -249,6 +263,19 @@ const onToggleAllow = async (val) => {
   const prev = prefs.allow;
   setPrefs((p) => ({ ...p, allow: val }));
 
+  // Для Expo Go просто сохраняем настройку без запроса разрешений
+  const isExpoGo = Constants?.appOwnership === 'expo';
+  if (isExpoGo) {
+    const { ok, message } = await savePrefs({ allow: val });
+    if (!ok) {
+      setPrefs((p) => ({ ...p, allow: prev }));
+      toast.error(message || "Не удалось сохранить изменения");
+    } else {
+      toast.info(val ? "Уведомления включены (только для standalone версии)" : "Уведомления выключены");
+    }
+    return;
+  }
+
   if (val) {
     // Включаем: запрашиваем разрешение и сохраняем токен
     const { granted, token } = await ensurePushPermission();
@@ -266,7 +293,7 @@ const onToggleAllow = async (val) => {
       }
     } else {
       // Expo Go или ошибка получения токена — предупреждаем, но не валим
-      toast.info("Разрешение дано. Токен не получен (Expo Go).");
+      toast.info("Разрешение дано. Токен будет получен в dev/прод билде.");
     }
   } else {
     // Выключаем: удаляем токен
@@ -514,6 +541,48 @@ const onToggleAllow = async (val) => {
       </Modal>
 
       {/* Theme picker modal */}
+      <Modal
+        visible={themeOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setThemeOpen(false)}
+      >
+        <Pressable style={[s.modalBackdrop, { backgroundColor: theme.colors.overlay }]} onPress={() => setThemeOpen(false)}>
+          <Pressable style={[s.sheet, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={[s.sheetTitle, { color: theme.colors.text }]}>Выберите тему</Text>
+
+            <Pressable 
+              style={[s.sheetRow, [s.rowDivider, { borderColor: theme.colors.border }]]}
+              onPress={() => { setMode('light'); setThemeOpen(false); }}
+            >
+              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Светлая</Text>
+              {mode === 'light' && <FeatherIcon name="check" size={20} color={theme.colors.primary} />}
+            </Pressable>
+
+            <Pressable 
+              style={[s.sheetRow, [s.rowDivider, { borderColor: theme.colors.border }]]}
+              onPress={() => { setMode('dark'); setThemeOpen(false); }}
+            >
+              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Тёмная</Text>
+              {mode === 'dark' && <FeatherIcon name="check" size={20} color={theme.colors.primary} />}
+            </Pressable>
+
+            <Pressable 
+              style={s.sheetRow}
+              onPress={() => { setMode('system'); setThemeOpen(false); }}
+            >
+              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Системная</Text>
+              {mode === 'system' && <FeatherIcon name="check" size={20} color={theme.colors.primary} />}
+            </Pressable>
+
+            <View style={{ height: 12 }} />
+            <Pressable onPress={() => setThemeOpen(false)} style={[s.sheetRow, { justifyContent: "center" }]}>
+              <Text style={[s.sheetLabel, { color: theme.colors.text, fontWeight: "700" }]}>Готово</Text>
+            </Pressable>
+            <View style={{ height: 12 }} />
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
