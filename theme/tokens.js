@@ -15,6 +15,7 @@ const light = {
     worker: "#5856D6",
     danger: "#FF3B30",
     overlay: "rgba(0,0,0,0.35)",
+    overlayNavBar: "rgba(0,0,0,0.25)",
     inputBg: "#FFFFFF",
     inputPlaceholder: "#9CA3AF",
     inputBorder: "#E5E7EB",
@@ -70,6 +71,7 @@ const dark = {
     inputBorder: "#262A34",
     cardShadow: "rgba(0,0,0,0.5)",
     overlay: "rgba(0,0,0,0.6)",
+    overlayNavBar: "rgba(0,0,0,0.45)",
 
     button: {
       primaryBg: "#2F6FFF",

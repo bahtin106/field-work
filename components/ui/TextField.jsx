@@ -26,7 +26,11 @@ const TextField = forwardRef(function TextField(
 ) {
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
-  const s = styles(theme, !!error, focused);
+  const [touched, setTouched] = useState(false);
+  const isRequired = /\*/.test(String(label || ''));
+  const requiredEmpty = isRequired && touched && !String(value || '').trim();
+  const isErr = !!error || requiredEmpty;
+  const s = styles(theme, isErr, focused);
   const maskRef = React.useRef(null);
   const inputRef = React.useRef(null);
   // bridge external ref
@@ -41,8 +45,10 @@ const TextField = forwardRef(function TextField(
 
   return (
     <View style={style}>
-      {label ? <Text style={s.label}>{label}</Text> : null}
       <View style={s.wrap}>
+        {label ? (
+          <Text style={s.floatingLabel}>{label}</Text>
+        ) : null}
         {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
         <View style={s.inputBox} onStartShouldSetResponder={() => true} onResponderGrant={() => inputRef.current?.focus?.() }>
           <TextInput
@@ -60,7 +66,7 @@ const TextField = forwardRef(function TextField(
             multiline={multiline}
             numberOfLines={numberOfLines}
             onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            onBlur={() => { setFocused(false); setTouched(true); }}
             maxLength={maxLength}
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
@@ -93,20 +99,28 @@ const styles = (t, isError, focused) =>
   StyleSheet.create({
     label: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm, marginBottom: 6 },
     wrap: {
-      position: "relative",
-      flexDirection: "row",
-      alignItems: "center",
+      position: 'relative',
+      flexDirection: 'row',
+      alignItems: 'center',
       backgroundColor: t.colors.inputBg,
       borderColor: isError ? t.colors.danger : focused ? t.colors.primary : t.colors.inputBorder,
       borderWidth: 1,
       borderRadius: t.radii.md,
       paddingHorizontal: 12,
-      height: 48,
-      ...(Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android),
+      paddingTop: 16,
+      height: 64,
+      ...(Platform.OS === 'ios' ? t.shadows.card.ios : t.shadows.card.android),
     },
-    input: { flex: 1, color: t.colors.text, fontSize: t.typography.sizes.md, paddingVertical: 10 },
+    floatingLabel: {
+      position: 'absolute',
+      left: 12,
+      top: 6,
+      color: t.colors.textSecondary,
+      fontSize: t.typography.sizes.sm,
+    },
+    input: { flex: 1, color: t.colors.text, fontSize: t.typography.sizes.md, paddingVertical: 8 },
     slot: { marginHorizontal: 4 },
-    inputBox: { flex: 1, justifyContent: "center", position: "relative" },
-    passwordMask: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, textAlign: "left" },
-    error: { color: t.colors.danger, fontSize: t.typography.sizes.sm, marginTop: 6 },
+    inputBox: { flex: 1, justifyContent: 'center', position: 'relative' },
+    passwordMask: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, textAlign: 'left' },
+    error: { color: t.colors.danger, fontSize: t.typography.sizes.sm, marginTop: 4, paddingLeft: 12 },
   });

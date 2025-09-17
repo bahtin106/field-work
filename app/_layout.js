@@ -2,7 +2,7 @@
 import 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { ActivityIndicator, View, AppState, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -87,6 +87,12 @@ useEffect(() => {
   return () => { mounted = false }
 }, []);
   const safeEdges = Platform.OS === 'ios' || insets.top >= 28 ? ['top','left','right'] : ['left','right'];
+  const onLayoutRootView = useCallback(() => {
+    if (booted) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [booted]);
+
 
   async function waitForSession({ tries = 20, delay = 100 } = {}) {
     for (let i = 0; i < tries; i++) {
@@ -118,23 +124,27 @@ useEffect(() => {
           if (mounted) setRole(null);
         }
       } finally {
-        if (mounted) setBooted(true);
+        if (mounted) SplashScreen.hideAsync().catch(() => {});
+      setBooted(true);
       }
     };
     boot();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (_, session) => {
-      const logged = !!session?.user;
+      // Drop React Query cache on any auth change to avoid stale screens/data after relogin
+      try { await queryClient.clear(); } catch {}
+const logged = !!session?.user;
       setIsLoggedIn(logged);
       if (logged && session?.user?.id) {
         try { await waitForSession(); const r = await getUserRole(); setRole(r); }
         catch { setRole(null); }
       } else { setRole(null); }
+      SplashScreen.hideAsync().catch(() => {});
       setBooted(true);
     });
 
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && booted && (isLoggedIn ? role : true)) {
+      if (state === 'active' && booted) {
         SplashScreen.hideAsync().catch(() => {});
       }
     });
@@ -147,11 +157,10 @@ useEffect(() => {
   }, [booted]);
 
   useEffect(() => {
-    const ready = booted && (isLoggedIn ? !!role : true);
+    const ready = booted;
     if (ready) SplashScreen.hideAsync().catch(() => {});
   }, [booted, isLoggedIn, role]);
-
-  // Push init (только для залогиненного пользователя, пропускаем в Expo Go)
+// Push init (только для залогиненного пользователя, пропускаем в Expo Go)
   useEffect(() => {
     if (!isLoggedIn) return;
     let detach;
@@ -170,11 +179,13 @@ useEffect(() => {
     return () => detach?.();
   }, [isLoggedIn]);
 
-  const ready = booted && (isLoggedIn ? !!role : true);
-
-  if (!ready) {
+  const ready = booted;
+  // После завершения инициализации навигация управляется
+  // свойством initialRouteName на Stack и перенаправлением при выходе
+  // в компонентах, поэтому отдельный редирект здесь не нужен.
+if (!ready) {
     return (
-      <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }}>
+      <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={onLayoutRootView}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size="large" />
         </View>
@@ -183,10 +194,10 @@ useEffect(() => {
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={onLayoutRootView}>
       <PermissionsProvider>
         <SettingsProvider>
-          <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }}>
+          <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={onLayoutRootView}>
             <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }}>
               <Stack
                 initialRouteName={isLoggedIn ? 'orders/index' : '(auth)'}

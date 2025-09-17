@@ -19,9 +19,33 @@ import { useRoute } from "@react-navigation/native";
 import FeatherIcon from "@expo/vector-icons/Feather";
 import { useTheme } from "../../theme";
 import { useToast } from "../../components/ui/ToastProvider";
+import SelectModal from "../../components/ui/SelectModal";
+import Button from "../../components/ui/Button";
 import { supabase } from "../../lib/supabase";
 
+// --- Edge-to-edge warning filter (expo-navigation-bar) ---
+// Скрывает только два известных WARN'а про edge-to-edge, не трогая остальные предупреждения.
+function useFilterEdgeToEdgeWarnings() {
+  React.useEffect(() => {
+    const originalWarn = console.warn;
+    const edgeToEdgeRegex = /`setBehaviorAsync` is not supported with edge-to-edge enabled\.|`setBackgroundColorAsync` is not supported with edge-to-edge enabled\./;
+    console.warn = (...args) => {
+      try {
+        const first = args && args.length ? String(args[0]) : "";
+        if (edgeToEdgeRegex.test(first)) {
+          return; // тихо игнорируем только эти конкретные варнинги
+        }
+      } catch {}
+      originalWarn(...args);
+    };
+    return () => {
+      console.warn = originalWarn;
+    };
+  }, []);
+}
+
 export default function AppSettings() {
+  useFilterEdgeToEdgeWarnings();
   const nav = useNavigation();
   const route = useRoute();
   const { theme, mode, setMode } = useTheme();
@@ -503,86 +527,35 @@ const onToggleAllow = async (val) => {
         />
       ) : null}
 
-      {/* Events sheet modal */}
-      <Modal
-        visible={eventsOpen}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setEventsOpen(false)}
-      >
-        <Pressable style={[s.modalBackdrop, { backgroundColor: theme.colors.overlay }]} onPress={() => setEventsOpen(false)}>
-          <Pressable style={[s.sheet, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={[s.sheetTitle, { color: theme.colors.text }]}>Включённые события</Text>
+      {/* Events SelectModal */}
+<SelectModal
+  visible={eventsOpen}
+  title="Включённые события"
+  searchable={false}
+  items={[
+    { id: "new_orders", label: "Новые заявки", right: <Switch value={!!prefs.new_orders} onValueChange={onToggleEvent("new_orders")} /> },
+    { id: "feed_orders", label: "Заявки в ленте", right: <Switch value={!!prefs.feed_orders} onValueChange={onToggleEvent("feed_orders")} /> },
+    ...(canCreateOrders ? [{ id: "reminders", label: "Напоминать о незабранных", right: <Switch value={!!prefs.reminders} onValueChange={onToggleEvent("reminders")} /> }] : [])
+  ]}
+  footer={<Button variant="secondary" title="Готово" onPress={() => setEventsOpen(false)} />}
+  onClose={() => setEventsOpen(false)}
+/>
 
-            <View style={[s.sheetRow, [s.rowDivider, { borderColor: theme.colors.border }]]}>
-              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Новые заявки</Text>
-              <Switch value={!!prefs.new_orders} onValueChange={onToggleEvent("new_orders")} />
-            </View>
 
-            <View style={[s.sheetRow, [s.rowDivider, { borderColor: theme.colors.border }]]}>
-              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Заявки в ленте</Text>
-              <Switch value={!!prefs.feed_orders} onValueChange={onToggleEvent("feed_orders")} />
-            </View>
+      {/* Theme SelectModal */}
+<SelectModal
+  visible={themeOpen}
+  title="Выберите тему"
+  searchable={false}
+  items={[
+    { id: "light", label: "Светлая", right: (mode === 'light' ? <FeatherIcon name="check" size={20} color={theme.colors.primary} /> : null) },
+    { id: "dark", label: "Тёмная", right: (mode === 'dark' ? <FeatherIcon name="check" size={20} color={theme.colors.primary} /> : null) },
+    { id: "system", label: "Системная", right: (mode === 'system' ? <FeatherIcon name="check" size={20} color={theme.colors.primary} /> : null) },
+  ]}
+  onSelect={(it) => { setMode(it.id); setThemeOpen(false); }}
+  onClose={() => setThemeOpen(false)}
+/>
 
-            {canCreateOrders ? (
-              <View style={s.sheetRow}>
-                <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Напоминать о незабранных</Text>
-                <Switch value={!!prefs.reminders} onValueChange={onToggleEvent("reminders")} />
-              </View>
-            ) : null}
-
-            <View style={{ height: 12 }} />
-            <Pressable onPress={() => setEventsOpen(false)} style={[s.sheetRow, { justifyContent: "center" }]}>
-              <Text style={[s.sheetLabel, { color: theme.colors.text, fontWeight: "700" }]}>Готово</Text>
-            </Pressable>
-            <View style={{ height: 12 }} />
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Theme picker modal */}
-      <Modal
-        visible={themeOpen}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setThemeOpen(false)}
-      >
-        <Pressable style={[s.modalBackdrop, { backgroundColor: theme.colors.overlay }]} onPress={() => setThemeOpen(false)}>
-          <Pressable style={[s.sheet, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={[s.sheetTitle, { color: theme.colors.text }]}>Выберите тему</Text>
-
-            <Pressable 
-              style={[s.sheetRow, [s.rowDivider, { borderColor: theme.colors.border }]]}
-              onPress={() => { setMode('light'); setThemeOpen(false); }}
-            >
-              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Светлая</Text>
-              {mode === 'light' && <FeatherIcon name="check" size={20} color={theme.colors.primary} />}
-            </Pressable>
-
-            <Pressable 
-              style={[s.sheetRow, [s.rowDivider, { borderColor: theme.colors.border }]]}
-              onPress={() => { setMode('dark'); setThemeOpen(false); }}
-            >
-              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Тёмная</Text>
-              {mode === 'dark' && <FeatherIcon name="check" size={20} color={theme.colors.primary} />}
-            </Pressable>
-
-            <Pressable 
-              style={s.sheetRow}
-              onPress={() => { setMode('system'); setThemeOpen(false); }}
-            >
-              <Text style={[s.sheetLabel, { color: theme.colors.text }]}>Системная</Text>
-              {mode === 'system' && <FeatherIcon name="check" size={20} color={theme.colors.primary} />}
-            </Pressable>
-
-            <View style={{ height: 12 }} />
-            <Pressable onPress={() => setThemeOpen(false)} style={[s.sheetRow, { justifyContent: "center" }]}>
-              <Text style={[s.sheetLabel, { color: theme.colors.text, fontWeight: "700" }]}>Готово</Text>
-            </Pressable>
-            <View style={{ height: 12 }} />
-          </Pressable>
-        </Pressable>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -622,25 +595,5 @@ const styles = (t) => StyleSheet.create({
   rightWrap: { flexDirection: "row", alignItems: "center" },
 
   // Modal bottom-sheet
-  modalBackdrop: { flex: 1, alignItems: "center", justifyContent: "flex-end" },
-  sheet: {
-    width: "100%",
-    borderTopLeftRadius: t.radii.xl,
-    borderTopRightRadius: t.radii.xl,
-    overflow: "hidden",
-    borderWidth: 1,
-    paddingBottom: t.spacing.sm,
-  },
-  sheetTitle: { fontSize: t.typography.sizes.md, fontWeight: "700", paddingLeft: t.spacing.xl,
-    paddingRight: t.spacing.lg, paddingTop: t.spacing.md, paddingBottom: t.spacing.xs },
-  sheetRow: {
-    height: 48,
-    paddingLeft: t.spacing.xl,
-    paddingRight: t.spacing.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: t.colors.surface,
-  },
-  sheetLabel: { fontSize: t.typography.sizes.md },
+
 });

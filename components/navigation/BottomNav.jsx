@@ -59,7 +59,7 @@ async function __fetchCanViewAll() {
 }
 
 const PATHS = {
-  home: '/orders',              // без завершающего слэша, чтобы матчился и '/orders/'
+  home: '/orders',
   orders: '/orders/my-orders',
   all: '/orders/all-orders',
   calendar: '/orders/calendar',
@@ -68,7 +68,9 @@ const PATHS = {
 function TabButton({ label, active, onPress, colors }) {
   return (
     <Pressable style={styles.btn} onPress={onPress} android_ripple={{ borderless: false }}>
-      <Text style={[styles.label, { color: active ? colors.active : colors.inactive }]}>{label}</Text>
+      <Text style={[styles.label, { color: active ? colors.active : colors.inactive }]}>
+        {typeof label === 'string' ? label : String(label || '')}
+      </Text>
       {active ? <View style={[styles.indicator, { backgroundColor: colors.active }]} /> : null}
     </Pressable>
   );

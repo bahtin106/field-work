@@ -21,6 +21,7 @@ import {
   Image } from 'react-native';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import Modal from 'react-native-modal';
+import Dialog from '../../../components/ui/Dialog';
 import { supabase } from '../../../lib/supabase';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Screen from '../../../components/layout/Screen';
@@ -269,7 +270,7 @@ const { theme } = useTheme();
     marginBottom: 12 },
   section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
   label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.textSecondary },
-  input: { marginHorizontal: 20, marginVertical: 8 },
+  input: { marginHorizontal: 0, marginVertical: 8 },
   inputFocused: {
     borderColor: theme.colors.primary,
     shadowColor: theme.colors.primary,
@@ -288,7 +289,7 @@ const { theme } = useTheme();
     height: 20,
     justifyContent: 'center',
     alignItems: 'center' },
-  selectInput: { marginHorizontal: 20, marginVertical: 8 },
+  selectInput: { marginHorizontal: 0, marginVertical: 8 },
   selectInputText: { fontSize: 16, color: theme.colors.text },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dateClearBtn: { marginLeft: 8, padding: 6 },
@@ -343,7 +344,7 @@ const { theme } = useTheme();
   modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
   modalText: { fontSize: 15, color: theme.colors.textSecondary, marginBottom: 20 },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-  helperError: { color: theme.colors.danger, fontSize: 12, marginTop: 6 },
+  helperError: { color: theme.colors.danger, fontSize: 12, marginTop: 4, marginLeft: 12 },
   centeredModal: { justifyContent: 'center', alignItems: 'center', margin: 0 },
   picker: {
     backgroundColor: theme.colors.surface,
@@ -464,7 +465,7 @@ const { theme } = useTheme();
   const router = useRouter();
   const navigation = useNavigation();
   
-  useLayoutEffect(() => { navigation.setOptions({ title: 'Редактирование сотрудника' }); }, [navigation]);
+  
 const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
   const [meIsAdmin, setMeIsAdmin] = useState(false);
@@ -669,7 +670,8 @@ const { id } = useLocalSearchParams();
       birthdate: birthdate ? birthdate.toISOString().slice(0, 10) : null,
       role,
       newPassword: newPassword || null,
-      departmentId: departmentId || null });
+      departmentId: departmentId || null,
+      isSuspended: !!isSuspended });
     return current !== initialSnap;
   }, [firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, initialSnap]);
   useFocusEffect(
@@ -726,6 +728,15 @@ const handleCancelPress = () => {
     router.back();
   }
 };
+
+  // Stable wrappers to avoid re-creating handlers on every render
+  const saveRef = useRef(handleSave);
+  const cancelRef = useRef(handleCancelPress);
+  saveRef.current = handleSave;
+  cancelRef.current = handleCancelPress;
+  const onPressSave = React.useCallback(() => saveRef.current && saveRef.current(), []);
+  const onPressCancel = React.useCallback(() => cancelRef.current && cancelRef.current(), []);
+
 const handleSave = async () => {
   setErr('');
   if (!firstName.trim()) {
@@ -821,14 +832,34 @@ catch (e) { }
     setSaving(false);
   }
 };
-useEffect(() => {
-    const sub = navigation.addListener('beforeRemove', (e) => {
+useLayoutEffect(() => {
+    navigation.setOptions({
+      title: 'Редактирование',
+      headerTitleAlign: 'center',
+      headerBackTitle: 'Отмена',
+      headerRight: undefined,
+    });
+    try {
+      navigation.setParams?.({
+        title: 'Редактирование',
+        centerTitle: true,
+        leftTextOnly: true,
+        headerBackTitle: 'Отмена',
+        onBackPress: onPressCancel,
+        rightTextLabel: 'Сохранить',
+        onRightPress: onPressSave,
+      });
+    } catch (e) {}
+  }, [navigation, onPressSave, onPressCancel]);
+
+  useEffect(() => {
+  const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || !isDirty) return; // пропускаем, если уже подтвердили
       e.preventDefault();
       setCancelVisible(true);
     });
     return sub;
-  }, [navigation, isDirty]);
+  } , [navigation, isDirty]);
   useEffect(() => {
     if (initialSnap) {
       allowLeaveRef.current = false;
@@ -1248,11 +1279,9 @@ const { error: updErr } = await supabase
                 <Text style={styles.errorText}>{err}</Text>
               </View>
             ) : null}
+            <Text style={styles.section}>Личные данные</Text>
             <View style={styles.card}>
-              <Text style={styles.section}>Личные данные</Text>
-              <Text style={styles.label}>Имя *</Text>
-              <TextField placeholder="Имя" placeholderTextColor={theme.colors.textSecondary}
-                style={[
+              <TextField label="Имя *" placeholder="Иван" placeholderTextColor={theme.colors.inputPlaceholder} style={[
                   styles.input,
                   focusFirst && styles.inputFocused,
                   !firstName.trim() && styles.inputError,
@@ -1261,11 +1290,9 @@ const { error: updErr } = await supabase
                 onChangeText={setFirstName}
                 onFocus={() => setFocusFirst(true)}
                 onBlur={() => setFocusFirst(false)}
-              />
+               />
               {!firstName.trim() ? <Text style={styles.helperError}>Укажите имя</Text> : null}
-              <Text style={styles.label}>Фамилия *</Text>
-              <TextField placeholder="Фамилия" placeholderTextColor={theme.colors.textSecondary}
-                style={[
+              <TextField label="Фамилия *" placeholder="Петров" placeholderTextColor={theme.colors.inputPlaceholder} style={[
                   styles.input,
                   focusLast && styles.inputFocused,
                   !lastName.trim() && styles.inputError,
@@ -1274,24 +1301,26 @@ const { error: updErr } = await supabase
                 onChangeText={setLastName}
                 onFocus={() => setFocusLast(true)}
                 onBlur={() => setFocusLast(false)}
-              />
+               />
               {!lastName.trim() ? <Text style={styles.helperError}>Укажите фамилию</Text> : null}
-              <Text style={styles.label}>E‑mail *</Text>
-              <TextField placeholder="you@example.com" placeholderTextColor={theme.colors.textSecondary}
-                style={[
-                  styles.input,
-                  focusEmail && styles.inputFocused,
-                  !emailValid && styles.inputError,
-                ]}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={email}
-                onChangeText={setEmail}
-                onFocus={() => setFocusEmail(true)}
-                onBlur={() => setFocusEmail(false)}
-              />
-              {!emailValid ? (
+              <TextField
+  label="Электронная почта *"
+  placeholder="ivan.petrov@example.com"
+  placeholderTextColor={theme.colors.inputPlaceholder}
+  style={[
+    styles.input,
+    focusEmail && styles.inputFocused,
+    !emailValid && styles.inputError,
+  ]}
+  keyboardType="email-address"
+  autoCapitalize="none"
+  autoCorrect={false}
+  value={email}
+  onChangeText={setEmail}
+  onFocus={() => setFocusEmail(true)}
+  onBlur={() => setFocusEmail(false)}
+/>
+{!emailValid ? (
                 <Text style={styles.helperError}>Укажите корректный имейл</Text>
               ) : null}
               <PhoneInput

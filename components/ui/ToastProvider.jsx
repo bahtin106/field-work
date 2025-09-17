@@ -94,20 +94,26 @@ export default function ToastProvider({ children }) {
   return (
     <Ctx.Provider value={value}>
       {children}
-      {msg ? (
-        <Animated.View
-  pointerEvents="box-none"
-  style={[
-    styles.container,
-    aStyle,
-    { bottom: (insets?.bottom || 0) + anchorOffset },
-  ]}
->
-          <View style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
-            <Text style={[styles.text, { color: p.fg }]}>{msg.text}</Text>
-          </View>
-        </Animated.View>
-      ) : null}
+      
+
+{msg ? (
+  <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        styles.portalContainer,
+        aStyle,
+        { bottom: (insets?.bottom || 0) + anchorOffset },
+      ]}
+    >
+      <View style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
+        <Text style={[styles.text, { color: p.fg }]}>{msg?.text}</Text>
+      </View>
+    </Animated.View>
+  </View>
+) : null}
+
+
     </Ctx.Provider>
   );
 }
@@ -125,6 +131,19 @@ const styles = StyleSheet.create({
     left: 0, right: 0,
     alignItems: "center",
     zIndex: 999,
+  },
+  portalContainer: {
+    position: "absolute",
+    left: 0, right: 0,
+    alignItems: "center",
+    zIndex: 1000,
+  },
+  modalContainer: {
+    position: 'absolute',
+    left: 0, right: 0,
+    alignItems: 'center',
+    zIndex: 1000,
+
   },
   toast: {
     minWidth: Math.min(560, width - 24),
