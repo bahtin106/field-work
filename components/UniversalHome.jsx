@@ -1,5 +1,5 @@
 // components/UniversalHome.jsx
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -25,7 +25,6 @@ async function fetchSession() {
 
 async function fetchProfile(uid) {
   if (!uid) return null;
-  // 1) Пытаемся найти профиль по profiles.user_id = auth.users.id
   try {
     const { data: byUserId } = await supabase
       .from('profiles')
@@ -35,7 +34,6 @@ async function fetchProfile(uid) {
     if (byUserId) return byUserId;
   } catch {}
 
-  // 2) Фоллбэк: некоторые схемы хранят сам профиль под тем же UUID в profiles.id
   const { data: byId } = await supabase
     .from('profiles')
     .select('full_name, first_name, last_name, avatar_url, role')
@@ -43,12 +41,13 @@ async function fetchProfile(uid) {
     .maybeSingle();
   return byId || null;
 }
+
 async function fetchCountsMy(uid) {
   if (!uid) return { feed: 0, new: 0, progress: 0, all: 0 };
   const fetchCount = async (filterCb) => {
     let q = supabase.from('orders_secure').select('id', { count: 'exact' });
     q = filterCb(q);
-    const { count } = await q.range(0, 0); // лёгкий способ посчитать без данных
+    const { count } = await q.range(0, 0);
     return count || 0;
   };
   const [feedMy, allMy, newMy, progressMy] = await Promise.all([
@@ -79,11 +78,10 @@ async function fetchCountsAll() {
 export default function UniversalHome({ role }) {
   const { theme } = useTheme();
   const router = useRouter();
-  const { has } = usePermissions();
+  const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const qc = useQueryClient();
 
-  // Подписка на смену пользователя: обновляем сессию и сбрасываем профиль
-  React.useEffect(() => {
+  useEffect(() => {
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       qc.setQueryData(['session'], s ?? null);
       qc.invalidateQueries({ queryKey: ['profile'] });
@@ -91,12 +89,9 @@ export default function UniversalHome({ role }) {
     return () => sub?.subscription?.unsubscribe?.();
   }, [qc]);
 
-  // Переключатель области просмотра (показываем только если есть доступ)
-  const canViewAll = has?.('canViewAllOrders');
-  const [scope, setScope] = useState('my'); // 'my' | 'all'
-  if (!canViewAll && scope !== 'my') setScope('my');
+  const [scope, setScope] = useState('my');
 
-  // ====== Профиль текущей сессии ======
+  // ====== Сессия / профиль ======
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
@@ -113,7 +108,6 @@ export default function UniversalHome({ role }) {
     staleTime: 0,
   });
 
-  // ВАЖНО: если uid нет (логаут/переключение), не показываем старые данные из кэша
   const currentProfile = uid ? profile : null;
   const profileLoading = uid && typeof profile === 'undefined';
 
@@ -124,10 +118,23 @@ export default function UniversalHome({ role }) {
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_url || null;
 
-  // Роль в шапке берём из профиля текущего пользователя (если есть), иначе из пропса
-  const roleToShow = currentProfile?.role || role;
+  // Роль для отображения
+  const roleToShow = roleFromPerms || currentProfile?.role || role;
 
-  // ====== Счётчики (SWR, без спиннеров) ======
+  // Админ без ожидания пермишенов
+  const isAdmin = roleToShow === 'admin';
+
+  // Область просмотра
+  const canViewAll = isAdmin || (!permsLoading && has?.('canViewAllOrders') === true);
+
+  // ★ Новое: право на создание заявок учитывает isAdmin и загрузку пермишенов
+  const canCreateOrders = isAdmin || (!permsLoading && has?.('canCreateOrders') === true); // ★
+
+  useEffect(() => {
+    if (!canViewAll && scope !== 'my') setScope('my');
+  }, [canViewAll, scope]);
+
+  // ====== Счётчики ======
   const { data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts','my', uid],
     queryFn: () => fetchCountsMy(uid),
@@ -155,15 +162,10 @@ export default function UniversalHome({ role }) {
   const handleLogout = async () => {
     try {
       await supabase.auth.signOut();
-    try { qc.clear(); } catch {}
-    try { router.replace('/(auth)/login'); } catch {}
+      try { qc.clear(); } catch {}
+      try { router.replace('/(auth)/login'); } catch {}
     } catch {}
-    // Чистим кэш, чтобы не всплывали старые ФИО/фото при смене пользователя
-    if (qc?.clear) {
-      qc.clear();
-    } else {
-      try { qc.invalidateQueries(); } catch {}
-    }
+    if (qc?.clear) qc.clear(); else { try { qc.invalidateQueries(); } catch {} }
   };
 
   const openOrdersWithFilter = (key) => {
@@ -178,8 +180,8 @@ export default function UniversalHome({ role }) {
   const menuItems = useMemo(() => [
     { key: 'app', title: 'Настройка приложения', icon: 'sliders', onPress: openAppSettings, visible: true },
     { key: 'stats', title: 'Статистика', icon: 'bar-chart-2', onPress: openStats, visible: true },
-    { key: 'company', title: 'Настройки компании', icon: 'settings', onPress: openCompanySettings, visible: roleToShow === 'admin' },
-  ].filter(i => i.visible), [roleToShow]);
+    { key: 'company', title: 'Настройки компании', icon: 'settings', onPress: openCompanySettings, visible: isAdmin },
+  ].filter(i => i.visible), [isAdmin]);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -303,7 +305,8 @@ export default function UniversalHome({ role }) {
         })}
       </View>
 
-      {has('canCreateOrders') && (
+      {/* ★ Тут заменили условие на canCreateOrders */}
+      {canCreateOrders && (
         <View style={styles.actionWrapper}>
           <Button title="Создать заявку" onPress={openCreateOrder} />
         </View>

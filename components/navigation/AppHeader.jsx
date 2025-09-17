@@ -31,6 +31,12 @@ function resolveTitle(options, route, pathnameRaw) {
   const name = route?.name || '';
   const pathname = pathnameRaw || '';
 
+  // Спец-случай: экран редактирования — показываем понятный заголовок
+  if (typeof pathname === 'string' && pathname.includes('/edit')) {
+    // если заголовок явно не задан через options/params, используем «Редактирование»
+    if (directRaw === undefined) return 'Редактирование';
+  }
+
   // Для страниц сотрудника скрываем автозаголовок до прихода данных
   if (pathname.startsWith('/users/')) return '';
 
@@ -53,10 +59,24 @@ export default function AppHeader({ options = {}, back, route }) {
   const nav = useNavigation();
   const pathname = usePathname?.() || "";
 
-  const title = resolveTitle(options, route, pathname);
+  const title = resolveTitle(options, route, pathname);  const backLabel = options?.headerBackTitle ?? route?.params?.headerBackTitle;
+  const wantCenterTitle = options?.headerTitleAlign === 'center' || route?.params?.centerTitle === true;
+  const onBack = () => {
+    try {
+      if (route?.params?.onBackPress && typeof route.params.onBackPress === 'function') {
+        route.params.onBackPress();
+        return;
+      }
+    } catch (e) {}
+    nav.goBack();
+  };
+
   const { onPressIn: onCtaIn, onPressOut: onCtaOut, containerStyle: capsuleAnim, overlayStyle: capsuleOverlay } = useCapsuleFeedback();
 
-  // ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----
+  
+  const rightLabel = route?.params?.rightTextLabel ?? options?.rightTextLabel;
+  const rightPress = route?.params?.onRightPress ?? options?.onRightPress;
+// ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----
   const scale = useRef(new Animated.Value(1)).current;
   const tint = useRef(new Animated.Value(0)).current; // 0 -> прозрачно, 1 -> тёмный кружок
 
@@ -74,11 +94,7 @@ export default function AppHeader({ options = {}, back, route }) {
 };
 
 // мгновенный переход по нажатию
-const onBack = () => nav.goBack();
-
-
-
-  const bg = tint.interpolate({
+const bg = tint.interpolate({
     inputRange: [0, 1],
     outputRange: ["rgba(0,0,0,0)", "rgba(0,0,0,0.08)"], // аккуратный тёмный кружок
   });
@@ -86,33 +102,131 @@ const onBack = () => nav.goBack();
   return (
     <View style={[s.container]}>
       {/* Левая группа: стрелка назад + заголовок слева */}
+      
       <View style={s.leftRow}>
-        {back ? (
-          <Animated.View style={{ transform: [{ scale }] }}>
-            <Pressable
-  hitSlop={12}
-  onPressIn={onPressIn}
-  onPressOut={onPressOut}
-  onPress={onBack}
-  style={s.backTouchable}
-              accessibilityRole="button"
-              accessibilityLabel="Назад"
-            >
-              <Animated.View style={[s.backCircle, { backgroundColor: bg }]}>
-                <Feather name="chevron-left" size={22} color={theme.colors.text} />
+        {route?.params?.headerLeftMode === 'close' ? (
+          <Pressable
+            hitSlop={12}
+            onPress={() => nav.goBack()}
+            style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 16 }}
+            accessibilityRole="button"
+            accessibilityLabel={String(route?.params?.headerLeftLabel || 'Закрыть')}
+          >
+            <View style={[s.backCircle, { width: 32, height: 32 }]}>
+              <Feather name="x" size={20} color={theme.colors.text} />
+            </View>
+            <Text style={[s.title, { marginLeft: 6 }]}>{String(route?.params?.headerLeftLabel || 'Закрыть')}</Text>
+          </Pressable>
+        ) : (
+          <>
+            {route?.params?.leftTextOnly ? (
+              <Pressable
+                hitSlop={12}
+                onPress={onBack}
+                style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 16 }}
+                accessibilityRole="button"
+                accessibilityLabel={String(backLabel || route?.params?.headerBackTitle || 'Отмена')}
+              >
+                <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
+                  {String(route?.params?.headerBackTitle ?? backLabel ?? 'Отмена')}
+                </Text>
+              </Pressable>
+            ) : back ? (
+              <Animated.View style={{ transform: [{ scale }] }}>
+                <Pressable
+                  hitSlop={12}
+                  onPressIn={onPressIn}
+                  onPressOut={onPressOut}
+                  onPress={onBack}
+                  style={[s.backTouchable, { flexDirection: 'row', alignItems: 'center' }]}
+                  accessibilityRole="button"
+                  accessibilityLabel={String(backLabel || 'Назад')}
+                >
+                  <Animated.View style={[s.backCircle, { backgroundColor: bg }]}>
+                    <Feather name="chevron-left" size={22} color={theme.colors.text} />
+                  </Animated.View>
+                  {backLabel ? (
+                    <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
+                      {String(backLabel)}
+                    </Text>
+                  ) : null}
+                </Pressable>
               </Animated.View>
-            </Pressable>
-          </Animated.View>
-        ) : null}
-
-        <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
-          {title}
-        </Text>
+            ) : null}
+            {!wantCenterTitle ? (
+              <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+                {typeof title === 'string' ? title : String(title ?? '')}
+              </Text>
+            ) : null}
+          </>
+        )}
       </View>
 
       {/* Правая зона для кастомных кнопок */}
+
+      {/* Centered title overlay when requested */}
+      {wantCenterTitle ? (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
+          <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+            {typeof title === 'string' ? title : String(title ?? '')}
+          </Text>
+        </View>
+      ) : null}
+
+
       <View style={s.right}>
-        {options?.headerRight ? options.headerRight() : (route?.params?.headerButtonLabel && route?.params?.headerButtonTo ? (
+        {rightLabel && rightPress ? (
+          <Pressable
+            hitSlop={10}
+            onPressIn={onCtaIn}
+            onPressOut={onCtaOut}
+            onPress={rightPress}
+            accessibilityRole="button"
+            accessibilityLabel={String(rightLabel)}
+          >
+            <Animated.View style={[{ paddingHorizontal: 8, height: 32, justifyContent: 'center' }]}>
+              <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
+                {String(rightLabel)}
+              </Text>
+            </Animated.View>
+          </Pressable>
+        ) : options?.headerRight ? (
+          options.headerRight()
+        ) : route?.params?.onRightPress && route?.params?.rightActionLabel ? (
+          <Pressable
+            hitSlop={10}
+            onPressIn={onCtaIn}
+            onPressOut={onCtaOut}
+            onPress={rightPress}
+          >
+            <Animated.View
+              style={[
+                {
+                  paddingHorizontal: 12,
+                  height: 32,
+                  borderRadius: 16,
+                  borderWidth: 1,
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  alignSelf: 'flex-end',
+                },
+                capsuleAnim,
+              ]}
+            >
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFillObject,
+                  { borderRadius: 16 },
+                  capsuleOverlay,
+                ]}
+              />
+              <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
+                {String(route.params.rightActionLabel ?? '')}
+              </Text>
+            </Animated.View>
+          </Pressable>
+        ) : route?.params?.headerButtonLabel && route?.params?.headerButtonTo ? (
           <Pressable
             hitSlop={10}
             onPressIn={onCtaIn}
@@ -142,11 +256,11 @@ const onBack = () => nav.goBack();
                 ]}
               />
               <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: "600", fontSize: 15 }}>
-                {route.params.headerButtonLabel}
+                {String(route.params.headerButtonLabel ?? '')}
               </Text>
             </Animated.View>
           </Pressable>
-        ) : null)}
+        ) : null}
       </View>
     </View>
   );
@@ -170,6 +284,7 @@ const s = StyleSheet.create({
   },
   right: { minWidth: 64, alignItems: "flex-end", paddingRight: 8 },
   title: { fontSize: 17, fontWeight: "600", marginLeft: 8 },
+  backText: { fontSize: 16, fontWeight: '600', marginLeft: 2 },
   // Кнопка назад с аккуратным кружком при нажатии
   backTouchable: { padding: 4, borderRadius: 20 },
   backCircle: {

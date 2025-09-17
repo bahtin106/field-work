@@ -24,6 +24,7 @@ function buildTheme(mode) {
     placeholder: base.colors.inputPlaceholder ?? base.colors.textSecondary ?? '#9CA3AF',
     inputPlaceholder: base.colors.inputPlaceholder ?? base.colors.textSecondary ?? '#9CA3AF',
     overlay: base.colors.overlay ?? 'rgba(0,0,0,0.35)',
+    overlayNavBar: base.colors.overlayNavBar ?? base.colors.overlay ?? 'rgba(0,0,0,0.35)',
     success: base.colors.success,
     warning: base.colors.warning,
     danger: base.colors.danger,

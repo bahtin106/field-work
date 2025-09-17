@@ -1,8 +1,8 @@
 // app/(auth)/_layout.js
-import { Stack, router } from 'expo-router';
+import React, { useCallback, useEffect } from 'react';
+import { View } from 'react-native';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useCallback, useEffect } from 'react';
-import { View } from 'react-native'; // ← добавили
 
 // Держим сплэш, пока не отрисуется первый экран логина
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -18,8 +18,13 @@ export default function AuthLayout() {
   }, []);
 
   return (
-    <View style={{ flex: 1 }} onLayout={onLayoutRootView}> {/* ← перенесли onLayout сюда */}
-      <Stack screenOptions={{ headerShown: false }} initialRouteName="login">
+    <View style={{ flex: 1 }} onLayout={onLayoutRootView}>
+      <Stack
+        initialRouteName="login"
+        screenOptions={{
+          headerShown: false, // убираем хедер чтобы исключить лишний текст
+        }}
+      >
         <Stack.Screen name="login" />
       </Stack>
     </View>
