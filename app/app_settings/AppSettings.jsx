@@ -222,6 +222,9 @@ export default function AppSettings() {
       return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0, 0);
     }
   }
+  // helper: оба времени заданы?
+  const bothQuietSet = (obj) => !!toTimeStr(obj.quiet_start) && !!toTimeStr(obj.quiet_end);
+
 
   const openTimePicker = (which) => () => {
     const base = which === "start" ? prefs.quiet_start : prefs.quiet_end;
@@ -230,23 +233,60 @@ export default function AppSettings() {
     setTimePickerOpen(which);
   };
 
+  
+  // Обновлённая логика выбора времени «Тихих часов»
   const onTimePicked = async (_ev, dateOrUndefined) => {
     if (!timePickerOpen) return;
-    // Android fires on dismiss with undefined
+    // Android: dismiss -> undefined
     if (!dateOrUndefined) { setTimePickerOpen(null); return; }
+
     const hhmm = toTimeStr(dateOrUndefined);
     const patch = timePickerOpen === "start" ? { quiet_start: hhmm } : { quiet_end: hhmm };
+
     const prevPrefs = prefs;
     const next = { ...prefs, ...patch };
+
+    // Сразу закрываем текущий пикер и обновляем локально
     setPrefs(next);
     setTimePickerOpen(null);
-    const { ok, message } = await savePrefs(patch);
+
+    // Если второе время ещё не задано — просим выбрать его и НИЧЕГО не сохраняем в базу
+    if (!bothQuietSet(next)) {
+      const missing = next.quiet_start ? "end" : "start";
+      const d = toDateFromStr(toTimeStr(next[missing]));
+      setTimeValue(d);
+      setTimeout(() => setTimePickerOpen(missing), 0);
+      toast.info(missing === "end" ? "Выберите конец тихих часов" : "Выберите начало тихих часов");
+      return;
+    }
+
+    // Если начало и конец совпали — считаем, что тихие часы выключены
+    if (toTimeStr(next.quiet_start) === toTimeStr(next.quiet_end)) {
+      const resetPatch = { quiet_start: null, quiet_end: null };
+      setPrefs((p) => ({ ...p, ...resetPatch }));
+      const { ok, message } = await savePrefs(resetPatch);
+      if (!ok) {
+        setPrefs(prevPrefs);
+        toast.error(message || "Не удалось сохранить");
+      } else {
+        toast.info("Тихие часы выключены");
+      }
+      return;
+    }
+
+    // Оба времени заданы и они разные — сохраняем пару атомарно
+    const { ok, message } = await savePrefs({
+      quiet_start: next.quiet_start,
+      quiet_end: next.quiet_end,
+    });
     if (!ok) {
-      // revert
       setPrefs(prevPrefs);
       toast.error(message || "Не удалось сохранить");
+    } else {
+      toast.info(`Тихие часы: ${toTimeStr(next.quiet_start)}–${toTimeStr(next.quiet_end)}`);
     }
   };
+
 
   
   async function savePushToken(token) {
@@ -411,7 +451,7 @@ const onToggleAllow = async (val) => {
           key: "sounds",
           label: "Звуки уведомлений",
           chevron: true,
-          onPress: () => toast.info("Настройка временно недоступна"),
+          onPress: () => toast.info("Будет добавлено в будущем"),
           disabled: true,
         },
         {
@@ -496,7 +536,7 @@ const onToggleAllow = async (val) => {
                         it.right
                       ) : null}
                       {(it.chevron || !it.switch) && (
-                        <FeatherIcon name="chevron-right" size={20} color={theme.colors.textSecondary} style={s.chevron} />
+                        <FeatherIcon name="chevron-right" size={theme.components.listItem.chevronSize} color={theme.colors.textSecondary} style={s.chevron} />
                       )}
                     </View>
                   </View>
@@ -576,11 +616,11 @@ const styles = (t) => StyleSheet.create({
     marginBottom: 0,
     borderRadius: t.radii.xl,
     overflow: "hidden",
-    borderWidth: 1,
+    borderWidth: t.components.card.borderWidth,
     ...(Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android),
   },
   row: {
-    height: 48,
+    height: t.components.listItem.height,
     paddingLeft: t.spacing.xl,
     paddingRight: t.spacing.lg,
     flexDirection: "row",
@@ -588,8 +628,8 @@ const styles = (t) => StyleSheet.create({
     justifyContent: "space-between",
     backgroundColor: t.colors.card,
   },
-  rowDivider: { borderBottomWidth: 1 },
-  disabled: { opacity: 0.5 },
+  rowDivider: { borderBottomWidth: t.components.listItem.dividerWidth },
+  disabled: { opacity: t.components.listItem.disabledOpacity },
   label: { fontSize: t.typography.sizes.md, fontWeight: "500" },
   value: { fontSize: t.typography.sizes.md },
   rightWrap: { flexDirection: "row", alignItems: "center" },

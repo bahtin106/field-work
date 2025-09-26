@@ -54,6 +54,10 @@ const light = {
     raised: { ios: { shadowColor: "#000", shadowOpacity: 0.08, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } }, android: { elevation: 3 } },
   },
   icons: { sm: 18, md: 22, lg: 28 },
+components: {
+  card: { borderWidth: 1 },
+  listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 }
+},
 };
 
 const dark = {

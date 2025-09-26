@@ -1,11 +1,13 @@
 import { AntDesign } from '@expo/vector-icons';
+import FeatherIcon from '@expo/vector-icons/Feather';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter, useFocusEffect, useNavigation } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import { HeaderCapsuleButton } from '../../../components/navigation/AppHeader'
 import {
-  ActivityIndicator,
+ActivityIndicator,
   Animated,
   BackHandler,
   Dimensions,
@@ -26,7 +28,8 @@ import { supabase } from '../../../lib/supabase';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
-import TextField from '../../../components/ui/TextField';
+import TextField, { DateOfBirthField, SelectField } from '../../../components/ui/TextField';
+import { useToast } from '../../../components/ui/ToastProvider';
 function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
@@ -462,7 +465,8 @@ const { theme } = useTheme();
     if (r === 'worker') return theme.colors.worker || theme.colors.primary;
     return theme.colors.textSecondary;
   }, [theme]);
-  const router = useRouter();
+  const { success: toastSuccess, error: toastError, info: toastInfo, setAnchorOffset, loading: toastLoading, promise: toastPromise } = useToast();
+const router = useRouter();
   const navigation = useNavigation();
   
   
@@ -539,9 +543,7 @@ const { id } = useLocalSearchParams();
   const [showPassword, setShowPassword] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [err, setErr] = useState('');
-  const [ok, setOk] = useState('');
-  const toastAnim = useRef(new Animated.Value(0)).current;
-  const ensureCameraPerms = async () => {
+      const ensureCameraPerms = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     return status === 'granted';
   };
@@ -568,7 +570,7 @@ const { id } = useLocalSearchParams();
         .eq('id', userId);
       if (updErr) throw updErr;
       setAvatarUrl(publicUrl);
-      setOk('Фото профиля обновлено');
+      toastSuccess('Фото профиля обновлено');
     } catch (e) {
       setErr(e?.message || 'Не удалось загрузить фото');
     }
@@ -576,7 +578,7 @@ const { id } = useLocalSearchParams();
   const deleteAvatar = async () => {
     try {
       setErr('');
-      setOk('');
+      toastInfo('Сохраняю…', { sticky: true });
       const prefix = `profiles/${userId}`;
       const { data: list, error: listErr } = await supabase.storage.from('avatars').list(prefix);
       if (!listErr && Array.isArray(list) && list.length) {
@@ -589,7 +591,7 @@ const { id } = useLocalSearchParams();
         .eq('id', userId);
       if (updErr) throw updErr;
       setAvatarUrl(null);
-      setOk('Фото удалено');
+      toastSuccess('Фото удалено');
     } catch (e) {
       setErr(e?.message || 'Не удалось удалить фото');
     }
@@ -625,24 +627,6 @@ const { id } = useLocalSearchParams();
       await uploadAvatar(res.assets[0].uri);
     }
   };
-  useEffect(() => {
-    if (!ok) return;
-    toastAnim.stopAnimation();
-    toastAnim.setValue(0);
-    Animated.sequence([
-      Animated.timing(toastAnim, {
-        toValue: 1,
-        duration: 280,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true }),
-      Animated.delay(3200),
-      Animated.timing(toastAnim, {
-        toValue: 0,
-        duration: 220,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true }),
-    ]).start(() => setOk(''));
-  }, [ok]);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -729,14 +713,20 @@ const handleCancelPress = () => {
   }
 };
 
-  // Stable wrappers to avoid re-creating handlers on every render
-  const saveRef = useRef(handleSave);
-  const cancelRef = useRef(handleCancelPress);
+// Stable wrappers to avoid re-creating handlers on every render
+const saveRef = useRef(null);
+const cancelRef = useRef(null);
+const onPressSave = React.useCallback(() => {
+  if (saveRef.current) return saveRef.current();
+}, []);
+const onPressCancel = React.useCallback(() => {
+  if (cancelRef.current) return cancelRef.current();
+}, []);
+useEffect(() => {
+  // Attach latest handlers after they are defined
   saveRef.current = handleSave;
   cancelRef.current = handleCancelPress;
-  const onPressSave = React.useCallback(() => saveRef.current && saveRef.current(), []);
-  const onPressCancel = React.useCallback(() => cancelRef.current && cancelRef.current(), []);
-
+});
 const handleSave = async () => {
   setErr('');
   if (!firstName.trim()) {
@@ -770,7 +760,7 @@ const proceedSave = async () => {
   try {
     setSaving(true);
     setErr('');
-    setOk('');
+    toastInfo('Сохраняю…', { sticky: true });
     const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: meIsAdmin ? role : undefined };
     Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
     const { data: updRows, error: updProfileErr } = await supabase
@@ -823,10 +813,11 @@ catch (e) { }
       departmentId: departmentId || null,
       isSuspended }));
     allowLeaveRef.current = true;
-    setOk('Сохранено');
+    toastSuccess('Сохранено');
   }
   catch (e) {
     setErr(e?.message || 'Не удалось сохранить изменения');
+    toastError(e?.message || 'Не удалось сохранить изменения');
   }
   finally {
     setSaving(false);
@@ -851,6 +842,8 @@ useLayoutEffect(() => {
       });
     } catch (e) {}
   }, [navigation, onPressSave, onPressCancel]);
+  useEffect(() => { try { setAnchorOffset(140); } catch (e) {} }, []);
+
 
   useEffect(() => {
   const sub = navigation.addListener('beforeRemove', (e) => {
@@ -903,57 +896,68 @@ const fetchMe = useCallback(async () => {
     const name = n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || 'Без имени';
     return name;
   };
-  const fetchUser = useCallback(async () => {  setLoading(true);
-  try {
-    if (meIsAdmin) {
-      const { data, error } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
-      if (error) throw error;
-      const row = Array.isArray(data) ? data[0] : data;
-      setEmail(row?.email || '');
-      setRole(row?.user_role || 'worker');
-      if (row?.birthdate) {
-        const d = new Date(row.birthdate);
-        setBirthdate(!isNaN(d.getTime()) ? d : null);
-      } else setBirthdate(null);
-    } else {
-      const { data: auth } = await supabase.auth.getUser();
-      if (auth?.user?.id === userId) setEmail(auth?.user?.email || '');
-    }
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('first_name, last_name, full_name, phone, is_suspended, suspended_at, avatar_url, department_id, role, birthdate')
-      .eq('id', userId)
-      .maybeSingle();
-    if (prof) {
-      setFirstName(prof.first_name || '');
-      setLastName(prof.last_name || '');
-      setHeaderName(formatName(prof));
-      setDepartmentId(prof?.department_id ?? null);
-      if (typeof prof.avatar_url !== 'undefined') setAvatarUrl(prof.avatar_url || null);
-      if (typeof prof.phone !== 'undefined') setPhone(String(prof.phone || '').replace(/\D/g, ''));
-      setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
-      if (!meIsAdmin && prof?.birthdate) {
-        const d = new Date(prof.birthdate);
-        setBirthdate(!isNaN(d.getTime()) ? d : null);
+  const fetchUser = useCallback(async () => {
+    setLoading(true);
+    try {
+      let adminRow = null;
+      if (meIsAdmin) {
+        const { data, error } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
+        if (error) throw error;
+        adminRow = Array.isArray(data) ? data[0] : data;
+        setEmail(adminRow?.email || '');
+        setRole(adminRow?.user_role || 'worker');
+        if (adminRow?.birthdate) {
+          const d = new Date(adminRow.birthdate);
+          setBirthdate(!isNaN(d.getTime()) ? d : null);
+        } else {
+          setBirthdate(null);
+        }
+      } else {
+        const { data: auth } = await supabase.auth.getUser();
+        if (auth?.user?.id === userId) setEmail(auth?.user?.email || '');
       }
-      if (!meIsAdmin) setRole(prof.role || 'worker');
+
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('first_name, last_name, full_name, phone, is_suspended, suspended_at, avatar_url, department_id, role, birthdate')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (prof) {
+        setFirstName(prof.first_name || '');
+        setLastName(prof.last_name || '');
+        setHeaderName(formatName(prof));
+        setDepartmentId(prof?.department_id ?? null);
+        if (typeof prof.avatar_url !== 'undefined') setAvatarUrl(prof.avatar_url || null);
+        if (typeof prof.phone !== 'undefined') setPhone(String(prof.phone || '').replace(/\D/g, ''));
+        setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
+        if (!meIsAdmin && prof?.birthdate) {
+          const d = new Date(prof.birthdate);
+          setBirthdate(!isNaN(d.getTime()) ? d : null);
+        }
+        if (!meIsAdmin) setRole(prof.role || 'worker');
+      }
+
+      setInitialSnap(JSON.stringify({
+        firstName: (prof?.first_name || '').trim(),
+        lastName: (prof?.last_name || '').trim(),
+        email: (meIsAdmin ? (adminRow?.email || '') : email).trim?.() || '',
+        phone: String(prof?.phone || '').replace(/\D/g, '') || '',
+        birthdate: (meIsAdmin ? adminRow?.birthdate : (prof?.birthdate || null)) ? String(meIsAdmin ? adminRow?.birthdate : prof?.birthdate) : null,
+        role: meIsAdmin ? (adminRow?.user_role || 'worker') : (prof?.role || 'worker'),
+        newPassword: null,
+        departmentId: (prof?.department_id ?? null),
+        isSuspended: !!(prof?.is_suspended || prof?.suspended_at)
+      }));
+    } catch (e) {
+      setErr(e?.message || 'Не удалось загрузить пользователя');
+      toastError(e?.message || 'Не удалось загрузить пользователя');
+    } finally {
+      setLoading(false);
     }
-    setInitialSnap(JSON.stringify({
-      firstName: (prof?.first_name || '').trim(),
-      lastName: (prof?.last_name || '').trim(),
-      email: (meIsAdmin ? (row?.email || '') : email).trim?.() || '',
-      phone: String(prof?.phone || '').replace(/\D/g, '') || '',
-      birthdate: (meIsAdmin ? row?.birthdate : (prof?.birthdate || null)) ? String(meIsAdmin ? row?.birthdate : prof?.birthdate) : null,
-      role: meIsAdmin ? (row?.user_role || 'worker') : (prof?.role || 'worker'),
-      newPassword: null,
-      departmentId: (prof?.department_id ?? null),
-      isSuspended: !!(prof?.is_suspended || prof?.suspended_at)
-    }));
-  } catch (e) {
-    setErr(e?.message || 'Не удалось загрузить пользователя');
-  } finally {
-    setLoading(false);
-  }}, [userId]);
+  }, [userId, meIsAdmin, email]);
+
+  // Initial load
   useEffect(() => {
     fetchMe();
     fetchUser();
@@ -1059,7 +1063,7 @@ const { error: updErr } = await supabase
     try {
       setSaving(true);
       setErr('');
-      setOk('');
+      toastInfo('Сохраняю…', { sticky: true });
       if (ordersAction === 'reassign') {
         if (!successor?.id) {
           setSuccessorError('Выберите правопреемника');
@@ -1072,10 +1076,11 @@ const { error: updErr } = await supabase
       const errS = await setSuspended(userId, true);
       if (errS) throw new Error(errS.message || 'Не удалось отстранить пользователя');
       setIsSuspended(true);
-      setOk('Сотрудник отстранён');
+      toastSuccess('Сотрудник отстранён');
       setSuspendVisible(false);
     } catch (e) {
       setErr(e?.message || 'Ошибка');
+      toastError(e?.message || 'Ошибка');
     } finally {
       setSaving(false);
     }
@@ -1086,14 +1091,15 @@ const { error: updErr } = await supabase
     try {
       setSaving(true);
       setErr('');
-      setOk('');
+      toastInfo('Сохраняю…', { sticky: true });
       const errS = await setSuspended(userId, false);
       if (errS) throw new Error(errS.message || 'Не удалось снять отстранение');
       setIsSuspended(false);
-      setOk('Отстранение снято');
+      toastSuccess('Отстранение снято');
       setUnsuspendVisible(false);
     } catch (e) {
       setErr(e?.message || 'Ошибка');
+      toastError(e?.message || 'Ошибка');
     } finally {
       setSaving(false);
     }
@@ -1115,16 +1121,17 @@ const { error: updErr } = await supabase
     try {
       setSaving(true);
       setErr('');
-      setOk('');
+      toastInfo('Сохраняю…', { sticky: true });
       const errR = await reassignOrders(userId, successor.id);
       if (errR) throw new Error(errR.message || 'Не удалось переназначить заявки');
       const errD = await deleteUserEverywhere(userId);
       if (errD) throw new Error(errD.message || 'Не удалось удалить пользователя');
-      setOk('Сотрудник удалён');
+      toastSuccess('Сотрудник удалён');
       setDeleteVisible(false);
       setTimeout(() => router.back(), 300);
     } catch (e) {
       setErr(e?.message || 'Ошибка');
+      toastError(e?.message || 'Ошибка');
     } finally {
       setSaving(false);
     }
@@ -1147,25 +1154,7 @@ const { error: updErr } = await supabase
         )}
         
         <ActivityIndicator size="large" />
-                <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: 16,
-            right: 16,
-            bottom: 140,
-            opacity: toastAnim,
-            transform: [
-              { translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
-            ] }}>
-          {!!ok && (
-            <View style={styles.toast}>
-              <AntDesign name="checkcircle" size={18} color={theme.colors.success} />
-              <Text style={styles.toastText}>{ok}</Text>
-            </View>
-          )}
-        </Animated.View>
-      </Screen>
+                </Screen>
     );
   }
   if (!meIsAdmin) {
@@ -1173,25 +1162,7 @@ const { error: updErr } = await supabase
       <Screen background="background">
         <View style={{ padding: 16, justifyContent: 'center', alignItems: 'center', flex: 1 }}>
         <Text style={{ fontSize: 16, color: theme.colors.textSecondary }}>Доступ только для администратора</Text>
-                <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: 16,
-            right: 16,
-            bottom: 140,
-            opacity: toastAnim,
-            transform: [
-              { translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
-            ] }}>
-          {!!ok && (
-            <View style={styles.toast}>
-              <AntDesign name="checkcircle" size={18} color={theme.colors.success} />
-              <Text style={styles.toastText}>{ok}</Text>
-            </View>
-          )}
-        </Animated.View>
-        </View>
+                </View>
       </Screen>
     );
   }
@@ -1336,30 +1307,18 @@ const { error: updErr } = await supabase
   ]}
   onFocus={() => setFocusPhone(true)}
   onBlur={() => setFocusPhone(false)}
-/><Text style={styles.label}>Дата рождения</Text>
-              <View style={styles.dateRow}>
-                <Pressable style={[styles.selectInput, { flex: 1 }]} onPress={openPicker}>
-                  <Text style={styles.selectInputText}>
-                    {birthdate
-                      ? withYear
-                        ? birthdate.toLocaleDateString('ru-RU', {
-                            day: '2-digit',
-                            month: 'long',
-                            year: 'numeric' })
-                        : birthdate.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long' })
-                      : 'Выберите дату'}
-                  </Text>
-                  <AntDesign name="calendar" size={16} color={theme.colors.textSecondary} />
-                </Pressable>
-                {birthdate ? (
-                  <Pressable
-                    onPress={() => setBirthdate(null)}
-                    style={styles.dateClearBtn}
-                    accessibilityLabel="Удалить дату">
-                    <AntDesign name="minuscircle" size={22} color={theme.colors.danger} />
-                  </Pressable>
-                ) : null}
-              </View>
+/><DateOfBirthField
+  label="Дата рождения"
+  style={styles.input}
+  value={birthdate ? { day: new Date(birthdate).getDate(), month: new Date(birthdate).getMonth()+1, year: withYear ? new Date(birthdate).getFullYear() : null } : undefined}
+  onChange={(v) => {
+    if (!v) { setBirthdate(null); setWithYear(false); return; }
+    setWithYear(v.year != null);
+    const y = v.year != null ? v.year : new Date().getFullYear();
+    const dt = new Date(y, (v.month||1)-1, v.day||1, 12, 0, 0, 0);
+    setBirthdate(dt);
+  }}
+/>
             </View>
             {!isSelfAdmin && (
               <View style={styles.card}>
@@ -1380,32 +1339,30 @@ const { error: updErr } = await supabase
             <View style={styles.card}>
               
             {meIsAdmin && (
-<View style={styles.card}>
-              <Text style={styles.section}>Роль в компании</Text>
-              
-              <Text style={styles.label}>Отдел</Text>
-              <Pressable style={{ marginHorizontal: 16, marginBottom: 10 }} onPress={() => setDeptModalVisible(true)}>
-                <Text style={styles.selectInputText}>{activeDeptName || 'Выберите отдел'}</Text>
-                <AntDesign name="down" size={16} color={theme.colors.textSecondary} />
-              </Pressable>
-              
-              <Text style={styles.label}>Роль</Text>
-              <Pressable
-                onPress={() => setShowRoles(true)}
-                style={[styles.selectInput]}>
-                <Text style={styles.selectInputText}>{ROLE_LABELS[role] || role}</Text>
-                <AntDesign name="down" size={16} color={theme.colors.textSecondary} />
-              </Pressable>
-              <Text style={styles.label}>Статус</Text>
-              <Pressable
-                onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
-                style={[styles.selectInput]}>
-                <Text style={styles.selectInputText}>
-                  {isSuspended ? 'Отстранён' : 'Активен'}
-                </Text>
-                <AntDesign name={isSuspended ? 'pausecircle' : 'checkcircle'} size={16} color={isSuspended ? theme.colors.danger : theme.colors.success} />
-              </Pressable>
-            </View>
+  <View>
+    <Text style={styles.section}>Роль в компании</Text>
+
+    <SelectField
+      label="Отдел"
+      value={activeDeptName || 'Выберите отдел'}
+      onPress={() => setDeptModalVisible(true)}
+      showValue={true}
+    />
+
+    <SelectField
+      label="Роль"
+      value={ROLE_LABELS[role] || role}
+      onPress={() => setShowRoles(true)}
+      showValue={true}
+    />
+
+    <SelectField
+      label="Статус"
+      value={isSuspended ? 'Отстранён' : 'Активен'}
+      onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
+      showValue={true}
+    />
+  </View>
 )}
 <Text style={styles.section}>Пароль</Text>
               <Text style={styles.label}>Новый пароль (мин. 6 символов)</Text>
@@ -1455,10 +1412,7 @@ const { error: updErr } = await supabase
               )}
             </View>
                       </ScrollView>
-                    <View style={styles.actionBar}>
-            <UIButton variant="secondary" size="md" onPress={handleCancelPress} style={{flex:1}} title="Отменить" />
-            <UIButton size="md" variant="primary" onPress={handleSave} style={{flex:1}} title={saving ? 'Сохранение…' : 'Сохранить'} />
-          </View>
+                    
         </View>
         <Modal
           backdropColor={theme.colors.overlay} isVisible={cancelVisible}
@@ -1627,14 +1581,14 @@ const { error: updErr } = await supabase
             {ordersAction === 'reassign' && (
               <View>
                 <Text style={[styles.label, { marginTop: 8 }]}>Правопреемник</Text>
-                <Pressable
-                  onPress={openSuccessorPickerFromSuspend}
-                  style={[styles.selectInput, successorError && { borderColor: theme.colors.danger }]}>
-                  <Text style={styles.selectInputText}>
-                    {successor?.name || 'Выберите сотрудника'}
-                  </Text>
-                  <AntDesign name="search1" size={16} color={theme.colors.textSecondary} />
-                </Pressable>
+<SelectField
+  label="Правопреемник"
+  value={successor?.name || 'Выберите сотрудника'}
+  onPress={openSuccessorPickerFromSuspend}
+  right={<AntDesign name="search1" size={16} color={theme.colors.textSecondary} />}
+  showValue={true}
+  style={successorError ? { borderColor: theme.colors.danger } : null}
+/>
                 {!!successorError && <Text style={styles.helperError}>{successorError}</Text>}
               </View>
             )}
@@ -1683,12 +1637,14 @@ const { error: updErr } = await supabase
               Необходимо выбрать правопреемника, чтобы переназначить все его заявки.
             </Text>
             <Text style={[styles.label, { marginTop: 8 }]}>Правопреемник *</Text>
-            <Pressable
-              onPress={openSuccessorPickerFromDelete}
-              style={[styles.selectInput, successorError && { borderColor: theme.colors.danger }]}>
-              <Text style={styles.selectInputText}>{successor?.name || 'Выберите сотрудника'}</Text>
-              <AntDesign name="search1" size={16} color={theme.colors.textSecondary} />
-            </Pressable>
+<SelectField
+  label="Правопреемник"
+  value={successor?.name || 'Выберите сотрудника'}
+  onPress={openSuccessorPickerFromDelete}
+  right={<AntDesign name="search1" size={16} color={theme.colors.textSecondary} />}
+  showValue={true}
+  style={successorError ? { borderColor: theme.colors.danger } : null}
+/>
             {!!successorError && <Text style={styles.helperError}>{successorError}</Text>}
             <View style={[styles.modalActions, { marginTop: 16 }]}>
               <Pressable
@@ -1910,24 +1866,6 @@ const { error: updErr } = await supabase
             </View>
           </View>
         </Modal>
-                <Animated.View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: 16,
-            right: 16,
-            bottom: 140,
-            opacity: toastAnim,
-            transform: [
-              { translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) },
-            ] }}>
-          {!!ok && (
-            <View style={styles.toast}>
-              <AntDesign name="checkcircle" size={18} color={theme.colors.success} />
-              <Text style={styles.toastText}>{ok}</Text>
-            </View>
-          )}
-        </Animated.View>
-      </Screen>
+                </Screen>
   );
 }

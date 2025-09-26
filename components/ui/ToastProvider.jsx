@@ -1,6 +1,6 @@
 // components/ui/ToastProvider.jsx
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { Text, View, StyleSheet, Dimensions } from "react-native";
+import { Text, View, StyleSheet, Dimensions, Modal } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme";
 import Animated, {
@@ -45,28 +45,24 @@ export default function ToastProvider({ children }) {
     op.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, (finished) => { if (!mounted.value) return; runOnJS(endHide)(); });
   }, [ty, op]);
 
-  const show = useCallback((text, type = "info") => {
-    // если уже показан — обновим текст и продлим таймер без повторного "въезда"
+  const show = useCallback((text, type = "info", opts = {}) => {
+    const { sticky = false, duration = 1800 } = opts || {};
+    // If already visible: update text/type and (re)arm timer depending on sticky
     if (visibleRef.current) {
       setMsg({ text, type });
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(hide, 1800);
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      if (!sticky) timerRef.current = setTimeout(hide, duration);
       return;
     }
-
+    // First show: set visible and play enter animation
     visibleRef.current = true;
     setMsg({ text, type });
-
-    // стартовые значения
     ty.value = 20;
     op.value = 0;
-
-    // въезд: чуть подпрыгивает, как в iOS
     ty.value = withSpring(0, { mass: 0.7, damping: 16, stiffness: 180 });
     op.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) });
-
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(hide, 1800);
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    if (!sticky) timerRef.current = setTimeout(hide, duration);
   }, [ty, op, hide]);
 
   const value = {
@@ -76,6 +72,15 @@ export default function ToastProvider({ children }) {
     success: (t) => show(t, "success"),
     error:   (t) => show(t, "error"),
     info:    (t) => show(t, "info"),
+    loading: (t = 'Сохраняю…') => show(t, 'info', { sticky: true }),
+    promise: (p, m = {}) => {
+      const { loading = 'Сохраняю…', success = 'Сохранено', error = 'Не удалось выполнить действие' } = m || {};
+      show(loading, 'info', { sticky: true });
+      const run = typeof p === 'function' ? p() : p;
+      return Promise.resolve(run)
+        .then((res) => { show(typeof success === 'function' ? success(res) : success, 'success'); return res; })
+        .catch((e) => { show(typeof error === 'function' ? error(e) : (e?.message || error), 'error'); throw e; });
+    },
   };
 
   const palette = (t) => ({
@@ -112,7 +117,6 @@ export default function ToastProvider({ children }) {
     </Animated.View>
   </View>
 ) : null}
-
 
     </Ctx.Provider>
   );

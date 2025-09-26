@@ -22,7 +22,10 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
+if (!globalThis.__SPLASH_LOCKED__) {
+  SplashScreen.preventAutoHideAsync().catch(() => {});
+  globalThis.__SPLASH_LOCKED__ = true;
+}
 
 // Единый QueryClient с SWR-поведением (мгновенный кэш + тихий рефетч)
 const queryClient = new QueryClient({
@@ -201,6 +204,7 @@ if (!ready) {
             <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }}>
               <Stack
                 initialRouteName={isLoggedIn ? 'orders/index' : '(auth)'}
+                    key={isLoggedIn ? 'app' : 'auth'}
                 screenOptions={{
                   headerShown: false,
                   animation: 'simple_push',
@@ -214,7 +218,7 @@ if (!ready) {
                 <Stack.Screen name="(auth)" options={{ headerShown: false }} />
                 <Stack.Screen name="orders/index" options={{ gestureEnabled: false }} />
               </Stack>
-              {isLoggedIn && <BottomNav />}
+              {booted && isLoggedIn && !!role && <BottomNav />}
             </Animated.View>
           </SafeAreaView>
         </SettingsProvider>

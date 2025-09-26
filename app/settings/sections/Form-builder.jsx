@@ -1,12 +1,12 @@
-// app/admin/form-builder.jsx
+// app/settings/sections/form-builder.jsx
 
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 // Unified theme & UI components
-import { useTheme } from '../../theme/ThemeProvider';
-import Screen from '../../components/layout/Screen';
-import Button from '../../components/ui/Button';
-import TextField from '../../components/ui/TextField';
+import { useTheme } from '../../../theme/ThemeProvider';
+import Screen from '../../../components/layout/Screen';
+import Button from '../../../components/ui/Button';
+import TextField from '../../../components/ui/TextField';
 import {View, Text, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Switch} from 'react-native';
 import { useColorScheme } from 'react-native';
 
@@ -16,12 +16,12 @@ let useAppTheme;
 try {
   // optional import; avoid crash if file/path missing
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  useAppTheme = require('../../theme/ThemeProvider').useTheme;
+  useAppTheme = require('../../../theme/ThemeProvider').useTheme;
 } catch {}
 
 let supabaseDefault, supabaseNamed;
 try {
-  const mod = require('../../lib/supabase');
+  const mod = require('../../../lib/supabase');
   supabaseDefault = mod.default;
   supabaseNamed = mod.supabase;
 } catch (e) {
@@ -30,7 +30,7 @@ try {
 
 const supabase = (typeof supabaseNamed !== 'undefined' && supabaseNamed) || supabaseDefault;
 if (!supabase) {
-  throw new Error('Supabase client import failed: check ../../lib/supabase export (default or named).');
+  throw new Error('Supabase client import failed: check ../../../lib/supabase export (default or named).');
 }
 
 const TYPE_PRESETS = [
