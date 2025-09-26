@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState, useLayoutEffect } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View, Pressable, Linking, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import Screen from '../../components/layout/Screen';
 import { useTheme } from '../../theme/ThemeProvider';
 import { supabase } from '../../lib/supabase';
@@ -156,16 +157,26 @@ export default function UserView() {
   }, [userId]);
 
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
-  useEffect(() => {
-    const canEdit = meIsAdmin || (myUid && myUid === userId);
-    if (canEdit) {
-      navigation.setParams({ headerButtonLabel: 'Изменить', headerButtonTo: `/users/${userId}/edit` });
-    } else {
-      navigation.setParams({ headerButtonLabel: null, headerButtonTo: null });
-    }
-  }, [navigation, userId, meIsAdmin, myUid]);
+  
+useEffect(() => {
+  const canEdit = meIsAdmin || (myUid && myUid === userId);
+  if (canEdit) {
+    navigation.setParams({
+  editLabel: 'Изменить',
+  headerButtonLabel: 'Изменить',
+  headerButtonTo: `/users/${userId}/edit`,
+});
 
-  // Copy helpers
+  } else {
+    navigation.setParams({
+      editLabel: null,
+      onEditPress: null,
+      headerButtonLabel: null,
+      headerButtonTo: null,
+    });
+  }
+}, [navigation, userId, meIsAdmin, myUid]);
+// Copy helpers
   const onCopyEmail = React.useCallback(async () => {
     if (!email) return;
     const text = String(email);
@@ -210,6 +221,14 @@ export default function UserView() {
     fetchMe();
     fetchUser();
   }, [fetchMe, fetchUser]);
+  // Refetch when screen regains focus (after editing)
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchUser();
+      return undefined;
+    }, [fetchUser])
+  );
+
 
   const initials = `${(firstName || '').trim().slice(0,1)}${(lastName || '').trim().slice(0,1)}`.toUpperCase();
   const statusColor = isSuspended ? theme.colors.danger : theme.colors.success;

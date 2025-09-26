@@ -8,6 +8,8 @@ import { useCapsuleFeedback } from "../../theme/ThemeProvider";
 
 // Человеческие заголовки для часто используемых экранов
 const TITLE_MAP = {
+  "settings": "Настройки компании",
+  "settings/index": "Настройки компании",
   "orders": "Заявки",
   "orders/index": "Заявки",
   "orders/my-orders": "Мои заявки",
@@ -49,6 +51,7 @@ function resolveTitle(options, route, pathnameRaw) {
   if (pathname.startsWith('/orders/my-orders')) return 'Мои заявки';
   if (pathname.startsWith('/orders')) return 'Заявки';
   if (pathname.startsWith('/users')) return 'Сотрудники';
+  if (pathname.startsWith('/settings')) return 'Настройки компании';
 
   // 4) дефолт: имя роута или пусто
   return name || '';
@@ -122,14 +125,18 @@ const bg = tint.interpolate({
             {route?.params?.leftTextOnly ? (
               <Pressable
                 hitSlop={12}
+                onPressIn={onCtaIn}
+                onPressOut={onCtaOut}
                 onPress={onBack}
                 style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 16 }}
                 accessibilityRole="button"
                 accessibilityLabel={String(backLabel || route?.params?.headerBackTitle || 'Отмена')}
               >
-                <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
-                  {String(route?.params?.headerBackTitle ?? backLabel ?? 'Отмена')}
-                </Text>
+                <Animated.View style={[capsuleAnim]}>
+                  <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
+                    {String(route?.params?.headerBackTitle ?? backLabel ?? 'Отмена')}
+                  </Text>
+                </Animated.View>
               </Pressable>
             ) : back ? (
               <Animated.View style={{ transform: [{ scale }] }}>
@@ -175,6 +182,23 @@ const bg = tint.interpolate({
 
 
       <View style={s.right}>
+
+{route?.params?.editLabel && route?.params?.onEditPress ? (
+  <Pressable
+    hitSlop={10}
+    onPressIn={onCtaIn}
+    onPressOut={onCtaOut}
+    onPress={route.params.onEditPress}
+    accessibilityRole="button"
+    accessibilityLabel={String(route.params.editLabel)}
+  >
+    <Animated.View style={[capsuleAnim]}>
+      <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
+        {String(route.params.editLabel)}
+      </Text>
+    </Animated.View>
+  </Pressable>
+) : null}
         {rightLabel && rightPress ? (
           <Pressable
             hitSlop={10}
@@ -184,7 +208,7 @@ const bg = tint.interpolate({
             accessibilityRole="button"
             accessibilityLabel={String(rightLabel)}
           >
-            <Animated.View style={[{ paddingHorizontal: 8, height: 32, justifyContent: 'center' }]}>
+            <Animated.View style={[capsuleAnim]}>
               <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
                 {String(rightLabel)}
               </Text>

@@ -1,6 +1,8 @@
 // components/ui/TextField.jsx
 import React, { useState, forwardRef } from "react";
-import { View, Text, TextInput, StyleSheet, Platform } from "react-native";
+import { View, Text, TextInput, StyleSheet, Platform, Modal, Pressable, Switch, FlatList, Animated, Easing } from "react-native";
+import { Picker } from "@react-native-picker/picker";
+import FeatherIcon from "@expo/vector-icons/Feather";
 import { useTheme } from "../../theme";
 
 const TextField = forwardRef(function TextField(
@@ -27,21 +29,17 @@ const TextField = forwardRef(function TextField(
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
+
   const isRequired = /\*/.test(String(label || ''));
   const requiredEmpty = isRequired && touched && !String(value || '').trim();
   const isErr = !!error || requiredEmpty;
   const s = styles(theme, isErr, focused);
   const maskRef = React.useRef(null);
   const inputRef = React.useRef(null);
-  // bridge external ref
   React.useImperativeHandle(ref, () => inputRef.current);
   const handleChangeText = React.useCallback((t) => {
-    if (Platform.OS === "android" && secureTextEntry && maskRef.current) {
-      try { maskRef.current.setNativeProps({ text: "\u2022".repeat(String(t || "").length) }); } catch {}
-    }
     onChangeText?.(t);
-  }, [onChangeText, secureTextEntry]);
-
+  }, [onChangeText]);
 
   return (
     <View style={style}>
@@ -50,7 +48,7 @@ const TextField = forwardRef(function TextField(
           <Text style={s.floatingLabel}>{label}</Text>
         ) : null}
         {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
-        <View style={s.inputBox} onStartShouldSetResponder={() => true} onResponderGrant={() => inputRef.current?.focus?.() }>
+        <View style={s.inputBox}>
           <TextInput
             ref={inputRef}
             value={value}
@@ -59,9 +57,6 @@ const TextField = forwardRef(function TextField(
             placeholderTextColor={theme.colors.inputPlaceholder}
             keyboardType={keyboardType || "default"}
             secureTextEntry={secureTextEntry}
-            textContentType={secureTextEntry ? "password" : "none"}
-            autoComplete={secureTextEntry ? "password" : "off"}
-            importantForAutofill={secureTextEntry ? "no" : "auto"}
             autoCorrect={false}
             multiline={multiline}
             numberOfLines={numberOfLines}
@@ -75,20 +70,9 @@ const TextField = forwardRef(function TextField(
             includeFontPadding={false}
             textAlignVertical="center"
           />
-          {(secureTextEntry && Platform.OS === "android") ? (
-            <TextInput
-              ref={maskRef}
-              pointerEvents="none"
-              editable={false}
-              value={"\u2022".repeat(String(value || "").length)}
-              style={[s.input, s.passwordMask, { color: theme.colors.text }]}
-              underlineColorAndroid="transparent"
-            />
-          ) : null}
         </View>
-{rightSlot ? <View style={s.slot}>{rightSlot}</View> : null}
+        {rightSlot ? <View style={s.slot}>{rightSlot}</View> : null}
       </View>
-      {!!error && <Text style={s.error}>{error}</Text>}
     </View>
   );
 });
@@ -97,30 +81,309 @@ export default TextField;
 
 const styles = (t, isError, focused) =>
   StyleSheet.create({
-    label: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm, marginBottom: 6 },
     wrap: {
       position: 'relative',
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: t.colors.inputBg,
-      borderColor: isError ? t.colors.danger : focused ? t.colors.primary : t.colors.inputBorder,
-      borderWidth: 1,
-      borderRadius: t.radii.md,
+      backgroundColor: 'transparent',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: isError ? t.colors.danger : (focused ? t.colors.primary : (t.colors.inputBorder || '#e0e0e0')),
       paddingHorizontal: 12,
-      paddingTop: 16,
+      paddingTop: 18,
       height: 64,
-      ...(Platform.OS === 'ios' ? t.shadows.card.ios : t.shadows.card.android),
     },
     floatingLabel: {
       position: 'absolute',
       left: 12,
       top: 6,
-      color: t.colors.textSecondary,
+      color: isError ? t.colors.danger : t.colors.textSecondary,
       fontSize: t.typography.sizes.sm,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
     },
-    input: { flex: 1, color: t.colors.text, fontSize: t.typography.sizes.md, paddingVertical: 8 },
+    input: {
+      flex: 1,
+      color: t.colors.text,
+      fontSize: t.typography.sizes.md,
+      paddingVertical: 10,
+    },
     slot: { marginHorizontal: 4 },
     inputBox: { flex: 1, justifyContent: 'center', position: 'relative' },
-    passwordMask: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, textAlign: 'left' },
-    error: { color: t.colors.danger, fontSize: t.typography.sizes.sm, marginTop: 4, paddingLeft: 12 },
   });
+
+
+// Unified Settings-like select row, styled to match AppSettings.jsx rows.
+// Usage:
+//   <SelectField label="Роль" value="Администратор" onPress={...} />
+//   <SelectField label="Звук" onPress={...} showValue={false} />
+export function SelectField({
+  label,
+  value,
+  onPress,
+  right,            // optional custom right ReactNode
+  showValue = true, // when false -> only chevron shown
+  disabled = false,
+  style,
+}) {
+  const { theme } = useTheme();
+  const s = selectStyles(theme);
+  return (
+    <Pressable onPress={onPress} disabled={disabled} android_ripple={{ color: theme.colors.ripple, borderless: false }}>
+      <View style={[s.row, disabled && s.disabled, style]}>
+        <Text style={[s.label, { color: theme.colors.text }]} numberOfLines={1}>{label}</Text>
+        <View style={s.rightWrap}>
+          {right ? right : (showValue ? (<Text style={[s.value, { color: theme.colors.text }]} numberOfLines={1}>{value ?? ''}</Text>) : null)}
+          <FeatherIcon name="chevron-right" size={20} color={theme.colors.textSecondary} style={s.chevron} />
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+const selectStyles = (t) => StyleSheet.create({
+  row: {
+    height: 48,
+    paddingLeft: 20,
+    paddingRight: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: t.colors.card,
+  },
+  disabled: { opacity: 0.5 },
+  label: { fontSize: t.typography.sizes.md, fontWeight: '500', flexShrink: 1, paddingRight: 8 },
+  value: { fontSize: t.typography.sizes.md, maxWidth: 220 },
+  rightWrap: { flexDirection: 'row', alignItems: 'center' },
+  chevron: { marginLeft: 6 },
+});
+
+/* ======================
+ * DateOfBirthField (Apple-like wheels in modal)
+ * Reusable field with the same visual style as TextField.
+ * Value shape: { day: number, month: number, year: number | null }
+ * onChange receives the same shape.
+ * Helper export: serializeDobForSupabase(value) -> { dob: string|null, dob_md: string }
+ * ====================== */
+
+const itemHeight = 36;
+
+function range(from, to) {
+  const arr = [];
+  for (let i = from; i <= to; i++) arr.push(i);
+  return arr;
+}
+
+const months = [
+  "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
+  "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
+];
+
+const pad2 = (n) => String(n).padStart(2, "0");
+
+export function serializeDobForSupabase(v) {
+  if (!v) return { dob: null, dob_md: null };
+  const md = `${pad2(v.month)}-${pad2(v.day)}`;
+  const dob = v.year ? `${v.year}-${md}` : null;
+  return { dob, dob_md: md };
+}
+
+export const DateOfBirthField = ({
+  label = "Дата рождения",
+  value,
+  onChange,
+  minYear = 1900,
+  maxYear = new Date().getFullYear(),
+  style,
+}) => {
+  const { theme } = useTheme();
+  const isErr = false;
+  const s = styles(theme, isErr, false);
+  const [open, setOpen] = React.useState(false);
+  const [d, setD] = React.useState(value?.day || 1);
+  const [m, setM] = React.useState(value?.month || 1);
+  const [y, setY] = React.useState(value?.year || maxYear);
+  const [withYear, setWithYear] = React.useState(value?.year != null);
+  // --- animated modal enter/exit (iOS-like) ---
+  const cardScale = React.useRef(new Animated.Value(0.96)).current;
+  const cardOpacity = React.useRef(new Animated.Value(0)).current;
+  const backdropOpacity = React.useRef(new Animated.Value(0)).current;
+
+  const animateIn = React.useCallback(() => {
+    cardScale.setValue(0.96);
+    cardOpacity.setValue(0);
+    backdropOpacity.setValue(0);
+    Animated.parallel([
+      Animated.spring(cardScale, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 8 }),
+      Animated.timing(cardOpacity, { toValue: 1, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 1, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]).start();
+  }, [cardScale, cardOpacity, backdropOpacity]);
+
+  const closeModal = React.useCallback(() => {
+    Animated.parallel([
+      Animated.timing(cardScale, { toValue: 0.98, duration: 140, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(cardOpacity, { toValue: 0, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+      Animated.timing(backdropOpacity, { toValue: 0, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+    ]).start(({ finished }) => { if (finished) setOpen(false); else setOpen(false); });
+  }, [cardScale, cardOpacity, backdropOpacity]);
+
+
+  const years = React.useMemo(() => range(minYear, maxYear).reverse(), [minYear, maxYear]);
+  const daysInMonth = (mm, yy) => new Date(yy || 2000, mm, 0).getDate();
+  const maxD = daysInMonth(m, withYear ? y : 2000);
+  React.useEffect(() => { if (d > maxD) setD(maxD); }, [m, y, withYear]);  
+
+  const display = () => {
+    if (!d || !m) return "";
+    const base = `${pad2(d)} ${months[m-1]}`;
+    return withYear ? `${base}, ${y}` : base;
+  };
+
+  const onDone = () => {
+    const out = { day: d, month: m, year: withYear ? y : null };
+    onChange?.(out);
+    setOpen(false);
+  };
+
+  // Render wheel column (FlatList with snap)
+  const Wheel = ({ data, selected, setSelected, disabled }) => {
+    const listRef = React.useRef(null);
+    React.useEffect(() => {
+      const idx = data.indexOf(selected);
+      if (idx >= 0) listRef.current?.scrollToIndex?.({ index: idx, animated: false });
+    }, []);
+    const onViewableItemsChanged = React.useRef(({ viewableItems }) => {
+      const center = viewableItems.find(v => v.index != null && v.isViewable);
+      if (center && center.item != null) setSelected(center.item);
+    }).current;
+    const getItemLayout = (_, index) => ({ length: itemHeight, offset: itemHeight * index, index });
+    return (
+      <View style={[wheelStyles.col, disabled && { opacity: 0.35 }]}>
+        <FlatList
+          ref={listRef}
+          data={data}
+          keyExtractor={(it) => String(it)}
+          getItemLayout={getItemLayout}
+          initialNumToRender={20}
+          showsVerticalScrollIndicator={false}
+          snapToInterval={itemHeight}
+          decelerationRate="fast"
+          viewabilityConfig={{ itemVisiblePercentThreshold: 99 }}
+          onViewableItemsChanged={onViewableItemsChanged}
+          renderItem={({ item }) => (
+            <View style={wheelStyles.item}>
+              <Text style={[wheelStyles.itemText, { color: theme.colors.text }]}>{item}</Text>
+            </View>
+          )}
+        />
+        <View style={[wheelStyles.selectionLine, { borderColor: theme.colors.inputBorder || '#e0e0e0' }]} />
+      </View>
+    );
+  };
+
+  return (
+    <View style={style}>
+      <Pressable onPress={() => { setOpen(true); setTimeout(animateIn, 0); }}>
+        <View style={s.wrap}>
+          <Text style={s.floatingLabel}>{label}</Text>
+          <View style={s.inputBox}>
+            <Text style={[s.input, { paddingVertical: 10, color: theme.colors.text }]}>{display()}</Text>
+          </View>
+        </View>
+      </Pressable>
+
+      <Modal transparent visible={open} animationType="none" onRequestClose={closeModal}>
+        <Animated.View style={[modalStyles.backdrop, { opacity: backdropOpacity }]} />
+        <View style={[modalStyles.center]}>
+          <Animated.View style={[modalStyles.card, { backgroundColor: theme.colors.surface, opacity: cardOpacity, transform: [{ scale: cardScale }] }]}>
+            <Text style={[modalStyles.title, { color: theme.colors.text }]}>Выберите дату</Text>
+
+            
+            <View style={modalStyles.wheelsRow}>
+              {Platform.OS === 'ios' ? (
+                <>
+                  <View style={modalStyles.pickerCol}>
+                    <Picker
+                      selectedValue={d}
+                      onValueChange={(v)=>setD(v)}
+                      itemStyle={{fontSize:18}}
+                    >
+                      {Array.from({length: daysInMonth(m, withYear ? y : 2000)}, (_,i)=>i+1).map(v=>(
+                        <Picker.Item key={v} label={String(v)} value={v} />
+                      ))}
+                    </Picker>
+                  </View>
+                  <View style={modalStyles.pickerCol}>
+                    <Picker
+                      selectedValue={m}
+                      onValueChange={(v)=>setM(v)}
+                      itemStyle={{fontSize:18}}
+                    >
+                      {months.map((name,idx)=>(
+                        <Picker.Item key={idx+1} label={name} value={idx+1} />
+                      ))}
+                    </Picker>
+                  </View>
+                  <View style={[modalStyles.pickerCol, !withYear && {opacity:0.35}]}>
+                    <Picker
+                      enabled={withYear}
+                      selectedValue={y}
+                      onValueChange={(v)=>setY(v)}
+                      itemStyle={{fontSize:18}}
+                    >
+                      {years.map(v=>(
+                        <Picker.Item key={v} label={String(v)} value={v} />
+                      ))}
+                    </Picker>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Wheel data={Array.from({length: daysInMonth(m, withYear ? y : 2000)}, (_, i) => i + 1)} selected={d} setSelected={setD} />
+                  <Wheel data={months.map((_, i) => i+1)} selected={m} setSelected={setM} />
+                  <Wheel data={years} selected={y} setSelected={setY} disabled={!withYear} />
+                </>
+              )}
+            </View>
+
+            <View style={modalStyles.switchRow}>
+              <Text style={[modalStyles.switchLabel, { color: theme.colors.textSecondary }]}>Указать год</Text>
+              <Switch value={withYear} onValueChange={setWithYear} />
+            </View>
+
+            <View style={modalStyles.actions}>
+              <Pressable onPress={closeModal} style={modalStyles.btn}>
+                <Text style={[modalStyles.btnText, { color: theme.colors.textSecondary }]}>Отмена</Text>
+              </Pressable>
+              <Pressable onPress={onDone} style={modalStyles.btn}>
+                <Text style={[modalStyles.btnText, { color: theme.colors.primary }]}>Готово</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      </Modal>
+    </View>
+  );
+};
+
+const wheelStyles = StyleSheet.create({
+  col: { width: 92, height: 180, overflow: "hidden" },
+  item: { height: itemHeight, alignItems: "center", justifyContent: "center" },
+  itemText: { fontSize: 18 },
+  selectionLine: {
+    position: "absolute", left: 8, right: 8, top: (180 - itemHeight)/2, height: itemHeight,
+    borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+});
+
+const modalStyles = StyleSheet.create({
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.25)" },
+  center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
+  card: { width: "100%", maxWidth: 420, borderRadius: 14, paddingVertical: 12 },
+  title: { fontSize: 16, fontWeight: "600", textAlign: "center", marginBottom: 8 },
+  wheelsRow: { flexDirection: "row", justifyContent: "space-evenly", paddingHorizontal: 12, paddingBottom: 8 },
+  actions: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingTop: 6 },
+  btn: { padding: 10, flex: 1, alignItems: "center" },
+  btnText: { fontSize: 16, fontWeight: "600" },
+});
+
