@@ -87,16 +87,34 @@ function buildTheme(mode) {
   };
 
   const components = {
-  card: { borderWidth: (base.components?.card?.borderWidth ?? 1) },
-  listItem: {
-    height: (base.components?.listItem?.height ?? 48),
-    dividerWidth: (base.components?.listItem?.dividerWidth ?? 1),
-    disabledOpacity: (base.components?.listItem?.disabledOpacity ?? 0.5),
-    chevronSize: (base.components?.listItem?.chevronSize ?? 20),
-  },
-};
+    card: {
+      borderWidth: (base.components?.card?.borderWidth ?? 1),
+    },
+    listItem: {
+      height: (base.components?.listItem?.height ?? 48),
+      dividerWidth: (base.components?.listItem?.dividerWidth ?? 1),
+      disabledOpacity: (base.components?.listItem?.disabledOpacity ?? 0.5),
+      chevronSize: (base.components?.listItem?.chevronSize ?? 20),
+    },
+    // NEW: sensible defaults; additive, won't break existing usage
+    sectionTitle: {
+      mb: base.components?.sectionTitle?.mb ?? 'sm', // spacing key
+      ml: base.components?.sectionTitle?.ml ?? 'sm', // spacing key
+    },
+    row: {
+      minHeight: base.components?.row?.minHeight ?? (base.components?.listItem?.height ?? 48),
+      py: base.components?.row?.py ?? null, // optional vertical padding (we set fixed height in screen)
+      gapX: base.components?.row?.gapX ?? 'sm', // spacing key
+    },
+    avatar: {
+      xl: base.components?.avatar?.xl ?? 120,
+      lg: base.components?.avatar?.lg ?? 96,
+      md: base.components?.avatar?.md ?? 48,
+      border: base.components?.avatar?.border ?? 1,
+    },
+  };
 
-return {
+  return {
     mode: effective,
     colors,
     shadows: normalizedShadows,

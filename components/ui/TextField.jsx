@@ -106,6 +106,7 @@ const styles = (t, isError, focused) =>
       color: t.colors.text,
       fontSize: t.typography.sizes.md,
       paddingVertical: 10,
+      paddingLeft: 0,
     },
     slot: { marginHorizontal: 4 },
     inputBox: { flex: 1, justifyContent: 'center', position: 'relative' },

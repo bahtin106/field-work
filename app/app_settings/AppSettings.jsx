@@ -6,10 +6,9 @@ import {
   StyleSheet,
   Switch,
   ScrollView,
-  Modal,
   Platform,
+  Linking,
 } from "react-native";
-import { Linking } from "react-native";
 import Constants from "expo-constants";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -22,6 +21,7 @@ import { useToast } from "../../components/ui/ToastProvider";
 import SelectModal from "../../components/ui/SelectModal";
 import Button from "../../components/ui/Button";
 import { supabase } from "../../lib/supabase";
+import { strings as STRINGS } from "../../constants/strings";
 
 // --- Edge-to-edge warning filter (expo-navigation-bar) ---
 // Скрывает только два известных WARN'а про edge-to-edge, не трогая остальные предупреждения.
@@ -51,9 +51,67 @@ export default function AppSettings() {
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
+  // Centralized strings with safe fallbacks
+  const STR = {
+    screenTitle: STRINGS?.appSettings?.title ?? "Настройки приложения",
+    sections: {
+      appearance: STRINGS?.appSettings?.sections?.appearance ?? "ВНЕШНИЙ ВИД",
+      notifications: STRINGS?.appSettings?.sections?.notifications ?? "УВЕДОМЛЕНИЯ",
+      quiet: STRINGS?.appSettings?.sections?.quiet ?? "ТИХИЕ ЧАСЫ",
+      privacy: STRINGS?.appSettings?.sections?.privacy ?? "ПРИВАТНОСТЬ",
+      ai: STRINGS?.appSettings?.sections?.ai ?? "AI",
+    },
+    labels: {
+      theme: STRINGS?.appSettings?.labels?.theme ?? "Тема",
+      textSize: STRINGS?.appSettings?.labels?.textSize ?? "Размер текста",
+      boldText: STRINGS?.appSettings?.labels?.boldText ?? "Жирный текст",
+      allowNotifications: STRINGS?.appSettings?.labels?.allowNotifications ?? "Допускать уведомления",
+      notificationSounds: STRINGS?.appSettings?.labels?.notificationSounds ?? "Звуки уведомлений",
+      enabledEvents: STRINGS?.appSettings?.labels?.enabledEvents ?? "Включённые события",
+      quietStart: STRINGS?.appSettings?.labels?.quietStart ?? "Начало",
+      quietEnd: STRINGS?.appSettings?.labels?.quietEnd ?? "Конец",
+      quietReset: STRINGS?.appSettings?.labels?.quietReset ?? "Сбросить время (Всегда уведомлять)",
+      privacyGeo: STRINGS?.appSettings?.labels?.privacyGeo ?? "Сервисы геолокации",
+      privacyAnalytics: STRINGS?.appSettings?.labels?.privacyAnalytics ?? "Анализ функционала",
+      privacySearch: STRINGS?.appSettings?.labels?.privacySearch ?? "Конфиденциальный поиск",
+      aiSuggestions: STRINGS?.appSettings?.labels?.aiSuggestions ?? "Персональные предложения",
+      aiAvatars: STRINGS?.appSettings?.labels?.aiAvatars ?? "Аватарки AI",
+      eventNewOrders: STRINGS?.appSettings?.labels?.eventNewOrders ?? "Новые заявки",
+      eventFeedOrders: STRINGS?.appSettings?.labels?.eventFeedOrders ?? "Заявки в ленте",
+      eventReminders: STRINGS?.appSettings?.labels?.eventReminders ?? "Напоминать о незабранных",
+    },
+    options: {
+      themeLight: STRINGS?.appSettings?.options?.themeLight ?? "Светлая",
+      themeDark: STRINGS?.appSettings?.options?.themeDark ?? "Тёмная",
+      themeSystem: STRINGS?.appSettings?.options?.themeSystem ?? "Системная",
+      off: STRINGS?.common?.off ?? "Выкл.",
+      done: STRINGS?.common?.done ?? "Готово",
+      pickTheme: STRINGS?.appSettings?.modals?.pickTheme ?? "Выберите тему",
+      pickEvents: STRINGS?.appSettings?.modals?.pickEvents ?? "Включённые события",
+    },
+    messages: {
+      future: STRINGS?.messages?.future ?? "Будет добавлено в будущем",
+      chooseQuietStart: STRINGS?.messages?.chooseQuietStart ?? "Выберите начало тихих часов",
+      chooseQuietEnd: STRINGS?.messages?.chooseQuietEnd ?? "Выберите конец тихих часов",
+      quietOff: STRINGS?.messages?.quietOff ?? "Тихие часы выключены",
+      quietRange: (a,b) => (STRINGS?.messages?.quietRange ? STRINGS.messages.quietRange(a,b) : `Тихие часы: ${a}–${b}`),
+      notifOn: STRINGS?.messages?.notifOn ?? "Уведомления включены",
+      notifOff: STRINGS?.messages?.notifOff ?? "Уведомления выключены",
+      notifOnStandalone: STRINGS?.messages?.notifOnStandalone ?? "Уведомления включены (только для standalone версии)",
+      noPermission: STRINGS?.messages?.noPermission ?? "Нет разрешения на уведомления. Разрешите в настройках.",
+      permissionGrantedNoToken: STRINGS?.messages?.permissionGrantedNoToken ?? "Разрешение дано. Токен будет получен в dev/прод билде.",
+      saveError: STRINGS?.messages?.saveError ?? "Не удалось сохранить изменения",
+      saveErrorGeneric: STRINGS?.messages?.saveErrorGeneric ?? "Не удалось сохранить",
+      noAuth: STRINGS?.messages?.noAuth ?? "Нет авторизации. Войдите снова.",
+      noConnection: STRINGS?.messages?.noConnection ?? "Нет соединения с сервером",
+      openSoundSettingsHint: STRINGS?.messages?.openSoundSettingsHint ?? "Откройте настройки звука вручную: Уведомления → Звук.",
+      tokenSaveFailed: STRINGS?.messages?.tokenSaveFailed ?? "Не удалось сохранить токен",
+    }
+  };
+
 
   const s = useMemo(() => styles(theme), [theme]);
-  const futureFeature = () => toast.info("Будет добавлено в будущем");
+  const futureFeature = () => toast.info(STR.messages.future);
 
   const [prefs, setPrefs] = useState({
     allow: true,
@@ -81,7 +139,7 @@ export default function AppSettings() {
         try {
           await Linking.openSettings();
         } catch (error) {
-          console.log("Не удалось открыть настройки:", error);
+          toast.error(STR.messages.openSoundSettingsHint);
         }
         return { granted: false, token: null };
       }
@@ -101,7 +159,7 @@ export default function AppSettings() {
         try {
           await Notifications.setNotificationChannelAsync('default', {
             name: 'default',
-            importance: (await import('expo-notifications')).AndroidImportance.MAX,
+            importance: Notifications.AndroidImportance.MAX,
             sound: 'default',
           });
         } catch {}
@@ -130,7 +188,7 @@ export default function AppSettings() {
         .select("allow, new_orders, feed_orders, reminders, quiet_start, quiet_end")
         .eq("user_id", uid)
         .maybeSingle();
-      if (data) setPrefs({ ...prefs, ...data });
+      if (data) setPrefs((p) => ({ ...p, ...data }));
 
       const { data: prof } = await supabase
         .from("profiles")
@@ -152,7 +210,7 @@ export default function AppSettings() {
         setCanCreateOrders(false);
       }
     } catch (e) {
-      toast.error("Не удалось загрузить настройки");
+      toast.error(STR.messages.saveError);
     } finally {
       setLoadingPrefs(false);
     }
@@ -174,19 +232,19 @@ export default function AppSettings() {
         .from("notification_prefs")
         .upsert({ user_id: uid, ...next }, { onConflict: "user_id" });
       if (error) {
-        let msg = "Не удалось сохранить изменения";
-        if (/permission denied/i.test(error.message)) msg = "Нет прав доступа к настройкам";
+        let msg = STR.messages.saveError;
+        if (/permission denied/i.test(error.message)) msg = STR.messages.noPermission ?? "Нет прав доступа к настройкам";
         else if (/row level security|rls/i.test(error.message)) msg = "Недостаточно прав (RLS)";
-        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = "Нет соединения с сервером";
+        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = STR.messages.noConnection;
         console.warn('savePrefs supabase error:', error);
         return { ok: false, message: msg };
       }
       return { ok: true };
     } catch (e) {
       const m = String(e?.message || e || "").toLowerCase();
-      let msg = "Не удалось сохранить";
-      if (m.includes("no_auth")) msg = "Нет авторизации. Войдите снова.";
-      else if (m.includes("failed to fetch") || m.includes("network")) msg = "Нет соединения с сервером";
+      let msg = STR.messages.saveErrorGeneric;
+      if (m.includes("no_auth")) msg = STR.messages.noAuth;
+      else if (m.includes("failed to fetch") || m.includes("network")) msg = STR.messages.noConnection;
       return { ok: false, message: msg };
     }
   }
@@ -256,7 +314,7 @@ export default function AppSettings() {
       const d = toDateFromStr(toTimeStr(next[missing]));
       setTimeValue(d);
       setTimeout(() => setTimePickerOpen(missing), 0);
-      toast.info(missing === "end" ? "Выберите конец тихих часов" : "Выберите начало тихих часов");
+      toast.info(missing === "end" ? STR.messages.chooseQuietEnd : STR.messages.chooseQuietStart);
       return;
     }
 
@@ -267,9 +325,9 @@ export default function AppSettings() {
       const { ok, message } = await savePrefs(resetPatch);
       if (!ok) {
         setPrefs(prevPrefs);
-        toast.error(message || "Не удалось сохранить");
+        toast.error(message || STR.messages.saveErrorGeneric);
       } else {
-        toast.info("Тихие часы выключены");
+        toast.info(STR.messages.quietOff);
       }
       return;
     }
@@ -281,9 +339,9 @@ export default function AppSettings() {
     });
     if (!ok) {
       setPrefs(prevPrefs);
-      toast.error(message || "Не удалось сохранить");
+      toast.error(message || STR.messages.saveErrorGeneric);
     } else {
-      toast.info(`Тихие часы: ${toTimeStr(next.quiet_start)}–${toTimeStr(next.quiet_end)}`);
+      toast.info(STR.messages.quietRange(toTimeStr(next.quiet_start), toTimeStr(next.quiet_end)));
     }
   };
 
@@ -298,14 +356,15 @@ export default function AppSettings() {
       if (!token) throw new Error('NO_TOKEN');
       const platform = Platform.OS === 'ios' ? 'ios' : 'android';
       // гарантируем одну запись на пользователя: delete -> insert
-      await supabase.from('push_tokens').delete().eq('user_id', uid);
-      const { error } = await supabase.from('push_tokens').insert({ user_id: uid, token, platform });
+      const { error } = await supabase
+        .from('push_tokens')
+        .upsert({ user_id: uid, token, platform }, { onConflict: 'user_id' });
       if (error) throw error;
       return { ok: true };
     } catch (e) {
-      let msg = 'Не удалось сохранить токен';
+      let msg = STR.messages.tokenSaveFailed;
       const m = String(e?.message || e).toLowerCase();
-      if (m.includes('no_auth')) msg = 'Нет авторизации';
+      if (m.includes('no_auth')) msg = STR.messages.noAuth;
       if (m.includes('permission denied') || m.includes('rls')) msg = 'Недостаточно прав (RLS)';
       return { ok: false, message: msg };
     }
@@ -333,9 +392,9 @@ const onToggleAllow = async (val) => {
     const { ok, message } = await savePrefs({ allow: val });
     if (!ok) {
       setPrefs((p) => ({ ...p, allow: prev }));
-      toast.error(message || "Не удалось сохранить изменения");
+      toast.error(message || STR.messages.saveError);
     } else {
-      toast.info(val ? "Уведомления включены (только для standalone версии)" : "Уведомления выключены");
+      toast.info(val ? STR.messages.notifOnStandalone : STR.messages.notifOff);
     }
     return;
   }
@@ -345,19 +404,19 @@ const onToggleAllow = async (val) => {
     const { granted, token } = await ensurePushPermission();
     if (!granted) {
       setPrefs((p) => ({ ...p, allow: prev }));
-      toast.error("Нет разрешения на уведомления. Разрешите в настройках.");
+      toast.error(STR.messages.noPermission);
       return;
     }
     if (token) {
       const r = await savePushToken(token);
       if (!r.ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(r.message || "Не удалось сохранить токен");
+        toast.error(r.message || STR.messages.tokenSaveFailed);
         return;
       }
     } else {
       // Expo Go или ошибка получения токена — предупреждаем, но не валим
-      toast.info("Разрешение дано. Токен будет получен в dev/прод билде.");
+      toast.info(STR.messages.permissionGrantedNoToken);
     }
   } else {
     // Выключаем: удаляем токен
@@ -367,10 +426,10 @@ const onToggleAllow = async (val) => {
   const { ok, message } = await savePrefs({ allow: val });
   if (!ok) {
     setPrefs((p) => ({ ...p, allow: prev }));
-    toast.error(message || "Не удалось сохранить изменения");
+    toast.error(message || STR.messages.saveError);
     console.warn("notification_prefs save error:", message);
   } else {
-    toast.info(val ? "Уведомления включены" : "Уведомления выключены");
+    toast.info(val ? STR.messages.notifOn : STR.messages.notifOff);
   }
 };
 
@@ -389,7 +448,7 @@ const onToggleAllow = async (val) => {
       try {
         await Linking.openSettings();
       } catch {
-        toast.info("Откройте настройки звука вручную: Уведомления → Звук.");
+        toast.info(STR.messages.openSoundSettingsHint);
       }
     }
   };
@@ -400,7 +459,7 @@ const onToggleAllow = async (val) => {
     const { ok, message } = await savePrefs({ [key]: val });
     if (!ok) {
       setPrefs((p) => ({ ...p, [key]: prev }));
-      toast.error(message || "Не удалось сохранить изменения");
+      toast.error(message || STR.messages.saveError);
       console.warn("notification_prefs save error:", message);
     }
   };
@@ -413,35 +472,35 @@ const onToggleAllow = async (val) => {
     const { ok, message } = await savePrefs(patch);
     if (!ok) {
       setPrefs((p) => ({ ...p, ...prev }));
-      toast.error(message || "Не удалось сохранить");
+      toast.error(message || STR.messages.saveErrorGeneric);
     } else {
-      toast.info("Тихие часы выключены");
+      toast.info(STR.messages.quietOff);
     }
   };
 
   const sections = [
     {
       key: "appearance",
-      title: "ВНЕШНИЙ ВИД",
+      title: STR.sections.appearance,
       items: [
         {
           key: "theme",
-          label: "Тема",
-          right: <Text style={[s.value, { color: theme.colors.text }]}>{mode === "system" ? "Системная" : mode === "light" ? "Светлая" : "Тёмная"}</Text>,
+          label: STR.labels.theme,
+          right: <Text style={[s.value, { color: theme.colors.text }]}>{mode === "system" ? STR.options.themeSystem : mode === "light" ? STR.options.themeLight : STR.options.themeDark}</Text>,
           chevron: true,
           onPress: () => setThemeOpen(true),
         },
-        { key: "text-size", label: "Размер текста", chevron: true, disabled: true, onPress: futureFeature },
-        { key: "bold-text", label: "Жирный текст", switch: true, disabled: true, onPress: futureFeature },
+        { key: "text-size", label: STR.labels.textSize, chevron: true, disabled: true, onPress: futureFeature },
+        { key: "bold-text", label: STR.labels.boldText, switch: true, disabled: true, onPress: futureFeature },
       ],
     },
     {
       key: "notifications",
-      title: "УВЕДОМЛЕНИЯ",
+      title: STR.sections.notifications,
       items: [
         {
           key: "allow",
-          label: "Допускать уведомления",
+          label: STR.labels.allowNotifications,
           switch: true,
           value: prefs.allow,
           onValueChange: onToggleAllow,
@@ -449,14 +508,14 @@ const onToggleAllow = async (val) => {
         },
         {
           key: "sounds",
-          label: "Звуки уведомлений",
+          label: STR.labels.notificationSounds,
           chevron: true,
-          onPress: () => toast.info("Будет добавлено в будущем"),
+          onPress: () => toast.info(STR.messages.future),
           disabled: true,
         },
         {
           key: "events",
-          label: "Включённые события",
+          label: STR.labels.enabledEvents,
           chevron: true,
           onPress: () => setEventsOpen(true),
           disabled: false,
@@ -465,25 +524,25 @@ const onToggleAllow = async (val) => {
     },
     {
       key: "quiet",
-      title: "ТИХИЕ ЧАСЫ",
+      title: STR.sections.quiet,
       items: [
         {
           key: "quiet_start",
-          label: "Начало",
-          right: <Text style={[s.value, { color: theme.colors.text }]}>{toTimeStr(prefs.quiet_start) || "Выкл."}</Text>,
+          label: STR.labels.quietStart,
+          right: <Text style={[s.value, { color: theme.colors.text }]}>{toTimeStr(prefs.quiet_start) || STR.options.off}</Text>,
           chevron: true,
           onPress: openTimePicker("start"),
         },
         {
           key: "quiet_end",
-          label: "Конец",
-          right: <Text style={[s.value, { color: theme.colors.text }]}>{toTimeStr(prefs.quiet_end) || "Выкл."}</Text>,
+          label: STR.labels.quietEnd,
+          right: <Text style={[s.value, { color: theme.colors.text }]}>{toTimeStr(prefs.quiet_end) || STR.options.off}</Text>,
           chevron: true,
           onPress: openTimePicker("end"),
         },
         {
           key: "quiet_reset",
-          label: "Сбросить время (Всегда уведомлять)",
+          label: STR.labels.quietReset,
           chevron: true,
           onPress: onResetQuietTimes,
         },
@@ -491,19 +550,19 @@ const onToggleAllow = async (val) => {
     },
     {
       key: "privacy",
-      title: "ПРИВАТНОСТЬ",
+      title: STR.sections.privacy,
       items: [
-        { key: "geo", label: "Сервисы геолокации", chevron: true, disabled: true, onPress: futureFeature },
-        { key: "analytics", label: "Анализ функционала", chevron: true, disabled: true, onPress: futureFeature },
-        { key: "private-search", label: "Конфиденциальный поиск", switch: true, disabled: true, onPress: futureFeature },
+        { key: "geo", label: STR.labels.privacyGeo, chevron: true, disabled: true, onPress: futureFeature },
+        { key: "analytics", label: STR.labels.privacyAnalytics, chevron: true, disabled: true, onPress: futureFeature },
+        { key: "private-search", label: STR.labels.privacySearch, switch: true, disabled: true, onPress: futureFeature },
       ],
     },
     {
       key: "ai",
-      title: "AI",
+      title: STR.sections.ai,
       items: [
-        { key: "suggestions", label: "Персональные предложения", chevron: true, disabled: true, onPress: futureFeature },
-        { key: "avatars", label: "Аватарки AI", switch: true, disabled: true, onPress: futureFeature },
+        { key: "suggestions", label: STR.labels.aiSuggestions, chevron: true, disabled: true, onPress: futureFeature },
+        { key: "avatars", label: STR.labels.aiAvatars, switch: true, disabled: true, onPress: futureFeature },
       ],
     },
   ];
@@ -511,7 +570,7 @@ const onToggleAllow = async (val) => {
   return (
     <SafeAreaView edges={['left','right']} style={{ flex: 1, backgroundColor: theme.colors.background }}>
       <ScrollView showsVerticalScrollIndicator={false}>
-        <AppHeader options={{ title: "Настройки приложения" }} back={nav.canGoBack()} route={route} />
+        <AppHeader options={{ title: STR.screenTitle }} back={nav.canGoBack()} route={route} />
         {sections.map((sec) => (
           <View key={sec.key} style={s.sectionWrap}>
             <Text style={[s.sectionTitle, { color: theme.colors.textSecondary }]}>{sec.title}</Text>
@@ -543,12 +602,18 @@ const onToggleAllow = async (val) => {
                 );
                 return (
                   <Pressable
-                    key={it.key}
-                    onPress={it.onPress}
-                    android_ripple={{ color: theme.colors.ripple, borderless: false }}
-                  >
-                    {row}
-                  </Pressable>
+  key={it.key}
+  onPress={() => {
+    if (it.disabled) {
+      toast.info(STR.messages.future);
+    } else {
+      it.onPress && it.onPress();
+    }
+  }}
+  android_ripple={it.disabled ? undefined : { color: theme.colors.ripple, borderless: false }}
+>
+  {row}
+</Pressable>
                 );
               })}
             </View>
@@ -570,14 +635,14 @@ const onToggleAllow = async (val) => {
       {/* Events SelectModal */}
 <SelectModal
   visible={eventsOpen}
-  title="Включённые события"
+  title={STR.options.pickEvents}
   searchable={false}
   items={[
-    { id: "new_orders", label: "Новые заявки", right: <Switch value={!!prefs.new_orders} onValueChange={onToggleEvent("new_orders")} /> },
-    { id: "feed_orders", label: "Заявки в ленте", right: <Switch value={!!prefs.feed_orders} onValueChange={onToggleEvent("feed_orders")} /> },
-    ...(canCreateOrders ? [{ id: "reminders", label: "Напоминать о незабранных", right: <Switch value={!!prefs.reminders} onValueChange={onToggleEvent("reminders")} /> }] : [])
+    { id: "new_orders", label: STR.labels.eventNewOrders, right: <Switch value={!!prefs.new_orders} onValueChange={onToggleEvent("new_orders")} /> },
+    { id: "feed_orders", label: STR.labels.eventFeedOrders, right: <Switch value={!!prefs.feed_orders} onValueChange={onToggleEvent("feed_orders")} /> },
+    ...(canCreateOrders ? [{ id: "reminders", label: STR.labels.eventReminders, right: <Switch value={!!prefs.reminders} onValueChange={onToggleEvent("reminders")} /> }] : [])
   ]}
-  footer={<Button variant="secondary" title="Готово" onPress={() => setEventsOpen(false)} />}
+  footer={<Button variant="secondary" title={STR.options.done} onPress={() => setEventsOpen(false)} />}
   onClose={() => setEventsOpen(false)}
 />
 
@@ -585,12 +650,12 @@ const onToggleAllow = async (val) => {
       {/* Theme SelectModal */}
 <SelectModal
   visible={themeOpen}
-  title="Выберите тему"
+  title={STR.options.pickTheme}
   searchable={false}
   items={[
-    { id: "light", label: "Светлая", right: (mode === 'light' ? <FeatherIcon name="check" size={20} color={theme.colors.primary} /> : null) },
-    { id: "dark", label: "Тёмная", right: (mode === 'dark' ? <FeatherIcon name="check" size={20} color={theme.colors.primary} /> : null) },
-    { id: "system", label: "Системная", right: (mode === 'system' ? <FeatherIcon name="check" size={20} color={theme.colors.primary} /> : null) },
+    { id: "light", label: STR.options.themeLight, right: (mode === 'light' ? <FeatherIcon name="check" size={theme.components.listItem.chevronSize} color={theme.colors.primary} /> : null) },
+    { id: "dark", label: STR.options.themeDark, right: (mode === 'dark' ? <FeatherIcon name="check" size={theme.components.listItem.chevronSize} color={theme.colors.primary} /> : null) },
+    { id: "system", label: STR.options.themeSystem, right: (mode === 'system' ? <FeatherIcon name="check" size={theme.components.listItem.chevronSize} color={theme.colors.primary} /> : null) },
   ]}
   onSelect={(it) => { setMode(it.id); setThemeOpen(false); }}
   onClose={() => setThemeOpen(false)}
@@ -604,7 +669,7 @@ const styles = (t) => StyleSheet.create({
   sectionWrap: { marginBottom: t.spacing.lg },
   sectionTitle: {
     fontSize: t.typography.sizes.xs,
-    fontWeight: "700",
+    fontWeight: t.typography.weight.bold,
     marginBottom: t.spacing.sm,
     paddingLeft: t.spacing.xl,
     paddingRight: t.spacing.lg,
@@ -630,7 +695,7 @@ const styles = (t) => StyleSheet.create({
   },
   rowDivider: { borderBottomWidth: t.components.listItem.dividerWidth },
   disabled: { opacity: t.components.listItem.disabledOpacity },
-  label: { fontSize: t.typography.sizes.md, fontWeight: "500" },
+  label: { fontSize: t.typography.sizes.md, fontWeight: t.typography.weight.medium },
   value: { fontSize: t.typography.sizes.md },
   rightWrap: { flexDirection: "row", alignItems: "center" },
 

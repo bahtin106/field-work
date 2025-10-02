@@ -4,15 +4,18 @@ import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
- Text,
- ActivityIndicator,
- Pressable,
- Modal,
- TextInput as RNTextInput,
- FlatList,
- RefreshControl,
- ScrollView,
- StyleSheet, TouchableOpacity } from 'react-native';
+  Text,
+  ActivityIndicator,
+  Pressable,
+  Modal,
+  TextInput as RNTextInput,
+  FlatList,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  Dimensions
+} from 'react-native';
 
 import { Calendar } from 'react-native-calendars';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
@@ -21,12 +24,15 @@ import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeProvider';
 import AppHeader from '../components/navigation/AppHeader';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
 // ------- Periods -------
 const PERIODS = [
-  { key: '30d', label: '30 дней' },
-  { key: 'ytd', label: 'Год' },
-  { key: 'all', label: 'Все' },
-  { key: 'custom', label: 'Диапазон' },
+  { key: '7d', label: '7д', days: 7 },
+  { key: '30d', label: '30д', days: 30 },
+  { key: '90d', label: '90д', days: 90 },
+  { key: 'ytd', label: 'Год', days: null },
+  { key: 'all', label: 'Все', days: null },
 ];
 
 // ------- Date helpers -------
@@ -48,7 +54,7 @@ const endOfDay = (d) => {
 };
 const iso = (d) => d.toISOString();
 const fmt = (d) =>
-  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—';
+  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const toISODate = (d) => {
   const y = d.getFullYear();
   const m = `0${d.getMonth() + 1}`.slice(-2);
@@ -59,35 +65,33 @@ const fromISODate = (s) => {
   const [y, m, d] = s.split('-').map(Number);
   return new Date(y, m - 1, d);
 };
-const HIT = { top: 12, bottom: 12, left: 12, right: 12 };
 
 const fRUB = (n) =>
   new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(
     Math.round(Number(n || 0)),
   );
 
-export default function StatsScreen() {
-  // ---- Theme from context ----
-  const { theme, mode } = useTheme();
+const formatNumber = (n) => new Intl.NumberFormat('ru-RU').format(n);
 
+export default function StatsScreen() {
+  const { theme, mode } = useTheme();
   const insets = useSafeAreaInsets();
+
   const TOK = React.useMemo(
     () => ({
       isDark: mode === 'dark' || theme.mode === 'dark',
       PRIMARY: theme.colors.accent,
+      PRIMARY_LIGHT: theme.colors.accent + '20',
       BG: theme.colors.bg,
       SURFACE: theme.colors.card,
       CARD_BORDER: theme.colors.border,
       TEXT: theme.colors.text,
       SUBTEXT: theme.text?.muted?.color || '#6B7280',
       OUTLINE: theme.colors.border,
-      SHADOW: '#000',
-      CAL_BG: theme.colors.bg,
-      CAL_TEXT: theme.colors.text,
-      INPUT_BG: theme.colors.card,
-      INPUT_BORDER: theme.colors.border,
-      INPUT_TEXT: theme.colors.text,
-      PLACEHOLDER: theme.text?.muted?.color || '#8E8E93',
+      SUCCESS: '#10B981',
+      WARNING: '#F59E0B',
+      ERROR: '#EF4444',
+      INFO: '#3B82F6',
     }),
     [theme, mode],
   );
@@ -106,15 +110,9 @@ export default function StatsScreen() {
   const [selectedUser, setSelectedUser] = useState(null);
 
   const [period, setPeriod] = useState('30d');
-
-  // Custom period state (persisted)
   const [customModalOpen, setCustomModalOpen] = useState(false);
-  const [customFrom, setCustomFrom] = useState(null);
-  const [customTo, setCustomTo] = useState(null);
-
-  // Temp range inside modal
-  const [rangeStart, setRangeStart] = useState(null); // 'YYYY-MM-DD'
-  const [rangeEnd, setRangeEnd] = useState(null); // 'YYYY-MM-DD'
+  const [rangeStart, setRangeStart] = useState(null);
+  const [rangeEnd, setRangeEnd] = useState(null);
 
   const isAdmin = role === 'admin';
   const isDispatcher = role === 'dispatcher';
@@ -124,257 +122,331 @@ export default function StatsScreen() {
     () =>
       StyleSheet.create({
         container: { flex: 1, backgroundColor: TOK.BG },
-        appBar: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: 16,
-          paddingTop: 6,
-          paddingBottom: 8,
-          backgroundColor: TOK.BG,
+        scrollContent: { paddingBottom: 28 },
+        
+        // Header
+        header: {
+          paddingHorizontal: 20,
+          paddingTop: 12,
+          paddingBottom: 16,
         },
-        appBarBack: {
-          width: 40,
-          height: 40,
-          borderRadius: 12,
-          backgroundColor: TOK.SURFACE,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginRight: 10,
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
+        headerTitle: { 
+          fontSize: 28, 
+          fontWeight: '700', 
+          color: TOK.TEXT,
+          marginBottom: 4,
         },
-        appBarTitle: { fontSize: 22, fontWeight: '700', color: TOK.TEXT },
+        headerSubtitle: {
+          fontSize: 16,
+          color: TOK.SUBTEXT,
+        },
 
-        chipRow: {
+        // Quick Stats
+        quickStats: {
+          paddingHorizontal: 20,
+          marginBottom: 16,
+        },
+        statsGrid: {
           flexDirection: 'row',
-          gap: 8,
-          paddingHorizontal: 16,
-          paddingTop: 10,
           flexWrap: 'wrap',
+          gap: 12,
         },
-        chip: {
-          paddingHorizontal: 14,
-          paddingVertical: 10,
-          borderRadius: 18,
+        statCard: {
+          width: (SCREEN_WIDTH - 52) / 2,
           backgroundColor: TOK.SURFACE,
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
-        },
-        chipActive: { backgroundColor: TOK.PRIMARY, borderColor: TOK.PRIMARY },
-        chipText: { fontSize: 14, color: TOK.isDark ? '#E5E5EA' : '#333333' },
-        chipTextActive: { color: 'white', fontWeight: '600' },
-
-        section: { paddingHorizontal: 16, paddingTop: 12 },
-        card: {
-          backgroundColor: TOK.BG,
           borderRadius: 16,
           padding: 16,
-          shadowColor: TOK.SHADOW,
-          shadowOpacity: TOK.isDark ? 0.4 : 0.08,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 2,
           borderWidth: 1,
           borderColor: TOK.CARD_BORDER,
         },
-        cardTitle: { fontSize: 15, color: TOK.SUBTEXT, marginBottom: 8 },
+        statValue: {
+          fontSize: 24,
+          fontWeight: '700',
+          color: TOK.TEXT,
+          marginBottom: 4,
+        },
+        statLabel: {
+          fontSize: 14,
+          color: TOK.SUBTEXT,
+        },
+        statTrend: {
+          fontSize: 12,
+          marginTop: 4,
+        },
 
-        metricRow: {
+        // Filters
+        filters: {
+          paddingHorizontal: 20,
+          marginBottom: 20,
+        },
+        filterRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
           alignItems: 'center',
-          paddingVertical: 6,
+          marginBottom: 12,
         },
-        metricLabel: { fontSize: 15, color: TOK.isDark ? '#D1D1D6' : '#444444' },
-        metricValue: { fontSize: 22, fontWeight: '700', color: TOK.TEXT },
-
-        picker: {
-          marginTop: 8,
-          backgroundColor: TOK.SURFACE,
-          borderRadius: 14,
-          padding: 12,
+        periodSelector: {
           flexDirection: 'row',
-          alignItems: 'center',
-          gap: 10,
+          backgroundColor: TOK.SURFACE,
+          borderRadius: 12,
+          padding: 4,
           borderWidth: 1,
           borderColor: TOK.OUTLINE,
         },
-        pickerText: { color: TOK.TEXT, fontSize: 16, fontWeight: '600' },
-        pickerHint: { fontSize: 12, color: TOK.SUBTEXT, marginTop: 2 },
-
-        modal: { flex: 1, backgroundColor: TOK.BG, paddingTop: insets.top },
-        modalHeaderRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
+        periodButton: {
           paddingHorizontal: 16,
-          paddingTop: 10,
-          paddingBottom: 10,
-          borderBottomColor: TOK.OUTLINE,
-          borderBottomWidth: 1,
-        },
-        modalClose: {
-          paddingHorizontal: 12,
           paddingVertical: 8,
-          borderRadius: 10,
+          borderRadius: 8,
+        },
+        periodButtonActive: {
+          backgroundColor: TOK.PRIMARY,
+        },
+        periodText: {
+          fontSize: 14,
+          fontWeight: '600',
+          color: TOK.SUBTEXT,
+        },
+        periodTextActive: {
+          color: '#FFFFFF',
+        },
+        userSelector: {
+          flexDirection: 'row',
+          alignItems: 'center',
           backgroundColor: TOK.SURFACE,
+          padding: 12,
+          borderRadius: 12,
           borderWidth: 1,
           borderColor: TOK.OUTLINE,
         },
-        modalCloseText: { color: TOK.TEXT, fontSize: 14, fontWeight: '600' },
+        userText: {
+          flex: 1,
+          fontSize: 16,
+          color: TOK.TEXT,
+          marginLeft: 8,
+        },
 
-        footerSpace: { height: 28 },
-
-        // Custom period modal
-        cHeader: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8 },
-        cTitle: { fontSize: 20, fontWeight: '700', color: TOK.TEXT },
-        cSubtitle: { fontSize: 13, color: TOK.SUBTEXT, marginTop: 4 },
-        cBlock: {
-          marginTop: 12,
+        // Charts & Details
+        section: {
+          marginBottom: 20,
+          paddingHorizontal: 20,
+        },
+        sectionTitle: {
+          fontSize: 20,
+          fontWeight: '700',
+          color: TOK.TEXT,
+          marginBottom: 16,
+        },
+        chartCard: {
           backgroundColor: TOK.SURFACE,
           borderRadius: 16,
-          marginHorizontal: 16,
-          padding: 12,
+          padding: 20,
           borderWidth: 1,
-          borderColor: TOK.OUTLINE,
+          borderColor: TOK.CARD_BORDER,
         },
-        cRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: 4,
-          paddingVertical: 6,
-        },
-        cLabel: { fontSize: 16, color: TOK.TEXT, fontWeight: '600' },
-        cDate: { fontSize: 15, color: TOK.isDark ? '#E5E5EA' : '#333333' },
-        cFooter: { padding: 16, gap: 10 },
-        btnPrimary: {
-          backgroundColor: TOK.PRIMARY,
-          padding: 14,
-          borderRadius: 14,
-          alignItems: 'center',
-        },
-        btnGhost: {
-          backgroundColor: TOK.SURFACE,
-          padding: 14,
-          borderRadius: 14,
-          alignItems: 'center',
-          borderWidth: 1,
-          borderColor: TOK.OUTLINE,
-        },
-        btnTextPrimary: { color: 'white', fontSize: 16, fontWeight: '700' },
-        btnTextGhost: { color: TOK.TEXT, fontSize: 16, fontWeight: '700' },
-        disabled: { opacity: 0.5 },
 
-        // User picker modal
-        upHeaderRow: {
+        // Status Breakdown
+        statusItem: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          paddingVertical: 12,
+          borderBottomWidth: 1,
+          borderBottomColor: TOK.OUTLINE + '30',
+        },
+        statusLeft: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          flex: 1,
+        },
+        statusDot: {
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          marginRight: 12,
+        },
+        statusName: {
+          fontSize: 16,
+          color: TOK.TEXT,
+          flex: 1,
+        },
+        statusStats: {
+          alignItems: 'flex-end',
+        },
+        statusCount: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: TOK.TEXT,
+        },
+        statusAmount: {
+          fontSize: 14,
+          color: TOK.SUBTEXT,
+          marginTop: 2,
+        },
+
+        // Performance Metrics
+        metricGrid: {
+          flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: 12,
+        },
+        metricCard: {
+          width: (SCREEN_WIDTH - 52) / 2,
+          backgroundColor: TOK.SURFACE,
+          borderRadius: 12,
+          padding: 16,
+          borderWidth: 1,
+          borderColor: TOK.CARD_BORDER,
+        },
+        metricValue: {
+          fontSize: 18,
+          fontWeight: '700',
+          color: TOK.TEXT,
+          marginBottom: 4,
+        },
+        metricLabel: {
+          fontSize: 13,
+          color: TOK.SUBTEXT,
+        },
+
+        // Modals
+        modal: { 
+          flex: 1, 
+          backgroundColor: TOK.BG, 
+          paddingTop: insets.top 
+        },
+        modalHeader: {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingHorizontal: 16,
-          paddingTop: 10,
-          paddingBottom: 10,
-          borderBottomColor: TOK.OUTLINE,
+          paddingHorizontal: 20,
+          paddingVertical: 16,
           borderBottomWidth: 1,
+          borderBottomColor: TOK.OUTLINE,
         },
-        searchBox: {
-          margin: 16,
+        modalTitle: {
+          fontSize: 20,
+          fontWeight: '700',
+          color: TOK.TEXT,
+        },
+        closeButton: {
+          padding: 8,
+        },
+        searchInput: {
+          margin: 20,
           borderRadius: 12,
-          paddingHorizontal: 12,
-          paddingVertical: 10,
+          paddingHorizontal: 16,
+          paddingVertical: 12,
           borderWidth: 1,
-          backgroundColor: TOK.INPUT_BG,
-          borderColor: TOK.INPUT_BORDER,
-          color: TOK.INPUT_TEXT,
+          backgroundColor: TOK.SURFACE,
+          borderColor: TOK.OUTLINE,
+          color: TOK.TEXT,
           fontSize: 16,
         },
         userItem: {
-          paddingHorizontal: 16,
-          paddingVertical: 12,
-          borderBottomWidth: 1,
-          borderBottomColor: TOK.OUTLINE,
           flexDirection: 'row',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          paddingHorizontal: 20,
+          paddingVertical: 16,
+          borderBottomWidth: 1,
+          borderBottomColor: TOK.OUTLINE + '30',
         },
-        userName: { color: TOK.TEXT, fontSize: 16 },
-        userRole: { color: TOK.SUBTEXT, fontSize: 13 },
-        checkBadge: {
-          paddingHorizontal: 10,
-          paddingVertical: 6,
+        userInfo: {
+          flex: 1,
+          marginLeft: 12,
+        },
+        userName: {
+          fontSize: 16,
+          color: TOK.TEXT,
+          marginBottom: 2,
+        },
+        userRole: {
+          fontSize: 14,
+          color: TOK.SUBTEXT,
+        },
+        selectedIndicator: {
+          width: 24,
+          height: 24,
           borderRadius: 12,
+          borderWidth: 2,
+          borderColor: TOK.PRIMARY,
+          justifyContent: 'center',
+          alignItems: 'center',
+        },
+        selectedDot: {
+          width: 12,
+          height: 12,
+          borderRadius: 6,
+          backgroundColor: TOK.PRIMARY,
+        },
+
+        // Calendar
+        calendarContainer: {
+          margin: 20,
+          borderRadius: 16,
+          overflow: 'hidden',
+          borderWidth: 1,
+          borderColor: TOK.OUTLINE,
+        },
+        rangeDisplay: {
+          padding: 20,
+          backgroundColor: TOK.SURFACE,
+          borderBottomWidth: 1,
+          borderBottomColor: TOK.OUTLINE,
+        },
+        rangeText: {
+          fontSize: 16,
+          color: TOK.TEXT,
+          textAlign: 'center',
+        },
+        modalActions: {
+          flexDirection: 'row',
+          padding: 20,
+          gap: 12,
+        },
+        actionButton: {
+          flex: 1,
+          paddingVertical: 16,
+          borderRadius: 12,
+          alignItems: 'center',
+        },
+        primaryAction: {
+          backgroundColor: TOK.PRIMARY,
+        },
+        secondaryAction: {
           backgroundColor: TOK.SURFACE,
           borderWidth: 1,
           borderColor: TOK.OUTLINE,
         },
-        checkText: { color: TOK.TEXT, fontWeight: '600' },
-        rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-        metricTiny: { fontSize: 13, color: TOK.isDark ? '#D1D1D6' : '#444444' },
-        separator: { height: 1, backgroundColor: TOK.OUTLINE, marginVertical: 6 },
-        muted: { color: TOK.SUBTEXT },
+        actionText: {
+          fontSize: 16,
+          fontWeight: '600',
+        },
+        primaryActionText: {
+          color: '#FFFFFF',
+        },
+        secondaryActionText: {
+          color: TOK.TEXT,
+        },
+        disabledAction: {
+          opacity: 0.5,
+        },
 
+        // Empty State
+        emptyState: {
+          alignItems: 'center',
+          padding: 40,
+        },
+        emptyText: {
+          fontSize: 16,
+          color: TOK.SUBTEXT,
+          textAlign: 'center',
+          marginTop: 12,
+        },
       }),
     [TOK, insets.top],
   );
 
-
-  // ---- Unified components (local) ----
-  const Button = ({ title, onPress, style, textStyle, disabled, hitSlop }) => (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={disabled}
-      hitSlop={hitSlop}
-      activeOpacity={0.85}
-      style={[style, disabled && { opacity: 0.6 }]}
-      accessibilityRole="button"
-    >
-      <Text style={textStyle}>{title}</Text>
-    </TouchableOpacity>
-  );
-
-  const TextField = ({
-    label,
-    placeholder,
-    value,
-    onChangeText,
-    multiline = false,
-    keyboardType,
-    secureTextEntry,
-    returnKeyType,
-    style,
-  }) => (
-    <View>
-      {!!label && (
-        <Text style={{ fontWeight: '500', marginBottom: 4, color: TOK.TEXT }}>{label}</Text>
-      )}
-      <RNTextInput
-        style={[
-          {
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: TOK.INPUT_BORDER,
-            backgroundColor: TOK.INPUT_BG,
-            color: TOK.INPUT_TEXT,
-            paddingHorizontal: 12,
-            paddingVertical: 10,
-            fontSize: 16,
-          },
-          multiline && { height: 100 },
-          style,
-        ]}
-        placeholder={placeholder || label}
-        placeholderTextColor={TOK.PLACEHOLDER}
-        value={value}
-        onChangeText={onChangeText}
-        multiline={multiline}
-        keyboardType={keyboardType}
-        secureTextEntry={secureTextEntry}
-        returnKeyType={returnKeyType}
-      />
-    </View>
-  );
-
-  // ---------- Load profile ----------
+  // Load profile
   const loadMe = useCallback(async () => {
     const { data: auth } = await supabase.auth.getUser();
     if (!auth?.user?.id) {
@@ -395,7 +467,7 @@ export default function StatsScreen() {
     setSelectedUser(prof);
   }, []);
 
-  // ---------- Load users (for managers) ----------
+  // Load users (for managers)
   const loadUsers = useCallback(async () => {
     if (!isManager || !me?.company_id) {
       setUsers([]);
@@ -411,316 +483,205 @@ export default function StatsScreen() {
     setUsers([{ id: 'ALL', full_name: 'Все сотрудники', role: 'all' }, ...rows]);
   }, [isManager, me?.company_id]);
 
-  // ---------- Period range ----------
+  // Period range calculation
   const periodRange = useMemo(() => {
     const now = new Date();
-    if (period === '30d') return { from: addDays(now, -30), to: endOfDay(now) };
-    if (period === 'ytd') return { from: startOfYear(now), to: endOfDay(now) };
-    if (period === 'custom') {
-      return {
-        from: customFrom ? startOfDay(customFrom) : null,
-        to: customTo ? endOfDay(customTo) : null,
+    const periodConfig = PERIODS.find(p => p.key === period);
+    
+    if (period === 'custom' && rangeStart && rangeEnd) {
+      return { 
+        from: startOfDay(fromISODate(rangeStart)), 
+        to: endOfDay(fromISODate(rangeEnd)) 
       };
     }
-    return { from: null, to: endOfDay(now) };
-  }, [period, customFrom, customTo]);
-
-  const companyUserIds = useMemo(
-    () => users.filter((u) => u.id !== 'ALL').map((u) => u.id),
-    [users],
-  );
-  const isAllSelected = selectedUserId === 'ALL';
-
-  // ---------- Load orders / payouts ----------
-  const [orders, setOrders] = useState([]);
-
-  
-  // Finance totals from RPC
-  const [finance, setFinance] = useState({ total_price: 0, total_fuel_cost: 0, net_income: 0 });
-  const [financeByStatus, setFinanceByStatus] = useState([]);
-  const loadOrders = useCallback(async () => {
-    if (!selectedUserId && !isAllSelected) {
-      setOrders([]);
-      return;
+    
+    if (periodConfig?.days) {
+      return { from: addDays(now, -periodConfig.days), to: endOfDay(now) };
     }
+    
+    if (period === 'ytd') {
+      return { from: startOfYear(now), to: endOfDay(now) };
+    }
+    
+    return { from: null, to: endOfDay(now) };
+  }, [period, rangeStart, rangeEnd]);
 
-const buildQuery = (table) => {
-      let q = supabase
-        .from(table)
-        .select(
-          table === 'order_payouts'
-            ? 'order_id, assigned_to, status, datetime, payout, fuel_cost, fuel_reimbursable'
-            : 'id, assigned_to, status, datetime',
-        )
+  // Load statistics data
+  const [stats, setStats] = useState({
+    totalOrders: 0,
+    completedOrders: 0,
+    inProgressOrders: 0,
+    newOrders: 0,
+    totalRevenue: 0,
+    totalCosts: 0,
+    netProfit: 0,
+    statusBreakdown: [],
+    performance: {
+      avgOrdersPerDay: 0,
+      completionRate: 0,
+      efficiency: 0,
+      avgRevenuePerOrder: 0,
+    }
+  });
+
+  const loadStats = useCallback(async () => {
+    if (!selectedUserId) return;
+
+    try {
+      // Load orders data
+      let query = supabase
+        .from('orders')
+        .select('id, status, datetime, total_price, fuel_cost, assigned_to')
         .order('datetime', { ascending: false });
 
-      if (isAllSelected) {
-        if (companyUserIds.length === 0) return { skip: true, q: null };
-        q = q.in('assigned_to', companyUserIds);
-      } else {
-        q = q.eq('assigned_to', selectedUserId);
+      if (selectedUserId !== 'ALL') {
+        query = query.eq('assigned_to', selectedUserId);
       }
 
-      if (periodRange.from) q = q.gte('datetime', iso(periodRange.from));
-      if (periodRange.to) q = q.lte('datetime', iso(periodRange.to));
-      return { skip: false, q };
-    };
-
-    // 1) Пытаемся сразу через view с выплатами (лучше для метрик денег)
-    const v = buildQuery('order_payouts');
-    if (!v?.skip && v?.q) {
-      const { data: vData, error: vErr } = await v.q;
-      if (!vErr && Array.isArray(vData)) {
-        setOrders(vData);
-        return;
+      if (periodRange.from) {
+        query = query.gte('datetime', iso(periodRange.from));
       }
-    }
+      if (periodRange.to) {
+        query = query.lte('datetime', iso(periodRange.to));
+      }
 
-    // 2) Фолбэк на прямой доступ к orders (если RLS режет view или она отсутствует)
-    const t = buildQuery('orders');
-    if (!t?.skip && t?.q) {
-      const { data: oData } = await t.q;
-      const mapped = (oData || []).map((o) => ({
-        order_id: o.id,
-        assigned_to: o.assigned_to,
-        status: o.status,
-        datetime: o.datetime,
-        payout: null,
-        fuel_cost: null,
-        fuel_reimbursable: null,
-      }));
-      setOrders(mapped);
-      return;
-    }
+      const { data: orders, error } = await query;
+      if (error) throw error;
 
-    setOrders([]);
-  
-  }, [selectedUserId, isAllSelected, companyUserIds, periodRange.from, periodRange.to]);
+      // Calculate statistics
+      const totalOrders = orders?.length || 0;
+      const completedOrders = orders?.filter(o => o.status === 'Завершённая').length || 0;
+      const inProgressOrders = orders?.filter(o => o.status === 'В работе').length || 0;
+      const newOrders = orders?.filter(o => o.status === 'Новый').length || 0;
+      
+      const totalRevenue = orders?.reduce((sum, o) => sum + (Number(o.total_price) || 0), 0) || 0;
+      const totalCosts = orders?.reduce((sum, o) => sum + (Number(o.fuel_cost) || 0), 0) || 0;
+      const netProfit = totalRevenue - totalCosts;
 
-  
-  // ---------- Load finance stats via RPC ----------
-  const loadFinance = useCallback(async () => {
-    const fromIso = periodRange.from ? iso(periodRange.from) : null;
-    const toIso = periodRange.to ? iso(periodRange.to) : null;
-    const p_executor = (isManager && !isAllSelected && selectedUserId) ? selectedUserId : null;
-    const { data, error } = await supabase.rpc('get_finance_stats', {
-      p_from: fromIso,
-      p_to: toIso,
-      p_executor
-    });
-    if (!error && Array.isArray(data)) {
-      const allRow = data.find(r => r.bucket === 'ALL') || { total_price: 0, total_fuel_cost: 0, net_income: 0 };
-      setFinance({
-        total_price: Number(allRow.total_price) || 0,
-        total_fuel_cost: Number(allRow.total_fuel_cost) || 0,
-        net_income: Number(allRow.net_income) || 0,
+      // Status breakdown
+      const statusBreakdown = [
+        { status: 'Завершённая', count: completedOrders, color: TOK.SUCCESS, amount: totalRevenue },
+        { status: 'В работе', count: inProgressOrders, color: TOK.WARNING, amount: 0 },
+        { status: 'Новый', count: newOrders, color: TOK.INFO, amount: 0 },
+      ].filter(item => item.count > 0);
+
+      // Performance metrics
+      const days = period === 'custom' && periodRange.from && periodRange.to 
+        ? Math.max(1, Math.ceil((periodRange.to - periodRange.from) / (24 * 60 * 60 * 1000)))
+        : (PERIODS.find(p => p.key === period)?.days || 365);
+      
+      const avgOrdersPerDay = totalOrders / days;
+      const completionRate = totalOrders > 0 ? completedOrders / totalOrders : 0;
+      const avgRevenuePerOrder = completedOrders > 0 ? totalRevenue / completedOrders : 0;
+
+      setStats({
+        totalOrders,
+        completedOrders,
+        inProgressOrders,
+        newOrders,
+        totalRevenue,
+        totalCosts,
+        netProfit,
+        statusBreakdown,
+        performance: {
+          avgOrdersPerDay,
+          completionRate,
+          efficiency: completionRate * 100,
+          avgRevenuePerOrder,
+        }
       });
-      const rows = data.filter(r => r.bucket && r.bucket !== 'ALL').map(r => ({
-        bucket: r.bucket,
-        total_price: Number(r.total_price) || 0,
-        total_fuel_cost: Number(r.total_fuel_cost) || 0,
-        net_income: Number(r.net_income) || 0,
-      }));
-      setFinanceByStatus(rows);
-    } else {
-      setFinance({ total_price: 0, total_fuel_cost: 0, net_income: 0 });
-      setFinanceByStatus([]);
+    } catch (error) {
+      console.error('Error loading stats:', error);
     }
-  }, [periodRange.from, periodRange.to, isManager, isAllSelected, selectedUserId]);
+  }, [selectedUserId, periodRange, period, TOK]);
 
-// ---------- Initial load ----------
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      await loadMe();
-    } finally {
-      setLoading(false);
-    }
-  }, [loadMe]);
-
+  // Initial load
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    const initialize = async () => {
+      setLoading(true);
+      try {
+        await loadMe();
+      } finally {
+        setLoading(false);
+      }
+    };
+    initialize();
+  }, []);
 
+  // Reload when dependencies change
   useFocusEffect(
     useCallback(() => {
-      (async () => {
-        if (!me) return;
-        if (isManager) await loadUsers();
-        await loadOrders();
-      })();
-    }, [me, isManager, selectedUserId, period, customFrom, customTo, loadUsers, loadOrders]),
+      if (me) {
+        if (isManager) loadUsers();
+        loadStats();
+      }
+    }, [me, isManager, selectedUserId, periodRange])
   );
 
-  
-  // also load finance after focus
-  useFocusEffect(
-    useCallback(() => {
-      (async () => {
-        await loadFinance();
-      })();
-    }, [loadFinance]),
-  );
-const onRefresh = useCallback(async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await loadOrders();
+      await loadStats();
       if (isManager) await loadUsers();
-    
-      await loadFinance();
     } finally {
       setRefreshing(false);
     }
-  }, [loadOrders, isManager, loadUsers]);
+  }, [loadStats, isManager, loadUsers]);
 
-  // ---------- Derived ----------
-  const computed = useMemo(() => {
-    const list = orders || [];
-    const totals = {
-      all: list.length,
-      new: list.filter((r) => r.status === 'Новый').length,
-      inProgress: list.filter((r) => r.status === 'В работе').length,
-      done: list.filter((r) => r.status === 'Завершённая').length,
-    };
-    const now = new Date();
-    const in7 = addDays(now, 7);
-    const upcoming = list
-      .filter(
-        (r) =>
-          r.datetime &&
-          new Date(r.datetime) >= now &&
-          new Date(r.datetime) <= in7 &&
-          r.status !== 'Завершённая',
-      )
-      .sort((a, b) => new Date(a.datetime) - new Date(b.datetime))
-      .slice(0, 6);
-
-    // Денежные метрики (работают, если пришли поля из view)
-    const money = list.reduce(
-      (acc, r) => {
-        const payout = Number(r.payout) || 0;
-        const fuelCost = Number(r.fuel_cost) || 0;
-        const reimb =
-          r?.fuel_reimbursable === true ||
-          r?.fuel_reimbursable === 't' ||
-          r?.fuel_reimbursable === 1;
-        acc.payout += payout;
-        if (reimb) acc.fuel += fuelCost;
-        acc.net = acc.payout - acc.fuel;
-        return acc;
-      },
-      { payout: 0, fuel: 0, net: 0 },
-    );
-
-    return { totals, upcoming, money };
-  }, [orders]);
-
-  const performance = useMemo(() => {
-    const list = orders || [];
-    const done = list.filter(r => r.status === 'Завершённая');
-    const inProgress = list.filter(r => r.status === 'В работе');
-    const fresh = list.filter(r => r.status === 'Новый');
-
-    let days = 1;
-    if (period === 'custom' && customFrom && customTo) {
-      const ms = Math.abs(endOfDay(customTo).getTime() - startOfDay(customFrom).getTime());
-      days = Math.max(1, Math.ceil(ms / (24*60*60*1000)));
-    } else if (period === '30d') {
-      days = 30;
-    } else if (period === 'ytd') {
-      const now = new Date();
-      const start = startOfYear(now);
-      const ms = endOfDay(now).getTime() - start.getTime();
-      days = Math.max(1, Math.ceil(ms / (24*60*60*1000)));
-    }
-
-    const avgPerDay = list.length / days;
-    const totalDone = done.length || 0;
-    const totalAll = list.length || 0;
-    const completion = totalAll ? (totalDone / totalAll) : 0;
-    const inWorkRate = totalAll ? (inProgress.length / totalAll) : 0;
-    const newRate = totalAll ? (fresh.length / totalAll) : 0;
-
-    const totalNet = list.reduce((acc, r) => {
-      const payout = Number(r.payout) || 0;
-      const fuel = (r?.fuel_reimbursable === true || r?.fuel_reimbursable === 't' || r?.fuel_reimbursable === 1) ? (Number(r.fuel_cost) || 0) : 0;
-      return acc + (payout - fuel);
-    }, 0);
-    const avgPayoutPerDone = totalDone ? (totalNet / totalDone) : 0;
-
-    return { days, avgPerDay, completion, inWorkRate, newRate, avgPayoutPerDone };
-  }, [orders, period, customFrom, customTo]);
-
-  const topPerformers = useMemo(() => {
-    if (!Array.isArray(orders) || orders.length === 0) return [];
-    const map = new Map();
-    orders.forEach(o => {
-      const uid = o.assigned_to || 'unknown';
-      map.set(uid, (map.get(uid) || 0) + 1);
-    });
-    const nameById = new Map();
-    (users || []).forEach(u => { if (u.id && u.id !== 'ALL') nameById.set(u.id, u.full_name || u.id); });
-    return Array.from(map.entries())
-      .map(([uid, count]) => ({ id: String(uid), name: nameById.get(uid) || uid, count }))
-      .sort((a,b) => b.count - a.count)
-      .slice(0, 3);
-  }, [orders, users]);
-
-
-
-  const selectedPeriodLabel = useMemo(() => {
-    if (period === 'custom') return `${fmt(customFrom)} → ${fmt(customTo)}`;
-    return PERIODS.find((p) => p.key === period)?.label || '—';
-  }, [period, customFrom, customTo]);
-
-  const filteredUsers = useMemo(() => {
-    const list = users;
-    const q = (usersSearch || '').trim().toLowerCase();
-    if (!q) return list;
-    return list.filter(
-      (u) =>
-        (u.full_name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q),
-    );
-  }, [users, usersSearch]);
-
-  // ---------- User picker ----------
-  const openPicker = () => setUserPickerOpen(true);
-  const closePicker = () => setUserPickerOpen(false);
-  const selectUser = (u) => {
-    setSelectedUserId(u.id);
-    setSelectedUser(u.id === 'ALL' ? { full_name: 'Все сотрудники', role: 'all' } : u);
-    closePicker();
+  // User selection
+  const openUserPicker = () => setUserPickerOpen(true);
+  const closeUserPicker = () => setUserPickerOpen(false);
+  const selectUser = (user) => {
+    setSelectedUserId(user.id);
+    setSelectedUser(user.id === 'ALL' ? { full_name: 'Все сотрудники', role: 'all' } : user);
+    closeUserPicker();
   };
 
-  // ---------- Custom period with react-native-calendars ----------
-  const openCustom = () => {
-    // Открываем модалку без автоподстановки сегодняшнего дня.
-    // Если ранее выбран кастомный диапазон — предзаполняем его, иначе оставляем пусто.
-    setRangeStart(customFrom ? toISODate(customFrom) : null);
-    setRangeEnd(customTo ? toISODate(customTo) : null);
+  // Custom period handling
+  const openCustomPeriod = () => {
     setCustomModalOpen(true);
   };
-  const closeCustom = () => setCustomModalOpen(false);
-  const resetCustom = () => {
+
+  const closeCustomPeriod = () => {
+    setCustomModalOpen(false);
     setRangeStart(null);
     setRangeEnd(null);
   };
-  const applyCustom = () => {
-    const from = fromISODate(rangeStart);
-    const to = fromISODate(rangeEnd);
-    setCustomFrom(startOfDay(from));
-    setCustomTo(endOfDay(to));
-    setPeriod('custom');
-    closeCustom();
+
+  const applyCustomPeriod = () => {
+    if (rangeStart && rangeEnd) {
+      setPeriod('custom');
+      setCustomModalOpen(false);
+    }
   };
 
-  // Calendar markings
+  const onDayPress = (day) => {
+    const todayIso = toISODate(new Date());
+    const picked = day.dateString > todayIso ? todayIso : day.dateString;
+
+    if (!rangeStart) {
+      setRangeStart(picked);
+      setRangeEnd(null);
+    } else if (rangeStart && !rangeEnd) {
+      if (picked < rangeStart) {
+        setRangeEnd(rangeStart);
+        setRangeStart(picked);
+      } else {
+        setRangeEnd(picked);
+      }
+    } else {
+      setRangeStart(picked);
+      setRangeEnd(null);
+    }
+  };
+
   const markedDates = useMemo(() => {
     if (!rangeStart) return {};
     const start = fromISODate(rangeStart);
     const end = rangeEnd ? fromISODate(rangeEnd) : start;
     const marks = {};
     const dayMS = 24 * 60 * 60 * 1000;
+    
     for (let t = start.getTime(); t <= end.getTime(); t += dayMS) {
       const d = new Date(t);
       const key = toISODate(d);
@@ -730,300 +691,327 @@ const onRefresh = useCallback(async () => {
         startingDay: isStart,
         endingDay: isEnd,
         color: TOK.PRIMARY,
-        textColor: 'white',
+        textColor: '#FFFFFF',
       };
     }
     return marks;
   }, [rangeStart, rangeEnd, TOK.PRIMARY]);
 
-  const onDayPress = (day) => {
-    const todayIso = toISODate(new Date());
-    const picked = day.dateString > todayIso ? todayIso : day.dateString; // запрет будущих дат
+  const filteredUsers = useMemo(() => {
+    const q = (usersSearch || '').trim().toLowerCase();
+    if (!q) return users;
+    return users.filter(u =>
+      (u.full_name || '').toLowerCase().includes(q) ||
+      (u.role || '').toLowerCase().includes(q)
+    );
+  }, [users, usersSearch]);
 
-    // 1) Если начало диапазона не выбрано — устанавливаем только "С"
-    if (!rangeStart) {
-      setRangeStart(picked);
-      setRangeEnd(null);
-      return;
-    }
+  const displayName = isManager
+    ? selectedUser?.full_name || 'Выберите сотрудника'
+    : me?.full_name || 'Моя статистика';
 
-    // 2) Если выбрано только "С" — второй тап задаёт "По"
-    if (rangeStart && !rangeEnd) {
-      if (picked < rangeStart) {
-        // если ткнули раньше — меняем местами
-        setRangeEnd(rangeStart);
-        setRangeStart(picked);
-      } else {
-        setRangeEnd(picked);
-      }
-      return;
-    }
-
-    // 3) Если диапазон уже заполнен (есть "С" и "По") — начинаем заново с нового "С"
-    setRangeStart(picked);
-    setRangeEnd(null);
-  };
-
-  const todayIso = toISODate(new Date());
-
-  // ---------- Render ----------
   if (loading) {
     return (
       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color={TOK.PRIMARY} />
       </View>
     );
-    }
-
-  const headerName = isManager
-    ? selectedUser?.full_name || 'Выберите пользователя'
-    : me?.full_name || 'Я';
+  }
 
   return (
     <View style={styles.container}>
-
+      <AppHeader options={{ title: 'Статистика' }} back />
+      
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentInsetAdjustmentBehavior="never"
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
       >
-        <AppHeader options={{ title: 'Статистика' }} back />
-        
-      {isManager && (
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Разрез по статусам</Text>
-            {(financeByStatus && financeByStatus.length > 0) ? (
-              <View style={{ gap: 10 }}>
-                {financeByStatus.map((row, idx) => (
-                  <View key={idx} style={styles.rowBetween}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.metricLabel}>{row.bucket}</Text>
-                    </View>
-                    <View style={{ flex: 2, alignItems: 'flex-end' }}>
-                      <Text style={styles.metricTiny}>Стоимость: {fRUB(row.total_price)}</Text>
-                      <Text style={styles.metricTiny}>ГСМ: {fRUB(row.total_fuel_cost)}</Text>
-                      <Text style={styles.metricTiny}>Итого: {fRUB(row.net_income)}</Text>
-                    </View>
-                  </View>
-                ))}
-                <View style={styles.separator} />
-                <View style={styles.rowBetween}>
-                  <Text style={styles.metricLabel}>Итого</Text>
-                  <Text style={styles.metricValue}>{fRUB(finance.net_income || 0)}</Text>
-                </View>
-              </View>
-            ) : (
-              <Text style={styles.muted}>Нет данных за выбранный период</Text>
-            )}
-          </View>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Статистика</Text>
+          <Text style={styles.headerSubtitle}>{displayName}</Text>
         </View>
-      )}
-/* Показатели */}}
-      <View style={styles.section}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Показатели</Text>
-          <View style={styles.metricRow}>
-            <Text style={styles.metricLabel}>Среднее заявок в день</Text>
-            <Text style={styles.metricValue}>{performance.avgPerDay.toFixed(2)}</Text>
-          </View>
-          <View style={styles.metricRow}>
-            <Text style={styles.metricLabel}>Завершено, %</Text>
-            <Text style={styles.metricValue}>{Math.round(performance.completion * 100)}%</Text>
-          </View>
-          <View style={styles.metricRow}>
-            <Text style={styles.metricLabel}>В работе, %</Text>
-            <Text style={styles.metricValue}>{Math.round(performance.inWorkRate * 100)}%</Text>
-          </View>
-          <View style={styles.metricRow}>
-            <Text style={styles.metricLabel}>Новые, %</Text>
-            <Text style={styles.metricValue}>{Math.round(performance.newRate * 100)}%</Text>
-          </View>
-          <View style={styles.metricRow}>
-            <Text style={styles.metricLabel}>Средняя выплата / завершённую</Text>
-            <Text style={styles.metricValue}>{fRUB(performance.avgPayoutPerDone)}</Text>
-          </View>
-        </View>
-      </View>
 
-      {/* Топ исполнителей (для менеджеров и при выборе «Все сотрудники») */}
-      {isManager && isAllSelected && topPerformers.length > 0 && (
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Топ исполнителей</Text>
-            {topPerformers.map((row) => (
-              <View key={row.id} style={styles.rowBetween}>
-                <Text style={styles.metricLabel}>{row.name}</Text>
-                <Text style={styles.metricValue}>{row.count}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-
-        {/* Upcoming */}
-        <View style={styles.section}>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Ближайшие выезды · 7 дней</Text>
-            {computed.upcoming.length > 0 ? (
-              computed.upcoming.map((o) => (
-                <View
-                  key={o.order_id}
-                  style={{
-                    paddingVertical: 10,
-                    borderBottomColor: TOK.OUTLINE,
-                    borderBottomWidth: 1,
-                  }}
-                >
-                  <View style={styles.metricRow}>
-                    <Text style={{ color: TOK.isDark ? '#E5E5EA' : '#333' }}>{o.status}</Text>
-                    <Text style={{ color: TOK.isDark ? '#FFFFFF' : '#333', fontWeight: '600' }}>
-                      {o.datetime
-                        ? new Date(o.datetime).toLocaleString('ru-RU', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: '2-digit',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
-                        : '—'}
-                    </Text>
-                  </View>
-                </View>
-              ))
-            ) : (
-              <Text style={{ color: TOK.SUBTEXT, marginTop: 8 }}>
-                Нет выездов в ближайшие 7 дней
+        {/* Quick Stats */}
+        <View style={styles.quickStats}>
+          <View style={styles.statsGrid}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{formatNumber(stats.totalOrders)}</Text>
+              <Text style={styles.statLabel}>Всего заявок</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{formatNumber(stats.completedOrders)}</Text>
+              <Text style={styles.statLabel}>Завершено</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={[styles.statValue, { color: TOK.SUCCESS }]}>
+                {fRUB(stats.netProfit)}
               </Text>
-            )}
+              <Text style={styles.statLabel}>Чистая прибыль</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>
+                {stats.performance.avgOrdersPerDay.toFixed(1)}
+              </Text>
+              <Text style={styles.statLabel}>В день</Text>
+            </View>
           </View>
         </View>
 
-        <View style={styles.footerSpace} />
+        {/* Filters */}
+        <View style={styles.filters}>
+          <View style={styles.filterRow}>
+            <View style={styles.periodSelector}>
+              {PERIODS.map((p) => (
+                <TouchableOpacity
+                  key={p.key}
+                  style={[
+                    styles.periodButton,
+                    period === p.key && styles.periodButtonActive,
+                  ]}
+                  onPress={() => setPeriod(p.key)}
+                >
+                  <Text style={[
+                    styles.periodText,
+                    period === p.key && styles.periodTextActive,
+                  ]}>
+                    {p.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            
+            {period === 'custom' && (
+              <TouchableOpacity onPress={openCustomPeriod}>
+                <Ionicons name="calendar" size={24} color={TOK.PRIMARY} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {isManager && (
+            <TouchableOpacity style={styles.userSelector} onPress={openUserPicker}>
+              <Ionicons name="people" size={20} color={TOK.SUBTEXT} />
+              <Text style={styles.userText} numberOfLines={1}>
+                {selectedUser?.full_name || 'Выберите сотрудника'}
+              </Text>
+              <Ionicons name="chevron-down" size={16} color={TOK.SUBTEXT} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Status Breakdown */}
+        {stats.statusBreakdown.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>По статусам</Text>
+            <View style={styles.chartCard}>
+              {stats.statusBreakdown.map((item, index) => (
+                <View key={item.status} style={styles.statusItem}>
+                  <View style={styles.statusLeft}>
+                    <View 
+                      style={[
+                        styles.statusDot, 
+                        { backgroundColor: item.color }
+                      ]} 
+                    />
+                    <Text style={styles.statusName}>{item.status}</Text>
+                  </View>
+                  <View style={styles.statusStats}>
+                    <Text style={styles.statusCount}>
+                      {formatNumber(item.count)}
+                    </Text>
+                    {item.amount > 0 && (
+                      <Text style={styles.statusAmount}>
+                        {fRUB(item.amount)}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Performance Metrics */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Эффективность</Text>
+          <View style={styles.metricGrid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>
+                {(stats.performance.completionRate * 100).toFixed(0)}%
+              </Text>
+              <Text style={styles.metricLabel}>Выполнено</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>
+                {fRUB(stats.performance.avgRevenuePerOrder)}
+              </Text>
+              <Text style={styles.metricLabel}>Средний чек</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>
+                {formatNumber(stats.inProgressOrders)}
+              </Text>
+              <Text style={styles.metricLabel}>В работе</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>
+                {formatNumber(stats.newOrders)}
+              </Text>
+              <Text style={styles.metricLabel}>Новые</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* Financial Summary */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Финансы</Text>
+          <View style={styles.chartCard}>
+            <View style={styles.statusItem}>
+              <Text style={styles.statusName}>Общий доход</Text>
+              <Text style={styles.statusCount}>{fRUB(stats.totalRevenue)}</Text>
+            </View>
+            <View style={styles.statusItem}>
+              <Text style={styles.statusName}>Расходы</Text>
+              <Text style={styles.statusCount}>{fRUB(stats.totalCosts)}</Text>
+            </View>
+            <View style={[styles.statusItem, { borderBottomWidth: 0 }]}>
+              <Text style={[styles.statusName, { fontWeight: '700' }]}>Чистая прибыль</Text>
+              <Text style={[styles.statusCount, { color: TOK.SUCCESS }]}>
+                {fRUB(stats.netProfit)}
+              </Text>
+            </View>
+          </View>
+        </View>
       </ScrollView>
+
+      {/* User Picker Modal */}
+      <Modal
+        visible={userPickerOpen}
+        animationType="slide"
+        onRequestClose={closeUserPicker}
+      >
+        <SafeAreaView style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Выбор сотрудника</Text>
+            <TouchableOpacity style={styles.closeButton} onPress={closeUserPicker}>
+              <Ionicons name="close" size={24} color={TOK.TEXT} />
+            </TouchableOpacity>
+          </View>
+
+          <RNTextInput
+            style={styles.searchInput}
+            placeholder="Поиск по имени..."
+            placeholderTextColor={TOK.SUBTEXT}
+            value={usersSearch}
+            onChangeText={setUsersSearch}
+          />
+
+          <FlatList
+            data={filteredUsers}
+            keyExtractor={(item) => String(item.id)}
+            renderItem={({ item }) => (
+              <TouchableOpacity 
+                style={styles.userItem} 
+                onPress={() => selectUser(item)}
+              >
+                <View style={[
+                  styles.selectedIndicator,
+                  { borderColor: selectedUserId === item.id ? TOK.PRIMARY : TOK.OUTLINE }
+                ]}>
+                  {selectedUserId === item.id && (
+                    <View style={styles.selectedDot} />
+                  )}
+                </View>
+                <View style={styles.userInfo}>
+                  <Text style={styles.userName}>{item.full_name}</Text>
+                  <Text style={styles.userRole}>{item.role}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Ionicons name="search" size={48} color={TOK.SUBTEXT} />
+                <Text style={styles.emptyText}>Сотрудники не найдены</Text>
+              </View>
+            }
+          />
+        </SafeAreaView>
+      </Modal>
 
       {/* Custom Period Modal */}
       <Modal
         visible={customModalOpen}
         animationType="slide"
-        onRequestClose={closeCustom}
-        transparent={false}
+        onRequestClose={closeCustomPeriod}
       >
         <SafeAreaView style={styles.modal}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.appBarTitle}>Выбор периода</Text>
-            <Button onPress={closeCustom} style={styles.modalClose} hitSlop={HIT} textStyle={styles.modalCloseText} title="Закрыть" />
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Выбор периода</Text>
+            <TouchableOpacity style={styles.closeButton} onPress={closeCustomPeriod}>
+              <Ionicons name="close" size={24} color={TOK.TEXT} />
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.cBlock}>
-            <Text style={styles.cLabel}>Диапазон</Text>
-            <Text style={[styles.cDate, { marginTop: 6 }]}>
-              {rangeStart && rangeEnd
-                ? `${fmt(fromISODate(rangeStart))} → ${fmt(fromISODate(rangeEnd))}`
-                : '—'}
+          <View style={styles.rangeDisplay}>
+            <Text style={styles.rangeText}>
+              {rangeStart && rangeEnd 
+                ? `${fmt(fromISODate(rangeStart))} — ${fmt(fromISODate(rangeEnd))}`
+                : 'Выберите диапазон дат'
+              }
             </Text>
-
-            <View
-              style={{
-                marginTop: 12,
-                borderRadius: 16,
-                overflow: 'hidden',
-                borderWidth: 1,
-                borderColor: TOK.OUTLINE,
-              }}
-            >
-              <Calendar
-                onDayPress={onDayPress}
-                markedDates={markedDates}
-                markingType="period"
-                maxDate={todayIso}
-                theme={{
-                  backgroundColor: TOK.CAL_BG,
-                  calendarBackground: TOK.CAL_BG,
-                  textSectionTitleColor: TOK.SUBTEXT,
-                  dayTextColor: TOK.CAL_TEXT,
-                  monthTextColor: TOK.CAL_TEXT,
-                  arrowColor: TOK.PRIMARY,
-                  selectedDayBackgroundColor: TOK.PRIMARY,
-                  selectedDayTextColor: '#ffffff',
-                  todayTextColor: TOK.PRIMARY,
-                }}
-                firstDay={1}
-                enableSwipeMonths
-              />
-            </View>
           </View>
 
-          <View style={styles.cFooter}>
-            <Button
-              onPress={applyCustom}
-              style={[styles.btnPrimary, !(rangeStart && rangeEnd) && styles.disabled]}
-              disabled={!(rangeStart && rangeEnd)}
-              textStyle={styles.btnTextPrimary}
-              title="Применить"
+          <View style={styles.calendarContainer}>
+            <Calendar
+              onDayPress={onDayPress}
+              markedDates={markedDates}
+              markingType="period"
+              maxDate={toISODate(new Date())}
+              theme={{
+                backgroundColor: TOK.SURFACE,
+                calendarBackground: TOK.SURFACE,
+                textSectionTitleColor: TOK.SUBTEXT,
+                dayTextColor: TOK.TEXT,
+                monthTextColor: TOK.TEXT,
+                arrowColor: TOK.PRIMARY,
+                selectedDayBackgroundColor: TOK.PRIMARY,
+                selectedDayTextColor: '#FFFFFF',
+                todayTextColor: TOK.PRIMARY,
+              }}
+              firstDay={1}
+              enableSwipeMonths
             />
-            <Button onPress={resetCustom} style={styles.btnGhost} textStyle={styles.btnTextGhost} title="Сбросить" />
-            <Button onPress={closeCustom} style={styles.btnGhost} textStyle={styles.btnTextGhost} title="Отмена" />
+          </View>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity 
+              style={[
+                styles.actionButton, 
+                styles.secondaryAction,
+              ]}
+              onPress={closeCustomPeriod}
+            >
+              <Text style={[styles.actionText, styles.secondaryActionText]}>
+                Отмена
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[
+                styles.actionButton, 
+                styles.primaryAction,
+                !(rangeStart && rangeEnd) && styles.disabledAction,
+              ]}
+              onPress={applyCustomPeriod}
+              disabled={!(rangeStart && rangeEnd)}
+            >
+              <Text style={[styles.actionText, styles.primaryActionText]}>
+                Применить
+              </Text>
+            </TouchableOpacity>
           </View>
         </SafeAreaView>
       </Modal>
-
-      {/* User Picker Modal */}
-      {isManager && (
-        <Modal
-          visible={userPickerOpen}
-          animationType="slide"
-          onRequestClose={() => setUserPickerOpen(false)}
-          transparent={false}
-        >
-          <SafeAreaView style={styles.modal}>
-            <View style={styles.upHeaderRow}>
-              <Text style={styles.appBarTitle}>Сотрудники</Text>
-              <Button
-                onPress={() => setUserPickerOpen(false)}
-                style={styles.modalClose}
-                hitSlop={HIT}
-                textStyle={styles.modalCloseText}
-                title="Закрыть"
-              />
-            </View>
-
-            <TextField
-              label={null}
-              value={usersSearch}
-              onChangeText={setUsersSearch}
-              placeholder="Поиск по имени или роли"
-              style={styles.searchBox}
-              returnKeyType="search"
-            />
-
-            <FlatList
-              data={filteredUsers}
-              keyExtractor={(item) => String(item.id)}
-              renderItem={({ item }) => {
-                const active = selectedUserId === item.id;
-                return (
-                  <Pressable onPress={() => selectUser(item)} style={styles.userItem}>
-                    <View>
-                      <Text style={styles.userName}>{item.full_name}</Text>
-                      <Text style={styles.userRole}>{item.role}</Text>
-                    </View>
-                    {active ? (
-                      <View style={styles.checkBadge}>
-                        <Text style={styles.checkText}>Выбрано</Text>
-                      </View>
-                    ) : (
-                      <Ionicons name="chevron-forward" size={18} color={TOK.SUBTEXT} />
-                    )}
-                  </Pressable>
-                );
-              }}
-              ListEmptyComponent={
-                <Text style={{ color: TOK.SUBTEXT, padding: 16 }}>Ничего не найдено</Text>
-              }
-            />
-          </SafeAreaView>
-        </Modal>
-      )}
     </View>
   );
 }
