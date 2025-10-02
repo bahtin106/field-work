@@ -18,5 +18,8 @@ const styles = (t) =>
       borderColor: t.colors.border,
       ...(Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android),
     },
-    padded: { padding: t.spacing.lg },
+    padded: {
+  paddingHorizontal: t.spacing[t.components.card.padX],
+  paddingVertical: t.spacing[t.components.card.padY],
+},
   });

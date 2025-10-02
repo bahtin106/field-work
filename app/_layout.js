@@ -2,10 +2,10 @@
 import 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState, useCallback } from 'react';
-import { ActivityIndicator, View, AppState, Platform } from 'react-native';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { ActivityIndicator, View, AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 
 import { supabase } from '../lib/supabase';
@@ -22,24 +22,20 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 
-if (!globalThis.__SPLASH_LOCKED__) {
-  SplashScreen.preventAutoHideAsync().catch(() => {});
-  globalThis.__SPLASH_LOCKED__ = true;
-}
+// Предотвращаем автоматическое скрытие сплэш-скрина
+SplashScreen.preventAutoHideAsync();
 
 // Единый QueryClient с SWR-поведением (мгновенный кэш + тихий рефетч)
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Критично для UX: оставляем предыдущие данные вместо спиннера
       keepPreviousData: true,
       placeholderData: (prev) => prev,
-      // Дефолтные тайминги (перепишем на экранах при необходимости)
-      staleTime: 5 * 60 * 1000,      // 5 минут
-      gcTime: 24 * 60 * 60 * 1000,   // сутки
+      staleTime: 5 * 60 * 1000,
+      gcTime: 24 * 60 * 60 * 1000,
       retry: 1,
       refetchOnMount: false,
-      refetchOnWindowFocus: false,   // в RN нет окна, управляем focusManager
+      refetchOnWindowFocus: false,
       refetchOnReconnect: true,
     },
   },
@@ -59,118 +55,129 @@ focusManager.setEventListener((handleFocus) => {
 });
 
 function RootLayoutInner() {
+  const [appReady, setAppReady] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);
-  const [booted, setBooted] = useState(false);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const appState = useRef(AppState.currentState);
 
+  const safeEdges = ['top', 'left', 'right'];
 
-// Init notifications handler lazily and skip in Expo Go
-useEffect(() => {
-  let mounted = true
-  ;(async () => {
-    try {
-      const { default: Constants } = await import('expo-constants');
-      if (Constants?.appOwnership === 'expo') return;
-      const Notifications = await import('expo-notifications');
-      if (!mounted) return;
-      Notifications.setNotificationHandler?.({
-        handleNotification: async () => ({
-          shouldShowBanner: true,
-          shouldShowList: true,
-          shouldPlaySound: true,
-          priority: Notifications.AndroidNotificationPriority?.MAX,
-        }),
-      });
-    } catch (e) {
-      console.warn('Notif handler init error:', e?.message || e);
+  // Простая функция для скрытия сплэша
+  const onLayoutRootView = useCallback(async () => {
+    if (appReady) {
+      await SplashScreen.hideAsync();
     }
-  })();
-  return () => { mounted = false }
-}, []);
-  const safeEdges = Platform.OS === 'ios' || insets.top >= 28 ? ['top','left','right'] : ['left','right'];
-  const onLayoutRootView = useCallback(() => {
-    if (booted) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [booted]);
+  }, [appReady]);
 
-
-  async function waitForSession({ tries = 20, delay = 100 } = {}) {
-    for (let i = 0; i < tries; i++) {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) return session;
-      } catch {}
-      await new Promise(r => setTimeout(r, delay));
-    }
-    return null;
-  }
-
+  // Упрощенная инициализация приложения
   useEffect(() => {
     let mounted = true;
-    const boot = async () => {
+
+    const initializeApp = async () => {
       try {
-        const { data } = await supabase.auth.getSession();
-        const session = data?.session;
+        // 1. Проверяем сессию
+        const { data: { session } } = await supabase.auth.getSession();
         const logged = !!session?.user;
-        if (mounted) setIsLoggedIn(logged);
+        
+        if (mounted) {
+          setIsLoggedIn(logged);
+          
+          // 2. Если пользователь залогинен, получаем роль
+          if (logged) {
+            try {
+              const userRole = await getUserRole();
+              if (mounted) setRole(userRole);
+            } catch (error) {
+              console.warn('Failed to get user role:', error);
+              if (mounted) setRole(null);
+            }
+          } else {
+            if (mounted) setRole(null);
+          }
+        }
+      } catch (error) {
+        console.error('App initialization error:', error);
+      } finally {
+        // 3. Помечаем приложение как готовое
+        if (mounted) {
+          setAppReady(true);
+        }
+      }
+    };
+
+    initializeApp();
+
+    // Слушатель изменения состояния аутентификации
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return;
+        
+        try {
+          // Очищаем кэш при изменении аутентификации
+          await queryClient.clear();
+        } catch (error) {
+          console.warn('Error clearing cache:', error);
+        }
+
+        const logged = !!session?.user;
+        setIsLoggedIn(logged);
 
         if (logged) {
           try {
-            await waitForSession();
-            const r = await getUserRole();
-            if (mounted) setRole(r);
-          } catch { if (mounted) setRole(null); }
+            const userRole = await getUserRole();
+            if (mounted) setRole(userRole);
+          } catch (error) {
+            console.warn('Failed to get user role on auth change:', error);
+            if (mounted) setRole(null);
+          }
         } else {
           if (mounted) setRole(null);
         }
-      } finally {
-        if (mounted) SplashScreen.hideAsync().catch(() => {});
-      setBooted(true);
       }
-    };
-    boot();
+    );
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(async (_, session) => {
-      // Drop React Query cache on any auth change to avoid stale screens/data after relogin
-      try { await queryClient.clear(); } catch {}
-const logged = !!session?.user;
-      setIsLoggedIn(logged);
-      if (logged && session?.user?.id) {
-        try { await waitForSession(); const r = await getUserRole(); setRole(r); }
-        catch { setRole(null); }
-      } else { setRole(null); }
-      SplashScreen.hideAsync().catch(() => {});
-      setBooted(true);
-    });
-
-    const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && booted) {
-        SplashScreen.hideAsync().catch(() => {});
+    // Слушатель состояния приложения для повторного скрытия сплэша если нужно
+    const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active' &&
+        appReady
+      ) {
+        // При возвращении в активное состояние, убедимся что сплэш скрыт
+        await SplashScreen.hideAsync();
       }
+      appState.current = nextAppState;
     });
 
     return () => {
       mounted = false;
-      authListener?.subscription?.unsubscribe();
-      sub?.remove?.();
+      subscription.unsubscribe();
+      appStateSubscription.remove();
     };
-  }, [booted]);
+  }, []);
 
+  // Скрываем сплэш когда приложение готово
   useEffect(() => {
-    const ready = booted;
-    if (ready) SplashScreen.hideAsync().catch(() => {});
-  }, [booted, isLoggedIn, role]);
-// Push init (только для залогиненного пользователя, пропускаем в Expo Go)
+    if (appReady) {
+      const hideSplash = async () => {
+        await SplashScreen.hideAsync();
+      };
+      hideSplash();
+    }
+  }, [appReady]);
+
+  // Push notifications (только для продакшн и залогиненных)
   useEffect(() => {
     if (!isLoggedIn) return;
+
     let detach;
     (async () => {
       try {
         const { default: Constants } = await import('expo-constants');
         if (Constants?.appOwnership === 'expo') return;
+        
         const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
         const token = await registerAndSavePushToken();
         console.log('✅ Expo push token (saved):', token);
@@ -179,32 +186,40 @@ const logged = !!session?.user;
         console.warn('Push init error:', e?.message || e);
       }
     })();
+
     return () => detach?.();
   }, [isLoggedIn]);
 
-  const ready = booted;
-  // После завершения инициализации навигация управляется
-  // свойством initialRouteName на Stack и перенаправлением при выходе
-  // в компонентах, поэтому отдельный редирект здесь не нужен.
-if (!ready) {
+  // Пока приложение не готово, показываем индикатор загрузки
+  if (!appReady) {
     return (
-      <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={onLayoutRootView}>
+      <SafeAreaView
+        edges={safeEdges}
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        onLayout={onLayoutRootView}
+      >
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" />
+          <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
       </SafeAreaView>
     );
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={onLayoutRootView}>
+    <GestureHandlerRootView
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      onLayout={onLayoutRootView}
+    >
       <PermissionsProvider>
         <SettingsProvider>
-          <SafeAreaView edges={safeEdges} style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={onLayoutRootView}>
+          <SafeAreaView
+            edges={safeEdges}
+            style={{ flex: 1, backgroundColor: theme.colors.background }}
+          >
             <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }}>
               <Stack
                 initialRouteName={isLoggedIn ? 'orders/index' : '(auth)'}
-                    key={isLoggedIn ? 'app' : 'auth'}
+                key={isLoggedIn ? 'app' : 'auth'}
                 screenOptions={{
                   headerShown: false,
                   animation: 'simple_push',
@@ -215,10 +230,10 @@ if (!ready) {
                   contentStyle: { backgroundColor: theme.colors.background },
                 }}
               >
-                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                <Stack.Screen name="(auth)" />
                 <Stack.Screen name="orders/index" options={{ gestureEnabled: false }} />
               </Stack>
-              {booted && isLoggedIn && !!role && <BottomNav />}
+              {isLoggedIn && role && <BottomNav />}
             </Animated.View>
           </SafeAreaView>
         </SettingsProvider>
@@ -229,12 +244,17 @@ if (!ready) {
 
 export default function RootLayout() {
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={{ persister, maxAge: 7 * 24 * 60 * 60 * 1000 }}>
-      <ThemeProvider>
-        <ToastProvider>
-          <RootLayoutInner />
-        </ToastProvider>
-      </ThemeProvider>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{ persister, maxAge: 7 * 24 * 60 * 60 * 1000 }}
+    >
+      <SafeAreaProvider>
+        <ThemeProvider>
+          <ToastProvider>
+            <RootLayoutInner />
+          </ToastProvider>
+        </ThemeProvider>
+      </SafeAreaProvider>
     </PersistQueryClientProvider>
   );
 }
