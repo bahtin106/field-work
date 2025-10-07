@@ -60,8 +60,11 @@ export default function Button({
     ]).start();
   };
 
-  const palette =
-    {
+  // ---- tokens from theme.components.button ----
+  const buttonTokens = theme?.components?.button || {};
+
+  const palettes =
+    buttonTokens.palette || {
       primary: {
         bg: theme.colors.primary,
         fg: theme.colors.primaryTextOn,
@@ -78,10 +81,10 @@ export default function Button({
         fg: theme.colors.primaryTextOn,
         border: theme.colors.danger,
       },
-    }[variant];
+    };
 
-  const sizes =
-    {
+  const sizesMap =
+    buttonTokens.sizes || {
       md: {
         h: 48,
         f: theme.typography.sizes.md,
@@ -92,7 +95,10 @@ export default function Button({
         f: theme.typography.sizes.lg,
         pad: theme.spacing.lg,
       },
-    }[size];
+    };
+
+  const palette = palettes[variant] || palettes.primary;
+  const sizes = sizesMap[size] || sizesMap.md;
 
   const s = styles(theme, palette, sizes, disabled || loading);
 

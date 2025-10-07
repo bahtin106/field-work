@@ -4,6 +4,7 @@ import { Pressable, Animated, StyleSheet, Platform, Easing } from "react-native"
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "../../theme";
+
 // alpha utility (consistent with SelectModal): supports #RRGGBB and rgb(R,G,B)
 function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -20,19 +21,90 @@ function withAlpha(color, a) {
   return `rgba(0,0,0,${a})`;
 }
 
+// Resolve palette entry from tokens. Token entries may be either a string color
+// or an object { ref: 'primary' | '#RRGGBB', alpha?: 0..1 }.
+const resolveTokenColor = (theme, token) => {
+  if (!token) return null;
+  if (typeof token === 'string') {
+    if (theme.colors[token]) return theme.colors[token];
+    return token; // assume literal
+  }
+  const base = resolveTokenColor(theme, token.ref || token.base || token.color) || theme.colors.primary;
+  const alpha = typeof token.alpha === 'number' ? token.alpha : (typeof token.a === 'number' ? token.a : 1);
+  return withAlpha(base, alpha);
+};
 
 export default function IconButton({
   onPress,
   style,
-  size = 32,           // touch target (min 32/40)
+  size = "md",            // now accepts 'sm' | 'md' | 'lg' | number
   radius = "md",
-  variant = "secondary", // secondary by default to match surface cards
+  variant = "secondary",
   disabled,
   children,
   hitSlop = { top: 8, bottom: 8, left: 8, right: 8 },
   accessibilityLabel,
 }) {
   const { theme } = useTheme();
+
+  // --- Theming tokens (centralized) ---
+  const iconTokens = theme?.components?.iconButton || {};
+  const sizesMap = iconTokens.sizes || { sm: 28, md: 32, lg: 40 };
+  const radiusMap = iconTokens.radius || { sm: "sm", md: "md", lg: "lg" };
+  const paletteTokens = iconTokens.palette;
+
+  // compute numeric touch size from tokens or explicit number
+  const touchSize = typeof size === "number" ? size : (sizesMap[size] ?? sizesMap.md);
+  const resolvedRadius = theme.radii[radius] ?? theme.radii[(typeof size === 'string' ? radiusMap[size] : 'md')] ?? theme.radii.md;
+
+  // palette fallback if tokens are absent
+  const fallbackPalette = {
+    primary: {
+      bg: withAlpha(theme.colors.primary, 10/255),
+      border: withAlpha(theme.colors.primary, 77/255),
+      ripple: withAlpha(theme.colors.primary, 31/255),
+      flash: withAlpha(theme.colors.primary, 34/255),
+      pulse: withAlpha(theme.colors.primary, 26/255),
+      pulseFilled: withAlpha(theme.colors.primary, 20/255),
+      icon: theme.colors.primary,
+    },
+    secondary: {
+      bg: "transparent",
+      border: "transparent",
+      ripple: withAlpha(theme.colors.primary, 31/255),
+      flash: withAlpha(theme.colors.primary, 34/255),
+      pulse: withAlpha(theme.colors.primary, 26/255),
+      pulseFilled: withAlpha(theme.colors.primary, 20/255),
+      icon: (theme.mode === 'dark' ? theme.colors.text : undefined),
+    },
+    ghost: {
+      bg: "transparent",
+      border: "transparent",
+      ripple: withAlpha(theme.colors.primary, 31/255),
+      flash: withAlpha(theme.colors.primary, 34/255),
+      pulse: withAlpha(theme.colors.primary, 26/255),
+      pulseFilled: withAlpha(theme.colors.primary, 20/255),
+      icon: (theme.mode === 'dark' ? theme.colors.text : undefined),
+    },
+  };
+
+  const resolvePalette = (v) => {
+    if (!paletteTokens || !paletteTokens[v]) return fallbackPalette[v] || fallbackPalette.secondary;
+    const pt = paletteTokens[v];
+    return {
+      bg: resolveTokenColor(theme, pt.bg) ?? fallbackPalette[v]?.bg,
+      border: resolveTokenColor(theme, pt.border) ?? fallbackPalette[v]?.border,
+      ripple: resolveTokenColor(theme, pt.ripple) ?? fallbackPalette[v]?.ripple,
+      flash: resolveTokenColor(theme, pt.flash) ?? fallbackPalette[v]?.flash,
+      pulse: resolveTokenColor(theme, pt.pulse) ?? fallbackPalette[v]?.pulse,
+      pulseFilled: resolveTokenColor(theme, pt.pulseFilled) ?? fallbackPalette[v]?.pulseFilled,
+      icon: resolveTokenColor(theme, pt.icon) ?? fallbackPalette[v]?.icon,
+    };
+  };
+
+  const palette = resolvePalette(variant);
+
+  // --- Animations & haptics ---
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
   const rotate = useRef(new Animated.Value(0)).current; // 0..1
@@ -64,19 +136,7 @@ export default function IconButton({
     ]).start();
   };
 
-    const palette = {
-  primary: {
-    bg: withAlpha(theme.colors.primary, 10/255),
-    border: withAlpha(theme.colors.primary, 77/255),
-  },
-  secondary: {
-  bg: 'transparent',
-  border: 'transparent',
-},
-  ghost: { bg: "transparent", border: "transparent" },
-}[variant];
-
-  const s = styles(theme, palette, size, radius, disabled);
+  const s = styles(theme, palette, touchSize, resolvedRadius, disabled);
 
   const handlePress = async () => {
     try {
@@ -125,8 +185,8 @@ export default function IconButton({
       onPressIn={onPressIn}
       onPressOut={onPressOut}
       accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      android_ripple={{ color: withAlpha(theme.colors.primary, 31/255), borderless: true, radius: Math.ceil(size * 0.75) }}
+      accessibilityLabel={accessibilityLabel || (typeof children === 'string' ? children : undefined)}
+      android_ripple={{ color: palette.ripple, borderless: true, radius: Math.ceil(touchSize * 0.75) }}
     >
       <Animated.View style={[
         { transform: [{ scale }, { rotate: rotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-6deg'] }) }], opacity },
@@ -140,18 +200,18 @@ export default function IconButton({
         {/* icon/content */}
         <Animated.View style={{ opacity: iconOpacity, transform: [{ scale: iconScale }] }}>
           {success
-  ? <Feather name="check" size={18} color={theme.colors.primary} />
-  : (React.isValidElement(children) && children.props?.color == null
-      ? React.cloneElement(children, { color: theme.mode === 'dark' ? theme.colors.text : undefined })
-      : children)
-}
+            ? <Feather name="check" size={18} color={theme.colors.primary} />
+            : (React.isValidElement(children) && children.props?.color == null
+                ? React.cloneElement(children, { color: palette.icon })
+                : children)
+          }
         </Animated.View>
       </Animated.View>
     </Pressable>
   );
 }
 
-const styles = (t, p, size, radius, disabled) =>
+const styles = (t, p, size, radiusPx, disabled) =>
   StyleSheet.create({
     btn: { position: 'relative', overflow: 'hidden',
       minWidth: size,
@@ -160,22 +220,21 @@ const styles = (t, p, size, radius, disabled) =>
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: disabled ? (p.bg === "transparent" ? t.colors.surface : withAlpha(p.bg, 204/255)) : p.bg,
-      borderRadius: t.radii[radius] ?? t.radii.md,
+      borderRadius: radiusPx,
       borderWidth: p.border === "transparent" ? 0 : 1,
       borderColor: p.border,
-            ...((p.bg === t.colors.surface || p.bg === (t.colors.button?.secondaryBg ?? ''))
+      ...((p.bg === t.colors.surface || p.bg === (t.colors.button?.secondaryBg ?? ''))
         ? (Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android)
         : null),
-
     },
-    flash: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: withAlpha(t.colors.primary, 34/255), borderRadius: t.radii[radius] ?? t.radii.md },
+    flash: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: p.flash, borderRadius: radiusPx },
     pulse: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: (p.bg === 'transparent' ? withAlpha(t.colors.primary, 26/255) : withAlpha(t.colors.primary, 20/255)),
-      borderRadius: t.radii[radius] ?? t.radii.md,
+      backgroundColor: (p.bg === 'transparent' ? p.pulse : p.pulseFilled),
+      borderRadius: radiusPx,
     },
   });

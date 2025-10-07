@@ -6,7 +6,8 @@ import { useNavigation } from "expo-router";
 import Screen from "../../components/layout/Screen";
 import { useTheme } from "../../theme";
 import { useToast } from "../../components/ui/ToastProvider";
-import { SwitchListModal, SingleSelectModal, DateTimeModal } from "../../components/ui/SelectModal";
+import { SelectModal, BaseModal, DateTimeModal } from "../../components/ui/modals";
+import { Feather } from "@expo/vector-icons";
 import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
 import { supabase } from "../../lib/supabase";
@@ -99,6 +100,48 @@ async function ensurePushPermission() {
   }
 }
 
+
+// ---- Local wrappers to replace deprecated imports ----
+function SingleSelectModal({ visible, title, options = [], selectedId, onSelect, onClose }) {
+  const { theme } = useTheme();
+  const mapped = (options || []).map((opt) => ({
+    id: opt.id,
+    label: opt.label,
+    right: selectedId === opt.id ? (<Feather name="check" size={18} color={theme.colors.primary} />) : null,
+  }));
+  return (
+    <SelectModal
+      visible={visible}
+      title={title}
+      items={mapped}
+      onSelect={(it) => onSelect?.(it.id)}
+      onClose={onClose}
+      searchable={false}
+    />
+  );
+}
+
+function SwitchListModal({ visible, title, toggles = [], footer = null, onClose }) {
+  const { theme } = useTheme();
+  return (
+    <BaseModal visible={visible} title={title} onClose={onClose}>
+      <View style={{ gap: theme.spacing.sm }}>
+        {toggles.map((t) => (
+          <SwitchField
+            key={t.id}
+            label={t.label}
+            value={!!t.value}
+            onValueChange={t.onChange}
+            accessibilityRole="switch"
+            accessibilityLabel={t.label}
+          />
+        ))}
+      </View>
+      {footer ? <View style={{ marginTop: theme.spacing.md }}>{footer}</View> : null}
+    </BaseModal>
+  );
+}
+// ---- end wrappers ----
 export default function AppSettings() {
   const nav = useNavigation();
   const ver = useI18nVersion();

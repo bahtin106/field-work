@@ -1,7 +1,6 @@
 // components/ui/TextField.jsx
 import React, { useState, forwardRef } from "react";
-import { View, Text, TextInput, StyleSheet, Platform, Modal, Pressable, Switch, FlatList, Animated, Easing } from "react-native";
-import { Picker } from "@react-native-picker/picker";
+import { View, Text, TextInput, StyleSheet, Platform, Pressable, Switch } from "react-native";
 import FeatherIcon from "@expo/vector-icons/Feather";
 import { useTheme } from "../../theme";
 import { listItemStyles, CHEVRON_GAP } from "./listItemStyles";
@@ -172,18 +171,8 @@ const selectStyles = (t) => StyleSheet.create({
   chevron: { marginLeft: CHEVRON_GAP },
 });
 
-const itemHeight = 36;
 
-function range(from, to) {
-  const arr = [];
-  for (let i = from; i <= to; i++) arr.push(i);
-  return arr;
-}
 
-const months = [
-  "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
-  "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
-];
 
 const pad2 = (n) => String(n).padStart(2, "0");
 
@@ -372,6 +361,8 @@ export const DateOfBirthField = ({
     </View>
   );
 };
+
+const itemHeight = 36;
 
 const wheelStyles = StyleSheet.create({
   col: { width: 92, height: 180, overflow: "hidden" },

@@ -24,47 +24,36 @@ export default function Screen({ children, style, scroll = true }) {
   const edges = isAuthScreen ? ['top','left','right','bottom'] : ['left','right'];
 
   return (
-  <KeyboardAwareScrollView
-    contentContainerStyle={{ flexGrow: 1 }}
-    keyboardShouldPersistTaps="handled"
-    enableOnAndroid
-    enableAutomaticScroll
-    extraScrollHeight={20}
-    keyboardOpeningTime={0}
-  >
     <SafeAreaView
       edges={edges}
       style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}
     >
-      
-     {useScroll ? (
-  <KeyboardAwareScrollView
-    contentContainerStyle={{ flexGrow: 1 }}
-    keyboardShouldPersistTaps="handled"
-    enableOnAndroid
-    enableAutomaticScroll
-    keyboardOpeningTime={0}
-    extraScrollHeight={-(insets?.bottom || 0)}
-  >
-    {showHeader && (
-      <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
-    )}
-    <View style={{ flex: 1 }}>
-      {children}
-    </View>
-  </KeyboardAwareScrollView>
-) : (
-  <>
-    {showHeader && (
-      <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
-    )}
-    <View style={{ flex: 1 }}>
-      {children}
-    </View>
-  </>
-)}
-       </SafeAreaView>
-  </KeyboardAwareScrollView>
-);
-
+      {useScroll ? (
+        <KeyboardAwareScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          enableOnAndroid
+          enableAutomaticScroll
+          keyboardOpeningTime={0}
+          extraScrollHeight={-(insets?.bottom || 0)}
+        >
+          {showHeader && (
+            <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
+          )}
+          <View style={{ flex: 1 }}>
+            {children}
+          </View>
+        </KeyboardAwareScrollView>
+      ) : (
+        <>
+          {showHeader && (
+            <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />
+          )}
+          <View style={{ flex: 1 }}>
+            {children}
+          </View>
+        </>
+      )}
+    </SafeAreaView>
+  );
 }
