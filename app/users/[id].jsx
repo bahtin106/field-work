@@ -1,15 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useState, useLayoutEffect } from 'react';
+// app/users/[id].jsx
+import React, { useCallback, useEffect, useState, useLayoutEffect } from 'react';
 import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View, Pressable, Linking, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import Screen from '../../components/layout/Screen';
-import { useTheme } from '../../theme/ThemeProvider';
+import { useTheme, } from '../../theme';
 import { supabase } from '../../lib/supabase';
 import { Feather } from '@expo/vector-icons';
 import { normalizeRu, formatRuMask, toE164 } from '../../components/ui/phone';
+import { listItemStyles } from '../../components/ui/listItemStyles';
+import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
 import IconButton from '../../components/ui/IconButton';
 import * as Clipboard from 'expo-clipboard';
 import { useToast } from '../../components/ui/ToastProvider';
+import { getLocale,t as T,useI18nVersion } from '../../src/i18n';
 
 function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -24,17 +29,24 @@ function withAlpha(color, a) {
   return `rgba(0,0,0,${a})`;
 }
 
-const ROLE_LABELS = { admin: 'Администратор', dispatcher: 'Диспетчер', worker: 'Рабочий' };
-
 export default function UserView() {
   const { theme } = useTheme();
   const s = React.useMemo(() => styles(theme), [theme]);
+  const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const toast = useToast();
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
   const router = useRouter();
   const navigation = useNavigation();
 
+  // Предотвращаем setState после размонтирования (паттерн как в AppSettings)
+  const mountedRef = React.useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  const ver = useI18nVersion();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [meIsAdmin, setMeIsAdmin] = useState(false);
@@ -49,16 +61,33 @@ export default function UserView() {
   const [role, setRole] = useState('worker');
   const [departmentName, setDepartmentName] = useState(null);
   const [isSuspended, setIsSuspended] = useState(false);
-  const roleLabel = ROLE_LABELS[role] || 'Рабочий';
+  const ROLE_LABELS = React.useMemo(() => ({ admin: T('role_admin','role_admin'), dispatcher: T('role_dispatcher','role_dispatcher'), worker: T('role_worker','role_worker') }), [ver]);
 
-  // Title: show user's full name
-  useLayoutEffect(() => { navigation.setOptions({ title: 'Просмотр профиля', headerTitle: 'Просмотр профиля' }); }, [navigation]);
-// Also set title in params so AppHeader picks it
-  useEffect(() => { navigation.setParams({ title: 'Просмотр профиля' }); }, [navigation]);
-// Load viewed user's data
+  const roleLabel = ROLE_LABELS[role] || T('role_worker','role_worker');
+
+  useLayoutEffect(() => {
+    const routeTitle = T('routes.users/[id]','routes.users/[id]');
+    navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
+  }, [navigation, ver]);
+
+  // Also set title in params so AppHeader picks it
+  useEffect(() => {
+    const routeTitle = T('routes.users/[id]','routes.users/[id]');
+    navigation.setParams({ title: routeTitle });
+  }, [navigation, ver]);
+
+  // Load viewed user's data
   const fetchUser = useCallback(async () => {
-    setLoading(true);
-    setErr('');
+        // Guard: ensure route param exists
+    if (!userId) {
+      if (mountedRef.current) {
+        setErr(T('errors_user_not_found','errors_user_not_found'));
+        setLoading(false);
+      }
+      return;
+    }
+if (mountedRef.current) setLoading(true);
+    if (mountedRef.current) setErr('');
     try {
       // Always know who is logged in for comparison
       const { data: auth } = await supabase.auth.getUser();
@@ -74,8 +103,8 @@ export default function UserView() {
           const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
           rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
         }
-        setMeIsAdmin(iAmAdmin);
-        setMyUid(uid);
+        if (mountedRef.current) setMeIsAdmin(iAmAdmin);
+        if (mountedRef.current) setMyUid(uid);
       }
 
       // Base profile fields (including birthdate + role for non-admins)
@@ -86,25 +115,27 @@ export default function UserView() {
         .maybeSingle();
 
       if (prof) {
-        setFirstName(prof.first_name || '');
-        setLastName(prof.last_name || '');
-        setAvatarUrl(prof.avatar_url || null);
-        setPhone(String(prof.phone || ''));
-        setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
-        setRole(prof.role || rpcRow?.user_role || 'worker');
+        if (mountedRef.current) setFirstName(prof.first_name || '');
+        if (mountedRef.current) setLastName(prof.last_name || '');
+        if (mountedRef.current) setAvatarUrl(prof.avatar_url || null);
+        if (mountedRef.current) setPhone(String(prof.phone || ''));
+        if (mountedRef.current) setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
+        if (mountedRef.current) setRole(prof.role || rpcRow?.user_role || 'worker');
 
         // birthdate: prefer profiles (RLS allows self), fallback to RPC for admins
         const bd = prof?.birthdate ?? rpcRow?.birthdate ?? null;
         if (bd) {
           const d = new Date(bd);
-          setBirthdate(!isNaN(d.getTime()) ? d : null);
-        } else setBirthdate(null);
+          if (mountedRef.current) setBirthdate(!isNaN(d.getTime()) ? d : null);
+        } else if (mountedRef.current) {
+          setBirthdate(null);
+        }
 
         const depId = prof?.department_id ?? null;
         if (depId) {
           const { data: d } = await supabase.from('departments').select('name').eq('id', depId).maybeSingle();
-          setDepartmentName(d?.name || null);
-        } else {
+          if (mountedRef.current) setDepartmentName(d?.name || null);
+        } else if (mountedRef.current) {
           setDepartmentName(null);
         }
       }
@@ -113,85 +144,93 @@ export default function UserView() {
       // - admin sees email of any user via RPC
       // - non-admin sees email only for own profile from auth
       if (rpcRow?.email) {
-        setEmail(rpcRow.email);
+        if (mountedRef.current) setEmail(rpcRow.email);
       } else if (uid && userId === uid && authEmail) {
-        setEmail(authEmail);
-      } else {
+        if (mountedRef.current) setEmail(authEmail);
+      } else if (mountedRef.current) {
         setEmail('');
       }
 
-    }
-  catch (e) {
-    const msg = e?.message || 'Не удалось загрузить пользователя';
-    setErr(msg);
-    try { toast.error(msg); } catch {}
-  }
-  finally {
-      setLoading(false);
+    } catch (e) {
+      const msg = e?.message || T('errors_loadUser','errors_loadUser');
+      if (mountedRef.current) setErr(msg);
+      try { toast.error(msg); } catch {}
+    } finally {
+      if (mountedRef.current) setLoading(false);
     }
   }, [userId]);
 
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
-  useEffect(() => {
+  const handleEditPress = React.useCallback(() => {
+    router.push(`/users/${userId}/edit`);
+  }, [router, userId]);
+
+  useLayoutEffect(() => {
     const canEdit = meIsAdmin || (myUid && myUid === userId);
+    // Move action into header options (serializable params stay clean)
+    navigation.setOptions({
+      headerRight: canEdit
+        ? () => (
+            <Button title={T('btn_edit','btn_edit')} onPress={handleEditPress} variant="secondary" size="md" />
+          )
+        : undefined,
+    });
+    // Also set serializable header button params for our custom AppHeader
     if (canEdit) {
-      navigation.setParams({
-  editLabel: 'Изменить',
-  onEditPress: () => router.push(`/users/${userId}/edit`),
-  headerButtonLabel: null,
-  headerButtonTo: null,
-});
-    } else {
+      navigation.setParams({ headerButtonLabel: T('btn_edit','btn_edit'), headerButtonTo: `/users/${userId}/edit`, editLabel: null });
+    }
+    // Keep route params free of functions — we no longer pass onEditPress
+    if (!canEdit) {
       navigation.setParams({
         editLabel: null,
-        onEditPress: null,
         headerButtonLabel: null,
         headerButtonTo: null,
       });
     }
-  }, [navigation, userId, meIsAdmin, myUid]);
+  }, [navigation, userId, meIsAdmin, myUid, handleEditPress]);
+
   // Copy helpers
   const onCopyEmail = React.useCallback(async () => {
-  if (!email) return false;
-  const text = String(email);
-  try {
-    await Clipboard.setStringAsync(text);
-    try { toast.success('E-mail скопирован'); } catch {}
-    return true;
-  } catch {
-    if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
-      try {
-        await globalThis.navigator.clipboard.writeText(text);
-        try { toast.success('E-mail скопирован'); } catch {}
-        return true;
-      } catch {}
+    if (!email) return false;
+    const text = String(email);
+    try {
+      await Clipboard.setStringAsync(text);
+      try { toast.success(T('toast_email_copied','toast_email_copied')); } catch {}
+      return true;
+    } catch {
+      if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
+        try {
+          await globalThis.navigator.clipboard.writeText(text);
+          try { toast.success(T('toast_email_copied','toast_email_copied')); } catch {}
+          return true;
+        } catch {}
+      }
+      try { toast.error(T('toast_copy_email_fail','toast_copy_email_fail')); } catch {}
+      return false;
     }
-    try { toast.error('Не удалось скопировать e-mail'); } catch {}
-    return false;
-  }
-}, [email, toast]);
+  }, [email, toast]);
 
   const onCopyPhone = React.useCallback(async () => {
-  if (!phone) return false;
-  const text = toE164(phone) || ('+' + normalizeRu(phone));
-  try {
-    await Clipboard.setStringAsync(text);
-    try { toast.success('Телефон скопирован'); } catch {}
-    return true;
-  } catch {
-    if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
-      try {
-        await globalThis.navigator.clipboard.writeText(text);
-        try { toast.success('Телефон скопирован'); } catch {}
-        return true;
-      } catch {}
+    if (!phone) return false;
+    const text = toE164(phone) || ('+' + normalizeRu(phone));
+    try {
+      await Clipboard.setStringAsync(text);
+      try { toast.success(T('toast_phone_copied','toast_phone_copied')); } catch {}
+      return true;
+    } catch {
+      if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
+        try {
+          await globalThis.navigator.clipboard.writeText(text);
+          try { toast.success(T('toast_phone_copied','toast_phone_copied')); } catch {}
+          return true;
+        } catch {}
+      }
+      try { toast.error(T('toast_copy_phone_fail','toast_copy_phone_fail')); } catch {}
+      return false;
     }
-    try { toast.error('Не удалось скопировать телефон'); } catch {}
-    return false;
-  }
-}, [phone, toast]);
+  }, [phone, toast]);
 
-// Refetch when screen regains focus (after editing)
+  // Refetch when screen regains focus (after editing)
   useFocusEffect(
     React.useCallback(() => {
       fetchUser();
@@ -205,7 +244,7 @@ export default function UserView() {
   if (loading) {
     return (
       <Screen>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <View style={s.center}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
       </Screen>
@@ -214,7 +253,7 @@ export default function UserView() {
   if (err) {
     return (
       <Screen>
-        <View style={{ padding: 16 }}>
+        <View style={{ padding: theme.spacing.lg }}>
           <Text style={{ color: theme.colors.danger }}>{err}</Text>
         </View>
       </Screen>
@@ -223,7 +262,7 @@ export default function UserView() {
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={s.contentWrap} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={s.contentWrap} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {/* Top avatar on background */}
         <View style={s.avatarContainer}>
           <View style={s.avatarXl}>
@@ -235,163 +274,141 @@ export default function UserView() {
           </View>
         </View>
 
-        
-        
-        <Text style={s.sectionTitle}>Личные данные</Text>
-        <View style={s.card}>
-          <View style={s.row}>
-            <Text style={s.rowLabel}>Имя</Text>
-            <View style={s.rowRight}>
-              <Text style={s.rowValue}>{(firstName || lastName) ? (`${firstName || ''} ${lastName || ''}`).trim() : '—'}</Text>
+        <Text style={base.sectionTitle}>{T('section_personal','section_personal')}</Text>
+        <Card>
+          <View style={base.row}>
+            <Text style={base.label}>{T('view_label_name','view_label_name')}</Text>
+            <View style={base.rightWrap}>
+              <Text style={base.value}>{(firstName || lastName) ? (`${firstName || ''} ${lastName || ''}`).trim() : T('common_dash','common_dash')}</Text>
             </View>
           </View>
-          <View style={s.sep} />
-          <View style={s.row}>
-            <Text style={s.rowLabel}>E‑mail</Text>
-            <View style={s.rowRight}>
+          <View style={base.sep} />
+          <View style={base.row}>
+            <Text style={base.label}>{T('view_label_email','view_label_email')}</Text>
+            <View style={base.rightWrap}>
               {email ? (
                 <Pressable accessibilityRole="link" onPress={async () => {
-  const url = `mailto:${email}`;
-  try {
-    const ok = await Linking.canOpenURL(url);
-    if (ok) await Linking.openURL(url);
-    else toast.error('Невозможно открыть почтовый клиент');
-  } catch {
-    toast.error('Невозможно открыть почтовый клиент');
-  }
-}}>
-  <Text style={[s.rowValue, s.link]}>{email}</Text>
+                  const url = `mailto:${email}`;
+                  try {
+                    const ok = await Linking.canOpenURL(url);
+                    if (ok) await Linking.openURL(url);
+                    else toast.error(T('errors_openMail','errors_openMail'));
+                  } catch {
+                    toast.error(T('errors_openMail','errors_openMail'));
+                  }
+                }}>
+                  <Text style={[base.value, s.link]}>{email}</Text>
                 </Pressable>
               ) : (
-                <Text style={s.rowValue}>—</Text>
+                <Text style={base.value}>{T('common_dash','common_dash')}</Text>
               )}
               {email ? (
-                <IconButton onPress={onCopyEmail} accessibilityLabel='Скопировать e‑mail'><Feather name='copy' size={16} /></IconButton>
+                <IconButton
+                  style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
+                  onPress={onCopyEmail}
+                  accessibilityLabel={T('a11y_copy_email','a11y_copy_email')}
+                >
+                  <Feather name='copy' size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                </IconButton>
               ) : null}
             </View>
           </View>
-          <View style={s.sep} />
-          <View style={s.row}>
-            <Text style={s.rowLabel}>Телефон</Text>
-            <View style={s.rowRight}>
+          <View style={base.sep} />
+          <View style={base.row}>
+            <Text style={base.label}>{T('view_label_phone','view_label_phone')}</Text>
+            <View style={base.rightWrap}>
               {phone ? (
                 <Pressable accessibilityRole="link" onPress={async () => {
-  const url = `tel:${toE164(phone) || ('+' + normalizeRu(phone))}`;
-  try {
-    const ok = await Linking.canOpenURL(url);
-    if (ok) await Linking.openURL(url);
-    else toast.error('Звонки недоступны на этом устройстве');
-  } catch {
-    toast.error('Звонки недоступны на этом устройстве');
-  }
-}}>
-  <Text style={[s.rowValue, s.link]}>{formatRuMask(phone)}</Text>
+                  const url = `tel:${toE164(phone) || ('+' + normalizeRu(phone))}`;
+                  try {
+                    const ok = await Linking.canOpenURL(url);
+                    if (ok) await Linking.openURL(url);
+                    else toast.error(T('errors_callsUnavailable','errors_callsUnavailable'));
+                  } catch {
+                    toast.error(T('errors_callsUnavailable','errors_callsUnavailable'));
+                  }
+                }}>
+                  <Text style={[base.value, s.link]}>{formatRuMask(phone)}</Text>
                 </Pressable>
               ) : (
-                <Text style={s.rowValue}>—</Text>
+                <Text style={base.value}>{T('common_dash','common_dash')}</Text>
               )}
               {phone ? (
-                <IconButton onPress={onCopyPhone} accessibilityLabel='Скопировать телефон'><Feather name='copy' size={16} /></IconButton>
+                <IconButton
+                  style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
+                  onPress={onCopyPhone}
+                  accessibilityLabel={T('a11y_copy_phone','a11y_copy_phone')}
+                >
+                  <Feather name='copy' size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                </IconButton>
               ) : null}
             </View>
           </View>
-          
-          <View style={s.sep} />
-          <View style={s.row}>
-            <Text style={s.rowLabel}>Дата рождения</Text>
-            <View style={s.rowRight}>
-              <Text style={s.rowValue}>{birthdate ? birthdate.toLocaleDateString('ru-RU', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}</Text>
-            </View>
-          </View>
-</View>
 
-<Text style={s.sectionTitle}>Роль в компании</Text>
-        <View style={s.card}>
-          <View style={s.row}>
-            <Text style={s.rowLabel}>Отдел</Text>
-            <View style={s.rowRight}>
-              <Text style={s.rowValue}>{departmentName || '—'}</Text>
+          <View style={base.sep} />
+          <View style={base.row}>
+            <Text style={base.label}>{T('label_birthdate','label_birthdate')}</Text>
+            <View style={base.rightWrap}>
+              <Text style={base.value}>{birthdate ? birthdate.toLocaleDateString((() => { try { return getLocale(); } catch { return 'ru-RU'; } })(), { day: '2-digit', month: 'long', year: 'numeric' }) : T('common_dash','common_dash')}</Text>
             </View>
           </View>
-          <View style={s.sep} />
-          <View style={s.row}>
-            <Text style={s.rowLabel}>Роль</Text>
-            <View style={s.rowRight}>
-              <Text style={s.rowValue}>{roleLabel}</Text>
+        </Card>
+
+        <Text style={base.sectionTitle}>{T('section_company_role','section_company_role')}</Text>
+        <Card>
+          <View style={base.row}>
+            <Text style={base.label}>{T('label_department','label_department')}</Text>
+            <View style={base.rightWrap}>
+              <Text style={base.value}>{departmentName || T('common_dash','common_dash')}</Text>
             </View>
           </View>
-          <View style={s.sep} />
-          <View style={s.row}>
-            <Text style={s.rowLabel}>Статус</Text>
-            <View style={s.rowRight}>
-              <Text style={[s.rowValue, { color: statusColor }]}>{isSuspended ? 'Отстранён' : 'Активен'}</Text>
+          <View style={base.sep} />
+          <View style={base.row}>
+            <Text style={base.label}>{T('label_role','label_role')}</Text>
+            <View style={base.rightWrap}>
+              <Text style={base.value}>{roleLabel}</Text>
             </View>
           </View>
-        </View>
+          <View style={base.sep} />
+          <View style={base.row}>
+            <Text style={base.label}>{T('label_status','label_status')}</Text>
+            <View style={base.rightWrap}>
+              <Text style={[base.value, { color: statusColor }]}>{isSuspended ? T('status_suspended','status_suspended') : T('status_active','status_active')}</Text>
+            </View>
+          </View>
+        </Card>
       </ScrollView>
     </Screen>
   );
 }
 
-const styles = (t) => StyleSheet.create({
-  contentWrap: { padding: t.spacing.lg, paddingBottom: t.spacing.xl },
-  card: {
-    backgroundColor: t.colors.surface,
-    borderRadius: t.radii.md,
-    borderWidth: t.components.card.borderWidth,
-    borderColor: t.colors.border,
-    paddingHorizontal: t.spacing[t.components.card.padX || 'md'],
-    paddingVertical:   0,
-    marginBottom: t.spacing.md,
-  },
-  headerRow: { flexDirection: 'row', alignItems: 'center', gap: t.spacing.md },
-  avatar: {
-    width: t.components.avatar.md, height: t.components.avatar.md, borderRadius: t.components.avatar.md / 2,
-    backgroundColor: withAlpha(t.colors.primary, 0.12),
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: t.components.avatar.border, borderColor: withAlpha(t.colors.primary, 0.24),
-    overflow: 'hidden',
-  },
-  avatarLg: {
-    width: t.components.avatar.lg, height: t.components.avatar.lg, borderRadius: t.components.avatar.lg / 2,
-    backgroundColor: withAlpha(t.colors.primary, 0.12),
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: t.components.avatar.border, borderColor: withAlpha(t.colors.primary, 0.24),
-    overflow: 'hidden',
-  },
-  avatarXl: {
-    width: t.components.avatar.xl, height: t.components.avatar.xl, borderRadius: t.components.avatar.xl / 2,
-    backgroundColor: withAlpha(t.colors.primary, 0.12),
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: t.components.avatar.border, borderColor: withAlpha(t.colors.primary, 0.24),
-    overflow: 'hidden',
-  },
-  avatarContainer: { alignItems: 'center', marginBottom: t.spacing.xl },
-  avatarTextXl: { fontSize: Math.round(t.components.avatar.xl * 0.33), color: t.colors.primary, fontWeight: '700' },
-  avatarImg: { width: '100%', height: '100%' },
-  avatarText: { color: t.colors.primary, fontWeight: '700' },
-  nameTitle: { fontSize: t.typography.sizes.md, fontWeight: '600', color: t.colors.text },
-  pillsRow: { flexDirection: 'row', gap: t.spacing.sm, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' },
-  pill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: t.radii.md, borderWidth: 1 },
-  pillText: { fontSize: t.typography.sizes.xs, fontWeight: '600' },
-  section: { marginBottom: t.spacing.sm, fontWeight: '600', color: t.colors.text },
-  sectionTitle: {
-    fontWeight: '700',
-    marginBottom: t.spacing[t.components.sectionTitle.mb],
-    marginLeft: t.spacing[t.components.sectionTitle.ml],
-    color: t.colors.text
-  },
-  rowRight: { flexDirection: 'row', alignItems: 'center', gap: t.spacing[t.components.row.gapX] },
-  link: { color: t.colors.primary },
-  row: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  height: t.components.row.minHeight,
-  paddingVertical: t.components.row.py ? t.spacing[t.components.row.py] : 0,
-},
-  rowLabel: { color: t.colors.textSecondary },
-  rowValue: { color: t.colors.text, fontWeight: '500' },
-  sep: { height: t.components.listItem.dividerWidth, backgroundColor: t.colors.border },
-});
-
+const styles = (t) => {
+  const AV = Number(t?.components?.avatar?.xl ?? 96);
+  const BORDER = Number(t?.components?.avatar?.border ?? StyleSheet.hairlineWidth);
+  const PRIMARY = t?.colors?.primary ?? '#007AFF';
+  const SPACING_LG = Number(t?.spacing?.lg ?? 16);
+  const SPACING_XL = Number(t?.spacing?.xl ?? 24);
+  return StyleSheet.create({
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    contentWrap: { padding: SPACING_LG, paddingBottom: SPACING_XL },
+    avatarXl: {
+      width: AV,
+      height: AV,
+      borderRadius: AV / 2,
+      backgroundColor: withAlpha(PRIMARY, 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: BORDER,
+      borderColor: withAlpha(PRIMARY, 0.24),
+      overflow: 'hidden',
+    },
+    avatarContainer: { alignItems: 'center', marginBottom: SPACING_XL },
+    avatarTextXl: {
+      fontSize: Math.round(AV * 0.33),
+      color: PRIMARY,
+      fontWeight: (t?.typography?.weight?.bold) || '700',
+    },
+    avatarImg: { width: '100%', height: '100%' },
+    link: { color: PRIMARY },
+  });
+};

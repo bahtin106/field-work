@@ -1,4 +1,4 @@
-// app/settings/sections/form-builder.jsx
+// app/company_settings/sections/form-builder.jsx
 
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';

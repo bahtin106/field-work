@@ -1,9 +1,4 @@
-// app/settings/sections/WorkTypesSettings.jsx
-// Placeholder screen for configuring work types.
-//
-// At the moment this page contains only a simple placeholder message.
-// Future releases should replace this component with real functionality for
-// managing different types of work performed by company employees.
+// app/company_settings/sections/WorkTypesSettings.jsx
 
 import React from 'react';
 import { View, Text } from 'react-native';

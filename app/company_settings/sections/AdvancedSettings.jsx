@@ -1,4 +1,4 @@
-// app/settings/sections/AdvancedSettings.jsx
+// app/company_settings/sections/AdvancedSettings.jsx
 import React, { useEffect, useState } from 'react';
 import {Pressable, ScrollView, Text, TextInput, View} from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';

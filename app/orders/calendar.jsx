@@ -21,7 +21,7 @@ import {
   Platform,
   Dimensions,
   Keyboard,
-} from 'react-native';
+  ScrollView } from 'react-native';
 import { InteractionManager } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -1141,44 +1141,46 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
                   style={styles.searchInput}
                   returnKeyType="search"
                 />
-                <FlatList
-                  data={filteredSortedUsers}
-                  keyExtractor={(item) => item.id}
-                  ItemSeparatorComponent={() => <View style={styles.separator} />}
-                  renderItem={({ item }) => (
-                    <Pressable
-                      style={styles.executorOption}
-                      onPress={() => handlePickUser(item.id)}
-                    >
-                      <View
-                        style={[
-                          styles.executorRow,
-                          selectedUserId === item.id && styles.executorRowSelected,
-                        ]}
-                      >
-                        <Text style={styles.executorText}>{item.name}</Text>
-                        <View
-                          style={[
-                            styles.rolePill,
-                            {
-                              borderColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.2, theme),
-                              backgroundColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.13, theme),
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={{ color: roleColor(theme, item.role) || theme.colors.text, fontSize: 12, fontWeight: '600' }}
-                          >
-                            {ROLE_LABEL_RU[item.role] || 'Исполнитель'}
-                          </Text>
-                        </View>
-                      </View>
-                    </Pressable>
-                  )}
-                  style={{ maxHeight: 360 }}
-                  keyboardShouldPersistTaps="handled"
-                  keyboardDismissMode="on-drag"
-                />
+                
+<ScrollView
+  style={{ maxHeight: 360 }}
+  keyboardShouldPersistTaps="handled"
+  keyboardDismissMode="on-drag"
+>
+  {filteredSortedUsers.map((item, idx) => (
+    <React.Fragment key={item.id}>
+      <Pressable
+        style={styles.executorOption}
+        onPress={() => handlePickUser(item.id)}
+      >
+        <View
+          style={[
+            styles.executorRow,
+            selectedUserId === item.id && styles.executorRowSelected,
+          ]}
+        >
+          <Text style={styles.executorText}>{item.name}</Text>
+          <View
+            style={[
+              styles.rolePill,
+              {
+                borderColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.2, theme),
+                backgroundColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.13, theme),
+              },
+            ]}
+          >
+            <Text
+              style={{ color: roleColor(theme, item.role) || theme.colors.text, fontSize: 12, fontWeight: '600' }}
+            >
+              {ROLE_LABEL_RU[item.role] || 'Исполнитель'}
+            </Text>
+          </View>
+        </View>
+      </Pressable>
+      {idx !== filteredSortedUsers.length - 1 && <View style={styles.separator} />}
+    </React.Fragment>
+  ))}
+</ScrollView>
               </View>
             </Animated.View>
           </Pressable>

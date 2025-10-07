@@ -1,5 +1,5 @@
 // components/ui/SelectModal.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useImperativeHandle } from "react";
 import {
   View,
   Text,
@@ -26,10 +26,11 @@ import * as NavigationBar from "expo-navigation-bar";
 import { useTheme } from "../../theme";
 import TextField, { SelectField } from "./TextField";
 import UIButton from "./Button";
+import { t as T } from '../../src/i18n';
 
 export default function SelectModal({
   visible,
-  title = "Выберите",
+  title = T('modal_select_title'),
   items = [],
   onSelect,
   onClose,
@@ -38,11 +39,14 @@ export default function SelectModal({
   footer,
   initialSearch = "",
   maxHeightRatio = 0.75,
-}) {
+}, ref) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => styles(theme), [theme]);
 
+  // Local RN Modal visibility to avoid unmount-while-visible race on Android
+  const [rnVisible, setRnVisible] = useState(false);
+  const [modalKey, setModalKey] = useState(0);
   const overlayColor = theme.colors.overlay || "rgba(0,0,0,0.35)";
   const screen = Dimensions.get("window");
   const screenH = screen.height;
@@ -69,37 +73,42 @@ export default function SelectModal({
     );
   }, [items, query]);
 
-  // Анимации окна и бекдропа — компактный выезд снизу
+  // Анимации окна и бекдропа
   const op = useSharedValue(0);     // backdrop opacity
   const ty = useSharedValue(24);    // translateY для аккуратного «выезда»
-  const sc = useSharedValue(1);     // без масштабирования — чтобы не было «разболтанности»
+  const sc = useSharedValue(1);     // без масштабирования
 
   const open = () => {
-    // быстрый аккуратный вход: fade + slide-up
+    if (!rnVisible) setRnVisible(true);
     op.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
     ty.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
-    // scale не трогаем (оставляем 1)
   };
 
   const close = () => {
-    // Закрытие — аккуратный слайд вниз (как было раньше по ощущениям), без рывка наверх
     const offY = Math.max(260, sheetMaxH * 0.9);
-    ty.value = withTiming(offY, { duration: 200, easing: Easing.in(Easing.cubic) }, () => {
-      runOnJS(onClose)();
-    });
+    ty.value = withTiming(offY, { duration: 200, easing: Easing.in(Easing.cubic) });
     op.value = withTiming(0, { duration: 220, easing: Easing.in(Easing.cubic) });
+    
+    // Используем setTimeout вместо runOnJS для гарантированного закрытия
+    setTimeout(() => {
+      setRnVisible(false);
+      if (onClose) onClose();
+    }, 250);
   };
+
+  // expose imperative close() for external callers (e.g., Cancel button)
+  useImperativeHandle(ref, () => ({ close }));
+
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
   const aCard = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }, { scale: sc.value }],
   }));
 
-  // Жест «потянуть вниз» — надёжный захват на хэндле
+  // Жест «потянуть вниз»
   const dragY = useRef(0);
   const pan = useRef(
     PanResponder.create({
-      // Сразу отдаём жест хэндлу — чтобы «не работает» больше не повторялось
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_e, g) =>
         Math.abs(g.dy) > Math.abs(g.dx) && Math.abs(g.dy) > 2,
@@ -110,7 +119,6 @@ export default function SelectModal({
       onPanResponderMove: (_e, g) => {
         const dy = Math.max(0, g.dy);
         dragY.current = dy;
-        // Лёгкая податливость без расхлябанности
         ty.value = dy * 0.85;
       },
       onPanResponderRelease: (_e, g) => {
@@ -124,15 +132,18 @@ export default function SelectModal({
     })
   ).current;
 
-  // Жизненный цикл
+  // Жизненный цикл - ОБНОВЛЕНО: обрабатываем как открытие, так и закрытие
   useEffect(() => {
     if (visible) {
       op.value = 0;
       ty.value = 24;
       sc.value = 1;
       open();
+    } else {
+      if (rnVisible) {
+        close();
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
   // Android nav bar overlay
@@ -198,22 +209,36 @@ export default function SelectModal({
     );
   };
 
-  // Равные небольшие отступы слева/справа/снизу
+  // Равные небольшие отступы
   const sideGap = theme.spacing.md;
   const bottomGap = theme.spacing.md;
 
+  // ОБНОВЛЕНО: упрощенная логика рендеринга
+  if (!visible && !rnVisible) {
+    return null;
+  }
+
   return (
     <Modal
-      visible={!!visible}
+      key={modalKey}
+      visible={!!rnVisible}
       transparent={true}
       presentationStyle="overFullScreen"
       animationType="none"
       statusBarTranslucent={true}
       navigationBarTranslucent={true}
-      onRequestClose={onClose}
+      onRequestClose={close}
+      onDismiss={() => {
+        setRnVisible(false);
+        try { onClose?.(); } catch (_) {}
+      }}
     >
       {/* Backdrop */}
-      <Pressable style={s.backdrop} onPress={close}>
+      <Pressable
+        style={s.backdrop}
+        onPress={close}
+        pointerEvents={rnVisible ? "auto" : "none"}
+      >
         <Animated.View
           style={[StyleSheet.absoluteFill, aBackdrop, { backgroundColor: overlayColor }]}
         />
@@ -233,7 +258,7 @@ export default function SelectModal({
             },
           ]}
         >
-          {/* Drag handle — именно на нём жест */}
+          {/* Drag handle */}
           <View style={s.handleHit} {...pan.panHandlers}>
             <View style={[s.handle, { backgroundColor: theme.colors.inputBorder }]} />
           </View>
@@ -243,7 +268,7 @@ export default function SelectModal({
             <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
               {title}
             </Text>
-            <Pressable hitSlop={10} onPress={close} style={s.closeBtn} accessibilityLabel="Закрыть">
+            <Pressable hitSlop={10} onPress={close} style={s.closeBtn} accessibilityLabel={T('btn_close')}>
               <Feather name="x" size={20} color={theme.colors.textSecondary} />
             </Pressable>
           </View>
@@ -252,10 +277,10 @@ export default function SelectModal({
           {searchable ? (
             <View style={{ paddingHorizontal: theme.spacing.lg, marginBottom: theme.spacing.sm }}>
               <TextField
-                label="Поиск"
+                label={T('common_search')}
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Начните вводить…"
+                placeholder={T('common_start_typing')}
                 returnKeyType="search"
               />
             </View>
@@ -266,15 +291,17 @@ export default function SelectModal({
             data={data}
             keyExtractor={(it, i) => String(it.id ?? i)}
             renderItem={renderItem || renderDefaultItem}
-            ItemSeparatorComponent={() => (
-              <View style={[s.separator, { backgroundColor: theme.colors.border }]} />
-            )}
-            contentContainerStyle={{ paddingBottom: theme.spacing.md }}
+            ItemSeparatorComponent={() => <View style={{ height: theme.spacing.sm }} />}
+            contentContainerStyle={{
+  paddingHorizontal: theme.spacing.lg,
+  paddingTop: theme.spacing.sm,
+  paddingBottom: theme.spacing.lg,
+}}
             style={{ flexGrow: 0 }}
             keyboardShouldPersistTaps="handled"
           />
 
-          {/* Footer (optional buttons) */}
+          {/* Footer */}
           {footer ? (
             <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.sm }}>
               {footer}
@@ -289,13 +316,11 @@ export default function SelectModal({
 const styles = (t) =>
   StyleSheet.create({
     backdrop: { ...StyleSheet.absoluteFillObject },
-    // Был center, теперь у нижнего края
     bottomWrap: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: "flex-end",
       alignItems: "center",
     },
-    // Окно с закруглением всех углов
     cardWrap: {
       width: "100%",
       borderRadius: t.radii.xl,
@@ -303,7 +328,6 @@ const styles = (t) =>
       overflow: "hidden",
       ...(Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android),
     },
-    // Увеличенная зона для удобного захвата жеста
     handleHit: {
       alignItems: "center",
       paddingVertical: t.spacing.md,
@@ -319,26 +343,23 @@ const styles = (t) =>
     closeBtn: { position: "absolute", right: 8, top: 6, padding: 8, borderRadius: 16 },
     separator: { height: 1, opacity: 0.6, marginHorizontal: t.spacing.lg },
     item: {
-      minHeight: 52,
-      paddingHorizontal: t.spacing.lg,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-    },
+  minHeight: 52,
+  paddingHorizontal: t.spacing.lg,
+  paddingVertical: 10,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  borderWidth: 1,
+  borderColor: t.colors.border,
+  backgroundColor: t.colors.surface,
+  borderRadius: 12,
+},
     itemLeft: { flexDirection: "row", alignItems: "center", flex: 1, paddingRight: 8 },
     itemTitle: { fontSize: t.typography.sizes.md, fontWeight: "600" },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
     itemRight: { marginLeft: 8, alignSelf: "center" },
   });
 
-//
-// Additional modal utilities and components
-//
-
-/*
- * Utility to apply alpha transparency to a color string. Supports hex and rgb formats.
- * This helper replicates the same logic used in edit.jsx to fade theme colors.
- */
 function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
@@ -348,17 +369,12 @@ function withAlpha(color, a) {
         .padStart(2, '0');
       return color + alpha;
     }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    const rgb = color.match(/^rgb\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$/i);
     if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
   }
   return `rgba(0,0,0,${a})`;
 }
 
-/*
- * Base styles generator for bottom‑sheet style modals. It mirrors the design
- * used in the existing SelectModal component: rounded corners, a drag handle,
- * consistent spacing and optional shadows depending on the platform.
- */
 const baseSheetStyles = (t) =>
   StyleSheet.create({
     backdrop: { ...StyleSheet.absoluteFillObject },
@@ -375,7 +391,7 @@ const baseSheetStyles = (t) =>
       ...(Platform.OS === 'ios' ? t.shadows.card.ios : t.shadows.card.android),
     },
     handleHit: { alignItems: 'center', paddingVertical: t.spacing.md },
-    handle: { width: 48, height: 5, borderRadius: 3 },
+    handle: { width: 40, height: 5, borderRadius: 3 },
     header: {
       minHeight: 44,
       paddingHorizontal: t.spacing.lg,
@@ -386,14 +402,8 @@ const baseSheetStyles = (t) =>
     closeBtn: { position: 'absolute', right: 8, top: 6, padding: 8, borderRadius: 16 },
   });
 
-/*
- * A reusable bottom‑sheet modal component. It exposes a header with a title,
- * optional drag handle, a content area for arbitrary children and an optional
- * footer slot for action buttons. Tapping the backdrop or dragging the sheet
- * down will close it unless explicitly disabled via props. Animations use
- * react‑native‑reanimated for smooth appearance and dismissal.
- */
-export function BaseModal({
+export const BaseModal = React.forwardRef(function BaseModal(
+{
   visible,
   onClose,
   title = '',
@@ -403,11 +413,15 @@ export function BaseModal({
   showHandle = true,
   disableBackdropClose = false,
   disablePanClose = false,
-}) {
+}, ref) {
+  const modalRef = React.useRef(null);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => baseSheetStyles(theme), [theme]);
-  const screenH = Dimensions.get('window').height;
+  // Local RN Modal visibility to prevent unmount-while-visible
+  const [rnVisible, setRnVisible] = useState(false);
+  const [modalKey, setModalKey] = useState(0);
+const screenH = Dimensions.get('window').height;
   // Limit the sheet height to leave breathing room above
   const sheetMaxH = Math.max(
     220,
@@ -415,25 +429,26 @@ export function BaseModal({
   );
   const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
 
-  // Animation values for opacity and translationY
-  const op = useSharedValue(0);
+   const op = useSharedValue(0);
   const ty = useSharedValue(24);
   const sc = useSharedValue(1);
 
-  // Open animation: fade in + slide up
   const open = () => {
-    op.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
+    if (!rnVisible) setRnVisible(true);op.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
     ty.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
   };
 
-  // Close animation: slide down then invoke onClose via runOnJS
-  const close = () => {
+   const close = () => {
     const offY = Math.max(260, sheetMaxH * 0.9);
-    ty.value = withTiming(offY, { duration: 200, easing: Easing.in(Easing.cubic) }, () => {
-      if (typeof onClose === 'function') runOnJS(onClose)();
-    });
+    ty.value = withTiming(offY, { duration: 200, easing: Easing.in(Easing.cubic) });
     op.value = withTiming(0, { duration: 220, easing: Easing.in(Easing.cubic) });
+    
+    setTimeout(() => {
+      setRnVisible(false);
+      if (typeof onClose === 'function') onClose();
+    }, 250);
   };
+useImperativeHandle(ref, () => ({ close }));
 
   // Animated styles
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
@@ -471,15 +486,19 @@ export function BaseModal({
   ).current;
 
   // Lifecycle: when visible changes, reset animations and open
-  useEffect(() => {
-    if (visible) {
-      op.value = 0;
-      ty.value = 24;
-      sc.value = 1;
-      open();
+useEffect(() => {
+  if (visible) {
+    op.value = 0;
+    ty.value = 24;
+    sc.value = 1;
+    open();
+  } else {
+    if (rnVisible) {
+      close();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [visible]);
 
   // On Android, adjust navigation bar behaviour to avoid overlay issues
   useEffect(() => {
@@ -498,24 +517,34 @@ export function BaseModal({
       } catch {}
     })();
   }, [visible, theme.mode]);
+  // Unmount fully when closed to avoid ghost touch blocker on Android
+if (!visible && !rnVisible) {
+  return null;
+}
 
   return (
     <Modal
-      visible={!!visible}
+      key={modalKey}
+      visible={!!rnVisible}
       transparent
       presentationStyle="overFullScreen"
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={close}
+      onDismiss={() => {
+  setRnVisible(false);
+  try { onClose?.(); } catch (_) {}
+}}
     >
       {/* Backdrop */}
       <Pressable
-        style={s.backdrop}
-        onPress={() => {
-          if (!disableBackdropClose) close();
-        }}
-      >
+  style={s.backdrop}
+  onPress={() => {
+    if (!disableBackdropClose) close();
+  }}
+  pointerEvents={rnVisible ? "auto" : "none"}
+>
         <Animated.View
           style={[StyleSheet.absoluteFill, aBackdrop, { backgroundColor: overlayColor }]}
         />
@@ -553,7 +582,7 @@ export function BaseModal({
               hitSlop={10}
               onPress={close}
               style={s.closeBtn}
-              accessibilityLabel="Закрыть"
+              accessibilityLabel={T('btn_close')}
             >
               <Feather name="x" size={20} color={theme.colors.textSecondary} />
             </Pressable>
@@ -577,19 +606,15 @@ export function BaseModal({
     </Modal>
   );
 }
+);
 
-/*
- * ConfirmModal displays a title, a message and two buttons: one for confirming
- * the action and one for cancelling/closing the modal. The confirm button
- * supports primary or destructive styling via the `confirmVariant` prop. The
- * loading flag allows caller to change the text while performing async work.
- */
+
 export function ConfirmModal({
   visible,
   title,
   message,
-  confirmLabel = 'OK',
-  cancelLabel = 'Отмена',
+  confirmLabel = T('btn_ok'),
+  cancelLabel = T('btn_cancel'),
   confirmVariant = 'primary',
   loading = false,
   onConfirm,
@@ -617,12 +642,15 @@ export function ConfirmModal({
       <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{cancelLabel}</Text>
     </Pressable>
   );
-  // Confirm button delegates styling to UIButton for consistency
-  const confirmButton = (
+   const confirmButton = (
     <UIButton
       variant={confirmVariant}
       size="md"
-      onPress={onConfirm}
+      onPress={() => {
+        try { onClose?.(); } finally {
+          setTimeout(() => { try { onConfirm?.(); } catch(_) {} }, 360);
+        }
+      }}
       title={loading ? confirmLabel : confirmLabel}
     />
   );
@@ -649,12 +677,7 @@ export function ConfirmModal({
   );
 }
 
-/*
- * AlertModal is a simplified variant of ConfirmModal with a single primary
- * acknowledgment button. Use it for informational messages that require only
- * closing the modal.
- */
-export function AlertModal({ visible, title, message, buttonLabel = 'Ок', onClose }) {
+export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'), onClose }) {
   const { theme } = useTheme();
   const footer = (
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
@@ -674,98 +697,6 @@ export function AlertModal({ visible, title, message, buttonLabel = 'Ок', onCl
           {message}
         </Text>
       </View>
-    </BaseModal>
-  );
-}
-
-/*
- * ActionSheetModal presents a list of actions and a cancel button. Each action
- * item can specify its visual variant: primary, secondary or destructive. When
- * an action is tapped the sheet closes and the action callback is invoked.
- */
-export function ActionSheetModal({
-  visible,
-  title,
-  actions = [],
-  cancelLabel = 'Отмена',
-  onClose,
-}) {
-  const { theme } = useTheme();
-  const handleActionPress = (act) => {
-    if (onClose) onClose();
-    act.onPress?.();
-  };
-  // Render each action using appropriate styling; fallback to primary
-  const content = (
-    <View style={{ gap: theme.spacing.sm }}>
-      {actions.map((act, idx) => {
-        const variant = act.variant || 'primary';
-        if (variant === 'primary' || variant === 'destructive') {
-          return (
-            <UIButton
-              key={idx}
-              variant={variant}
-              size="md"
-              onPress={() => handleActionPress(act)}
-              title={act.label}
-            />
-          );
-        }
-        // Secondary: border and transparent background
-        return (
-          <Pressable
-            key={idx}
-            onPress={() => handleActionPress(act)}
-            style={({ pressed }) => [
-              {
-                paddingVertical: 12,
-                paddingHorizontal: 16,
-                borderRadius: 10,
-                alignItems: 'center',
-                borderWidth: 1,
-                borderColor: theme.colors.border,
-                backgroundColor: 'transparent',
-              },
-              pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-            ]}
-          >
-            <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{act.label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-  const footer = (
-    <View style={{ flexDirection: 'row', justifyContent: 'center' }}>
-      <Pressable
-        onPress={onClose}
-        style={({ pressed }) => [
-          {
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-            borderRadius: 10,
-            alignItems: 'center',
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            backgroundColor: 'transparent',
-            flex: 1,
-          },
-          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-        ]}
-      >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{cancelLabel}</Text>
-      </Pressable>
-    </View>
-  );
-  return (
-    <BaseModal
-      visible={visible}
-      onClose={onClose}
-      title={title}
-      maxHeightRatio={0.6}
-      footer={footer}
-    >
-      {content}
     </BaseModal>
   );
 }
@@ -872,244 +803,6 @@ function Wheel({ data, index, onIndexChange, width, enabled = true, activeColor,
 }
 
 /*
- * DatePickerModal displays three wheels for selecting day, month and year. A
- * toggle lets the user omit the year entirely. When the user confirms the
- * selection the onApply callback receives an object with day, month (1‑indexed)
- * and year (or null if omitted). The header automatically updates to show
- * the selected date in a short Russian format.
- */
-export function DatePickerModal({
-  visible,
-  initialDate = null,
-  onApply,
-  onClose,
-}) {
-  const { theme } = useTheme();
-  // Local state for the selected indices and whether to include the year
-  const [withYear, setWithYear] = useState(true);
-  const [dayIdx, setDayIdx] = useState(0);
-  const [monthIdx, setMonthIdx] = useState(0);
-  const [yearIdx, setYearIdx] = useState(0);
-
-  // Helper functions to generate ranges and compute days per month
-  const range = (a, b) => {
-    const arr = [];
-    for (let i = a; i <= b; i++) arr.push(i);
-    return arr;
-  };
-  const daysInMonth = (month, yearNullable) => {
-    if (month === 1 && yearNullable == null) return 29;
-    const y = yearNullable ?? 2024;
-    return new Date(y, month + 1, 0).getDate();
-  };
-  // Month abbreviations in Russian (nominative)
-  const MONTHS_ABBR = [
-    'янв.',
-    'февр.',
-    'март',
-    'апр.',
-    'май',
-    'июн.',
-    'июл.',
-    'авг.',
-    'сент.',
-    'окт.',
-    'нояб.',
-    'дек.',
-  ];
-  const MONTHS_GEN = [
-    'января',
-    'февраля',
-    'марта',
-    'апреля',
-    'мая',
-    'июня',
-    'июля',
-    'августа',
-    'сентября',
-    'октября',
-    'ноября',
-    'декабря',
-  ];
-  // Build the years list from 1900 to the current year, descending
-  const years = useMemo(() => {
-    const nowY = new Date().getFullYear();
-    return range(1900, nowY).reverse();
-  }, []);
-  // Recompute days when month/year selection changes
-  const days = useMemo(
-    () => range(1, daysInMonth(monthIdx, withYear ? years[yearIdx] : null)),
-    [monthIdx, yearIdx, withYear, years],
-  );
-  // When the picker becomes visible, initialize indices based on initialDate or current date
-  useEffect(() => {
-    if (visible) {
-      const base = initialDate instanceof Date
-        ? initialDate
-        : initialDate
-        ? new Date(initialDate)
-        : new Date();
-      const y = base.getFullYear();
-      const m = base.getMonth();
-      const d = base.getDate();
-      const yIndex = years.indexOf(y);
-      setYearIdx(yIndex >= 0 ? yIndex : 0);
-      setMonthIdx(m);
-      // default withYear to true if initialDate provided, false otherwise
-      setWithYear(initialDate != null);
-      const maxD = daysInMonth(m, years[yIndex >= 0 ? yIndex : 0]);
-      setDayIdx(Math.max(0, Math.min(d - 1, maxD - 1)));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, initialDate, years]);
-  // Compute a nicely formatted header: e.g. "10 марта 1990" or "10 марта" if year omitted
-  const headerTitle = useMemo(() => {
-    const d = (dayIdx + 1).toString();
-    const m = MONTHS_GEN[monthIdx] || '';
-    if (!withYear) return `${d} ${m}`;
-    return `${d} ${m} ${years[yearIdx]}`;
-  }, [dayIdx, monthIdx, withYear, yearIdx, years]);
-  // Width of each wheel based on the dialog width; match edit.jsx calculation
-  const SCREEN_W = Dimensions.get('window').width;
-  const DIALOG_W = Math.min(SCREEN_W * 0.85, 360);
-  const WHEEL_W = (DIALOG_W - 32) / 3;
-
-  // Handler when user confirms selection
-  const handleApply = () => {
-    const day = dayIdx + 1;
-    const month = monthIdx + 1;
-    const year = withYear ? years[yearIdx] : null;
-    onApply?.({ day, month, year });
-    onClose?.();
-  };
-
-  // Footer with Cancel and OK buttons
-  const footer = (
-    <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-      <Pressable
-        onPress={onClose}
-        style={({ pressed }) => [
-          {
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-            borderRadius: 10,
-            alignItems: 'center',
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            backgroundColor: 'transparent',
-            flex: 1,
-          },
-          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-        ]}
-      >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>Отмена</Text>
-      </Pressable>
-      <UIButton variant="primary" size="md" onPress={handleApply} title="ОК" />
-    </View>
-  );
-
-  // Styles specific to picker (selection lines and shading)
-  const pickerStyles = {
-    wheelsRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 10,
-      height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP,
-    },
-    selectionLines: {
-      position: 'absolute',
-      left: 10,
-      right: 10,
-      top: (ITEM_HEIGHT_DP * (VISIBLE_COUNT_DP - 1)) / 2,
-      height: ITEM_HEIGHT_DP,
-      borderTopWidth: 1,
-      borderBottomWidth: 1,
-      borderColor: theme.colors.border,
-    },
-    dimTop: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      top: 0,
-      height: ITEM_HEIGHT_DP,
-      backgroundColor: withAlpha(theme.colors.text, 0.06),
-      borderTopLeftRadius: 16,
-      borderTopRightRadius: 16,
-    },
-    dimBottom: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      height: ITEM_HEIGHT_DP,
-      backgroundColor: withAlpha(theme.colors.text, 0.06),
-      borderBottomLeftRadius: 16,
-      borderBottomRightRadius: 16,
-    },
-    yearSwitchRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: 4,
-      marginBottom: theme.spacing.sm,
-    },
-    yearSwitchLabel: { color: theme.colors.text, fontSize: 14 },
-  };
-
-  return (
-    <BaseModal
-      visible={visible}
-      onClose={onClose}
-      title={headerTitle}
-      maxHeightRatio={0.65}
-      footer={footer}
-    >
-      <View style={{ position: 'relative' }}>
-        <View style={pickerStyles.wheelsRow}>
-          <Wheel
-            data={days.map(String)}
-            activeColor={theme.colors.primary}
-            inactiveColor={theme.colors.textSecondary}
-            index={dayIdx}
-            onIndexChange={setDayIdx}
-            width={WHEEL_W}
-          />
-          <Wheel
-            data={MONTHS_ABBR}
-            activeColor={theme.colors.primary}
-            inactiveColor={theme.colors.textSecondary}
-            index={monthIdx}
-            onIndexChange={(i) => {
-              setMonthIdx(i);
-              setDayIdx((d) => Math.min(d, daysInMonth(i, withYear ? years[yearIdx] : null) - 1));
-            }}
-            width={WHEEL_W}
-          />
-          <Wheel
-            data={years.map(String)}
-            activeColor={theme.colors.primary}
-            inactiveColor={theme.colors.textSecondary}
-            index={yearIdx}
-            onIndexChange={setYearIdx}
-            width={WHEEL_W}
-            enabled={withYear}
-          />
-        </View>
-        {/* Overlay lines and shading for selection indication */}
-        <View pointerEvents="none" style={pickerStyles.selectionLines} />
-        <View pointerEvents="none" style={pickerStyles.dimTop} />
-        <View pointerEvents="none" style={pickerStyles.dimBottom} />
-      </View>
-      {/* Toggle for including year */}
-      <View style={pickerStyles.yearSwitchRow}>
-        <Text style={pickerStyles.yearSwitchLabel}>Указать год</Text>
-        <Switch value={withYear} onValueChange={setWithYear} />
-      </View>
-    </BaseModal>
-  );
-}
-
-/*
  * SuspendModal handles the workflow for suspending a user. It asks whether to
  * keep existing orders or reassign them to another employee. When reassign is
  * selected, a successor can be chosen via a SelectField. Validation errors
@@ -1191,13 +884,13 @@ export function SuspendModal({
           pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
         ]}
       >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>Отмена</Text>
+        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{T('btn_cancel')}</Text>
       </Pressable>
       <UIButton
         variant="primary"
         size="md"
         onPress={onConfirm}
-        title={saving ? 'Применяю…' : 'Отстранить'}
+        title={saving ? T('btn_applying') : T('btn_suspend')}
       />
     </View>
   );
@@ -1205,24 +898,22 @@ export function SuspendModal({
     <BaseModal
       visible={visible}
       onClose={onClose}
-      title="Отстранить сотрудника?"
+      title={T('dlg_suspend_title')}
       maxHeightRatio={0.7}
       footer={footer}
     >
       <View style={{ marginBottom: theme.spacing.md }}>
         <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
-          Выберите, что сделать с его заявками.
+          {T('dlg_suspend_message')}
         </Text>
       </View>
-      <View style={{ gap: 10 }}>{radioOption('keep', 'Оставить как есть')}{radioOption('reassign', 'Переназначить на сотрудника')}</View>
+      <View style={{ gap: 10 }}>{radioOption('keep', T('dlg_suspend_keep'))}{radioOption('reassign', T('dlg_suspend_reassign'))}</View>
       {ordersAction === 'reassign' ? (
         <View style={{ marginTop: 8 }}>
-          <Text style={{ fontWeight: '500', marginBottom: 4, color: theme.colors.textSecondary }}>
-            Правопреемник
-          </Text>
+          <Text style={{ fontWeight: '500', marginBottom: 4, color: theme.colors.textSecondary }}>{T('field_successor')}</Text>
           <SelectField
-            label="Правопреемник"
-            value={successor?.name || 'Выберите сотрудника'}
+            label={T('field_successor')}
+            value={successor?.name || T('placeholder_pick_employee')}
             onPress={() => {
               openSuccessorPicker?.();
             }}
@@ -1275,13 +966,13 @@ export function DeleteEmployeeModal({
           pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
         ]}
       >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>Отмена</Text>
+        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{T('btn_cancel')}</Text>
       </Pressable>
       <UIButton
         variant="primary"
         size="md"
         onPress={onConfirm}
-        title={saving ? 'Удаляю…' : 'Удалить'}
+        title={saving ? T('btn_deleting') : T('btn_delete')}
       />
     </View>
   );
@@ -1289,7 +980,7 @@ export function DeleteEmployeeModal({
     <BaseModal
       visible={visible}
       onClose={onClose}
-      title="Удалить сотрудника?"
+      title={T('dlg_delete_title')}
       maxHeightRatio={0.7}
       footer={footer}
     >
@@ -1298,15 +989,13 @@ export function DeleteEmployeeModal({
           Удалить сотрудника?
         </Text>
         <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
-          Необходимо выбрать правопреемника, чтобы переназначить все его заявки.
+          {T('dlg_delete_msg')}
         </Text>
       </View>
-      <Text style={{ fontWeight: '500', marginTop: 8, marginBottom: 4, color: theme.colors.textSecondary }}>
-        Правопреемник *
-      </Text>
+      <Text style={{ fontWeight: '500', marginTop: 8, marginBottom: 4, color: theme.colors.textSecondary }}>{T('field_successor')} *</Text>
       <SelectField
-        label="Правопреемник"
-        value={successor?.name || 'Выберите сотрудника'}
+        label={T('field_successor')}
+        value={successor?.name || T('placeholder_pick_employee')}
         onPress={() => {
           openSuccessorPicker?.();
         }}
@@ -1328,6 +1017,65 @@ export function DeleteEmployeeModal({
  * pick from the library and optionally delete the existing avatar. A cancel
  * button is included automatically.
  */
+
+/*
+ * ActionSheetModal — простой Action Sheet на базе BaseModal.
+ * Пропсы:
+ *  - visible, title, actions: [{ label, onPress, variant: 'primary'|'secondary'|'destructive' }]
+ *  - cancelLabel, onClose
+ */
+export function ActionSheetModal({
+  visible,
+  title = '',
+  actions = [],
+  cancelLabel = T('btn_cancel'),
+  onClose,
+}) {
+  const { theme } = useTheme();
+  const handleAction = (fn) => {
+    try { onClose?.(); } finally {
+      // Даем анимации закрытия завершиться, затем вызываем колбэк
+      setTimeout(() => { try { fn?.(); } catch(_) {} }, 280);
+    }
+  };
+  return (
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      maxHeightRatio={0.5}
+    >
+      <View style={{ gap: 10, marginBottom: theme.spacing.sm }}>
+        {actions.map((a, idx) => (
+          <UIButton
+            key={idx}
+            variant={a.variant || 'secondary'}
+            size="md"
+            title={a.label}
+            onPress={() => handleAction(a.onPress)}
+          />
+        ))}
+      </View>
+      <Pressable
+        onPress={onClose}
+        style={({ pressed }) => [
+          {
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 10,
+            alignItems: 'center',
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            backgroundColor: 'transparent',
+          },
+          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
+        ]}
+      >
+        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{cancelLabel}</Text>
+      </Pressable>
+    </BaseModal>
+  );
+}
 export function AvatarSheetModal({
   visible,
   avatarUrl,
@@ -1337,18 +1085,18 @@ export function AvatarSheetModal({
   onClose,
 }) {
   const actions = [
-    { label: 'Сделать фото', onPress: onTakePhoto, variant: 'primary' },
-    { label: 'Выбрать из галереи', onPress: onPickFromLibrary, variant: 'secondary' },
+    { label: T('action_take_photo'), onPress: onTakePhoto, variant: 'primary' },
+    { label: T('action_pick_photo'), onPress: onPickFromLibrary, variant: 'secondary' },
   ];
   if (avatarUrl) {
-    actions.push({ label: 'Удалить фото', onPress: onDeletePhoto, variant: 'destructive' });
+    actions.push({ label: T('action_delete_photo'), onPress: onDeletePhoto, variant: 'destructive' });
   }
   return (
     <ActionSheetModal
       visible={visible}
-      title="Фото профиля"
+      title={T('title_profile_photo')}
       actions={actions}
-      cancelLabel="Отмена"
+      cancelLabel={T('btn_cancel')}
       onClose={onClose}
     />
   );
@@ -1370,7 +1118,7 @@ export function DepartmentSelectModal({
   // Build items array with a null option first
   const items = useMemo(() => {
     const list = [];
-    list.push({ id: null, label: 'Без отдела' });
+    list.push({ id: null, label: T('placeholder_department') });
     (departments || []).forEach((d) => {
       list.push({ id: d.id, label: d.name });
     });
@@ -1388,7 +1136,9 @@ export function DepartmentSelectModal({
           {
             flexDirection: 'row',
             alignItems: 'center',
-            padding: 12,
+            minHeight: 52,
+            paddingVertical: 10,
+            paddingHorizontal: 16,
             borderRadius: 12,
             borderWidth: 1,
             borderColor: theme.colors.border,
@@ -1402,20 +1152,20 @@ export function DepartmentSelectModal({
         ]}
       >
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: theme.colors.text }}>{item.label}</Text>
+          <Text style={{ fontSize: 16, color: theme.colors.text }}>{item.label}</Text>
         </View>
-        <AntDesign
-          name={selected ? 'checkcircle' : 'checkcircleo'}
-          size={20}
-          color={selected ? theme.colors.primary : theme.colors.border}
-        />
+        {selected ? (
+  <Feather name="check-circle" size={20} color={theme.colors.primary} />
+) : (
+  <Feather name="circle" size={20} color={theme.colors.border} />
+)}
       </Pressable>
     );
   };
   return (
     <SelectModal
       visible={visible}
-      title="Выбор отдела"
+      title={T('picker_department_title')}
       items={items}
       onSelect={(it) => {
         onSelect?.(it.id);
@@ -1458,7 +1208,9 @@ export function RoleSelectModal({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 12,
-            padding: 12,
+            minHeight: 52,
+            paddingVertical: 10,
+            paddingHorizontal: 16,
             borderRadius: 12,
             borderWidth: 1,
             borderColor: theme.colors.border,
@@ -1472,23 +1224,23 @@ export function RoleSelectModal({
         ]}
       >
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 16, fontWeight: '600', color: theme.colors.text }}>{item.label}</Text>
+          <Text style={{ fontSize: 16, color: theme.colors.text }}>{item.label}</Text>
           {item.subtitle ? (
             <Text style={{ fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 }}>{item.subtitle}</Text>
           ) : null}
         </View>
-        <AntDesign
-          name={selected ? 'checkcircle' : 'checkcircleo'}
-          size={20}
-          color={selected ? theme.colors.primary : theme.colors.border}
-        />
+        {selected ? (
+  <Feather name="check-circle" size={20} color={theme.colors.primary} />
+) : (
+  <Feather name="circle" size={20} color={theme.colors.border} />
+)}
       </Pressable>
     );
   };
   return (
     <SelectModal
       visible={visible}
-      title="Выбор роли"
+      title={T('picker_role_title')}
       items={items}
       onSelect={(it) => {
         onSelect?.(it.id);
@@ -1498,5 +1250,388 @@ export function RoleSelectModal({
       maxHeightRatio={0.8}
       renderItem={renderItem}
     />
+  );
+}
+
+/*
+ * SingleSelectModal — универсальный список с чек‑маркером.
+ * Пропсы: visible, title, options: [{id,label,subtitle,disabled}], selectedId, onSelect(id), onClose
+ */
+export function SingleSelectModal({ visible, title, options = [], selectedId, onSelect, onClose }) {
+  const { theme } = useTheme();
+  const renderItem = ({ item }) => {
+    const selected = String(selectedId) === String(item.id);
+    return (
+      <Pressable
+        onPress={() => onSelect?.(item.id)}
+        disabled={!!item.disabled}
+        style={({ pressed }) => [
+          {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            minHeight: 52,
+            paddingVertical: 10,
+            paddingHorizontal: 16,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            backgroundColor: theme.colors.surface,
+            opacity: item.disabled ? 0.5 : 1,
+          },
+          selected && {
+            borderColor: theme.colors.primary,
+            backgroundColor: withAlpha(theme.colors.primary, 0.12),
+          },
+          pressed && { opacity: 0.85 },
+        ]}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 16, color: theme.colors.text }}>{item.label}</Text>
+          {item.subtitle ? (
+            <Text style={{ fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 }}>{item.subtitle}</Text>
+          ) : null}
+        </View>
+        {selected ? (
+  <Feather name="check-circle" size={20} color={theme.colors.primary} />
+) : (
+  <Feather name="circle" size={20} color={theme.colors.border} />
+)}
+      </Pressable>
+    );
+  };
+  return (
+    <SelectModal
+      visible={visible}
+      title={title}
+      items={options}
+      onSelect={(it) => onSelect?.(it.id)}
+      onClose={onClose}
+      searchable={false}
+      maxHeightRatio={0.8}
+      renderItem={renderItem}
+    />
+  );
+}
+
+/*
+ * SwitchListModal — список переключателей в унифицированном стиле.
+ * Пропсы: visible, title, toggles: [{id,label,value,onChange,disabled}], footer, onClose
+ */
+export function SwitchListModal({ visible, title, toggles = [], footer, onClose }) {
+  const { theme } = useTheme();
+  return (
+    <BaseModal visible={visible} onClose={onClose} title={title} maxHeightRatio={0.8} footer={footer}>
+      <View style={{ gap: 8, marginTop: theme.spacing.sm, marginBottom: theme.spacing.sm }}>
+        {toggles.map((t) => (
+          <View
+            key={String(t.id)}
+            style={{
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  minHeight: 52,
+  paddingVertical: 1,
+  paddingHorizontal: 12,
+  borderRadius: 10,
+  borderWidth: 1,
+  borderColor: theme.colors.border,
+  backgroundColor: theme.colors.surface,
+  opacity: t.disabled ? 0.5 : 1,
+}}
+          >
+            <Text style={{ fontSize: 16, color: theme.colors.text, flex: 1, paddingRight: 8 }}>
+              {t.label}
+            </Text>
+            <Switch
+              value={!!t.value}
+              onValueChange={t.onChange}
+              disabled={!!t.disabled}
+            />
+          </View>
+        ))}
+      </View>
+    </BaseModal>
+  );
+}
+
+
+/*
+ * DateTimeModal — универсальный выбор даты/времени.
+ * Режимы: mode="date" | "time" | "datetime"
+ * Пропсы:
+ *  - visible, onClose, onApply(Date)
+ *  - initial: Date | string | number (по умолчанию — сейчас)
+ *  - mode: 'date' | 'time' | 'datetime'
+ *  - minuteStep: 1..30 (по умолчанию 5)
+ *
+ * Ничего из старых модалок не трогаем — это новый самостоятельный компонент.
+ * Стилистика и поведение соответствуют остальным модалкам (BaseModal).
+ */
+export function DateTimeModal({
+  visible,
+  onClose,
+  onApply,
+  initial = null,
+  mode = 'datetime',
+  minuteStep = 5,
+  allowOmitYear = false,
+  omitYearDefault = true,
+  omitYearLabel = T('datetime_omit_year'),
+}) {
+  const modalRef = React.useRef(null);
+
+  const { theme } = useTheme();
+  const [contentW, setContentW] = React.useState(0);
+
+  // --- helpers ---
+  const clampStep = (n, step) => Math.max(1, Math.min(30, Math.floor(step || 5)));
+  const step = clampStep(minuteStep, minuteStep);
+  const range = (a,b) => { const r=[]; for(let i=a;i<=b;i++) r.push(i); return r; };
+  const pad2 = (n) => String(n).padStart(2,'0');
+
+  const parseInitial = (v) => {
+    if (v instanceof Date && !isNaN(v)) return new Date(v.getTime());
+    if (typeof v === 'string' || typeof v === 'number') {
+      const d = new Date(v);
+      if (!isNaN(d)) return d;
+    }
+    return new Date();
+  };
+  const baseDate = parseInitial(initial);
+
+  // --- state for DATE ---
+  const MONTHS_ABBR = ['янв.','февр.','март','апр.','май','июн.','июл.','авг.','сент.','окт.','нояб.','дек.'];
+  const MONTHS_GEN  = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  const daysInMonth = (m, yNullable) => {
+    if (m === 1 && (yNullable == null)) return 29;
+    const y = yNullable ?? baseDate.getFullYear();
+    return new Date(y, m + 1, 0).getDate();
+  };
+  const years = React.useMemo(() => { const y = new Date().getFullYear(); return range(1900, y+10); }, []);
+  const [dYearIdx, setDYearIdx] = React.useState(0);
+  const [dMonthIdx, setDMonthIdx] = React.useState(0);
+  const [dDayIdx, setDDayIdx] = React.useState(0);
+  // возможность отключить год (для ДР)
+  const [withYear, setWithYear] = React.useState(omitYearDefault);
+  const days = React.useMemo(() => range(1, daysInMonth(dMonthIdx, withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null)), [dMonthIdx, dYearIdx, years, withYear]);
+
+  // --- state for TIME ---
+  const minutesData = React.useMemo(() => range(0, 59).filter(m => m % step === 0), [step]);
+  const [tHourIdx, setTHourIdx] = React.useState(0);
+  const [tMinuteIdx, setTMinuteIdx] = React.useState(0);
+
+  // tab for datetime mode
+  const [tab, setTab] = React.useState('date'); // 'date' | 'time'
+
+  // init on open
+  React.useEffect(() => {
+    if (!visible) return;
+    const y = years.indexOf(baseDate.getFullYear()); setDYearIdx(y >= 0 ? y : 0);
+    setWithYear(allowOmitYear ? omitYearDefault : true);
+    setDMonthIdx(baseDate.getMonth());
+    const maxD = daysInMonth(baseDate.getMonth(), baseDate.getFullYear());
+    setDDayIdx(Math.max(0, Math.min(baseDate.getDate()-1, maxD-1)));
+    setTHourIdx(baseDate.getHours());
+    const mi = Math.round(baseDate.getMinutes() / step);
+    const minuteVal = Math.min(59, mi*step);
+    const mIdx = minutesData.indexOf(minuteVal);
+    setTMinuteIdx(mIdx >= 0 ? mIdx : 0);
+    setTab('date');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  // header text
+  const header = React.useMemo(() => {
+    const d = (dDayIdx+1), mName = MONTHS_GEN[dMonthIdx] || '', y = years[dYearIdx] || baseDate.getFullYear();
+    const hh = pad2(tHourIdx), mm = pad2(minutesData[tMinuteIdx] ?? 0);
+    if (mode === 'date') return withYear ? `${d} ${mName} ${y}` : `${d} ${mName}`;
+    if (mode === 'time') return `${hh}:${mm}`;
+    // datetime
+    return withYear ? `${d} ${mName} ${y}, ${hh}:${mm}` : `${d} ${mName}, ${hh}:${mm}`;
+  }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData]);
+
+  // calc wheel width
+  const innerGap = 8;
+  const W3 = Math.max(64, contentW > 0 ? (contentW - innerGap * 2) / 3 : 0);
+  const W2 = Math.max(64, contentW > 0 ? (contentW - innerGap) / 2 : 0);
+
+  // apply
+  const handleApply = () => {
+    const year  = years[dYearIdx] || baseDate.getFullYear();
+    const month = dMonthIdx; // 0-index
+    const day   = dDayIdx + 1;
+    const hour  = tHourIdx;
+    const min   = minutesData[tMinuteIdx] ?? 0;
+    let out;
+    if (mode === 'date') out = new Date(year, month, day, 0, 0, 0, 0);
+    else if (mode === 'time') {
+      const now = new Date();
+      out = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, min, 0, 0);
+    } else {
+      out = new Date(year, month, day, hour, min, 0, 0);
+    }
+    onApply?.(out, { withYear, day: dDayIdx + 1, month: dMonthIdx + 1, year: withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null });
+    onClose?.();
+  };
+
+  // footer
+  const footer = (
+    <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+      <Pressable
+        onPress={() => modalRef.current?.close()}
+        style={({ pressed }) => [
+          {
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 10,
+            alignItems: 'center',
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            backgroundColor: 'transparent',
+            flex: 1,
+          },
+          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
+        ]}
+      >
+        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{T('btn_cancel')}</Text>
+      </Pressable>
+      <UIButton variant="primary" size="md" onPress={handleApply} title={T('btn_ok')} />
+    </View>
+  );
+
+  // segmented for datetime
+  const Segmented = () => (
+    <View style={{ flexDirection: 'row', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 12, overflow: 'hidden', marginBottom: theme.spacing.sm }}>
+      {['date','time'].map((k) => {
+        const active = tab === k;
+        return (
+          <Pressable
+            key={k}
+            onPress={() => setTab(k)}
+            style={({ pressed }) => [
+              { flex: 1, paddingVertical: 8, alignItems: 'center', backgroundColor: active ? withAlpha(theme.colors.primary, 0.12) : theme.colors.surface },
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Text style={{ color: active ? theme.colors.primary : theme.colors.textSecondary, fontWeight: active ? '700' : '500' }}>
+              {k === 'date' ? T('datetime_tab_date') : T('datetime_tab_time')}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+
+  return (
+    <BaseModal ref={modalRef} visible={visible} onClose={onClose} title={header} maxHeightRatio={0.65} footer={footer}>
+      <View onLayout={(e)=>setContentW(e.nativeEvent.layout.width)}>
+        {mode === 'datetime' ? <Segmented /> : null}
+
+        {(mode === 'date' || (mode === 'datetime' && tab === 'date')) ? (
+          <>
+
+          <View style={{ position:'relative', marginBottom: 10 }}>
+            <View style={{ flexDirection:'row', justifyContent:'space-between', gap: innerGap, height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP }}>
+              <Wheel
+                data={range(1, daysInMonth(dMonthIdx, withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null)).map(String)}
+                activeColor={theme.colors.primary}
+                inactiveColor={theme.colors.textSecondary}
+                index={dDayIdx}
+                onIndexChange={setDDayIdx}
+                width={W3}
+              />
+              <Wheel
+                data={MONTHS_ABBR}
+                activeColor={theme.colors.primary}
+                inactiveColor={theme.colors.textSecondary}
+                index={dMonthIdx}
+                onIndexChange={(i) => {
+                  setDMonthIdx(i);
+                  setDDayIdx((d) => Math.min(d, daysInMonth(i, withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null) - 1));
+                }}
+                width={W3}
+              />
+              <Wheel
+                data={years.map(String)}
+                activeColor={theme.colors.primary}
+                inactiveColor={theme.colors.textSecondary}
+                index={dYearIdx}
+                onIndexChange={setDYearIdx}
+                width={W3}
+                enabled={withYear}
+              />
+            </View>
+            <View pointerEvents="none" style={{ position:'absolute', left:0, right:0, top:(ITEM_HEIGHT_DP*(VISIBLE_COUNT_DP-1))/2, height:ITEM_HEIGHT_DP, backgroundColor: withAlpha(theme.colors.primary, 0.06), borderWidth:1, borderColor: withAlpha(theme.colors.primary, 0.22), borderRadius:12 }} />
+          </View>
+
+          {(allowOmitYear && (mode === 'date' || (mode === 'datetime' && tab === 'date'))) ? (
+            <View style={{
+              flexDirection:'row',
+              alignItems:'center',
+              justifyContent:'space-between',
+              marginTop: theme.spacing.sm,
+              paddingHorizontal: 4,
+              paddingLeft: 12,  // nudge text right for nicer alignment
+              paddingVertical: 6,
+            }}>
+              <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }}>
+                {omitYearLabel}
+              </Text>
+              <View style={{ width: 12 }} />
+              <Switch value={withYear} onValueChange={setWithYear} />
+            </View>
+          ) : null}
+
+        </>
+        ) : null}
+
+        {(mode === 'time' || (mode === 'datetime' && tab === 'time')) ? (
+          <>
+
+          <View style={{ position:'relative', marginBottom: 10 }}>
+            <View style={{ flexDirection:'row', justifyContent:'space-between', gap: innerGap, height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP }}>
+              <Wheel
+                data={range(0,23).map((n)=>pad2(n))}
+                activeColor={theme.colors.primary}
+                inactiveColor={theme.colors.textSecondary}
+                index={tHourIdx}
+                onIndexChange={setTHourIdx}
+                width={W2}
+              />
+              <Wheel
+                data={minutesData.map((n)=>pad2(n))}
+                activeColor={theme.colors.primary}
+                inactiveColor={theme.colors.textSecondary}
+                index={tMinuteIdx}
+                onIndexChange={setTMinuteIdx}
+                width={W2}
+              />
+            </View>
+            <View pointerEvents="none" style={{ position:'absolute', left:0, right:0, top:(ITEM_HEIGHT_DP*(VISIBLE_COUNT_DP-1))/2, height:ITEM_HEIGHT_DP, backgroundColor: withAlpha(theme.colors.primary, 0.06), borderWidth:1, borderColor: withAlpha(theme.colors.primary, 0.22), borderRadius:12 }} />
+          </View>
+
+          {(allowOmitYear && (mode === 'date' || (mode === 'datetime' && tab === 'date'))) ? (
+            <View style={{
+              flexDirection:'row',
+              alignItems:'center',
+              justifyContent:'space-between',
+              marginTop: theme.spacing.sm,
+              paddingHorizontal: 4,
+              paddingLeft: 12,  // nudge text right for nicer alignment
+              paddingVertical: 6,
+            }}>
+              <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }}>
+                {omitYearLabel}
+              </Text>
+              <View style={{ width: 12 }} />
+              <Switch value={withYear} onValueChange={setWithYear} />
+            </View>
+          ) : null}
+
+        </>
+          ) : null}
+      </View>
+    </BaseModal>
   );
 }

@@ -1,92 +1,113 @@
-import { AntDesign } from '@expo/vector-icons';
+import { AntDesign, Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter, useFocusEffect, useNavigation } from 'expo-router';
-import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {
-ActivityIndicator,
- 
- BackHandler,
- Dimensions,
- 
- FlatList,
- Platform,
- Pressable,
- ScrollView,
- StyleSheet,
- Switch,
- Text,
- View,
- Image } from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, BackHandler, Dimensions, FlatList, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PhoneInput from '../../../components/ui/PhoneInput';
-// Remove the old Dialog import; all modals now come from SelectModal.jsx
-// Pull in the default SelectModal plus the specialized modal variants we added
-import SelectModal, {
-  ConfirmModal,
-  AlertModal,
-  SuspendModal,
-  DeleteEmployeeModal,
-  AvatarSheetModal,
-  DepartmentSelectModal,
-  RoleSelectModal,
-  DatePickerModal,
-} from '../../../components/ui/SelectModal';
+import { isValidRu as isValidPhone, normalizeRu } from '../../../components/ui/phone';
+import SelectModal, { ConfirmModal, AlertModal, SuspendModal, DeleteEmployeeModal, AvatarSheetModal, DepartmentSelectModal, RoleSelectModal, DateTimeModal } from '../../../components/ui/SelectModal';
 import { supabase } from '../../../lib/supabase';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
-import TextField, { DateOfBirthField, SelectField } from '../../../components/ui/TextField';
+import IconButton from '../../../components/ui/IconButton';
+import Card from '../../../components/ui/Card';
+import TextField, { SelectField } from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { t as S } from '../../../src/i18n';
+import { TBL, STORAGE, FUNCTIONS as APP_FUNCTIONS, AVATAR } from '../../../lib/constants';
+import AppHeader from '../../../components/navigation/AppHeader';
+
+const TABLES = {
+  profiles: TBL.PROFILES || 'profiles',
+  orders: TBL.ORDERS || 'orders',
+  departments: TBL.DEPARTMENTS || 'departments',
+};
+
+const __EDIT_CFG = (() => {
+  try {
+    const mix = process.env.EXPO_PUBLIC_EDIT_CONFIG_JSON;
+    if (mix) { const o = JSON.parse(mix); if (o && typeof o === 'object') return o; }
+  } catch (_) {}
+  return {};
+})();
+const __EDIT_BUCKETS = (() => {
+  try {
+    const s = process.env.EXPO_PUBLIC_BUCKETS_JSON;
+    if (s) { const o = JSON.parse(s); if (o && typeof o === 'object') return o; }
+  } catch (_) {}
+  return __EDIT_CFG.buckets || {};
+})();
+const __EDIT_FUNCTIONS = (() => {
+  try {
+    const s = process.env.EXPO_PUBLIC_FUNCTIONS_JSON;
+    if (s) { const o = JSON.parse(s); if (o && typeof o === 'object') return o; }
+  } catch (_) {}
+  return __EDIT_CFG.functions || {};
+})();
+const __IS_PROD = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+const __pick = (val, devFallback) => (val != null ? val : (__IS_PROD ? null : devFallback));
+
+const BUCKETS = STORAGE;
+const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
+const AVA_MIME = AVATAR.MIME;
+
+
+const FUNCTIONS = APP_FUNCTIONS;
+
+const FN_GET_PROFILE = process.env.EXPO_PUBLIC_RPC_GET_PROFILE || (__EDIT_FUNCTIONS.getProfileWithEmail ?? 'admin_get_profile_with_email');
+
+const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
+
+
+import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
+
+try {
+  const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
+  if (fromEnv) ROLE_LABELS = { ...ROLE_LABELS, ...JSON.parse(fromEnv) };
+} catch {}
+
+let ROLE_DESCRIPTIONS = (globalThis?.APP_I18N?.role_descriptions) || {
+  [ROLE.DISPATCHER]: S('role_desc_dispatcher'),
+  [ROLE.WORKER]: S('role_desc_worker')
+};
+try {
+  const fromEnv = process.env.EXPO_PUBLIC_ROLE_DESCRIPTIONS_JSON;
+  if (fromEnv) ROLE_DESCRIPTIONS = { ...ROLE_DESCRIPTIONS, ...JSON.parse(fromEnv) };
+} catch {}
+
 function withAlpha(color, a) {
- if (typeof color === 'string') {
-  const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-  if (hex) {
-   const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
-   return color + alpha;
+  if (typeof color === 'string') {
+    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) {
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+      return color + alpha;
+    }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
   }
-  const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-  if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
- }
- return `rgba(0,0,0,${a})`;
+  return `rgba(0,0,0,${a})`;
 }
-// Legacy constants and helpers for the old date picker (Wheel). They remain here to avoid
-// runtime errors in the legacy Wheel component even though the new DatePickerModal is used.
-const ITEM_HEIGHT = 44;
-const VISIBLE_COUNT = 5;
-const SCREEN_W = Dimensions.get('window').width;
-const DIALOG_W = Math.min(SCREEN_W * 0.85, 360);
-const WHEEL_W = (DIALOG_W - 32) / 3;
-const MONTHS_GEN = [
- 'января',
- 'февраля',
- 'марта',
- 'апреля',
- 'мая',
- 'июня',
- 'июля',
- 'августа',
- 'сентября',
- 'октября',
- 'ноября',
- 'декабря',
-];
-const MONTHS_ABBR = [
- 'янв.',
- 'февр.',
- 'март',
- 'апр.',
- 'май',
- 'июн.',
- 'июл.',
- 'авг.',
- 'сент.',
- 'окт.',
- 'нояб.',
- 'дек.',
-];
+
+function formatDateRU(date, withYear = true) {
+  try {
+    const d = (date instanceof Date) ? date : new Date(date);
+    if (isNaN(d.getTime())) return '';
+    const opts = withYear
+      ? { day: 'numeric', month: 'long', year: 'numeric' }
+      : { day: 'numeric', month: 'long' };
+    let s = d.toLocaleDateString('ru-RU', opts);
+    s = s.replace(/\s*г\.?$/i, '');
+    return s.replace(/(\d+)\s+([А-ЯЁ][а-яё]+)/u, (m, day, month) => `${day} ${month.toLowerCase()}`);
+  } catch {
+    return '';
+  }
+}
 function daysInMonth(monthIdx, yearNullable) {
  if (monthIdx === 1 && yearNullable == null) return 29;
- const y = yearNullable ?? 2024;
+ const y = yearNullable ?? new Date().getFullYear();
  return new Date(y, monthIdx + 1, 0).getDate();
 }
 function range(a, b) {
@@ -119,136 +140,50 @@ function isValidEmailStrict(raw) {
  if (tld.length < 2 || tld.length> 24) return false;
  return true;
 }
-function Wheel({ data, index, onIndexChange, width, enabled = true, activeColor, inactiveColor }) {
- const { theme } = useTheme();
- const _activeColor = activeColor || theme.colors.primary;
- const listRef = useRef(null);
- const isSyncingRef = useRef(false);
- const [selIndex, setSelIndex] = useState(index ?? 0);
- useEffect(() => {
-  const next = Math.max(0, Math.min(data.length - 1, index ?? 0));
-  if (next !== selIndex) {
-   setSelIndex(next);
-   isSyncingRef.current = true;
-   listRef.current?.scrollToOffset({ offset: next * ITEM_HEIGHT, animated: false });
-   setTimeout(() => {
-    isSyncingRef.current = false;
-   }, 0);
-  }
- }, [index, data.length]);
- useEffect(() => {
-  if (selIndex> data.length - 1) {
-   const next = data.length - 1;
-   setSelIndex(next);
-   isSyncingRef.current = true;
-   listRef.current?.scrollToOffset({ offset: next * ITEM_HEIGHT, animated: false });
-   setTimeout(() => {
-    isSyncingRef.current = false;
-   }, 0);
-   onIndexChange?.(next);
-  }
- }, [data.length]);
- const snapOffsets = useMemo(() => data.map((_, i) => i * ITEM_HEIGHT), [data]);
- const onMomentumEnd = (e) => {
-  const y = e.nativeEvent.contentOffset.y;
-  const i = Math.round(y / ITEM_HEIGHT);
-  const clamped = Math.max(0, Math.min(data.length - 1, i));
-  const target = clamped * ITEM_HEIGHT;
-  if (!isSyncingRef.current && Math.abs(target - y)> 0.5) {
-   isSyncingRef.current = true;
-   listRef.current?.scrollToOffset({ offset: target, animated: false });
-   setTimeout(() => {
-    isSyncingRef.current = false;
-   }, 0);
-  }
-  if (clamped !== selIndex) {
-   setSelIndex(clamped);
-   onIndexChange?.(clamped);
-  }
- };
- return (
-  <FlatList
-   ref={listRef}
-   data={data}
-   keyExtractor={(_, i) => String(i)}
-   renderItem={({ item, index: i }) => (
-    <View style={[wheelStyles.item, !enabled && { opacity: 0.35 }]}>
-     <Text style={[wheelStyles.itemText, i === selIndex && [wheelStyles.itemTextActive, { color: _activeColor }]]}>
-      {item}
-     </Text>
-    </View>
-   )}
-   showsVerticalScrollIndicator={false}
-   getItemLayout={(_, i) => ({ length: ITEM_HEIGHT, offset: ITEM_HEIGHT * i, index: i })}
-   snapToOffsets={snapOffsets}
-   snapToAlignment="center"
-   decelerationRate={Platform.OS === 'ios' ? 0.995 : 0.985}
-   bounces={false}
-   overScrollMode="never"
-   onMomentumScrollEnd={onMomentumEnd}
-   initialNumToRender={VISIBLE_COUNT + 2}
-   scrollEventThrottle={16}
-   style={{ width }}
-   contentContainerStyle={{ paddingVertical: (ITEM_HEIGHT * (VISIBLE_COUNT - 1)) / 2 }}
-   scrollEnabled={enabled}
-   initialScrollIndex={Math.max(0, Math.min(data.length - 1, selIndex))}
-   onScrollToIndexFailed={(info) => {
-    const offset = Math.min(
-     info.highestMeasuredFrameIndex * ITEM_HEIGHT,
-     info.averageItemLength * info.index,
-    );
-    listRef.current?.scrollToOffset({ offset, animated: false });
-    setTimeout(
-     () =>
-      listRef.current?.scrollToIndex({
-       index: info.index,
-       animated: false,
-       viewPosition: 0.5 }),
-     0,
-    );
-   }}
-  />
- );
-}
-const wheelStyles = StyleSheet.create({
- item: { height: ITEM_HEIGHT, justifyContent: 'center', alignItems: 'center' },
- itemText: { fontSize: 18 },
- itemTextActive: { fontSize: 20, fontWeight: '700' } });
-const ROLES = ['dispatcher', 'worker'];
-const ROLE_LABELS = { dispatcher: 'Диспетчер', worker: 'Рабочий', admin: 'Администратор' };
-const ROLE_DESCRIPTIONS = {
- dispatcher: 'Назначение и управление заявками.',
- worker: 'Выполнение заявок, без админ‑прав.' };
 export default function EditUser() {
 const { theme } = useTheme();
- const styles = React.useMemo(() => StyleSheet.create({
+  const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
+  const MEDIA_QUALITY = (typeof theme.media?.quality === 'number') ? theme.media.quality : 0.85;
+
+  const ICON_MD = theme.icons?.md ?? 22;
+ const ICON_SM = theme.icons?.sm ?? 18;
+ const ICONBUTTON_TOUCH = theme.components?.iconButton?.size ?? 32;
+ const TRAILING_WIDTH = theme.components?.input?.trailingSlotWidth 
+   ?? (ICONBUTTON_TOUCH + theme.spacing.sm + ICON_MD + theme.spacing.sm + (theme.components?.input?.trailingGap ?? 8));
+ const CAMERA_ICON = Math.max(theme.icons?.minCamera ?? 12, Math.round((theme.icons?.sm ?? 18) * 0.67));
+ const RADIO_SIZE = theme.components?.radio?.size ?? ICON_MD;
+ const RADIO_DOT = theme.components?.radio?.dot ?? Math.max(6, Math.round(RADIO_SIZE / 2 - 3));
+const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
+ const EXTRA_SCROLL_PAD = theme.spacing.sm;
+const styles = React.useMemo(() => {
+  return StyleSheet.create({
  container: { flex: 1, backgroundColor: theme.colors.background },
- scroll: { paddingHorizontal: 16 },
+ scroll: { paddingHorizontal: theme.spacing.lg, flexGrow: 1 },
  
  appBar: {
   flexDirection: 'row',
   alignItems: 'center',
   justifyContent: 'space-between',
-  marginBottom: 10 },
- appBarBack: { padding: 6, borderRadius: 10 },
- appBarTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text },
- rolePillHeader: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1 },
- rolePillHeaderText: { fontSize: 12, fontWeight: '600' },
- headerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
- headerCard: { padding: 8, marginBottom: 12 },
+  marginBottom: theme.spacing.sm },
+ appBarBack: { padding: theme.spacing.xs, borderRadius: theme.radii.md },
+ appBarTitle: { fontSize: theme.typography.sizes.lg, fontWeight: '700', color: theme.colors.text },
+ rolePillHeader: { paddingHorizontal: theme.spacing.sm, paddingVertical: theme.spacing.xs, borderRadius: theme.radii.lg, borderWidth: theme.components.card.borderWidth },
+ rolePillHeaderText: { fontSize: theme.typography.sizes.xs, fontWeight: '600' },
+ headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md },
+ headerCard: { padding: theme.spacing.sm, marginBottom: theme.spacing.md },
  headerCardSuspended: {
   backgroundColor: withAlpha(theme.colors.danger, 0.08),
   borderColor: withAlpha(theme.colors.danger, 0.2),
-  borderWidth: 1,
-  borderRadius: 12 },
+  borderWidth: theme.components.card.borderWidth,
+  borderRadius: theme.radii.lg },
  avatar: {
-  width: 48,
-  height: 48,
-  borderRadius: 24,
+  width: theme.components.avatar.md,
+  height: theme.components.avatar.md,
+  borderRadius: theme.components.avatar.md / 2,
   backgroundColor: withAlpha(theme.colors.primary, 0.12),
   alignItems: 'center',
   justifyContent: 'center',
-  borderWidth: 1,
+  borderWidth: theme.components.card.borderWidth,
   borderColor: withAlpha(theme.colors.primary, 0.24),
   overflow: 'hidden' },
  avatarImg: { width: '100%', height: '100%' },
@@ -257,230 +192,94 @@ const { theme } = useTheme();
   right: -2,
   bottom: -2,
   backgroundColor: theme.colors.primary,
-  borderRadius: 10,
-  paddingHorizontal: 5,
-  paddingVertical: 3,
-  borderWidth: 2,
+  borderRadius: theme.radii.md,
+  paddingHorizontal: theme.spacing.xs,
+  paddingVertical: theme.spacing.xs,
+  borderWidth: theme.components?.avatar?.border ?? theme.components.card.borderWidth,
   borderColor: theme.colors.surface
  },
  avatarText: { color: theme.colors.primary, fontWeight: '700' },
- nameTitle: { fontSize: 16, fontWeight: '600', color: theme.colors.text },
- badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999 },
+ nameTitle: { fontSize: theme.typography.sizes.md, fontWeight: '600', color: theme.colors.text },
+ badge: { paddingHorizontal: theme.spacing.sm, paddingVertical: theme.spacing.xs, borderRadius: theme.radii.pill },
  badgeGreen: { backgroundColor: theme.colors.success },
  badgeRed: { backgroundColor: theme.colors.danger },
  badgeOutline: {
-  borderWidth: 1,
+  borderWidth: theme.components.card.borderWidth,
   borderColor: theme.colors.border,
-  borderRadius: 999,
-  paddingHorizontal: 8,
-  paddingVertical: 4 },
- badgeOutlineText: { color: theme.colors.text, fontSize: 12 },
- badgeText: { fontSize: 12, fontWeight: '600' },
+  borderRadius: theme.radii.pill,
+  paddingHorizontal: theme.spacing.sm,
+  paddingVertical: theme.spacing.xs },
+ badgeOutlineText: { color: theme.colors.text, fontSize: theme.typography.sizes.xs },
+ badgeText: { fontSize: theme.typography.sizes.xs, fontWeight: '600' },
  card: {
   backgroundColor: theme.colors.surface,
-  borderRadius: 12,
-  padding: 12,
+  borderRadius: theme.radii.lg,
+  padding: theme.spacing.md,
   borderColor: theme.colors.border,
-  borderWidth: 1,
-  marginBottom: 12 },
+  borderWidth: theme.components.card.borderWidth,
+  marginBottom: theme.spacing.md },
  section: {
-  marginTop: 6,
-  marginBottom: 8,
+  marginTop: theme.spacing.xs,
+  marginBottom: theme.spacing.sm,
   marginLeft: theme.spacing[theme.components.sectionTitle.ml],
   fontWeight: '600',
   color: theme.colors.text,
 },
- label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.textSecondary },
- input: { marginHorizontal: 0, marginVertical: 8 },
- inputFocused: {
-  borderColor: theme.colors.primary,
-  shadowColor: theme.colors.primary,
-  shadowOpacity: 0.1,
-  shadowRadius: 6,
-  shadowOffset: { width: 0, height: 2 },
-  elevation: 1 },
- inputError: { borderColor: theme.colors.danger },
- inputWithIcon: { paddingRight: 44 },
- inputIcon: {
-  position: 'absolute',
-  right: 10,
-  top: '50%',
-  transform: [{ translateY: -10 }],
-  padding: 0,
-  height: 20,
-  justifyContent: 'center',
-  alignItems: 'center' },
- selectInput: { marginHorizontal: 0, marginVertical: 8 },
- selectInputText: { fontSize: 16, color: theme.colors.text },
- dateRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
- dateClearBtn: { marginLeft: 8, padding: 6 },
- appButton: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center' },
- appButtonText: { fontSize: 16 },
- btnPrimary: { backgroundColor: theme.colors.primary },
- btnPrimaryText: { color: theme.colors.onPrimary, fontWeight: '600' },
- btnSecondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.colors.border },
- btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
- btnDestructive: { backgroundColor: theme.colors.danger },
- btnDestructiveText: { color: theme.colors.onPrimary, fontWeight: '600' },
+ label: { fontWeight: '500', marginBottom: theme.spacing.xs, marginTop: theme.spacing.md, color: theme.colors.textSecondary },
+ 
+ field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
  errorCard: {
   backgroundColor: withAlpha(theme.colors.danger, 0.12),
   borderColor: theme.colors.danger,
-  borderWidth: 1,
-  padding: 12,
-  borderRadius: 14,
-  marginBottom: 12 },
+  borderWidth: theme.components.card.borderWidth,
+  padding: theme.spacing.md,
+  borderRadius: theme.radii.xl,
+  marginBottom: theme.spacing.md },
  errorTitle: { color: theme.colors.danger, fontWeight: '600' },
- errorText: { color: theme.colors.danger, marginTop: 4 },
+ errorText: { color: theme.colors.danger, marginTop: theme.spacing.xs },
  successCard: {
   backgroundColor: withAlpha(theme.colors.success, 0.1),
   borderColor: theme.colors.success,
-  borderWidth: 1,
-  padding: 12,
-  borderRadius: 14,
-  marginBottom: 12 },
+  borderWidth: theme.components.card.borderWidth,
+  padding: theme.spacing.md,
+  borderRadius: theme.radii.xl,
+  marginBottom: theme.spacing.md },
  successText: { color: theme.colors.success, fontWeight: '600' },
- assigneeOption: { paddingVertical: 10, paddingHorizontal: 4 },
- assigneeText: { fontSize: 16, color: theme.colors.text },
+ assigneeOption: { paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.xs },
+ assigneeText: { fontSize: theme.typography.sizes.md, color: theme.colors.text },
  copyBtn: {
   backgroundColor: withAlpha(theme.colors.primary, 0.08),
-  paddingVertical: 10,
-  paddingHorizontal: 12,
-  borderRadius: 8,
-  borderWidth: 1,
+  paddingVertical: theme.spacing.sm,
+  paddingHorizontal: theme.spacing.md,
+  borderRadius: theme.radii.sm,
+  borderWidth: theme.components.card.borderWidth,
   borderColor: withAlpha(theme.colors.primary, 0.35) },
  copyBtnText: { color: theme.colors.primary, fontWeight: '600' },
  modalContainer: {
   backgroundColor: theme.colors.surface,
-  borderRadius: 12,
-  padding: 20,
-  width: '90%',
+  borderRadius: theme.radii.lg,
+  padding: theme.spacing.xl,
+  width: `${Math.round((theme.components?.modal?.widthPct ?? 0.9) * 100)}%`,
   alignSelf: 'center',
-  maxWidth: 400 },
+  maxWidth: theme.components?.modal?.maxWidth ?? 400 },
  modalContainerFull: {
   backgroundColor: theme.colors.surface,
-  borderTopLeftRadius: 16,
-  borderTopRightRadius: 16,
-  padding: 20,
+  borderTopLeftRadius: theme.radii.xl,
+  borderTopRightRadius: theme.radii.xl,
+  padding: theme.spacing.xl,
   width: '100%' },
- modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12 },
- modalText: { fontSize: 15, color: theme.colors.textSecondary, marginBottom: 20 },
- modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
- helperError: { color: theme.colors.danger, fontSize: 12, marginTop: 4, marginLeft: 12 },
+ modalTitle: { fontSize: theme.typography.sizes.lg, fontWeight: '600', marginBottom: theme.spacing.md },
+ modalText: { fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary, marginBottom: theme.spacing.xl },
+ modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md },
+ helperError: { color: theme.colors.danger, fontSize: theme.typography.sizes.xs, marginTop: theme.spacing.xs, marginLeft: theme.spacing.md },
  centeredModal: { justifyContent: 'center', alignItems: 'center', margin: 0 },
- picker: {
-  backgroundColor: theme.colors.surface,
-  borderRadius: 18,
-  paddingVertical: 20,
-  paddingHorizontal: 16,
-  borderColor: theme.colors.border,
-  borderWidth: 1,
-  width: '85%',
-  maxWidth: 360,
-  overflow: 'hidden', ...(theme.shadows?.md || {}) },
- pickerTitle: {
-  textAlign: 'center',
-  fontSize: 18,
-  color: theme.colors.text,
-  marginBottom: 12,
-  fontWeight: '600' },
- wheelsRow: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  marginBottom: 10,
-  height: ITEM_HEIGHT * VISIBLE_COUNT },
- selectionLines: {
-  position: 'absolute',
-  left: 10,
-  right: 10,
-  top: (ITEM_HEIGHT * (VISIBLE_COUNT - 1)) / 2,
-  height: ITEM_HEIGHT,
-  borderTopWidth: 1,
-  borderBottomWidth: 1,
-  borderColor: theme.colors.border },
- pickerActions: { flexDirection: 'row', gap: 12, marginTop: 12 },
- actionBtn: { flex: 1 },
- yearSwitchRow: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginTop: 4 },
- yearSwitchLabel: { color: theme.colors.text, fontSize: 14 },
- dimTop: {
-  position: 'absolute',
-  left: 0,
-  right: 0,
-  top: 0,
-  height: ITEM_HEIGHT,
-  backgroundColor: withAlpha(theme.colors.text, 0.06),
-  borderTopLeftRadius: 16,
-  borderTopRightRadius: 16 },
- dimBottom: {
-  position: 'absolute',
-  left: 0,
-  right: 0,
-  bottom: 0,
-  height: ITEM_HEIGHT,
-  backgroundColor: withAlpha(theme.colors.text, 0.06),
-  borderBottomLeftRadius: 16,
-  borderBottomRightRadius: 16 },
- radioRow: { gap: 10 },
- radio: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6 },
- radioOuter: {
-  width: 18,
-  height: 18,
-  borderRadius: 9,
-  borderWidth: 2,
-  borderColor: theme.colors.border,
-  justifyContent: 'center',
-  alignItems: 'center',
-  marginRight: 8 },
- radioOuterActive: { borderColor: theme.colors.primary },
- radioInner: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'transparent' },
- radioInnerActive: { backgroundColor: theme.colors.primary },
- roleItem: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 12,
-  padding: 12,
-  borderRadius: 12,
-  borderWidth: 1,
-  borderColor: theme.colors.border,
-  backgroundColor: theme.colors.surface },
- roleItemSelected: { borderColor: theme.colors.primary, backgroundColor: withAlpha(theme.colors.primary, 0.12) },
- roleTitle: { fontSize: 16, fontWeight: '600', color: theme.colors.text },
- roleDesc: { fontSize: 13, color: theme.colors.textSecondary, marginTop: 2 },
- actionBar: {
-  position: 'absolute',
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundColor: theme.colors.surface,
-  borderTopWidth: 1,
-  borderTopColor: theme.colors.border,
-  paddingHorizontal: 16,
-  paddingTop: 10,
-  paddingBottom: 14,
-  flexDirection: 'row',
-  alignItems: 'stretch',
-  gap: 12 },
- actionBarBtn: { marginLeft: 8 },
- toast: {
-  alignSelf: 'center',
-  backgroundColor: theme.colors.surface,
-  borderRadius: 12,
-  paddingHorizontal: 14,
-  paddingVertical: 10,
-  borderWidth: 1,
-  borderColor: withAlpha(theme.colors.success, 0.4),
-  flexDirection: 'row',
-  alignItems: 'center',
-  gap: 8, ...(theme.shadows?.md || {}),
-  maxWidth: 440 },
- toastText: { color: theme.colors.success, fontWeight: '600' } }), [theme]);
+  });
+}, [theme]);
+ 
  const roleColor = React.useCallback((r) => {
-  if (r === 'admin') return theme.colors.primary;
-  if (r === 'dispatcher') return theme.colors.success;
-  if (r === 'worker') return theme.colors.worker || theme.colors.primary;
+  if (r === ROLE.ADMIN) return theme.colors.primary;
+  if (r === ROLE.DISPATCHER) return theme.colors.success;
+  if (r === ROLE.WORKER) return theme.colors.worker || theme.colors.primary;
   return theme.colors.textSecondary;
  }, [theme]);
  const { success: toastSuccess, error: toastError, info: toastInfo, setAnchorOffset, loading: toastLoading, promise: toastPromise } = useToast();
@@ -496,11 +295,12 @@ const { id } = useLocalSearchParams();
  const canEdit = meIsAdmin || (meId && meId === userId);
  const [avatarUrl, setAvatarUrl] = useState(null);
  const [avatarSheet, setAvatarSheet] = useState(false);
+ const [avatarKey, setAvatarKey] = useState(0);
  const [loading, setLoading] = useState(true);
  const [saving, setSaving] = useState(false);
  const [firstName, setFirstName] = useState('');
  const [lastName, setLastName] = useState('');
- const [headerName, setHeaderName] = useState('Без имени'); // название профиля — меняем только после сохранения
+ const [headerName, setHeaderName] = useState(S('placeholder_no_name'));
  const [email, setEmail] = useState('');
  const [phone, setPhone] = useState('');
  const [birthdate, setBirthdate] = useState(null);
@@ -511,8 +311,8 @@ const { id } = useLocalSearchParams();
   const d = (departments || []).find((x) => String(x.id) === String(departmentId));
   return d ? d.name : null;
  }, [departments, departmentId]);
- const [showDatePicker, setShowDatePicker] = useState(false);
- const [withYear, setWithYear] = useState(true);
+const [withYear, setWithYear] = useState(true);
+ const [dobModalVisible, setDobModalVisible] = useState(false);
  const [confirmPwdVisible, setConfirmPwdVisible] = useState(false);
  const [pendingSave, setPendingSave] = useState(false);
  const [focusFirst, setFocusFirst] = useState(false);
@@ -520,7 +320,7 @@ const { id } = useLocalSearchParams();
  const [focusEmail, setFocusEmail] = useState(false);
  const [focusPhone, setFocusPhone] = useState(false);
  const [focusPwd, setFocusPwd] = useState(false);
- const [role, setRole] = useState('worker');
+ const [role, setRole] = useState(ROLE.WORKER);
  const [newPassword, setNewPassword] = useState('');
  const [showPassword, setShowPassword] = useState(false);
  const [showRoles, setShowRoles] = useState(false);
@@ -538,56 +338,56 @@ const { id } = useLocalSearchParams();
    const resp = await fetch(uri);
    const ab = await resp.arrayBuffer();
    const fileData = new Uint8Array(ab);
-   const filename = `avatar_${Date.now()}.jpg`;
-   const path = `profiles/${userId}/${filename}`;
+   const filename = `${AVA_PREFIX}${Date.now()}.jpg`;
+   const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
    const { error: upErr } = await supabase.storage
-    .from('avatars')
-    .upload(path, fileData, { contentType: 'image/jpeg', upsert: false });
+    .from(STORAGE.AVATARS)
+    .upload(path, fileData, { contentType: AVA_MIME, upsert: false });
    if (upErr) throw upErr;
-   const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+   const { data: pub } = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
    const publicUrl = pub?.publicUrl || null;
    const { error: updErr } = await supabase
-    .from('profiles')
+    .from(TABLES.profiles)
     .update({ avatar_url: publicUrl })
     .eq('id', userId);
    if (updErr) throw updErr;
    setAvatarUrl(publicUrl);
-   toastSuccess('Фото профиля обновлено');
+   toastSuccess(S('toast_avatar_updated'));
   } catch (e) {
-   setErr(e?.message || 'Не удалось загрузить фото');
+   setErr(e?.message || S('toast_generic_error'));
   }
  };
  const deleteAvatar = async () => {
   try {
    setErr('');
-   toastInfo('Сохраняю…', { sticky: true });
-   const prefix = `profiles/${userId}`;
-   const { data: list, error: listErr } = await supabase.storage.from('avatars').list(prefix);
+   toastInfo(S('toast_saving'), { sticky: true });
+   const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
+   const { data: list, error: listErr } = await supabase.storage.from(STORAGE.AVATARS).list(prefix);
    if (!listErr && Array.isArray(list) && list.length) {
     const paths = list.map((f) => `${prefix}/${f.name}`);
-    await supabase.storage.from('avatars').remove(paths);
+    await supabase.storage.from(STORAGE.AVATARS).remove(paths);
    }
    const { error: updErr } = await supabase
-    .from('profiles')
+    .from(TABLES.profiles)
     .update({ avatar_url: null })
     .eq('id', userId);
    if (updErr) throw updErr;
    setAvatarUrl(null);
-   toastSuccess('Фото удалено');
+   toastSuccess(S('toast_saved'));
   } catch (e) {
-   setErr(e?.message || 'Не удалось удалить фото');
+   setErr(e?.message || S('toast_generic_error'));
   }
  };
  const pickFromCamera = async () => {
   const okCam = await ensureCameraPerms();
   if (!okCam) {
-   setErr('Нет доступа к камере');
+   setErr(S('error_camera_denied'));
    return;
   }
   const res = await ImagePicker.launchCameraAsync({
    allowsEditing: true,
-   aspect: [1, 1],
-   quality: 0.85,
+   aspect: MEDIA_ASPECT,
+   quality: MEDIA_QUALITY,
    mediaTypes: ImagePicker.MediaTypeOptions.Images });
   if (!res.canceled && res.assets && res.assets[0]?.uri) {
    await uploadAvatar(res.assets[0].uri);
@@ -596,13 +396,13 @@ const { id } = useLocalSearchParams();
  const pickFromLibrary = async () => {
   const okLib = await ensureLibraryPerms();
   if (!okLib) {
-   setErr('Нет доступа к галерее');
+   setErr(S('error_library_denied'));
    return;
   }
   const res = await ImagePicker.launchImageLibraryAsync({
    allowsEditing: true,
-   aspect: [1, 1],
-   quality: 0.85,
+   aspect: MEDIA_ASPECT,
+   quality: MEDIA_QUALITY,
    mediaTypes: ImagePicker.MediaTypeOptions.Images,
    selectionLimit: 1 });
   if (!res.canceled && res.assets && res.assets[0]?.uri) {
@@ -610,6 +410,7 @@ const { id } = useLocalSearchParams();
   }
  };
  const [cancelVisible, setCancelVisible] = useState(false);
+ const [cancelKey, setCancelKey] = useState(0);
  const [warningVisible, setWarningVisible] = useState(false);
  const [warningMessage, setWarningMessage] = useState('');
  const [initialSnap, setInitialSnap] = useState(null);
@@ -626,7 +427,30 @@ const { id } = useLocalSearchParams();
  const [pickerLoading, setPickerLoading] = useState(false);
  const [pickerReturn, setPickerReturn] = useState(null); // 'delete' | 'suspend' | null
  const scrollRef = useRef(null);
- const isDirty = useMemo(() => {
+ const pwdRef = useRef(null);
+ const insets = useSafeAreaInsets();
+ const scrollYRef = useRef(0);
+ const ensureVisible = (ref) => {
+   try {
+     if (!ref?.current || !scrollRef?.current) return;
+     requestAnimationFrame(() => {
+       try {
+         ref.current.measureInWindow((x, y, w, h) => {
+           const screenH = Dimensions.get('window').height;
+           const bottom = (y || 0) + (h || 0);
+           const visibleH = screenH - ((insets?.bottom || 0) + EXTRA_SCROLL_PAD);
+           if (bottom > visibleH) {
+             const delta = bottom - visibleH + EXTRA_SCROLL_PAD;
+             const currentY = scrollYRef?.current || 0;
+             scrollRef.current.scrollTo({ y: currentY + delta, animated: true });
+           }
+         });
+       } catch (e) {}
+     });
+   } catch (e) {}
+ };
+
+const isDirty = useMemo(() => {
   if (!initialSnap) return false;
   const current = JSON.stringify({
    firstName: firstName.trim(),
@@ -645,7 +469,8 @@ const { id } = useLocalSearchParams();
    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
     if (allowLeaveRef.current) return false;
     if (isDirty) {
-     setCancelVisible(true);
+     setCancelKey((k) => k + 1);
+   setCancelVisible(true);
      return true;
     }
     return false;
@@ -663,14 +488,14 @@ const { id } = useLocalSearchParams();
  const autoClearLoadingRef = useRef(null);
  useEffect(() => {
   if (loading || !meLoaded) {
-   autoClearLoadingRef.current = setTimeout(() => setLoading(false), 12000);
+   autoClearLoadingRef.current = setTimeout(() => setLoading(false), theme.timings?.requestTimeoutMs ?? 12000);
   }
   return () => {
    if (autoClearLoadingRef.current) clearTimeout(autoClearLoadingRef.current);
   };
  }, [loading]);
 const showWarning = (msg) => {
- setWarningMessage(String(msg || 'Что-то пошло не так'));
+ setWarningMessage(String(msg || S('dlg_generic_warning')));
  setWarningVisible(true);
 };
 const confirmCancel = () => {
@@ -684,7 +509,8 @@ const confirmCancel = () => {
 };
 const handleCancelPress = () => {
  if (isDirty) {
-  setCancelVisible(true);
+  setCancelKey((k) => k + 1);
+   setCancelVisible(true);
   return;
  }
  allowLeaveRef.current = true;
@@ -695,7 +521,6 @@ const handleCancelPress = () => {
  }
 };
 
-// Stable wrappers to avoid re-creating handlers on every render
 const saveRef = useRef(null);
 const cancelRef = useRef(null);
 const onPressSave = React.useCallback(() => {
@@ -705,30 +530,29 @@ const onPressCancel = React.useCallback(() => {
  if (cancelRef.current) return cancelRef.current();
 }, []);
 useEffect(() => {
- // Attach latest handlers after they are defined
  saveRef.current = handleSave;
  cancelRef.current = handleCancelPress;
 });
 const handleSave = async () => {
  setErr('');
  if (!firstName.trim()) {
-  showWarning('Укажите имя');
+  showWarning(S('err_first_name'));
   return;
  }
  if (!lastName.trim()) {
-  showWarning('Укажите фамилию');
+  showWarning(S('err_last_name'));
   return;
  }
  if (!emailValid) {
-  showWarning('Введите корректный e‑mail');
+  showWarning(S('err_email'));
   return;
  }
- if (String(phone || '').trim() && !phoneValid) {
-  showWarning('Телефон должен быть в формате +7 9XX XXX‑XX‑XX');
+ if (String(phone || '').trim() && !isValidPhone(String(phone||''))) {
+  showWarning(S('err_phone'));
   return;
  }
  if (!passwordValid) {
-  showWarning('Пароль должен быть не короче 6 символов');
+  showWarning(S('err_password_short'));
   return;
  }
  if (newPassword && newPassword.length> 0) {
@@ -742,23 +566,23 @@ const proceedSave = async () => {
  try {
   setSaving(true);
   setErr('');
-  toastInfo('Сохраняю…', { sticky: true });
-  const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: meIsAdmin ? role : undefined };
+  toastInfo(S('toast_saving'), { sticky: true });
+  const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: (meIsAdmin && !(meId && meId === userId)) ? role : undefined };
   Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
   const { data: updRows, error: updProfileErr } = await supabase
-   .from('profiles')
+   .from(TABLES.profiles)
    .update(payload)
    .eq('id', userId)
-   .select('id'); // force returning rows to verify success
+   .select('id');
   if (updProfileErr) throw updProfileErr;
   if (!Array.isArray(updRows) || updRows.length === 0) {
-   throw new Error('Запись профиля не обновлена (возможно, RLS запрещает обновление)');
+   throw new Error(S('error_profile_not_updated'));
   }
   try {
    const { data: sess } = await supabase.auth.getSession();
    const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-   const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/update_user`;
-   if (FN_URL && FN_URL.startsWith('http')) {
+   const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
+   if (APP_FUNCTIONS.UPDATE_USER && FN_URL && FN_URL.includes('/functions/v1/') && FN_URL.startsWith('http')) {
     const body = {
      user_id: userId,
      email: String(email || '').trim() || undefined,
@@ -783,7 +607,7 @@ catch (e) { }
   setNewPassword('');
   setConfirmPwdVisible(false);
   setPendingSave(false);
-  setHeaderName(`${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() || 'Без имени');
+  setHeaderName(`${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() || S('placeholder_no_name'));
   setInitialSnap(JSON.stringify({
    firstName: firstName.trim(),
    lastName: lastName.trim(),
@@ -795,11 +619,11 @@ catch (e) { }
    departmentId: departmentId || null,
    isSuspended }));
   allowLeaveRef.current = true;
-  toastSuccess('Сохранено');
+  toastSuccess(S('toast_saved'));
  }
  catch (e) {
-  setErr(e?.message || 'Не удалось сохранить изменения');
-  toastError(e?.message || 'Не удалось сохранить изменения');
+  setErr(e?.message || S('error_save_failed'));
+  toastError(e?.message || S('error_save_failed'));
  }
  finally {
   setSaving(false);
@@ -807,30 +631,25 @@ catch (e) { }
 };
 useLayoutEffect(() => {
   navigation.setOptions({
-   title: 'Редактирование',
-   headerTitleAlign: 'center',
-   headerBackTitle: 'Отмена',
-   headerRight: undefined,
+    header: () => (
+      <AppHeader
+        title={S('title_edit')}
+        leftText={S('header_cancel')}
+        rightText={S('header_save')}
+        onLeftPress={onPressCancel}
+        onRightPress={onPressSave}
+      />
+    ),
   });
-  try {
-   navigation.setParams?.({
-    title: 'Редактирование',
-    centerTitle: true,
-    leftTextOnly: true,
-    headerBackTitle: 'Отмена',
-    onBackPress: onPressCancel,
-    rightTextLabel: 'Сохранить',
-    onRightPress: onPressSave,
-   });
-  } catch (e) {}
- }, [navigation, onPressSave, onPressCancel]);
- useEffect(() => { try { setAnchorOffset(140); } catch (e) {} }, []);
+}, [navigation, onPressSave, onPressCancel]);
 
+ useEffect(() => { try { setAnchorOffset(theme.components?.toast?.anchorOffset ?? 120); } catch (e) {} }, []);
 
  useEffect(() => {
  const sub = navigation.addListener('beforeRemove', (e) => {
-   if (allowLeaveRef.current || !isDirty) return; // пропускаем, если уже подтвердили
+   if (allowLeaveRef.current || !isDirty) return;
    e.preventDefault();
+   setCancelKey((k) => k + 1);
    setCancelVisible(true);
   });
   return sub;
@@ -845,17 +664,10 @@ useLayoutEffect(() => {
   [newPassword],
  );
  const emailValid = useMemo(() => isValidEmailStrict(email), [email]);
- const rawPhone = useMemo(() => String(phone || '').replace(/\D/g, ''), [phone]);
- const phoneValid = useMemo(() => {
-  if (rawPhone.length !== 11) return false;
-  if (!rawPhone.startsWith('7')) return false;
-  if (rawPhone[1] !== '9') return false; // РФ мобильные
-  return true;
- }, [rawPhone]);
  const fetchDepartments = useCallback(async () => {
   try {
    const { data, error } = await supabase
-    .from('departments')
+    .from(TABLES.departments)
     .select('id, name')
     .order('name', { ascending: true });
    if (error) throw error;
@@ -868,15 +680,15 @@ const fetchMe = useCallback(async () => {
   const uid = authUser?.user?.id;
   if (!uid) { setMeLoaded(true); return; }
   setMeId(uid);
-  const { data: me } = await supabase.from('profiles').select('id, role').eq('id', uid).single();
-  setMeIsAdmin(me?.role === 'admin');
+  const { data: me } = await supabase.from(TABLES.profiles).select('id, role').eq('id', uid).single();
+  setMeIsAdmin(me?.role === ROLE.ADMIN);
   setMeLoaded(true);
  }, []);
  const formatName = (p) => {
   const n1 = (p.first_name || '').trim();
   const n2 = (p.last_name || '').trim();
   const fn = (p.full_name || '').trim();
-  const name = n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || 'Без имени';
+  const name = n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || S('placeholder_no_name');
   return name;
  };
  const fetchUser = useCallback(async () => {
@@ -884,11 +696,11 @@ const fetchMe = useCallback(async () => {
   try {
    let adminRow = null;
    if (meIsAdmin) {
-    const { data, error } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
+    const { data, error } = await supabase.rpc(FN_GET_PROFILE, { target_user_id: userId });
     if (error) throw error;
     adminRow = Array.isArray(data) ? data[0] : data;
     setEmail(adminRow?.email || '');
-    setRole(adminRow?.user_role || 'worker');
+    setRole(adminRow?.user_role || ROLE.WORKER);
     if (adminRow?.birthdate) {
      const d = new Date(adminRow.birthdate);
      setBirthdate(!isNaN(d.getTime()) ? d : null);
@@ -901,7 +713,7 @@ const fetchMe = useCallback(async () => {
    }
 
    const { data: prof } = await supabase
-    .from('profiles')
+    .from(TABLES.profiles)
     .select('first_name, last_name, full_name, phone, is_suspended, suspended_at, avatar_url, department_id, role, birthdate')
     .eq('id', userId)
     .maybeSingle();
@@ -918,7 +730,7 @@ const fetchMe = useCallback(async () => {
      const d = new Date(prof.birthdate);
      setBirthdate(!isNaN(d.getTime()) ? d : null);
     }
-    if (!meIsAdmin) setRole(prof.role || 'worker');
+    if (!meIsAdmin) setRole(prof.role || ROLE.WORKER);
    }
 
    setInitialSnap(JSON.stringify({
@@ -927,20 +739,19 @@ const fetchMe = useCallback(async () => {
     email: (meIsAdmin ? (adminRow?.email || '') : email).trim?.() || '',
     phone: String(prof?.phone || '').replace(/\D/g, '') || '',
     birthdate: (meIsAdmin ? adminRow?.birthdate : (prof?.birthdate || null)) ? String(meIsAdmin ? adminRow?.birthdate : prof?.birthdate) : null,
-    role: meIsAdmin ? (adminRow?.user_role || 'worker') : (prof?.role || 'worker'),
+    role: meIsAdmin ? (adminRow?.user_role || ROLE.WORKER) : (prof?.role || ROLE.WORKER),
     newPassword: null,
     departmentId: (prof?.department_id ?? null),
     isSuspended: !!(prof?.is_suspended || prof?.suspended_at)
    }));
   } catch (e) {
-   setErr(e?.message || 'Не удалось загрузить пользователя');
-   toastError(e?.message || 'Не удалось загрузить пользователя');
+   setErr(e?.message || S('toast_generic_error'));
+   toastError(e?.message || S('toast_generic_error'));
   } finally {
    setLoading(false);
   }
  }, [userId, meIsAdmin, email]);
 
- // Initial load
  useEffect(() => {
   fetchMe();
  }, [fetchMe]);
@@ -954,7 +765,7 @@ const fetchMe = useCallback(async () => {
 useEffect(() => {
   if (!userId) return;
   const channel = supabase
-   .channel(`rt-user-${userId}`)
+   .channel(`${RT_PREFIX}${userId}`)
    .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` }, () => {
     fetchUser();
     fetchDepartments();
@@ -964,7 +775,7 @@ useEffect(() => {
  }, [userId, fetchUser, fetchDepartments]);
 const reassignOrders = async (fromUserId, toUserId) => {
   const { error } = await supabase
-   .from('orders')
+   .from(TABLES.orders)
    .update({ assigned_to: toUserId })
    .eq('assigned_to', fromUserId);
   return error;
@@ -973,8 +784,8 @@ const reassignOrders = async (fromUserId, toUserId) => {
   try {
    const { data: sess } = await supabase.auth.getSession();
    const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-   const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/update_user`;
-   if (FN_URL && FN_URL.startsWith('http')) {
+   const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
+   if (APP_FUNCTIONS.UPDATE_USER && FN_URL && FN_URL.includes('/functions/v1/') && FN_URL.startsWith('http')) {
     try {
      const res = await fetch(FN_URL, {
       method: 'POST',
@@ -989,26 +800,26 @@ const reassignOrders = async (fromUserId, toUserId) => {
     } catch (e) { }
    }
 const { error: updErr } = await supabase
-    .from('profiles')
+    .from(TABLES.profiles)
     .update({ is_suspended: !!value, suspended_at: value ? new Date().toISOString() : null })
     .eq('id', uid);
    return updErr ?? null;
   } catch (e) {
    const { error } = await supabase
-    .from('profiles')
+    .from(TABLES.profiles)
     .update({ is_suspended: !!value, suspended_at: value ? new Date().toISOString() : null })
     .eq('id', uid);
    return error ?? e;
   }
  };
  const deleteUserEverywhere = async (uid) => {
-  const tryPaths = [
-   '/admin_delete_user',
-   '/delete_user',
-   '/admin-delete-user',
-   '/user_delete',
-   '/remove_user',
-  ];
+  const tryPaths = (
+  APP_FUNCTIONS.DELETE_USERAliases && APP_FUNCTIONS.DELETE_USERAliases.length
+    ? APP_FUNCTIONS.DELETE_USERAliases.map(n => '/' + String(n || '').replace(/^\//, ''))
+    : (String(process.env.EXPO_PUBLIC_FN_DELETE_USER_ALIASES || '')
+        .split(',').map(s => s.trim()).filter(Boolean).map(n => '/' + n))
+);
+  if (APP_FUNCTIONS.DELETE_USER) { tryPaths.unshift('/' + String(APP_FUNCTIONS.DELETE_USER).replace(/^\//, '')); }
   try {
    const { data: sess } = await supabase.auth.getSession();
    const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -1029,11 +840,11 @@ const { error: updErr } = await supabase
      payload = await res.json();
     } catch (e) { } if (payload && (payload.ok === true || payload.success === true)) return null;
    }
-  } catch (e) { } const { error } = await supabase.from('profiles').delete().eq('id', uid);
+  } catch (e) { } const { error } = await supabase.from(TABLES.profiles).delete().eq('id', uid);
   return error;
  };
  const onAskSuspend = () => {
-  if (!meIsAdmin) return showWarning('Нет доступа');
+  if (!meIsAdmin) return showWarning(S('error_no_access'));
   if (meId && userId === meId) return; // не для себя
   setOrdersAction('keep');
   setSuccessor(null);
@@ -1041,85 +852,85 @@ const { error: updErr } = await supabase
   setSuspendVisible(true);
  };
  const onAskUnsuspend = () => {
-  if (!meIsAdmin) return showWarning('Нет доступа');
+  if (!meIsAdmin) return showWarning(S('error_no_access'));
   if (meId && userId === meId) return;
   setUnsuspendVisible(true);
  };
  const onConfirmSuspend = async () => {
-  if (!meIsAdmin) return showWarning('Нет доступа');
+  if (!meIsAdmin) return showWarning(S('error_no_access'));
   if (meId && userId === meId) return;
   try {
    setSaving(true);
    setErr('');
-   toastInfo('Сохраняю…', { sticky: true });
+   toastInfo(S('toast_saving'), { sticky: true });
    if (ordersAction === 'reassign') {
     if (!successor?.id) {
-     setSuccessorError('Выберите правопреемника');
+     setSuccessorError(S('err_successor_required'));
      setSaving(false);
      return;
     }
     const errR = await reassignOrders(userId, successor.id);
-    if (errR) throw new Error(errR.message || 'Не удалось переназначить заявки');
+    if (errR) throw new Error(errR.message || S('toast_generic_error'));
    }
    const errS = await setSuspended(userId, true);
-   if (errS) throw new Error(errS.message || 'Не удалось отстранить пользователя');
+   if (errS) throw new Error(errS.message || S('toast_generic_error'));
    setIsSuspended(true);
-   toastSuccess('Сотрудник отстранён');
+   toastSuccess(S('toast_suspended'));
    setSuspendVisible(false);
   } catch (e) {
-   setErr(e?.message || 'Ошибка');
-   toastError(e?.message || 'Ошибка');
+   setErr(e?.message || S('dlg_generic_warning'));
+   toastError(e?.message || S('dlg_generic_warning'));
   } finally {
    setSaving(false);
   }
  };
  const onConfirmUnsuspend = async () => {
-  if (!meIsAdmin) return showWarning('Нет доступа');
+  if (!meIsAdmin) return showWarning(S('error_no_access'));
   if (meId && userId === meId) return;
   try {
    setSaving(true);
    setErr('');
-   toastInfo('Сохраняю…', { sticky: true });
+   toastInfo(S('toast_saving'), { sticky: true });
    const errS = await setSuspended(userId, false);
-   if (errS) throw new Error(errS.message || 'Не удалось снять отстранение');
+   if (errS) throw new Error(errS.message || S('err_unsuspend_failed'));
    setIsSuspended(false);
-   toastSuccess('Отстранение снято');
+   toastSuccess(S('toast_unsuspended'));
    setUnsuspendVisible(false);
   } catch (e) {
-   setErr(e?.message || 'Ошибка');
-   toastError(e?.message || 'Ошибка');
+   setErr(e?.message || S('dlg_generic_warning'));
+   toastError(e?.message || S('dlg_generic_warning'));
   } finally {
    setSaving(false);
   }
  };
  const onAskDelete = () => {
-  if (!meIsAdmin) return showWarning('Нет доступа');
+  if (!meIsAdmin) return showWarning(S('error_no_access'));
   if (meId && userId === meId) return;
   setSuccessor(null);
   setSuccessorError('');
   setDeleteVisible(true);
  };
  const onConfirmDelete = async () => {
-  if (!meIsAdmin) return showWarning('Нет доступа');
+  if (!meIsAdmin) return showWarning(S('error_no_access'));
   if (meId && userId === meId) return;
   if (!successor?.id) {
-   setSuccessorError('Укажите правопреемника');
+   setSuccessorError(S('err_successor_required'));
    return;
   }
   try {
    setSaving(true);
    setErr('');
-   toastInfo('Сохраняю…', { sticky: true });
+   toastInfo(S('toast_saving'), { sticky: true });
    const errR = await reassignOrders(userId, successor.id);
-   if (errR) throw new Error(errR.message || 'Не удалось переназначить заявки');
+   if (errR) throw new Error(errR.message || S('toast_generic_error'));
    const errD = await deleteUserEverywhere(userId);
-   if (errD) throw new Error(errD.message || 'Не удалось удалить пользователя');
-   toastSuccess('Сотрудник удалён');
+   if (errD) throw new Error(errD.message || S('toast_generic_error'));
+   toastSuccess(S('toast_deleted'));
    setDeleteVisible(false);
-   setTimeout(() => router.back(), 300);
+   setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300)
   } catch (e) {
-   setErr(e?.message || 'Ошибка');
-   toastError(e?.message || 'Ошибка');
+   setErr(e?.message || S('dlg_generic_warning'));
+   toastError(e?.message || S('dlg_generic_warning'));
   } finally {
    setSaving(false);
   }
@@ -1134,18 +945,18 @@ const { error: updErr } = await supabase
   setSuspendVisible(false);
   setPickerVisible(true);
  };
- if (loading || !meLoaded) {
+if (loading || !meLoaded) {
   return (
-   <Screen background="background">
-    <ActivityIndicator size="large" />
-        </Screen>
+    <Screen background="background" scroll={false}>
+      <ActivityIndicator size="large" />
+    </Screen>
   );
- }
+}
  if (!canEdit) {
   return (
-   <Screen background="background">
-    <View style={{ padding: 16, justifyContent: 'center', alignItems: 'center', flex: 1 }}>
-     <Text style={{ fontSize: 16, color: theme.colors.textSecondary }}>Доступ только для администратора</Text>
+   <Screen background="background" scroll={false}>
+    <View style={{ padding: theme.spacing.lg, justifyContent: 'center', alignItems: 'center', flex: 1 }}>
+     <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>{S('error_no_access')}</Text>
     </View>
    </Screen>
   );
@@ -1154,13 +965,21 @@ const { error: updErr } = await supabase
  const initials =
   `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
  return (
-  <Screen background="background">
+  <Screen background="background" scroll={false}>
     
 <View style={styles.container}>
      <ScrollView
       ref={scrollRef}
-      contentContainerStyle={[styles.scroll, { paddingBottom: 120 }]}>
-            <View
+      style={{ flex: 1 }}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+      onScroll={(e) => { try { scrollYRef.current = e.nativeEvent.contentOffset.y || 0; } catch (_) {} }}
+      scrollEventThrottle={16}
+      contentInsetAdjustmentBehavior="always"
+      contentContainerStyle={[styles.scroll, { paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl }]}
+      showsVerticalScrollIndicator={false}
+     >
+      <View
        style={[
         styles.card,
         styles.headerCard,
@@ -1169,17 +988,17 @@ const { error: updErr } = await supabase
        <View style={styles.headerRow}>
         <Pressable
          style={styles.avatar}
-         onPress={() => setAvatarSheet(true)}
+         onPress={() => { setAvatarKey((k) => k + 1); setAvatarSheet(true); }}
          accessibilityRole="button"
-         accessibilityLabel="Изменить фото профиля"
-         accessibilityHint="Нажмите, чтобы загрузить или изменить фото">
+         accessibilityLabel={S('a11y_change_avatar')}
+         accessibilityHint={S('a11y_change_avatar_hint')}>
          {avatarUrl ? (
           <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
          ) : (
           <Text style={styles.avatarText}>{initials || '•'}</Text>
          )}
          <View style={styles.avatarCamBadge}>
-          <AntDesign name="camera" size={12} color={theme.colors.onPrimary} />
+          <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
          </View>
         </Pressable>
         <View style={{ flex: 1 }}>
@@ -1187,17 +1006,17 @@ const { error: updErr } = await supabase
          <View
           style={{
            flexDirection: 'row',
-           gap: 8,
-           marginTop: 4,
+           gap: theme.spacing.sm,
+           marginTop: theme.spacing.xs,
            alignItems: 'center',
            flexWrap: 'wrap' }}>
           <View
            style={[styles.rolePillHeader, { borderColor: withAlpha(isSuspended ? theme.colors.danger : theme.colors.success, 0.2), backgroundColor: withAlpha(isSuspended ? theme.colors.danger : theme.colors.success, 0.13) }]}>
            <Text style={[styles.rolePillHeaderText, { color: isSuspended ? theme.colors.danger : theme.colors.success }]}>
-            {isSuspended ? 'Отстранён' : 'Активен'}
+            {isSuspended ? S('status_suspended') : S('status_active')}
            </Text>
           </View>
-          {role === 'admin' ? (
+          {role === ROLE.ADMIN ? (
            <View
             style={[
              styles.rolePillHeader,
@@ -1230,43 +1049,30 @@ const { error: updErr } = await supabase
       </View>
       {err ? (
        <View style={styles.errorCard}>
-        <Text style={styles.errorTitle}>Ошибка</Text>
+        <Text style={styles.errorTitle}>{S('dlg_alert_title')}</Text>
         <Text style={styles.errorText}>{err}</Text>
        </View>
       ) : null}
-      <Text style={styles.section}>Личные данные</Text>
-      <View style={styles.card}>
-       <TextField label="Имя *" placeholder="Иван" placeholderTextColor={theme.colors.inputPlaceholder} style={[
-         styles.input,
-         focusFirst && styles.inputFocused,
-         !firstName.trim() && styles.inputError,
-        ]}
+      <Text style={styles.section}>{S('section_personal')}</Text>
+      <Card>
+       <TextField label={S('label_first_name')} placeholder={S('placeholder_first_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
         value={firstName}
         onChangeText={setFirstName}
         onFocus={() => setFocusFirst(true)}
         onBlur={() => setFocusFirst(false)}
         />
-       {!firstName.trim() ? <Text style={styles.helperError}>Укажите имя</Text> : null}
-       <TextField label="Фамилия *" placeholder="Петров" placeholderTextColor={theme.colors.inputPlaceholder} style={[
-         styles.input,
-         focusLast && styles.inputFocused,
-         !lastName.trim() && styles.inputError,
-        ]}
+       {!firstName.trim() ? <Text style={styles.helperError}>{S('err_first_name')}</Text> : null}
+       <TextField label={S('label_last_name')} placeholder={S('placeholder_last_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
         value={lastName}
         onChangeText={setLastName}
         onFocus={() => setFocusLast(true)}
         onBlur={() => setFocusLast(false)}
         />
-       {!lastName.trim() ? <Text style={styles.helperError}>Укажите фамилию</Text> : null}
+       {!lastName.trim() ? <Text style={styles.helperError}>{S('err_last_name')}</Text> : null}
        <TextField
- label="Электронная почта *"
- placeholder="ivan.petrov@example.com"
- placeholderTextColor={theme.colors.inputPlaceholder}
- style={[
-  styles.input,
-  focusEmail && styles.inputFocused,
-  !emailValid && styles.inputError,
- ]}
+ label={S('label_email')}
+ placeholder={S('placeholder_email')} placeholderTextColor={theme.colors.inputPlaceholder}
+ style={styles.field}
  keyboardType="email-address"
  autoCapitalize="none"
  autoCorrect={false}
@@ -1276,135 +1082,129 @@ const { error: updErr } = await supabase
  onBlur={() => setFocusEmail(false)}
 />
 {!emailValid ? (
-        <Text style={styles.helperError}>Укажите корректный имейл</Text>
+        <Text style={styles.helperError}>{S('err_email')}</Text>
        ) : null}
        <PhoneInput
  value={phone}
  onChangeText={(val, meta) => {
   setPhone(val);
  }}
- error={!phoneValid ? 'Укажите корректный номер' : undefined}
- style={[
-  styles.input,
-  focusPhone && styles.inputFocused,
-  !phoneValid && styles.inputError,
- ]}
+ error={!isValidPhone(String(phone||'')) ? S('err_phone') : undefined}
+ style={styles.field}
  onFocus={() => setFocusPhone(true)}
  onBlur={() => setFocusPhone(false)}
-/><DateOfBirthField
- label="Дата рождения"
- style={styles.input}
- value={birthdate ? { day: new Date(birthdate).getDate(), month: new Date(birthdate).getMonth()+1, year: withYear ? new Date(birthdate).getFullYear() : null } : undefined}
- onChange={(v) => {
-  if (!v) { setBirthdate(null); setWithYear(false); return; }
-  setWithYear(v.year != null);
-  const y = v.year != null ? v.year : new Date().getFullYear();
-  const dt = new Date(y, (v.month||1)-1, v.day||1, 12, 0, 0, 0);
-  setBirthdate(dt);
- }}
 />
-      </View>
+<SelectField
+  label={S('label_birthdate')}
+  value={birthdate ? formatDateRU(birthdate, withYear) : S('placeholder_birthdate')}
+  onPress={() => setDobModalVisible(true)}
+  showValue={true}
+  style={styles.field}
+/>
+      </Card>
       {!isSelfAdmin && (
-       <View style={styles.card}>
+       <Card>
         <View style={{ flexDirection: 'row' }}>
-         <Pressable
+         <UIButton
+          title={S('btn_delete')}
+          variant="destructive"
           onPress={onAskDelete}
-          style={({ pressed }) => [
-           styles.appButton,
-           styles.btnDestructive,
-           { flex: 1 },
-           pressed && { transform: [{ scale: 0.98 }] },
-          ]}>
-          <Text style={[styles.appButtonText, styles.btnDestructiveText]}>Удалить</Text>
-         </Pressable>
+          style={{ flex: 1 }}
+        />
         </View>
-       </View>
+       </Card>
       )}
       {meIsAdmin && (
- <>
-  <Text style={styles.section}>Роль в компании</Text>
-  <View style={styles.card}>
-
+  <>
+    <Text style={styles.section}>{S('section_company_role')}</Text>
+    <Card>
+      <View style={{ marginTop: theme.spacing.xs }}>
+  <Text style={styles.label}>{S('label_department')}</Text>
   <SelectField
-   label="Отдел"
-   value={activeDeptName || 'Выберите отдел'}
-   onPress={() => setDeptModalVisible(true)}
-   showValue={true}
+    value={activeDeptName || S('placeholder_department')}
+    onPress={() => setDeptModalVisible(true)}
+    showValue={true}
   />
+</View>
 
+      {!isSelfAdmin && (
+        <>
+          <View style={{ marginTop: theme.spacing.xs }}>
+  <Text style={styles.label}>{S('label_role')}</Text>
   <SelectField
-   label="Роль"
-   value={ROLE_LABELS[role] || role}
-   onPress={() => setShowRoles(true)}
-   showValue={true}
+    value={ROLE_LABELS[role] || role}
+    onPress={() => setShowRoles(true)}
+    showValue={true}
   />
-
+</View>
+          <View style={{ marginTop: theme.spacing.xs }}>
+  <Text style={styles.label}>{S('label_status')}</Text>
   <SelectField
-   label="Статус"
-   value={isSuspended ? 'Отстранён' : 'Активен'}
-   onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
-   showValue={true}
+    value={isSuspended ? S('status_suspended') : S('status_active')}
+    onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
+    showValue={true}
   />
- </View>
- </>
+</View>
+        </>
+      )}
+    </Card>
+  </>
 )}
-<Text style={styles.section}>Пароль</Text>
-       <Text style={styles.label}>Новый пароль (мин. 6 символов)</Text>
-       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-        <View style={{ flex: 1, position: 'relative' }}>
-         <TextField
-          style={[
-           styles.input,
-           styles.inputWithIcon,
-           focusPwd && styles.inputFocused,
-           newPassword.length> 0 && !passwordValid && styles.inputError,
-          ]}
-          value={newPassword}
-          onChangeText={setNewPassword}
-          secureTextEntry={!showPassword}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onFocus={() => setFocusPwd(true)}
-          onBlur={() => setFocusPwd(false)}
-         />
-         <Pressable
-          onPress={() => setShowPassword((v) => !v)}
-          style={styles.inputIcon}
-          accessibilityLabel={showPassword ? 'Скрыть пароль' : 'Показать пароль'}>
-          <AntDesign name={showPassword ? 'eye' : 'eyeo'} size={20} color={theme.colors.textSecondary} />
-         </Pressable>
-        </View>
-        <Pressable
-         onPress={async () => {
-          await Clipboard.setStringAsync(newPassword || '');
-          showWarning('Пароль скопирован');
-          setTimeout(() => setWarningVisible(false), 1000);
-         }}
-         disabled={!newPassword}
-         style={({ pressed }) => [
-          styles.copyBtn,
-          !newPassword && { opacity: 0.5 },
-          pressed && { transform: [{ scale: 0.96 }] },
-         ]}>
-         <Text style={styles.copyBtnText}>Скопировать</Text>
-        </Pressable>
-       </View>
-       {newPassword.length> 0 && !passwordValid && (
-        <Text style={{ marginTop: 6, color: theme.colors.danger, fontSize: 12 }}>
-         Минимум 6 символов
-        </Text>
-       )}
-           </ScrollView>
-          
+
+<Text style={styles.section}>{S('section_password')}</Text>
+<Card>
+  <View style={{ position: 'relative' }}>
+    <TextField
+  ref={pwdRef}
+  value={newPassword}
+  onChangeText={setNewPassword}
+  placeholder={S('placeholder_new_password')}
+  secureTextEntry={!showPassword}
+  autoCapitalize="none"
+  autoCorrect={false}
+  error={newPassword.length > 0 && !passwordValid ? ' ' : undefined}
+  style={styles.field}
+  rightSlot={(
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Pressable
+        onPress={() => { pwdRef.current?.blur(); setShowPassword(v => !v); }}
+        accessibilityLabel={showPassword ? S('a11y_hide_password') : S('a11y_show_password')}
+        hitSlop={{ top: theme.spacing.sm, bottom: theme.spacing.sm, left: theme.spacing.sm, right: theme.spacing.sm }}
+        style={{ padding: theme.spacing.xs }}
+      >
+        <Feather name={showPassword ? 'eye' : 'eye-off'} size={ICON_MD} color={theme.colors.textSecondary} />
+      </Pressable>
+      {!!newPassword && (
+        <IconButton
+          onPress={async () => {
+            await Clipboard.setStringAsync(newPassword || '');
+            toastSuccess(S('toast_password_copied'));
+          }}
+          accessibilityLabel={S('a11y_copy_password')}
+          size={ICONBUTTON_TOUCH}
+        >
+          <Feather name="copy" size={ICON_SM} />
+        </IconButton>
+      )}
     </View>
+  )}
+/>
+  </View>
+  </Card>
+  {newPassword.length > 0 && !passwordValid ? (
+    <Text style={{ marginTop: theme.spacing.xs, color: theme.colors.danger, fontSize: theme.typography.sizes.xs }}>{S('err_password_short')}</Text>
+  ) : null}
+     </ScrollView>
+         </View>
     {/* Exit without saving confirmation */}
     <ConfirmModal
+      key={`cancel-${cancelKey}`}
       visible={cancelVisible}
       onClose={() => setCancelVisible(false)}
-      title="Выйти без сохранения?"
-      message="Все изменения будут потеряны. Вы уверены?"
-      confirmLabel="Выйти"
-      cancelLabel="Остаться"
+      title={S('dlg_leave_title')}
+      message={S('dlg_leave_msg')}
+      confirmLabel={S('dlg_leave_confirm')}
+      cancelLabel={S('dlg_leave_cancel')}
       confirmVariant="destructive"
       onConfirm={confirmCancel}
     />
@@ -1412,9 +1212,9 @@ const { error: updErr } = await supabase
     <AlertModal
       visible={warningVisible}
       onClose={() => setWarningVisible(false)}
-      title="Внимание"
+      title={S('dlg_alert_title')}
       message={warningMessage}
-      buttonLabel="Ок"
+      buttonLabel={S('dlg_ok')}
     />
     {/* Confirm password update */}
     <ConfirmModal
@@ -1423,28 +1223,13 @@ const { error: updErr } = await supabase
         setConfirmPwdVisible(false);
         setPendingSave(false);
       }}
-      title="Обновить пароль пользователя?"
-      message="Вы изменяете пароль. Сохранить изменения?"
-      confirmLabel={saving ? 'Сохраняю…' : 'Сохранить'}
-      cancelLabel="Отмена"
-      confirmVariant="primary"
+      title={S('dlg_confirm_pwd_title')}
+      message={S('dlg_confirm_pwd_msg')}
+      confirmLabel={saving ? S('toast_saving') : S('header_save')}
+      cancelLabel={S('header_cancel')}      confirmVariant="primary"
       onConfirm={() => proceedSave()}
     />
-        {/* Birthdate picker modal */}
-        <DatePickerModal
-          visible={showDatePicker}
-          initialDate={birthdate}
-          onApply={({ day, month, year }) => {
-            // Determine the year to use: if omitted, use the current year but track withYear state
-            const y = year != null ? year : new Date().getFullYear();
-            // Update birthdate to midday to avoid timezone issues
-            const newDate = new Date(y, (month || 1) - 1, day || 1, 12, 0, 0, 0);
-            setBirthdate(newDate);
-            setWithYear(year != null);
-          }}
-          onClose={() => setShowDatePicker(false)}
-        />
-    <SuspendModal
+        <SuspendModal
       visible={suspendVisible}
       ordersAction={ordersAction}
       setOrdersAction={setOrdersAction}
@@ -1459,11 +1244,10 @@ const { error: updErr } = await supabase
     <ConfirmModal
       visible={unsuspendVisible}
       onClose={() => setUnsuspendVisible(false)}
-      title="Снять отстранение?"
-      message="Сотрудник снова сможет пользоваться приложением."
-      confirmLabel={saving ? 'Применяю…' : 'Подтверждаю'}
-      cancelLabel="Отмена"
-      confirmVariant="primary"
+      title={S('dlg_unsuspend_title')}
+      message={S('dlg_unsuspend_msg')}
+      confirmLabel={saving ? S('dlg_unsuspend_apply') : S('dlg_unsuspend_confirm')}
+      cancelLabel={S('header_cancel')}      confirmVariant="primary"
       onConfirm={onConfirmUnsuspend}
     />
     <DeleteEmployeeModal
@@ -1479,7 +1263,7 @@ const { error: updErr } = await supabase
     
     <SelectModal
       visible={pickerVisible}
-      title="Выбор сотрудника"
+      title={S('picker_user_title')}
       items={(pickerItems || []).map((it) => ({
         id: it.id,
         label: it.name,
@@ -1505,6 +1289,7 @@ const { error: updErr } = await supabase
     />
     
     <AvatarSheetModal
+      key={`avatar-${avatarKey}`}
       visible={avatarSheet}
       avatarUrl={avatarUrl}
       onTakePhoto={pickFromCamera}
@@ -1512,52 +1297,7 @@ const { error: updErr } = await supabase
       onDeletePhoto={deleteAvatar}
       onClose={() => setAvatarSheet(false)}
     />
-    {/* <Dialog visible={avatarSheet} onClose={() => setAvatarSheet(false)}> 
-     <View style={styles.modalContainer}>
-      <Text style={styles.modalTitle}>Фото профиля</Text>
-      <View style={{ gap: 10 }}>
-       <Pressable
-        onPress={() => {
-         setAvatarSheet(false);
-         pickFromCamera();
-        }}
-        style={[styles.appButton, styles.btnPrimary]}>
-        <Text style={[styles.appButtonText, styles.btnPrimaryText]}>Сделать фото</Text>
-       </Pressable>
-       <Pressable
-        onPress={() => {
-         setAvatarSheet(false);
-         pickFromLibrary();
-        }}
-        style={[styles.appButton, styles.btnSecondary]}>
-        <Text style={[styles.appButtonText, styles.btnSecondaryText]}>
-         Выбрать из галереи
-        </Text>
-       </Pressable>
-       {!!avatarUrl && (
-        <Pressable
-         onPress={() => {
-          setAvatarSheet(false);
-          deleteAvatar();
-         }}
-         style={[styles.appButton, styles.btnDestructive]}>
-         <Text style={[styles.appButtonText, styles.btnDestructiveText]}>
-          Удалить фото
-         </Text>
-        </Pressable>
-       )}
-      </View>
-      <View style={[styles.modalActions, { marginTop: 12 }]}>
-       <Pressable
-        onPress={() => setAvatarSheet(false)}
-        style={[styles.appButton, styles.btnSecondary, { flex: 1 }]}>
-        <Text style={[styles.appButtonText, styles.btnSecondaryText]}>Отмена</Text>
-       </Pressable>
-      </View>
-     </View>
-    
-*/}
-        <DepartmentSelectModal
+    <DepartmentSelectModal
           visible={deptModalVisible}
           departmentId={departmentId}
           departments={departments}
@@ -1581,6 +1321,25 @@ const { error: updErr } = await supabase
           onClose={() => setShowRoles(false)}
         />
         {/* removed old role select dialog */}
+        
+    <DateTimeModal
+      visible={dobModalVisible}
+      onClose={() => setDobModalVisible(false)}
+      mode="date"
+      allowOmitYear={true}
+      omitYearDefault={withYear}
+      initial={birthdate || new Date()}
+      onApply={(dateObj, extra) => {
+        try {
+          const d = new Date(dateObj);
+          setBirthdate(d);
+          if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
+        } finally {
+          setDobModalVisible(false);
+        }
+      }}
+    />
+
         </Screen>
  );
 }

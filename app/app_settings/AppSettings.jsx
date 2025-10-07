@@ -1,118 +1,123 @@
-import React, { useMemo, useState , useEffect} from "react";
-import {
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  Switch,
-  ScrollView,
-  Platform,
-  Linking,
-} from "react-native";
+// app/app_settings/AppSettings.jsx
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { View, Text, StyleSheet, ScrollView, Platform, Linking, ActivityIndicator } from "react-native";
 import Constants from "expo-constants";
-import DateTimePicker from "@react-native-community/datetimepicker";
-import { SafeAreaView } from "react-native-safe-area-context";
-import AppHeader from "../../components/navigation/AppHeader";
 import { useNavigation } from "expo-router";
-import { useRoute } from "@react-navigation/native";
-import FeatherIcon from "@expo/vector-icons/Feather";
+import Screen from "../../components/layout/Screen";
 import { useTheme } from "../../theme";
 import { useToast } from "../../components/ui/ToastProvider";
-import SelectModal from "../../components/ui/SelectModal";
+import { SwitchListModal, SingleSelectModal, DateTimeModal } from "../../components/ui/SelectModal";
+import Card from "../../components/ui/Card";
 import Button from "../../components/ui/Button";
 import { supabase } from "../../lib/supabase";
-import { strings as STRINGS } from "../../constants/strings";
+import { getUid, readProfile, readRolePerm, savePushToken as savePushTokenHelper, deletePushToken as deletePushTokenHelper } from "../../lib/supabaseHelpers";
+import { devWarn as __devLog } from "../../src/utils/dev";
+import { APP_DEFAULTS, ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME } from "../../config/notifications";
+import { SelectField, SwitchField } from "../../components/ui/TextField";
+import { listItemStyles } from "../../components/ui/listItemStyles";
 
-// --- Edge-to-edge warning filter (expo-navigation-bar) ---
-// Скрывает только два известных WARN'а про edge-to-edge, не трогая остальные предупреждения.
-function useFilterEdgeToEdgeWarnings() {
-  React.useEffect(() => {
-    const originalWarn = console.warn;
-    const edgeToEdgeRegex = /`setBehaviorAsync` is not supported with edge-to-edge enabled\.|`setBackgroundColorAsync` is not supported with edge-to-edge enabled\./;
-    console.warn = (...args) => {
+import { t as T, getLocale, setLocale, useI18nVersion, availableLocales } from '../../src/i18n';
+
+// Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
+const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
+
+// Defaults for quiet hours (robust parsing with sane fallback)
+const [DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE] = (() => {
+  const match = String(APP_DEFAULTS?.quietEnd ?? '09:00').match(/^(\d{2}):(\d{2})$/);
+  const h = parseInt(match?.[1] ?? '9', 10);
+  const m = parseInt(match?.[2] ?? '0', 10);
+  return [h, m];
+})();
+
+let installEdgeToEdgeWarnFilter;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  installEdgeToEdgeWarnFilter = require("../../src/utils/devWarnFilter")?.installEdgeToEdgeWarnFilter;
+} catch (e) { __devLog('devWarnFilter import failed:', e?.message || e); }
+import { saveUserLocale } from '../../lib/userLocale';
+import { TBL, PERM_KEYS } from "../../lib/constants";
+
+if (__DEV__ && typeof installEdgeToEdgeWarnFilter === "function") {
+  installEdgeToEdgeWarnFilter();
+}
+
+// Cache expo-notifications dynamic import to avoid repeated module loads
+let __NotificationsMod = null;
+
+async function getNotifications() {
+  if (!__NotificationsMod) {
+    __NotificationsMod = await import('expo-notifications');
+  }
+  return __NotificationsMod;
+}
+
+async function ensurePushPermission() {
+  try {
+    // Web: expo-notifications не поддерживаются; не запускаем токен-флоу
+    if (Platform.OS === 'web') {
+      try { if (Linking?.openSettings) await Linking.openSettings(); } catch (e) {}
+      return { granted: false, token: null };
+    }
+
+    const isExpoGo = Constants?.appOwnership === 'expo';
+    if (isExpoGo) {
+      try { if (Linking?.openSettings) await Linking.openSettings(); } catch (e) { __devLog('openSettings failed:', e?.message || e); }
+      return { granted: false, token: null };
+    }
+
+    const Notifications = await getNotifications();
+    const { status: existing } = await Notifications.getPermissionsAsync();
+    let finalStatus = existing;
+    if (existing !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+
+    const granted = finalStatus === 'granted';
+
+    if (Platform.OS === 'android') {
       try {
-        const first = args && args.length ? String(args[0]) : "";
-        if (edgeToEdgeRegex.test(first)) {
-          return; // тихо игнорируем только эти конкретные варнинги
-        }
-      } catch {}
-      originalWarn(...args);
-    };
-    return () => {
-      console.warn = originalWarn;
-    };
-  }, []);
+        await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
+          name: ANDROID_CHANNEL_NAME,
+          importance: Notifications.AndroidImportance.MAX,
+          sound: 'default',
+        });
+      } catch (e) { __devLog('setNotificationChannelAsync failed:', e?.message || e); }
+    }
+
+    let token = null;
+    try {
+      const projectId = (Constants?.expoConfig?.extra?.eas?.projectId) ?? (Constants?.easConfig?.projectId);
+      const resp = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
+      token = resp?.data || null;
+    } catch (e) { __devLog('getExpoPushTokenAsync failed:', e?.message || e); }
+
+    return { granted, token };
+  } catch (e) {
+    __devLog('ensurePushPermission failed:', e?.message || e);
+    return { granted: false, token: null };
+  }
 }
 
 export default function AppSettings() {
-  useFilterEdgeToEdgeWarnings();
   const nav = useNavigation();
-  const route = useRoute();
+  const ver = useI18nVersion();
+
+  useEffect(() => {
+    try {
+      nav.setParams({ headerTitle: T('routes.app_settings/AppSettings') });
+    } catch (e) { __devLog('nav.setParams failed:', e?.message || e); }
+  }, [ver]);
+
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
-  // Centralized strings with safe fallbacks
-  const STR = {
-    screenTitle: STRINGS?.appSettings?.title ?? "Настройки приложения",
-    sections: {
-      appearance: STRINGS?.appSettings?.sections?.appearance ?? "ВНЕШНИЙ ВИД",
-      notifications: STRINGS?.appSettings?.sections?.notifications ?? "УВЕДОМЛЕНИЯ",
-      quiet: STRINGS?.appSettings?.sections?.quiet ?? "ТИХИЕ ЧАСЫ",
-      privacy: STRINGS?.appSettings?.sections?.privacy ?? "ПРИВАТНОСТЬ",
-      ai: STRINGS?.appSettings?.sections?.ai ?? "AI",
-    },
-    labels: {
-      theme: STRINGS?.appSettings?.labels?.theme ?? "Тема",
-      textSize: STRINGS?.appSettings?.labels?.textSize ?? "Размер текста",
-      boldText: STRINGS?.appSettings?.labels?.boldText ?? "Жирный текст",
-      allowNotifications: STRINGS?.appSettings?.labels?.allowNotifications ?? "Допускать уведомления",
-      notificationSounds: STRINGS?.appSettings?.labels?.notificationSounds ?? "Звуки уведомлений",
-      enabledEvents: STRINGS?.appSettings?.labels?.enabledEvents ?? "Включённые события",
-      quietStart: STRINGS?.appSettings?.labels?.quietStart ?? "Начало",
-      quietEnd: STRINGS?.appSettings?.labels?.quietEnd ?? "Конец",
-      quietReset: STRINGS?.appSettings?.labels?.quietReset ?? "Сбросить время (Всегда уведомлять)",
-      privacyGeo: STRINGS?.appSettings?.labels?.privacyGeo ?? "Сервисы геолокации",
-      privacyAnalytics: STRINGS?.appSettings?.labels?.privacyAnalytics ?? "Анализ функционала",
-      privacySearch: STRINGS?.appSettings?.labels?.privacySearch ?? "Конфиденциальный поиск",
-      aiSuggestions: STRINGS?.appSettings?.labels?.aiSuggestions ?? "Персональные предложения",
-      aiAvatars: STRINGS?.appSettings?.labels?.aiAvatars ?? "Аватарки AI",
-      eventNewOrders: STRINGS?.appSettings?.labels?.eventNewOrders ?? "Новые заявки",
-      eventFeedOrders: STRINGS?.appSettings?.labels?.eventFeedOrders ?? "Заявки в ленте",
-      eventReminders: STRINGS?.appSettings?.labels?.eventReminders ?? "Напоминать о незабранных",
-    },
-    options: {
-      themeLight: STRINGS?.appSettings?.options?.themeLight ?? "Светлая",
-      themeDark: STRINGS?.appSettings?.options?.themeDark ?? "Тёмная",
-      themeSystem: STRINGS?.appSettings?.options?.themeSystem ?? "Системная",
-      off: STRINGS?.common?.off ?? "Выкл.",
-      done: STRINGS?.common?.done ?? "Готово",
-      pickTheme: STRINGS?.appSettings?.modals?.pickTheme ?? "Выберите тему",
-      pickEvents: STRINGS?.appSettings?.modals?.pickEvents ?? "Включённые события",
-    },
-    messages: {
-      future: STRINGS?.messages?.future ?? "Будет добавлено в будущем",
-      chooseQuietStart: STRINGS?.messages?.chooseQuietStart ?? "Выберите начало тихих часов",
-      chooseQuietEnd: STRINGS?.messages?.chooseQuietEnd ?? "Выберите конец тихих часов",
-      quietOff: STRINGS?.messages?.quietOff ?? "Тихие часы выключены",
-      quietRange: (a,b) => (STRINGS?.messages?.quietRange ? STRINGS.messages.quietRange(a,b) : `Тихие часы: ${a}–${b}`),
-      notifOn: STRINGS?.messages?.notifOn ?? "Уведомления включены",
-      notifOff: STRINGS?.messages?.notifOff ?? "Уведомления выключены",
-      notifOnStandalone: STRINGS?.messages?.notifOnStandalone ?? "Уведомления включены (только для standalone версии)",
-      noPermission: STRINGS?.messages?.noPermission ?? "Нет разрешения на уведомления. Разрешите в настройках.",
-      permissionGrantedNoToken: STRINGS?.messages?.permissionGrantedNoToken ?? "Разрешение дано. Токен будет получен в dev/прод билде.",
-      saveError: STRINGS?.messages?.saveError ?? "Не удалось сохранить изменения",
-      saveErrorGeneric: STRINGS?.messages?.saveErrorGeneric ?? "Не удалось сохранить",
-      noAuth: STRINGS?.messages?.noAuth ?? "Нет авторизации. Войдите снова.",
-      noConnection: STRINGS?.messages?.noConnection ?? "Нет соединения с сервером",
-      openSoundSettingsHint: STRINGS?.messages?.openSoundSettingsHint ?? "Откройте настройки звука вручную: Уведомления → Звук.",
-      tokenSaveFailed: STRINGS?.messages?.tokenSaveFailed ?? "Не удалось сохранить токен",
-    }
-  };
-
-
+  const [langOpen, setLangOpen] = useState(false);
+  const _curLocale = (() => { try { return getLocale(); } catch { return 'ru'; } })();
+  const _curLangLabel = T(`language_${_curLocale}`);
   const s = useMemo(() => styles(theme), [theme]);
-  const futureFeature = () => toast.info(STR.messages.future);
-
+  const base = useMemo(() => listItemStyles(theme), [theme]);
+  const futureFeature = () => toast.info(T('settings_soon'));
   const [prefs, setPrefs] = useState({
     allow: true,
     new_orders: true,
@@ -123,128 +128,115 @@ export default function AppSettings() {
   });
   const [loadingPrefs, setLoadingPrefs] = useState(false);
   const [eventsOpen, setEventsOpen] = useState(false);
-  const [timePickerOpen, setTimePickerOpen] = useState(null); // "start" | "end" | null
+  const [timePickerOpen, setTimePickerOpen] = useState(null);
   const [timeValue, setTimeValue] = useState(new Date());
-
   const [canCreateOrders, setCanCreateOrders] = useState(false);
 
-  // Запрос разрешений на уведомления + создание Android-канала, возврат токена (если получилось)
-  async function ensurePushPermission() {
-    try {
-      // Expo Go: полностью пропускаем импорт expo-notifications, чтобы не срабатывала авто-регистрация токена
-      const isExpoGo = Constants?.appOwnership === 'expo';
-      
-      // Для Expo Go показываем системные настройки уведомлений
-      if (isExpoGo) {
-        try {
-          await Linking.openSettings();
-        } catch (error) {
-          toast.error(STR.messages.openSoundSettingsHint);
-        }
-        return { granted: false, token: null };
+  // Prevent setState on unmounted component
+  const mounted = useRef(false);
+  const reopenTimer = useRef(null);
+  useEffect(() => {
+    mounted.current = true;
+    
+return () => {
+      mounted.current = false;
+      if (reopenTimer.current) {
+        clearTimeout(reopenTimer.current);
+        reopenTimer.current = null;
       }
-      
-      // Динамически импортируем модуль (без сайд-эффектов на старте приложения)
-      const Notifications = await import('expo-notifications');
-      // 1) Запрос/проверка прав
-      const { status: existing } = await Notifications.getPermissionsAsync();
-      let finalStatus = existing;
-      if (existing !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-      const granted = finalStatus === 'granted';
-      // 2) Android: канал
-      if (Platform.OS === 'android') {
-        try {
-          await Notifications.setNotificationChannelAsync('default', {
-            name: 'default',
-            importance: Notifications.AndroidImportance.MAX,
-            sound: 'default',
-          });
-        } catch {}
-      }
-      // 3) Получаем Expo push token (в dev/прод билде)
-      let token = null;
-      try {
-        const resp = await Notifications.getExpoPushTokenAsync();
-        token = resp?.data || null;
-      } catch {}
-      return { granted, token };
-    } catch {
-      return { granted: false, token: null };
-    }
-  }
+    };
 
+  }, []);
   async function loadPrefs() {
     setLoadingPrefs(true);
     try {
-      const { data: ures } = await supabase.auth.getUser();
-      const uid = ures?.user?.id;
-      if (!uid) return;
+      // 1) UID
+      let uid = null;
+      try {
+        uid = await getUid();
+      } catch (e) {
+        const m = String(e?.message || e || '').toLowerCase();
+        if (m.includes('no_auth')) {
+          // пользователь ещё не авторизован / сессия не прогрузилась
+          return;
+        }
+        throw e;
+      }
 
-      const { data } = await supabase
-        .from("notification_prefs")
-        .select("allow, new_orders, feed_orders, reminders, quiet_start, quiet_end")
-        .eq("user_id", uid)
+      // 2) Prefs
+      const { data, error: prefsErr } = await supabase
+        .from(TBL.NOTIF_PREFS)
+        .select('allow, new_orders, feed_orders, reminders, quiet_start, quiet_end')
+        .eq('user_id', uid)
         .maybeSingle();
-      if (data) setPrefs((p) => ({ ...p, ...data }));
 
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("role, company_id")
-        .eq("id", uid)
-        .maybeSingle();
+      if (prefsErr) {
+        __devLog('NOTIF_PREFS load error:', prefsErr.message || prefsErr);
+        toast.error(T('errors_loadSettings'));
+        return;
+      }
 
-      if (prof?.company_id && prof?.role) {
-        const { data: perm } = await supabase
-          .from("app_role_permissions")
-          .select("value")
-          .eq("company_id", prof.company_id)
-          .eq("role", prof.role)
-          .eq("key", "canCreateOrders")
-          .maybeSingle();
-        const v = (perm?.value ?? "").toString().trim().toLowerCase();
-        setCanCreateOrders(v in { "1":1, "true":1, "t":1, "yes":1, "y":1 });
-      } else {
-        setCanCreateOrders(false);
+      if (data && mounted.current) setPrefs((p) => ({ ...p, ...data }));
+
+      // default quiet hours, если пусто
+      try {
+        const qs = data?.quiet_start, qe = data?.quiet_end;
+        const bothEmpty = (!qs || String(qs).trim() === '') && (!qe || String(qe).trim() === '');
+        if ((!data || bothEmpty) && mounted.current) {
+          const defaultPatch = { quiet_start: APP_DEFAULTS?.quietStart, quiet_end: APP_DEFAULTS?.quietEnd };
+          setPrefs((p) => ({ ...p, ...(data || {}), ...defaultPatch }));
+        }
+      } catch (e) { __devLog('init default quiet hours failed:', e?.message || e); }
+
+      // 3) Профиль/пермишены
+      try {
+        const prof = await readProfile(uid);
+        if (prof?.company_id && prof?.role) {
+          try {
+            const permValue = await readRolePerm(prof.company_id, prof.role, PERM_KEYS.CAN_CREATE_ORDERS);
+            const v = (permValue ?? '').toString().trim().toLowerCase();
+            mounted.current && setCanCreateOrders(v in { '1':1, 'true':1, 't':1, 'yes':1, 'y':1 });
+          } catch (e) {
+            __devLog('readRolePerm failed:', e?.message || e);
+            mounted.current && setCanCreateOrders(false);
+          }
+        } else {
+          mounted.current && setCanCreateOrders(false);
+        }
+      } catch (e) {
+        __devLog('readProfile failed:', e?.message || e);
+        mounted.current && setCanCreateOrders(false);
       }
     } catch (e) {
-      toast.error(STR.messages.saveError);
+      __devLog('loadPrefs fatal:', e?.message || e);
+      toast.error(T('errors_loadSettings'));
     } finally {
-      setLoadingPrefs(false);
+      if (mounted.current) setLoadingPrefs(false);
     }
   }
 
-  useEffect(() => {
-    loadPrefs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { loadPrefs(); }, []);
 
   async function savePrefs(patch) {
     try {
-      const { data: ures, error: userErr } = await supabase.auth.getUser();
-      if (userErr) throw userErr;
-      const uid = ures?.user?.id;
-      if (!uid) throw new Error("NO_AUTH");
+      const uid = await getUid();
       const next = { ...prefs, ...patch };
       const { error } = await supabase
-        .from("notification_prefs")
-        .upsert({ user_id: uid, ...next }, { onConflict: "user_id" });
+        .from(TBL.NOTIF_PREFS)
+        .upsert({ user_id: uid, ...next }, { onConflict: "user_id", returning: 'minimal' });
       if (error) {
-        let msg = STR.messages.saveError;
-        if (/permission denied/i.test(error.message)) msg = STR.messages.noPermission ?? "Нет прав доступа к настройкам";
-        else if (/row level security|rls/i.test(error.message)) msg = "Недостаточно прав (RLS)";
-        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = STR.messages.noConnection;
-        console.warn('savePrefs supabase error:', error);
+        let msg = T('errors_saveGeneric');
+        if (/permission denied/i.test(error.message)) msg = T('errors_noSettingsAccess');
+        else if (/row level security|rls/i.test(error.message)) msg = T('errors_rls');
+        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = T('errors_network');
         return { ok: false, message: msg };
       }
       return { ok: true };
     } catch (e) {
       const m = String(e?.message || e || "").toLowerCase();
-      let msg = STR.messages.saveErrorGeneric;
-      if (m.includes("no_auth")) msg = STR.messages.noAuth;
-      else if (m.includes("failed to fetch") || m.includes("network")) msg = STR.messages.noConnection;
+      let msg = T('errors_saveShort');
+      if (m.includes("no_auth")) msg = T('errors_noAuth');
+      else if (m.includes("failed to fetch") || m.includes("network")) msg = T('errors_network');
       return { ok: false, message: msg };
     }
   }
@@ -252,7 +244,6 @@ export default function AppSettings() {
   function toTimeStr(v) {
     if (!v) return null;
     if (typeof v === "string") {
-      // "HH:MM:SS" or "HH:MM"
       const m = v.match(/^(\d{2}):(\d{2})/);
       if (m) return `${m[1]}:${m[2]}`;
       return null;
@@ -265,37 +256,40 @@ export default function AppSettings() {
     return null;
   }
 
-  // FIX: не используем "1900-й год", чтобы не ловить исторические таймзоны (дрейф ~55 мин).
   function toDateFromStr(s) {
     try {
       const now = new Date();
-      const baseY = now.getFullYear();
-      const baseM = now.getMonth();
-      const baseD = now.getDate();
-      if (!s) return new Date(baseY, baseM, baseD, 9, 0, 0, 0); // 09:00 default
-      const [hh, mm] = s.split(":").map((n)=>parseInt(n,10));
-      return new Date(baseY, baseM, baseD, isNaN(hh)?9:hh, isNaN(mm)?0:mm, 0, 0);
-    } catch {
+      if (!s || typeof s !== 'string' || !s.includes(':')) {
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE, 0, 0);
+      }
+      const [hs, ms] = s.split(":");
+      const hh = parseInt(hs, 10);
+      const mm = parseInt(ms, 10);
+      const H = Number.isFinite(hh) ? hh : DEFAULT_QUIET_HOUR;
+      const M = Number.isFinite(mm) ? mm : DEFAULT_QUIET_MINUTE;
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), H, M, 0, 0);
+    } catch (e) {
+      __devLog('toDateFromStr parse failed:', e?.message || e);
       const now = new Date();
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0, 0);
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE, 0, 0);
     }
   }
-  // helper: оба времени заданы?
+
   const bothQuietSet = (obj) => !!toTimeStr(obj.quiet_start) && !!toTimeStr(obj.quiet_end);
 
-
   const openTimePicker = (which) => () => {
-    const base = which === "start" ? prefs.quiet_start : prefs.quiet_end;
+    const bothNull = !toTimeStr(prefs.quiet_start) && !toTimeStr(prefs.quiet_end);
+    const fallback = which === "start" ? APP_DEFAULTS?.quietStart : APP_DEFAULTS?.quietEnd;
+    const base = which === "start"
+      ? (prefs.quiet_start ?? (bothNull ? fallback : null))
+      : (prefs.quiet_end   ?? (bothNull ? fallback : null));
     const d = toDateFromStr(toTimeStr(base));
     setTimeValue(d);
     setTimePickerOpen(which);
   };
 
-  
-  // Обновлённая логика выбора времени «Тихих часов»
   const onTimePicked = async (_ev, dateOrUndefined) => {
     if (!timePickerOpen) return;
-    // Android: dismiss -> undefined
     if (!dateOrUndefined) { setTimePickerOpen(null); return; }
 
     const hhmm = toTimeStr(dateOrUndefined);
@@ -304,152 +298,135 @@ export default function AppSettings() {
     const prevPrefs = prefs;
     const next = { ...prefs, ...patch };
 
-    // Сразу закрываем текущий пикер и обновляем локально
     setPrefs(next);
     setTimePickerOpen(null);
 
-    // Если второе время ещё не задано — просим выбрать его и НИЧЕГО не сохраняем в базу
     if (!bothQuietSet(next)) {
       const missing = next.quiet_start ? "end" : "start";
       const d = toDateFromStr(toTimeStr(next[missing]));
       setTimeValue(d);
-      setTimeout(() => setTimePickerOpen(missing), 0);
-      toast.info(missing === "end" ? STR.messages.chooseQuietEnd : STR.messages.chooseQuietStart);
+      
+if (mounted.current) {
+        if (reopenTimer.current) clearTimeout(reopenTimer.current);
+        reopenTimer.current = setTimeout(() => {
+          if (mounted.current) setTimePickerOpen(missing);
+        }, 0);
+      }
+
+      toast.info(missing === "end" ? T('quiet_pickEnd') : T('quiet_pickStart'));
       return;
     }
 
-    // Если начало и конец совпали — считаем, что тихие часы выключены
     if (toTimeStr(next.quiet_start) === toTimeStr(next.quiet_end)) {
       const resetPatch = { quiet_start: null, quiet_end: null };
       setPrefs((p) => ({ ...p, ...resetPatch }));
       const { ok, message } = await savePrefs(resetPatch);
       if (!ok) {
         setPrefs(prevPrefs);
-        toast.error(message || STR.messages.saveErrorGeneric);
+        toast.error(message || T('quiet_saveFail'));
       } else {
-        toast.info(STR.messages.quietOff);
+        toast.info(T('quiet_off'));
       }
       return;
     }
 
-    // Оба времени заданы и они разные — сохраняем пару атомарно
     const { ok, message } = await savePrefs({
       quiet_start: next.quiet_start,
       quiet_end: next.quiet_end,
     });
     if (!ok) {
       setPrefs(prevPrefs);
-      toast.error(message || STR.messages.saveErrorGeneric);
+      toast.error(message || T('quiet_saveFail'));
     } else {
-      toast.info(STR.messages.quietRange(toTimeStr(next.quiet_start), toTimeStr(next.quiet_end)));
+      toast.info(T('quiet_range') + `${toTimeStr(next.quiet_start)}–${toTimeStr(next.quiet_end)}`);
     }
   };
 
-
-  
   async function savePushToken(token) {
     try {
-      const { data: ures, error: userErr } = await supabase.auth.getUser();
-      if (userErr) throw userErr;
-      const uid = ures?.user?.id;
-      if (!uid) throw new Error('NO_AUTH');
+      const uid = await getUid();
       if (!token) throw new Error('NO_TOKEN');
       const platform = Platform.OS === 'ios' ? 'ios' : 'android';
-      // гарантируем одну запись на пользователя: delete -> insert
-      const { error } = await supabase
-        .from('push_tokens')
-        .upsert({ user_id: uid, token, platform }, { onConflict: 'user_id' });
-      if (error) throw error;
+      await savePushTokenHelper(uid, token, platform);
       return { ok: true };
     } catch (e) {
-      let msg = STR.messages.tokenSaveFailed;
+      let msg = T('push_saveTokenFail');
       const m = String(e?.message || e).toLowerCase();
-      if (m.includes('no_auth')) msg = STR.messages.noAuth;
-      if (m.includes('permission denied') || m.includes('rls')) msg = 'Недостаточно прав (RLS)';
+      if (m.includes('no_auth')) msg = T('errors_noAuthShort');
+      if (m.includes('permission denied') || m.includes('rls')) msg = T('errors_rls');
       return { ok: false, message: msg };
     }
   }
 
   async function removePushToken() {
     try {
-      const { data: ures, error: userErr } = await supabase.auth.getUser();
-      if (userErr) throw userErr;
-      const uid = ures?.user?.id;
-      if (!uid) throw new Error('NO_AUTH');
-      await supabase.from('push_tokens').delete().eq('user_id', uid);
+      const uid = await getUid();
+      await deletePushTokenHelper(uid);
       return { ok: true };
-    } catch {
+    } catch (e) {
+      __devLog('removePushToken failed:', e?.message || e);
       return { ok: false };
     }
   }
-const onToggleAllow = async (val) => {
-  const prev = prefs.allow;
-  setPrefs((p) => ({ ...p, allow: val }));
 
-  // Для Expo Go просто сохраняем настройку без запроса разрешений
-  const isExpoGo = Constants?.appOwnership === 'expo';
-  if (isExpoGo) {
-    const { ok, message } = await savePrefs({ allow: val });
-    if (!ok) {
-      setPrefs((p) => ({ ...p, allow: prev }));
-      toast.error(message || STR.messages.saveError);
-    } else {
-      toast.info(val ? STR.messages.notifOnStandalone : STR.messages.notifOff);
-    }
-    return;
-  }
+  const onToggleAllow = async (val) => {
+    const prev = prefs.allow;
+    setPrefs((p) => ({ ...p, allow: val }));
 
-  if (val) {
-    // Включаем: запрашиваем разрешение и сохраняем токен
-    const { granted, token } = await ensurePushPermission();
-    if (!granted) {
-      setPrefs((p) => ({ ...p, allow: prev }));
-      toast.error(STR.messages.noPermission);
+    const isExpoGo = Constants?.appOwnership === 'expo';
+    if (isExpoGo) {
+      const { ok, message } = await savePrefs({ allow: val });
+      if (!ok) {
+        setPrefs((p) => ({ ...p, allow: prev }));
+        toast.error(message || T('errors_saveGeneric'));
+      } else {
+        toast.info(val ? T('push_onStandalone') : T('push_off'));
+      }
       return;
     }
-    if (token) {
-      const r = await savePushToken(token);
-      if (!r.ok) {
+
+    if (val) {
+      // Enabling: request permission, save token, then save prefs
+      const { granted, token } = await ensurePushPermission();
+      if (!granted) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(r.message || STR.messages.tokenSaveFailed);
+        toast.error(T('push_noPermission'));
         return;
       }
+      if (token) {
+        const r = await savePushToken(token);
+        if (!r.ok) {
+          setPrefs((p) => ({ ...p, allow: prev }));
+          toast.error(r.message || T('push_saveTokenFail'));
+          return;
+        }
+      } else {
+        toast.info(T('push_permissionGranted'));
+      }
+      const { ok, message } = await savePrefs({ allow: true });
+      if (!ok) {
+        setPrefs((p) => ({ ...p, allow: prev }));
+        toast.error(message || T('errors_saveGeneric'));
+        __devLog('notification_prefs save error:', message);
+      } else {
+        toast.info(T('push_on'));
+      }
+      return;
     } else {
-      // Expo Go или ошибка получения токена — предупреждаем, но не валим
-      toast.info(STR.messages.permissionGrantedNoToken);
-    }
-  } else {
-    // Выключаем: удаляем токен
-    await removePushToken();
-  }
-
-  const { ok, message } = await savePrefs({ allow: val });
-  if (!ok) {
-    setPrefs((p) => ({ ...p, allow: prev }));
-    toast.error(message || STR.messages.saveError);
-    console.warn("notification_prefs save error:", message);
-  } else {
-    toast.info(val ? STR.messages.notifOn : STR.messages.notifOff);
-  }
-};
-
-  // Улучшили UX открытия настроек звука/уведомлений
-  const onOpenSystemSounds = async () => {
-    try {
-      if (Platform.OS === "android") {
-        // Пробуем открыть экран уведомлений системы
-        const intentUrl = "intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;end";
-        await Linking.openURL(intentUrl);
+      // Disabling: save prefs first, then remove token if save succeeded
+      const { ok, message } = await savePrefs({ allow: false });
+      if (!ok) {
+        setPrefs((p) => ({ ...p, allow: prev }));
+        toast.error(message || T('errors_saveGeneric'));
+        __devLog('notification_prefs save error (disable):', message);
         return;
       }
-      // iOS: открываем настройки приложения
-      await Linking.openURL("app-settings:");
-    } catch {
-      try {
-        await Linking.openSettings();
-      } catch {
-        toast.info(STR.messages.openSoundSettingsHint);
+      const r = await removePushToken();
+      if (!r.ok) {
+        __devLog('removePushToken after disable returned not ok');
       }
+      toast.info(T('push_off'));
+      return;
     }
   };
 
@@ -459,12 +436,11 @@ const onToggleAllow = async (val) => {
     const { ok, message } = await savePrefs({ [key]: val });
     if (!ok) {
       setPrefs((p) => ({ ...p, [key]: prev }));
-      toast.error(message || STR.messages.saveError);
+      toast.error(message || T('errors_saveGeneric'));
       console.warn("notification_prefs save error:", message);
     }
   };
 
-  // Кнопка «Сбросить»: обнуляем quiet_start/quiet_end
   const onResetQuietTimes = async () => {
     const prev = { quiet_start: prefs.quiet_start, quiet_end: prefs.quiet_end };
     const patch = { quiet_start: null, quiet_end: null };
@@ -472,233 +448,190 @@ const onToggleAllow = async (val) => {
     const { ok, message } = await savePrefs(patch);
     if (!ok) {
       setPrefs((p) => ({ ...p, ...prev }));
-      toast.error(message || STR.messages.saveErrorGeneric);
+      toast.error(message || T('quiet_saveFail'));
     } else {
-      toast.info(STR.messages.quietOff);
+      toast.info(T('quiet_off'));
     }
   };
 
-  const sections = [
+  // --- UI sections (structure without hardcoded texts; titles/labels come from i18n) ---
+  const sectionBase = useMemo(() => [
     {
       key: "appearance",
-      title: STR.sections.appearance,
       items: [
-        {
-          key: "theme",
-          label: STR.labels.theme,
-          right: <Text style={[s.value, { color: theme.colors.text }]}>{mode === "system" ? STR.options.themeSystem : mode === "light" ? STR.options.themeLight : STR.options.themeDark}</Text>,
-          chevron: true,
-          onPress: () => setThemeOpen(true),
-        },
-        { key: "text-size", label: STR.labels.textSize, chevron: true, disabled: true, onPress: futureFeature },
-        { key: "bold-text", label: STR.labels.boldText, switch: true, disabled: true, onPress: futureFeature },
+        { key: "theme",       type: "select", onPress: () => setThemeOpen(true) },
+        { key: "language",    type: "select", value: _curLangLabel, onPress: () => setLangOpen(true) },
+        { key: "bold-text",   switch: true,   disabled: true, onValueChange: futureFeature },
       ],
     },
     {
       key: "notifications",
-      title: STR.sections.notifications,
       items: [
-        {
-          key: "allow",
-          label: STR.labels.allowNotifications,
-          switch: true,
-          value: prefs.allow,
-          onValueChange: onToggleAllow,
-          disabled: loadingPrefs,
-        },
-        {
-          key: "sounds",
-          label: STR.labels.notificationSounds,
-          chevron: true,
-          onPress: () => toast.info(STR.messages.future),
-          disabled: true,
-        },
-        {
-          key: "events",
-          label: STR.labels.enabledEvents,
-          chevron: true,
-          onPress: () => setEventsOpen(true),
-          disabled: false,
-        },
+        { key: "allow",   switch: true, onValueChange: onToggleAllow },
+        { key: "sounds",  type: "select", disabled: true, onPress: futureFeature },
+        { key: "events",  type: "select", onPress: () => setEventsOpen(true) },
       ],
     },
     {
       key: "quiet",
-      title: STR.sections.quiet,
       items: [
-        {
-          key: "quiet_start",
-          label: STR.labels.quietStart,
-          right: <Text style={[s.value, { color: theme.colors.text }]}>{toTimeStr(prefs.quiet_start) || STR.options.off}</Text>,
-          chevron: true,
-          onPress: openTimePicker("start"),
-        },
-        {
-          key: "quiet_end",
-          label: STR.labels.quietEnd,
-          right: <Text style={[s.value, { color: theme.colors.text }]}>{toTimeStr(prefs.quiet_end) || STR.options.off}</Text>,
-          chevron: true,
-          onPress: openTimePicker("end"),
-        },
-        {
-          key: "quiet_reset",
-          label: STR.labels.quietReset,
-          chevron: true,
-          onPress: onResetQuietTimes,
-        },
+        { key: "quiet_start", type: "select", onPress: openTimePicker("start") },
+        { key: "quiet_end",   type: "select", onPress: openTimePicker("end") },
+        { key: "quiet_reset", type: "select", onPress: onResetQuietTimes },
       ],
     },
     {
       key: "privacy",
-      title: STR.sections.privacy,
       items: [
-        { key: "geo", label: STR.labels.privacyGeo, chevron: true, disabled: true, onPress: futureFeature },
-        { key: "analytics", label: STR.labels.privacyAnalytics, chevron: true, disabled: true, onPress: futureFeature },
-        { key: "private-search", label: STR.labels.privacySearch, switch: true, disabled: true, onPress: futureFeature },
+        { key: "geo",            type: "select", disabled: true, onPress: futureFeature },
+        { key: "analytics",      type: "select", disabled: true, onPress: futureFeature },
+        { key: "private-search", switch: true,   disabled: true, onValueChange: futureFeature },
       ],
     },
     {
       key: "ai",
-      title: STR.sections.ai,
       items: [
-        { key: "suggestions", label: STR.labels.aiSuggestions, chevron: true, disabled: true, onPress: futureFeature },
-        { key: "avatars", label: STR.labels.aiAvatars, switch: true, disabled: true, onPress: futureFeature },
+        { key: "suggestions", type: "select", disabled: true, onPress: futureFeature },
+        { key: "avatars",     switch: true,   disabled: true, onValueChange: futureFeature },
       ],
     },
-  ];
+  ].map((sec) => ({
+    ...sec,
+    title: T(`settings_sections_${sec.key}_title`),
+    items: sec.items.map((it) => ({
+      ...it,
+      label: T(`settings_sections_${sec.key}_items_${it.key}`, it.label),
+    })),
+  })), [_curLocale, theme, canCreateOrders, ver]);
+
+  // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
+  const sections = useMemo(() => sectionBase.map((sec) => ({
+    ...sec,
+    items: sec.items.map((it) => {
+      if (sec.key === "notifications" && it.key === "allow") {
+        return { ...it, value: !!prefs.allow, disabled: !!loadingPrefs };
+      }
+      if (sec.key === "quiet" && it.key === "quiet_start") {
+        return { ...it, value: (toTimeStr(prefs.quiet_start) || T('common_off')) };
+      }
+      if (sec.key === "quiet" && it.key === "quiet_end") {
+        return { ...it, value: (toTimeStr(prefs.quiet_end) || T('common_off')) };
+      }
+      if (sec.key === "appearance" && it.key === "language") {
+        return { ...it, value: _curLangLabel };
+      }
+      return it;
+    })
+  })), [sectionBase, prefs, loadingPrefs, _curLangLabel]);
 
   return (
-    <SafeAreaView edges={['left','right']} style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <AppHeader options={{ title: STR.screenTitle }} back={nav.canGoBack()} route={route} />
+    <Screen>
+      <ScrollView contentContainerStyle={s.contentWrap} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        {loadingPrefs && (
+          <View style={{ paddingVertical: 8 }}>
+            <ActivityIndicator />
+          </View>
+        )}
         {sections.map((sec) => (
           <View key={sec.key} style={s.sectionWrap}>
-            <Text style={[s.sectionTitle, { color: theme.colors.textSecondary }]}>{sec.title}</Text>
-            <View style={[s.card, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+            <Text style={base.sectionTitle}>{sec.title}</Text>
+            <Card paddedXOnly>
               {sec.items.map((it, idx) => {
                 const last = idx === sec.items.length - 1;
-                const row = (
-                  <View style={[s.row, !last && [s.rowDivider, { borderColor: theme.colors.border }], it.disabled && s.disabled]}>
-                    <Text style={[s.label, { color: theme.colors.text }]}>{it.label}</Text>
-                    <View style={s.rightWrap}>
-                      {it.switch ? (
-                        <>
-                          <Switch
-                            value={!!it.value}
-                            onValueChange={it.onValueChange}
-                            disabled={!!it.disabled}
-                            trackColor={{ true: theme.colors.primary }}
-                          />
-                          <View style={s.chevronSpacer} />
-                        </>
-                      ) : it.right ? (
-                        it.right
-                      ) : null}
-                      {(it.chevron || !it.switch) && (
-                        <FeatherIcon name="chevron-right" size={theme.components.listItem.chevronSize} color={theme.colors.textSecondary} style={s.chevron} />
-                      )}
-                    </View>
-                  </View>
-                );
                 return (
-                  <Pressable
-  key={it.key}
-  onPress={() => {
-    if (it.disabled) {
-      toast.info(STR.messages.future);
-    } else {
-      it.onPress && it.onPress();
-    }
-  }}
-  android_ripple={it.disabled ? undefined : { color: theme.colors.ripple, borderless: false }}
->
-  {row}
-</Pressable>
+                  <React.Fragment key={it.key}>
+                    {it.switch ? (
+                      <SwitchField
+                        label={it.label}
+                        value={!!it.value}
+                        onValueChange={it.onValueChange}
+                        disabled={!!it.disabled}
+                        accessibilityRole="switch"
+                        accessibilityLabel={it.label}
+                      />
+                    ) : (
+                      <SelectField
+                        label={it.label}
+                        value={it.value}
+                        onPress={() => {
+                          if (it.disabled) futureFeature();
+                          else it.onPress && it.onPress();
+                        }}
+                        disabled={!!it.disabled}
+                        accessibilityRole="button"
+                        accessibilityLabel={it.label}
+                      />
+                    )}
+                    {!last && (<View style={base.sep} />)}
+                  </React.Fragment>
                 );
               })}
-            </View>
+            </Card>
           </View>
         ))}
       </ScrollView>
 
-      {/* Time Picker (native) */}
+      {/* Time Picker */}
       {timePickerOpen ? (
-        <DateTimePicker
+        <DateTimeModal
+          visible={!!timePickerOpen}
           mode="time"
-          value={timeValue}
-          is24Hour
-          display={Platform.OS === "ios" ? "spinner" : "default"}
-          onChange={onTimePicked}
+          initial={timeValue}
+          minuteStep={TIME_PICKER_MINUTE_STEP}
+          onApply={(d) => onTimePicked(null, d)}
+          onClose={() => setTimePickerOpen(null)}
         />
       ) : null}
 
-      {/* Events SelectModal */}
-<SelectModal
-  visible={eventsOpen}
-  title={STR.options.pickEvents}
-  searchable={false}
-  items={[
-    { id: "new_orders", label: STR.labels.eventNewOrders, right: <Switch value={!!prefs.new_orders} onValueChange={onToggleEvent("new_orders")} /> },
-    { id: "feed_orders", label: STR.labels.eventFeedOrders, right: <Switch value={!!prefs.feed_orders} onValueChange={onToggleEvent("feed_orders")} /> },
-    ...(canCreateOrders ? [{ id: "reminders", label: STR.labels.eventReminders, right: <Switch value={!!prefs.reminders} onValueChange={onToggleEvent("reminders")} /> }] : [])
-  ]}
-  footer={<Button variant="secondary" title={STR.options.done} onPress={() => setEventsOpen(false)} />}
-  onClose={() => setEventsOpen(false)}
-/>
+      {/* Events */}
+      <SwitchListModal
+        visible={eventsOpen}
+        title={T('settings_events_title')}
+        toggles={[
+          { id: "new_orders", label: T('settings_events_newOrders'), value: !!prefs.new_orders, onChange: onToggleEvent("new_orders") },
+          { id: "feed_orders", label: T('settings_events_feedOrders'), value: !!prefs.feed_orders, onChange: onToggleEvent("feed_orders") },
+          ...(canCreateOrders ? [{ id: "reminders", label: T('settings_events_reminders'), value: !!prefs.reminders, onChange: onToggleEvent("reminders") }] : [])
+        ]}
+        footer={<Button variant="secondary" title={T('btn_apply')} onPress={() => setEventsOpen(false)} />}
+        onClose={() => setEventsOpen(false)}
+      />
 
+      {/* Theme */}
+      <SingleSelectModal
+        visible={themeOpen}
+        title={T('settings_theme_title')}
+        options={[
+          { id: "light", label: T('settings_theme_light') },
+          { id: "dark",  label: T('settings_theme_dark') },
+          { id: "system", label: T('settings_theme_system') }
+        ]}
+        selectedId={mode}
+        onSelect={(id) => { setMode(id); setThemeOpen(false); }}
+        onClose={() => setThemeOpen(false)}
+      />
 
-      {/* Theme SelectModal */}
-<SelectModal
-  visible={themeOpen}
-  title={STR.options.pickTheme}
-  searchable={false}
-  items={[
-    { id: "light", label: STR.options.themeLight, right: (mode === 'light' ? <FeatherIcon name="check" size={theme.components.listItem.chevronSize} color={theme.colors.primary} /> : null) },
-    { id: "dark", label: STR.options.themeDark, right: (mode === 'dark' ? <FeatherIcon name="check" size={theme.components.listItem.chevronSize} color={theme.colors.primary} /> : null) },
-    { id: "system", label: STR.options.themeSystem, right: (mode === 'system' ? <FeatherIcon name="check" size={theme.components.listItem.chevronSize} color={theme.colors.primary} /> : null) },
-  ]}
-  onSelect={(it) => { setMode(it.id); setThemeOpen(false); }}
-  onClose={() => setThemeOpen(false)}
-/>
-
-    </SafeAreaView>
+      {/* Language */}
+      <SingleSelectModal
+        visible={langOpen}
+        title={T('settings_language_title')}
+        options={availableLocales.map(id => ({ id, label: T(`language_${id}`) }))}
+        selectedId={_curLocale}
+        onSelect={async (id) => {
+          try {
+            await setLocale(id);
+            try { await saveUserLocale(id); } catch (e) { console.warn('saveUserLocale:', e?.message || e); }
+            toast.info(T('lang_changed') ?? 'Language changed');
+          } finally {
+            setLangOpen(false);
+          }
+        }}
+        onClose={() => setLangOpen(false)}
+      />
+    </Screen>
   );
 }
 
 const styles = (t) => StyleSheet.create({
-  sectionWrap: { marginBottom: t.spacing.lg },
-  sectionTitle: {
-    fontSize: t.typography.sizes.xs,
-    fontWeight: t.typography.weight.bold,
-    marginBottom: t.spacing.sm,
-    paddingLeft: t.spacing.xl,
-    paddingRight: t.spacing.lg,
-    textTransform: "uppercase",
-  },
-  card: {
-    marginHorizontal: t.spacing.lg,
-    marginTop: 0,
-    marginBottom: 0,
-    borderRadius: t.radii.xl,
-    overflow: "hidden",
-    borderWidth: t.components.card.borderWidth,
-    ...(Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android),
-  },
-  row: {
-    height: t.components.listItem.height,
-    paddingLeft: t.spacing.xl,
-    paddingRight: t.spacing.lg,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: t.colors.card,
-  },
-  rowDivider: { borderBottomWidth: t.components.listItem.dividerWidth },
-  disabled: { opacity: t.components.listItem.disabledOpacity },
-  label: { fontSize: t.typography.sizes.md, fontWeight: t.typography.weight.medium },
-  value: { fontSize: t.typography.sizes.md },
-  rightWrap: { flexDirection: "row", alignItems: "center" },
-
-  // Modal bottom-sheet
-
+  contentWrap: { padding: t.spacing.lg, paddingBottom: t.spacing.xl },
+  sectionWrap: { marginBottom: 0 },
 });

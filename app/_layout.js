@@ -7,7 +7,8 @@ import { ActivityIndicator, View, AppState } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaView, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { LinearTransition } from 'react-native-reanimated';
-
+import { initI18n, setLocale } from '../src/i18n';
+import { loadUserLocale } from '../lib/userLocale';
 import { supabase } from '../lib/supabase';
 import SettingsProvider from '../providers/SettingsProvider';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
@@ -15,17 +16,14 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { PermissionsProvider } from '../lib/permissions';
 import BottomNav from '../components/navigation/BottomNav';
 import { getUserRole } from '../lib/getUserRole';
-// ---- React Query: cache + offline persist (Expo Managed, AsyncStorage) ----
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 
-// Предотвращаем автоматическое скрытие сплэш-скрина
 SplashScreen.preventAutoHideAsync();
 
-// Единый QueryClient с SWR-поведением (мгновенный кэш + тихий рефетч)
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -41,10 +39,8 @@ const queryClient = new QueryClient({
   },
 });
 
-// Persist кэша в AsyncStorage (Expo-friendly)
 const persister = createAsyncStoragePersister({ storage: AsyncStorage });
 
-// Сетевое состояние и фокус для RN
 onlineManager.setEventListener((setOnline) =>
   NetInfo.addEventListener((state) => setOnline(!!state.isConnected))
 );
@@ -64,30 +60,44 @@ function RootLayoutInner() {
 
   const safeEdges = ['top', 'left', 'right'];
 
-  // Простая функция для скрытия сплэша
   const onLayoutRootView = useCallback(async () => {
     if (appReady) {
       await SplashScreen.hideAsync();
     }
   }, [appReady]);
 
-  // Упрощенная инициализация приложения
   useEffect(() => {
     let mounted = true;
 
     const initializeApp = async () => {
       try {
-        // 1. Проверяем сессию
         const { data: { session } } = await supabase.auth.getSession();
+        // i18n init из AsyncStorage (локальный кэш)
+        await initI18n();
+
+        // Если пользователь залогинен — подтянем язык из профиля (Supabase)
+        if (session?.user) {
+          try {
+            const code = await loadUserLocale();
+            if (code) await setLocale(code);
+          } catch (e) {
+            console.warn('loadUserLocale failed:', e?.message || e);
+          }
+        }
+
         const logged = !!session?.user;
         
         if (mounted) {
           setIsLoggedIn(logged);
+          // Разрешаем переход к стэку сразу — роль подтянем асинхронно
+          if (!appReady) setAppReady(true);
           
           // 2. Если пользователь залогинен, получаем роль
           if (logged) {
             try {
-              const userRole = await getUserRole();
+              const userRolePromise = getUserRole();
+              const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('worker'), 5000));
+              const userRole = await Promise.race([userRolePromise, timeoutPromise]);
               if (mounted) setRole(userRole);
             } catch (error) {
               console.warn('Failed to get user role:', error);
@@ -109,7 +119,6 @@ function RootLayoutInner() {
 
     initializeApp();
 
-    // Слушатель изменения состояния аутентификации
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
@@ -123,11 +132,23 @@ function RootLayoutInner() {
 
         const logged = !!session?.user;
         setIsLoggedIn(logged);
+          // Разрешаем переход к стэку сразу — роль подтянем асинхронно
+          if (!appReady) setAppReady(true);
 
         if (logged) {
+          // Синхронизируем язык из профиля при входе
           try {
-            const userRole = await getUserRole();
-            if (mounted) setRole(userRole);
+            const code = await loadUserLocale();
+            if (code) await setLocale(code);
+          } catch (e) {
+            console.warn('loadUserLocale on auth change failed:', e?.message || e);
+          }
+          
+          try {
+            const userRolePromise = getUserRole();
+              const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('worker'), 5000));
+              const userRole = await Promise.race([userRolePromise, timeoutPromise]);
+              if (mounted) setRole(userRole);
           } catch (error) {
             console.warn('Failed to get user role on auth change:', error);
             if (mounted) setRole(null);
@@ -138,7 +159,6 @@ function RootLayoutInner() {
       }
     );
 
-    // Слушатель состояния приложения для повторного скрытия сплэша если нужно
     const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
       if (
         appState.current.match(/inactive|background/) &&
@@ -158,7 +178,6 @@ function RootLayoutInner() {
     };
   }, []);
 
-  // Скрываем сплэш когда приложение готово
   useEffect(() => {
     if (appReady) {
       const hideSplash = async () => {
@@ -168,7 +187,6 @@ function RootLayoutInner() {
     }
   }, [appReady]);
 
-  // Push notifications (только для продакшн и залогиненных)
   useEffect(() => {
     if (!isLoggedIn) return;
 
@@ -190,7 +208,6 @@ function RootLayoutInner() {
     return () => detach?.();
   }, [isLoggedIn]);
 
-  // Пока приложение не готово, показываем индикатор загрузки
   if (!appReady) {
     return (
       <SafeAreaView
