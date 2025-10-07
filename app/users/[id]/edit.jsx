@@ -7,7 +7,7 @@ import { ActivityIndicator, BackHandler, Dimensions, FlatList, Platform, Pressab
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import { isValidRu as isValidPhone, normalizeRu } from '../../../components/ui/phone';
-import SelectModal, { ConfirmModal, AlertModal, SuspendModal, DeleteEmployeeModal, AvatarSheetModal, DepartmentSelectModal, RoleSelectModal, DateTimeModal } from '../../../components/ui/SelectModal';
+import { SelectModal, ConfirmModal, AlertModal, DateTimeModal } from '../../../components/ui/modals';
 import { supabase } from '../../../lib/supabase';
 import { useTheme } from '../../../theme/ThemeProvider';
 import Screen from '../../../components/layout/Screen';
@@ -140,6 +140,139 @@ function isValidEmailStrict(raw) {
  if (tld.length < 2 || tld.length> 24) return false;
  return true;
 }
+
+// === Lightweight wrappers for split modals (local to this screen) ===
+function AvatarSheetModal({ visible, onTakePhoto, onPickFromLibrary, onDeletePhoto, onClose }) {
+  const items = [
+    { id: 'camera', label: 'Сделать фото' },
+    { id: 'library', label: 'Выбрать из галереи' },
+    { id: 'delete', label: 'Удалить фото' },
+  ];
+  return (
+    <SelectModal
+      visible={visible}
+      title="Фото профиля"
+      items={items}
+      onSelect={(it) => {
+        try {
+          if (it.id === 'camera') onTakePhoto?.();
+          if (it.id === 'library') onPickFromLibrary?.();
+          if (it.id === 'delete') onDeletePhoto?.();
+        } finally {
+          onClose?.();
+        }
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
+function DepartmentSelectModal({ visible, departments = [], departmentId, onSelect, onClose }) {
+  const mapped = (departments || []).map((d) => ({ id: d.id, label: d.name }));
+  return (
+    <SelectModal
+      visible={visible}
+      title="Отдел"
+      items={mapped}
+      onSelect={(it) => onSelect?.(it.id)}
+      onClose={onClose}
+    />
+  );
+}
+
+function RoleSelectModal({ visible, role, roles = [], roleLabels = {}, roleDescriptions = {}, onSelect, onClose }) {
+  const items = (roles || []).map((r) => ({
+    id: r,
+    label: roleLabels[r] || r,
+    subtitle: roleDescriptions[r] || null,
+  }));
+  return (
+    <SelectModal
+      visible={visible}
+      title="Роль"
+      items={items}
+      onSelect={(it) => onSelect?.(it.id)}
+      onClose={onClose}
+    />
+  );
+}
+
+function SuspendModal({
+  visible,
+  ordersAction = 'keep',
+  setOrdersAction,
+  openSuccessorPicker,
+  onConfirm,
+  onClose,
+}) {
+  const items = [
+    { id: 'keep', label: 'Заблокировать (заявки оставить)' },
+    { id: 'reassign', label: 'Заблокировать и выбрать преемника' },
+  ];
+  return (
+    <SelectModal
+      visible={visible}
+      title="Изменить статус пользователя"
+      items={items}
+      onSelect={(it) => {
+        try {
+          if (it.id === 'reassign') {
+            setOrdersAction?.('reassign');
+            openSuccessorPicker?.();
+          } else {
+            setOrdersAction?.('keep');
+            onConfirm?.();
+          }
+        } finally {
+          onClose?.();
+        }
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
+function DeleteEmployeeModal({
+  visible,
+  successor,
+  openSuccessorPicker,
+  onConfirm,
+  saving,
+  onClose,
+}) {
+  // If successor not chosen yet — prompt to pick one; otherwise ask for destructive confirmation
+  if (!successor?.id) {
+    return (
+      <ConfirmModal
+        visible={visible}
+        title="Удаление сотрудника"
+        message="Перед удалением нужно выбрать преемника для заявок."
+        confirmLabel="Выбрать"
+        cancelLabel="Отмена"
+        confirmVariant="primary"
+        loading={false}
+        onConfirm={() => {
+          try { openSuccessorPicker?.(); } finally { onClose?.(); }
+        }}
+        onClose={onClose}
+      />
+    );
+  }
+  return (
+    <ConfirmModal
+      visible={visible}
+      title="Удалить сотрудника?"
+      message="Все заявки будут перепривязаны к выбранному преемнику. Действие необратимо."
+      confirmLabel={saving ? "Удаление..." : "Удалить"}
+      cancelLabel="Отмена"
+      confirmVariant="destructive"
+      loading={!!saving}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    />
+  );
+}
+// === end wrappers ===
 export default function EditUser() {
 const { theme } = useTheme();
   const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];

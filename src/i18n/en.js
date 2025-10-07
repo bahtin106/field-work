@@ -15,10 +15,4 @@ export default {
   '(auth)/sign-in':   'Sign In',
   'app_settings/AppSettings': 'App Settings',
   },
-  // Profile view (app/users/[id])
-  // Roles
-  role_dispatcher: 'Dispatcher',
-  role_worker: 'Worker',
-  role_admin: 'Administrator',
-
   };

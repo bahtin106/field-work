@@ -5,7 +5,7 @@ import { useRouter, useNavigation } from 'expo-router';
 import { useRoute } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
-import SelectModal, { BaseModal } from '../../components/ui/SelectModal';
+import { SelectModal, BaseModal } from '../../components/ui/modals';
 import TextField, { SelectField } from '../../components/ui/TextField';
 import { SETTINGS_SECTIONS, UI_TEXT, PHONE_MODE_OPTIONS } from '../../constants/settings';
 import { useToast } from '../../components/ui/ToastProvider';
