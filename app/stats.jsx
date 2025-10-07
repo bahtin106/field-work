@@ -531,7 +531,7 @@ export default function StatsScreen() {
       // Load orders data
       let query = supabase
         .from('orders')
-        .select('id, status, datetime, total_price, fuel_cost, assigned_to')
+        .select('id, status, datetime, fuel_cost, assigned_to')
         .order('datetime', { ascending: false });
 
       if (selectedUserId !== 'ALL') {
@@ -554,7 +554,10 @@ export default function StatsScreen() {
       const inProgressOrders = orders?.filter(o => o.status === 'В работе').length || 0;
       const newOrders = orders?.filter(o => o.status === 'Новый').length || 0;
       
-      const totalRevenue = orders?.reduce((sum, o) => sum + (Number(o.total_price) || 0), 0) || 0;
+      const getRevenue = (o) => Number(
+        o.total_price ?? o.total ?? o.total_amount ?? o.amount_total ?? o.amount ?? o.price ?? 0
+      );
+      const totalRevenue = orders?.reduce((sum, o) => sum + getRevenue(o), 0) || 0;
       const totalCosts = orders?.reduce((sum, o) => sum + (Number(o.fuel_cost) || 0), 0) || 0;
       const netProfit = totalRevenue - totalCosts;
 

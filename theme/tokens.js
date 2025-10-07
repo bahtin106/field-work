@@ -5,6 +5,7 @@ const light = {
     surface: "#FFFFFF",
     text: "#0A0A0A",
     textSecondary: "#6B7280",
+    textStrong: "#2D2D2D",
     muted: "#6B7280",
     primary: "#007AFF",
     onPrimary: "#FFFFFF",
@@ -19,6 +20,7 @@ const light = {
     inputBg: "#FFFFFF",
     inputPlaceholder: "#9CA3AF",
     inputBorder: "#E5E7EB",
+    transparent: "transparent",
     cardShadow: "rgba(0,0,0,0.06)",
 
     button: {
@@ -56,7 +58,14 @@ const light = {
   icons: { sm: 18, md: 22, lg: 28 },
 components: {
   card: { borderWidth: 1 },
+  media: { aspect: [1, 1], quality: 0.85 },
+
   listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 }
+},
+
+timings: {
+  requestTimeoutMs: 12000,
+  backDelayMs: 300,
 },
 };
 
@@ -68,19 +77,21 @@ const dark = {
     surface: "#121218",
     text: "#F3F4F6",
     textSecondary: "#A3A3A3",
+    textStrong: "#E5E7EB",
     muted: "#A3A3A3",
     worker: "#7C7CF0",
     border: "#23252B",
     inputBg: "#161823",
     inputBorder: "#262A34",
     cardShadow: "rgba(0,0,0,0.5)",
+    transparent: "transparent",
     overlay: "rgba(0,0,0,0.6)",
     overlayNavBar: "rgba(0,0,0,0.45)",
 
     button: {
       primaryBg: "#2F6FFF",
       primaryText: "#FFFFFF",
-      secondaryBg: "#161823",
+      secondaryBg: "#3A4254",
       secondaryText: "#F3F4F6",
       dangerBg: "#FF453A",
       dangerText: "#FFFFFF"
@@ -101,6 +112,11 @@ const dark = {
     card: { ios: { shadowColor: "#000", shadowOpacity: 0.35, shadowRadius: 18, shadowOffset: { width: 0, height: 10 } }, android: { elevation: 4 } },
     raised: { ios: { shadowColor: "#000", shadowOpacity: 0.45, shadowRadius: 22, shadowOffset: { width: 0, height: 14 } }, android: { elevation: 6 } },
   },
+
+timings: {
+  requestTimeoutMs: 12000,
+  backDelayMs: 300,
+},
 };
 
 export const tokens = { light, dark };

@@ -4,6 +4,7 @@ import { View, Text, TextInput, StyleSheet, Platform, Modal, Pressable, Switch, 
 import { Picker } from "@react-native-picker/picker";
 import FeatherIcon from "@expo/vector-icons/Feather";
 import { useTheme } from "../../theme";
+import { listItemStyles, CHEVRON_GAP } from "./listItemStyles";
 
 const TextField = forwardRef(function TextField(
   {
@@ -43,10 +44,10 @@ const TextField = forwardRef(function TextField(
 
   return (
     <View style={style}>
+      {label ? (
+        <Text style={s.topLabel}>{label}</Text>
+      ) : null}
       <View style={s.wrap}>
-        {label ? (
-          <Text style={s.floatingLabel}>{label}</Text>
-        ) : null}
         {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
         <View style={s.inputBox}>
           <TextInput
@@ -66,7 +67,7 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
             onSubmitEditing={onSubmitEditing}
-            style={[s.input, (secureTextEntry && Platform.OS === "android") ? { color: "transparent" } : null]}
+            style={[s.input, (secureTextEntry && Platform.OS === "android") ? { color: theme.colors.transparent } : null]}
             includeFontPadding={false}
             textAlignVertical="center"
           />
@@ -89,17 +90,14 @@ const styles = (t, isError, focused) =>
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: isError ? t.colors.danger : (focused ? t.colors.primary : (t.colors.inputBorder || '#e0e0e0')),
       paddingHorizontal: 12,
-      paddingTop: 18,
-      height: 64,
+      height: 52,
     },
-    floatingLabel: {
-      position: 'absolute',
-      left: 12,
-      top: 6,
-      color: isError ? t.colors.danger : t.colors.textSecondary,
+    topLabel: {
+      fontWeight: '500',
+      marginBottom: 4,
+      marginTop: 12,
+      color: t.colors.textSecondary,
       fontSize: t.typography.sizes.sm,
-      textTransform: 'uppercase',
-      letterSpacing: 0.5,
     },
     input: {
       flex: 1,
@@ -127,44 +125,52 @@ export function SelectField({
   style,
 }) {
   const { theme } = useTheme();
+  const base = listItemStyles(theme);
   const s = selectStyles(theme);
   return (
-    <Pressable onPress={onPress} disabled={disabled} android_ripple={{ color: theme.colors.ripple, borderless: false }}>
-      <View style={[s.row, disabled && s.disabled, style]}>
-        <Text style={[s.label, { color: theme.colors.text }]} numberOfLines={1}>{label}</Text>
+    <Pressable onPress={onPress} disabled={disabled} android_ripple={disabled ? undefined : { color: theme.colors.ripple, borderless: false }}>
+      <View style={[base.row, disabled && s.disabled, style]}>
+        <Text style={[base.label, s.label]} numberOfLines={1}>{label}</Text>
         <View style={s.rightWrap}>
-          {right ? right : (showValue ? (<Text style={[s.value, { color: theme.colors.text }]} numberOfLines={1}>{value ?? ''}</Text>) : null)}
-          <FeatherIcon name="chevron-right" size={20} color={theme.colors.textSecondary} style={s.chevron} />
+          {right ? right : (showValue ? (<Text style={[base.value, s.value]} numberOfLines={1}>{value ?? ''}</Text>) : null)}
+          <FeatherIcon name="chevron-right" size={theme.components.listItem.chevronSize} color={theme.colors.textSecondary} style={s.chevron} />
         </View>
       </View>
     </Pressable>
   );
 }
 
-const selectStyles = (t) => StyleSheet.create({
-  row: {
-    height: 48,
-    paddingLeft: 20,
-    paddingRight: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: t.colors.card,
-  },
-  disabled: { opacity: 0.5 },
-  label: { fontSize: t.typography.sizes.md, fontWeight: '500', flexShrink: 1, paddingRight: 8 },
-  value: { fontSize: t.typography.sizes.md, maxWidth: 220 },
-  rightWrap: { flexDirection: 'row', alignItems: 'center' },
-  chevron: { marginLeft: 6 },
-});
 
-/* ======================
- * DateOfBirthField (Apple-like wheels in modal)
- * Reusable field with the same visual style as TextField.
- * Value shape: { day: number, month: number, year: number | null }
- * onChange receives the same shape.
- * Helper export: serializeDobForSupabase(value) -> { dob: string|null, dob_md: string }
- * ====================== */
+// Unified Settings-like switch row.
+// Usage:
+//   <SwitchField label="Уведомления" value={true} onValueChange={...} />
+export function SwitchField({ label, value, onValueChange, disabled = false, style }) {
+  const { theme } = useTheme();
+  const base = listItemStyles(theme);
+  return (
+    <View style={[base.row, disabled && { opacity: theme.components.listItem.disabledOpacity }, style]}>
+      <Text style={base.label}>{label}</Text>
+      <View style={base.rightWrap}>
+        <View style={base.switchWrap}>
+          <Switch
+            value={!!value}
+            onValueChange={onValueChange}
+            disabled={!!disabled}
+            trackColor={{ true: theme.colors.primary }}
+          />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const selectStyles = (t) => StyleSheet.create({
+  disabled: { opacity: t.components.listItem.disabledOpacity || 0.5 },
+  label: { flexShrink: 1, paddingRight: 8 },
+  value: { maxWidth: 220 },
+  rightWrap: { flexDirection: 'row', alignItems: 'center' },
+  chevron: { marginLeft: CHEVRON_GAP },
+});
 
 const itemHeight = 36;
 
@@ -294,7 +300,7 @@ export const DateOfBirthField = ({
       </Pressable>
 
       <Modal transparent visible={open} animationType="none" onRequestClose={closeModal}>
-        <Animated.View style={[modalStyles.backdrop, { opacity: backdropOpacity }]} />
+        <Animated.View style={[modalStyles.backdrop, { backgroundColor: theme.colors.overlay, opacity: backdropOpacity }]} />
         <View style={[modalStyles.center]}>
           <Animated.View style={[modalStyles.card, { backgroundColor: theme.colors.surface, opacity: cardOpacity, transform: [{ scale: cardScale }] }]}>
             <Text style={[modalStyles.title, { color: theme.colors.text }]}>Выберите дату</Text>
@@ -378,7 +384,7 @@ const wheelStyles = StyleSheet.create({
 });
 
 const modalStyles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.25)" },
+  backdrop: { ...StyleSheet.absoluteFillObject, },
   center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
   card: { width: "100%", maxWidth: 420, borderRadius: 14, paddingVertical: 12 },
   title: { fontSize: 16, fontWeight: "600", textAlign: "center", marginBottom: 8 },

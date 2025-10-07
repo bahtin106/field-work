@@ -4,6 +4,22 @@ import { Pressable, Animated, StyleSheet, Platform, Easing } from "react-native"
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useTheme } from "../../theme";
+// alpha utility (consistent with SelectModal): supports #RRGGBB and rgb(R,G,B)
+function withAlpha(color, a) {
+  if (typeof color === 'string') {
+    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) {
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
+      return color + alpha;
+    }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
+  }
+  return `rgba(0,0,0,${a})`;
+}
+
 
 export default function IconButton({
   onPress,
@@ -48,17 +64,17 @@ export default function IconButton({
     ]).start();
   };
 
-  const palette = {
-    primary: {
-      bg: theme.colors.primary + "0A", // ~4% alpha
-      border: theme.colors.primary + "4D",
-    },
-    secondary: {
-      bg: theme.colors.surface,
-      border: theme.colors.border,
-    },
-    ghost: { bg: "transparent", border: "transparent" },
-  }[variant];
+    const palette = {
+  primary: {
+    bg: withAlpha(theme.colors.primary, 10/255),
+    border: withAlpha(theme.colors.primary, 77/255),
+  },
+  secondary: {
+  bg: 'transparent',
+  border: 'transparent',
+},
+  ghost: { bg: "transparent", border: "transparent" },
+}[variant];
 
   const s = styles(theme, palette, size, radius, disabled);
 
@@ -110,7 +126,7 @@ export default function IconButton({
       onPressOut={onPressOut}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
-      android_ripple={{ color: (theme.colors.primary + "1F"), borderless: true, radius: Math.ceil(size * 0.75) }}
+      android_ripple={{ color: withAlpha(theme.colors.primary, 31/255), borderless: true, radius: Math.ceil(size * 0.75) }}
     >
       <Animated.View style={[
         { transform: [{ scale }, { rotate: rotate.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-6deg'] }) }], opacity },
@@ -123,7 +139,12 @@ export default function IconButton({
         <Animated.View pointerEvents="none" style={[s.flash, { opacity: flashOpacity }]} />
         {/* icon/content */}
         <Animated.View style={{ opacity: iconOpacity, transform: [{ scale: iconScale }] }}>
-          {success ? <Feather name="check" size={18} color={theme.colors.primary} /> : children}
+          {success
+  ? <Feather name="check" size={18} color={theme.colors.primary} />
+  : (React.isValidElement(children) && children.props?.color == null
+      ? React.cloneElement(children, { color: theme.mode === 'dark' ? theme.colors.text : undefined })
+      : children)
+}
         </Animated.View>
       </Animated.View>
     </Pressable>
@@ -138,24 +159,23 @@ const styles = (t, p, size, radius, disabled) =>
       paddingHorizontal: 6,
       alignItems: "center",
       justifyContent: "center",
-      backgroundColor: disabled ? (p.bg === "transparent" ? t.colors.surface : p.bg + "CC") : p.bg,
+      backgroundColor: disabled ? (p.bg === "transparent" ? t.colors.surface : withAlpha(p.bg, 204/255)) : p.bg,
       borderRadius: t.radii[radius] ?? t.radii.md,
       borderWidth: p.border === "transparent" ? 0 : 1,
       borderColor: p.border,
-      ...(p.bg === t.colors.surface
-        ? Platform.OS === "ios"
-          ? t.shadows.card.ios
-          : t.shadows.card.android
+            ...((p.bg === t.colors.surface || p.bg === (t.colors.button?.secondaryBg ?? ''))
+        ? (Platform.OS === "ios" ? t.shadows.card.ios : t.shadows.card.android)
         : null),
+
     },
-    flash: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: t.colors.primary + '22', borderRadius: t.radii[radius] ?? t.radii.md },
+    flash: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: withAlpha(t.colors.primary, 34/255), borderRadius: t.radii[radius] ?? t.radii.md },
     pulse: {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
       bottom: 0,
-      backgroundColor: (p.bg === 'transparent' ? (t.colors.primary + '1A') : (t.colors.primary + '14')),
+      backgroundColor: (p.bg === 'transparent' ? withAlpha(t.colors.primary, 26/255) : withAlpha(t.colors.primary, 20/255)),
       borderRadius: t.radii[radius] ?? t.radii.md,
     },
   });

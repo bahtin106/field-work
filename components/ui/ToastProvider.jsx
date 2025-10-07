@@ -3,6 +3,18 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { Text, View, StyleSheet, Dimensions, Modal } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../../theme";
+// --- i18n labels (safe runtime require) ---
+let __labels = null;
+try { __labels = require('../../i18n/labels'); } catch (_) {}
+const i18nT = (key, fallback) => {
+  const mod = __labels || {};
+  if (typeof mod.t === 'function') return mod.t(key, fallback);
+  if (typeof mod.getLabel === 'function') return mod.getLabel(key, fallback);
+  const dict = mod.labels || mod.default || mod || {};
+  const val = String(key).split('.').reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), dict);
+  return (val == null || val === '') ? (fallback ?? key) : String(val);
+};
+
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -19,7 +31,7 @@ export default function ToastProvider({ children }) {
   const insets = useSafeAreaInsets();
 
   const [msg, setMsg] = useState(null);         // { text, type }
-  const [anchorOffset, setAnchorOffset] = useState(120);
+  const [anchorOffset, setAnchorOffset] = useState(theme.components?.toast?.anchorOffset ?? 120);
 
   const timerRef = useRef(null);
   const mounted = useSharedValue(true);
@@ -72,9 +84,9 @@ export default function ToastProvider({ children }) {
     success: (t) => show(t, "success"),
     error:   (t) => show(t, "error"),
     info:    (t) => show(t, "info"),
-    loading: (t = 'Сохраняю…') => show(t, 'info', { sticky: true }),
+    loading: (text) => show(text ?? i18nT('toast.loading', 'Сохраняю…'), 'info', { sticky: true }),
     promise: (p, m = {}) => {
-      const { loading = 'Сохраняю…', success = 'Сохранено', error = 'Не удалось выполнить действие' } = m || {};
+      const { loading = i18nT('toast.loading', 'Сохраняю…'), success = i18nT('toast.success', 'Сохранено'), error = i18nT('toast.error', 'Не удалось выполнить действие') } = m || {};
       show(loading, 'info', { sticky: true });
       const run = typeof p === 'function' ? p() : p;
       return Promise.resolve(run)

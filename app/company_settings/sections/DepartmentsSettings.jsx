@@ -1,4 +1,4 @@
-// app/settings/sections/DepartmentsSettings.jsx
+// app/company_settings/sections/DepartmentsSettings.jsx
 // Placeholder screen for configuring company departments.
 //
 // This screen currently shows a placeholder message to indicate that

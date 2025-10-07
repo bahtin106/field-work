@@ -7,6 +7,18 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { supabase } from '../../lib/supabase';
 import { getUserRole } from '../../lib/getUserRole';
 import { useToast } from '../ui/ToastProvider';
+// --- i18n labels (safe runtime require) ---
+let __labels = null;
+try { __labels = require('../../i18n/labels'); } catch (_) {}
+const t = (key, fallback) => {
+  const mod = __labels || {};
+  if (typeof mod.t === 'function') return mod.t(key, fallback);
+  if (typeof mod.getLabel === 'function') return mod.getLabel(key, fallback);
+  const dict = mod.labels || mod.default || mod || {};
+  const val = String(key).split('.').reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), dict);
+  return (val == null || val === '') ? (fallback ?? key) : String(val);
+};
+
 import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
 
 // -------- helpers --------
@@ -237,7 +249,7 @@ function BottomNavInner() {
       <View key={`variant-${Number(!!canAll)}`} style={styles.bar} onLayout={(e) => { const h = e.nativeEvent.layout.height; if (setAnchorOffset) setAnchorOffset(h + 24); }}>
         <TabButton
           key="tab-home"
-          label="Главная"
+          label={t("bottomNav.home", "Главная")}
           active={activeKey === 'home'}
           onPress={() => { if (activeKey !== 'home') router.replace(PATHS.home); }}
           colors={colors}
@@ -247,14 +259,14 @@ function BottomNavInner() {
           <>
             <TabButton
               key="tab-orders"
-              label="Мои"
+              label={t("bottomNav.my", "Мои")}
               active={activeKey === 'orders'}
               onPress={() => { if (activeKey !== 'orders') router.replace(PATHS.orders); }}
               colors={colors}
             />
             <TabButton
               key="tab-all"
-              label="Все"
+              label={t("bottomNav.all", "Все")}
               active={activeKey === 'all'}
               onPress={() => { if (activeKey !== 'all') router.replace(PATHS.all); }}
               colors={colors}
@@ -263,7 +275,7 @@ function BottomNavInner() {
         ) : (
           <TabButton
             key="tab-orders-only"
-            label="Мои заявки"
+            label={t("bottomNav.myOrders", "Мои заявки")}
             active={activeKey === 'orders'}
             onPress={() => { if (activeKey !== 'orders') router.replace(PATHS.orders); }}
             colors={colors}
@@ -272,7 +284,7 @@ function BottomNavInner() {
 
         <TabButton
           key="tab-calendar"
-          label="Календарь"
+          label={t("bottomNav.calendar", "Календарь")}
           active={activeKey === 'calendar'}
           onPress={() => { if (activeKey !== 'calendar') router.replace(PATHS.calendar); }}
           colors={colors}

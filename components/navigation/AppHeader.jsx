@@ -5,53 +5,56 @@ import { useNavigation, usePathname, router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "../../theme";
 import { useCapsuleFeedback } from "../../theme/ThemeProvider";
+// alpha utility (consistent with SelectModal): supports #RRGGBB and rgb(R,G,B)
+function withAlpha(color, a) {
+  if (typeof color === 'string') {
+    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) {
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
+      return color + alpha;
+    }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
+  }
+  return `rgba(0,0,0,${a})`;
+}
+
 
 // Человеческие заголовки для часто используемых экранов
-const TITLE_MAP = {
-  "settings": "Настройки компании",
-  "settings/index": "Настройки компании",
-  "orders": "Заявки",
-  "orders/index": "Заявки",
-  "orders/my-orders": "Мои заявки",
-  "orders/all-orders": "Все заявки",
-  "orders/calendar": "Календарь",
-  "users/[id]": "Пользователь",
-  "users": "Сотрудники",
-  "(auth)/sign-in": "Вход",
-};
+import { getRouteTitle } from '../../constants/routeTitles';
+import { t as T } from '../../src/i18n';
 
 function resolveTitle(options, route, pathnameRaw) {
   // 1) Явный заголовок: params -> options
   const directRaw = route?.params?.title ?? route?.params?.headerTitle ?? options?.title ?? options?.headerTitle;
   // Важно: различаем undefined и пустую строку/плейсхолдер
   if (directRaw !== undefined) {
-    const v = String(directRaw ?? '');
-    if (!v || v === 'Без имени') return '';
-    return v;
-  }
+  const v = String(directRaw ?? '');
+  const noName = String(T?.('placeholder_no_name', 'Без имени'));
+  if (!v || v === noName) return '';
+  return v;
+}
 
   const name = route?.name || '';
   const pathname = pathnameRaw || '';
 
   // Спец-случай: экран редактирования — показываем понятный заголовок
   if (typeof pathname === 'string' && pathname.includes('/edit')) {
-    // если заголовок явно не задан через options/params, используем «Редактирование»
-    if (directRaw === undefined) return 'Редактирование';
-  }
+  if (directRaw === undefined) return (globalThis?.S?.('edit_title') ?? 'Редактирование');
+}
 
   // Для страниц сотрудника скрываем автозаголовок до прихода данных
   if (pathname.startsWith('/users/')) return '';
 
-  // 2) по имени роута
-  if (TITLE_MAP[name]) return TITLE_MAP[name];
+  // 2) по имени роута через централизованный словарь
+const titleByName = getRouteTitle(name);
+if (titleByName) return titleByName;
 
-  // 3) по пути
-  if (pathname.startsWith('/orders/calendar')) return 'Календарь';
-  if (pathname.startsWith('/orders/all-orders')) return 'Все заявки';
-  if (pathname.startsWith('/orders/my-orders')) return 'Мои заявки';
-  if (pathname.startsWith('/orders')) return 'Заявки';
-  if (pathname.startsWith('/users')) return 'Сотрудники';
-  if (pathname.startsWith('/settings')) return 'Настройки компании';
+  // 3) по пути через централизованный словарь
+const titleByPath = getRouteTitle(pathname.replace(/^\//, ''));
+if (titleByPath) return titleByPath;
 
   // 4) дефолт: имя роута или пусто
   return name || '';
@@ -74,11 +77,16 @@ export default function AppHeader({ options = {}, back, route }) {
     nav.goBack();
   };
 
-  const { onPressIn: onCtaIn, onPressOut: onCtaOut, containerStyle: capsuleAnim, overlayStyle: capsuleOverlay } = useCapsuleFeedback();
+  const { onPressIn: onLeftIn, onPressOut: onLeftOut, containerStyle: leftCapsuleAnim } = useCapsuleFeedback();
+const { onPressIn: onRightIn, onPressOut: onRightOut, containerStyle: rightCapsuleAnim, overlayStyle: rightCapsuleOverlay } = useCapsuleFeedback();
 
   
-  const rightLabel = route?.params?.rightTextLabel ?? options?.rightTextLabel;
-  const rightPress = route?.params?.onRightPress ?? options?.onRightPress;
+  const rightLabel = options?.rightTextLabel ?? route?.params?.rightTextLabel;
+const rightPress =
+  options?.onRightPress ??
+  route?.params?.onRightPress ??
+  (route?.params?.headerButtonTo ? () => router.push(route.params.headerButtonTo) : undefined);
+
 // ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----
   const scale = useRef(new Animated.Value(1)).current;
   const tint = useRef(new Animated.Value(0)).current; // 0 -> прозрачно, 1 -> тёмный кружок
@@ -99,7 +107,7 @@ export default function AppHeader({ options = {}, back, route }) {
 // мгновенный переход по нажатию
 const bg = tint.interpolate({
     inputRange: [0, 1],
-    outputRange: ["rgba(0,0,0,0)", "rgba(0,0,0,0.08)"], // аккуратный тёмный кружок
+    outputRange: [withAlpha(theme.colors.text, 0), withAlpha(theme.colors.text, 0.08)], // аккуратный кружок из палитры
   });
 
   return (
@@ -113,28 +121,28 @@ const bg = tint.interpolate({
             onPress={() => nav.goBack()}
             style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 16 }}
             accessibilityRole="button"
-            accessibilityLabel={String(route?.params?.headerLeftLabel || 'Закрыть')}
+            accessibilityLabel={String(route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? 'Закрыть'))}
           >
             <View style={[s.backCircle, { width: 32, height: 32 }]}>
               <Feather name="x" size={20} color={theme.colors.text} />
             </View>
-            <Text style={[s.title, { marginLeft: 6 }]}>{String(route?.params?.headerLeftLabel || 'Закрыть')}</Text>
+            <Text style={[s.title, { marginLeft: 6 }]}>{String(route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? 'Закрыть'))}</Text>
           </Pressable>
         ) : (
           <>
             {route?.params?.leftTextOnly ? (
               <Pressable
                 hitSlop={12}
-                onPressIn={onCtaIn}
-                onPressOut={onCtaOut}
+                onPressIn={onLeftIn}
+                onPressOut={onLeftOut}
                 onPress={onBack}
                 style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 16 }}
                 accessibilityRole="button"
-                accessibilityLabel={String(backLabel || route?.params?.headerBackTitle || 'Отмена')}
+                accessibilityLabel={String(backLabel || route?.params?.headerBackTitle || (globalThis?.S?.('cancel') ?? 'Отмена'))}
               >
-                <Animated.View style={[capsuleAnim]}>
+                <Animated.View style={[leftCapsuleAnim]}>
                   <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
-                    {String(route?.params?.headerBackTitle ?? backLabel ?? 'Отмена')}
+                    {String(route?.params?.headerBackTitle ?? backLabel ?? (globalThis?.S?.('cancel') ?? 'Отмена'))}
                   </Text>
                 </Animated.View>
               </Pressable>
@@ -147,7 +155,7 @@ const bg = tint.interpolate({
                   onPress={onBack}
                   style={[s.backTouchable, { flexDirection: 'row', alignItems: 'center' }]}
                   accessibilityRole="button"
-                  accessibilityLabel={String(backLabel || 'Назад')}
+                  accessibilityLabel={String(backLabel || (globalThis?.S?.('back') ?? 'Назад'))}
                 >
                   <Animated.View style={[s.backCircle, { backgroundColor: bg }]}>
                     <Feather name="chevron-left" size={22} color={theme.colors.text} />
@@ -183,32 +191,16 @@ const bg = tint.interpolate({
 
       <View style={s.right}>
 
-{route?.params?.editLabel && route?.params?.onEditPress ? (
+        {rightLabel && (rightPress || route?.params?.headerButtonTo) ? (
   <Pressable
     hitSlop={10}
-    onPressIn={onCtaIn}
-    onPressOut={onCtaOut}
-    onPress={route.params.onEditPress}
+    onPressIn={onRightIn}
+    onPressOut={onRightOut}
+    onPress={rightPress || (() => router.push(route.params.headerButtonTo))}
     accessibilityRole="button"
-    accessibilityLabel={String(route.params.editLabel)}
+    accessibilityLabel={String(rightLabel)}
   >
-    <Animated.View style={[capsuleAnim]}>
-      <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
-        {String(route.params.editLabel)}
-      </Text>
-    </Animated.View>
-  </Pressable>
-) : null}
-        {rightLabel && rightPress ? (
-          <Pressable
-            hitSlop={10}
-            onPressIn={onCtaIn}
-            onPressOut={onCtaOut}
-            onPress={rightPress}
-            accessibilityRole="button"
-            accessibilityLabel={String(rightLabel)}
-          >
-            <Animated.View style={[capsuleAnim]}>
+            <Animated.View style={[rightCapsuleAnim]}>
               <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
                 {String(rightLabel)}
               </Text>
@@ -219,8 +211,8 @@ const bg = tint.interpolate({
         ) : route?.params?.onRightPress && route?.params?.rightActionLabel ? (
           <Pressable
             hitSlop={10}
-            onPressIn={onCtaIn}
-            onPressOut={onCtaOut}
+            onPressIn={onRightIn}
+            onPressOut={onRightOut}
             onPress={rightPress}
           >
             <Animated.View
@@ -234,7 +226,7 @@ const bg = tint.interpolate({
                   alignItems: 'center',
                   alignSelf: 'flex-end',
                 },
-                capsuleAnim,
+                rightCapsuleAnim,
               ]}
             >
               <Animated.View
@@ -242,7 +234,7 @@ const bg = tint.interpolate({
                 style={[
                   StyleSheet.absoluteFillObject,
                   { borderRadius: 16 },
-                  capsuleOverlay,
+                  rightCapsuleOverlay,
                 ]}
               />
               <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
@@ -253,34 +245,15 @@ const bg = tint.interpolate({
         ) : route?.params?.headerButtonLabel && route?.params?.headerButtonTo ? (
           <Pressable
             hitSlop={10}
-            onPressIn={onCtaIn}
-            onPressOut={onCtaOut}
+            onPressIn={onRightIn}
+            onPressOut={onRightOut}
             onPress={() => router.push(route.params.headerButtonTo)}
+            accessibilityRole="button"
+            accessibilityLabel={String(route.params.headerButtonLabel)}
           >
-            <Animated.View
-              style={[
-                {
-                  paddingHorizontal: 12,
-                  height: 32,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  alignSelf: "flex-end",
-                },
-                capsuleAnim,
-              ]}
-            >
-              <Animated.View
-                pointerEvents="none"
-                style={[
-                  StyleSheet.absoluteFillObject,
-                  { borderRadius: 16 },
-                  capsuleOverlay,
-                ]}
-              />
-              <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: "600", fontSize: 15 }}>
-                {String(route.params.headerButtonLabel ?? '')}
+            <Animated.View style={[rightCapsuleAnim]}>
+              <Text numberOfLines={1} style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}>
+                {String(route.params.headerButtonLabel)}
               </Text>
             </Animated.View>
           </Pressable>

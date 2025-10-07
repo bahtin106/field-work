@@ -33,8 +33,17 @@ function buildTheme(mode) {
     card: (base.colors.card ?? base.colors.surface) ?? '#FFFFFF',
     accent: base.colors.primary ?? base.colors.accent,
     accentTextOn: base.colors.onPrimary ?? base.colors.primaryTextOn,
-    navbar: base.colors.navbar ?? base.colors.surface,
+    navigationBarBg: base.colors.navigationBarBg ?? base.colors.navbar ?? base.colors.surface,
+    navbar: base.colors.navbar ?? base.colors.navigationBarBg ?? base.colors.surface,
     ripple: base.colors.ripple ?? (effective === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
+    button: {
+      primaryBg: base.colors.button?.primaryBg ?? (base.colors.primary ?? '#007AFF'),
+      primaryText: base.colors.button?.primaryText ?? (base.colors.onPrimary ?? '#FFFFFF'),
+      secondaryBg: base.colors.button?.secondaryBg ?? (effective === 'dark' ? '#3A4254' : '#EEF1F6'),
+      secondaryText: base.colors.button?.secondaryText ?? (base.colors.text ?? '#0A0A0A'),
+      dangerBg: base.colors.button?.dangerBg ?? (effective === 'dark' ? '#FF453A' : '#FF3B30'),
+      dangerText: base.colors.button?.dangerText ?? '#FFFFFF',
+    },
   };
 
   const normalizedShadows = {
@@ -89,6 +98,8 @@ function buildTheme(mode) {
   const components = {
     card: {
       borderWidth: (base.components?.card?.borderWidth ?? 1),
+      padX: (base.components?.card?.padX ?? 'lg'),
+      padY: (base.components?.card?.padY ?? 'lg'),
     },
     listItem: {
       height: (base.components?.listItem?.height ?? 48),
@@ -112,9 +123,29 @@ function buildTheme(mode) {
       md: base.components?.avatar?.md ?? 48,
       border: base.components?.avatar?.border ?? 1,
     },
+  
+iconButton: { size: (base.components?.iconButton?.size ?? 32) },
+input: { 
+  trailingSlotWidth: (base.components?.input?.trailingSlotWidth ?? undefined),
+  trailingGap: (base.components?.input?.trailingGap ?? 8),
+},
+toast: { anchorOffset: (base.components?.toast?.anchorOffset ?? 120) },
+scrollView: { paddingBottom: (base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24) },
+};
+
+  // Pass-through shared media config (used by ImagePicker, etc.)
+  const media = {
+    aspect: (base.components?.media?.aspect ?? [1, 1]),
+    quality: (base.components?.media?.quality ?? 0.85),
   };
 
-  return {
+
+  
+const timings = {
+  requestTimeoutMs: (base.timings?.requestTimeoutMs ?? 12000),
+  backDelayMs: (base.timings?.backDelayMs ?? 300),
+};
+return {
     mode: effective,
     colors,
     shadows: normalizedShadows,
@@ -122,6 +153,8 @@ function buildTheme(mode) {
     radii,
     spacing,
     components,
+    media,
+    timings,
     _raw: base,
   };
 }

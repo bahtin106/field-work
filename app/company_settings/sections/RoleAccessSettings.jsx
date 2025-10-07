@@ -1,4 +1,4 @@
-// app/settings/sections/RoleAccessSettings.jsx
+// app/company_settings/sections/RoleAccessSettings.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { View, Text, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Platform } from 'react-native';

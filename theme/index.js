@@ -1,3 +1,3 @@
 // theme/index.js
-export { ThemeProvider, useTheme } from './ThemeProvider';
+export { ThemeProvider, useTheme, CapsulePressable, useCapsuleFeedback } from './ThemeProvider';
 export { tokens } from './tokens';
