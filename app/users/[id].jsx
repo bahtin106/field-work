@@ -14,7 +14,8 @@ import Card from '../../components/ui/Card';
 import IconButton from '../../components/ui/IconButton';
 import * as Clipboard from 'expo-clipboard';
 import { useToast } from '../../components/ui/ToastProvider';
-import { getLocale,t as T,useI18nVersion } from '../../src/i18n';
+import { getLocale, useI18nVersion } from '../../src/i18n';
+import { useTranslation } from '../../src/i18n/useTranslation';
 
 function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -47,6 +48,7 @@ export default function UserView() {
   }, []);
 
   const ver = useI18nVersion();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [meIsAdmin, setMeIsAdmin] = useState(false);
@@ -61,18 +63,18 @@ export default function UserView() {
   const [role, setRole] = useState('worker');
   const [departmentName, setDepartmentName] = useState(null);
   const [isSuspended, setIsSuspended] = useState(false);
-  const ROLE_LABELS = React.useMemo(() => ({ admin: T('role_admin','role_admin'), dispatcher: T('role_dispatcher','role_dispatcher'), worker: T('role_worker','role_worker') }), [ver]);
+  const ROLE_LABELS = React.useMemo(() => ({ admin: t('role_admin','role_admin'), dispatcher: t('role_dispatcher','role_dispatcher'), worker: t('role_worker','role_worker') }), [ver]);
 
-  const roleLabel = ROLE_LABELS[role] || T('role_worker','role_worker');
+  const roleLabel = ROLE_LABELS[role] || t('role_worker','role_worker');
 
   useLayoutEffect(() => {
-    const routeTitle = T('routes.users/[id]','routes.users/[id]');
+    const routeTitle = t('routes.users/[id]','routes.users/[id]');
     navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
   }, [navigation, ver]);
 
   // Also set title in params so AppHeader picks it
   useEffect(() => {
-    const routeTitle = T('routes.users/[id]','routes.users/[id]');
+    const routeTitle = t('routes.users/[id]','routes.users/[id]');
     navigation.setParams({ title: routeTitle });
   }, [navigation, ver]);
 
@@ -81,14 +83,22 @@ export default function UserView() {
         // Guard: ensure route param exists
     if (!userId) {
       if (mountedRef.current) {
-        setErr(T('errors_user_not_found','errors_user_not_found'));
+        setErr(t('errors_user_not_found','errors_user_not_found'));
         setLoading(false);
       }
       return;
     }
 if (mountedRef.current) setLoading(true);
     if (mountedRef.current) setErr('');
+    let __watchdog = null;
     try {
+      __watchdog = setTimeout(() => {
+        if (mountedRef.current) {
+          try { toast.error(t('errors_network','errors_network')); } catch {}
+          setErr(t('errors_network','errors_network'));
+          setLoading(false);
+        }
+      }, (theme?.timings?.requestTimeoutMs ?? 12000));
       // Always know who is logged in for comparison
       const { data: auth } = await supabase.auth.getUser();
       const uid = auth?.user?.id || null;
@@ -152,10 +162,11 @@ if (mountedRef.current) setLoading(true);
       }
 
     } catch (e) {
-      const msg = e?.message || T('errors_loadUser','errors_loadUser');
+      const msg = e?.message || t('errors_loadUser','errors_loadUser');
       if (mountedRef.current) setErr(msg);
       try { toast.error(msg); } catch {}
     } finally {
+      try { clearTimeout(__watchdog); } catch {}
       if (mountedRef.current) setLoading(false);
     }
   }, [userId]);
@@ -171,13 +182,13 @@ if (mountedRef.current) setLoading(true);
     navigation.setOptions({
       headerRight: canEdit
         ? () => (
-            <Button title={T('btn_edit','btn_edit')} onPress={handleEditPress} variant="secondary" size="md" />
+            <Button title={t('btn_edit','btn_edit')} onPress={handleEditPress} variant="secondary" size="md" />
           )
         : undefined,
     });
     // Also set serializable header button params for our custom AppHeader
     if (canEdit) {
-      navigation.setParams({ headerButtonLabel: T('btn_edit','btn_edit'), headerButtonTo: `/users/${userId}/edit`, editLabel: null });
+      navigation.setParams({ headerButtonLabel: t('btn_edit','btn_edit'), headerButtonTo: `/users/${userId}/edit`, editLabel: null });
     }
     // Keep route params free of functions — we no longer pass onEditPress
     if (!canEdit) {
@@ -195,17 +206,17 @@ if (mountedRef.current) setLoading(true);
     const text = String(email);
     try {
       await Clipboard.setStringAsync(text);
-      try { toast.success(T('toast_email_copied','toast_email_copied')); } catch {}
+      try { toast.success(t('toast_email_copied','toast_email_copied')); } catch {}
       return true;
     } catch {
       if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
         try {
           await globalThis.navigator.clipboard.writeText(text);
-          try { toast.success(T('toast_email_copied','toast_email_copied')); } catch {}
+          try { toast.success(t('toast_email_copied','toast_email_copied')); } catch {}
           return true;
         } catch {}
       }
-      try { toast.error(T('toast_copy_email_fail','toast_copy_email_fail')); } catch {}
+      try { toast.error(t('toast_copy_email_fail','toast_copy_email_fail')); } catch {}
       return false;
     }
   }, [email, toast]);
@@ -215,17 +226,17 @@ if (mountedRef.current) setLoading(true);
     const text = toE164(phone) || ('+' + normalizeRu(phone));
     try {
       await Clipboard.setStringAsync(text);
-      try { toast.success(T('toast_phone_copied','toast_phone_copied')); } catch {}
+      try { toast.success(t('toast_phone_copied','toast_phone_copied')); } catch {}
       return true;
     } catch {
       if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
         try {
           await globalThis.navigator.clipboard.writeText(text);
-          try { toast.success(T('toast_phone_copied','toast_phone_copied')); } catch {}
+          try { toast.success(t('toast_phone_copied','toast_phone_copied')); } catch {}
           return true;
         } catch {}
       }
-      try { toast.error(T('toast_copy_phone_fail','toast_copy_phone_fail')); } catch {}
+      try { toast.error(t('toast_copy_phone_fail','toast_copy_phone_fail')); } catch {}
       return false;
     }
   }, [phone, toast]);
@@ -274,17 +285,17 @@ if (mountedRef.current) setLoading(true);
           </View>
         </View>
 
-        <Text style={base.sectionTitle}>{T('section_personal','section_personal')}</Text>
-        <Card>
+        <Text style={base.sectionTitle}>{t('section_personal','section_personal')}</Text>
+        <Card paddedXOnly>
           <View style={base.row}>
-            <Text style={base.label}>{T('view_label_name','view_label_name')}</Text>
+            <Text style={base.label}>{t('view_label_name','view_label_name')}</Text>
             <View style={base.rightWrap}>
-              <Text style={base.value}>{(firstName || lastName) ? (`${firstName || ''} ${lastName || ''}`).trim() : T('common_dash','common_dash')}</Text>
+              <Text style={base.value}>{(firstName || lastName) ? (`${firstName || ''} ${lastName || ''}`).trim() : t('common_dash','common_dash')}</Text>
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{T('view_label_email','view_label_email')}</Text>
+            <Text style={base.label}>{t('view_label_email','view_label_email')}</Text>
             <View style={base.rightWrap}>
               {email ? (
                 <Pressable accessibilityRole="link" onPress={async () => {
@@ -292,21 +303,21 @@ if (mountedRef.current) setLoading(true);
                   try {
                     const ok = await Linking.canOpenURL(url);
                     if (ok) await Linking.openURL(url);
-                    else toast.error(T('errors_openMail','errors_openMail'));
+                    else toast.error(t('errors_openMail','errors_openMail'));
                   } catch {
-                    toast.error(T('errors_openMail','errors_openMail'));
+                    toast.error(t('errors_openMail','errors_openMail'));
                   }
                 }}>
                   <Text style={[base.value, s.link]}>{email}</Text>
                 </Pressable>
               ) : (
-                <Text style={base.value}>{T('common_dash','common_dash')}</Text>
+                <Text style={base.value}>{t('common_dash','common_dash')}</Text>
               )}
               {email ? (
                 <IconButton
                   style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyEmail}
-                  accessibilityLabel={T('a11y_copy_email','a11y_copy_email')}
+                  accessibilityLabel={t('a11y_copy_email','a11y_copy_email')}
                 >
                   <Feather name='copy' size={Number(theme?.typography?.sizes?.md ?? 16)} />
                 </IconButton>
@@ -315,7 +326,7 @@ if (mountedRef.current) setLoading(true);
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{T('view_label_phone','view_label_phone')}</Text>
+            <Text style={base.label}>{t('view_label_phone','view_label_phone')}</Text>
             <View style={base.rightWrap}>
               {phone ? (
                 <Pressable accessibilityRole="link" onPress={async () => {
@@ -323,21 +334,21 @@ if (mountedRef.current) setLoading(true);
                   try {
                     const ok = await Linking.canOpenURL(url);
                     if (ok) await Linking.openURL(url);
-                    else toast.error(T('errors_callsUnavailable','errors_callsUnavailable'));
+                    else toast.error(t('errors_callsUnavailable','errors_callsUnavailable'));
                   } catch {
-                    toast.error(T('errors_callsUnavailable','errors_callsUnavailable'));
+                    toast.error(t('errors_callsUnavailable','errors_callsUnavailable'));
                   }
                 }}>
                   <Text style={[base.value, s.link]}>{formatRuMask(phone)}</Text>
                 </Pressable>
               ) : (
-                <Text style={base.value}>{T('common_dash','common_dash')}</Text>
+                <Text style={base.value}>{t('common_dash','common_dash')}</Text>
               )}
               {phone ? (
                 <IconButton
                   style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyPhone}
-                  accessibilityLabel={T('a11y_copy_phone','a11y_copy_phone')}
+                  accessibilityLabel={t('a11y_copy_phone','a11y_copy_phone')}
                 >
                   <Feather name='copy' size={Number(theme?.typography?.sizes?.md ?? 16)} />
                 </IconButton>
@@ -347,33 +358,33 @@ if (mountedRef.current) setLoading(true);
 
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{T('label_birthdate','label_birthdate')}</Text>
+            <Text style={base.label}>{t('label_birthdate','label_birthdate')}</Text>
             <View style={base.rightWrap}>
-              <Text style={base.value}>{birthdate ? birthdate.toLocaleDateString((() => { try { return getLocale(); } catch { return 'ru-RU'; } })(), { day: '2-digit', month: 'long', year: 'numeric' }) : T('common_dash','common_dash')}</Text>
+              <Text style={base.value}>{birthdate ? birthdate.toLocaleDateString((() => { try { return getLocale(); } catch { return 'ru-RU'; } })(), { day: '2-digit', month: 'long', year: 'numeric' }) : t('common_dash','common_dash')}</Text>
             </View>
           </View>
         </Card>
 
-        <Text style={base.sectionTitle}>{T('section_company_role','section_company_role')}</Text>
-        <Card>
+        <Text style={base.sectionTitle}>{t('section_company_role','section_company_role')}</Text>
+        <Card paddedXOnly>
           <View style={base.row}>
-            <Text style={base.label}>{T('label_department','label_department')}</Text>
+            <Text style={base.label}>{t('label_department','label_department')}</Text>
             <View style={base.rightWrap}>
-              <Text style={base.value}>{departmentName || T('common_dash','common_dash')}</Text>
+              <Text style={base.value}>{departmentName || t('common_dash','common_dash')}</Text>
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{T('label_role','label_role')}</Text>
+            <Text style={base.label}>{t('label_role','label_role')}</Text>
             <View style={base.rightWrap}>
               <Text style={base.value}>{roleLabel}</Text>
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{T('label_status','label_status')}</Text>
+            <Text style={base.label}>{t('label_status','label_status')}</Text>
             <View style={base.rightWrap}>
-              <Text style={[base.value, { color: statusColor }]}>{isSuspended ? T('status_suspended','status_suspended') : T('status_active','status_active')}</Text>
+              <Text style={[base.value, { color: statusColor }]}>{isSuspended ? t('status_suspended','status_suspended') : t('status_active','status_active')}</Text>
             </View>
           </View>
         </Card>

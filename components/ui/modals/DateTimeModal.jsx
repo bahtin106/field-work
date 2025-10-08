@@ -38,8 +38,14 @@ export default function DateTimeModal({
   };
   const baseDate = parseInitial(initial);
 
-  const MONTHS_ABBR = ['янв.','февр.','март','апр.','май','июн.','июл.','авг.','сент.','окт.','нояб.','дек.'];
-  const MONTHS_GEN  = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+  const MONTHS_ABBR = Array.from({ length: 12 }, (_, i) =>
+  new Date(2000, i, 1).toLocaleString(undefined, { month: 'short' })
+);
+  const MONTHS_GEN = Array.from({ length: 12 }, (_, i) =>
+  new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'long' })
+    .format(new Date(2000, i, 1))
+    .replace(/^\d+\s*/, '')
+);
 
   const daysInMonth = (m, yNullable) => {
     if (m === 1 && (yNullable == null)) return 29;
@@ -84,9 +90,10 @@ export default function DateTimeModal({
     return withYear ? `${d} ${mName} ${y}, ${hh}:${mm}` : `${d} ${mName}, ${hh}:${mm}`;
   }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData]);
 
-  const innerGap = 8;
-  const W3 = Math.max(64, contentW > 0 ? (contentW - innerGap * 2) / 3 : 0);
-  const W2 = Math.max(64, contentW > 0 ? (contentW - innerGap) / 2 : 0);
+  const innerGap = (theme.components?.datetimeModal?.innerGap ?? theme.spacing?.sm ?? 8);
+  const minWheelWidth = (theme.components?.datetimeModal?.wheelMinWidth ?? 64);
+  const W3 = Math.max(minWheelWidth, contentW > 0 ? (contentW - innerGap * 2) / 3 : 0);
+  const W2 = Math.max(minWheelWidth, contentW > 0 ? (contentW - innerGap) / 2 : 0);
 
   const handleApply = () => {
     const year  = years[dYearIdx] || baseDate.getFullYear();

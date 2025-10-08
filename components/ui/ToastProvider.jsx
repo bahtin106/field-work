@@ -84,9 +84,9 @@ export default function ToastProvider({ children }) {
     success: (t) => show(t, "success"),
     error:   (t) => show(t, "error"),
     info:    (t) => show(t, "info"),
-    loading: (text) => show(text ?? i18nT('toast.loading', 'Сохраняю…'), 'info', { sticky: true }),
+    loading: (text) => show(text ?? i18nT('toast.loading'), 'info', { sticky: true }),
     promise: (p, m = {}) => {
-      const { loading = i18nT('toast.loading', 'Сохраняю…'), success = i18nT('toast.success', 'Сохранено'), error = i18nT('toast.error', 'Не удалось выполнить действие') } = m || {};
+      const { loading = i18nT('toast.loading'), success = i18nT('toast.success'), error = i18nT('toast.error') } = m || {};
       show(loading, 'info', { sticky: true });
       const run = typeof p === 'function' ? p() : p;
       return Promise.resolve(run)

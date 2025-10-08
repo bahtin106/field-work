@@ -16,7 +16,8 @@ import IconButton from '../../../components/ui/IconButton';
 import Card from '../../../components/ui/Card';
 import TextField, { SelectField } from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
-import { t as S } from '../../../src/i18n';
+import { useTranslation } from '../../../src/i18n/useTranslation';
+import { useI18nVersion } from '../../../src/i18n';
 import { TBL, STORAGE, FUNCTIONS as APP_FUNCTIONS, AVATAR } from '../../../lib/constants';
 import AppHeader from '../../../components/navigation/AppHeader';
 
@@ -64,15 +65,13 @@ const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
 
 import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
 
+let ROLE_LABELS_LOCAL = ROLE_LABELS;
 try {
-  const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
-  if (fromEnv) ROLE_LABELS = { ...ROLE_LABELS, ...JSON.parse(fromEnv) };
+const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
+if (fromEnv) ROLE_LABELS_LOCAL = { ...ROLE_LABELS_LOCAL, ...JSON.parse(fromEnv) };
 } catch {}
 
-let ROLE_DESCRIPTIONS = (globalThis?.APP_I18N?.role_descriptions) || {
-  [ROLE.DISPATCHER]: S('role_desc_dispatcher'),
-  [ROLE.WORKER]: S('role_desc_worker')
-};
+let ROLE_DESCRIPTIONS = (globalThis?.APP_I18N?.role_descriptions) || {};
 try {
   const fromEnv = process.env.EXPO_PUBLIC_ROLE_DESCRIPTIONS_JSON;
   if (fromEnv) ROLE_DESCRIPTIONS = { ...ROLE_DESCRIPTIONS, ...JSON.parse(fromEnv) };
@@ -143,15 +142,17 @@ function isValidEmailStrict(raw) {
 
 // === Lightweight wrappers for split modals (local to this screen) ===
 function AvatarSheetModal({ visible, onTakePhoto, onPickFromLibrary, onDeletePhoto, onClose }) {
+  const { t } = useTranslation();
+
   const items = [
-    { id: 'camera', label: 'Сделать фото' },
-    { id: 'library', label: 'Выбрать из галереи' },
-    { id: 'delete', label: 'Удалить фото' },
+    { id: 'camera', label: t('profile_photo_take') },
+    { id: 'library', label: t('profile_photo_choose') },
+    { id: 'delete', label: t('profile_photo_delete') },
   ];
   return (
     <SelectModal
       visible={visible}
-      title="Фото профиля"
+      title={t('profile_photo_title')}
       items={items}
       onSelect={(it) => {
         try {
@@ -168,11 +169,12 @@ function AvatarSheetModal({ visible, onTakePhoto, onPickFromLibrary, onDeletePho
 }
 
 function DepartmentSelectModal({ visible, departments = [], departmentId, onSelect, onClose }) {
+  const { t } = useTranslation();
   const mapped = (departments || []).map((d) => ({ id: d.id, label: d.name }));
   return (
     <SelectModal
       visible={visible}
-      title="Отдел"
+      title={t('user_department_title')}
       items={mapped}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
@@ -181,6 +183,7 @@ function DepartmentSelectModal({ visible, departments = [], departmentId, onSele
 }
 
 function RoleSelectModal({ visible, role, roles = [], roleLabels = {}, roleDescriptions = {}, onSelect, onClose }) {
+  const { t } = useTranslation();
   const items = (roles || []).map((r) => ({
     id: r,
     label: roleLabels[r] || r,
@@ -189,7 +192,7 @@ function RoleSelectModal({ visible, role, roles = [], roleLabels = {}, roleDescr
   return (
     <SelectModal
       visible={visible}
-      title="Роль"
+      title={t('user_role_title')}
       items={items}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
@@ -205,14 +208,15 @@ function SuspendModal({
   onConfirm,
   onClose,
 }) {
+  const { t } = useTranslation();
   const items = [
-    { id: 'keep', label: 'Заблокировать (заявки оставить)' },
-    { id: 'reassign', label: 'Заблокировать и выбрать преемника' },
+    { id: 'keep', label: t('user_block_keepOrders') },
+    { id: 'reassign', label: t('user_block_reassign') },
   ];
   return (
     <SelectModal
       visible={visible}
-      title="Изменить статус пользователя"
+      title={t('user_changeStatus_title')}
       items={items}
       onSelect={(it) => {
         try {
@@ -240,15 +244,16 @@ function DeleteEmployeeModal({
   saving,
   onClose,
 }) {
+  const { t } = useTranslation();
   // If successor not chosen yet — prompt to pick one; otherwise ask for destructive confirmation
   if (!successor?.id) {
     return (
       <ConfirmModal
         visible={visible}
-        title="Удаление сотрудника"
-        message="Перед удалением нужно выбрать преемника для заявок."
-        confirmLabel="Выбрать"
-        cancelLabel="Отмена"
+        title={t('user_delete_title')}
+        message={t('user_delete_needSuccessor')}
+        confirmLabel={t('btn_choose')}
+        cancelLabel={t('btn_cancel')}
         confirmVariant="primary"
         loading={false}
         onConfirm={() => {
@@ -261,10 +266,10 @@ function DeleteEmployeeModal({
   return (
     <ConfirmModal
       visible={visible}
-      title="Удалить сотрудника?"
-      message="Все заявки будут перепривязаны к выбранному преемнику. Действие необратимо."
-      confirmLabel={saving ? "Удаление..." : "Удалить"}
-      cancelLabel="Отмена"
+      title={t('user_delete_confirm_title')}
+      message={t('user_delete_confirm_message')}
+      confirmLabel={saving ? t('btn_deleting') : t('btn_delete')}
+      cancelLabel={t('btn_cancel')}
       confirmVariant="destructive"
       loading={!!saving}
       onConfirm={onConfirm}
@@ -275,17 +280,33 @@ function DeleteEmployeeModal({
 // === end wrappers ===
 export default function EditUser() {
 const { theme } = useTheme();
+  const { t } = useTranslation();
+  const ver = useI18nVersion();
+useLayoutEffect(() => {
+  const routeTitle = t('routes.users/[id]/edit', 'routes.users/[id]/edit');
+  navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
+}, [navigation, ver]);
+
+useEffect(() => {
+  const routeTitle = t('routes.users/[id]/edit', 'routes.users/[id]/edit');
+  navigation.setParams({ title: routeTitle });
+}, [navigation, ver]);
+
+  const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(() => ({
+    [ROLE.DISPATCHER]: ROLE_DESCRIPTIONS[ROLE.DISPATCHER] ?? t('role_desc_dispatcher'),
+    [ROLE.WORKER]: ROLE_DESCRIPTIONS[ROLE.WORKER] ?? t('role_desc_worker'),
+  }), [t]);
   const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
   const MEDIA_QUALITY = (typeof theme.media?.quality === 'number') ? theme.media.quality : 0.85;
 
   const ICON_MD = theme.icons?.md ?? 22;
  const ICON_SM = theme.icons?.sm ?? 18;
  const ICONBUTTON_TOUCH = theme.components?.iconButton?.size ?? 32;
- const TRAILING_WIDTH = theme.components?.input?.trailingSlotWidth 
-   ?? (ICONBUTTON_TOUCH + theme.spacing.sm + ICON_MD + theme.spacing.sm + (theme.components?.input?.trailingGap ?? 8));
- const CAMERA_ICON = Math.max(theme.icons?.minCamera ?? 12, Math.round((theme.icons?.sm ?? 18) * 0.67));
+ const TRAILING_WIDTH = theme.components?.input?.trailingSlotWidth
+?? (ICONBUTTON_TOUCH + theme.spacing.sm + ICON_MD + theme.spacing.sm + (theme.components?.input?.trailingGap ?? theme.spacing.xs));
+ const CAMERA_ICON = Math.max(theme.icons?.minCamera ?? 12, Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)));
  const RADIO_SIZE = theme.components?.radio?.size ?? ICON_MD;
- const RADIO_DOT = theme.components?.radio?.dot ?? Math.max(6, Math.round(RADIO_SIZE / 2 - 3));
+ const RADIO_DOT = theme.components?.radio?.dot ?? Math.max(theme.components?.radio?.dotMin ?? 6, Math.round(RADIO_SIZE / 2 - 3));
 const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
  const EXTRA_SCROLL_PAD = theme.spacing.sm;
 const styles = React.useMemo(() => {
@@ -322,8 +343,8 @@ const styles = React.useMemo(() => {
  avatarImg: { width: '100%', height: '100%' },
  avatarCamBadge: {
   position: 'absolute',
-  right: -2,
-  bottom: -2,
+  right: -(theme.components?.avatar?.badgeOffset ?? 2),
+  bottom: -(theme.components?.avatar?.badgeOffset ?? 2),
   backgroundColor: theme.colors.primary,
   borderRadius: theme.radii.md,
   paddingHorizontal: theme.spacing.xs,
@@ -433,7 +454,7 @@ const { id } = useLocalSearchParams();
  const [saving, setSaving] = useState(false);
  const [firstName, setFirstName] = useState('');
  const [lastName, setLastName] = useState('');
- const [headerName, setHeaderName] = useState(S('placeholder_no_name'));
+ const [headerName, setHeaderName] = useState(t('placeholder_no_name'));
  const [email, setEmail] = useState('');
  const [phone, setPhone] = useState('');
  const [birthdate, setBirthdate] = useState(null);
@@ -485,15 +506,15 @@ const [withYear, setWithYear] = useState(true);
     .eq('id', userId);
    if (updErr) throw updErr;
    setAvatarUrl(publicUrl);
-   toastSuccess(S('toast_avatar_updated'));
+   toastSuccess(t('toast_avatar_updated'));
   } catch (e) {
-   setErr(e?.message || S('toast_generic_error'));
+   setErr(e?.message || t('toast_generic_error'));
   }
  };
  const deleteAvatar = async () => {
   try {
    setErr('');
-   toastInfo(S('toast_saving'), { sticky: true });
+   toastInfo(t('toast_saving'), { sticky: true });
    const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
    const { data: list, error: listErr } = await supabase.storage.from(STORAGE.AVATARS).list(prefix);
    if (!listErr && Array.isArray(list) && list.length) {
@@ -506,15 +527,15 @@ const [withYear, setWithYear] = useState(true);
     .eq('id', userId);
    if (updErr) throw updErr;
    setAvatarUrl(null);
-   toastSuccess(S('toast_saved'));
+   toastSuccess(t('toast_saved'));
   } catch (e) {
-   setErr(e?.message || S('toast_generic_error'));
+   setErr(e?.message || t('toast_generic_error'));
   }
  };
  const pickFromCamera = async () => {
   const okCam = await ensureCameraPerms();
   if (!okCam) {
-   setErr(S('error_camera_denied'));
+   setErr(t('error_camera_denied'));
    return;
   }
   const res = await ImagePicker.launchCameraAsync({
@@ -529,7 +550,7 @@ const [withYear, setWithYear] = useState(true);
  const pickFromLibrary = async () => {
   const okLib = await ensureLibraryPerms();
   if (!okLib) {
-   setErr(S('error_library_denied'));
+   setErr(t('error_library_denied'));
    return;
   }
   const res = await ImagePicker.launchImageLibraryAsync({
@@ -628,7 +649,7 @@ const isDirty = useMemo(() => {
   };
  }, [loading]);
 const showWarning = (msg) => {
- setWarningMessage(String(msg || S('dlg_generic_warning')));
+ setWarningMessage(String(msg || t('dlg_generic_warning')));
  setWarningVisible(true);
 };
 const confirmCancel = () => {
@@ -669,23 +690,23 @@ useEffect(() => {
 const handleSave = async () => {
  setErr('');
  if (!firstName.trim()) {
-  showWarning(S('err_first_name'));
+  showWarning(t('err_first_name'));
   return;
  }
  if (!lastName.trim()) {
-  showWarning(S('err_last_name'));
+  showWarning(t('err_last_name'));
   return;
  }
  if (!emailValid) {
-  showWarning(S('err_email'));
+  showWarning(t('err_email'));
   return;
  }
  if (String(phone || '').trim() && !isValidPhone(String(phone||''))) {
-  showWarning(S('err_phone'));
+  showWarning(t('err_phone'));
   return;
  }
  if (!passwordValid) {
-  showWarning(S('err_password_short'));
+  showWarning(t('err_password_short'));
   return;
  }
  if (newPassword && newPassword.length> 0) {
@@ -699,7 +720,7 @@ const proceedSave = async () => {
  try {
   setSaving(true);
   setErr('');
-  toastInfo(S('toast_saving'), { sticky: true });
+  toastInfo(t('toast_saving'), { sticky: true });
   const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: (meIsAdmin && !(meId && meId === userId)) ? role : undefined };
   Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
   const { data: updRows, error: updProfileErr } = await supabase
@@ -709,7 +730,7 @@ const proceedSave = async () => {
    .select('id');
   if (updProfileErr) throw updProfileErr;
   if (!Array.isArray(updRows) || updRows.length === 0) {
-   throw new Error(S('error_profile_not_updated'));
+   throw new Error(t('error_profile_not_updated'));
   }
   try {
    const { data: sess } = await supabase.auth.getSession();
@@ -740,7 +761,7 @@ catch (e) { }
   setNewPassword('');
   setConfirmPwdVisible(false);
   setPendingSave(false);
-  setHeaderName(`${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() || S('placeholder_no_name'));
+  setHeaderName(`${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() || t('placeholder_no_name'));
   setInitialSnap(JSON.stringify({
    firstName: firstName.trim(),
    lastName: lastName.trim(),
@@ -752,31 +773,27 @@ catch (e) { }
    departmentId: departmentId || null,
    isSuspended }));
   allowLeaveRef.current = true;
-  toastSuccess(S('toast_saved'));
+  toastSuccess(t('toast_saved'));
  }
  catch (e) {
-  setErr(e?.message || S('error_save_failed'));
-  toastError(e?.message || S('error_save_failed'));
+  setErr(e?.message || t('error_save_failed'));
+  toastError(e?.message || t('error_save_failed'));
  }
  finally {
   setSaving(false);
  }
 };
-useLayoutEffect(() => {
-  navigation.setOptions({
-    header: () => (
-      <AppHeader
-        title={S('title_edit')}
-        leftText={S('header_cancel')}
-        rightText={S('header_save')}
-        onLeftPress={onPressCancel}
-        onRightPress={onPressSave}
-      />
-    ),
-  });
-}, [navigation, onPressSave, onPressCancel]);
-
- useEffect(() => { try { setAnchorOffset(theme.components?.toast?.anchorOffset ?? 120); } catch (e) {} }, []);
+useEffect(() => {
+  try {
+    navigation.setParams({
+      centerTitle: true,
+      leftTextOnly: true,
+      headerBackTitle: t('header_cancel'),
+      rightTextLabel: t('header_save'),
+      onRightPress: onPressSave,
+    });
+  } catch (e) {}
+}, [navigation, ver, onPressSave, t]);
 
  useEffect(() => {
  const sub = navigation.addListener('beforeRemove', (e) => {
@@ -821,7 +838,7 @@ const fetchMe = useCallback(async () => {
   const n1 = (p.first_name || '').trim();
   const n2 = (p.last_name || '').trim();
   const fn = (p.full_name || '').trim();
-  const name = n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || S('placeholder_no_name');
+  const name = n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || t('placeholder_no_name');
   return name;
  };
  const fetchUser = useCallback(async () => {
@@ -878,8 +895,8 @@ const fetchMe = useCallback(async () => {
     isSuspended: !!(prof?.is_suspended || prof?.suspended_at)
    }));
   } catch (e) {
-   setErr(e?.message || S('toast_generic_error'));
-   toastError(e?.message || S('toast_generic_error'));
+   setErr(e?.message || t('toast_generic_error'));
+   toastError(e?.message || t('toast_generic_error'));
   } finally {
    setLoading(false);
   }
@@ -977,7 +994,7 @@ const { error: updErr } = await supabase
   return error;
  };
  const onAskSuspend = () => {
-  if (!meIsAdmin) return showWarning(S('error_no_access'));
+  if (!meIsAdmin) return showWarning(t('error_no_access'));
   if (meId && userId === meId) return; // не для себя
   setOrdersAction('keep');
   setSuccessor(null);
@@ -985,85 +1002,85 @@ const { error: updErr } = await supabase
   setSuspendVisible(true);
  };
  const onAskUnsuspend = () => {
-  if (!meIsAdmin) return showWarning(S('error_no_access'));
+  if (!meIsAdmin) return showWarning(t('error_no_access'));
   if (meId && userId === meId) return;
   setUnsuspendVisible(true);
  };
  const onConfirmSuspend = async () => {
-  if (!meIsAdmin) return showWarning(S('error_no_access'));
+  if (!meIsAdmin) return showWarning(t('error_no_access'));
   if (meId && userId === meId) return;
   try {
    setSaving(true);
    setErr('');
-   toastInfo(S('toast_saving'), { sticky: true });
+   toastInfo(t('toast_saving'), { sticky: true });
    if (ordersAction === 'reassign') {
     if (!successor?.id) {
-     setSuccessorError(S('err_successor_required'));
+     setSuccessorError(t('err_successor_required'));
      setSaving(false);
      return;
     }
     const errR = await reassignOrders(userId, successor.id);
-    if (errR) throw new Error(errR.message || S('toast_generic_error'));
+    if (errR) throw new Error(errR.message || t('toast_generic_error'));
    }
    const errS = await setSuspended(userId, true);
-   if (errS) throw new Error(errS.message || S('toast_generic_error'));
+   if (errS) throw new Error(errS.message || t('toast_generic_error'));
    setIsSuspended(true);
-   toastSuccess(S('toast_suspended'));
+   toastSuccess(t('toast_suspended'));
    setSuspendVisible(false);
   } catch (e) {
-   setErr(e?.message || S('dlg_generic_warning'));
-   toastError(e?.message || S('dlg_generic_warning'));
+   setErr(e?.message || t('dlg_generic_warning'));
+   toastError(e?.message || t('dlg_generic_warning'));
   } finally {
    setSaving(false);
   }
  };
  const onConfirmUnsuspend = async () => {
-  if (!meIsAdmin) return showWarning(S('error_no_access'));
+  if (!meIsAdmin) return showWarning(t('error_no_access'));
   if (meId && userId === meId) return;
   try {
    setSaving(true);
    setErr('');
-   toastInfo(S('toast_saving'), { sticky: true });
+   toastInfo(t('toast_saving'), { sticky: true });
    const errS = await setSuspended(userId, false);
-   if (errS) throw new Error(errS.message || S('err_unsuspend_failed'));
+   if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
    setIsSuspended(false);
-   toastSuccess(S('toast_unsuspended'));
+   toastSuccess(t('toast_unsuspended'));
    setUnsuspendVisible(false);
   } catch (e) {
-   setErr(e?.message || S('dlg_generic_warning'));
-   toastError(e?.message || S('dlg_generic_warning'));
+   setErr(e?.message || t('dlg_generic_warning'));
+   toastError(e?.message || t('dlg_generic_warning'));
   } finally {
    setSaving(false);
   }
  };
  const onAskDelete = () => {
-  if (!meIsAdmin) return showWarning(S('error_no_access'));
+  if (!meIsAdmin) return showWarning(t('error_no_access'));
   if (meId && userId === meId) return;
   setSuccessor(null);
   setSuccessorError('');
   setDeleteVisible(true);
  };
  const onConfirmDelete = async () => {
-  if (!meIsAdmin) return showWarning(S('error_no_access'));
+  if (!meIsAdmin) return showWarning(t('error_no_access'));
   if (meId && userId === meId) return;
   if (!successor?.id) {
-   setSuccessorError(S('err_successor_required'));
+   setSuccessorError(t('err_successor_required'));
    return;
   }
   try {
    setSaving(true);
    setErr('');
-   toastInfo(S('toast_saving'), { sticky: true });
+   toastInfo(t('toast_saving'), { sticky: true });
    const errR = await reassignOrders(userId, successor.id);
-   if (errR) throw new Error(errR.message || S('toast_generic_error'));
+   if (errR) throw new Error(errR.message || t('toast_generic_error'));
    const errD = await deleteUserEverywhere(userId);
-   if (errD) throw new Error(errD.message || S('toast_generic_error'));
-   toastSuccess(S('toast_deleted'));
+   if (errD) throw new Error(errD.message || t('toast_generic_error'));
+   toastSuccess(t('toast_deleted'));
    setDeleteVisible(false);
    setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300)
   } catch (e) {
-   setErr(e?.message || S('dlg_generic_warning'));
-   toastError(e?.message || S('dlg_generic_warning'));
+   setErr(e?.message || t('dlg_generic_warning'));
+   toastError(e?.message || t('dlg_generic_warning'));
   } finally {
    setSaving(false);
   }
@@ -1081,7 +1098,7 @@ const { error: updErr } = await supabase
 if (loading || !meLoaded) {
   return (
     <Screen background="background" scroll={false}>
-      <ActivityIndicator size="large" />
+      <ActivityIndicator size={theme.components?.activityIndicator?.size ?? 'large'} />
     </Screen>
   );
 }
@@ -1089,7 +1106,7 @@ if (loading || !meLoaded) {
   return (
    <Screen background="background" scroll={false}>
     <View style={{ padding: theme.spacing.lg, justifyContent: 'center', alignItems: 'center', flex: 1 }}>
-     <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>{S('error_no_access')}</Text>
+     <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>{t('error_no_access')}</Text>
     </View>
    </Screen>
   );
@@ -1123,8 +1140,8 @@ if (loading || !meLoaded) {
          style={styles.avatar}
          onPress={() => { setAvatarKey((k) => k + 1); setAvatarSheet(true); }}
          accessibilityRole="button"
-         accessibilityLabel={S('a11y_change_avatar')}
-         accessibilityHint={S('a11y_change_avatar_hint')}>
+         accessibilityLabel={t('a11y_change_avatar')}
+         accessibilityHint={t('a11y_change_avatar_hint')}>
          {avatarUrl ? (
           <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
          ) : (
@@ -1146,7 +1163,7 @@ if (loading || !meLoaded) {
           <View
            style={[styles.rolePillHeader, { borderColor: withAlpha(isSuspended ? theme.colors.danger : theme.colors.success, 0.2), backgroundColor: withAlpha(isSuspended ? theme.colors.danger : theme.colors.success, 0.13) }]}>
            <Text style={[styles.rolePillHeaderText, { color: isSuspended ? theme.colors.danger : theme.colors.success }]}>
-            {isSuspended ? S('status_suspended') : S('status_active')}
+            {isSuspended ? t('status_suspended') : t('status_active')}
            </Text>
           </View>
           {role === ROLE.ADMIN ? (
@@ -1158,7 +1175,7 @@ if (loading || !meLoaded) {
               backgroundColor: withAlpha(roleColor('admin'), 0.13) },
             ]}>
             <Text style={[styles.rolePillHeaderText, { color: roleColor('admin') }]}>
-             {ROLE_LABELS.admin}
+             {ROLE_LABELS_LOCAL.admin}
             </Text>
            </View>
           ) : (
@@ -1171,7 +1188,7 @@ if (loading || !meLoaded) {
                backgroundColor: withAlpha(roleColor(role), 0.13) },
              ]}>
              <Text style={[styles.rolePillHeaderText, { color: roleColor(role) }]}>
-              {ROLE_LABELS[role] || role}
+              {ROLE_LABELS_LOCAL[role] || role}
              </Text>
             </View>
            )
@@ -1182,29 +1199,29 @@ if (loading || !meLoaded) {
       </View>
       {err ? (
        <View style={styles.errorCard}>
-        <Text style={styles.errorTitle}>{S('dlg_alert_title')}</Text>
+        <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
         <Text style={styles.errorText}>{err}</Text>
        </View>
       ) : null}
-      <Text style={styles.section}>{S('section_personal')}</Text>
+      <Text style={styles.section}>{t('section_personal')}</Text>
       <Card>
-       <TextField label={S('label_first_name')} placeholder={S('placeholder_first_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
+       <TextField label={t('label_first_name')} placeholder={t('placeholder_first_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
         value={firstName}
         onChangeText={setFirstName}
         onFocus={() => setFocusFirst(true)}
         onBlur={() => setFocusFirst(false)}
         />
-       {!firstName.trim() ? <Text style={styles.helperError}>{S('err_first_name')}</Text> : null}
-       <TextField label={S('label_last_name')} placeholder={S('placeholder_last_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
+       {!firstName.trim() ? <Text style={styles.helperError}>{t('err_first_name')}</Text> : null}
+       <TextField label={t('label_last_name')} placeholder={t('placeholder_last_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
         value={lastName}
         onChangeText={setLastName}
         onFocus={() => setFocusLast(true)}
         onBlur={() => setFocusLast(false)}
         />
-       {!lastName.trim() ? <Text style={styles.helperError}>{S('err_last_name')}</Text> : null}
+       {!lastName.trim() ? <Text style={styles.helperError}>{t('err_last_name')}</Text> : null}
        <TextField
- label={S('label_email')}
- placeholder={S('placeholder_email')} placeholderTextColor={theme.colors.inputPlaceholder}
+ label={t('label_email')}
+ placeholder={t('placeholder_email')} placeholderTextColor={theme.colors.inputPlaceholder}
  style={styles.field}
  keyboardType="email-address"
  autoCapitalize="none"
@@ -1215,31 +1232,34 @@ if (loading || !meLoaded) {
  onBlur={() => setFocusEmail(false)}
 />
 {!emailValid ? (
-        <Text style={styles.helperError}>{S('err_email')}</Text>
+        <Text style={styles.helperError}>{t('err_email')}</Text>
        ) : null}
        <PhoneInput
  value={phone}
  onChangeText={(val, meta) => {
   setPhone(val);
  }}
- error={!isValidPhone(String(phone||'')) ? S('err_phone') : undefined}
+ error={!isValidPhone(String(phone||'')) ? t('err_phone') : undefined}
  style={styles.field}
  onFocus={() => setFocusPhone(true)}
  onBlur={() => setFocusPhone(false)}
 />
-<SelectField
-  label={S('label_birthdate')}
-  value={birthdate ? formatDateRU(birthdate, withYear) : S('placeholder_birthdate')}
-  onPress={() => setDobModalVisible(true)}
-  showValue={true}
-  style={styles.field}
-/>
+<Pressable onPress={() => setDobModalVisible(true)} accessibilityRole="button" accessibilityLabel={t('label_birthdate')}>
+  <TextField
+    label={t('label_birthdate')}
+    value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
+    placeholder={t('placeholder_birthdate')}
+    style={styles.field}
+    editable={false}
+    rightSlot={null}
+  />
+</Pressable>
       </Card>
       {!isSelfAdmin && (
        <Card>
         <View style={{ flexDirection: 'row' }}>
          <UIButton
-          title={S('btn_delete')}
+          title={t('btn_delete')}
           variant="destructive"
           onPress={onAskDelete}
           style={{ flex: 1 }}
@@ -1249,12 +1269,12 @@ if (loading || !meLoaded) {
       )}
       {meIsAdmin && (
   <>
-    <Text style={styles.section}>{S('section_company_role')}</Text>
+    <Text style={styles.section}>{t('section_company_role')}</Text>
     <Card>
       <View style={{ marginTop: theme.spacing.xs }}>
-  <Text style={styles.label}>{S('label_department')}</Text>
+  <Text style={styles.label}>{t('label_department')}</Text>
   <SelectField
-    value={activeDeptName || S('placeholder_department')}
+    value={activeDeptName || t('placeholder_department')}
     onPress={() => setDeptModalVisible(true)}
     showValue={true}
   />
@@ -1263,17 +1283,17 @@ if (loading || !meLoaded) {
       {!isSelfAdmin && (
         <>
           <View style={{ marginTop: theme.spacing.xs }}>
-  <Text style={styles.label}>{S('label_role')}</Text>
+  <Text style={styles.label}>{t('label_role')}</Text>
   <SelectField
-    value={ROLE_LABELS[role] || role}
+    value={ROLE_LABELS_LOCAL[role] || role}
     onPress={() => setShowRoles(true)}
     showValue={true}
   />
 </View>
           <View style={{ marginTop: theme.spacing.xs }}>
-  <Text style={styles.label}>{S('label_status')}</Text>
+  <Text style={styles.label}>{t('label_status')}</Text>
   <SelectField
-    value={isSuspended ? S('status_suspended') : S('status_active')}
+    value={isSuspended ? t('status_suspended') : t('status_active')}
     onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
     showValue={true}
   />
@@ -1284,24 +1304,24 @@ if (loading || !meLoaded) {
   </>
 )}
 
-<Text style={styles.section}>{S('section_password')}</Text>
+<Text style={styles.section}>{t('section_password')}</Text>
 <Card>
   <View style={{ position: 'relative' }}>
     <TextField
   ref={pwdRef}
   value={newPassword}
   onChangeText={setNewPassword}
-  placeholder={S('placeholder_new_password')}
+  placeholder={t('placeholder_new_password')}
   secureTextEntry={!showPassword}
   autoCapitalize="none"
   autoCorrect={false}
-  error={newPassword.length > 0 && !passwordValid ? ' ' : undefined}
+  error={undefined}
   style={styles.field}
   rightSlot={(
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
       <Pressable
         onPress={() => { pwdRef.current?.blur(); setShowPassword(v => !v); }}
-        accessibilityLabel={showPassword ? S('a11y_hide_password') : S('a11y_show_password')}
+        accessibilityLabel={showPassword ? t('a11y_hide_password') : t('a11y_show_password')}
         hitSlop={{ top: theme.spacing.sm, bottom: theme.spacing.sm, left: theme.spacing.sm, right: theme.spacing.sm }}
         style={{ padding: theme.spacing.xs }}
       >
@@ -1311,9 +1331,9 @@ if (loading || !meLoaded) {
         <IconButton
           onPress={async () => {
             await Clipboard.setStringAsync(newPassword || '');
-            toastSuccess(S('toast_password_copied'));
+            toastSuccess(t('toast_password_copied'));
           }}
-          accessibilityLabel={S('a11y_copy_password')}
+          accessibilityLabel={t('a11y_copy_password')}
           size={ICONBUTTON_TOUCH}
         >
           <Feather name="copy" size={ICON_SM} />
@@ -1325,7 +1345,7 @@ if (loading || !meLoaded) {
   </View>
   </Card>
   {newPassword.length > 0 && !passwordValid ? (
-    <Text style={{ marginTop: theme.spacing.xs, color: theme.colors.danger, fontSize: theme.typography.sizes.xs }}>{S('err_password_short')}</Text>
+    <Text style={{ marginTop: theme.spacing.xs, color: theme.colors.danger, fontSize: theme.typography.sizes.xs }}>{t('err_password_short')}</Text>
   ) : null}
      </ScrollView>
          </View>
@@ -1334,10 +1354,10 @@ if (loading || !meLoaded) {
       key={`cancel-${cancelKey}`}
       visible={cancelVisible}
       onClose={() => setCancelVisible(false)}
-      title={S('dlg_leave_title')}
-      message={S('dlg_leave_msg')}
-      confirmLabel={S('dlg_leave_confirm')}
-      cancelLabel={S('dlg_leave_cancel')}
+      title={t('dlg_leave_title')}
+      message={t('dlg_leave_msg')}
+      confirmLabel={t('dlg_leave_confirm')}
+      cancelLabel={t('dlg_leave_cancel')}
       confirmVariant="destructive"
       onConfirm={confirmCancel}
     />
@@ -1345,9 +1365,9 @@ if (loading || !meLoaded) {
     <AlertModal
       visible={warningVisible}
       onClose={() => setWarningVisible(false)}
-      title={S('dlg_alert_title')}
+      title={t('dlg_alert_title')}
       message={warningMessage}
-      buttonLabel={S('dlg_ok')}
+      buttonLabel={t('dlg_ok')}
     />
     {/* Confirm password update */}
     <ConfirmModal
@@ -1356,10 +1376,10 @@ if (loading || !meLoaded) {
         setConfirmPwdVisible(false);
         setPendingSave(false);
       }}
-      title={S('dlg_confirm_pwd_title')}
-      message={S('dlg_confirm_pwd_msg')}
-      confirmLabel={saving ? S('toast_saving') : S('header_save')}
-      cancelLabel={S('header_cancel')}      confirmVariant="primary"
+      title={t('dlg_confirm_pwd_title')}
+      message={t('dlg_confirm_pwd_msg')}
+      confirmLabel={saving ? t('toast_saving') : t('header_save')}
+      cancelLabel={t('header_cancel')}      confirmVariant="primary"
       onConfirm={() => proceedSave()}
     />
         <SuspendModal
@@ -1377,10 +1397,10 @@ if (loading || !meLoaded) {
     <ConfirmModal
       visible={unsuspendVisible}
       onClose={() => setUnsuspendVisible(false)}
-      title={S('dlg_unsuspend_title')}
-      message={S('dlg_unsuspend_msg')}
-      confirmLabel={saving ? S('dlg_unsuspend_apply') : S('dlg_unsuspend_confirm')}
-      cancelLabel={S('header_cancel')}      confirmVariant="primary"
+      title={t('dlg_unsuspend_title')}
+      message={t('dlg_unsuspend_msg')}
+      confirmLabel={saving ? t('dlg_unsuspend_apply') : t('dlg_unsuspend_confirm')}
+      cancelLabel={t('header_cancel')}      confirmVariant="primary"
       onConfirm={onConfirmUnsuspend}
     />
     <DeleteEmployeeModal
@@ -1396,11 +1416,11 @@ if (loading || !meLoaded) {
     
     <SelectModal
       visible={pickerVisible}
-      title={S('picker_user_title')}
+      title={t('picker_user_title')}
       items={(pickerItems || []).map((it) => ({
         id: it.id,
         label: it.name,
-        subtitle: ROLE_LABELS[it.role] || it.role,
+        subtitle: ROLE_LABELS_LOCAL[it.role] || it.role,
         right: null,
       }))}
       onSelect={(item) => {
@@ -1445,8 +1465,8 @@ if (loading || !meLoaded) {
           visible={showRoles}
           role={role}
           roles={ROLES}
-          roleLabels={ROLE_LABELS}
-          roleDescriptions={ROLE_DESCRIPTIONS}
+          roleLabels={ROLE_LABELS_LOCAL}
+          roleDescriptions={ROLE_DESCRIPTIONS_LOCAL}
           onSelect={(r) => {
             setRole(r);
             setShowRoles(false);

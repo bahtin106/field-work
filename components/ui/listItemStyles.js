@@ -5,13 +5,14 @@ export const VALUE_FONT_WEIGHT = '500';
 
 export const listItemStyles = (t) => StyleSheet.create({
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: t.components?.listItem?.height ?? 48,
-    paddingHorizontal: t.spacing.xs, // симметричные отступы
-    paddingVertical: t.components?.row?.py ? t.spacing[t.components.row.py] : t.spacing.sm,
-  },
+  flexDirection: 'row',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  height: t.components?.listItem?.height ?? 48,
+  paddingHorizontal: t.spacing.xs,
+  paddingTop: t.spacing.xs,
+  paddingBottom: t.spacing.xs,
+},
 
   label: {
     flex: 1,
@@ -42,8 +43,8 @@ export const listItemStyles = (t) => StyleSheet.create({
   sep: {
     height: t.components.listItem.dividerWidth,
     backgroundColor: t.colors.border,
-    marginLeft: t.spacing.lg,
-    marginRight: t.spacing.lg,
+    marginLeft: t.spacing.xs,
+    marginRight: t.spacing.xs,
   },
 
   // заголовки секций («Внешний вид», «Уведомления»)

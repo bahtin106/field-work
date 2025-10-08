@@ -3,6 +3,7 @@ import React, { useState, forwardRef } from "react";
 import { View, Text, TextInput, StyleSheet, Platform, Pressable, Switch } from "react-native";
 import FeatherIcon from "@expo/vector-icons/Feather";
 import { useTheme } from "../../theme";
+import { t as T } from "../../src/i18n";
 import { listItemStyles, CHEVRON_GAP } from "./listItemStyles";
 
 const TextField = forwardRef(function TextField(
@@ -34,7 +35,6 @@ const TextField = forwardRef(function TextField(
   const requiredEmpty = isRequired && touched && !String(value || '').trim();
   const isErr = !!error || requiredEmpty;
   const s = styles(theme, isErr, focused);
-  const maskRef = React.useRef(null);
   const inputRef = React.useRef(null);
   React.useImperativeHandle(ref, () => inputRef.current);
   const handleChangeText = React.useCallback((t) => {
@@ -172,8 +172,6 @@ const selectStyles = (t) => StyleSheet.create({
 });
 
 
-
-
 const pad2 = (n) => String(n).padStart(2, "0");
 
 export function serializeDobForSupabase(v) {
@@ -183,205 +181,39 @@ export function serializeDobForSupabase(v) {
   return { dob, dob_md: md };
 }
 
+// --- CLEANED DateOfBirthField ---
+// Removed all built-in modals, wheels, pickers, animations.
+// Now it only renders a read-only settings-like row with the current value.
+// External screens/components can control the value via props.
 export const DateOfBirthField = ({
-  label = "Дата рождения",
+  label = T('fields.dob'),
   value,
-  onChange,
-  minYear = 1900,
-  maxYear = new Date().getFullYear(),
+  onChange, // kept for API compatibility (not used internally)
   style,
 }) => {
   const { theme } = useTheme();
   const isErr = false;
   const s = styles(theme, isErr, false);
-  const [open, setOpen] = React.useState(false);
-  const [d, setD] = React.useState(value?.day || 1);
-  const [m, setM] = React.useState(value?.month || 1);
-  const [y, setY] = React.useState(value?.year || maxYear);
-  const [withYear, setWithYear] = React.useState(value?.year != null);
-  // --- animated modal enter/exit (iOS-like) ---
-  const cardScale = React.useRef(new Animated.Value(0.96)).current;
-  const cardOpacity = React.useRef(new Animated.Value(0)).current;
-  const backdropOpacity = React.useRef(new Animated.Value(0)).current;
-
-  const animateIn = React.useCallback(() => {
-    cardScale.setValue(0.96);
-    cardOpacity.setValue(0);
-    backdropOpacity.setValue(0);
-    Animated.parallel([
-      Animated.spring(cardScale, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 8 }),
-      Animated.timing(cardOpacity, { toValue: 1, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(backdropOpacity, { toValue: 1, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-    ]).start();
-  }, [cardScale, cardOpacity, backdropOpacity]);
-
-  const closeModal = React.useCallback(() => {
-    Animated.parallel([
-      Animated.timing(cardScale, { toValue: 0.98, duration: 140, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      Animated.timing(cardOpacity, { toValue: 0, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      Animated.timing(backdropOpacity, { toValue: 0, duration: 120, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-    ]).start(({ finished }) => { if (finished) setOpen(false); else setOpen(false); });
-  }, [cardScale, cardOpacity, backdropOpacity]);
-
-
-  const years = React.useMemo(() => range(minYear, maxYear).reverse(), [minYear, maxYear]);
-  const daysInMonth = (mm, yy) => new Date(yy || 2000, mm, 0).getDate();
-  const maxD = daysInMonth(m, withYear ? y : 2000);
-  React.useEffect(() => { if (d > maxD) setD(maxD); }, [m, y, withYear]);  
 
   const display = () => {
-    if (!d || !m) return "";
-    const base = `${pad2(d)} ${months[m-1]}`;
-    return withYear ? `${base}, ${y}` : base;
-  };
-
-  const onDone = () => {
-    const out = { day: d, month: m, year: withYear ? y : null };
-    onChange?.(out);
-    setOpen(false);
-  };
-
-  // Render wheel column (FlatList with snap)
-  const Wheel = ({ data, selected, setSelected, disabled }) => {
-    const listRef = React.useRef(null);
-    React.useEffect(() => {
-      const idx = data.indexOf(selected);
-      if (idx >= 0) listRef.current?.scrollToIndex?.({ index: idx, animated: false });
-    }, []);
-    const onViewableItemsChanged = React.useRef(({ viewableItems }) => {
-      const center = viewableItems.find(v => v.index != null && v.isViewable);
-      if (center && center.item != null) setSelected(center.item);
-    }).current;
-    const getItemLayout = (_, index) => ({ length: itemHeight, offset: itemHeight * index, index });
-    return (
-      <View style={[wheelStyles.col, disabled && { opacity: 0.35 }]}>
-        <FlatList
-          ref={listRef}
-          data={data}
-          keyExtractor={(it) => String(it)}
-          getItemLayout={getItemLayout}
-          initialNumToRender={20}
-          showsVerticalScrollIndicator={false}
-          snapToInterval={itemHeight}
-          decelerationRate="fast"
-          viewabilityConfig={{ itemVisiblePercentThreshold: 99 }}
-          onViewableItemsChanged={onViewableItemsChanged}
-          renderItem={({ item }) => (
-            <View style={wheelStyles.item}>
-              <Text style={[wheelStyles.itemText, { color: theme.colors.text }]}>{item}</Text>
-            </View>
-          )}
-        />
-        <View style={[wheelStyles.selectionLine, { borderColor: theme.colors.inputBorder || '#e0e0e0' }]} />
-      </View>
-    );
-  };
+    if (!value?.day || !value?.month) return "";
+    const base = `${pad2(value.day)} ${months[value.month - 1]}`;
+    return value.year ? `${base}, ${value.year}` : base;
+    };
 
   return (
     <View style={style}>
-      <Pressable onPress={() => { setOpen(true); setTimeout(animateIn, 0); }}>
-        <View style={s.wrap}>
-          <Text style={s.floatingLabel}>{label}</Text>
-          <View style={s.inputBox}>
-            <Text style={[s.input, { paddingVertical: 10, color: theme.colors.text }]}>{display()}</Text>
-          </View>
+      <View style={s.wrap}>
+        <Text style={s.topLabel}>{label}</Text>
+        <View style={s.inputBox}>
+          <Text style={[s.input, { paddingVertical: 10 }]}>{display()}</Text>
         </View>
-      </Pressable>
-
-      <Modal transparent visible={open} animationType="none" onRequestClose={closeModal}>
-        <Animated.View style={[modalStyles.backdrop, { backgroundColor: theme.colors.overlay, opacity: backdropOpacity }]} />
-        <View style={[modalStyles.center]}>
-          <Animated.View style={[modalStyles.card, { backgroundColor: theme.colors.surface, opacity: cardOpacity, transform: [{ scale: cardScale }] }]}>
-            <Text style={[modalStyles.title, { color: theme.colors.text }]}>Выберите дату</Text>
-
-            
-            <View style={modalStyles.wheelsRow}>
-              {Platform.OS === 'ios' ? (
-                <>
-                  <View style={modalStyles.pickerCol}>
-                    <Picker
-                      selectedValue={d}
-                      onValueChange={(v)=>setD(v)}
-                      itemStyle={{fontSize:18}}
-                    >
-                      {Array.from({length: daysInMonth(m, withYear ? y : 2000)}, (_,i)=>i+1).map(v=>(
-                        <Picker.Item key={v} label={String(v)} value={v} />
-                      ))}
-                    </Picker>
-                  </View>
-                  <View style={modalStyles.pickerCol}>
-                    <Picker
-                      selectedValue={m}
-                      onValueChange={(v)=>setM(v)}
-                      itemStyle={{fontSize:18}}
-                    >
-                      {months.map((name,idx)=>(
-                        <Picker.Item key={idx+1} label={name} value={idx+1} />
-                      ))}
-                    </Picker>
-                  </View>
-                  <View style={[modalStyles.pickerCol, !withYear && {opacity:0.35}]}>
-                    <Picker
-                      enabled={withYear}
-                      selectedValue={y}
-                      onValueChange={(v)=>setY(v)}
-                      itemStyle={{fontSize:18}}
-                    >
-                      {years.map(v=>(
-                        <Picker.Item key={v} label={String(v)} value={v} />
-                      ))}
-                    </Picker>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <Wheel data={Array.from({length: daysInMonth(m, withYear ? y : 2000)}, (_, i) => i + 1)} selected={d} setSelected={setD} />
-                  <Wheel data={months.map((_, i) => i+1)} selected={m} setSelected={setM} />
-                  <Wheel data={years} selected={y} setSelected={setY} disabled={!withYear} />
-                </>
-              )}
-            </View>
-
-            <View style={modalStyles.switchRow}>
-              <Text style={[modalStyles.switchLabel, { color: theme.colors.textSecondary }]}>Указать год</Text>
-              <Switch value={withYear} onValueChange={setWithYear} />
-            </View>
-
-            <View style={modalStyles.actions}>
-              <Pressable onPress={closeModal} style={modalStyles.btn}>
-                <Text style={[modalStyles.btnText, { color: theme.colors.textSecondary }]}>Отмена</Text>
-              </Pressable>
-              <Pressable onPress={onDone} style={modalStyles.btn}>
-                <Text style={[modalStyles.btnText, { color: theme.colors.primary }]}>Готово</Text>
-              </Pressable>
-            </View>
-          </Animated.View>
-        </View>
-      </Modal>
+      </View>
     </View>
   );
 };
 
-const itemHeight = 36;
-
-const wheelStyles = StyleSheet.create({
-  col: { width: 92, height: 180, overflow: "hidden" },
-  item: { height: itemHeight, alignItems: "center", justifyContent: "center" },
-  itemText: { fontSize: 18 },
-  selectionLine: {
-    position: "absolute", left: 8, right: 8, top: (180 - itemHeight)/2, height: itemHeight,
-    borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-});
-
-const modalStyles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, },
-  center: { flex: 1, justifyContent: "center", alignItems: "center", padding: 20 },
-  card: { width: "100%", maxWidth: 420, borderRadius: 14, paddingVertical: 12 },
-  title: { fontSize: 16, fontWeight: "600", textAlign: "center", marginBottom: 8 },
-  wheelsRow: { flexDirection: "row", justifyContent: "space-evenly", paddingHorizontal: 12, paddingBottom: 8 },
-  actions: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingTop: 6 },
-  btn: { padding: 10, flex: 1, alignItems: "center" },
-  btnText: { fontSize: 16, fontWeight: "600" },
-});
-
+// Helpers kept for formatting only
+const months = Array.from({ length: 12 }, (_, i) =>
+  new Date(2000, i, 1).toLocaleString(undefined, { month: 'short' }).replace('.', '')
+);
