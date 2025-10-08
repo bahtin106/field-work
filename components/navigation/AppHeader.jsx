@@ -4,7 +4,7 @@ import { View, Text, Pressable, StyleSheet, Animated } from "react-native";
 import { useNavigation, usePathname, router } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "../../theme";
-import { useCapsuleFeedback } from "../../theme/ThemeProvider";
+import { useCapsuleFeedback } from "../ui/useCapsuleFeedback";
 import { useRouteTitle } from "./useRouteTitle";
 
 // alpha utility (consistent with SelectModal): supports #RRGGBB and rgb(R,G,B)

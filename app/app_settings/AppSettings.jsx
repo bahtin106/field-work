@@ -17,7 +17,8 @@ import { APP_DEFAULTS, ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME } from "../../co
 import { SelectField, SwitchField } from "../../components/ui/TextField";
 import { listItemStyles } from "../../components/ui/listItemStyles";
 
-import { t as T, getLocale, setLocale, useI18nVersion, availableLocales } from '../../src/i18n';
+import { getLocale, setLocale, useI18nVersion, availableLocales } from '../../src/i18n';
+import { useTranslation } from '../../src/i18n/useTranslation';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
 const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
@@ -137,7 +138,11 @@ function SwitchListModal({ visible, title, toggles = [], footer = null, onClose 
           />
         ))}
       </View>
-      {footer ? <View style={{ marginTop: theme.spacing.md }}>{footer}</View> : null}
+      {footer ? (
+  <View style={{ marginTop: theme.spacing.md, marginBottom: theme.spacing.lg }}>
+    {footer}
+  </View>
+) : null}
     </BaseModal>
   );
 }
@@ -145,10 +150,11 @@ function SwitchListModal({ visible, title, toggles = [], footer = null, onClose 
 export default function AppSettings() {
   const nav = useNavigation();
   const ver = useI18nVersion();
+  const { t } = useTranslation();
 
   useEffect(() => {
     try {
-      nav.setParams({ headerTitle: T('routes.app_settings/AppSettings') });
+      nav.setParams({ headerTitle: t('routes.app_settings/AppSettings') });
     } catch (e) { __devLog('nav.setParams failed:', e?.message || e); }
   }, [ver]);
 
@@ -157,10 +163,10 @@ export default function AppSettings() {
   const [themeOpen, setThemeOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
   const _curLocale = (() => { try { return getLocale(); } catch { return 'ru'; } })();
-  const _curLangLabel = T(`language_${_curLocale}`);
+  const _curLangLabel = t(`language_${_curLocale}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
-  const futureFeature = () => toast.info(T('settings_soon'));
+  const futureFeature = () => toast.info(t('settings_soon'));
   const [prefs, setPrefs] = useState({
     allow: true,
     new_orders: true,
@@ -215,7 +221,7 @@ return () => {
 
       if (prefsErr) {
         __devLog('NOTIF_PREFS load error:', prefsErr.message || prefsErr);
-        toast.error(T('errors_loadSettings'));
+        toast.error(t('errors_loadSettings'));
         return;
       }
 
@@ -252,7 +258,7 @@ return () => {
       }
     } catch (e) {
       __devLog('loadPrefs fatal:', e?.message || e);
-      toast.error(T('errors_loadSettings'));
+      toast.error(t('errors_loadSettings'));
     } finally {
       if (mounted.current) setLoadingPrefs(false);
     }
@@ -268,18 +274,18 @@ return () => {
         .from(TBL.NOTIF_PREFS)
         .upsert({ user_id: uid, ...next }, { onConflict: "user_id", returning: 'minimal' });
       if (error) {
-        let msg = T('errors_saveGeneric');
-        if (/permission denied/i.test(error.message)) msg = T('errors_noSettingsAccess');
-        else if (/row level security|rls/i.test(error.message)) msg = T('errors_rls');
-        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = T('errors_network');
+        let msg = t('errors_saveGeneric');
+        if (/permission denied/i.test(error.message)) msg = t('errors_noSettingsAccess');
+        else if (/row level security|rls/i.test(error.message)) msg = t('errors_rls');
+        else if (/timeout|network|failed to fetch/i.test(error.message)) msg = t('errors_network');
         return { ok: false, message: msg };
       }
       return { ok: true };
     } catch (e) {
       const m = String(e?.message || e || "").toLowerCase();
-      let msg = T('errors_saveShort');
-      if (m.includes("no_auth")) msg = T('errors_noAuth');
-      else if (m.includes("failed to fetch") || m.includes("network")) msg = T('errors_network');
+      let msg = t('errors_saveShort');
+      if (m.includes("no_auth")) msg = t('errors_noAuth');
+      else if (m.includes("failed to fetch") || m.includes("network")) msg = t('errors_network');
       return { ok: false, message: msg };
     }
   }
@@ -356,7 +362,7 @@ if (mounted.current) {
         }, 0);
       }
 
-      toast.info(missing === "end" ? T('quiet_pickEnd') : T('quiet_pickStart'));
+      toast.info(missing === "end" ? t('quiet_pickEnd') : t('quiet_pickStart'));
       return;
     }
 
@@ -366,9 +372,9 @@ if (mounted.current) {
       const { ok, message } = await savePrefs(resetPatch);
       if (!ok) {
         setPrefs(prevPrefs);
-        toast.error(message || T('quiet_saveFail'));
+        toast.error(message || t('quiet_saveFail'));
       } else {
-        toast.info(T('quiet_off'));
+        toast.info(t('quiet_off'));
       }
       return;
     }
@@ -379,9 +385,9 @@ if (mounted.current) {
     });
     if (!ok) {
       setPrefs(prevPrefs);
-      toast.error(message || T('quiet_saveFail'));
+      toast.error(message || t('quiet_saveFail'));
     } else {
-      toast.info(T('quiet_range') + `${toTimeStr(next.quiet_start)}–${toTimeStr(next.quiet_end)}`);
+      toast.info(t('quiet_range') + `${toTimeStr(next.quiet_start)}–${toTimeStr(next.quiet_end)}`);
     }
   };
 
@@ -393,10 +399,10 @@ if (mounted.current) {
       await savePushTokenHelper(uid, token, platform);
       return { ok: true };
     } catch (e) {
-      let msg = T('push_saveTokenFail');
+      let msg = t('push_saveTokenFail');
       const m = String(e?.message || e).toLowerCase();
-      if (m.includes('no_auth')) msg = T('errors_noAuthShort');
-      if (m.includes('permission denied') || m.includes('rls')) msg = T('errors_rls');
+      if (m.includes('no_auth')) msg = t('errors_noAuthShort');
+      if (m.includes('permission denied') || m.includes('rls')) msg = t('errors_rls');
       return { ok: false, message: msg };
     }
   }
@@ -421,9 +427,9 @@ if (mounted.current) {
       const { ok, message } = await savePrefs({ allow: val });
       if (!ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(message || T('errors_saveGeneric'));
+        toast.error(message || t('errors_saveGeneric'));
       } else {
-        toast.info(val ? T('push_onStandalone') : T('push_off'));
+        toast.info(val ? t('push_onStandalone') : t('push_off'));
       }
       return;
     }
@@ -433,26 +439,26 @@ if (mounted.current) {
       const { granted, token } = await ensurePushPermission();
       if (!granted) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(T('push_noPermission'));
+        toast.error(t('push_noPermission'));
         return;
       }
       if (token) {
         const r = await savePushToken(token);
         if (!r.ok) {
           setPrefs((p) => ({ ...p, allow: prev }));
-          toast.error(r.message || T('push_saveTokenFail'));
+          toast.error(r.message || t('push_saveTokenFail'));
           return;
         }
       } else {
-        toast.info(T('push_permissionGranted'));
+        toast.info(t('push_permissionGranted'));
       }
       const { ok, message } = await savePrefs({ allow: true });
       if (!ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(message || T('errors_saveGeneric'));
+        toast.error(message || t('errors_saveGeneric'));
         __devLog('notification_prefs save error:', message);
       } else {
-        toast.info(T('push_on'));
+        toast.info(t('push_on'));
       }
       return;
     } else {
@@ -460,7 +466,7 @@ if (mounted.current) {
       const { ok, message } = await savePrefs({ allow: false });
       if (!ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(message || T('errors_saveGeneric'));
+        toast.error(message || t('errors_saveGeneric'));
         __devLog('notification_prefs save error (disable):', message);
         return;
       }
@@ -468,7 +474,7 @@ if (mounted.current) {
       if (!r.ok) {
         __devLog('removePushToken after disable returned not ok');
       }
-      toast.info(T('push_off'));
+      toast.info(t('push_off'));
       return;
     }
   };
@@ -479,7 +485,7 @@ if (mounted.current) {
     const { ok, message } = await savePrefs({ [key]: val });
     if (!ok) {
       setPrefs((p) => ({ ...p, [key]: prev }));
-      toast.error(message || T('errors_saveGeneric'));
+      toast.error(message || t('errors_saveGeneric'));
       console.warn("notification_prefs save error:", message);
     }
   };
@@ -491,9 +497,9 @@ if (mounted.current) {
     const { ok, message } = await savePrefs(patch);
     if (!ok) {
       setPrefs((p) => ({ ...p, ...prev }));
-      toast.error(message || T('quiet_saveFail'));
+      toast.error(message || t('quiet_saveFail'));
     } else {
-      toast.info(T('quiet_off'));
+      toast.info(t('quiet_off'));
     }
   };
 
@@ -540,10 +546,10 @@ if (mounted.current) {
     },
   ].map((sec) => ({
     ...sec,
-    title: T(`settings_sections_${sec.key}_title`),
+    title: t(`settings_sections_${sec.key}_title`),
     items: sec.items.map((it) => ({
       ...it,
-      label: T(`settings_sections_${sec.key}_items_${it.key}`, it.label),
+      label: t(`settings_sections_${sec.key}_items_${it.key}`, it.label),
     })),
   })), [_curLocale, theme, canCreateOrders, ver]);
 
@@ -555,10 +561,10 @@ if (mounted.current) {
         return { ...it, value: !!prefs.allow, disabled: !!loadingPrefs };
       }
       if (sec.key === "quiet" && it.key === "quiet_start") {
-        return { ...it, value: (toTimeStr(prefs.quiet_start) || T('common_off')) };
+        return { ...it, value: (toTimeStr(prefs.quiet_start) || t('common_off')) };
       }
       if (sec.key === "quiet" && it.key === "quiet_end") {
-        return { ...it, value: (toTimeStr(prefs.quiet_end) || T('common_off')) };
+        return { ...it, value: (toTimeStr(prefs.quiet_end) || t('common_off')) };
       }
       if (sec.key === "appearance" && it.key === "language") {
         return { ...it, value: _curLangLabel };
@@ -575,9 +581,9 @@ if (mounted.current) {
             <ActivityIndicator />
           </View>
         )}
-        {sections.map((sec) => (
+        {sections.map((sec, idx) => (
           <View key={sec.key} style={s.sectionWrap}>
-            <Text style={base.sectionTitle}>{sec.title}</Text>
+            <Text style={[base.sectionTitle, idx === 0 && { marginTop: 0 }]}>{sec.title}</Text>
             <Card paddedXOnly>
               {sec.items.map((it, idx) => {
                 const last = idx === sec.items.length - 1;
@@ -629,24 +635,24 @@ if (mounted.current) {
       {/* Events */}
       <SwitchListModal
         visible={eventsOpen}
-        title={T('settings_events_title')}
+        title={t('settings_events_title')}
         toggles={[
-          { id: "new_orders", label: T('settings_events_newOrders'), value: !!prefs.new_orders, onChange: onToggleEvent("new_orders") },
-          { id: "feed_orders", label: T('settings_events_feedOrders'), value: !!prefs.feed_orders, onChange: onToggleEvent("feed_orders") },
-          ...(canCreateOrders ? [{ id: "reminders", label: T('settings_events_reminders'), value: !!prefs.reminders, onChange: onToggleEvent("reminders") }] : [])
+          { id: "new_orders", label: t('settings_events_newOrders'), value: !!prefs.new_orders, onChange: onToggleEvent("new_orders") },
+          { id: "feed_orders", label: t('settings_events_feedOrders'), value: !!prefs.feed_orders, onChange: onToggleEvent("feed_orders") },
+          ...(canCreateOrders ? [{ id: "reminders", label: t('settings_events_reminders'), value: !!prefs.reminders, onChange: onToggleEvent("reminders") }] : [])
         ]}
-        footer={<Button variant="secondary" title={T('btn_apply')} onPress={() => setEventsOpen(false)} />}
+        footer={<Button variant="secondary" title={t('btn_apply')} onPress={() => setEventsOpen(false)} />}
         onClose={() => setEventsOpen(false)}
       />
 
       {/* Theme */}
       <SingleSelectModal
         visible={themeOpen}
-        title={T('settings_theme_title')}
+        title={t('settings_theme_title')}
         options={[
-          { id: "light", label: T('settings_theme_light') },
-          { id: "dark",  label: T('settings_theme_dark') },
-          { id: "system", label: T('settings_theme_system') }
+          { id: "light", label: t('settings_theme_light') },
+          { id: "dark",  label: t('settings_theme_dark') },
+          { id: "system", label: t('settings_theme_system') }
         ]}
         selectedId={mode}
         onSelect={(id) => { setMode(id); setThemeOpen(false); }}
@@ -656,14 +662,14 @@ if (mounted.current) {
       {/* Language */}
       <SingleSelectModal
         visible={langOpen}
-        title={T('settings_language_title')}
-        options={availableLocales.map(id => ({ id, label: T(`language_${id}`) }))}
+        title={t('settings_language_title')}
+        options={availableLocales.map(id => ({ id, label: t(`language_${id}`) }))}
         selectedId={_curLocale}
         onSelect={async (id) => {
           try {
             await setLocale(id);
             try { await saveUserLocale(id); } catch (e) { console.warn('saveUserLocale:', e?.message || e); }
-            toast.info(T('lang_changed') ?? 'Language changed');
+            toast.info(t('lang_changed') ?? 'Language changed');
           } finally {
             setLangOpen(false);
           }
@@ -675,6 +681,6 @@ if (mounted.current) {
 }
 
 const styles = (t) => StyleSheet.create({
-  contentWrap: { padding: t.spacing.lg, paddingBottom: t.spacing.xl },
+  contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
   sectionWrap: { marginBottom: 0 },
 });

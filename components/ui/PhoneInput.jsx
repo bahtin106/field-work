@@ -2,9 +2,10 @@
 import React, { useCallback, useRef } from "react";
 import TextField from "./TextField";
 import { maskApply, normalizeRu } from "./phone";
+import { t as T } from "../../src/i18n";
 
 export default function PhoneInput({
-  label = "Телефон",
+  label = T('fields.phone'),
   value,
   onChangeText,
   error,

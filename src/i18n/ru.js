@@ -47,7 +47,7 @@ export default {
 
   // Лейблы полей
   view_label_name: 'Имя',
-  view_label_email: 'E‑mail',
+  view_label_email: 'E-mail',
   view_label_phone: 'Телефон',
   label_first_name: 'Имя *',
   label_last_name: 'Фамилия *',
@@ -60,7 +60,7 @@ export default {
   // Плейсхолдеры
   placeholder_birthdate: 'Выберите дату',
   placeholder_department: 'Без отдела',
-  placeholder_no_name: 'Без имени',  
+  placeholder_no_name: 'Без имени',
   placeholder_first_name: 'Иван',
   placeholder_last_name: 'Петров',
   placeholder_email: 'ivan.petrov@example.com',
@@ -201,7 +201,7 @@ export default {
   settings_sections_ai_items_avatars: 'Аватары',
 
   // Выбор языка
-  settings_language_title: 'Язык интерфейса',  
+  settings_language_title: 'Язык интерфейса',
   language_ru: 'Русский',
   language_en: 'Английский',
 
@@ -217,4 +217,41 @@ export default {
   settings_theme_dark: 'Тёмная',
   settings_theme_system: 'Системная',
 
+  // Компания
+  company_settings_title: 'Настройки компании',
+
+  company_settings_sections_company_title: 'Компания',
+  company_settings_sections_company_items_timezone: 'Часовой пояс',
+  company_settings_sections_company_items_employees: 'Сотрудники',
+  company_settings_sections_company_items_billing: 'Подписка и оплата',
+
+  company_settings_sections_management_title: 'Управление',
+  company_settings_sections_management_items_notifications: 'Уведомления',
+  company_settings_sections_management_items_access: 'Настройки доступа',
+  company_settings_sections_management_items_form_builder: 'Редактор полей',
+  company_settings_sections_management_items_work_types: 'Виды работ',
+  company_settings_sections_management_items_departments: 'Отделы',
+
+  company_settings_sections_departure_title: 'Параметры выезда',
+  company_settings_sections_departure_toggles_useDepartureTime: 'Включить время выезда',
+  company_settings_sections_departure_helperText_departureOn: 'Дата и время выезда',
+  company_settings_sections_departure_helperText_departureOff: 'Только дата выезда',
+
+  company_settings_sections_phone_title: 'Телефон для рабочих',
+  company_settings_sections_phone_items_phoneMode: 'Показывать номер',
+  company_settings_sections_phone_items_windowBefore: 'За сколько часов до выезда',
+  company_settings_sections_phone_items_windowAfter: 'Сколько часов после выезда',
+
+  company_settings_modals_timezone_title: 'Выберите часовой пояс',
+  company_settings_modals_timezone_subtitleDevice: 'Текущий часовой пояс устройства',
+
+  company_settings_modals_phoneMode_title: 'Показ номера телефона',
+  company_settings_modals_phoneMode_options_always: 'Всегда',
+  company_settings_modals_phoneMode_options_never: 'Никогда',
+  company_settings_modals_phoneMode_options_window: 'Только в интервале',
+  fields_phone: 'Телефон',
+  fields_dob: 'Дата рождения',
+  toast_loading: 'Сохраняю…',
+  toast_success: 'Сохранено',
+  toast_error: 'Не удалось выполнить действие',
 };

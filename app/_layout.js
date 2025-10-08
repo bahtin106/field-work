@@ -22,7 +22,12 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 
-SplashScreen.preventAutoHideAsync();
+// Guard against multiple calls in dev (Fast Refresh) / multiple mounts
+if (!globalThis.__splashPrevented) {
+  globalThis.__splashPrevented = true;
+  // Don't await to avoid blocking module eval; ignore harmless race errors
+  SplashScreen.preventAutoHideAsync().catch(() => {});
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -58,27 +63,52 @@ function RootLayoutInner() {
   const insets = useSafeAreaInsets();
   const appState = useRef(AppState.currentState);
 
+  // ensure Splash.hide called only once
+  const splashHiddenRef = useRef(false);
+  const hideSplashNow = useCallback(async () => {
+    if (splashHiddenRef.current) return;
+    try {
+      await SplashScreen.hideAsync();
+    } catch (e) {
+      console.warn('hideSplash error:', e?.message || e);
+    } finally {
+      splashHiddenRef.current = true;
+    }
+  }, []);
+
   const safeEdges = ['top', 'left', 'right'];
 
   const onLayoutRootView = useCallback(async () => {
     if (appReady) {
-      await SplashScreen.hideAsync();
+      await hideSplashNow();
     }
-  }, [appReady]);
+  }, [appReady, hideSplashNow]);
 
   useEffect(() => {
     let mounted = true;
 
     const initializeApp = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        // i18n init из AsyncStorage (локальный кэш)
-        await initI18n();
+        // 1) Try to get session, but never block UI longer than 3.5s
+        const sessResult = await Promise.race([
+          supabase.auth.getSession().catch(() => ({ data: { session: null } })),
+          new Promise((resolve) => setTimeout(() => resolve({ data: { session: null } }), 3500)),
+        ]);
+        const session = sessResult?.data?.session ?? null;
 
-        // Если пользователь залогинен — подтянем язык из профиля (Supabase)
+        // 2) Init i18n from local cache, but don't block startup longer than ~1.5s
+        await Promise.race([
+          initI18n(),
+          new Promise((resolve) => setTimeout(resolve, 1500)),
+        ]);
+
+        // 3) If user is logged in — sync locale from profile (best effort)
         if (session?.user) {
           try {
-            const code = await loadUserLocale();
+            const code = await Promise.race([
+              loadUserLocale(),
+              new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+            ]);
             if (code) await setLocale(code);
           } catch (e) {
             console.warn('loadUserLocale failed:', e?.message || e);
@@ -86,13 +116,12 @@ function RootLayoutInner() {
         }
 
         const logged = !!session?.user;
-        
+
         if (mounted) {
           setIsLoggedIn(logged);
-          // Разрешаем переход к стэку сразу — роль подтянем асинхронно
+          // Allow navigation immediately; role loads in background
           if (!appReady) setAppReady(true);
-          
-          // 2. Если пользователь залогинен, получаем роль
+
           if (logged) {
             try {
               const userRolePromise = getUserRole();
@@ -109,9 +138,10 @@ function RootLayoutInner() {
         }
       } catch (error) {
         console.error('App initialization error:', error);
+        if (mounted && !appReady) setAppReady(true);
       } finally {
-        // 3. Помечаем приложение как готовое
-        if (mounted) {
+        // Ensure we never stay on loader in any case
+        if (mounted && !appReady) {
           setAppReady(true);
         }
       }
@@ -122,9 +152,9 @@ function RootLayoutInner() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         if (!mounted) return;
-        
+
         try {
-          // Очищаем кэш при изменении аутентификации
+          // Clear React Query cache on auth changes
           await queryClient.clear();
         } catch (error) {
           console.warn('Error clearing cache:', error);
@@ -132,23 +162,26 @@ function RootLayoutInner() {
 
         const logged = !!session?.user;
         setIsLoggedIn(logged);
-          // Разрешаем переход к стэку сразу — роль подтянем асинхронно
-          if (!appReady) setAppReady(true);
+        // Allow transition immediately; role loads in background
+        if (!appReady) setAppReady(true);
 
         if (logged) {
-          // Синхронизируем язык из профиля при входе
+          // Sync locale on sign-in
           try {
-            const code = await loadUserLocale();
+            const code = await Promise.race([
+              loadUserLocale(),
+              new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+            ]);
             if (code) await setLocale(code);
           } catch (e) {
             console.warn('loadUserLocale on auth change failed:', e?.message || e);
           }
-          
+
           try {
             const userRolePromise = getUserRole();
-              const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('worker'), 5000));
-              const userRole = await Promise.race([userRolePromise, timeoutPromise]);
-              if (mounted) setRole(userRole);
+            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('worker'), 5000));
+            const userRole = await Promise.race([userRolePromise, timeoutPromise]);
+            if (mounted) setRole(userRole);
           } catch (error) {
             console.warn('Failed to get user role on auth change:', error);
             if (mounted) setRole(null);
@@ -161,12 +194,12 @@ function RootLayoutInner() {
 
     const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
       if (
-        appState.current.match(/inactive|background/) &&
+        appState.current?.match(/inactive|background/) &&
         nextAppState === 'active' &&
         appReady
       ) {
-        // При возвращении в активное состояние, убедимся что сплэш скрыт
-        await SplashScreen.hideAsync();
+        // When returning to foreground, ensure splash is hidden (safety)
+        await hideSplashNow();
       }
       appState.current = nextAppState;
     });
@@ -178,14 +211,12 @@ function RootLayoutInner() {
     };
   }, []);
 
+  // Secondary safety: once appReady flips, hide splash if it somehow wasn't hidden by onLayout
   useEffect(() => {
     if (appReady) {
-      const hideSplash = async () => {
-        await SplashScreen.hideAsync();
-      };
-      hideSplash();
+      hideSplashNow();
     }
-  }, [appReady]);
+  }, [appReady, hideSplashNow]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -195,7 +226,7 @@ function RootLayoutInner() {
       try {
         const { default: Constants } = await import('expo-constants');
         if (Constants?.appOwnership === 'expo') return;
-        
+
         const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
         const token = await registerAndSavePushToken();
         console.log('✅ Expo push token (saved):', token);

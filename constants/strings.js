@@ -1,56 +1,58 @@
-// apps/field-work/constants/strings.js
+// constants/strings.js
+import { t as T } from '../src/i18n';
+
 export const strings = {
-  settingsTitle: 'Настройки компании',
+  settingsTitle: T('company_settings_title'),
   sections: {
     company: {
-      title: 'Компания',
+      title: T('company_settings_sections_company_title'),
       items: {
-        timezone: 'Часовой пояс',
-        employees: 'Сотрудники',
-        billing: 'Подписка и оплата',
+        timezone: T('company_settings_sections_company_items_timezone'),
+        employees: T('company_settings_sections_company_items_employees'),
+        billing: T('company_settings_sections_company_items_billing'),
       },
     },
     management: {
-      title: 'Управление',
+      title: T('company_settings_sections_management_title'),
       items: {
-        notifications: 'Уведомления',
-        access: 'Настройки доступа',
-        form_builder: 'Редактор полей',
-        work_types: 'Виды работ',
-        departments: 'Отделы',
+        notifications: T('company_settings_sections_management_items_notifications'),
+        access: T('company_settings_sections_management_items_access'),
+        form_builder: T('company_settings_sections_management_items_form_builder'),
+        work_types: T('company_settings_sections_management_items_work_types'),
+        departments: T('company_settings_sections_management_items_departments'),
       },
     },
     departure: {
-      title: 'Параметры выезда',
-      toggles: { useDepartureTime: 'Включить время выезда' },
+      title: T('company_settings_sections_departure_title'),
+      toggles: { useDepartureTime: T('company_settings_sections_departure_toggles_useDepartureTime') },
       helperText: {
-        departureOn: 'Дата и время выезда',
-        departureOff: 'Только дата выезда',
+        departureOn: T('company_settings_sections_departure_helperText_departureOn'),
+        departureOff: T('company_settings_sections_departure_helperText_departureOff'),
       },
     },
     phone: {
-      title: 'Телефон для рабочих',
+      title: T('company_settings_sections_phone_title'),
       items: {
-        phoneMode: 'Показывать номер',
-        windowBefore: 'За сколько часов до выезда',
-        windowAfter: 'Сколько часов после выезда',
+        phoneMode: T('company_settings_sections_phone_items_phoneMode'),
+        windowBefore: T('company_settings_sections_phone_items_windowBefore'),
+        windowAfter: T('company_settings_sections_phone_items_windowAfter'),
       },
     },
   },
   modals: {
     timezone: {
-      title: 'Выберите часовой пояс',
-      subtitleDevice: 'Текущий часовой пояс устройства',
-      searchable: true,
+      title: T('company_settings_modals_timezone_title'),
+      subtitleDevice: T('company_settings_modals_timezone_subtitleDevice'),
+      searchable: true, // это конфиг, не перевод
     },
     phoneMode: {
-      title: 'Показ номера телефона',
+      title: T('company_settings_modals_phoneMode_title'),
       options: {
-        always: 'Всегда',
-        never: 'Никогда',
-        window: 'Только в интервале',
+        always: T('company_settings_modals_phoneMode_options_always'),
+        never: T('company_settings_modals_phoneMode_options_never'),
+        window: T('company_settings_modals_phoneMode_options_window'),
       },
-      searchable: false,
+      searchable: false, // это конфиг, не перевод
     },
   },
 };
