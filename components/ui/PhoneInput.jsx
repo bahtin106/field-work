@@ -5,7 +5,7 @@ import { maskApply, normalizeRu } from "./phone";
 import { t as T } from "../../src/i18n";
 
 export default function PhoneInput({
-  label = T('fields.phone'),
+  label = T('fields_phone'),
   value,
   onChangeText,
   error,

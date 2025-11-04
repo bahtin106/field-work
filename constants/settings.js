@@ -13,11 +13,11 @@ export const SETTINGS_SECTIONS = {
   MANAGEMENT: {
     title: T('company_settings_sections_management_title'),
     items: [
-      { key: 'notifications', label: T('company_settings_sections_management_items_notifications'), route: '/settings/notifications' },
-      { key: 'access',        label: T('company_settings_sections_management_items_access'),        route: '/settings/access' },
-      { key: 'form_builder',  label: T('company_settings_sections_management_items_form_builder'),  route: '/settings/sections/form-builder' },
-      { key: 'work_types',    label: T('company_settings_sections_management_items_work_types'),    route: '/settings/sections/WorkTypesSettings' },
-      { key: 'departments',   label: T('company_settings_sections_management_items_departments'),   route: '/settings/sections/DepartmentsSettings' },
+      { key: 'notifications', label: T('company_settings_sections_management_items_notifications'), route: '/company_settings/sections/notificationSettings' },
+      { key: 'access',        label: T('company_settings_sections_management_items_access'),        route: '/company_settings/sections/access' },
+      { key: 'form_builder',  label: T('company_settings_sections_management_items_form_builder'),  route: '/company_settings/sections/form-builder' },
+      { key: 'work_types',    label: T('company_settings_sections_management_items_work_types'),    route: '/company_settings/sections/workTypesSettings' },
+      { key: 'departments',   label: T('company_settings_sections_management_items_departments'),   route: '/company_settings/sections/departmentsSettings' },
     ],
   },
   DEPARTURE: {

@@ -52,13 +52,17 @@ export default function AppHeader({ options = {}, back, route }) {
   const rightLabel = useMemo(() => (options?.rightTextLabel ?? route?.params?.rightTextLabel), [options?.rightTextLabel, route?.params?.rightTextLabel]);
 
   const rightPress = useCallback(
-    () => {
-      if (typeof options?.onRightPress === 'function') return options.onRightPress();
-      if (typeof route?.params?.onRightPress === 'function') return route.params.onRightPress();
-      if (route?.params?.headerButtonTo) return router.push(route.params.headerButtonTo);
-    },
-    [options?.onRightPress, route?.params?.onRightPress, route?.params?.headerButtonTo]
-  );
+  () => {
+    if (typeof options?.onRightPress === 'function') return options.onRightPress();
+    if (typeof route?.params?.onRightPress === 'function') return route.params.onRightPress();
+    // Global action registry by id to avoid non-serializable params
+    const actionId = route?.params?.onRightPressId;
+    const fn = actionId && globalThis?.__headerActions ? globalThis.__headerActions[actionId] : null;
+    if (typeof fn === 'function') return fn();
+    if (route?.params?.headerButtonTo) return router.push(route.params.headerButtonTo);
+  },
+  [options?.onRightPress, route?.params?.onRightPress, route?.params?.onRightPressId, route?.params?.headerButtonTo]
+);
 
   // ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----
   const scale = useRef(new Animated.Value(1)).current;
@@ -163,7 +167,7 @@ export default function AppHeader({ options = {}, back, route }) {
 
       {/* Правая зона для кастомных кнопок */}
       <View style={s.right}>
-        {rightLabel && (options?.onRightPress || route?.params?.onRightPress || route?.params?.headerButtonTo) ? (
+        {rightLabel ? (
           <Pressable
             hitSlop={10}
             onPressIn={onRightIn}

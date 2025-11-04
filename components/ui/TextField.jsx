@@ -7,24 +7,7 @@ import { t as T } from "../../src/i18n";
 import { listItemStyles, CHEVRON_GAP } from "./listItemStyles";
 
 const TextField = forwardRef(function TextField(
-  {
-    label,
-    value,
-    onChangeText,
-    placeholder,
-    keyboardType,
-    secureTextEntry,
-    error,
-    rightSlot,
-    leftSlot,
-    multiline,
-    numberOfLines,
-    style,
-    maxLength,
-    autoCapitalize,
-    returnKeyType,
-    onSubmitEditing,
-  },
+  { label, value, onChangeText, placeholder, keyboardType, secureTextEntry, error, rightSlot, leftSlot, multiline, numberOfLines, style, maxLength, autoCapitalize, returnKeyType, onSubmitEditing, onFocus, onBlur, pressable = false, onPress },
   ref
 ) {
   const { theme } = useTheme();
@@ -60,8 +43,8 @@ const TextField = forwardRef(function TextField(
             autoCorrect={false}
             multiline={multiline}
             numberOfLines={numberOfLines}
-            onFocus={() => setFocused(true)}
-            onBlur={() => { setFocused(false); setTouched(true); }}
+            onFocus={(e) => { setFocused(true); onFocus?.(e); }}
+            onBlur={(e) => { setFocused(false); setTouched(true); onBlur?.(e); }}
             maxLength={maxLength}
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
@@ -70,6 +53,16 @@ const TextField = forwardRef(function TextField(
             includeFontPadding={false}
             textAlignVertical="center"
           />
+          {pressable ? (
+            <Pressable
+              onPress={onPress}
+              style={StyleSheet.absoluteFill}
+              android_ripple={{ color: theme.colors.ripple, borderless: false }}
+              hitSlop={{ top: 6, bottom: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={String(label || placeholder || value || '')}
+            />
+          ) : null}
         </View>
         {rightSlot ? <View style={s.slot}>{rightSlot}</View> : null}
       </View>
@@ -89,12 +82,12 @@ const styles = (t, isError, focused) =>
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: isError ? t.colors.danger : (focused ? t.colors.primary : (t.colors.inputBorder || '#e0e0e0')),
       paddingHorizontal: 12,
-      height: 52,
+      height: (t.components?.input?.height ?? (t.components?.listItem?.height ?? 48)),
     },
     topLabel: {
       fontWeight: '500',
-      marginBottom: 4,
-      marginTop: 12,
+      marginBottom: 1,
+      marginTop: 1,
       color: t.colors.textSecondary,
       fontSize: t.typography.sizes.sm,
     },
@@ -102,7 +95,7 @@ const styles = (t, isError, focused) =>
       flex: 1,
       color: t.colors.text,
       fontSize: t.typography.sizes.md,
-      paddingVertical: 10,
+      paddingVertical: Math.max(4, Math.round((t.components?.input?.height ?? (t.components?.listItem?.height ?? 48)) * 0.25)),
       paddingLeft: 0,
     },
     slot: { marginHorizontal: 4 },
@@ -122,20 +115,58 @@ export function SelectField({
   showValue = true, // when false -> only chevron shown
   disabled = false,
   style,
+  dense = false,            // NEW: compact row height
+  alignValueLeft = false,   // NEW: value aligned left
 }) {
   const { theme } = useTheme();
   const base = listItemStyles(theme);
   const s = selectStyles(theme);
   return (
     <Pressable onPress={onPress} disabled={disabled} android_ripple={disabled ? undefined : { color: theme.colors.ripple, borderless: false }}>
-      <View style={[base.row, disabled && s.disabled, style]}>
-        <Text style={[base.label, s.label]} numberOfLines={1}>{label}</Text>
-        <View style={s.rightWrap}>
-          {right ? right : (showValue ? (<Text style={[base.value, s.value]} numberOfLines={1}>{value ?? ''}</Text>) : null)}
-          <FeatherIcon name="chevron-right" size={theme.components.listItem.chevronSize} color={theme.colors.textSecondary} style={s.chevron} />
-        </View>
+      
+      <View
+        style={[
+          base.row,
+          disabled && s.disabled,
+          dense && { height: Math.max(36, theme.components?.input?.height ?? 36) },
+          style,
+        ]}
+      >
+        {alignValueLeft ? (
+  <>
+    <View style={{ flexDirection: 'column', alignItems: 'flex-start', flex: 1 }}>
+      {label ? (
+        <Text style={[base.label, s.label, { paddingRight: 0 }]} numberOfLines={1}>
+          {label}
+        </Text>
+      ) : null}
+      {showValue ? (
+        <Text
+          style={[base.value, s.value, { textAlign: 'left', marginTop: 2, flexShrink: 1 }]}
+          numberOfLines={1}
+        >
+          {value ?? ''}
+        </Text>
+      ) : null}
+    </View>
+    <FeatherIcon
+      name="chevron-right"
+      size={theme.components.listItem.chevronSize}
+      color={theme.colors.textSecondary}
+      style={s.chevron}
+    />
+  </>
+) : (
+          <>
+            <Text style={[base.label, s.label]} numberOfLines={1}>{label}</Text>
+            <View style={s.rightWrap}>
+              {right ? right : (showValue ? (<Text style={[base.value, s.value]} numberOfLines={1}>{value ?? ''}</Text>) : null)}
+              <FeatherIcon name="chevron-right" size={theme.components.listItem.chevronSize} color={theme.colors.textSecondary} style={s.chevron} />
+            </View>
+          </>
+        )}
       </View>
-    </Pressable>
+</Pressable>
   );
 }
 
@@ -143,7 +174,7 @@ export function SelectField({
 // Unified Settings-like switch row.
 // Usage:
 //   <SwitchField label="Уведомления" value={true} onValueChange={...} />
-export function SwitchField({ label, value, onValueChange, disabled = false, style }) {
+export function SwitchField({ label, value, onValueChange, disabled = false, style, pressable = false, onPress, placeholder }) {
   const { theme } = useTheme();
   const base = listItemStyles(theme);
   return (
@@ -157,6 +188,16 @@ export function SwitchField({ label, value, onValueChange, disabled = false, sty
             disabled={!!disabled}
             trackColor={{ true: theme.colors.primary }}
           />
+          {pressable ? (
+            <Pressable
+              onPress={onPress}
+              style={StyleSheet.absoluteFill}
+              android_ripple={{ color: theme.colors.ripple, borderless: false }}
+              hitSlop={{ top: 6, bottom: 6 }}
+              accessibilityRole="button"
+              accessibilityLabel={String(label || placeholder || value || '')}
+            />
+          ) : null}
         </View>
       </View>
     </View>
@@ -206,7 +247,20 @@ export const DateOfBirthField = ({
       <View style={s.wrap}>
         <Text style={s.topLabel}>{label}</Text>
         <View style={s.inputBox}>
-          <Text style={[s.input, { paddingVertical: 10 }]}>{display()}</Text>
+          <Text
+  style={[
+    s.input,
+    {
+      paddingVertical: Math.max(
+        4,
+        Math.round((t.components?.input?.height ?? (t.components?.listItem?.height ?? 48)) * 0.25)
+      ),
+    },
+  ]}
+>
+  {display()}
+</Text>
+
         </View>
       </View>
     </View>

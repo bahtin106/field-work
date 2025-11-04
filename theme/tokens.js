@@ -60,6 +60,8 @@ components: {
   card: { borderWidth: 1 },
   media: { aspect: [1, 1], quality: 0.85 },
 
+  // Default row heights
+  input: { height: 36 },
   listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 }
 },
 

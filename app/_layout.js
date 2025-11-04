@@ -1,6 +1,6 @@
 // app/_layout.js
 import 'react-native-gesture-handler';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { ActivityIndicator, View, AppState } from 'react-native';
@@ -21,6 +21,8 @@ import NetInfo from '@react-native-community/netinfo';
 import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { AvoidSoftInput } from 'react-native-avoid-softinput';
+import { useAppLastSeen } from '../useAppLastSeen'; // ✅ mount last-seen hook
 
 // Guard against multiple calls in dev (Fast Refresh) / multiple mounts
 if (!globalThis.__splashPrevented) {
@@ -44,6 +46,14 @@ const queryClient = new QueryClient({
   },
 });
 
+// Do not persist/keep transient auth-related queries
+try {
+  queryClient.setQueryDefaults(['session'], { retry: 0, gcTime: 0, cacheTime: 0 });
+  queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: 5 * 60 * 1000 });
+  queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: 5 * 60 * 1000 });
+  queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: 5 * 60 * 1000 });
+} catch {}
+
 const persister = createAsyncStoragePersister({ storage: AsyncStorage });
 
 onlineManager.setEventListener((setOnline) =>
@@ -61,7 +71,12 @@ function RootLayoutInner() {
   const [role, setRole] = useState(null);
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const segments = useSegments();
   const appState = useRef(AppState.currentState);
+
+  // ✅ mount hook globally (logs + DB update inside the hook)
+  useAppLastSeen(60_000);
 
   // ensure Splash.hide called only once
   const splashHiddenRef = useRef(false);
@@ -217,6 +232,22 @@ function RootLayoutInner() {
       hideSplashNow();
     }
   }, [appReady, hideSplashNow]);
+  // Global IME handling: enable AvoidSoftInput once at root (except Expo Go)
+  useEffect(() => {
+    let enabled = false;
+    (async () => {
+      try {
+        const { default: Constants } = await import('expo-constants');
+        if (Constants?.appOwnership === 'expo') return; // Expo Go unsupported
+        AvoidSoftInput.setEnabled(true);
+        enabled = true;
+      } catch {}
+    })();
+    return () => {
+      try { if (enabled) AvoidSoftInput.setEnabled(false); } catch {}
+    };
+  }, []);
+
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -238,6 +269,21 @@ function RootLayoutInner() {
 
     return () => detach?.();
   }, [isLoggedIn]);
+
+useEffect(() => {
+  if (!appReady) return;
+  const seg0 = Array.isArray(segments) ? segments[0] : undefined;
+  const inAuth = seg0 === '(auth)';
+  // After logout: always land on login within (auth) stack
+  if (!isLoggedIn && !inAuth) {
+    try { router.replace('/(auth)/login'); } catch {}
+    return;
+  }
+  // After login from Auth stack: go to main
+  if (isLoggedIn && inAuth) {
+    try { router.replace('/orders/index'); } catch {}
+  }
+}, [isLoggedIn, appReady, segments, router]);
 
   if (!appReady) {
     return (
@@ -294,7 +340,12 @@ export default function RootLayout() {
   return (
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={{ persister, maxAge: 7 * 24 * 60 * 60 * 1000 }}
+      persistOptions={{ persister, maxAge: 7 * 24 * 60 * 60 * 1000, dehydrateOptions: { shouldDehydrateQuery: (q) => {
+              const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
+              // Skip persisting auth/role/profile/permission queries and anything not successful
+              if (key0 === 'session' || key0 === 'userRole' || key0 === 'profile' || key0 === 'perm-canViewAll') return false;
+              return q.state.status === 'success';
+            } } }}
     >
       <SafeAreaProvider>
         <ThemeProvider>

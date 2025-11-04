@@ -160,13 +160,14 @@ export default function UniversalHome({ role }) {
   const openStats = () => router.push('/stats');
   const openCreateOrder = () => router.push('/orders/create-order');
   const handleLogout = async () => {
-    try {
-      await supabase.auth.signOut();
-      try { qc.clear(); } catch {}
-      try { router.replace('/(auth)/login'); } catch {}
-    } catch {}
-    if (qc?.clear) qc.clear(); else { try { qc.invalidateQueries(); } catch {} }
-  };
+  try {
+    await supabase.auth.signOut();
+    await qc.clear();
+    // Не вызываем router.replace — переход произойдёт автоматически через onAuthStateChange
+  } catch (e) {
+    console.warn('Logout error:', e);
+  }
+};
 
   const openOrdersWithFilter = (key) => {
     if (scope === 'all' && canViewAll) {

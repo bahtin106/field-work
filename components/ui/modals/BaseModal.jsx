@@ -1,7 +1,7 @@
 
 // components/ui/modals/BaseModal.jsx
 import React, { useMemo, useRef, useState, useImperativeHandle, useEffect } from "react";
-import { View, Text, Modal, Pressable, StyleSheet, Dimensions, PanResponder, Platform } from "react-native";
+import { View, Text, Modal, Pressable, StyleSheet, Dimensions, PanResponder, Platform, Keyboard } from "react-native";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, Easing } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as NavigationBar from "expo-navigation-bar";
@@ -69,9 +69,57 @@ const BaseModalImpl = ({
   const [rnVisible, setRnVisible] = useState(false);
   const [modalKey, setModalKey] = useState(0);
 
+  // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
+  const [kbInset, setKbInset] = useState(0);
+  const [kbTop, setKbTop] = useState(Dimensions.get('window').height);
+
+  useEffect(() => {
+    if (!rnVisible) { setKbInset(0); return; }
+    const showE = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
+    const hideE = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subShow = Keyboard.addListener(showE, (e) => {
+      try {
+        const screenH = Dimensions.get('window').height;
+        const isIOS = Platform.OS === 'ios';
+        let h = 0;
+        let top = screenH;
+        if (isIOS) {
+          const endY = e.endCoordinates?.screenY ?? screenH;
+          h = Math.max(0, endY < screenH ? (screenH - endY) : 0);
+          top = endY;
+        } else {
+          h = Math.max(0, e.endCoordinates?.height ?? 0);
+          top = screenH - h;
+        }
+        setKbInset(h);
+        setKbTop(top);
+      } catch(_) {}
+    });
+    const subHide = Keyboard.addListener(hideE, () => { setKbInset(0); setKbTop(Dimensions.get('window').height); });
+    return () => { try { subShow?.remove?.(); subHide?.remove?.(); } catch(_) {} };
+  }, [rnVisible]);
+
   const screenH = Dimensions.get('window').height;
   const sheetMaxH = Math.max(220, Math.min(screenH * maxHeightRatio, screenH - (insets.top + 48)));
   const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
+  // Only push modal if keyboard overlaps the card's bottom edge.
+  const baseBottomPad = theme.spacing.md + (insets?.bottom || 0);
+
+// Clamp to prevent the modal from moving beyond the top safe area.
+const minTopGap = Math.max(12, theme.spacing.sm);
+const maxExtraBottom = Math.max(
+  0,
+  screenH - sheetMaxH - (insets.top + minTopGap) - baseBottomPad
+);
+
+const extraBottom = useMemo(() => {
+  // Baseline bottom edge without extra padding
+  const cardBottom = screenH - baseBottomPad;
+  const overlap = Math.max(0, cardBottom - kbTop);
+  const need = overlap > 0 ? (overlap + 8) : 0;
+  return Math.min(need, maxExtraBottom);
+}, [kbTop, screenH, baseBottomPad, maxExtraBottom]);
+
 
   const op = useSharedValue(0);
   const ty = useSharedValue(24);
@@ -96,6 +144,7 @@ const BaseModalImpl = ({
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
   const aCard = useAnimatedStyle(() => ({ transform: [{ translateY: ty.value }, { scale: sc.value }] }));
+
 
   const dragY = useRef(0);
   const pan = useRef(
@@ -169,7 +218,7 @@ const BaseModalImpl = ({
       </Pressable>
 
       {/* Bottom container */}
-      <View style={[s.bottomWrap, { paddingHorizontal: theme.spacing.md, paddingBottom: theme.spacing.md }]} pointerEvents="box-none">
+      <View style={[s.bottomWrap, { paddingHorizontal: theme.spacing.md, paddingBottom: (baseBottomPad + extraBottom) }]} pointerEvents="box-none">
         <Animated.View
           style={[
             s.cardWrap,
