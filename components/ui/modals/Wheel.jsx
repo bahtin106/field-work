@@ -1,4 +1,3 @@
-
 // components/ui/modals/Wheel.jsx
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import { View, Text, FlatList, Platform } from "react-native";
@@ -37,8 +36,7 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
 
   const snapOffsets = useMemo(() => data.map((_, i) => i * ITEM_HEIGHT_DP), [data]);
 
-  const onMomentumEnd = (e) => {
-    const y = e.nativeEvent.contentOffset.y;
+  const syncToNearest = (y) => {
     const i = Math.round(y / ITEM_HEIGHT_DP);
     const clamped = Math.max(0, Math.min(data.length - 1, i));
     const target = clamped * ITEM_HEIGHT_DP;
@@ -51,6 +49,17 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
       setSelIndex(clamped);
       onIndexChange?.(clamped);
     }
+  };
+
+  const onMomentumEnd = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    syncToNearest(y);
+  };
+
+  // NEW: also sync selection when user lifts the finger, even if momentum hasn't started yet.
+  const onDragEnd = (e) => {
+    const y = e.nativeEvent.contentOffset?.y ?? 0;
+    syncToNearest(y);
   };
 
   return (
@@ -75,6 +84,7 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
       bounces={false}
       overScrollMode="never"
       onMomentumScrollEnd={onMomentumEnd}
+      onScrollEndDrag={onDragEnd}
       initialNumToRender={VISIBLE_COUNT_DP + 2}
       scrollEventThrottle={16}
       style={{ width }}

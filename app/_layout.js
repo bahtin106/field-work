@@ -219,9 +219,7 @@ function RootLayoutInner() {
     };
   }, []);
 
-  useEffect(() => {
-    if (appReady) hideSplashNow();
-  }, [ready, hideSplashNow]);
+  useEffect(() => { if (ready) hideSplashNow(); }, [ready, hideSplashNow]);
 
   useEffect(() => {
     let enabled = false;
