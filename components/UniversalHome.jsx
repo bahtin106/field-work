@@ -1,4 +1,4 @@
-// components/UniversalHome.jsx
+// components/universalhome.jsx
 import React, { useMemo, useState, useEffect } from 'react';
 import {
   View,
@@ -16,6 +16,8 @@ import Card from './ui/Card';
 import Button from './ui/Button';
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+
+function isUuid(s){return typeof s==='string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);}
 
 // --- data fetchers ---
 async function fetchSession() {
@@ -98,7 +100,7 @@ export default function UniversalHome({ role }) {
     staleTime: 0,
     refetchOnMount: true,
   });
-  const uid = session?.user?.id || null;
+  const uid = isUuid(session?.user?.id) ? session.user.id : null;
 
   const { data: profile } = useQuery({
     queryKey: ['profile', uid],

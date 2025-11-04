@@ -21,10 +21,13 @@ import TextField from '../../components/ui/TextField';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { Feather } from '@expo/vector-icons';
 
+import { useRouter } from 'expo-router';
+
 export default function LoginScreen() {
   const { theme } = useTheme();
   const ls = listItemStyles(theme);
   const isDark = theme?.mode === 'dark';
+  const router = useRouter();
 
   const styles = useMemo(
     () =>
@@ -110,7 +113,7 @@ export default function LoginScreen() {
 
     await waitForSession();
     setLoading(false);
-    // navigation handled in RootLayout; no manual replace
+    router.replace('/orders/index');
   };
 
   const isDisabled = !email || !password || loading;
