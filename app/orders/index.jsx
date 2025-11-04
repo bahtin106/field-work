@@ -9,17 +9,10 @@ import UniversalHome from '../../components/UniversalHome';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
 import { supabase } from '../../lib/supabase';
 import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
+import { useRef } from 'react';
+import * as SplashScreen from 'expo-splash-screen';
 
-// Показывать полноэкранный сплэш только на самом первом заходе на Home
-let _HOME_BOOT_DONE = false;
-
-/**
- * Цели этого патча:
- * 1) Убрать "двойные" спиннеры и дерганья роли.
- * 2) Показать единый красивый полноэкранный лоадер до тех пор,
- *    пока роль получена и сеть "успокоилась" (нет активных запросов React Query).
- * 3) Не ломать существующий код и навигацию.
- */
+let _GLOBAL_BOOT_FLAG = { value: false };
 
 // --- PremiumLoader: минималистичный «дорогой» экран загрузки (без мерцаний) ---
 function PremiumLoader({ text = 'Подготавливаем рабочее пространство' }) {
@@ -152,45 +145,46 @@ export default function IndexScreen() {
     return () => unsub && unsub();
   }, [qc]);
 
-  const readyByRole = React.useMemo(
-    () => ['worker', 'dispatcher', 'admin'].includes((role || '').toString()),
-    [role]
-  );
 
-  // Редирект в логин, если роли нет (и загрузки роли уже нет)
-  React.useEffect(() => {
-    if (!isLoading && (role === null || role === undefined)) {
-      router.replace('/(auth)/login');
-    }
-  }, [isLoading, role]);
+// Гарантированно прячем Expo Splash при заходе на экран (после логина)
+useFocusEffect(React.useCallback(() => {
+  let done = false;
+  (async () => {
+    try { await SplashScreen.hideAsync(); } catch {}
+    // страховка: повторно через тик
+    setTimeout(() => { if (!done) { try { SplashScreen.hideAsync(); } catch {} } }, 120);
+  })();
+  return () => { done = true; };
+}, []));
 
-  // Управление единым оверлеем загрузки
-  const initialSplash = React.useRef(!_HOME_BOOT_DONE).current;
+
+  
+   // Управление единым оверлеем загрузки
+const initialSplash = React.useRef(!_GLOBAL_BOOT_FLAG.value).current;
   const [splashVisible, setSplashVisible] = React.useState(initialSplash);
   const splashStart = React.useRef(Date.now());
   const MIN_SPLASH_MS = 600;     // минимум 600мс, чтобы анимация выглядела «дорогой»
   const NET_IDLE_GRACE_MS = 280; // небольшой «люфт» после окончания запросов
 
-  React.useEffect(() => {
-    // После первого успешного показа не держим сплэш на последующих заходах
-    if (!initialSplash) { if (splashVisible) setSplashVisible(false); return; }
-    let t1 = null;
-    if (!readyByRole || isLoading) {
-      setSplashVisible(true);
-      return () => { if (t1) clearTimeout(t1); };
-    }
-    if (isFetching === 0) {
-      const elapsed = Date.now() - splashStart.current;
-      const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
-      t1 = setTimeout(() => { setSplashVisible(false); _HOME_BOOT_DONE = true; }, Math.max(waitMin, NET_IDLE_GRACE_MS));
-    }
-    return () => { if (t1) clearTimeout(t1); };
-  }, [readyByRole, isLoading, isFetching, splashVisible, initialSplash]);
+  
+React.useEffect(() => {
+  // После первого успешного показа не держим сплэш на последующих заходах
+  if (!initialSplash) { if (splashVisible) setSplashVisible(false); return; }
+  let t1 = null;
+  if (isFetching === 0) {
+    const elapsed = Date.now() - splashStart.current;
+    const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
+    t1 = setTimeout(() => { setSplashVisible(false); _GLOBAL_BOOT_FLAG.value = true; }, Math.max(waitMin, NET_IDLE_GRACE_MS));
+  } else {
+    setSplashVisible(true);
+  }
+  return () => { if (t1) clearTimeout(t1); };
+}, [isFetching, splashVisible, initialSplash]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={() => { try { SplashScreen.hideAsync(); } catch(e) {} }}>
       {/* Рендерим контент только когда роль валидна, но под оверлеем */}
-      {readyByRole ? <UniversalHome role={role} /> : null}
+      <UniversalHome role={role} />
 
       {/* Единый «премиум» оверлей загрузки */}
       {splashVisible && (

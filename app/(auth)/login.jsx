@@ -1,30 +1,29 @@
 // app/(auth)/login.jsx
-import { router } from 'expo-router';
 import React, { useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
-  ActivityIndicator,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
   TouchableWithoutFeedback,
   Keyboard,
   StatusBar,
-  Alert,
   Pressable,
 } from 'react-native';
-import { AntDesign } from '@expo/vector-icons';
 import { supabase } from '../../lib/supabase';
-import { useTheme } from '../../theme/ThemeProvider';
+import { useTheme } from '../../theme';
+import { t as T } from '../../src/i18n';
 
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
+import { listItemStyles } from '../../components/ui/listItemStyles';
 import { Feather } from '@expo/vector-icons';
 
 export default function LoginScreen() {
   const { theme } = useTheme();
+  const ls = listItemStyles(theme);
   const isDark = theme?.mode === 'dark';
 
   const styles = useMemo(
@@ -45,16 +44,16 @@ export default function LoginScreen() {
         title: {
           textAlign: 'center',
           color: theme?.colors?.text,
-          fontSize: 32,
-          fontWeight: '700',
+          fontSize: theme?.typography?.sizes?.xxl ?? 32,
+          fontWeight: theme?.typography?.weight?.bold ?? '700',
           letterSpacing: 0.3,
           textTransform: 'capitalize',
-          marginBottom: 6,
+          marginBottom: theme?.spacing?.xs,
         },
         subtitle: {
           textAlign: 'center',
           color: theme?.colors?.textSecondary ?? theme?.colors?.text,
-          fontSize: 14,
+          fontSize: theme?.typography?.sizes?.sm ?? 14,
           marginBottom: theme?.spacing?.xl ?? 24,
         },
         passwordWrapper: {
@@ -73,8 +72,8 @@ export default function LoginScreen() {
           textAlign: 'center',
           marginTop: -4,
           marginBottom: theme?.spacing?.sm ?? 14,
-          fontSize: 14,
-          fontWeight: '500',
+          fontSize: theme?.typography?.sizes?.sm ?? 14,
+          fontWeight: theme?.typography?.weight?.medium ?? '500',
         },
       }),
     [theme],
@@ -86,6 +85,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const passwordRef = useRef(null);
+
   // Ensure we have a session token before first DB queries
   async function waitForSession({ tries = 15, delay = 120 } = {}) {
     for (let i = 0; i < tries; i++) {
@@ -96,7 +96,6 @@ export default function LoginScreen() {
     return null;
   }
 
-
   const handleLogin = async () => {
     if (!email || !password || loading) return;
     setLoading(true);
@@ -105,14 +104,14 @@ export default function LoginScreen() {
     const { error: authErr } = await supabase.auth.signInWithPassword({ email, password });
     if (authErr) {
       setLoading(false);
-      setError('Неверный логин или пароль');
+      setError(T('errors.invalid_credentials', 'errors.invalid_credentials'));
       return;
     }
 
     await waitForSession();
-setLoading(false);
-router.replace('/orders');
-};
+    setLoading(false);
+    // navigation handled in RootLayout; no manual replace
+  };
 
   const isDisabled = !email || !password || loading;
 
@@ -127,37 +126,39 @@ router.replace('/orders');
           <View style={{ flex: 1 }}>
             <View style={styles.container}>
               <View style={styles.centerBlock}>
-                <Text style={styles.title}>Монитор</Text>
-                <Text style={styles.subtitle}>Контроль выездных задач и заявок</Text>
+                <Text style={styles.title}>{T('login.title', 'login.title')}</Text>
+                <Text style={styles.subtitle}>{T('login.subtitle', 'login.subtitle')}</Text>
 
                 <TextField
                   value={email}
                   onChangeText={setEmail}
-                  placeholder="Электронная почта"
+                  placeholder={T('fields.email', 'fields.email')}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   returnKeyType="next"
                   onSubmitEditing={() => passwordRef.current?.focus()}
                 />
+                <View style={ls.sep} />
 
                 <View style={styles.passwordWrapper}>
                   <TextField
                     ref={passwordRef}
                     value={password}
                     onChangeText={setPassword}
-                    placeholder="Пароль"
+                    placeholder={T('fields.password', 'fields.password')}
                     secureTextEntry={!showPassword}
                     returnKeyType="done"
                     onSubmitEditing={handleLogin}
                   />
+                  <View style={ls.sep} />
                   <Pressable
                     onPress={() => setShowPassword((v) => !v)}
                     style={styles.eyeToggle}
-                    accessibilityLabel={showPassword ? 'Скрыть пароль' : 'Показать пароль'}
+                    accessibilityLabel={showPassword ? T('auth.hide_password', 'auth.hide_password') : T('auth.show_password', 'auth.show_password')}
                   >
                     <Feather
                       name={showPassword ? 'eye-off' : 'eye'}
-                      size={20}
+                      size={theme?.components?.listItem?.chevronSize}
                       color={theme?.colors?.textSecondary ?? theme?.colors?.text}
                     />
                   </Pressable>
@@ -166,13 +167,14 @@ router.replace('/orders');
                 {error ? <Text style={styles.error}>{error}</Text> : null}
 
                 <View style={{ opacity: isDisabled ? 0.5 : 1 }}>
-                  <Button title="Войти"
+                  <Button
+                    title={T('btn_login', 'btn_login')}
                     variant="primary"
                     size="lg"
                     onPress={handleLogin}
                     disabled={isDisabled}
                     loading={loading}
-                   />
+                  />
                 </View>
               </View>
             </View>

@@ -3,7 +3,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter, useFocusEffect, useNavigation } from 'expo-router';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Dimensions, FlatList, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image } from 'react-native';
+import { ActivityIndicator, BackHandler, Dimensions, FlatList, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, Image, Keyboard } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import { isValidRu as isValidPhone, normalizeRu } from '../../../components/ui/phone';
@@ -14,7 +14,7 @@ import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
 import IconButton from '../../../components/ui/IconButton';
 import Card from '../../../components/ui/Card';
-import TextField, { SelectField } from '../../../components/ui/TextField';
+import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useI18nVersion } from '../../../src/i18n';
@@ -55,16 +55,13 @@ const BUCKETS = STORAGE;
 const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
 const AVA_MIME = AVATAR.MIME;
 
-
 const FUNCTIONS = APP_FUNCTIONS;
 
 const FN_GET_PROFILE = process.env.EXPO_PUBLIC_RPC_GET_PROFILE || (__EDIT_FUNCTIONS.getProfileWithEmail ?? 'admin_get_profile_with_email');
 
 const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
 
-
 import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
-
 let ROLE_LABELS_LOCAL = ROLE_LABELS;
 try {
 const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
@@ -84,7 +81,7 @@ function withAlpha(color, a) {
       const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
       return color + alpha;
     }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    const rgb = color.match(/^rgb\s*(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*)$/i);
     if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
   }
   return `rgba(0,0,0,${a})`;
@@ -282,17 +279,16 @@ export default function EditUser() {
 const { theme } = useTheme();
   const { t } = useTranslation();
   const ver = useI18nVersion();
-useLayoutEffect(() => {
-  const routeTitle = t('routes.users/[id]/edit', 'routes.users/[id]/edit');
-  navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
-}, [navigation, ver]);
-
 useEffect(() => {
   const routeTitle = t('routes.users/[id]/edit', 'routes.users/[id]/edit');
-  navigation.setParams({ title: routeTitle });
-}, [navigation, ver]);
-
-  const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(() => ({
+  navigation.setParams({
+    title: routeTitle,
+    leftTextOnly: true,
+    
+    
+    centerTitle: true,
+  });
+}, [navigation, ver]);const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(() => ({
     [ROLE.DISPATCHER]: ROLE_DESCRIPTIONS[ROLE.DISPATCHER] ?? t('role_desc_dispatcher'),
     [ROLE.WORKER]: ROLE_DESCRIPTIONS[ROLE.WORKER] ?? t('role_desc_worker'),
   }), [t]);
@@ -308,7 +304,7 @@ useEffect(() => {
  const RADIO_SIZE = theme.components?.radio?.size ?? ICON_MD;
  const RADIO_DOT = theme.components?.radio?.dot ?? Math.max(theme.components?.radio?.dotMin ?? 6, Math.round(RADIO_SIZE / 2 - 3));
 const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
- const EXTRA_SCROLL_PAD = theme.spacing.sm;
+ const EXTRA_SCROLL_PAD = 50; // Увеличиваем отступ для гарантии
 const styles = React.useMemo(() => {
   return StyleSheet.create({
  container: { flex: 1, backgroundColor: theme.colors.background },
@@ -439,9 +435,14 @@ const styles = React.useMemo(() => {
  const { success: toastSuccess, error: toastError, info: toastInfo, setAnchorOffset, loading: toastLoading, promise: toastPromise } = useToast();
 const router = useRouter();
  const navigation = useNavigation();
+
+useLayoutEffect(() => {
+  const routeTitle = t('routes.users/[id]/edit', 'routes.users/[id]/edit');
+  navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
+}, [navigation, ver]);
+
  
- 
-const { id } = useLocalSearchParams();
+ const { id } = useLocalSearchParams();
  const userId = Array.isArray(id) ? id[0] : id;
  const [meIsAdmin, setMeIsAdmin] = useState(false);
  const [meId, setMeId] = useState(null);
@@ -478,6 +479,7 @@ const [withYear, setWithYear] = useState(true);
  const [newPassword, setNewPassword] = useState('');
  const [showPassword, setShowPassword] = useState(false);
  const [showRoles, setShowRoles] = useState(false);
+
  const [err, setErr] = useState('');
    const ensureCameraPerms = async () => {
   const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -527,7 +529,7 @@ const [withYear, setWithYear] = useState(true);
     .eq('id', userId);
    if (updErr) throw updErr;
    setAvatarUrl(null);
-   toastSuccess(t('toast_saved'));
+   toastSuccess(t('toast_success'));
   } catch (e) {
    setErr(e?.message || t('toast_generic_error'));
   }
@@ -582,6 +584,14 @@ const [withYear, setWithYear] = useState(true);
  const [pickerReturn, setPickerReturn] = useState(null); // 'delete' | 'suspend' | null
  const scrollRef = useRef(null);
  const pwdRef = useRef(null);
+ const firstNameRef = useRef(null);
+ const lastNameRef = useRef(null);
+ const emailRef = useRef(null);
+ const phoneRef = useRef(null);
+const dobFieldRef = useRef(null);
+const deptFieldRef = useRef(null);
+const roleFieldRef = useRef(null);
+const statusFieldRef = useRef(null);
  const insets = useSafeAreaInsets();
  const scrollYRef = useRef(0);
  const ensureVisible = (ref) => {
@@ -591,8 +601,10 @@ const [withYear, setWithYear] = useState(true);
        try {
          ref.current.measureInWindow((x, y, w, h) => {
            const screenH = Dimensions.get('window').height;
+           const keyboardHeight = kbInset > 0 ? kbInset : 300; // Минимальная высота клавиатуры как fallback
            const bottom = (y || 0) + (h || 0);
-           const visibleH = screenH - ((insets?.bottom || 0) + EXTRA_SCROLL_PAD);
+           const visibleH = screenH - keyboardHeight - EXTRA_SCROLL_PAD;
+           
            if (bottom > visibleH) {
              const delta = bottom - visibleH + EXTRA_SCROLL_PAD;
              const currentY = scrollYRef?.current || 0;
@@ -680,6 +692,14 @@ const cancelRef = useRef(null);
 const onPressSave = React.useCallback(() => {
  if (saveRef.current) return saveRef.current();
 }, []);
+
+useEffect(() => {
+  if (!globalThis.__headerActions) globalThis.__headerActions = {};
+  const actionId = `save-${String(userId || 'edit')}`;
+  globalThis.__headerActions[actionId] = onPressSave;
+  navigation.setParams({ rightTextLabel: t('header_save'), onRightPressId: actionId });
+  return () => { try { delete globalThis.__headerActions[actionId]; } catch(_) {} };
+}, [navigation, ver, onPressSave, t, userId]);
 const onPressCancel = React.useCallback(() => {
  if (cancelRef.current) return cancelRef.current();
 }, []);
@@ -773,7 +793,7 @@ catch (e) { }
    departmentId: departmentId || null,
    isSuspended }));
   allowLeaveRef.current = true;
-  toastSuccess(t('toast_saved'));
+  toastSuccess(t('toast_success'));
  }
  catch (e) {
   setErr(e?.message || t('error_save_failed'));
@@ -783,19 +803,63 @@ catch (e) { }
   setSaving(false);
  }
 };
+
+const [kbInset, setKbInset] = useState(0);
+ useEffect(() => {
+  const showE = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+  const hideE = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+  const onShow = (e) => {
+    const h = Math.max(0, e?.endCoordinates?.height || 0);
+    setKbInset(h);
+    
+    // Автоматический скролл к активному полю с увеличенной задержкой для стабильности
+    setTimeout(() => {
+      if (focusFirst && firstNameRef.current) ensureVisible(firstNameRef);
+      else if (focusLast && lastNameRef.current) ensureVisible(lastNameRef);
+      else if (focusEmail && emailRef.current) ensureVisible(emailRef);
+      else if (focusPhone && phoneRef.current) ensureVisible(phoneRef);
+      else if (focusPwd && pwdRef.current) ensureVisible(pwdRef);
+    }, 150); // Увеличиваем задержку для полной стабилизации клавиатуры
+  };
+  const onHide = () => setKbInset(0);
+  const s1 = Keyboard.addListener(showE, onShow);
+  const s2 = Keyboard.addListener(hideE, onHide);
+  return () => { try { s1.remove(); s2.remove(); } catch (_) {} };
+ }, []);
+
+// Дополнительная защита - пересчет позиции при изменении kbInset
+useEffect(() => {
+  if (kbInset > 0) {
+    setTimeout(() => {
+      if (focusFirst && firstNameRef.current) ensureVisible(firstNameRef);
+      else if (focusLast && lastNameRef.current) ensureVisible(lastNameRef);
+      else if (focusEmail && emailRef.current) ensureVisible(emailRef);
+      else if (focusPhone && phoneRef.current) ensureVisible(phoneRef);
+      else if (focusPwd && pwdRef.current) ensureVisible(pwdRef);
+    }, 200);
+  }
+}, [kbInset, focusFirst, focusLast, focusEmail, focusPhone, focusPwd]);
+
 useEffect(() => {
   try {
-    navigation.setParams({
-      centerTitle: true,
-      leftTextOnly: true,
-      headerBackTitle: t('header_cancel'),
-      rightTextLabel: t('header_save'),
-      onRightPress: onPressSave,
-    });
-  } catch (e) {}
-}, [navigation, ver, onPressSave, t]);
+    // Keep params serializable only
+navigation.setParams({
+  rightTextLabel: t('header_save'),
+  centerTitle: true,
+  leftTextOnly: true,
+  headerBackTitle: t('header_cancel') || 'Отмена',
+  
+  
+});
+// Put callbacks and alignment into screen options
 
- useEffect(() => {
+navigation.setOptions({
+  
+  headerTitleAlign: 'center',
+  
+});
+} catch (e) {}
+}, [navigation, ver, onPressSave, t]);useEffect(() => {
  const sub = navigation.addListener('beforeRemove', (e) => {
    if (allowLeaveRef.current || !isDirty) return;
    e.preventDefault();
@@ -1119,6 +1183,7 @@ if (loading || !meLoaded) {
     
 <View style={styles.container}>
      <ScrollView
+      
       ref={scrollRef}
       style={{ flex: 1 }}
       keyboardShouldPersistTaps="handled"
@@ -1126,7 +1191,11 @@ if (loading || !meLoaded) {
       onScroll={(e) => { try { scrollYRef.current = e.nativeEvent.contentOffset.y || 0; } catch (_) {} }}
       scrollEventThrottle={16}
       contentInsetAdjustmentBehavior="always"
-      contentContainerStyle={[styles.scroll, { paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl }]}
+      contentContainerStyle={[styles.scroll, { 
+        paddingBottom: (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) + 
+                      (insets?.bottom ?? 0) + 
+                      (kbInset > 0 ? Math.max(kbInset, 250) + EXTRA_SCROLL_PAD : EXTRA_SCROLL_PAD) // Гарантируем минимальную высоту для клавиатуры
+      }]}
       showsVerticalScrollIndicator={false}
      >
       <View
@@ -1205,99 +1274,107 @@ if (loading || !meLoaded) {
       ) : null}
       <Text style={styles.section}>{t('section_personal')}</Text>
       <Card>
-       <TextField label={t('label_first_name')} placeholder={t('placeholder_first_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
+       <TextField 
+        ref={firstNameRef}
+        label={t('label_first_name')} 
+        placeholder={t('placeholder_first_name')} 
+        placeholderTextColor={theme.colors.inputPlaceholder} 
+        style={styles.field}
         value={firstName}
         onChangeText={setFirstName}
-        onFocus={() => setFocusFirst(true)}
+        onFocus={() => {
+          setFocusFirst(true);
+          setTimeout(() => ensureVisible(firstNameRef), 150); // Увеличиваем задержку
+        }}
         onBlur={() => setFocusFirst(false)}
         />
        {!firstName.trim() ? <Text style={styles.helperError}>{t('err_first_name')}</Text> : null}
-       <TextField label={t('label_last_name')} placeholder={t('placeholder_last_name')} placeholderTextColor={theme.colors.inputPlaceholder} style={styles.field}
+       <TextField 
+        ref={lastNameRef}
+        label={t('label_last_name')} 
+        placeholder={t('placeholder_last_name')} 
+        placeholderTextColor={theme.colors.inputPlaceholder} 
+        style={styles.field}
         value={lastName}
         onChangeText={setLastName}
-        onFocus={() => setFocusLast(true)}
+        onFocus={() => {
+          setFocusLast(true);
+          setTimeout(() => ensureVisible(lastNameRef), 150); // Увеличиваем задержку
+        }}
         onBlur={() => setFocusLast(false)}
         />
        {!lastName.trim() ? <Text style={styles.helperError}>{t('err_last_name')}</Text> : null}
        <TextField
- label={t('label_email')}
- placeholder={t('placeholder_email')} placeholderTextColor={theme.colors.inputPlaceholder}
- style={styles.field}
- keyboardType="email-address"
- autoCapitalize="none"
- autoCorrect={false}
- value={email}
- onChangeText={setEmail}
- onFocus={() => setFocusEmail(true)}
- onBlur={() => setFocusEmail(false)}
+        ref={emailRef}
+        label={t('label_email')}
+        placeholder={t('placeholder_email')} 
+        placeholderTextColor={theme.colors.inputPlaceholder}
+        style={styles.field}
+        keyboardType="email-address"
+        autoCapitalize="none"
+        autoCorrect={false}
+        value={email}
+        onChangeText={setEmail}
+        onFocus={() => {
+          setFocusEmail(true);
+          setTimeout(() => ensureVisible(emailRef), 150); // Увеличиваем задержку
+        }}
+        onBlur={() => setFocusEmail(false)}
 />
 {!emailValid ? (
         <Text style={styles.helperError}>{t('err_email')}</Text>
        ) : null}
        <PhoneInput
- value={phone}
- onChangeText={(val, meta) => {
-  setPhone(val);
- }}
- error={!isValidPhone(String(phone||'')) ? t('err_phone') : undefined}
- style={styles.field}
- onFocus={() => setFocusPhone(true)}
- onBlur={() => setFocusPhone(false)}
+        ref={phoneRef}
+        value={phone}
+        onChangeText={(val, meta) => {
+         setPhone(val);
+        }}
+        error={!isValidPhone(String(phone||'')) ? t('err_phone') : undefined}
+        style={styles.field}
+        onFocus={() => {
+          setFocusPhone(true);
+          setTimeout(() => ensureVisible(phoneRef), 150); // Увеличиваем задержку
+        }}
+        onBlur={() => setFocusPhone(false)}
 />
-<Pressable onPress={() => setDobModalVisible(true)} accessibilityRole="button" accessibilityLabel={t('label_birthdate')}>
-  <TextField
-    label={t('label_birthdate')}
-    value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
-    placeholder={t('placeholder_birthdate')}
-    style={styles.field}
-    editable={false}
-    rightSlot={null}
-  />
-</Pressable>
+<TextField
+  label={t('label_birthdate')}
+  value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
+  style={styles.field}
+  pressable
+  onPress={() => setDobModalVisible(true)}
+/>
       </Card>
-      {!isSelfAdmin && (
-       <Card>
-        <View style={{ flexDirection: 'row' }}>
-         <UIButton
-          title={t('btn_delete')}
-          variant="destructive"
-          onPress={onAskDelete}
-          style={{ flex: 1 }}
-        />
-        </View>
-       </Card>
-      )}
+      
       {meIsAdmin && (
   <>
     <Text style={styles.section}>{t('section_company_role')}</Text>
     <Card>
-      <View style={{ marginTop: theme.spacing.xs }}>
-  <Text style={styles.label}>{t('label_department')}</Text>
-  <SelectField
-    value={activeDeptName || t('placeholder_department')}
-    onPress={() => setDeptModalVisible(true)}
-    showValue={true}
-  />
-</View>
+      <TextField
+  label={t('label_department')}
+  value={activeDeptName || t('placeholder_department')}
+  style={styles.field}
+  pressable
+  onPress={() => setDeptModalVisible(true)}
+/>
 
       {!isSelfAdmin && (
         <>
-          <View style={{ marginTop: theme.spacing.xs }}>
-  <Text style={styles.label}>{t('label_role')}</Text>
-  <SelectField
-    value={ROLE_LABELS_LOCAL[role] || role}
-    onPress={() => setShowRoles(true)}
-    showValue={true}
-  />
-</View>
-          <View style={{ marginTop: theme.spacing.xs }}>
-  <Text style={styles.label}>{t('label_status')}</Text>
-  <SelectField
-    value={isSuspended ? t('status_suspended') : t('status_active')}
-    onPress={isSuspended ? onAskUnsuspend : onAskSuspend}
-    showValue={true}
-  />
-</View>
+         <TextField
+  label={t('label_role')}
+  value={ROLE_LABELS_LOCAL[role] || role}
+  style={styles.field}
+  pressable
+  onPress={() => setShowRoles(true)}
+/>
+          <TextField
+  label={t('label_status')}
+  value={isSuspended ? t('status_suspended') : t('status_active')}
+  style={styles.field}
+  pressable
+  onPress={() => (isSuspended ? onAskUnsuspend : onAskSuspend)()}
+/>
         </>
       )}
     </Card>
@@ -1307,8 +1384,13 @@ if (loading || !meLoaded) {
 <Text style={styles.section}>{t('section_password')}</Text>
 <Card>
   <View style={{ position: 'relative' }}>
-    <TextField
+   <TextField
   ref={pwdRef}
+  onFocus={() => { 
+    setFocusPwd(true); 
+    setTimeout(() => ensureVisible(pwdRef), 150); // Увеличиваем задержку
+  }}
+  onBlur={() => setFocusPwd(false)}
   value={newPassword}
   onChangeText={setNewPassword}
   placeholder={t('placeholder_new_password')}
@@ -1344,6 +1426,16 @@ if (loading || !meLoaded) {
 />
   </View>
   </Card>
+
+{!isSelfAdmin && (
+  <UIButton
+    title={t('btn_delete')}
+    variant="destructive"
+    onPress={onAskDelete}
+    style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
+  />
+)}
+
   {newPassword.length > 0 && !passwordValid ? (
     <Text style={{ marginTop: theme.spacing.xs, color: theme.colors.danger, fontSize: theme.typography.sizes.xs }}>{t('err_password_short')}</Text>
   ) : null}

@@ -11,7 +11,7 @@ export const EDITABLE_ROLES = (process.env.EXPO_PUBLIC_EDITABLE_ROLES || `${ROLE
 import { t as T } from '../src/i18n';
 
 export const ROLE_LABELS = {
-  [ROLE.DISPATCHER]: T('roles.dispatcher'),
-  [ROLE.WORKER]:     T('roles.worker'),
-  [ROLE.ADMIN]:      T('roles.admin'),
+  [ROLE.DISPATCHER]: T('role_dispatcher'),
+  [ROLE.WORKER]:     T('role_worker'),
+  [ROLE.ADMIN]:      T('role_admin'),
 };

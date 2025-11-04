@@ -6,6 +6,25 @@ import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
 
+// Mix two HEX colors (like CSS overlay but returns opaque color). ratio is 0..1 of top color.
+function mixHexColors(baseHex, topHex, ratio = 0.08) {
+  try {
+    const toRGB = (h) => {
+      const m = String(h || '').trim().match(/^#?([0-9a-fA-F]{6})$/);
+      if (!m) return null;
+      const n = parseInt(m[1], 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+    };
+    const b = toRGB(baseHex); const t = toRGB(topHex);
+    if (!b || !t) return baseHex || topHex;
+    const k = Math.max(0, Math.min(1, Number(ratio)));
+    const r = Math.round(b.r * (1 - k) + t.r * k);
+    const g = Math.round(b.g * (1 - k) + t.g * k);
+    const bch = Math.round(b.b * (1 - k) + t.b * k);
+    return '#' + ((1 << 24) + (r << 16) + (g << 8) + bch).toString(16).slice(1).toUpperCase();
+  } catch { return baseHex; }
+}
+
 function buildTheme(mode) {
   const effective = mode === 'system' ? (Appearance.getColorScheme?.() || 'light') : mode;
   const base = effective === 'dark' ? tokens.dark : tokens.light;
@@ -13,6 +32,8 @@ function buildTheme(mode) {
   const colors = {
     background: base.colors.background ?? base.colors.bg ?? '#FFFFFF',
     surface: base.colors.surface ?? base.colors.card ?? '#FFFFFF',
+    // Opaque blend for suspended cards: mix surface with danger at ~8%
+    surfaceMutedDanger: mixHexColors((base.colors.surface ?? base.colors.card ?? '#FFFFFF'), (base.colors.danger ?? '#FF3B30'), 0.08),
     text: base.colors.text ?? '#0A0A0A',
     textSecondary: base.colors.textSecondary ?? '#6B7280',
     primary: base.colors.primary ?? base.colors.accent ?? '#007AFF',
@@ -126,6 +147,7 @@ function buildTheme(mode) {
   
 iconButton: { size: (base.components?.iconButton?.size ?? 32) },
 input: { 
+  height: (base.components?.input?.height ?? (base.components?.listItem?.height ?? 48)),
   trailingSlotWidth: (base.components?.input?.trailingSlotWidth ?? undefined),
   trailingGap: (base.components?.input?.trailingGap ?? 8),
 },
