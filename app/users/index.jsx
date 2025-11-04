@@ -68,6 +68,8 @@ export default function UsersIndex() {
   const ty = theme.typography;
   const rad = theme.radii;
   const controlH = (theme.components?.input?.height ?? (theme.components?.listItem?.height ?? 48));
+  const btnH = (theme.components?.button?.sizes?.md?.h ?? (theme.components?.row?.minHeight ?? (theme.components?.listItem?.height ?? 48)));
+
 
   const styles = React.useMemo(() => StyleSheet.create({
     safe: { flex: 1, backgroundColor: c.background },
@@ -78,13 +80,18 @@ export default function UsersIndex() {
     searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
     searchBox: {
       flex: 1, position: 'relative', backgroundColor: c.inputBg, borderRadius: rad.lg, borderWidth: 1, borderColor: c.inputBorder,
-      height: controlH, justifyContent: 'center', paddingHorizontal: sz.sm,
-    },
+      height: btnH, justifyContent: 'center', paddingLeft: sz.sm, paddingRight: sz.sm, },
     clearBtn: {
-      position: 'absolute', right: sz.xs, top: Math.max(0, (controlH - 28) / 2), width: 28, height: 28, borderRadius: 14,
-      backgroundColor: withAlpha(c.border, 0.5), alignItems: 'center', justifyContent: 'center',
-    },
+  position: 'absolute',
+  right: 6,
+  top: '50%',
+  marginTop: -14,
+  width: 28, height: 28, borderRadius: 14,
+  backgroundColor: withAlpha(c.border, 0.5),
+  alignItems: 'center', justifyContent: 'center',
+},
     clearBtnText: { fontSize: 20, lineHeight: 20, color: c.textSecondary, fontWeight: ty.weight.semibold, marginTop: -2 },
+    searchMask: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: c.inputBg, borderBottomLeftRadius: rad.lg, borderBottomRightRadius: rad.lg },
     metaRow: { marginTop: sz.xs },
     metaText: { fontSize: ty.sizes.sm, color: c.textSecondary },
     errorCard: {
@@ -519,28 +526,31 @@ const renderItem = useCallback(
 
             {/* Search + Create */}
             <View style={styles.searchRow}>
-              <View style={styles.searchBox}>
-                <UITextField
-                  value={q}
-                  onChangeText={setQ}
-                  placeholder={t('users_search_placeholder')}
-                  returnKeyType="search"
-                  onSubmitEditing={Keyboard.dismiss}
-                  rightSlot={
-                    !!q ? (
-                      <Pressable
-                        android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
-                        onPress={() => setQ('')}
-                        style={styles.clearBtn}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common_clear')}
-                      >
-                        <Text style={styles.clearBtnText}>×</Text>
-                      </Pressable>
-                    ) : null
-                  }
-                />
-              </View>
+              
+<View style={styles.searchBox}>
+  <UITextField
+    value={q}
+    onChangeText={setQ}
+    placeholder={t('users_search_placeholder')}
+    returnKeyType="search"
+    onSubmitEditing={Keyboard.dismiss}
+  
+  underlineColorAndroid="transparent"
+/>
+{!!q ? (
+    <Pressable
+      android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
+      onPress={() => setQ('')}
+      style={styles.clearBtn}
+      accessibilityRole="button"
+      accessibilityLabel={t('common_clear')}
+    >
+      <Text style={styles.clearBtnText}>×</Text>
+    </Pressable>
+  ) : null}
+  <View style={styles.searchMask} />
+</View>
+
 
               <Button title={t('btn_create')} onPress={() => router.push('/users/new')} variant="primary" size="md" />
             </View>

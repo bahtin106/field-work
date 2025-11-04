@@ -26,27 +26,18 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       warn(`${src}: RPC exception:`, e);
     }
 
-    // 2) Fallback UPDATE без .select(...) (чтобы не требовать select-политики)
-    try {
-      log(`${src}: UPDATE fallback try (no select)`);
-      const { error } = await supabase
-        .from('profiles')
-        .update({ last_seen_at: new Date().toISOString() })
-        .eq('id', uid);
-
-      if (error) {
-        warn(`${src}: UPDATE error:`, error);
-        return false;
-      }
-      log(`${src}: UPDATE OK (no select)`);
-      return true;
-    } catch (e) {
-      warn(`${src}: UPDATE exception:`, e);
-      return false;
-    }
+    // 2) Больше НЕ делаем UPDATE в profiles — это и даёт "permission denied" при RLS.
+    log(`${src}: skip UPDATE fallback (RLS-safe)`);
+    return false;
   }
 
   async function ping(src = 'unknown') {
+    // Не шевелимся, если приложение не активно — убираем сетевые ошибки в фоне
+    if (appStateRef.current !== 'active') {
+      log(`${src}: skip (appState=${appStateRef.current})`);
+      return;
+    }
+
     if (inFlightRef.current) {
       log(`${src}: skip (in flight)`);
       return;
@@ -54,9 +45,18 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
     inFlightRef.current = true;
 
     try {
-      const { data: { user } = {}, error: userErr } = await supabase.auth.getUser();
-      if (userErr) { warn(`${src}: getUser error:`, userErr); return; }
-      if (!user?.id) { log(`${src}: no user session, skip`); return; }
+      // безопасный вызов без крашей при отсутствии сессии
+      const { data: { user } = {}, error: userErr } =
+        await supabase.auth.getUser().catch((e) => ({ error: e }));
+
+      if (userErr?.message?.includes?.('Auth session missing')) {
+        log(`${src}: no valid session (AuthSessionMissingError), skip`);
+        return;
+      }
+      if (!user?.id) {
+        log(`${src}: no user session, skip`);
+        return;
+      }
 
       const now = Date.now();
       if (now - lastSentAtRef.current < minIntervalMs) {
@@ -70,7 +70,12 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
         log(`${src}: done, next after >= ${minIntervalMs}ms`);
       }
     } catch (e) {
-      warn(`${src}: ping exception:`, e);
+      // подавляем сетевые ошибки, чтобы не сыпались красные логи
+      if (e?.message?.includes?.('Network request failed')) {
+        log(`${src}: network down, skip`);
+      } else {
+        warn(`${src}: ping exception:`, e);
+      }
     } finally {
       inFlightRef.current = false;
     }
@@ -88,17 +93,18 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       ping('interval');
     }, 15_000);
 
-    // возврат на передний план
+    // реакция на смену состояния приложения
     const sub = AppState.addEventListener('change', (next) => {
       const prev = appStateRef.current;
       appStateRef.current = next;
       log('AppState change:', prev, '→', next);
       if (next === 'active' && prev !== 'active') {
+        // сразу пингуем при возвращении
         ping('foreground');
       }
     });
 
-    // на событие аутентификации
+    // события аутентификации
     const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
       log('auth event:', event, !!session?.user?.id ? 'has user' : 'no user');
       // сбрасываем троттлинг, чтобы сразу отправить свежий last_seen после логина

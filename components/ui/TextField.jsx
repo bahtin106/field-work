@@ -43,6 +43,7 @@ const TextField = forwardRef(function TextField(
             autoCorrect={false}
             multiline={multiline}
             numberOfLines={numberOfLines}
+            underlineColorAndroid="transparent"
             onFocus={(e) => { setFocused(true); onFocus?.(e); }}
             onBlur={(e) => { setFocused(false); setTouched(true); onBlur?.(e); }}
             maxLength={maxLength}
@@ -79,8 +80,8 @@ const styles = (t, isError, focused) =>
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: 'transparent',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: isError ? t.colors.danger : (focused ? t.colors.primary : (t.colors.inputBorder || '#e0e0e0')),
+      borderBottomWidth: 0,
+      borderBottomColor: 'transparent',
       paddingHorizontal: 12,
       height: (t.components?.input?.height ?? (t.components?.listItem?.height ?? 48)),
     },

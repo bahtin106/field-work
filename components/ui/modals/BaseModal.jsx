@@ -4,7 +4,7 @@ import React, { useMemo, useRef, useState, useImperativeHandle, useEffect } from
 import { View, Text, Modal, Pressable, StyleSheet, Dimensions, PanResponder, Platform, Keyboard } from "react-native";
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, Easing } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as NavigationBar from "expo-navigation-bar";
+// NavigationBar: dynamically imported on Android to avoid Expo Go iOS native-module error
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "../../../theme";
 import { t as T } from '../../../src/i18n';
@@ -181,6 +181,7 @@ const extraBottom = useMemo(() => {
     if (Platform.OS !== 'android') return;
     (async () => {
       try {
+        const NavigationBar = await import('expo-navigation-bar');
         if (visible) {
           await NavigationBar.setBehaviorAsync('overlay-swipe');
           await NavigationBar.setBackgroundColorAsync('transparent');
