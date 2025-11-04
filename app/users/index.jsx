@@ -25,7 +25,9 @@ import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 import Button from '../../components/ui/Button';
 import UITextField from '../../components/ui/TextField';
-import { SelectModal } from '../../components/ui/modals';
+// Unified filter system: import our reusable components
+import FilterModal from '../../components/filters/FilterModal';
+import { useFilters } from '../../components/hooks/useFilters';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
@@ -80,16 +82,13 @@ export default function UsersIndex() {
     searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
     searchBox: {
       flex: 1, position: 'relative', backgroundColor: c.inputBg, borderRadius: rad.lg, borderWidth: 1, borderColor: c.inputBorder,
-      height: btnH, justifyContent: 'center', paddingLeft: sz.sm, paddingRight: sz.sm, },
+      height: btnH, justifyContent: 'center', paddingLeft: sz.sm, paddingRight: sz.md, },
     clearBtn: {
-  position: 'absolute',
-  right: 6,
-  top: '50%',
-  marginTop: -14,
-  width: 28, height: 28, borderRadius: 14,
-  backgroundColor: withAlpha(c.border, 0.5),
-  alignItems: 'center', justifyContent: 'center',
-},
+      width: 28, height: 28, borderRadius: 14,
+backgroundColor: withAlpha(c.border, 0.5),
+alignItems: 'center', justifyContent: 'center',
+      marginRight: -4,
+    },
     clearBtnText: { fontSize: 20, lineHeight: 20, color: c.textSecondary, fontWeight: ty.weight.semibold, marginTop: -2 },
     searchMask: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: c.inputBg, borderBottomLeftRadius: rad.lg, borderBottomRightRadius: rad.lg },
     metaRow: { marginTop: sz.xs },
@@ -139,6 +138,17 @@ export default function UsersIndex() {
       backgroundColor: c.background, paddingTop: sz.sm, borderTopLeftRadius: rad.lg, borderTopRightRadius: rad.lg, maxHeight: '80%',
       ...((theme.shadows && theme.shadows.level2 && theme.shadows.level2[Platform.OS]) || {}),
     },
+    // Filter icon button: sized like a control, uses border and surface colors for consistency
+    filterBtn: {
+      width: controlH,
+      height: controlH,
+      backgroundColor: c.surface,
+      borderRadius: rad.lg,
+      borderWidth: 1,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     modalHeader: { paddingHorizontal: sz.lg, paddingBottom: sz.sm },
     modalTitle: { color: c.text, fontWeight: ty.weight.bold, fontSize: ty.sizes.md },
     divider: { height: 1, backgroundColor: c.border, marginVertical: sz.xs, marginHorizontal: sz.lg },
@@ -163,10 +173,15 @@ export default function UsersIndex() {
   // Company feature flag: use_departments
   const [useDepartments, setUseDepartments] = useState(false);
 
-  // Departments state (for filtering only)
+  // Departments list for filter options
   const [departments, setDepartments] = useState([]);
-  const [deptFilter, setDeptFilter] = useState(null);
-  const [deptPickerVisible, setDeptPickerVisible] = useState(false);
+
+  // Hook to manage all filter values and persist them across sessions
+  const filters = useFilters({
+    screenKey: 'users',
+    defaults: { departments: [], roles: [], suspended: null },
+    // keep default TTL (1h) for filter persistence
+  });
 
   // Avoid fullscreen loader flicker after first content paint
   const hasShownContent = React.useRef(false);
@@ -209,10 +224,8 @@ export default function UsersIndex() {
         }
       }
       setUseDepartments(enabled);
-      if (!enabled) setDeptFilter(null);
     } catch {
       setUseDepartments(false);
-      setDeptFilter(null);
     } finally {
       // Mark flag as resolved to render full UI without flicker
       setFlagReady(true);
@@ -244,8 +257,23 @@ export default function UsersIndex() {
         .select('id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at')
         .order('full_name', { ascending: true, nullsFirst: false });
 
-      if (useDepartments && deptFilter != null) {
-        query = query.eq('department_id', deptFilter);
+      // Apply selected filters
+      // Departments: use .in() for multi-select
+      if (useDepartments && Array.isArray(filters.values.departments) && filters.values.departments.length > 0) {
+        const deptIds = filters.values.departments.map((d) => (typeof d === 'number' ? d : String(d)));
+        query = query.in('department_id', deptIds);
+      }
+      // Roles: multi-select by role codes
+      if (Array.isArray(filters.values.roles) && filters.values.roles.length > 0) {
+        query = query.in('role', filters.values.roles);
+      }
+      // Suspended: tri-state filter
+      if (filters.values.suspended === true) {
+        // Show only suspended users (either is_suspended true or suspended_at not null)
+        query = query.or('is_suspended.eq.true,suspended_at.not.is.null');
+      } else if (filters.values.suspended === false) {
+        // Show only active users (not suspended and no suspended_at)
+        query = query.eq('is_suspended', false).is('suspended_at', null);
       }
 
       const { data, error } = await query;
@@ -262,7 +290,7 @@ export default function UsersIndex() {
     } finally {
       setLoading(false);
     }
-  }, [deptFilter, useDepartments]);
+  }, [filters.values, useDepartments]);
 
   // Initial load
   useEffect(() => {
@@ -369,6 +397,8 @@ function parsePgTs(ts) {
     return new Date(utcMs); // treat no-TZ as UTC
   };
 
+  // (Filter schema and summary definitions removed from inside parsePgTs; they will be defined outside this function.)
+
   try {
     if (typeof ts === 'string') {
       let s = ts.trim();
@@ -416,6 +446,95 @@ function parsePgTs(ts) {
     return null;
   }
 }
+
+  // --- Filter definitions ---
+  // Build schema for filter modal: dynamic according to available options.
+  // We define this outside of parsePgTs so it has access to current state hooks.
+  const filterSchema = useMemo(() => {
+    const schema = [];
+    // Show department filter only if the company uses departments
+    if (useDepartments) {
+      schema.push({
+        name: 'departments',
+        label: 'users_department',
+        type: 'multiselect',
+        props: {
+          options: departments.map((d) => ({
+            id: String(d.id),
+            value: String(d.id),
+            label: d.name,
+          })),
+          searchable: false,
+        },
+      });
+    }
+    // Roles filter: multi-select among available roles
+    schema.push({
+      name: 'roles',
+      label: 'users_role',
+      type: 'multiselect',
+      props: {
+        options: Object.keys(ROLE_LABELS).map((r) => ({
+          id: r,
+          value: r,
+          label: ROLE_LABELS[r] || r,
+        })),
+        searchable: false,
+      },
+    });
+    // Suspended filter: tri-state (all, only suspended, without suspended)
+    schema.push({
+      name: 'suspended',
+      label: 'users_suspended',
+      type: 'select',
+      props: {
+        options: [
+          { id: 'all', value: null, label: t('users_showAll', 'Все') },
+          { id: 'onlySuspended', value: true, label: t('users_onlySuspended', 'Отстраненные') },
+          { id: 'withoutSuspended', value: false, label: t('users_withoutSuspended', 'Без отстраненных') },
+        ],
+        searchable: false,
+      },
+    });
+    return schema;
+  }, [useDepartments, departments, t]);
+
+  // Compose summary string for active filters to display in UI
+  const filterSummary = useMemo(() => {
+    const parts = [];
+    // Department summary
+    if (
+      useDepartments &&
+      Array.isArray(filters.values.departments) &&
+      filters.values.departments.length
+    ) {
+      const names = filters.values.departments
+        .map((id) => {
+          const d = departments.find((dept) => String(dept.id) === String(id));
+          return d ? d.name : null;
+        })
+        .filter(Boolean);
+      if (names.length) {
+        parts.push(`${t('users_department')}: ${names.join(', ')}`);
+      }
+    }
+    // Role summary
+    if (Array.isArray(filters.values.roles) && filters.values.roles.length) {
+      const roleNames = filters.values.roles
+        .map((r) => ROLE_LABELS[r])
+        .filter(Boolean);
+      if (roleNames.length) {
+        parts.push(`${t('users_role', 'Роль')}: ${roleNames.join(', ')}`);
+      }
+    }
+    // Suspended summary
+    if (filters.values.suspended === true) {
+      parts.push(t('users_onlySuspended', 'Отстраненные'));
+    } else if (filters.values.suspended === false) {
+      parts.push(t('users_withoutSuspended', 'Без отстраненных'));
+    }
+    return parts.join(' • ');
+  }, [filters.values, departments, useDepartments]);
 
 // --- Presence helpers (i18n-driven, no hardcoded strings)
 const isOnlineNow = React.useCallback((ts) => {
@@ -491,11 +610,7 @@ const renderItem = useCallback(
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  // Derived: department name by id
-  const activeDeptName = useMemo(() => {
-    const d = departments.find((d) => String(d.id) === String(deptFilter));
-    return d ? d.name : null;
-  }, [departments, deptFilter]);
+  // Derived: department name is now handled via filter summary
 
   if ((!hasShownContent.current && loading) || !flagReady) {
     return (
@@ -526,55 +641,65 @@ const renderItem = useCallback(
 
             {/* Search + Create */}
             <View style={styles.searchRow}>
-              
-<View style={styles.searchBox}>
-  <UITextField
-    value={q}
-    onChangeText={setQ}
-    placeholder={t('users_search_placeholder')}
-    returnKeyType="search"
-    onSubmitEditing={Keyboard.dismiss}
-  
-  underlineColorAndroid="transparent"
-/>
-{!!q ? (
-    <Pressable
-      android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
-      onPress={() => setQ('')}
-      style={styles.clearBtn}
-      accessibilityRole="button"
-      accessibilityLabel={t('common_clear')}
-    >
-      <Text style={styles.clearBtnText}>×</Text>
-    </Pressable>
-  ) : null}
-  <View style={styles.searchMask} />
-</View>
-
+              <View style={styles.searchBox}>
+                <UITextField
+                  value={q}
+                  onChangeText={setQ}
+                  placeholder={t('users_search_placeholder')}
+                  returnKeyType="search"
+                  onSubmitEditing={Keyboard.dismiss}
+                  rightSlot={
+                    !!q ? (
+                      <Pressable
+                        android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
+                        onPress={() => setQ('')}
+                        style={styles.clearBtn}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common_clear')}
+                      >
+                        <Text style={styles.clearBtnText}>×</Text>
+                      </Pressable>
+                    ) : null
+                  }
+                />
+              </View>
 
               <Button title={t('btn_create')} onPress={() => router.push('/users/new')} variant="primary" size="md" />
             </View>
 
-            {/* Department filter (visible only if company enabled departments) */}
-            {useDepartments && (
-              <View style={styles.toolbarRow}>
-                <Pressable
-                  android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
-                  onPress={() => setDeptPickerVisible(true)}
-                  style={styles.chip}
-                >
-                  <Text style={styles.chipText}>
-                    {activeDeptName ? `${t('users_department')}: ${activeDeptName}` : t('users_allDepartments')}
+            {/* Filter row: icon to open modal and summary + reset when active */}
+            <View style={styles.toolbarRow}>
+              <Pressable
+                onPress={() => filters.open()}
+                android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
+                style={styles.filterBtn}
+                accessibilityRole="button"
+                accessibilityLabel={t('users_filterButton', 'Фильтры')}
+              >
+                <Feather name="sliders" size={18} color={theme.colors.text} />
+              </Pressable>
+              {filterSummary ? (
+                <>
+                  <Text style={[styles.metaText, { flexShrink: 1 }]} numberOfLines={2}>
+                    {filterSummary}
                   </Text>
-                  <Text style={styles.chipHint}>{t('common_select')}</Text>
-                </Pressable>
-              </View>
-            )}
+                  <Pressable
+                    onPress={() => {
+                      filters.reset();
+                      filters.apply().then(() => {
+                        fetchUsers();
+                      });
+                    }}
+                  >
+                    <Text style={[styles.metaText, { color: theme.colors.primary, marginLeft: theme.spacing.sm }]}> {t('settings_sections_quiet_items_quiet_reset', 'Сбросить')}</Text>
+                  </Pressable>
+                </>
+              ) : null}
+            </View>
 
             <View style={styles.metaRow}>
               <Text style={styles.metaText}>
                 {debouncedQ ? `${t('users_found')}: ${filtered.length}` : `${t('users_total')}: ${list.length}`}
-                {useDepartments && activeDeptName ? ` • ${activeDeptName}` : ''}
               </Text>
             </View>
 
@@ -602,30 +727,24 @@ const renderItem = useCallback(
             ListEmptyComponent={<EmptyState />}
           />
 
-          {/* Department Picker Modal */}
-          {useDepartments && (
-            <SelectModal
-              visible={deptPickerVisible}
-              onClose={() => setDeptPickerVisible(false)}
-              title={t('users_filterByDepartment')}
-              searchable={false}
-              items={[
-                { id: '__all', label: t('users_allDepartments'), right: (deptFilter == null ? <Feather name="check" size={18} color={theme.colors.primary} /> : null) },
-                ...departments.map((d) => ({
-                  id: String(d.id),
-                  label: d.name,
-                  right: (String(deptFilter) === String(d.id) ? <Feather name="check" size={18} color={theme.colors.primary} /> : null),
-                })),
-              ]}
-              onSelect={(item) => {
-                if (!item) return;
-                if (item.id === '__all') setDeptFilter(null);
-                else setDeptFilter(String(item.id));
-                setDeptPickerVisible(false);
-              }}
-              maxHeightRatio={0.65}
-            />
-          )}
+          {/* Filter modal */}
+          <FilterModal
+            visible={filters.visible}
+            onClose={() => filters.close()}
+            schema={filterSchema}
+            values={filters.values}
+            onChange={(name, value) => {
+              filters.setValue(name, value);
+            }}
+            onReset={() => {
+              filters.reset();
+            }}
+            onApply={() => {
+              filters.apply().then(() => {
+                fetchUsers();
+              });
+            }}
+          />
         </View>
       </TouchableWithoutFeedback>
     </SafeAreaView>
