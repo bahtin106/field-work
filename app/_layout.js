@@ -19,6 +19,7 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { getUserRole } from '../lib/getUserRole';
 import logger from '../lib/logger';
 import { onLogout } from '../lib/logoutBus';
+import { forceNavigate, setNavigationReady } from '../lib/navigation';
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
@@ -428,25 +429,27 @@ function RootLayoutInner() {
     return () => detach?.();
   }, [isLoggedIn]);
 
-  // Объединенная логика навигации
+  // Форсированная навигация при изменении статуса авторизации
+  // Обновляем статус навигации
+  useEffect(() => {
+    if (rootNavigationState?.key) {
+      setNavigationReady(true);
+    }
+  }, [rootNavigationState]);
+
+  // Обрабатываем изменение статуса логина
   useEffect(() => {
     if (!ready || !rootNavigationState?.key) return;
 
     const seg0 = Array.isArray(segments) ? segments[0] : undefined;
     const inAuth = seg0 === '(auth)';
 
-    // Пропускаем первый маунт
-    if (!_authMountedRef.current) {
-      _authMountedRef.current = true;
-      return;
-    }
-
     if (!isLoggedIn && !inAuth) {
-      router.replace('/(auth)/login');
+      forceNavigate('/(auth)/login');
     } else if (isLoggedIn && inAuth) {
-      router.replace('/orders');
+      forceNavigate('/orders');
     }
-  }, [isLoggedIn, ready, segments, router, rootNavigationState]);
+  }, [isLoggedIn, ready, segments, rootNavigationState]);
 
   if (!ready) {
     return (
