@@ -1,3 +1,5 @@
+// app/users/[id]/edit.jsx
+
 import { AntDesign, Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
@@ -63,6 +65,60 @@ const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
 
 import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
 let ROLE_LABELS_LOCAL = ROLE_LABELS;
+
+// --- Local date formatter to avoid UTC shifts ---
+const __ymdLocal = (d) => {
+  if (!(d instanceof Date) || isNaN(d)) return null;
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+};
+// --- end helper ---
+
+// Robust local-date helpers to avoid UTC shifts and month off-by-one
+const __parseLocalYMD = (val) => {
+  try {
+    if (!val) return null;
+    if (val instanceof Date && !isNaN(val)) {
+      // Normalize to local date (strip time)
+      return new Date(val.getFullYear(), val.getMonth(), val.getDate());
+    }
+    const s = String(val);
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+      return new Date(y, mo - 1, d);
+    }
+    // Fallback: try Date(...) and normalize
+    const d = new Date(val);
+    return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  } catch { return null; }
+};
+
+const __coercePickerDate = (v) => {
+  try {
+    if (!v) return null;
+    if (v instanceof Date && !isNaN(v)) {
+      return new Date(v.getFullYear(), v.getMonth(), v.getDate());
+    }
+    if (typeof v === 'object' && v.year && v.month && v.day) {
+      // month comes 1..12 from pickers — convert to JS 0..11
+      return new Date(Number(v.year), Number(v.month) - 1, Number(v.day));
+    }
+    if (typeof v === 'string') {
+      // Accept "YYYY-MM-DD"
+      const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    }
+    const d = new Date(v);
+    return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  } catch { return null; }
+};
+// --- end local-date helpers ---
+
+
+
 try {
 const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
 if (fromEnv) ROLE_LABELS_LOCAL = { ...ROLE_LABELS_LOCAL, ...JSON.parse(fromEnv) };
@@ -623,7 +679,7 @@ const isDirty = useMemo(() => {
    lastName: lastName.trim(),
    email: email.trim(),
    phone: String(phone).replace(/\D/g, '') || '',
-   birthdate: birthdate ? birthdate.toISOString().slice(0, 10) : null,
+   birthdate: birthdate ? __ymdLocal(birthdate) : null,
    role,
    newPassword: newPassword || null,
    departmentId: departmentId || null,
@@ -741,7 +797,7 @@ const proceedSave = async () => {
   setSaving(true);
   setErr('');
   toastInfo(t('toast_saving'), { sticky: true });
-  const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: (meIsAdmin && !(meId && meId === userId)) ? role : undefined };
+  const payload = { first_name: firstName.trim(), last_name: lastName.trim(), phone: String(phone || '').replace(/\D/g, '') || null, birthdate: birthdate ? __ymdLocal(birthdate) : null, department_id: meIsAdmin ? (departmentId || null) : undefined, role: (meIsAdmin && !(meId && meId === userId)) ? role : undefined };
   Object.keys(payload).forEach(k => payload[k] === undefined && delete payload[k]);
   const { data: updRows, error: updProfileErr } = await supabase
    .from(TABLES.profiles)
@@ -787,7 +843,7 @@ catch (e) { }
    lastName: lastName.trim(),
    email: String(email || '').trim(),
    phone: String(phone || '').replace(/\D/g, '') || '',
-   birthdate: birthdate ? String(new Date(birthdate).toISOString().slice(0, 10)) : null,
+   birthdate: birthdate ? __ymdLocal(birthdate) : null,
    role,
    newPassword: null,
    departmentId: departmentId || null,
@@ -1576,8 +1632,27 @@ if (loading || !meLoaded) {
       initial={birthdate || new Date()}
       onApply={(dateObj, extra) => {
         try {
-          const d = new Date(dateObj);
-          setBirthdate(d);
+          // Preserve local date at 12:00 to avoid TZ rollbacks/forwards
+          let d = null;
+          const makeLocalNoon = (y, m, da) => new Date(Number(y), Number(m), Number(da), 12, 0, 0, 0);
+
+          if (dateObj instanceof Date && !isNaN(dateObj)) {
+            d = makeLocalNoon(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+          } else if (dateObj && typeof dateObj === 'object' && 'year' in dateObj && 'month' in dateObj && 'day' in dateObj) {
+            // Month may be 0..11 (from our DateTimeModal) — keep as-is
+            const y = Number(dateObj.year);
+            let m = Number(dateObj.month);
+            const da = Number(dateObj.day);
+            if (m >= 1 && m <= 12 && extra && extra.month == null) m = m - 1; // defensive: only if clearly 1..12 and no extra.month
+            d = makeLocalNoon(y, m, da);
+          } else if (typeof dateObj === 'string') {
+            const m = dateObj.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (m) d = makeLocalNoon(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+          } else {
+            const tmp = new Date(dateObj);
+            if (!isNaN(tmp)) d = makeLocalNoon(tmp.getFullYear(), tmp.getMonth(), tmp.getDate());
+          }
+          if (d && !isNaN(d)) setBirthdate(d);
           if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
         } finally {
           setDobModalVisible(false);

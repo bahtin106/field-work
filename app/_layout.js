@@ -81,6 +81,9 @@ function RootLayoutInner() {
   const rootNavigationState = useRootNavigationState();
   const appState = useRef(AppState.currentState);
 
+  // Guard to avoid initial redirect flicker on first paint
+  const didInitRef = useRef(false);
+
   const splashHiddenRef = useRef(false);
   const hideSplashNow = useCallback(async () => {
     if (splashHiddenRef.current) return;
@@ -267,12 +270,18 @@ function RootLayoutInner() {
     if (!rootNavigationState?.key) return;
     const seg0 = Array.isArray(segments) ? segments[0] : undefined;
     const inAuth = seg0 === '(auth)';
+    // iOS fix: only skip the FIRST unauth redirect to login (to avoid flicker),
+    // but still allow redirect to /orders immediately if user is already logged in.
+    if (!didInitRef.current) {
+      didInitRef.current = true;
+      if (!isLoggedIn && !inAuth) return;
+    }
     if (!isLoggedIn && !inAuth) {
       try { router.replace('/(auth)/login'); } catch {}
       return;
     }
     if (isLoggedIn && inAuth) {
-      try { router.replace('/orders/index'); } catch {}
+      try { router.replace('/orders'); } catch {}
     }
   }, [isLoggedIn, ready, segments, router, rootNavigationState]);
 
