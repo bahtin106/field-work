@@ -1,14 +1,14 @@
 // components/universalhome.jsx
-import React, { useMemo, useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useTheme } from '../theme/ThemeProvider';
-import { supabase } from '../lib/supabase';
-import { usePermissions } from '../lib/permissions';
-import Card from './ui/Card';
-import Button from './ui/Button';
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { usePermissions } from '../lib/permissions';
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../theme/ThemeProvider';
+import Button from './ui/Button';
+import Card from './ui/Card';
 
 function isUuid(s) {
   return (
@@ -165,7 +165,20 @@ export default function UniversalHome({ role }) {
     try {
       await supabase.auth.signOut();
       await qc.clear();
-      // Не вызываем router.replace — переход произойдёт автоматически через onAuthStateChange
+      // Принудительно перенаправляем на страницу логина сразу после signOut.
+      // Некоторым устройствам/сетапам onAuthStateChange может обрабатываться с задержкой,
+      // поэтому делаем небольшой setTimeout чтобы избежать гонки и обеспечить UX.
+      try {
+        setTimeout(() => {
+          try {
+            router.replace('/(auth)/login');
+          } catch (err) {
+            console.warn('router.replace after logout failed:', err);
+          }
+        }, 50);
+      } catch (err) {
+        console.warn('scheduling router.replace failed:', err);
+      }
     } catch (e) {
       console.warn('Logout error:', e);
     }

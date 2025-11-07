@@ -196,80 +196,91 @@ function RootLayoutInner() {
 
     initializeApp();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
+    let subscription = null;
+    try {
+      const onAuth = supabase.auth.onAuthStateChange(async (_event, session) => {
+        if (!mounted) return;
 
-      // Always try to get authoritative session state from supabase
-      let currentSession = session;
-      try {
-        const res = await supabase.auth.getSession();
-        currentSession = res?.data?.session ?? currentSession;
-      } catch (e) {
-        logger.warn('onAuthStateChange getSession error:', e?.message || e);
-      }
-
-      try {
-        // Clear cache to avoid showing stale data after auth change
-        await queryClient.clear();
-      } catch (e) {
-        logger.warn('queryClient.clear error:', e?.message || e);
-      }
-
-      const logged = !!currentSession?.user;
-      setIsLoggedIn(logged);
-      setSessionReady(true);
-      if (!appReady) setAppReady(true);
-
-      if (!logged) {
+        // Always try to get authoritative session state from supabase
+        let currentSession = session;
         try {
-          await persister.removeClient?.();
+          const res = await supabase.auth.getSession();
+          currentSession = res?.data?.session ?? currentSession;
         } catch (e) {
-          logger.warn('persister.removeClient error:', e?.message || e);
+          logger.warn('onAuthStateChange getSession error:', e?.message || e);
         }
-        // clear role when logged out
-        if (mounted) setRole(null);
-        // Ensure we navigate to login after sign-out (some signOut flows don't trigger immediate UI redirects)
+
         try {
-          router.replace('/(auth)/login');
+          // Clear cache to avoid showing stale data after auth change
+          await queryClient.clear();
         } catch (e) {
-          logger.warn('router.replace (on logout) error:', e?.message || e);
+          logger.warn('queryClient.clear error:', e?.message || e);
         }
-        return;
-      }
 
-      // On login: ensure locale and role are loaded and queries refreshed
-      try {
-        const code = await Promise.race([
-          loadUserLocale(),
-          new Promise((resolve) => setTimeout(() => resolve(null), LOCALE_TIMEOUT)),
-        ]);
-        if (code) await setLocale(code);
-      } catch (e) {
-        logger.warn('loadUserLocale (onAuth) error:', e?.message || e);
-      }
+        const logged = !!currentSession?.user;
+        setIsLoggedIn(logged);
+        setSessionReady(true);
+        if (!appReady) setAppReady(true);
 
-      try {
-        const userRolePromise = getUserRole();
-        const timeoutPromise = new Promise((resolve) =>
-          setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
-        );
-        const userRole = await Promise.race([userRolePromise, timeoutPromise]);
-        if (mounted) setRole(userRole);
-      } catch (e) {
-        logger.warn('getUserRole (onAuth) error:', e?.message || e);
-        if (mounted) setRole(null);
-      }
+        if (!logged) {
+          try {
+            await persister.removeClient?.();
+          } catch (e) {
+            logger.warn('persister.removeClient error:', e?.message || e);
+          }
+          // clear role when logged out
+          if (mounted) setRole(null);
+          // Ensure we navigate to login after sign-out (some signOut flows don't trigger immediate UI redirects)
+          try {
+            // small delay to avoid racing with navigation readiness
+            setTimeout(() => {
+              try {
+                router.replace('/(auth)/login');
+              } catch (err) {
+                logger.warn('router.replace (on logout) error:', err?.message || err);
+              }
+            }, 60);
+          } catch (e) {
+            logger.warn('router.replace (on logout) schedule error:', e?.message || e);
+          }
+          return;
+        }
 
-      // Trigger fresh queries for critical data
-      try {
-        queryClient.invalidateQueries({ queryKey: ['profile'] });
-        queryClient.invalidateQueries({ queryKey: ['userRole'] });
-      } catch (e) {
-        logger.warn('invalidateQueries error:', e?.message || e);
-      }
-    });
+        // On login: ensure locale and role are loaded and queries refreshed
+        try {
+          const code = await Promise.race([
+            loadUserLocale(),
+            new Promise((resolve) => setTimeout(() => resolve(null), LOCALE_TIMEOUT)),
+          ]);
+          if (code) await setLocale(code);
+        } catch (e) {
+          logger.warn('loadUserLocale (onAuth) error:', e?.message || e);
+        }
+
+        try {
+          const userRolePromise = getUserRole();
+          const timeoutPromise = new Promise((resolve) =>
+            setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
+          );
+          const userRole = await Promise.race([userRolePromise, timeoutPromise]);
+          if (mounted) setRole(userRole);
+        } catch (e) {
+          logger.warn('getUserRole (onAuth) error:', e?.message || e);
+          if (mounted) setRole(null);
+        }
+
+        // Trigger fresh queries for critical data
+        try {
+          queryClient.invalidateQueries({ queryKey: ['profile'] });
+          queryClient.invalidateQueries({ queryKey: ['userRole'] });
+        } catch (e) {
+          logger.warn('invalidateQueries error:', e?.message || e);
+        }
+      });
+      subscription = onAuth?.data?.subscription ?? null;
+    } catch (e) {
+      logger.warn('onAuthStateChange subscribe error:', e?.message || e);
+    }
 
     const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
       if (appState.current?.match(/inactive|background/) && nextAppState === 'active' && ready) {
@@ -280,8 +291,16 @@ function RootLayoutInner() {
 
     return () => {
       mounted = false;
-      subscription.unsubscribe();
-      appStateSubscription.remove();
+      try {
+        subscription?.unsubscribe?.();
+      } catch (e) {
+        logger.warn('subscription unsubscribe error:', e?.message || e);
+      }
+      try {
+        appStateSubscription?.remove?.();
+      } catch (e) {
+        logger.warn('appStateSubscription remove error:', e?.message || e);
+      }
     };
   }, []);
 
