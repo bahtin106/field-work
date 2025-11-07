@@ -29,13 +29,25 @@ export default function DateTimeModal({
   const pad2 = (n) => String(n).padStart(2,'0');
 
   const parseInitial = (v) => {
-    if (v instanceof Date && !isNaN(v)) return new Date(v.getTime());
-    if (typeof v === 'string' || typeof v === 'number') {
-      const d = new Date(v);
-      if (!isNaN(d)) return d;
+  try {
+    if (v instanceof Date && !isNaN(v)) {
+      return new Date(v.getFullYear(), v.getMonth(), v.getDate(), v.getHours(), v.getMinutes(), 0, 0);
     }
-    return new Date();
-  };
+    if (typeof v === 'string') {
+      const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+        return new Date(y, mo - 1, d, 12, 0, 0, 0);
+      }
+    }
+    if (typeof v === 'number') {
+      const d = new Date(v);
+      return isNaN(d) ? new Date() : d;
+    }
+    const d = new Date(v);
+    return isNaN(d) ? new Date() : d;
+  } catch { return new Date(); }
+};
   const baseDate = parseInitial(initial);
 
   const MONTHS_ABBR = Array.from({ length: 12 }, (_, i) =>
@@ -48,9 +60,11 @@ export default function DateTimeModal({
 );
 
   const daysInMonth = (m, yNullable) => {
-    if (m === 1 && (yNullable == null)) return 29;
-    const y = yNullable ?? baseDate.getFullYear();
-    return new Date(y, m + 1, 0).getDate();
+    // Robust: month 0..11, when year is omitted use leap year 2000 to allow Feb 29,
+    // and always compute via JS Date to avoid off-by-one.
+    const month = Number.isFinite(m) ? Number(m) : 0;
+    const year = (yNullable == null) ? 2000 : Number(yNullable);
+    return new Date(year, month + 1, 0).getDate();
   };
   const years = React.useMemo(() => { const y = new Date().getFullYear(); return range(1900, y+10); }, []);
   const [dYearIdx, setDYearIdx] = React.useState(0);
@@ -58,7 +72,11 @@ export default function DateTimeModal({
   const [dDayIdx, setDDayIdx] = React.useState(0);
 
   const [withYear, setWithYear] = React.useState(omitYearDefault);
-  const days = React.useMemo(() => range(1, daysInMonth(dMonthIdx, withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null)), [dMonthIdx, dYearIdx, years, withYear]);
+  const days = React.useMemo(() => {
+    const selMonth = Math.max(0, Math.min(11, Number(dMonthIdx) || 0));
+    const selYear = withYear ? (Number(years[dYearIdx]) || baseDate.getFullYear()) : null;
+    return range(1, daysInMonth(selMonth, selYear));
+  }, [dMonthIdx, dYearIdx, years, withYear]);
 
   const minutesData = React.useMemo(() => range(0, 59).filter(m => m % step === 0), [step]);
   const [tHourIdx, setTHourIdx] = React.useState(0);
@@ -102,14 +120,14 @@ export default function DateTimeModal({
     const hour  = tHourIdx;
     const min   = minutesData[tMinuteIdx] ?? 0;
     let out;
-    if (mode === 'date') out = new Date(year, month, day, 0, 0, 0, 0);
+    if (mode === 'date') out = new Date(year, month, day, 12, 0, 0, 0);
     else if (mode === 'time') {
       const now = new Date();
       out = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, min, 0, 0);
     } else {
       out = new Date(year, month, day, hour, min, 0, 0);
     }
-    onApply?.(out, { withYear, day: dDayIdx + 1, month: dMonthIdx + 1, year: withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null });
+    onApply?.(out, { withYear, day: dDayIdx + 1, month: dMonthIdx, year: withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null });
     onClose?.();
   };
 
@@ -169,7 +187,7 @@ export default function DateTimeModal({
             <View style={{ position:'relative', marginBottom: 10 }}>
               <View style={{ flexDirection:'row', justifyContent:'space-between', gap: innerGap, height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP }}>
                 <Wheel
-                  data={Array.from({length: (daysInMonth(dMonthIdx, withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null))}, (_,i)=>String(i+1))}
+                  data={days.map(String)}
                   activeColor={theme.colors.primary}
                   inactiveColor={theme.colors.textSecondary}
                   index={dDayIdx}
@@ -183,7 +201,10 @@ export default function DateTimeModal({
                   index={dMonthIdx}
                   onIndexChange={(i) => {
                     setDMonthIdx(i);
-                    setDDayIdx((d) => Math.min(d, daysInMonth(i, withYear ? (years[dYearIdx] || baseDate.getFullYear()) : null) - 1));
+                    setDDayIdx((d) => {
+                      const selYear = withYear ? (Number(years[dYearIdx]) || baseDate.getFullYear()) : null;
+                      return Math.min(d, daysInMonth(i, selYear) - 1);
+                    });
                   }}
                   width={W3}
                 />

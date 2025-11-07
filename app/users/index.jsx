@@ -26,8 +26,8 @@ import { useTheme } from '../../theme/ThemeProvider';
 import Button from '../../components/ui/Button';
 import UITextField from '../../components/ui/TextField';
 // Unified filter system: import our reusable components
-import FilterModal from '../../components/filters/FilterModal';
 import { useFilters } from '../../components/hooks/useFilters';
+import FiltersPanel from '../../components/filters/FiltersPanel';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
@@ -55,6 +55,29 @@ export default function UsersIndex() {
   useTranslation(); // subscribe to i18n changes without re-plumbing
   const { top: headerHeight } = useSafeAreaInsets();
   const router = useRouter();
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  const [departments, setDepartments] = useState([]);
+  const [useDepartments, setUseDepartments] = useState(false);
+  const [flagReady, setFlagReady] = useState(false);
+
+  const [filtersVisible, setFiltersVisible] = useState(false);
+
+
+  const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const filters = useFilters('users', { departments: [], roles: [], suspended: null }, { ttlHours: 0.003 }); // ~10.8s TTL to keep filters briefly after leaving the page
+  // Safe bridge for FiltersPanel -> useFilters API differences
+  const setFilterValue = useCallback((key, value) => {
+    if (filters && typeof filters.set === 'function') return filters.set(key, value);
+    if (filters && typeof filters.setValue === 'function') return filters.setValue(key, value);
+    if (filters && typeof filters.update === 'function') return filters.update(key, value);
+  }, [filters]);
+
+
+
 
   // keep Android navigation bar buttons readable while modals are open
   const applyNavBar = React.useCallback(async () => {
@@ -65,7 +88,8 @@ export default function UsersIndex() {
 
   React.useEffect(() => { applyNavBar(); }, [applyNavBar]);
 
-  const c = theme.colors;
+  const openFiltersPanel = React.useCallback(() => { setFiltersVisible(true); }, []);
+const c = theme.colors;
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
@@ -125,63 +149,8 @@ alignItems: 'center', justifyContent: 'center',
     emptyText: { color: c.textSecondary },
     // --- Departments UI
     toolbarRow: { marginTop: sz.xs, flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
-    chip: {
-      height: controlH, flex: 1, backgroundColor: c.surface, borderRadius: rad.lg, borderWidth: 1, borderColor: c.border,
-      paddingHorizontal: sz.sm, alignItems: 'center', justifyContent: 'space-between', flexDirection: 'row',
-    },
-    chipText: { color: c.text, fontSize: ty.sizes.sm },
-    chipHint: { color: c.textSecondary, fontSize: ty.sizes.xs },
-    modalOverlay: { flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-end' },
-    modalDim: { ...StyleSheet.absoluteFillObject, backgroundColor: theme.colors.overlay },
-    modalBackdrop: { flex: 1, justifyContent: 'flex-end' },
-    modalCard: {
-      backgroundColor: c.background, paddingTop: sz.sm, borderTopLeftRadius: rad.lg, borderTopRightRadius: rad.lg, maxHeight: '80%',
-      ...((theme.shadows && theme.shadows.level2 && theme.shadows.level2[Platform.OS]) || {}),
-    },
-    // Filter icon button: sized like a control, uses border and surface colors for consistency
-    filterBtn: {
-      width: controlH,
-      height: controlH,
-      backgroundColor: c.surface,
-      borderRadius: rad.lg,
-      borderWidth: 1,
-      borderColor: c.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    modalHeader: { paddingHorizontal: sz.lg, paddingBottom: sz.sm },
-    modalTitle: { color: c.text, fontWeight: ty.weight.bold, fontSize: ty.sizes.md },
-    divider: { height: 1, backgroundColor: c.border, marginVertical: sz.xs, marginHorizontal: sz.lg },
-    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: sz.lg, paddingVertical: sz.sm },
-    rowText: { color: c.text, fontSize: ty.sizes.md, flexShrink: 1 },
-    muted: { color: c.textSecondary },
-    applyBar: { padding: sz.lg, borderTopWidth: 1, borderTopColor: c.border, flexDirection: 'row', justifyContent: 'flex-end', columnGap: sz.sm },
-    ghostBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: rad.md, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
-    manageBtnText: { color: c.text, fontWeight: ty.weight.semibold },
-  }), [c, sz, ty, rad, controlH, theme.shadows]);
-
-  const [list, setList] = useState([]);
-  const [q, setQ] = useState('');
-  const [debouncedQ, setDebouncedQ] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-
-  // Company flag readiness gate to avoid UI flicker
-  const [flagReady, setFlagReady] = useState(false);
-
-  // Company feature flag: use_departments
-  const [useDepartments, setUseDepartments] = useState(false);
-
-  // Departments list for filter options
-  const [departments, setDepartments] = useState([]);
-
-  // Hook to manage all filter values and persist them across sessions
-  const filters = useFilters({
-    screenKey: 'users',
-    defaults: { departments: [], roles: [], suspended: null },
-    // keep default TTL (1h) for filter persistence
-  });
+    filterBtn: { height: controlH, width: controlH, borderRadius: controlH / 2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, backgroundColor: c.surface, marginRight: sz.sm },    // keep default TTL (1h) for filter persistence
+  }), [theme]);
 
   // Avoid fullscreen loader flicker after first content paint
   const hasShownContent = React.useRef(false);
@@ -618,7 +587,9 @@ const renderItem = useCallback(
         <View style={styles.loaderWrap}>
           <ActivityIndicator size="large" />
         </View>
-      </SafeAreaView>
+      
+          
+          </SafeAreaView>
     );
   }
 
@@ -670,7 +641,7 @@ const renderItem = useCallback(
             {/* Filter row: icon to open modal and summary + reset when active */}
             <View style={styles.toolbarRow}>
               <Pressable
-                onPress={() => filters.open()}
+                onPress={openFiltersPanel}
                 android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
                 style={styles.filterBtn}
                 accessibilityRole="button"
@@ -684,9 +655,19 @@ const renderItem = useCallback(
                     {filterSummary}
                   </Text>
                   <Pressable
-                    onPress={() => {
-                      filters.reset();
-                      filters.apply().then(() => {
+                onPress={() => {
+                      // Explicitly set defaults so persistence overwrites any previously saved filters
+                      if (setFilterValue) {
+                        setFilterValue('departments', []);
+                        setFilterValue('roles', []);
+                        setFilterValue('suspended', null);
+                      }
+                      // Ensure in-memory state mirrors defaults as well
+                      if (filters && typeof filters.reset === 'function') {
+                        filters.reset();
+                      }
+                      // Persist defaults so old filters do NOT resurrect on next mount
+                      Promise.resolve(filters && typeof filters.apply === 'function' ? filters.apply() : null).then(() => {
                         fetchUsers();
                       });
                     }}
@@ -727,26 +708,26 @@ const renderItem = useCallback(
             ListEmptyComponent={<EmptyState />}
           />
 
-          {/* Filter modal */}
-          <FilterModal
-            visible={filters.visible}
-            onClose={() => filters.close()}
-            schema={filterSchema}
-            values={filters.values}
-            onChange={(name, value) => {
-              filters.setValue(name, value);
-            }}
-            onReset={() => {
-              filters.reset();
-            }}
-            onApply={() => {
-              filters.apply().then(() => {
-                fetchUsers();
-              });
-            }}
-          />
+          
         </View>
       </TouchableWithoutFeedback>
+    
+          {/* DNS-like full-screen Filters Panel */}
+          <FiltersPanel
+            visible={filtersVisible}
+            onClose={() => setFiltersVisible(false)}
+            departments={useDepartments ? departments : []}
+            rolesOptions={Object.keys(ROLE_LABELS).map(r => ({ id: r, value: r, label: ROLE_LABELS[r] || r }))}
+            values={filters.values}
+            setValue={setFilterValue}
+            defaults={{ departments: [], roles: [], suspended: null }}
+            onReset={() => filters.reset()}
+            onApply={async () => {
+              await filters.apply();
+              setFiltersVisible(false);
+              fetchUsers();
+            }}
+          />
     </SafeAreaView>
   );
 }

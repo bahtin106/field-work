@@ -157,7 +157,7 @@ export default function UniversalHome({ role }) {
 
   // ====== Навигация ======
   const openSelfProfileEdit = () => { if (uid) router.push(`/users/${uid}`); };
-  const openAppSettings = () => router.push('/app_settings/AppSettings');
+  const openAppSettings = () => router.push('/app_settings/appsettings');
   const openCompanySettings = () => router.push('/company_settings');
   const openStats = () => router.push('/stats');
   const openCreateOrder = () => router.push('/orders/create-order');
