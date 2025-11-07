@@ -14,6 +14,7 @@ import 'react-native-gesture-handler';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import AuthNavigator from '../components/navigation/AuthNavigator';
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider from '../components/ui/ToastProvider';
 import { getUserRole } from '../lib/getUserRole';
@@ -98,9 +99,9 @@ function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);
   const { theme } = useTheme();
-  const router = useRouter();
-  const segments = useSegments();
-  const rootNavigationState = useRootNavigationState();
+  const _router = useRouter();
+  const _segments = useSegments();
+  const _rootNavigationState = useRootNavigationState();
   const appState = useRef(AppState.currentState);
 
   // Guard to avoid initial redirect flicker on first paint
@@ -250,7 +251,7 @@ function RootLayoutInner() {
             setTimeout(() => {
               try {
                 logger?.warn?.('onAuthStateChange: calling router.replace to /(auth)/login');
-                router.replace('/(auth)/login');
+                _router.replace('/(auth)/login');
               } catch (err) {
                 logger.warn('router.replace (on logout) error:', err?.message || err);
               }
@@ -326,7 +327,7 @@ function RootLayoutInner() {
             if (!appReady) setAppReady(true);
           }
           try {
-            router.replace('/(auth)/login');
+            _router.replace('/(auth)/login');
           } catch (e) {
             logger.warn('logoutBus: router.replace failed:', e?.message || e);
           }
@@ -360,56 +361,39 @@ function RootLayoutInner() {
     if (ready) hideSplashNow();
   }, [ready, hideSplashNow]);
 
-  // Единая логика навигации и эффектов
-  useEffect(() => {
-    if (!ready || !rootNavigationState?.key) return;
-
-    // Обработка навигации
-    const handleNavigation = async () => {
-      const seg0 = Array.isArray(segments) ? segments[0] : undefined;
-      const inAuth = seg0 === '(auth)';
-
-      if (!isLoggedIn) {
-        // При выходе сначала очищаем все состояние
-        try {
-          await queryClient.clear();
-          await persister.removeClient();
-          setRole(null);
-        } catch (e) {
-          logger.warn('Logout cleanup error:', e);
-        }
-
-        // Затем делаем навигацию
-        if (!inAuth) {
-          logger.warn('Forcing navigation to login...');
-          await router.replace('/(auth)/login');
-        }
-      } else if (inAuth) {
-        logger.warn('Forcing navigation to orders...');
-        await router.replace('/orders');
+  // Обработчик успешной навигации
+  const handleNavigationComplete = useCallback(async () => {
+    // Обновляем состояние только если это выход
+    if (!isLoggedIn) {
+      try {
+        await queryClient.clear();
+        await persister.removeClient();
+        setRole(null);
+      } catch (e) {
+        logger.warn('Logout cleanup error:', e);
       }
-    };
-
-    handleNavigation();
-
-    // Инициализация push-уведомлений для залогиненных пользователей
-    if (isLoggedIn) {
-      let detach;
-      (async () => {
-        try {
-          const { default: Constants } = await import('expo-constants');
-          if (Constants?.appOwnership === 'expo') return;
-          const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
-          const token = await registerAndSavePushToken();
-          logger.warn('✅ Expo push token (saved):', token);
-          detach = attachNotificationLogs();
-        } catch (e) {
-          logger.warn('Push init error:', e);
-        }
-      })();
-      return () => detach?.();
     }
-  }, [isLoggedIn, ready, segments, rootNavigationState]);
+  }, [isLoggedIn]);
+
+  // Инициализация push-уведомлений для залогиненных пользователей
+  useEffect(() => {
+    if (!isLoggedIn) return;
+
+    let detach;
+    (async () => {
+      try {
+        const { default: Constants } = await import('expo-constants');
+        if (Constants?.appOwnership === 'expo') return;
+        const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
+        const token = await registerAndSavePushToken();
+        logger.warn('✅ Expo push token (saved):', token);
+        detach = attachNotificationLogs();
+      } catch (e) {
+        logger.warn('Push init error:', e);
+      }
+    })();
+    return () => detach?.();
+  }, [isLoggedIn]);
 
   // Инициализация обработки клавиатуры
   useEffect(() => {
@@ -475,6 +459,10 @@ function RootLayoutInner() {
               </Stack>
               {isLoggedIn && role && <BottomNav />}
               {isLoggedIn ? <LastSeenTracker /> : null}
+              <AuthNavigator
+                isLoggedIn={isLoggedIn}
+                onNavigationComplete={handleNavigationComplete}
+              />
             </Animated.View>
           </SafeAreaView>
         </SettingsProvider>
