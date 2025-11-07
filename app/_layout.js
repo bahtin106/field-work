@@ -103,7 +103,7 @@ function RootLayoutInner() {
   const appState = useRef(AppState.currentState);
 
   // Guard to avoid initial redirect flicker on first paint
-  const didInitRef = useRef(false);
+  const _didInitRef = useRef(false);
   // Marker to skip auth-driven redirects during initial mount
   const _authMountedRef = useRef(false);
 
@@ -428,30 +428,23 @@ function RootLayoutInner() {
     return () => detach?.();
   }, [isLoggedIn]);
 
+  // Объединенная логика навигации
   useEffect(() => {
-    if (!ready) return;
-    if (!rootNavigationState?.key) return;
+    if (!ready || !rootNavigationState?.key) return;
+
     const seg0 = Array.isArray(segments) ? segments[0] : undefined;
     const inAuth = seg0 === '(auth)';
-    // Обновлённая логика: один redirect на старте, без двойного перехода
-    if (!didInitRef.current) {
-      didInitRef.current = true;
+
+    // Пропускаем первый маунт
+    if (!_authMountedRef.current) {
+      _authMountedRef.current = true;
       return;
     }
+
     if (!isLoggedIn && !inAuth) {
-      try {
-        router.replace('/(auth)/login');
-      } catch (e) {
-        logger.warn('router.replace -> login error:', e?.message || e);
-      }
-      return;
-    }
-    if (isLoggedIn && inAuth) {
-      try {
-        router.replace('/orders');
-      } catch (e) {
-        logger.warn('router.replace -> orders error:', e?.message || e);
-      }
+      router.replace('/(auth)/login');
+    } else if (isLoggedIn && inAuth) {
+      router.replace('/orders');
     }
   }, [isLoggedIn, ready, segments, router, rootNavigationState]);
 

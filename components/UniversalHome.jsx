@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import logger from '../lib/logger';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeProvider';
@@ -163,64 +164,11 @@ export default function UniversalHome({ role }) {
   const openCreateOrder = () => router.push('/orders/create-order');
   const handleLogout = async () => {
     try {
-      logger?.warn?.('logout: initiating');
-    } catch {}
-    try {
-      await supabase.auth.signOut();
-      try {
-        // clear react-query cache (may be synchronous)
-        await qc.clear();
-      } catch (e) {
-        console.warn('qc.clear error after signOut:', e);
-      }
-      try {
-        logger?.warn?.('logout: signOut completed, scheduling router.replace');
-      } catch {}
-      // Принудительно перенаправляем на страницу логина сразу после signOut.
-      // Некоторым устройствам/сетапам onAuthStateChange может обрабатываться с задержкой,
-      // поэтому делаем небольшой setTimeout чтобы избежать гонки и обеспечить UX.
-      try {
-        // use helper to centralize logout behavior
-        const { logout } = await import('../lib/auth');
-        await logout({ qc, router });
-        // Extra aggressive fallback: try calling global router directly and ensure replace is attempted
-        try {
-          const mod = await import('expo-router');
-          const grouter = mod?.router;
-          if (grouter && typeof grouter.replace === 'function') {
-            grouter.replace('/(auth)/login');
-          }
-        } catch (err) {
-          logger?.warn?.('logout: failed to call global router fallback:', err?.message || err);
-        }
-        try {
-          // attempt local router replace again after small delay
-          globalThis?.setTimeout?.(() => {
-            try {
-              router?.replace?.('/(auth)/login');
-            } catch (e) {
-              logger?.warn?.('logout: final local router.replace failed:', e?.message || e);
-            }
-          }, 120);
-        } catch (e) {
-          void e;
-        }
-      } catch (err) {
-        logger?.warn?.('logout helper failed, falling back to local replace:', err?.message || err);
-        try {
-          globalThis?.setTimeout?.(() => {
-            try {
-              router.replace('/(auth)/login');
-            } catch (e) {
-              logger?.warn?.('fallback router.replace failed:', e?.message || e);
-            }
-          }, 60);
-        } catch (e) {
-          logger?.warn?.('scheduling fallback router.replace failed:', e?.message || e);
-        }
-      }
+      logger.warn('Начинаем выход...');
+      const { logout } = await import('../lib/auth');
+      await logout({ qc, router });
     } catch (e) {
-      console.warn('Logout error:', e);
+      logger.warn('Ошибка при выходе:', e);
     }
   };
 
