@@ -115,7 +115,19 @@ export default function LoginScreen() {
 
     await waitForSession();
     setLoading(false);
-    router.replace('/orders/index');
+    // navigate to home; use small delay to avoid racing with RootLayout mount/navigation readiness
+    try {
+      setTimeout(() => {
+        try {
+          router.replace('/orders');
+        } catch (err) {
+          console.warn('router.replace after login failed:', err);
+        }
+      }, 80);
+    } catch (err) {
+      console.warn('scheduling router.replace failed:', err);
+      router.replace('/orders');
+    }
   };
 
   const isDisabled = !email || !password || loading;
