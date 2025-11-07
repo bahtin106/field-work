@@ -26,7 +26,13 @@ export default function BillingScreen() {
     <Screen background="background">
       <Card>
         <View style={{ gap: theme.spacing.sm }}>
-          <Text style={{ color: theme.colors.text, fontSize: theme.typography.sizes.lg, fontWeight: theme.typography.weight.bold }}>
+          <Text
+            style={{
+              color: theme.colors.text,
+              fontSize: theme.typography.sizes.lg,
+              fontWeight: theme.typography.weight.bold,
+            }}
+          >
             {t('billing_placeholder_title')}
           </Text>
           <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.md }}>

@@ -101,13 +101,16 @@ export function useFilters({ screenKey, defaults = {}, ttl = DEFAULT_TTL }) {
   }, [storageKey, values]);
 
   // Expose API to consumer
-  return useMemo(() => ({
-    visible,
-    open,
-    close,
-    values,
-    setValue,
-    reset,
-    apply,
-  }), [visible, open, close, values, setValue, reset, apply]);
+  return useMemo(
+    () => ({
+      visible,
+      open,
+      close,
+      values,
+      setValue,
+      reset,
+      apply,
+    }),
+    [visible, open, close, values, setValue, reset, apply],
+  );
 }

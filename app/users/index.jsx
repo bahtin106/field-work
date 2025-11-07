@@ -38,7 +38,9 @@ function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
     if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
       return color + alpha;
     }
     const rgb = color.match(/^rgb\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$/i);
@@ -65,19 +67,25 @@ export default function UsersIndex() {
 
   const [filtersVisible, setFiltersVisible] = useState(false);
 
-
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const filters = useFilters('users', { departments: [], roles: [], suspended: null }, { ttlHours: 0.003 }); // ~10.8s TTL to keep filters briefly after leaving the page
+  // Initialize filters with a short TTL (~10 seconds). 1 hour is too long for this use case.
+  // When filters are applied they will persist for roughly 10 seconds and then expire.
+  // Note: ttlHours accepts hours, so 0.003 ≈ 10.8 seconds.
+  const filters = useFilters(
+    'users',
+    { departments: [], roles: [], suspended: null },
+    { ttlHours: 0.003 },
+  );
   // Safe bridge for FiltersPanel -> useFilters API differences
-  const setFilterValue = useCallback((key, value) => {
-    if (filters && typeof filters.set === 'function') return filters.set(key, value);
-    if (filters && typeof filters.setValue === 'function') return filters.setValue(key, value);
-    if (filters && typeof filters.update === 'function') return filters.update(key, value);
-  }, [filters]);
-
-
-
+  const setFilterValue = useCallback(
+    (key, value) => {
+      if (filters && typeof filters.set === 'function') return filters.set(key, value);
+      if (filters && typeof filters.setValue === 'function') return filters.setValue(key, value);
+      if (filters && typeof filters.update === 'function') return filters.update(key, value);
+    },
+    [filters],
+  );
 
   // keep Android navigation bar buttons readable while modals are open
   const applyNavBar = React.useCallback(async () => {
@@ -86,71 +94,164 @@ export default function UsersIndex() {
     } catch {}
   }, [theme.mode]);
 
-  React.useEffect(() => { applyNavBar(); }, [applyNavBar]);
+  React.useEffect(() => {
+    applyNavBar();
+  }, [applyNavBar]);
 
-  const openFiltersPanel = React.useCallback(() => { setFiltersVisible(true); }, []);
-const c = theme.colors;
+  const openFiltersPanel = React.useCallback(() => {
+    setFiltersVisible(true);
+  }, []);
+  const c = theme.colors;
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
-  const controlH = (theme.components?.input?.height ?? (theme.components?.listItem?.height ?? 48));
-  const btnH = (theme.components?.button?.sizes?.md?.h ?? (theme.components?.row?.minHeight ?? (theme.components?.listItem?.height ?? 48)));
+  const controlH = theme.components?.input?.height ?? theme.components?.listItem?.height ?? 48;
+  const btnH =
+    theme.components?.button?.sizes?.md?.h ??
+    theme.components?.row?.minHeight ??
+    theme.components?.listItem?.height ??
+    48;
 
-
-  const styles = React.useMemo(() => StyleSheet.create({
-    safe: { flex: 1, backgroundColor: c.background },
-    container: { flex: 1 },
-    loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: c.background },
-    header: { paddingHorizontal: sz.lg, paddingTop: Math.max(4, sz.xs), paddingBottom: sz.sm },
-    title: { fontSize: ty.sizes.xl, fontWeight: ty.weight.bold, color: c.text, marginBottom: sz.sm },
-    searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
-    searchBox: {
-      flex: 1, position: 'relative', backgroundColor: c.inputBg, borderRadius: rad.lg, borderWidth: 1, borderColor: c.inputBorder,
-      height: btnH, justifyContent: 'center', paddingLeft: sz.sm, paddingRight: sz.md, },
-    clearBtn: {
-      width: 28, height: 28, borderRadius: 14,
-backgroundColor: withAlpha(c.border, 0.5),
-alignItems: 'center', justifyContent: 'center',
-      marginRight: -4,
-    },
-    clearBtnText: { fontSize: 20, lineHeight: 20, color: c.textSecondary, fontWeight: ty.weight.semibold, marginTop: -2 },
-    searchMask: { position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth, backgroundColor: c.inputBg, borderBottomLeftRadius: rad.lg, borderBottomRightRadius: rad.lg },
-    metaRow: { marginTop: sz.xs },
-    metaText: { fontSize: ty.sizes.sm, color: c.textSecondary },
-    errorCard: {
-      marginTop: sz.xs, backgroundColor: withAlpha(c.danger, 0.13), borderColor: withAlpha(c.danger, 0.2),
-      borderWidth: 1, paddingHorizontal: sz.sm, paddingVertical: sz.xs, borderRadius: rad.md,
-    },
-    errorText: { color: c.danger, fontSize: ty.sizes.sm },
-    listContent: { paddingHorizontal: sz.lg, paddingBottom: theme.components?.scrollView?.paddingBottom ?? sz.xl },
-    card: {
-      position: 'relative',
-      backgroundColor: c.surface, padding: sz.sm, borderRadius: rad.xl, marginBottom: sz.sm,
-      ...((theme.shadows && theme.shadows.card && (Platform.OS === 'ios' ? theme.shadows.card.ios : theme.shadows.card.android)) || {}),
-    },
-    cardSuspended: {
-  backgroundColor: theme.colors.surfaceMutedDanger,
-  borderWidth: 0,
-  borderColor: 'transparent',
-},
-    cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    cardTextWrap: { flexShrink: 1, paddingRight: sz.sm },
-    cardTitle: { fontSize: ty.sizes.md, fontWeight: ty.weight.semibold, color: c.text },
-    rolePill: { paddingHorizontal: sz.sm, paddingVertical: 6, borderRadius: rad.md, borderWidth: 1 },
-    rolePillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold },
-    rolePillTopRight: { position: 'absolute', top: sz.xs, right: sz.xs, zIndex: 2 },
-    suspendedPill: {
-      position: 'absolute', right: sz.xs, bottom: sz.xs, zIndex: 2,
-      paddingHorizontal: sz.sm, paddingVertical: 6, borderRadius: rad.md, borderWidth: 1,
-      backgroundColor: withAlpha(c.danger, 0.13), borderColor: withAlpha(c.danger, 0.2),
-    },
-    suspendedPillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold, color: c.danger },
-    emptyWrap: { padding: sz.lg, alignItems: 'center' },
-    emptyText: { color: c.textSecondary },
-    // --- Departments UI
-    toolbarRow: { marginTop: sz.xs, flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
-    filterBtn: { height: controlH, width: controlH, borderRadius: controlH / 2, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: c.border, backgroundColor: c.surface, marginRight: sz.sm },    // keep default TTL (1h) for filter persistence
-  }), [theme]);
+  const styles = React.useMemo(
+    () =>
+      StyleSheet.create({
+        safe: { flex: 1, backgroundColor: c.background },
+        container: { flex: 1 },
+        loaderWrap: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: c.background,
+        },
+        header: { paddingHorizontal: sz.lg, paddingTop: Math.max(4, sz.xs), paddingBottom: sz.sm },
+        title: {
+          fontSize: ty.sizes.xl,
+          fontWeight: ty.weight.bold,
+          color: c.text,
+          marginBottom: sz.sm,
+        },
+        searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
+        searchBox: {
+          flex: 1,
+          position: 'relative',
+          backgroundColor: c.inputBg,
+          borderRadius: rad.lg,
+          borderWidth: 1,
+          borderColor: c.inputBorder,
+          height: btnH,
+          justifyContent: 'center',
+          paddingLeft: sz.sm,
+          paddingRight: sz.md,
+        },
+        clearBtn: {
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+          backgroundColor: withAlpha(c.border, 0.5),
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginRight: -4,
+        },
+        clearBtnText: {
+          fontSize: 20,
+          lineHeight: 20,
+          color: c.textSecondary,
+          fontWeight: ty.weight.semibold,
+          marginTop: -2,
+        },
+        searchMask: {
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: StyleSheet.hairlineWidth,
+          backgroundColor: c.inputBg,
+          borderBottomLeftRadius: rad.lg,
+          borderBottomRightRadius: rad.lg,
+        },
+        metaRow: { marginTop: sz.xs },
+        metaText: { fontSize: ty.sizes.sm, color: c.textSecondary },
+        errorCard: {
+          marginTop: sz.xs,
+          backgroundColor: withAlpha(c.danger, 0.13),
+          borderColor: withAlpha(c.danger, 0.2),
+          borderWidth: 1,
+          paddingHorizontal: sz.sm,
+          paddingVertical: sz.xs,
+          borderRadius: rad.md,
+        },
+        errorText: { color: c.danger, fontSize: ty.sizes.sm },
+        listContent: {
+          paddingHorizontal: sz.lg,
+          paddingBottom: theme.components?.scrollView?.paddingBottom ?? sz.xl,
+        },
+        card: {
+          position: 'relative',
+          backgroundColor: c.surface,
+          padding: sz.sm,
+          borderRadius: rad.xl,
+          marginBottom: sz.sm,
+          ...((theme.shadows &&
+            theme.shadows.card &&
+            (Platform.OS === 'ios' ? theme.shadows.card.ios : theme.shadows.card.android)) ||
+            {}),
+        },
+        cardSuspended: {
+          backgroundColor: theme.colors.surfaceMutedDanger,
+          borderWidth: 0,
+          borderColor: 'transparent',
+        },
+        cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+        cardTextWrap: { flexShrink: 1, paddingRight: sz.sm },
+        cardTitle: { fontSize: ty.sizes.md, fontWeight: ty.weight.semibold, color: c.text },
+        rolePill: {
+          paddingHorizontal: sz.sm,
+          paddingVertical: 6,
+          borderRadius: rad.md,
+          borderWidth: 1,
+        },
+        rolePillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold },
+        rolePillTopRight: { position: 'absolute', top: sz.xs, right: sz.xs, zIndex: 2 },
+        suspendedPill: {
+          position: 'absolute',
+          right: sz.xs,
+          bottom: sz.xs,
+          zIndex: 2,
+          paddingHorizontal: sz.sm,
+          paddingVertical: 6,
+          borderRadius: rad.md,
+          borderWidth: 1,
+          backgroundColor: withAlpha(c.danger, 0.13),
+          borderColor: withAlpha(c.danger, 0.2),
+        },
+        suspendedPillText: {
+          fontSize: ty.sizes.xs,
+          fontWeight: ty.weight.semibold,
+          color: c.danger,
+        },
+        emptyWrap: { padding: sz.lg, alignItems: 'center' },
+        emptyText: { color: c.textSecondary },
+        // --- Departments UI
+        toolbarRow: {
+          marginTop: sz.xs,
+          flexDirection: 'row',
+          alignItems: 'center',
+          columnGap: sz.sm,
+        },
+        filterBtn: {
+          height: controlH,
+          width: controlH,
+          borderRadius: controlH / 2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+          borderColor: c.border,
+          backgroundColor: c.surface,
+          marginRight: sz.sm,
+        }, // keep default TTL (1h) for filter persistence
+      }),
+    [theme],
+  );
 
   // Avoid fullscreen loader flicker after first content paint
   const hasShownContent = React.useRef(false);
@@ -158,7 +259,10 @@ alignItems: 'center', justifyContent: 'center',
   // --- Debounce for search (theme.timings)
   useEffect(() => {
     const ms = Number(theme.timings?.backDelayMs) || 300;
-    const tmr = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), Math.max(120, Math.min(600, ms)));
+    const tmr = setTimeout(
+      () => setDebouncedQ(q.trim().toLowerCase()),
+      Math.max(120, Math.min(600, ms)),
+    );
     return () => clearTimeout(tmr);
   }, [q, theme.timings?.backDelayMs]);
 
@@ -199,7 +303,7 @@ alignItems: 'center', justifyContent: 'center',
       // Mark flag as resolved to render full UI without flicker
       setFlagReady(true);
     }
-}, []);
+  }, []);
 
   const fetchDepartments = useCallback(async () => {
     if (!useDepartments) {
@@ -207,9 +311,12 @@ alignItems: 'center', justifyContent: 'center',
       return;
     }
     try {
-      const { data, error } = await supabase.from('departments').select('id, name, is_enabled').order('name');
+      const { data, error } = await supabase
+        .from('departments')
+        .select('id, name, is_enabled')
+        .order('name');
       if (error) throw error;
-      const enabledOnly = (Array.isArray(data) ? data : []).filter(d => d.is_enabled !== false);
+      const enabledOnly = (Array.isArray(data) ? data : []).filter((d) => d.is_enabled !== false);
       setDepartments(enabledOnly);
     } catch {
       // silent
@@ -223,13 +330,21 @@ alignItems: 'center', justifyContent: 'center',
     try {
       let query = supabase
         .from('profiles')
-        .select('id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at')
+        .select(
+          'id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at',
+        )
         .order('full_name', { ascending: true, nullsFirst: false });
 
       // Apply selected filters
       // Departments: use .in() for multi-select
-      if (useDepartments && Array.isArray(filters.values.departments) && filters.values.departments.length > 0) {
-        const deptIds = filters.values.departments.map((d) => (typeof d === 'number' ? d : String(d)));
+      if (
+        useDepartments &&
+        Array.isArray(filters.values.departments) &&
+        filters.values.departments.length > 0
+      ) {
+        const deptIds = filters.values.departments.map((d) =>
+          typeof d === 'number' ? d : String(d),
+        );
         query = query.in('department_id', deptIds);
       }
       // Roles: multi-select by role codes
@@ -291,7 +406,9 @@ alignItems: 'center', justifyContent: 'center',
 
     const sub = channel.subscribe();
     return () => {
-      try { sub.unsubscribe(); } catch {}
+      try {
+        sub.unsubscribe();
+      } catch {}
     };
   }, [fetchUsers, fetchDepartments, useDepartments]);
 
@@ -315,9 +432,13 @@ alignItems: 'center', justifyContent: 'center',
   const filtered = useMemo(() => {
     if (!debouncedQ) return list;
     return list.filter((u) => {
-      const name = ((`${u.first_name || ''} ${u.last_name || ''}`.trim()) || u.full_name || '').toLowerCase();
+      const name = (
+        `${u.first_name || ''} ${u.last_name || ''}`.trim() ||
+        u.full_name ||
+        ''
+      ).toLowerCase();
       const roleCode = (u.role || '').toLowerCase();
-      const roleTitle = (ROLE_LABELS[u.role]?.toLowerCase?.() || '');
+      const roleTitle = ROLE_LABELS[u.role]?.toLowerCase?.() || '';
       return (
         name.includes(debouncedQ) || roleCode.includes(debouncedQ) || roleTitle.includes(debouncedQ)
       );
@@ -334,10 +455,10 @@ alignItems: 'center', justifyContent: 'center',
   const rolePillStyle = (role) => {
     const color =
       role === ROLE.ADMIN
-        ? (theme.colors?.primary)
+        ? theme.colors?.primary
         : role === ROLE.DISPATCHER
-        ? (theme.colors?.success)
-        : (theme.colors?.worker || theme.colors?.primary);
+          ? theme.colors?.success
+          : theme.colors?.worker || theme.colors?.primary;
     return {
       container: [
         styles.rolePill,
@@ -348,73 +469,76 @@ alignItems: 'center', justifyContent: 'center',
       ],
       text: [styles.rolePillText, { color }],
     };
-
-};
-
-// Robust Postgres timestamptz → Date parser (handles most common variants, treats no-TZ as UTC)
-function parsePgTs(ts) {
-  if (!ts) return null;
-  if (ts instanceof Date) return isNaN(ts) ? null : ts;
-
-  const toDateFromParts = (y, m, d, hh, mm, ss, ms, tzSign, tzH, tzM) => {
-    const utcMs = Date.UTC(y, m - 1, d, hh, mm, ss, ms);
-    if (tzSign) {
-      const offMin = (tzH || 0) * 60 + (tzM || 0);
-      const offMs = offMin * 60 * 1000;
-      return new Date(utcMs - (tzSign === '-' ? -offMs : offMs));
-    }
-    return new Date(utcMs); // treat no-TZ as UTC
   };
 
-  // (Filter schema and summary definitions removed from inside parsePgTs; they will be defined outside this function.)
+  // Robust Postgres timestamptz → Date parser (handles most common variants, treats no-TZ as UTC)
+  function parsePgTs(ts) {
+    if (!ts) return null;
+    if (ts instanceof Date) return isNaN(ts) ? null : ts;
 
-  try {
-    if (typeof ts === 'string') {
-      let s = ts.trim();
-      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s) && s.indexOf('T') === -1) {
-        s = s.replace(' ', 'T');
+    const toDateFromParts = (y, m, d, hh, mm, ss, ms, tzSign, tzH, tzM) => {
+      const utcMs = Date.UTC(y, m - 1, d, hh, mm, ss, ms);
+      if (tzSign) {
+        const offMin = (tzH || 0) * 60 + (tzM || 0);
+        const offMs = offMin * 60 * 1000;
+        return new Date(utcMs - (tzSign === '-' ? -offMs : offMs));
+      }
+      return new Date(utcMs); // treat no-TZ as UTC
+    };
+
+    // (Filter schema and summary definitions removed from inside parsePgTs; they will be defined outside this function.)
+
+    try {
+      if (typeof ts === 'string') {
+        let s = ts.trim();
+        if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(s) && s.indexOf('T') === -1) {
+          s = s.replace(' ', 'T');
+        }
+
+        const m = s.match(
+          /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):?(\d{2})|([+-])(\d{2}))?$/,
+        );
+        if (m) {
+          const year = +m[1],
+            month = +m[2],
+            day = +m[3];
+          const hh = +m[4],
+            mi = +m[5],
+            ss = +m[6];
+          const frac = m[7] ? m[7] : null;
+          let ms = 0;
+          if (frac) {
+            const msStr = (frac + '000').slice(0, 3);
+            ms = +msStr;
+          }
+
+          if (m[8] === 'Z') {
+            return new Date(Date.UTC(year, month - 1, day, hh, mi, ss, ms));
+          }
+          if (m[9] && m[10]) {
+            const sign = m[9];
+            const tzH = +m[10];
+            const tzM = +(m[11] || 0);
+            return toDateFromParts(year, month, day, hh, mi, ss, ms, sign, tzH, tzM);
+          }
+          if (m[12] && m[13]) {
+            const sign = m[12];
+            const tzH = +m[13];
+            return toDateFromParts(year, month, day, hh, mi, ss, ms, sign, tzH, 0);
+          }
+          return toDateFromParts(year, month, day, hh, mi, ss, ms, null, 0, 0);
+        }
+
+        const d = new Date(s);
+        return isNaN(d) ? null : d;
       }
 
-      const m = s.match(
-        /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):?(\d{2})|([+-])(\d{2}))?$/
-      );
-      if (m) {
-        const year = +m[1], month = +m[2], day = +m[3];
-        const hh = +m[4], mi = +m[5], ss = +m[6];
-        const frac = m[7] ? m[7] : null;
-        let ms = 0;
-        if (frac) {
-          const msStr = (frac + '000').slice(0, 3);
-          ms = +msStr;
-        }
-
-        if (m[8] === 'Z') {
-          return new Date(Date.UTC(year, month - 1, day, hh, mi, ss, ms));
-        }
-        if (m[9] && m[10]) {
-          const sign = m[9];
-          const tzH = +m[10];
-          const tzM = +(m[11] || 0);
-          return toDateFromParts(year, month, day, hh, mi, ss, ms, sign, tzH, tzM);
-        }
-        if (m[12] && m[13]) {
-          const sign = m[12];
-          const tzH = +m[13];
-          return toDateFromParts(year, month, day, hh, mi, ss, ms, sign, tzH, 0);
-        }
-        return toDateFromParts(year, month, day, hh, mi, ss, ms, null, 0, 0);
-      }
-
-      const d = new Date(s);
+      const d = new Date(ts);
       return isNaN(d) ? null : d;
+    } catch {
+      return null;
     }
-
-    const d = new Date(ts);
-    return isNaN(d) ? null : d;
-  } catch {
-    return null;
   }
-}
 
   // --- Filter definitions ---
   // Build schema for filter modal: dynamic according to available options.
@@ -460,7 +584,11 @@ function parsePgTs(ts) {
         options: [
           { id: 'all', value: null, label: t('users_showAll', 'Все') },
           { id: 'onlySuspended', value: true, label: t('users_onlySuspended', 'Отстраненные') },
-          { id: 'withoutSuspended', value: false, label: t('users_withoutSuspended', 'Без отстраненных') },
+          {
+            id: 'withoutSuspended',
+            value: false,
+            label: t('users_withoutSuspended', 'Без отстраненных'),
+          },
         ],
         searchable: false,
       },
@@ -489,9 +617,7 @@ function parsePgTs(ts) {
     }
     // Role summary
     if (Array.isArray(filters.values.roles) && filters.values.roles.length) {
-      const roleNames = filters.values.roles
-        .map((r) => ROLE_LABELS[r])
-        .filter(Boolean);
+      const roleNames = filters.values.roles.map((r) => ROLE_LABELS[r]).filter(Boolean);
       if (roleNames.length) {
         parts.push(`${t('users_role', 'Роль')}: ${roleNames.join(', ')}`);
       }
@@ -505,72 +631,95 @@ function parsePgTs(ts) {
     return parts.join(' • ');
   }, [filters.values, departments, useDepartments]);
 
-// --- Presence helpers (i18n-driven, no hardcoded strings)
-const isOnlineNow = React.useCallback((ts) => {
-  // online if last_seen within past 2 minutes (allow small future skew up to 5 min)
-  const d = parsePgTs(ts);
-  if (!d) return false;
-  const diff = Date.now() - d.getTime(); // positive if past
-  return diff <= 2 * 60 * 1000 && diff >= -5 * 60 * 1000;
-}, []);
+  // --- Presence helpers (i18n-driven, no hardcoded strings)
+  const isOnlineNow = React.useCallback((ts) => {
+    // online if last_seen within past 2 minutes (allow small future skew up to 5 min)
+    const d = parsePgTs(ts);
+    if (!d) return false;
+    const diff = Date.now() - d.getTime(); // positive if past
+    return diff <= 2 * 60 * 1000 && diff >= -5 * 60 * 1000;
+  }, []);
 
-const formatPresence = React.useCallback((ts) => {
-  // Returns either "В сети" or "Был в сети: 03.10.2025 в 23:59" or "Был в сети: никогда"
-  if (isOnlineNow(ts)) return t('users_online');
+  const formatPresence = React.useCallback(
+    (ts) => {
+      // Returns either "В сети" or "Был в сети: 03.10.2025 в 23:59" or "Был в сети: никогда"
+      if (isOnlineNow(ts)) return t('users_online');
 
-  if (!ts) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
-  const d = parsePgTs(ts);
-  if (!d) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
+      if (!ts) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
+      const d = parsePgTs(ts);
+      if (!d) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
 
-  const datePart = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
-  const timePart = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(d);
-  return `${t('users_lastSeen_prefix')} ${datePart} ${t('common_at')} ${timePart}`;
-}, [isOnlineNow, t]);
-    
-// Exact "last seen" formatter: always shows full date & time (local), robust to small clock skews
+      const datePart = new Intl.DateTimeFormat('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      }).format(d);
+      const timePart = new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(d);
+      return `${t('users_lastSeen_prefix')} ${datePart} ${t('common_at')} ${timePart}`;
+    },
+    [isOnlineNow, t],
+  );
 
-const renderItem = useCallback(
+  // Exact "last seen" formatter: always shows full date & time (local), robust to small clock skews
+
+  const renderItem = useCallback(
     ({ item }) => {
       const stylesPill = rolePillStyle(item.role);
-      const fullName = ((`${item.first_name || ''} ${item.last_name || ''}`.trim()) || item.full_name || '').trim();
+      const fullName = (
+        `${item.first_name || ''} ${item.last_name || ''}`.trim() ||
+        item.full_name ||
+        ''
+      ).trim();
       return (
         <Pressable
           android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
           onPress={() => goToUser(item.id)}
-          style={[styles.card, (item?.is_suspended === true || !!item?.suspended_at) ? styles.cardSuspended : null]}
+          style={[
+            styles.card,
+            item?.is_suspended === true || !!item?.suspended_at ? styles.cardSuspended : null,
+          ]}
           accessibilityRole="button"
           accessibilityLabel={`${t('users_openUser')} ${fullName || t('common_noName')}`}
         >
           <View style={styles.cardRow}>
-            
-<View style={styles.cardTextWrap}>
-  <Text numberOfLines={1} style={styles.cardTitle}>
-    {fullName || t('common_noName')}
-  </Text>
-  {item?.department_id ? (
-    <Text numberOfLines={1} style={styles.metaText}>
-      {(() => {
-        const d = departments.find((d) => String(d.id) === String(item.department_id));
-        return d ? `${t('users_department')}: ${d.name}` : null;
-      })()}
-    </Text>
-  ) : null}
-  <Text numberOfLines={1} style={[styles.metaText, isOnlineNow(item?.last_seen_at) ? { color: theme.colors.success, fontWeight: theme.typography.weight.semibold } : null]}>
-    {formatPresence(item?.last_seen_at)}
-  </Text>
-</View>
-
+            <View style={styles.cardTextWrap}>
+              <Text numberOfLines={1} style={styles.cardTitle}>
+                {fullName || t('common_noName')}
+              </Text>
+              {item?.department_id ? (
+                <Text numberOfLines={1} style={styles.metaText}>
+                  {(() => {
+                    const d = departments.find((d) => String(d.id) === String(item.department_id));
+                    return d ? `${t('users_department')}: ${d.name}` : null;
+                  })()}
+                </Text>
+              ) : null}
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.metaText,
+                  isOnlineNow(item?.last_seen_at)
+                    ? { color: theme.colors.success, fontWeight: theme.typography.weight.semibold }
+                    : null,
+                ]}
+              >
+                {formatPresence(item?.last_seen_at)}
+              </Text>
+            </View>
           </View>
 
           <View style={[stylesPill.container, styles.rolePillTopRight]}>
             <Text style={stylesPill.text}>{ROLE_LABELS[item.role] || '—'}</Text>
           </View>
 
-          { (item?.is_suspended === true || !!item?.suspended_at) ? (
+          {item?.is_suspended === true || !!item?.suspended_at ? (
             <View style={styles.suspendedPill}>
               <Text style={styles.suspendedPillText}>Отстранен</Text>
             </View>
-          ) : null }
+          ) : null}
         </Pressable>
       );
     },
@@ -587,9 +736,7 @@ const renderItem = useCallback(
         <View style={styles.loaderWrap}>
           <ActivityIndicator size="large" />
         </View>
-      
-          
-          </SafeAreaView>
+      </SafeAreaView>
     );
   }
 
@@ -603,13 +750,11 @@ const renderItem = useCallback(
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
-
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <View style={styles.container}>
           <AppHeader back options={{ headerTitleAlign: 'left', title: t('routes_users_index') }} />
 
           <View style={styles.header}>
-
             {/* Search + Create */}
             <View style={styles.searchRow}>
               <View style={styles.searchBox}>
@@ -622,7 +767,10 @@ const renderItem = useCallback(
                   rightSlot={
                     !!q ? (
                       <Pressable
-                        android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
+                        android_ripple={{
+                          borderless: false,
+                          color: withAlpha(theme.colors.border, 0.13),
+                        }}
                         onPress={() => setQ('')}
                         style={styles.clearBtn}
                         accessibilityRole="button"
@@ -635,7 +783,12 @@ const renderItem = useCallback(
                 />
               </View>
 
-              <Button title={t('btn_create')} onPress={() => router.push('/users/new')} variant="primary" size="md" />
+              <Button
+                title={t('btn_create')}
+                onPress={() => router.push('/users/new')}
+                variant="primary"
+                size="md"
+              />
             </View>
 
             {/* Filter row: icon to open modal and summary + reset when active */}
@@ -655,24 +808,29 @@ const renderItem = useCallback(
                     {filterSummary}
                   </Text>
                   <Pressable
-                onPress={() => {
-                      // Explicitly set defaults so persistence overwrites any previously saved filters
+                    onPress={() => {
+                      // Manually clear all filters and persist the empty state.
+                      // Calling reset() alone only updates local state; we explicitly set
+                      // each filter to its default value and then apply to persist.
                       if (setFilterValue) {
                         setFilterValue('departments', []);
                         setFilterValue('roles', []);
                         setFilterValue('suspended', null);
                       }
-                      // Ensure in-memory state mirrors defaults as well
-                      if (filters && typeof filters.reset === 'function') {
-                        filters.reset();
-                      }
-                      // Persist defaults so old filters do NOT resurrect on next mount
-                      Promise.resolve(filters && typeof filters.apply === 'function' ? filters.apply() : null).then(() => {
+                      filters.apply().then(() => {
                         fetchUsers();
                       });
                     }}
                   >
-                    <Text style={[styles.metaText, { color: theme.colors.primary, marginLeft: theme.spacing.sm }]}> {t('settings_sections_quiet_items_quiet_reset', 'Сбросить')}</Text>
+                    <Text
+                      style={[
+                        styles.metaText,
+                        { color: theme.colors.primary, marginLeft: theme.spacing.sm },
+                      ]}
+                    >
+                      {' '}
+                      {t('settings_sections_quiet_items_quiet_reset', 'Сбросить')}
+                    </Text>
                   </Pressable>
                 </>
               ) : null}
@@ -680,7 +838,9 @@ const renderItem = useCallback(
 
             <View style={styles.metaRow}>
               <Text style={styles.metaText}>
-                {debouncedQ ? `${t('users_found')}: ${filtered.length}` : `${t('users_total')}: ${list.length}`}
+                {debouncedQ
+                  ? `${t('users_found')}: ${filtered.length}`
+                  : `${t('users_total')}: ${list.length}`}
               </Text>
             </View>
 
@@ -707,27 +867,29 @@ const renderItem = useCallback(
             }
             ListEmptyComponent={<EmptyState />}
           />
-
-          
         </View>
       </TouchableWithoutFeedback>
-    
-          {/* DNS-like full-screen Filters Panel */}
-          <FiltersPanel
-            visible={filtersVisible}
-            onClose={() => setFiltersVisible(false)}
-            departments={useDepartments ? departments : []}
-            rolesOptions={Object.keys(ROLE_LABELS).map(r => ({ id: r, value: r, label: ROLE_LABELS[r] || r }))}
-            values={filters.values}
-            setValue={setFilterValue}
-            defaults={{ departments: [], roles: [], suspended: null }}
-            onReset={() => filters.reset()}
-            onApply={async () => {
-              await filters.apply();
-              setFiltersVisible(false);
-              fetchUsers();
-            }}
-          />
+
+      {/* DNS-like full-screen Filters Panel */}
+      <FiltersPanel
+        visible={filtersVisible}
+        onClose={() => setFiltersVisible(false)}
+        departments={useDepartments ? departments : []}
+        rolesOptions={Object.keys(ROLE_LABELS).map((r) => ({
+          id: r,
+          value: r,
+          label: ROLE_LABELS[r] || r,
+        }))}
+        values={filters.values}
+        setValue={setFilterValue}
+        defaults={{ departments: [], roles: [], suspended: null }}
+        onReset={() => filters.reset()}
+        onApply={async () => {
+          await filters.apply();
+          setFiltersVisible(false);
+          fetchUsers();
+        }}
+      />
     </SafeAreaView>
   );
 }

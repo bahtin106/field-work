@@ -8,20 +8,21 @@ import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useToast } from '../ui/ToastProvider';
 // --- i18n labels (safe runtime require) ---
 let __labels = null;
-try { __labels = require('../../i18n/labels'); } catch (_) {}
+try {
+  __labels = require('../../i18n/labels');
+} catch (_) {}
 const t = (key, fallback) => {
   const mod = __labels || {};
   if (typeof mod.t === 'function') return mod.t(key, fallback);
   if (typeof mod.getLabel === 'function') return mod.getLabel(key, fallback);
   const dict = mod.labels || mod.default || mod || {};
-  const val = String(key).split('.').reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), dict);
-  return (val == null || val === '') ? (fallback ?? key) : String(val);
+  const val = String(key)
+    .split('.')
+    .reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), dict);
+  return val == null || val === '' ? (fallback ?? key) : String(val);
 };
 
-
 // -------- helpers --------
-
-
 
 const PATHS = {
   home: '/orders',
@@ -29,7 +30,6 @@ const PATHS = {
   all: '/orders/all-orders',
   calendar: '/orders/calendar',
 };
-
 
 function TabButton({ label, active, onPress, colors, metrics }) {
   const accLabel = typeof label === 'string' ? label : String(label || 'Tab');
@@ -72,7 +72,12 @@ function BottomNavInner() {
   const appear = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (navVisible) {
-      Animated.timing(appear, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+      Animated.timing(appear, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start();
     } else {
       appear.setValue(0);
     }
@@ -116,7 +121,9 @@ function BottomNavInner() {
       const delay = Math.max(waitMin, NET_IDLE_GRACE_MS);
       t = setTimeout(() => setNavVisible(true), delay);
     }
-    return () => { if (t) clearTimeout(t); };
+    return () => {
+      if (t) clearTimeout(t);
+    };
   }, [navVisible, roleLoading, canAllLoading, isFetching]);
 
   // скрываем бар на экранах авторизации
@@ -125,17 +132,16 @@ function BottomNavInner() {
   // до первой готовности — не рендерим вообще (чтобы не появлялся раньше главной)
   if (!navVisible) return null;
 
-
   const activeKey =
     pathname === PATHS.home || pathname === `${PATHS.home}/`
       ? 'home'
       : pathname.startsWith(PATHS.calendar)
-      ? 'calendar'
-      : pathname.startsWith(PATHS.all)
-      ? 'all'
-      : pathname.startsWith(PATHS.orders)
-      ? 'orders'
-      : null;
+        ? 'calendar'
+        : pathname.startsWith(PATHS.all)
+          ? 'all'
+          : pathname.startsWith(PATHS.orders)
+            ? 'orders'
+            : null;
 
   return (
     <Animated.View
@@ -149,48 +155,70 @@ function BottomNavInner() {
       ]}
     >
       {/* гарантированный ремоунт при смене canAll */}
-      <View key={`variant-${Number(!!canAll)}`} style={[styles.bar, { height: metrics.itemHeight, paddingHorizontal: metrics.ph }]} onLayout={(e) => { const h = e.nativeEvent.layout.height; if (setAnchorOffset) setAnchorOffset(h + (theme?.spacing?.xl ?? 24)); }}>
+      <View
+        key={`variant-${Number(!!canAll)}`}
+        style={[styles.bar, { height: metrics.itemHeight, paddingHorizontal: metrics.ph }]}
+        onLayout={(e) => {
+          const h = e.nativeEvent.layout.height;
+          if (setAnchorOffset) setAnchorOffset(h + (theme?.spacing?.xl ?? 24));
+        }}
+      >
         <TabButton
           key="tab-home"
-          label={t("bottomNav.home", "Главная")}
+          label={t('bottomNav.home', 'Главная')}
           active={activeKey === 'home'}
-          onPress={() => { if (activeKey !== 'home') router.replace(PATHS.home); }}
-          colors={colors} metrics={metrics}
+          onPress={() => {
+            if (activeKey !== 'home') router.replace(PATHS.home);
+          }}
+          colors={colors}
+          metrics={metrics}
         />
 
         {canAll ? (
           <>
             <TabButton
               key="tab-orders"
-              label={t("bottomNav.my", "Мои")}
+              label={t('bottomNav.my', 'Мои')}
               active={activeKey === 'orders'}
-              onPress={() => { if (activeKey !== 'orders') router.replace(PATHS.orders); }}
-              colors={colors} metrics={metrics}
+              onPress={() => {
+                if (activeKey !== 'orders') router.replace(PATHS.orders);
+              }}
+              colors={colors}
+              metrics={metrics}
             />
             <TabButton
               key="tab-all"
-              label={t("bottomNav.all", "Все")}
+              label={t('bottomNav.all', 'Все')}
               active={activeKey === 'all'}
-              onPress={() => { if (activeKey !== 'all') router.replace(PATHS.all); }}
-              colors={colors} metrics={metrics}
+              onPress={() => {
+                if (activeKey !== 'all') router.replace(PATHS.all);
+              }}
+              colors={colors}
+              metrics={metrics}
             />
           </>
         ) : (
           <TabButton
             key="tab-orders-only"
-            label={t("bottomNav.myOrders", "Мои заявки")}
+            label={t('bottomNav.myOrders', 'Мои заявки')}
             active={activeKey === 'orders'}
-            onPress={() => { if (activeKey !== 'orders') router.replace(PATHS.orders); }}
-            colors={colors} metrics={metrics}
+            onPress={() => {
+              if (activeKey !== 'orders') router.replace(PATHS.orders);
+            }}
+            colors={colors}
+            metrics={metrics}
           />
         )}
 
         <TabButton
           key="tab-calendar"
-          label={t("bottomNav.calendar", "Календарь")}
+          label={t('bottomNav.calendar', 'Календарь')}
           active={activeKey === 'calendar'}
-          onPress={() => { if (activeKey !== 'calendar') router.replace(PATHS.calendar); }}
-          colors={colors} metrics={metrics}
+          onPress={() => {
+            if (activeKey !== 'calendar') router.replace(PATHS.calendar);
+          }}
+          colors={colors}
+          metrics={metrics}
         />
       </View>
     </Animated.View>

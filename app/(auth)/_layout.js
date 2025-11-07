@@ -6,10 +6,7 @@ import { View } from 'react-native';
 export default function AuthLayout() {
   return (
     <View style={{ flex: 1 }}>
-      <Stack
-        initialRouteName="login"
-        screenOptions={{ headerShown: false }}
-      >
+      <Stack initialRouteName="login" screenOptions={{ headerShown: false }}>
         <Stack.Screen name="login" />
       </Stack>
     </View>

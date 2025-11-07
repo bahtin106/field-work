@@ -1,6 +1,15 @@
 // apps/field-work/app/orders/edit/[id].jsx
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, Platform, ScrollView, KeyboardAvoidingView, ToastAndroid } from 'react-native';
+import {
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  Platform,
+  ScrollView,
+  KeyboardAvoidingView,
+  ToastAndroid,
+} from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { AntDesign } from '@expo/vector-icons';
 import Modal from 'react-native-modal';
@@ -26,14 +35,16 @@ export default function EditOrderScreen() {
       const clean = path.split('?')[0];
       const parts = clean.split('/').filter(Boolean);
       return parts.length ? parts[parts.length - 1] : null;
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }, [pathname]);
   const router = useRouter();
   const { theme } = useTheme();
 
   // schema-driven required fields (admin form builder)
   const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
-const [workTypeIdView, setWorkTypeIdView] = useState(null);
+  const [workTypeIdView, setWorkTypeIdView] = useState(null);
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -42,7 +53,9 @@ const [workTypeIdView, setWorkTypeIdView] = useState(null);
         if (mounted && data && Array.isArray(data.fields)) setSchemaEdit(data);
       } catch {}
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   // work types
@@ -69,7 +82,9 @@ const [workTypeIdView, setWorkTypeIdView] = useState(null);
         console.warn('workTypes bootstrap', e?.message || e);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   // form state
@@ -93,15 +108,23 @@ const [workTypeIdView, setWorkTypeIdView] = useState(null);
     let mounted = true;
     (async () => {
       try {
-        const { data: row, error } = await supabase.from('orders_secure').select('*').eq('id', id).single();
+        const { data: row, error } = await supabase
+          .from('orders_secure')
+          .select('*')
+          .eq('id', id)
+          .single();
         if (error) throw error;
         // Fallback: fetch work_type_id directly from orders if view doesn't expose it
         let wtId = row.work_type_id ?? null;
         if (wtId == null) {
-          const { data: row2 } = await supabase.from('orders').select('work_type_id').eq('id', id).single();
+          const { data: row2 } = await supabase
+            .from('orders')
+            .select('work_type_id')
+            .eq('id', id)
+            .single();
           wtId = row2?.work_type_id ?? null;
         }
-if (!mounted) return;
+        if (!mounted) return;
         setTitle(row.title || '');
         setDescription(row.comment || '');
         setRegion(row.region || '');
@@ -124,54 +147,60 @@ if (!mounted) return;
         setLoading(false);
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [id]);
 
-  const styles = useMemo(() => StyleSheet.create({
-    container: { padding: 16, paddingBottom: 32 },
-    card: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 12,
-      padding: 12,
-      borderColor: theme.colors.border,
-      borderWidth: 1,
-      marginBottom: 12,
-    },
-    section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
-    label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
-    input: {
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 10,
-      padding: 10,
-      color: theme.colors.text,
-    },
-    selectInput: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      borderRadius: 10,
-      backgroundColor: theme.colors.surface,
-      padding: 12,
-      marginTop: 4,
-    },
-    selectInputText: { fontSize: 16, color: theme.colors.text },
-    topBar: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingTop: 10,
-      paddingBottom: 6,
-    },
-    backText: { color: theme.colors.primary, fontSize: 16 },
-    modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
-    modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
-    modalText: { fontSize: 15, color: theme.colors.textSecondary },
-  }), [theme]);
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { padding: 16, paddingBottom: 32 },
+        card: {
+          backgroundColor: theme.colors.surface,
+          borderRadius: 12,
+          padding: 12,
+          borderColor: theme.colors.border,
+          borderWidth: 1,
+          marginBottom: 12,
+        },
+        section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
+        label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
+        input: {
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+          borderRadius: 10,
+          padding: 10,
+          color: theme.colors.text,
+        },
+        selectInput: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          borderRadius: 10,
+          backgroundColor: theme.colors.surface,
+          padding: 12,
+          marginTop: 4,
+        },
+        selectInputText: { fontSize: 16, color: theme.colors.text },
+        topBar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 16,
+          paddingTop: 10,
+          paddingBottom: 6,
+        },
+        backText: { color: theme.colors.primary, fontSize: 16 },
+        modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
+        modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
+        modalText: { fontSize: 15, color: theme.colors.textSecondary },
+      }),
+    [theme],
+  );
 
   const showToast = (msg) => {
     if (Platform.OS === 'android') ToastAndroid.show(msg, ToastAndroid.SHORT);
@@ -219,10 +248,17 @@ if (!mounted) return;
   }
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <Screen background="background" edges={['top', 'bottom']}>
         <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={16} style={{flexDirection:'row',alignItems:'center',gap:6}}>
+          <Pressable
+            onPress={() => router.back()}
+            hitSlop={16}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+          >
             <AntDesign name="left" size={18} color={theme.colors.primary} />
             <Text style={styles.backText}>Назад</Text>
           </Pressable>
@@ -234,7 +270,12 @@ if (!mounted) return;
             <Text style={styles.section}>Основное</Text>
 
             <Text style={styles.label}>Название заявки *</Text>
-            <TextField style={styles.input} placeholder="Например: Обрезка деревьев" value={title} onChangeText={setTitle} />
+            <TextField
+              style={styles.input}
+              placeholder="Например: Обрезка деревьев"
+              value={title}
+              onChangeText={setTitle}
+            />
 
             <Text style={styles.label}>Описание</Text>
             <TextField
@@ -251,9 +292,15 @@ if (!mounted) return;
                 <Text style={styles.label}>Тип работ</Text>
                 <Pressable style={styles.selectInput} onPress={() => setWorkTypeModalVisible(true)}>
                   <Text style={styles.selectInputText}>
-                    {workTypeId ? (workTypes.find((w) => w.id === workTypeId)?.name || 'не выбран') : 'не выбран'}
+                    {workTypeId
+                      ? workTypes.find((w) => w.id === workTypeId)?.name || 'не выбран'
+                      : 'не выбран'}
                   </Text>
-                  <AntDesign name="down" size={16} color={theme.colors.textSecondary || theme.colors.text} />
+                  <AntDesign
+                    name="down"
+                    size={16}
+                    color={theme.colors.textSecondary || theme.colors.text}
+                  />
                 </Pressable>
               </View>
             )}
@@ -291,13 +338,18 @@ if (!mounted) return;
         backdropOpacity={0.3}
       >
         <View style={{ backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '600', color: theme.colors.text, marginBottom: 12 }}>
+          <Text
+            style={{ fontSize: 18, fontWeight: '600', color: theme.colors.text, marginBottom: 12 }}
+          >
             Выберите тип работ
           </Text>
           {workTypes.map((t) => (
             <Pressable
               key={t.id}
-              onPress={() => { setWorkTypeId(t.id); setWorkTypeModalVisible(false); }}
+              onPress={() => {
+                setWorkTypeId(t.id);
+                setWorkTypeModalVisible(false);
+              }}
               style={({ pressed }) => [{ paddingVertical: 10 }, pressed && { opacity: 0.8 }]}
             >
               <Text style={{ fontSize: 16, color: theme.colors.text }}>{t.name}</Text>

@@ -72,17 +72,25 @@ export function useUserPermissions() {
   const isFetching = useIsFetching();
 
   const doRefresh = async () => {
-    try { await qc.invalidateQueries({ queryKey: ['perm-canViewAll'] }); } catch {}
+    try {
+      await qc.invalidateQueries({ queryKey: ['perm-canViewAll'] });
+    } catch {}
   };
 
   const pollTimer = useRef(null);
   const kickoffSafetyPoll = () => {
-    if (pollTimer.current) { clearInterval(pollTimer.current); pollTimer.current = null; }
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
     let ticks = 0;
     pollTimer.current = setInterval(async () => {
       ticks += 1;
       await doRefresh();
-      if (ticks >= 5) { clearInterval(pollTimer.current); pollTimer.current = null; }
+      if (ticks >= 5) {
+        clearInterval(pollTimer.current);
+        pollTimer.current = null;
+      }
     }, 1200);
   };
 
@@ -117,7 +125,7 @@ export function useUserPermissions() {
             () => {
               doRefresh();
               kickoffSafetyPoll();
-            }
+            },
           );
         });
       }

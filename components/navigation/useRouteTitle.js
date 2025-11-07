@@ -1,5 +1,5 @@
 // components/navigation/useRouteTitle.js
-import { useMemo } from "react";
+import { useMemo } from 'react';
 import { getRouteTitle } from '../../constants/routeTitles';
 import { t as T } from '../../src/i18n';
 
@@ -7,14 +7,11 @@ import { t as T } from '../../src/i18n';
  * Возвращает финальный заголовок экрана по options/route/pathname
  * Инкапсулирует прежнюю логику resolveTitle и мемоизирует результат
  */
-export function useRouteTitle(options = {}, route, pathnameRaw = "") {
+export function useRouteTitle(options = {}, route, pathnameRaw = '') {
   return useMemo(() => {
     // 1) Явный заголовок: params -> options
     const directRaw =
-      route?.params?.title ??
-      route?.params?.headerTitle ??
-      options?.title ??
-      options?.headerTitle;
+      route?.params?.title ?? route?.params?.headerTitle ?? options?.title ?? options?.headerTitle;
 
     // Важно: различаем undefined и пустую строку/плейсхолдер
     if (directRaw !== undefined) {
@@ -29,7 +26,7 @@ export function useRouteTitle(options = {}, route, pathnameRaw = "") {
 
     // Спец-случай: экран редактирования — показываем понятный заголовок
     if (typeof pathname === 'string' && pathname.includes('/edit')) {
-      return (globalThis?.S?.('edit_title') ?? 'Редактирование');
+      return globalThis?.S?.('edit_title') ?? 'Редактирование';
     }
 
     // Для страниц сотрудника скрываем автозаголовок до прихода данных

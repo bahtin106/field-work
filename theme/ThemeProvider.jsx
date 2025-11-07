@@ -10,30 +10,39 @@ const STORAGE_KEY = 'THEME_MODE_V2';
 function mixHexColors(baseHex, topHex, ratio = 0.08) {
   try {
     const toRGB = (h) => {
-      const m = String(h || '').trim().match(/^#?([0-9a-fA-F]{6})$/);
+      const m = String(h || '')
+        .trim()
+        .match(/^#?([0-9a-fA-F]{6})$/);
       if (!m) return null;
       const n = parseInt(m[1], 16);
       return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
     };
-    const b = toRGB(baseHex); const t = toRGB(topHex);
+    const b = toRGB(baseHex);
+    const t = toRGB(topHex);
     if (!b || !t) return baseHex || topHex;
     const k = Math.max(0, Math.min(1, Number(ratio)));
     const r = Math.round(b.r * (1 - k) + t.r * k);
     const g = Math.round(b.g * (1 - k) + t.g * k);
     const bch = Math.round(b.b * (1 - k) + t.b * k);
     return '#' + ((1 << 24) + (r << 16) + (g << 8) + bch).toString(16).slice(1).toUpperCase();
-  } catch { return baseHex; }
+  } catch {
+    return baseHex;
+  }
 }
 
 function buildTheme(mode) {
-  const effective = mode === 'system' ? (Appearance.getColorScheme?.() || 'light') : mode;
+  const effective = mode === 'system' ? Appearance.getColorScheme?.() || 'light' : mode;
   const base = effective === 'dark' ? tokens.dark : tokens.light;
 
   const colors = {
     background: base.colors.background ?? base.colors.bg ?? '#FFFFFF',
     surface: base.colors.surface ?? base.colors.card ?? '#FFFFFF',
     // Opaque blend for suspended cards: mix surface with danger at ~8%
-    surfaceMutedDanger: mixHexColors((base.colors.surface ?? base.colors.card ?? '#FFFFFF'), (base.colors.danger ?? '#FF3B30'), 0.08),
+    surfaceMutedDanger: mixHexColors(
+      base.colors.surface ?? base.colors.card ?? '#FFFFFF',
+      base.colors.danger ?? '#FF3B30',
+      0.08,
+    ),
     text: base.colors.text ?? '#0A0A0A',
     textSecondary: base.colors.textSecondary ?? '#6B7280',
     primary: base.colors.primary ?? base.colors.accent ?? '#007AFF',
@@ -51,29 +60,34 @@ function buildTheme(mode) {
     danger: base.colors.danger,
     worker: base.colors.worker ?? '#5856D6',
     bg: base.colors.background ?? base.colors.bg,
-    card: (base.colors.card ?? base.colors.surface) ?? '#FFFFFF',
+    card: base.colors.card ?? base.colors.surface ?? '#FFFFFF',
     accent: base.colors.primary ?? base.colors.accent,
     accentTextOn: base.colors.onPrimary ?? base.colors.primaryTextOn,
     navigationBarBg: base.colors.navigationBarBg ?? base.colors.navbar ?? base.colors.surface,
     navbar: base.colors.navbar ?? base.colors.navigationBarBg ?? base.colors.surface,
-    ripple: base.colors.ripple ?? (effective === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
+    ripple:
+      base.colors.ripple ?? (effective === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
     button: {
-      primaryBg: base.colors.button?.primaryBg ?? (base.colors.primary ?? '#007AFF'),
-      primaryText: base.colors.button?.primaryText ?? (base.colors.onPrimary ?? '#FFFFFF'),
-      secondaryBg: base.colors.button?.secondaryBg ?? (effective === 'dark' ? '#3A4254' : '#EEF1F6'),
-      secondaryText: base.colors.button?.secondaryText ?? (base.colors.text ?? '#0A0A0A'),
+      primaryBg: base.colors.button?.primaryBg ?? base.colors.primary ?? '#007AFF',
+      primaryText: base.colors.button?.primaryText ?? base.colors.onPrimary ?? '#FFFFFF',
+      secondaryBg:
+        base.colors.button?.secondaryBg ?? (effective === 'dark' ? '#3A4254' : '#EEF1F6'),
+      secondaryText: base.colors.button?.secondaryText ?? base.colors.text ?? '#0A0A0A',
       dangerBg: base.colors.button?.dangerBg ?? (effective === 'dark' ? '#FF453A' : '#FF3B30'),
       dangerText: base.colors.button?.dangerText ?? '#FFFFFF',
     },
   };
 
   const normalizedShadows = {
-    card:
-      base.shadows?.card ??
-      {
-        ios: { shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-        android: { elevation: 2 },
+    card: base.shadows?.card ?? {
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
       },
+      android: { elevation: 2 },
+    },
     level1: base.shadows?.card ?? {},
     level2: base.shadows?.raised ?? {},
     ...(base.shadows || {}),
@@ -118,15 +132,15 @@ function buildTheme(mode) {
 
   const components = {
     card: {
-      borderWidth: (base.components?.card?.borderWidth ?? 1),
-      padX: (base.components?.card?.padX ?? 'sm'),
-      padY: (base.components?.card?.padY ?? 'sm'),
+      borderWidth: base.components?.card?.borderWidth ?? 1,
+      padX: base.components?.card?.padX ?? 'sm',
+      padY: base.components?.card?.padY ?? 'sm',
     },
     listItem: {
-      height: (base.components?.listItem?.height ?? 48),
-      dividerWidth: (base.components?.listItem?.dividerWidth ?? 1),
-      disabledOpacity: (base.components?.listItem?.disabledOpacity ?? 0.5),
-      chevronSize: (base.components?.listItem?.chevronSize ?? 20),
+      height: base.components?.listItem?.height ?? 48,
+      dividerWidth: base.components?.listItem?.dividerWidth ?? 1,
+      disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
+      chevronSize: base.components?.listItem?.chevronSize ?? 20,
     },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
@@ -134,7 +148,7 @@ function buildTheme(mode) {
       ml: base.components?.sectionTitle?.ml ?? 'sm', // spacing key
     },
     row: {
-      minHeight: base.components?.row?.minHeight ?? (base.components?.listItem?.height ?? 48),
+      minHeight: base.components?.row?.minHeight ?? base.components?.listItem?.height ?? 48,
       py: base.components?.row?.py ?? null, // optional vertical padding (we set fixed height in screen)
       gapX: base.components?.row?.gapX ?? 'sm', // spacing key
     },
@@ -144,30 +158,30 @@ function buildTheme(mode) {
       md: base.components?.avatar?.md ?? 48,
       border: base.components?.avatar?.border ?? 1,
     },
-  
-iconButton: { size: (base.components?.iconButton?.size ?? 32) },
-input: { 
-  height: (base.components?.input?.height ?? (base.components?.listItem?.height ?? 48)),
-  trailingSlotWidth: (base.components?.input?.trailingSlotWidth ?? undefined),
-  trailingGap: (base.components?.input?.trailingGap ?? 8),
-},
-toast: { anchorOffset: (base.components?.toast?.anchorOffset ?? 120) },
-scrollView: { paddingBottom: (base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24) },
-};
+
+    iconButton: { size: base.components?.iconButton?.size ?? 32 },
+    input: {
+      height: base.components?.input?.height ?? base.components?.listItem?.height ?? 48,
+      trailingSlotWidth: base.components?.input?.trailingSlotWidth ?? undefined,
+      trailingGap: base.components?.input?.trailingGap ?? 8,
+    },
+    toast: { anchorOffset: base.components?.toast?.anchorOffset ?? 120 },
+    scrollView: {
+      paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
+    },
+  };
 
   // Pass-through shared media config (used by ImagePicker, etc.)
   const media = {
-    aspect: (base.components?.media?.aspect ?? [1, 1]),
-    quality: (base.components?.media?.quality ?? 0.85),
+    aspect: base.components?.media?.aspect ?? [1, 1],
+    quality: base.components?.media?.quality ?? 0.85,
   };
 
-
-  
-const timings = {
-  requestTimeoutMs: (base.timings?.requestTimeoutMs ?? 12000),
-  backDelayMs: (base.timings?.backDelayMs ?? 300),
-};
-return {
+  const timings = {
+    requestTimeoutMs: base.timings?.requestTimeoutMs ?? 12000,
+    backDelayMs: base.timings?.backDelayMs ?? 300,
+  };
+  return {
     mode: effective,
     colors,
     shadows: normalizedShadows,
@@ -228,7 +242,11 @@ export const ThemeProvider = ({ children }) => {
     setMode((m) => (m === 'light' ? 'dark' : 'light'));
   }, []);
 
-  return <ThemeContext.Provider value={{ theme, mode, setMode, toggle }}>{children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={{ theme, mode, setMode, toggle }}>
+      {children}
+    </ThemeContext.Provider>
+  );
 };
 
 export const useTheme = () => useContext(ThemeContext);

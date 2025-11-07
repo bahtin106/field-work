@@ -1,12 +1,20 @@
 // components/ui/modals/Wheel.jsx
-import React, { useMemo, useRef, useState, useEffect } from "react";
-import { View, Text, FlatList, Platform } from "react-native";
-import { useTheme } from "../../../theme";
+import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { View, Text, FlatList, Platform } from 'react-native';
+import { useTheme } from '../../../theme';
 
 export const ITEM_HEIGHT_DP = 44;
 export const VISIBLE_COUNT_DP = 5;
 
-export default function Wheel({ data, index, onIndexChange, width, enabled = true, activeColor, inactiveColor }) {
+export default function Wheel({
+  data,
+  index,
+  onIndexChange,
+  width,
+  enabled = true,
+  activeColor,
+  inactiveColor,
+}) {
   const { theme } = useTheme();
   const _activeColor = activeColor || theme.colors.primary;
   const listRef = useRef(null);
@@ -19,7 +27,9 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
       setSelIndex(next);
       isSyncingRef.current = true;
       listRef.current?.scrollToOffset({ offset: next * ITEM_HEIGHT_DP, animated: false });
-      setTimeout(() => { isSyncingRef.current = false; }, 0);
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 0);
     }
   }, [index, data.length]);
 
@@ -29,7 +39,9 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
       setSelIndex(next);
       isSyncingRef.current = true;
       listRef.current?.scrollToOffset({ offset: next * ITEM_HEIGHT_DP, animated: false });
-      setTimeout(() => { isSyncingRef.current = false; }, 0);
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 0);
       onIndexChange?.(next);
     }
   }, [data.length]);
@@ -43,7 +55,9 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
     if (!isSyncingRef.current && Math.abs(target - y) > 0.5) {
       isSyncingRef.current = true;
       listRef.current?.scrollToOffset({ offset: target, animated: false });
-      setTimeout(() => { isSyncingRef.current = false; }, 0);
+      setTimeout(() => {
+        isSyncingRef.current = false;
+      }, 0);
     }
     if (clamped !== selIndex) {
       setSelIndex(clamped);
@@ -68,9 +82,17 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
       data={data}
       keyExtractor={(_, i) => String(i)}
       renderItem={({ item, index: i }) => (
-        <View style={[{ height: ITEM_HEIGHT_DP, justifyContent: 'center', alignItems: 'center' }, !enabled && { opacity: 0.35 }]}> 
+        <View
+          style={[
+            { height: ITEM_HEIGHT_DP, justifyContent: 'center', alignItems: 'center' },
+            !enabled && { opacity: 0.35 },
+          ]}
+        >
           <Text
-            style={[{ fontSize: 18, color: inactiveColor || theme.colors.textSecondary }, i === selIndex && { fontSize: 20, fontWeight: '700', color: _activeColor }]}
+            style={[
+              { fontSize: 18, color: inactiveColor || theme.colors.textSecondary },
+              i === selIndex && { fontSize: 20, fontWeight: '700', color: _activeColor },
+            ]}
           >
             {item}
           </Text>
@@ -97,12 +119,13 @@ export default function Wheel({ data, index, onIndexChange, width, enabled = tru
           info.averageItemLength * info.index,
         );
         listRef.current?.scrollToOffset({ offset, animated: false });
-        setTimeout(() =>
-          listRef.current?.scrollToIndex({
-            index: info.index,
-            animated: false,
-            viewPosition: 0.5,
-          }),
+        setTimeout(
+          () =>
+            listRef.current?.scrollToIndex({
+              index: info.index,
+              animated: false,
+              viewPosition: 0.5,
+            }),
           0,
         );
       }}

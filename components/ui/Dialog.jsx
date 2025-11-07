@@ -1,7 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { Easing, runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useTheme } from '../../theme/ThemeProvider';
 
 export default function Dialog({
@@ -52,20 +59,24 @@ export default function Dialog({
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-      <Animated.View
-        pointerEvents="auto"
-        style={[styles.overlay, overlayStyle]}
-      >
+      <Animated.View pointerEvents="auto" style={[styles.overlay, overlayStyle]}>
         {/* перехватываем тап по фону */}
         <Pressable style={StyleSheet.absoluteFill} onPress={handleBackdrop} />
       </Animated.View>
 
-      <View pointerEvents="box-none" style={[styles.centerWrap, { paddingBottom: Math.max(16, insets?.bottom || 0) }]}>
+      <View
+        pointerEvents="box-none"
+        style={[styles.centerWrap, { paddingBottom: Math.max(16, insets?.bottom || 0) }]}
+      >
         <Animated.View
           style={[
             styles.card,
             { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, maxWidth },
-          , theme.shadows?.md || {}, contentStyle, cardStyle]}
+            ,
+            theme.shadows?.md || {},
+            contentStyle,
+            cardStyle,
+          ]}
         >
           {children}
         </Animated.View>

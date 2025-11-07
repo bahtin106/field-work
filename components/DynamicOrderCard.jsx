@@ -11,7 +11,9 @@ function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
     if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
       return color + alpha;
     }
     const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
@@ -25,15 +27,18 @@ function withAlpha(color, a) {
 function formatPhoneDisplay(raw) {
   try {
     if (!raw) return '';
-    const digits = String(raw).replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
+    const digits = String(raw)
+      .replace(/\D/g, '')
+      .replace(/^8(\d{10})$/, '7$1');
     if (digits.length === 11 && digits.startsWith('7')) {
       const p = digits.slice(1);
-      return `+7 (${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6,8)}-${p.slice(8,10)}`;
+      return `+7 (${p.slice(0, 3)}) ${p.slice(3, 6)}-${p.slice(6, 8)}-${p.slice(8, 10)}`;
     }
     return String(raw);
-  } catch { return String(raw || ''); }
+  } catch {
+    return String(raw || '');
+  }
 }
-
 
 /* ===== Name cache for executor (avoid N requests in lists) ===== */
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
@@ -61,7 +66,7 @@ function formatDateShort(iso) {
     'нояб.',
     'дек.',
   ];
-  return `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}, ${d.toLocaleTimeString('ru-RU', {hour: '2-digit', minute: '2-digit'})}`;
+  return `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
 }
 
 function getOptionLabel(field, value) {
@@ -150,7 +155,8 @@ function looksLikeUuid(s) {
   if (typeof s !== 'string') return false;
   const str = s.trim();
   if (!str) return false;
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str)) return true;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str))
+    return true;
   return false;
 }
 
@@ -224,11 +230,20 @@ export default function DynamicOrderCard({
   // Executor name (bottom-right)
   const executorName = useMemo(() => {
     const byNamePriority = [
-      'assigned_to_name','assigned_to_fullname','assigned_to_fio',
-      'assignee_name','assignee_fullname','assignee_fio',
-      'executor_name','executor_fullname','executor_fio',
-      'worker_name','worker_fullname','worker_fio',
-      'responsible_name','responsible_fullname',
+      'assigned_to_name',
+      'assigned_to_fullname',
+      'assigned_to_fio',
+      'assignee_name',
+      'assignee_fullname',
+      'assignee_fio',
+      'executor_name',
+      'executor_fullname',
+      'executor_fio',
+      'worker_name',
+      'worker_fullname',
+      'worker_fio',
+      'responsible_name',
+      'responsible_fullname',
     ];
     for (const key of byNamePriority) {
       const f = getFieldByKey(key);
@@ -237,8 +252,13 @@ export default function DynamicOrderCard({
       if (typeof v === 'string' && v.trim() && !looksLikeUuid(v)) return v.trim();
     }
     const nestedObjs = [
-      order?.assigned_to_profile, order?.executor_profile, order?.assignee_profile,
-      order?.assigned_user, order?.executor_user, order?.worker_user, order?.assigned_to_user,
+      order?.assigned_to_profile,
+      order?.executor_profile,
+      order?.assignee_profile,
+      order?.assigned_user,
+      order?.executor_user,
+      order?.worker_user,
+      order?.assigned_to_user,
     ].filter(Boolean);
     for (const obj of nestedObjs) {
       const n = joinName(obj);
@@ -259,14 +279,22 @@ export default function DynamicOrderCard({
       if (name) return name;
     }
     if (order?.users_map) {
-      const idKeys = ['assigned_to','executor','assignee','worker','responsible','assigned_user_id','executor_id'];
+      const idKeys = [
+        'assigned_to',
+        'executor',
+        'assignee',
+        'worker',
+        'responsible',
+        'assigned_user_id',
+        'executor_id',
+      ];
       for (const idKey of idKeys) {
         const idVal = order?.[idKey];
         const mapped = typeof idVal === 'string' ? order.users_map[idVal] : null;
         if (mapped && typeof mapped === 'string' && mapped.trim()) return mapped.trim();
       }
     }
-    const dirKeys = ['assigned_to','executor','assignee','worker','responsible'];
+    const dirKeys = ['assigned_to', 'executor', 'assignee', 'worker', 'responsible'];
     for (const k of dirKeys) {
       const obj = order?.[k];
       if (obj && typeof obj === 'object') {
@@ -279,15 +307,24 @@ export default function DynamicOrderCard({
       }
     }
     const emailLike =
-      order?.assigned_to_email || order?.executor_email || order?.assignee_email ||
-      order?.assigned_to_login || order?.executor_login;
+      order?.assigned_to_email ||
+      order?.executor_email ||
+      order?.assignee_email ||
+      order?.assigned_to_login ||
+      order?.executor_login;
     if (typeof emailLike === 'string' && emailLike.trim()) return emailLike.trim();
 
     try {
       const entries = Object.entries(order || {});
       for (const [k, v] of entries) {
         const lk = String(k).toLowerCase();
-        if ((lk.includes('executor') || lk.includes('assign') || lk.includes('worker') || lk.includes('responsible')) && lk.includes('name')) {
+        if (
+          (lk.includes('executor') ||
+            lk.includes('assign') ||
+            lk.includes('worker') ||
+            lk.includes('responsible')) &&
+          lk.includes('name')
+        ) {
           if (typeof v === 'string' && v.trim() && !looksLikeUuid(v)) return v.trim();
           if (typeof v === 'object') {
             const n = joinName(v);
@@ -318,14 +355,23 @@ export default function DynamicOrderCard({
       const d = new Date(bottomDateIso);
       if (isNaN(d)) return '';
       return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    } catch { return ''; }
+    } catch {
+      return '';
+    }
   }, [bottomDateIso]);
 
   // Context-driven visibility
   const roleRaw = (
-    viewerRole || order?.viewerRole || order?.current_user_role || order?.role ||
-    settings?.role || settings?.currentRole || ''
-  ).toString().toLowerCase();
+    viewerRole ||
+    order?.viewerRole ||
+    order?.current_user_role ||
+    order?.role ||
+    settings?.role ||
+    settings?.currentRole ||
+    ''
+  )
+    .toString()
+    .toLowerCase();
   const isAdminOrDispatcher = roleRaw === 'admin' || roleRaw === 'dispatcher';
   let showExecutor = false;
   if (context === 'my_orders') {
@@ -341,7 +387,9 @@ export default function DynamicOrderCard({
   // Title
   const title =
     readWithFallback(order, getFieldByKey('title'), 'title') ||
-    order?.title || order?.city || order?.id;
+    order?.title ||
+    order?.city ||
+    order?.id;
 
   // Resolve missing executor via Supabase
   const initialExecCached =
@@ -398,7 +446,7 @@ export default function DynamicOrderCard({
         alignSelf: 'stretch',
         width: '100%',
         marginVertical: 8,
-        
+
         ...(theme.shadows?.level1?.[Platform.OS] || {
           shadowColor: theme.colors.shadow || '#000',
           shadowOpacity: theme.mode === 'dark' ? 0.25 : 0.05,
@@ -447,11 +495,7 @@ export default function DynamicOrderCard({
       {/* Details under title (no datetime here) */}
       <View style={{ gap: 2, marginTop: 4, marginBottom: 6 }}>
         {primaryRows.map((row) => (
-          <Text
-            key={row.key}
-            numberOfLines={1}
-            style={{ fontSize: 14, color: mutedColor }}
-          >
+          <Text key={row.key} numberOfLines={1} style={{ fontSize: 14, color: mutedColor }}>
             {row.label ? `${row.label}: ` : ''}
             <Text style={{ color: theme.colors.text }}>{row.value || '—'}</Text>
           </Text>
@@ -480,22 +524,27 @@ export default function DynamicOrderCard({
                 marginRight: 6,
               }}
             >
-              <Text style={{ color: theme.colors.onPrimary, fontSize: 12, fontWeight: '700', lineHeight: 12 }}>
+              <Text
+                style={{
+                  color: theme.colors.onPrimary,
+                  fontSize: 12,
+                  fontWeight: '700',
+                  lineHeight: 12,
+                }}
+              >
                 с
               </Text>
             </View>
           )}
-          {
-            context === 'calendar' && bottomTimeStr ? (
-              <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-                {bottomTimeStr}
-              </Text>
-            ) : showDate ? (
-              <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-                {formatDateShort(bottomDateIso)}
-              </Text>
-            ) : null
-          }
+          {context === 'calendar' && bottomTimeStr ? (
+            <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
+              {bottomTimeStr}
+            </Text>
+          ) : showDate ? (
+            <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
+              {formatDateShort(bottomDateIso)}
+            </Text>
+          ) : null}
         </View>
 
         {showExecutor ? (

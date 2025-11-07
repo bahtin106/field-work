@@ -24,7 +24,9 @@ export const strings = {
     },
     departure: {
       title: T('company_settings_sections_departure_title'),
-      toggles: { useDepartureTime: T('company_settings_sections_departure_toggles_useDepartureTime') },
+      toggles: {
+        useDepartureTime: T('company_settings_sections_departure_toggles_useDepartureTime'),
+      },
       helperText: {
         departureOn: T('company_settings_sections_departure_helperText_departureOn'),
         departureOff: T('company_settings_sections_departure_helperText_departureOff'),

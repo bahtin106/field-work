@@ -2,23 +2,22 @@
 // Full-screen page-like filters without RN Modal. No remount on selection → no flicker.
 // Stays mounted; visibility is controlled by Animated slide. Matches "отдельная страница" UX.
 
-import React, { useMemo, useState, useEffect, useRef } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  StyleSheet,
-  Animated,
-  Easing,
-  Dimensions,
-  Platform,
-} from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useTheme } from '../../theme/ThemeProvider';
-import Button from '../ui/Button';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  Dimensions,
+  Easing,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { useTheme } from '../../theme/ThemeProvider';
+import Button from '../ui/Button';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -62,6 +61,7 @@ export default function FiltersPanel({
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
+  const sh = theme.shadows;
 
   // --- Draft state: accumulate edits locally; apply on button press ---
   const [draft, setDraft] = useState({
@@ -75,7 +75,6 @@ export default function FiltersPanel({
     roles: Array.isArray(values.roles) ? values.roles : [],
     suspended: values.suspended ?? null,
   });
-
 
   // Re-init draft and baseline every time panel opens
   useEffect(() => {
@@ -119,19 +118,16 @@ export default function FiltersPanel({
   const categories = useMemo(() => {
     const cats = [];
     if (departments && departments.length > 0) {
-      cats.push({ key: 'departments', label: t('users_department', 'Отдел') });
+      cats.push({ key: 'departments', label: t('users_department') });
     }
-    cats.push({ key: 'roles', label: t('users_role', 'Роль') });
-    cats.push({ key: 'suspended', label: t('users_suspended', 'Состояние') });
+    cats.push({ key: 'roles', label: t('users_role') });
+    cats.push({ key: 'suspended', label: t('users_suspended') });
     return cats;
   }, [departments, t]);
 
-  const [activeCat, setActiveCat] = useState(() => (categories[0] ? categories[0].key : null));
-  useEffect(() => {
-    if (!categories.find((c) => c.key === activeCat) && categories.length > 0) {
-      setActiveCat(categories[0].key);
-    }
-  }, [categories, activeCat]);
+  // Do not preselect any category on open — require explicit user choice so
+  // the active row is highlighted only when the user taps it.
+  const [activeCat, setActiveCat] = useState(null);
 
   // Shallow set compares
   const eqArrays = (a = [], b = []) => {
@@ -166,7 +162,9 @@ export default function FiltersPanel({
   const selectSuspended = (val) => setDraft((d) => ({ ...d, suspended: val }));
 
   const styles = useMemo(() => {
-    const leftWidth = sz.lg * 8;
+    // Reduce left column: previous base was sz.lg * 3; first reduced to 60%,
+    // now reduce further by 30% of that (total ~42% of base).
+    const computedLeft = Math.max(1, Math.round(sz.lg * 3 * 0.6 * 0.7));
     return StyleSheet.create({
       overlay: {
         ...StyleSheet.absoluteFillObject,
@@ -175,7 +173,8 @@ export default function FiltersPanel({
       },
       backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: withAlpha(c.scrim ?? '#000', 0.28),
+        // overlay color comes from theme (already an rgba string in tokens)
+        backgroundColor: c.overlay,
       },
       page: {
         position: 'absolute',
@@ -184,19 +183,20 @@ export default function FiltersPanel({
         bottom: 0,
         width: SCREEN_W,
         backgroundColor: c.background,
-        shadowColor: '#000',
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        shadowOffset: { width: -2, height: 0 },
-        elevation: 6,
+        // Use theme shadows (ios + android values) instead of hardcoded ones
+        shadowColor: sh?.card?.ios?.shadowColor,
+        shadowOpacity: sh?.card?.ios?.shadowOpacity,
+        shadowRadius: sh?.card?.ios?.shadowRadius,
+        shadowOffset: sh?.card?.ios?.shadowOffset,
+        elevation: sh?.card?.android?.elevation,
       },
       header: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingVertical: sz.sm,
         paddingHorizontal: sz.md,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: c.border,
+        // remove header separator line per request
+        borderBottomWidth: 0,
         backgroundColor: c.surface,
       },
       headerTitle: {
@@ -209,18 +209,25 @@ export default function FiltersPanel({
       },
       content: { flexDirection: 'row', flex: 1 },
       categories: {
-        width: leftWidth,
-        borderRightWidth: StyleSheet.hairlineWidth,
-        borderRightColor: c.border,
-        backgroundColor: c.surface,
+        width: computedLeft,
+        // remove column separator per request
+        borderRightWidth: 0,
+        // keep left column visually distinct in light theme: use theme background
+        backgroundColor: c.background,
       },
       categoryItem: {
         paddingVertical: sz.sm,
         paddingHorizontal: sz.md,
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-start', // allow wrapping in label
       },
-      categoryLabel: { fontSize: ty.sizes.md, color: c.textSecondary },
+      categoryLabel: {
+        fontSize: ty.sizes.md,
+        color: c.textSecondary,
+        flex: 1,
+        flexWrap: 'wrap',
+        flexShrink: 1,
+      },
       categoryItemActive: { backgroundColor: c.inputBg },
       categoryLabelActive: { color: c.text, fontWeight: ty.weight.semibold },
       options: { flex: 1, backgroundColor: c.inputBg },
@@ -237,35 +244,47 @@ export default function FiltersPanel({
     });
   }, [c, sz, ty]);
 
-  const optionRow = useMemo(() => ({
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: sz.sm,
-    paddingHorizontal: sz.md,
-  }), [sz]);
+  const optionRow = useMemo(
+    () => ({
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: sz.sm,
+      paddingHorizontal: sz.md,
+    }),
+    [sz],
+  );
 
-  const optionLabel = useMemo(() => ({
-    flexShrink: 1,
-    fontSize: ty.sizes.md,
-    color: c.text,
-  }), [ty.sizes.md, c.text]);
+  const optionLabel = useMemo(
+    () => ({
+      flexShrink: 1,
+      fontSize: ty.sizes.md,
+      color: c.text,
+    }),
+    [ty.sizes.md, c.text],
+  );
 
-  const checkboxBase = useMemo(() => ({
-    width: 20,
-    height: 20,
-    borderRadius: rad.md,
-    borderWidth: 1,
-    borderColor: c.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: sz.md,
-    backgroundColor: c.surface,
-  }), [c.border, c.surface, rad.md, sz.md]);
+  const checkboxBase = useMemo(
+    () => ({
+      width: 20,
+      height: 20,
+      borderRadius: rad.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: sz.md,
+      backgroundColor: c.surface,
+    }),
+    [c.border, c.surface, rad.md, sz.md],
+  );
 
-  const checkboxSelected = useMemo(() => ({
-    borderColor: c.primary,
-    backgroundColor: withAlpha(c.primary, 0.15),
-  }), [c.primary]);
+  const checkboxSelected = useMemo(
+    () => ({
+      borderColor: c.primary,
+      backgroundColor: withAlpha(c.primary, 0.15),
+    }),
+    [c.primary],
+  );
 
   const renderOptions = () => {
     switch (activeCat) {
@@ -274,59 +293,105 @@ export default function FiltersPanel({
           return (
             <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
               <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>
-                {t('common_noData', 'Нет данных')}
+                {t('common_noData')}
               </Text>
             </View>
           );
         }
-        return departments.map((d) => {
-          const selected = Array.isArray(draft.departments)
-            ? draft.departments.map(String).includes(String(d.id))
-            : false;
-          return (
+        // 'All' option
+        const allSelected = !Array.isArray(draft.departments) || draft.departments.length === 0;
+        return (
+          <>
             <Pressable
-              key={String(d.id)}
-              onPress={() => toggleDepartment(d.id)}
+              key="all"
+              onPress={() => setDraft((d) => ({ ...d, departments: [] }))}
               style={({ pressed }) => [
                 optionRow,
                 pressed && { backgroundColor: withAlpha(c.border, 0.07) },
               ]}
             >
-              <View style={[checkboxBase, selected && checkboxSelected]}>
-                {selected && <Feather name="check" size={14} color={c.onPrimary || c.surface} />}
+              <View style={[checkboxBase, allSelected && checkboxSelected]}>
+                {allSelected && <Feather name="check" size={14} color={c.onPrimary} />}
               </View>
-              <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]} numberOfLines={2}>
-                {d.name}
+              <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+                {' '}
+                {t('users_showAll')}
               </Text>
             </Pressable>
-          );
-        });
+            {departments.map((d) => {
+              const selected = Array.isArray(draft.departments)
+                ? draft.departments.map(String).includes(String(d.id))
+                : false;
+              return (
+                <Pressable
+                  key={String(d.id)}
+                  onPress={() => toggleDepartment(d.id)}
+                  style={({ pressed }) => [
+                    optionRow,
+                    pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                  ]}
+                >
+                  <View style={[checkboxBase, selected && checkboxSelected]}>
+                    {selected && <Feather name="check" size={14} color={c.onPrimary} />}
+                  </View>
+                  <Text
+                    style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}
+                    numberOfLines={2}
+                  >
+                    {d.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </>
+        );
       case 'roles':
-        return rolesOptions.map((r) => {
-          const selected = Array.isArray(draft.roles) ? draft.roles.includes(r.value) : false;
-          return (
+        // 'All' option for roles: empty selection means all
+        const rolesAllSelected = !Array.isArray(draft.roles) || draft.roles.length === 0;
+        return (
+          <>
             <Pressable
-              key={r.id}
-              onPress={() => toggleRole(r.value)}
+              key="all_roles"
+              onPress={() => setDraft((d) => ({ ...d, roles: [] }))}
               style={({ pressed }) => [
                 optionRow,
                 pressed && { backgroundColor: withAlpha(c.border, 0.07) },
               ]}
             >
-              <View style={[checkboxBase, selected && checkboxSelected]}>
-                {selected && <Feather name="check" size={14} color={c.onPrimary || c.surface} />}
+              <View style={[checkboxBase, rolesAllSelected && checkboxSelected]}>
+                {rolesAllSelected && <Feather name="check" size={14} color={c.onPrimary} />}
               </View>
-              <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
-                {r.label}
+              <Text style={[optionLabel, rolesAllSelected && { fontWeight: ty.weight.semibold }]}>
+                {t('users_showAll')}
               </Text>
             </Pressable>
-          );
-        });
+            {rolesOptions.map((r) => {
+              const selected = Array.isArray(draft.roles) ? draft.roles.includes(r.value) : false;
+              return (
+                <Pressable
+                  key={r.id}
+                  onPress={() => toggleRole(r.value)}
+                  style={({ pressed }) => [
+                    optionRow,
+                    pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                  ]}
+                >
+                  <View style={[checkboxBase, selected && checkboxSelected]}>
+                    {selected && <Feather name="check" size={14} color={c.onPrimary} />}
+                  </View>
+                  <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                    {r.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </>
+        );
       case 'suspended':
         const opts = [
-          { id: 'all', value: null, label: t('users_showAll', 'Все') },
-          { id: 'onlySuspended', value: true, label: t('users_onlySuspended', 'Отстраненные') },
-          { id: 'withoutSuspended', value: false, label: t('users_withoutSuspended', 'Без отстраненных') },
+          { id: 'all', value: null, label: t('users_showAll') },
+          { id: 'onlySuspended', value: true, label: t('users_onlySuspended') },
+          { id: 'withoutSuspended', value: false, label: t('users_withoutSuspended') },
         ];
         return opts.map((opt) => {
           const selected = (draft.suspended ?? null) === opt.value;
@@ -340,7 +405,7 @@ export default function FiltersPanel({
               ]}
             >
               <View style={[checkboxBase, selected && checkboxSelected]}>
-                {selected && <Feather name="check" size={14} color={c.onPrimary || c.surface} />}
+                {selected && <Feather name="check" size={14} color={c.onPrimary} />}
               </View>
               <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
                 {opt.label}
@@ -364,35 +429,54 @@ export default function FiltersPanel({
     >
       <View style={[styles.backdrop, { opacity: visible ? 1 : 0 }]} />
 
-      <Animated.View
-        style={[styles.page, { transform: [{ translateX: tx }] }]}
-      >
+      <Animated.View style={[styles.page, { transform: [{ translateX: tx }] }]}>
         <View style={styles.header}>
-          <Pressable
-            onPress={onClose}
-            android_ripple={{ borderless: true, color: withAlpha(c.border, 0.2) }}
-            style={styles.iconButton}
-            accessibilityRole="button"
-            accessibilityLabel={t('common_back', 'Назад')}
-          >
-            <Feather name="arrow-left" size={20} color={c.text} />
-          </Pressable>
-          <Text style={styles.headerTitle}>{t('common_filter', 'Фильтры')}</Text>
+          {/* Left arrow intentionally removed per spec; title stays in place */}
+          <Text style={styles.headerTitle}>{t('common_filter')}</Text>
           <Pressable
             onPress={() => {
-            setDraft({
-              departments: Array.isArray(defaults.departments) ? defaults.departments.map(String) : [],
-              roles: Array.isArray(defaults.roles) ? defaults.roles : [],
-              suspended: defaults.suspended ?? null,
-            });
-          }}
+              // If there are changes, only reset filters (do NOT close the panel).
+              // If there are no changes, close the panel.
+              if (hasChanges) {
+                const emptyDeps = Array.isArray(defaults.departments)
+                  ? defaults.departments.map(String)
+                  : [];
+                const emptyRoles = Array.isArray(defaults.roles) ? defaults.roles : [];
+                const emptySuspended = defaults.suspended ?? null;
+                const snapshot = {
+                  departments: emptyDeps,
+                  roles: emptyRoles,
+                  suspended: emptySuspended,
+                };
+                // Reset draft and baseline so hasChanges becomes false immediately
+                setDraft(snapshot);
+                setBaseline(snapshot);
+                // Propagate reset to parent state: update values and then call onApply
+                // so the cleared filters persist (prevents stale filter on reopen).
+                if (setValue) {
+                  setValue('departments', emptyDeps);
+                  setValue('roles', emptyRoles);
+                  setValue('suspended', emptySuspended);
+                }
+                if (onApply) {
+                  // Call onApply to let parent persist the cleared filters. Do not close the panel.
+                  onApply();
+                }
+                // Do not call onReset or onClose here; keep panel open per UX request.
+                return;
+              }
+              // No changes: just close
+              if (onClose) onClose();
+            }}
             android_ripple={{ borderless: false, color: withAlpha(c.border, 0.13) }}
             style={styles.resetBtn}
             accessibilityRole="button"
-            accessibilityLabel={t('settings_sections_quiet_items_quiet_reset', 'Сбросить')}
+            accessibilityLabel={
+              hasChanges ? t('settings_sections_quiet_items_quiet_reset') : t('common_close')
+            }
           >
             <Text style={styles.resetBtnText}>
-              {t('settings_sections_quiet_items_quiet_reset', 'Сбросить')}
+              {hasChanges ? t('settings_sections_quiet_items_quiet_reset') : t('common_close')}
             </Text>
           </Pressable>
         </View>
@@ -424,21 +508,24 @@ export default function FiltersPanel({
         {hasChanges && (
           <View style={styles.applyBar}>
             <Button
-              title={t('btn_apply', 'Применить')}
+              title={t('btn_apply')}
               onPress={() => {
-              if (setValue) {
-                setValue('departments', Array.isArray(draft.departments) ? draft.departments : []);
-                setValue('roles', Array.isArray(draft.roles) ? draft.roles : []);
-                setValue('suspended', draft.suspended ?? null);
-              }
-              if (onApply) onApply();
-              // update baseline to reflect applied state so button hides if staying open
-              setBaseline({
-                departments: Array.isArray(draft.departments) ? draft.departments : [],
-                roles: Array.isArray(draft.roles) ? draft.roles : [],
-                suspended: draft.suspended ?? null,
-              });
-            }}
+                if (setValue) {
+                  setValue(
+                    'departments',
+                    Array.isArray(draft.departments) ? draft.departments : [],
+                  );
+                  setValue('roles', Array.isArray(draft.roles) ? draft.roles : []);
+                  setValue('suspended', draft.suspended ?? null);
+                }
+                if (onApply) onApply();
+                // update baseline to reflect applied state so button hides if staying open
+                setBaseline({
+                  departments: Array.isArray(draft.departments) ? draft.departments : [],
+                  roles: Array.isArray(draft.roles) ? draft.roles : [],
+                  suspended: draft.suspended ?? null,
+                });
+              }}
               variant="primary"
               size="md"
             />

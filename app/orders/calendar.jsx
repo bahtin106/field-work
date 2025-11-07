@@ -21,7 +21,8 @@ import {
   Platform,
   Dimensions,
   Keyboard,
-  ScrollView } from 'react-native';
+  ScrollView,
+} from 'react-native';
 import { InteractionManager } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -43,7 +44,9 @@ function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
     if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
       return color + alpha;
     }
     const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
@@ -57,10 +60,14 @@ function withAlpha(color, a) {
 const ROLE_LABEL_RU = { admin: 'Администратор', dispatcher: 'Диспетчер', worker: 'Рабочий' };
 const roleColor = (theme, r) => {
   switch (r) {
-    case 'admin': return theme?.colors?.primary;
-    case 'dispatcher': return theme?.colors?.success;
-    case 'worker': return theme?.colors?.worker || theme?.colors?.primary;
-    default: return theme?.colors?.textSecondary;
+    case 'admin':
+      return theme?.colors?.primary;
+    case 'dispatcher':
+      return theme?.colors?.success;
+    case 'worker':
+      return theme?.colors?.worker || theme?.colors?.primary;
+    default:
+      return theme?.colors?.textSecondary;
   }
 };
 
@@ -106,17 +113,15 @@ export default function CalendarScreen() {
   const { theme } = useTheme();
 
   const mutedColor =
-    theme?.text?.muted?.color ??
-    theme?.colors?.muted ??
-    theme?.colors?.textSecondary;
+    theme?.text?.muted?.color ?? theme?.colors?.muted ?? theme?.colors?.textSecondary;
 
   // === NAVBAR: keep one stable color by theme, even with modals ===
   const applyNavBar = useCallback(async () => {
-  try {
-    // Edge-to-edge: background color is drawn by app; only set buttons style to keep contrast
-    await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
-  } catch {}
-}, [theme]);
+    try {
+      // Edge-to-edge: background color is drawn by app; only set buttons style to keep contrast
+      await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
+    } catch {}
+  }, [theme]);
 
   useEffect(() => {
     // apply on mount and whenever theme changes
@@ -130,7 +135,7 @@ export default function CalendarScreen() {
         container: { flex: 1 },
 
         calendarCard: {
-          backgroundColor: (theme.colors.card || theme.colors.surface),
+          backgroundColor: theme.colors.card || theme.colors.surface,
           borderRadius: 16,
           marginHorizontal: 12,
           marginTop: 2,
@@ -195,12 +200,12 @@ export default function CalendarScreen() {
           backgroundColor:
             theme?.colors?.badgeBg ??
             (theme.mode === 'dark'
-              ? (theme.colors.card || theme.colors.surface)
-              : (theme.colors.inputBg || theme.colors.surface)),
+              ? theme.colors.card || theme.colors.surface
+              : theme.colors.inputBg || theme.colors.surface),
           alignItems: 'center',
           justifyContent: 'center',
         },
-        countPillSelected: { backgroundColor: (theme.colors.card || theme.colors.surface) },
+        countPillSelected: { backgroundColor: theme.colors.card || theme.colors.surface },
         countText: { fontSize: 10, fontWeight: '800', color: theme.colors.primary },
         countTextSelected: { color: theme.colors.primary },
 
@@ -214,15 +219,18 @@ export default function CalendarScreen() {
           paddingTop: 8,
           paddingBottom: 8,
         },
-        ordersHeaderRight: { flexDirection: 'row', alignItems: 'center', flexShrink: 0, marginLeft: 8 },
+        ordersHeaderRight: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          flexShrink: 0,
+          marginLeft: 8,
+        },
         ordersTitle: { fontWeight: '700', fontSize: 16, color: theme.colors.text },
 
         // chips
         chip: {
           marginLeft: 8,
-          backgroundColor:
-            theme.colors?.chipBg ??
-            (theme.colors.inputBg || theme.colors.surface),
+          backgroundColor: theme.colors?.chipBg ?? (theme.colors.inputBg || theme.colors.surface),
           paddingVertical: 6,
           paddingHorizontal: 12,
           borderRadius: 14,
@@ -232,9 +240,22 @@ export default function CalendarScreen() {
         chipActive: { backgroundColor: theme.colors.primary },
         chipText: { color: theme.colors.primary, fontWeight: '600' },
         chipTextActive: { color: theme.colors.onPrimary || theme.colors.primaryTextOn },
-        chipCompact: { height: 34, paddingVertical: 0, paddingHorizontal: 10, borderRadius: 12, borderWidth: 1 },
-        clearChip: { height: 30, width: 30, paddingHorizontal: 0, borderRadius: 15, alignItems: 'center', justifyContent: 'center', borderWidth: 1 },
-
+        chipCompact: {
+          height: 34,
+          paddingVertical: 0,
+          paddingHorizontal: 10,
+          borderRadius: 12,
+          borderWidth: 1,
+        },
+        clearChip: {
+          height: 30,
+          width: 30,
+          paddingHorizontal: 0,
+          borderRadius: 15,
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: 1,
+        },
 
         // cards (copied from all-orders, trimmed)
         card: {
@@ -275,9 +296,19 @@ export default function CalendarScreen() {
           justifyContent: 'center',
           marginRight: 6,
         },
-        urgentDotText: { color: theme.colors.onPrimary, fontSize: 12, fontWeight: '700', lineHeight: 12 },
+        urgentDotText: {
+          color: theme.colors.onPrimary,
+          fontSize: 12,
+          fontWeight: '700',
+          lineHeight: 12,
+        },
 
-        noOrders: { fontSize: 14, color: theme.colors.textSecondary, textAlign: 'center', marginTop: 20 },
+        noOrders: {
+          fontSize: 14,
+          color: theme.colors.textSecondary,
+          textAlign: 'center',
+          marginTop: 20,
+        },
 
         // modals
         modalBackdrop: { flex: 1, justifyContent: 'flex-end' },
@@ -299,7 +330,10 @@ export default function CalendarScreen() {
         monthGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
         monthCell: {
           width: '31%',
-          backgroundColor: theme.mode === 'dark' ? (theme.colors.card || theme.colors.surface) : theme.colors.background || theme.colors.surface,
+          backgroundColor:
+            theme.mode === 'dark'
+              ? theme.colors.card || theme.colors.surface
+              : theme.colors.background || theme.colors.surface,
           borderRadius: 12,
           paddingVertical: 12,
           alignItems: 'center',
@@ -308,7 +342,9 @@ export default function CalendarScreen() {
         monthCellText: { fontSize: 14, fontWeight: '600', color: theme.colors.text },
 
         searchInput: {
-          backgroundColor: theme.colors.surface ? theme.colors.surface[1] : (theme.colors.card || theme.colors.surface),
+          backgroundColor: theme.colors.surface
+            ? theme.colors.surface[1]
+            : theme.colors.card || theme.colors.surface,
           borderColor: theme.colors.border,
           borderWidth: 1,
           borderRadius: 12,
@@ -323,15 +359,21 @@ export default function CalendarScreen() {
           borderBottomColor: theme.colors.border,
           borderBottomWidth: 1,
           paddingHorizontal: 16,
-          backgroundColor: (theme.colors.card || theme.colors.surface),
+          backgroundColor: theme.colors.card || theme.colors.surface,
         },
-        userRowActive: { backgroundColor: theme.colors?.chipBg || theme.colors.inputBg || theme.colors.surface },
+        userRowActive: {
+          backgroundColor: theme.colors?.chipBg || theme.colors.inputBg || theme.colors.surface,
+        },
         userName: { fontSize: 16, color: theme.colors.text },
         userNameActive: { color: theme.colors.primary, fontWeight: '700' },
 
         centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
-        modalOverlay: { flex: 1, backgroundColor: theme.colors.overlay, justifyContent: 'flex-end' },
+        modalOverlay: {
+          flex: 1,
+          backgroundColor: theme.colors.overlay,
+          justifyContent: 'flex-end',
+        },
 
         modalContent: {
           backgroundColor: 'transparent',
@@ -364,7 +406,7 @@ export default function CalendarScreen() {
 
         rolePill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, borderWidth: 1 },
         modalCard: {
-          backgroundColor: (theme.colors.card || theme.colors.surface),
+          backgroundColor: theme.colors.card || theme.colors.surface,
           borderRadius: 18,
           padding: 16,
           borderWidth: 1,
@@ -384,7 +426,7 @@ export default function CalendarScreen() {
       }),
     [theme],
   );
-const getDateKey = (v) => {
+  const getDateKey = (v) => {
     if (!v) return null;
     if (typeof v === 'string') return v.slice(0, 10);
     try {
@@ -413,16 +455,19 @@ const getDateKey = (v) => {
 
   const router = useRouter();
 
-  
-// Из календаря аппаратная "Назад" всегда ведёт на Главную
-useFocusEffect(React.useCallback(() => {
-  const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-    try { router.replace('/orders'); } catch {}
-    return true;
-  });
-  return () => sub.remove();
-}, [])); /* __CALENDAR_BACK_TO_HOME__ */
-const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnTo) : null;
+  // Из календаря аппаратная "Назад" всегда ведёт на Главную
+  useFocusEffect(
+    React.useCallback(() => {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        try {
+          router.replace('/orders');
+        } catch {}
+        return true;
+      });
+      return () => sub.remove();
+    }, []),
+  ); /* __CALENDAR_BACK_TO_HOME__ */
+  const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnTo) : null;
   let backParams = {};
   try {
     backParams = returnParams ? JSON.parse(returnParams) : {};
@@ -850,9 +895,11 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
 
   if (loading) {
     return (
-      <Screen><View style={styles.centered}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View></Screen>
+      <Screen>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </Screen>
     );
   }
 
@@ -910,7 +957,7 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
   };
 
   return (
-  <Screen style={styles.safeArea} scroll={false}>
+    <Screen style={styles.safeArea} scroll={false}>
       <View style={styles.container}>
         <Animated.View style={{ transform: [{ translateX: monthTrans }], opacity: monthOpacity }}>
           <Calendar
@@ -1017,15 +1064,24 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
             ellipsizeMode="tail"
           >
             Заявки на{' '}
-            {isNoDateMode ? 'Без даты' : format(new Date(selectedDate), 'd MMMM', { locale: dfnsRu })}
+            {isNoDateMode
+              ? 'Без даты'
+              : format(new Date(selectedDate), 'd MMMM', { locale: dfnsRu })}
           </Text>
           {(role === 'admin' || role === 'dispatcher') && (
             <View style={styles.ordersHeaderRight}>
               <Button
                 onPress={openUserPicker}
                 variant={selectedUserId ? 'primary' : 'secondary'}
-                style={[styles.chip, styles.chipCompact, selectedUserId && styles.chipActive, { flexShrink: 1, maxWidth: 260 }]}
-                title={selectedUserId ? (usersMap.get(selectedUserId) || 'Сотрудник') : 'Все сотрудники'}
+                style={[
+                  styles.chip,
+                  styles.chipCompact,
+                  selectedUserId && styles.chipActive,
+                  { flexShrink: 1, maxWidth: 260 },
+                ]}
+                title={
+                  selectedUserId ? usersMap.get(selectedUserId) || 'Сотрудник' : 'Все сотрудники'
+                }
               />
               {selectedUserId && (
                 <Button
@@ -1092,9 +1148,17 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
             >
               <View style={styles.modalCard}>
                 <View className="yearRow" style={styles.yearRow}>
-                  <Button title="‹" onPress={() => setPickerYear((y) => y - 1)} textStyle={styles.arrow} />
+                  <Button
+                    title="‹"
+                    onPress={() => setPickerYear((y) => y - 1)}
+                    textStyle={styles.arrow}
+                  />
                   <Text style={styles.yearText}>{pickerYear}</Text>
-                  <Button title="›" onPress={() => setPickerYear((y) => y + 1)} textStyle={styles.arrow} />
+                  <Button
+                    title="›"
+                    onPress={() => setPickerYear((y) => y + 1)}
+                    textStyle={styles.arrow}
+                  />
                 </View>
                 <View style={styles.monthGrid}>
                   {MONTHS_RU.map((m, idx) => (
@@ -1141,46 +1205,58 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
                   style={styles.searchInput}
                   returnKeyType="search"
                 />
-                
-<ScrollView
-  style={{ maxHeight: 360 }}
-  keyboardShouldPersistTaps="handled"
-  keyboardDismissMode="on-drag"
->
-  {filteredSortedUsers.map((item, idx) => (
-    <React.Fragment key={item.id}>
-      <Pressable
-        style={styles.executorOption}
-        onPress={() => handlePickUser(item.id)}
-      >
-        <View
-          style={[
-            styles.executorRow,
-            selectedUserId === item.id && styles.executorRowSelected,
-          ]}
-        >
-          <Text style={styles.executorText}>{item.name}</Text>
-          <View
-            style={[
-              styles.rolePill,
-              {
-                borderColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.2, theme),
-                backgroundColor: withAlpha(roleColor(theme, item.role) || theme.colors.border, 0.13, theme),
-              },
-            ]}
-          >
-            <Text
-              style={{ color: roleColor(theme, item.role) || theme.colors.text, fontSize: 12, fontWeight: '600' }}
-            >
-              {ROLE_LABEL_RU[item.role] || 'Исполнитель'}
-            </Text>
-          </View>
-        </View>
-      </Pressable>
-      {idx !== filteredSortedUsers.length - 1 && <View style={styles.separator} />}
-    </React.Fragment>
-  ))}
-</ScrollView>
+
+                <ScrollView
+                  style={{ maxHeight: 360 }}
+                  keyboardShouldPersistTaps="handled"
+                  keyboardDismissMode="on-drag"
+                >
+                  {filteredSortedUsers.map((item, idx) => (
+                    <React.Fragment key={item.id}>
+                      <Pressable
+                        style={styles.executorOption}
+                        onPress={() => handlePickUser(item.id)}
+                      >
+                        <View
+                          style={[
+                            styles.executorRow,
+                            selectedUserId === item.id && styles.executorRowSelected,
+                          ]}
+                        >
+                          <Text style={styles.executorText}>{item.name}</Text>
+                          <View
+                            style={[
+                              styles.rolePill,
+                              {
+                                borderColor: withAlpha(
+                                  roleColor(theme, item.role) || theme.colors.border,
+                                  0.2,
+                                  theme,
+                                ),
+                                backgroundColor: withAlpha(
+                                  roleColor(theme, item.role) || theme.colors.border,
+                                  0.13,
+                                  theme,
+                                ),
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={{
+                                color: roleColor(theme, item.role) || theme.colors.text,
+                                fontSize: 12,
+                                fontWeight: '600',
+                              }}
+                            >
+                              {ROLE_LABEL_RU[item.role] || 'Исполнитель'}
+                            </Text>
+                          </View>
+                        </View>
+                      </Pressable>
+                      {idx !== filteredSortedUsers.length - 1 && <View style={styles.separator} />}
+                    </React.Fragment>
+                  ))}
+                </ScrollView>
               </View>
             </Animated.View>
           </Pressable>
@@ -1193,14 +1269,14 @@ const backTargetPath = typeof returnTo === 'string' && returnTo ? String(returnT
 function getStatusMeta(theme, status) {
   switch (status) {
     case 'В ленте':
-      return { bg: theme.colors?.inputBg || (theme.colors?.surface), fg: theme.colors?.warning };
+      return { bg: theme.colors?.inputBg || theme.colors?.surface, fg: theme.colors?.warning };
     case 'Новый':
-      return { bg: theme.colors?.inputBg || (theme.colors?.surface), fg: theme.colors?.primary };
+      return { bg: theme.colors?.inputBg || theme.colors?.surface, fg: theme.colors?.primary };
     case 'В работе':
-      return { bg: theme.colors?.inputBg || (theme.colors?.surface), fg: theme.colors?.success };
+      return { bg: theme.colors?.inputBg || theme.colors?.surface, fg: theme.colors?.success };
     case 'Завершённая':
       return { bg: theme.colors?.surface, fg: theme.colors?.textSecondary };
     default:
       return { bg: theme.colors?.surface, fg: theme.colors?.text };
   }
-};
+}

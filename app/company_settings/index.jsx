@@ -1,6 +1,15 @@
 // app/company_settings/index.jsx
 import React from 'react';
-import { View, Text, Switch, StyleSheet, Platform, Pressable, Keyboard, ScrollView } from 'react-native';
+import {
+  View,
+  Text,
+  Switch,
+  StyleSheet,
+  Platform,
+  Pressable,
+  Keyboard,
+  ScrollView,
+} from 'react-native';
 import { useRouter, useNavigation } from 'expo-router';
 import { useRoute } from '@react-navigation/native';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -12,8 +21,6 @@ import { useToast } from '../../components/ui/ToastProvider';
 import UIButton from '../../components/ui/Button';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useI18nVersion } from '../../src/i18n';
-
-
 
 import { Feather } from '@expo/vector-icons';
 // Lazy-load Supabase client to avoid breaking other screens if path differs.
@@ -41,18 +48,103 @@ const getDeviceTimeZone = () => {
 /** Fallback list if Intl.supportedValuesOf('timeZone') is unavailable */
 const FALLBACK_TZ = [
   'Etc/UTC',
-  'Pacific/Midway','Pacific/Honolulu','America/Anchorage','America/Los_Angeles','America/Denver','America/Phoenix','America/Chicago','America/New_York','America/Toronto','America/Mexico_City',
-  'America/Bogota','America/Lima','America/Caracas','America/Santiago','America/Sao_Paulo','Atlantic/Azores','Atlantic/Reykjavik',
-  'Europe/Lisbon','Europe/London','Europe/Dublin','Europe/Madrid','Europe/Paris','Europe/Berlin','Europe/Amsterdam','Europe/Prague','Europe/Vienna','Europe/Zurich','Europe/Warsaw','Europe/Budapest',
-  'Europe/Rome','Europe/Stockholm','Europe/Helsinki','Europe/Athens','Europe/Bucharest','Europe/Chisinau','Europe/Kiev','Europe/Istanbul','Europe/Minsk',
-  'Europe/Kaliningrad','Europe/Moscow','Europe/Samara','Europe/Saratov',
-  'Asia/Yekaterinburg','Asia/Omsk','Asia/Novosibirsk','Asia/Barnaul','Asia/Tomsk','Asia/Krasnoyarsk','Asia/Irkutsk','Asia/Yakutsk','Asia/Vladivostok','Asia/Sakhalin','Asia/Magадан','Asia/Кamчатка',
-  'Asia/Tbilisi','Asia/Yerevan','Asia/Baku','Asia/Tashkent','Asia/Samarkand','Asia/Bishkek','Asia/Dushanbe',
-  'Asia/Almaty','Asia/Qostanay','Asia/Aqtau','Asia/Aqtobe','Asia/Atyrau','Asia/Oral',
-  'Asia/Tehran','Asia/Baghdad','Asia/Jerusalem','Asia/Dubai','Asia/Karachi','Asia/Kolkata','Asia/Kathmandu','Asia/Colombo',
-  'Asia/Dhaka','Asia/Bangkok','Asia/Ho_Chi_Minh','Asia/Jakarta','Asia/Singapore','Asia/Kuala_Lumpur','Asia/Hong_Kong','Asia/Taipei','Asia/Shanghai','Asia/Seoul','Asia/Tokyo',
-  'Australia/Perth','Australia/Darwin','Australia/Adelaide','Australia/Brisbane','Australia/Sydney',
-  'Pacific/Port_Moresby','Pacific/Guadalcanal','Pacific/Fiji','Pacific/Auckland','Pacific/Chatham','Pacific/Tongatapu'
+  'Pacific/Midway',
+  'Pacific/Honolulu',
+  'America/Anchorage',
+  'America/Los_Angeles',
+  'America/Denver',
+  'America/Phoenix',
+  'America/Chicago',
+  'America/New_York',
+  'America/Toronto',
+  'America/Mexico_City',
+  'America/Bogota',
+  'America/Lima',
+  'America/Caracas',
+  'America/Santiago',
+  'America/Sao_Paulo',
+  'Atlantic/Azores',
+  'Atlantic/Reykjavik',
+  'Europe/Lisbon',
+  'Europe/London',
+  'Europe/Dublin',
+  'Europe/Madrid',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Amsterdam',
+  'Europe/Prague',
+  'Europe/Vienna',
+  'Europe/Zurich',
+  'Europe/Warsaw',
+  'Europe/Budapest',
+  'Europe/Rome',
+  'Europe/Stockholm',
+  'Europe/Helsinki',
+  'Europe/Athens',
+  'Europe/Bucharest',
+  'Europe/Chisinau',
+  'Europe/Kiev',
+  'Europe/Istanbul',
+  'Europe/Minsk',
+  'Europe/Kaliningrad',
+  'Europe/Moscow',
+  'Europe/Samara',
+  'Europe/Saratov',
+  'Asia/Yekaterinburg',
+  'Asia/Omsk',
+  'Asia/Novosibirsk',
+  'Asia/Barnaul',
+  'Asia/Tomsk',
+  'Asia/Krasnoyarsk',
+  'Asia/Irkutsk',
+  'Asia/Yakutsk',
+  'Asia/Vladivostok',
+  'Asia/Sakhalin',
+  'Asia/Magадан',
+  'Asia/Кamчатка',
+  'Asia/Tbilisi',
+  'Asia/Yerevan',
+  'Asia/Baku',
+  'Asia/Tashkent',
+  'Asia/Samarkand',
+  'Asia/Bishkek',
+  'Asia/Dushanbe',
+  'Asia/Almaty',
+  'Asia/Qostanay',
+  'Asia/Aqtau',
+  'Asia/Aqtobe',
+  'Asia/Atyrau',
+  'Asia/Oral',
+  'Asia/Tehran',
+  'Asia/Baghdad',
+  'Asia/Jerusalem',
+  'Asia/Dubai',
+  'Asia/Karachi',
+  'Asia/Kolkata',
+  'Asia/Kathmandu',
+  'Asia/Colombo',
+  'Asia/Dhaka',
+  'Asia/Bangkok',
+  'Asia/Ho_Chi_Minh',
+  'Asia/Jakarta',
+  'Asia/Singapore',
+  'Asia/Kuala_Lumpur',
+  'Asia/Hong_Kong',
+  'Asia/Taipei',
+  'Asia/Shanghai',
+  'Asia/Seoul',
+  'Asia/Tokyo',
+  'Australia/Perth',
+  'Australia/Darwin',
+  'Australia/Adelaide',
+  'Australia/Brisbane',
+  'Australia/Sydney',
+  'Pacific/Port_Moresby',
+  'Pacific/Guadalcanal',
+  'Pacific/Fiji',
+  'Pacific/Auckland',
+  'Pacific/Chatham',
+  'Pacific/Tongatapu',
 ];
 
 function isZoneSupported(zone) {
@@ -112,14 +204,14 @@ function getOffsetMinutes(zone) {
       second: '2-digit',
     });
     const parts = dtf.formatToParts(now);
-    const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
     const asUTC = Date.UTC(
       Number(map.year),
       Number(map.month) - 1,
       Number(map.day),
       Number(map.hour),
       Number(map.minute),
-      Number(map.second)
+      Number(map.second),
     );
     const diffMin = Math.round((asUTC - now.getTime()) / 60000);
     return diffMin;
@@ -127,7 +219,7 @@ function getOffsetMinutes(zone) {
     try {
       const now = new Date();
       const utc = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
-      const tz  = new Date(now.toLocaleString('en-US', { timeZone: zone }));
+      const tz = new Date(now.toLocaleString('en-US', { timeZone: zone }));
       if (!isNaN(tz.getTime()) && !isNaN(utc.getTime())) {
         return Math.round((tz - utc) / 60000);
       }
@@ -157,12 +249,10 @@ function zoneToItem(zone, deviceZone, t) {
     offset,
     offset.replace(':00', ''),
     offset.replace('UTC', '').trim(),
-    offset.replace('UTC', '').replace(':00','').trim(),
-    `${offsetMin >= 0 ? '+' : ''}${Math.floor(offsetMin/60)}`,
+    offset.replace('UTC', '').replace(':00', '').trim(),
+    `${offsetMin >= 0 ? '+' : ''}${Math.floor(offsetMin / 60)}`,
   ].join(' ');
-  const subtitle = isDevice
-    ? `${basic} · ${t('timezone_subtitle_device')}`
-    : basic;
+  const subtitle = isDevice ? `${basic} · ${t('timezone_subtitle_device')}` : basic;
   return { id: zone, label, subtitle, offsetMin, city };
 }
 
@@ -175,43 +265,53 @@ export default function CompanySettings() {
   const { t } = useTranslation();
   const ver = useI18nVersion();
   // Единицы времени и преобразователи — зависят от t, поэтому внутри компонента
-  const UNIT_ITEMS = React.useMemo(() => ([
-    { id: 'min',  label: t('time_unit_minutes'),  mul: 1 },
-    { id: 'hour', label: t('time_unit_hours'),    mul: 60 },
-    { id: 'day',  label: t('time_unit_days'),     mul: 1440 },
-  ]), [t]);
+  const UNIT_ITEMS = React.useMemo(
+    () => [
+      { id: 'min', label: t('time_unit_minutes'), mul: 1 },
+      { id: 'hour', label: t('time_unit_hours'), mul: 60 },
+      { id: 'day', label: t('time_unit_days'), mul: 1440 },
+    ],
+    [t],
+  );
 
   const decomposeMinutes = React.useCallback((total) => {
     const n = Math.max(0, Number(total) || 0);
     if (n % 1440 === 0) return { val: String(n / 1440), unit: 'day' };
-    if (n % 60 === 0)   return { val: String(n / 60),   unit: 'hour' };
+    if (n % 60 === 0) return { val: String(n / 60), unit: 'hour' };
     return { val: String(n), unit: 'min' };
   }, []);
 
-  const toMinutes = React.useCallback((valStr, unitId) => {
-    const v = Math.max(0, Number(valStr) || 0);
-    const mul = UNIT_ITEMS.find(u => u.id === unitId)?.mul || 1;
-    return Math.min(43200, Math.round(v * mul));
-  }, [UNIT_ITEMS]);
+  const toMinutes = React.useCallback(
+    (valStr, unitId) => {
+      const v = Math.max(0, Number(valStr) || 0);
+      const mul = UNIT_ITEMS.find((u) => u.id === unitId)?.mul || 1;
+      return Math.min(43200, Math.round(v * mul));
+    },
+    [UNIT_ITEMS],
+  );
 
   // Батч-обновление нескольких полей компаний
-  const updateSettings = React.useCallback(async (patch) => {
-    const supabase = await getSupabase();
-    if (!supabase) throw new Error(t('errors_noDb'));
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error(t('errors_noAuth'));
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('company_id')
-      .eq('id', user.id)
-      .single();
-    const companyId = profile?.company_id;
-    if (!companyId) throw new Error(t('errors_companyNotFound'));
-    const { error } = await supabase.from('companies').update(patch).eq('id', companyId);
-    if (error) throw error;
-    return true;
-  }, [t]);
-
+  const updateSettings = React.useCallback(
+    async (patch) => {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error(t('errors_noDb'));
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error(t('errors_noAuth'));
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('id', user.id)
+        .single();
+      const companyId = profile?.company_id;
+      if (!companyId) throw new Error(t('errors_companyNotFound'));
+      const { error } = await supabase.from('companies').update(patch).eq('id', companyId);
+      if (error) throw error;
+      return true;
+    },
+    [t],
+  );
 
   const s = React.useMemo(() => styles(theme), [theme]);
 
@@ -226,12 +326,18 @@ export default function CompanySettings() {
   const [savingCompany, setSavingCompany] = React.useState(false);
 
   const closeCompanyEditor = React.useCallback(() => {
-    try { Keyboard.dismiss(); } catch (_) {}
+    try {
+      Keyboard.dismiss();
+    } catch (_) {}
     setCompanyNameOpen(false);
     setCompanyNameError('');
     setSavingCompany(false);
     // Force re-create modal instance to avoid any stale RN Modal overlays
-    setTimeout(() => { try { setCompanyModalKey((k) => k + 1); } catch (_) {} }, 0);
+    setTimeout(() => {
+      try {
+        setCompanyModalKey((k) => k + 1);
+      } catch (_) {}
+    }, 0);
   }, []);
 
   const [useDepartureTime, setUseDepartureTime] = React.useState(false);
@@ -245,7 +351,6 @@ export default function CompanySettings() {
   const [beforeUnit, setBeforeUnit] = React.useState('min');
   const [afterUnit, setAfterUnit] = React.useState('min');
 
-
   React.useLayoutEffect(() => {
     try {
       const titleKeyPrimary = 'routes.settings/index';
@@ -254,14 +359,16 @@ export default function CompanySettings() {
       nav.setParams({ headerTitle: title });
     } catch {}
   }, [ver, t]);
-// Load current company settings
+  // Load current company settings
   React.useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const supabase = await getSupabase();
         if (!supabase) return;
-        const { data: { user } } = await supabase.auth.getUser();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
         if (!user) return;
         const { data: profile } = await supabase
           .from('profiles')
@@ -272,7 +379,9 @@ export default function CompanySettings() {
         if (!companyId) return;
         const { data: companyRow } = await supabase
           .from('companies')
-          .select('name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins')
+          .select(
+            'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins',
+          )
           .eq('id', companyId)
           .single();
         if (!alive) return;
@@ -281,52 +390,60 @@ export default function CompanySettings() {
           setCompanyName(companyRow.name);
           setCompanyNameInitial(companyRow.name);
         }
-        if (typeof companyRow?.use_departure_time === 'boolean') setUseDepartureTime(companyRow.use_departure_time);
-        if (typeof companyRow?.worker_phone_mode === 'string') setPhoneMode(companyRow.worker_phone_mode);
+        if (typeof companyRow?.use_departure_time === 'boolean')
+          setUseDepartureTime(companyRow.use_departure_time);
+        if (typeof companyRow?.worker_phone_mode === 'string')
+          setPhoneMode(companyRow.worker_phone_mode);
         const _b = companyRow?.worker_phone_window_before_mins ?? null;
         const _a = companyRow?.worker_phone_window_after_mins ?? null;
         if (_b != null) setWindowBefore(String(_b));
         if (_a != null) setWindowAfter(String(_a));
-
       } catch (e) {
         // silent
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  const updateSetting = React.useCallback(async (key, value) => {
-    const supabase = await getSupabase();
-    if (!supabase) throw new Error(t('errors_noDb'));
-    const { data: { user }, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !user) throw new Error(t('errors_noAuth'));
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('company_id')
-      .eq('id', user.id)
-      .single();
-    if (profErr) throw profErr;
-    const companyId = profile?.company_id;
-    if (!companyId) throw new Error(t('errors_companyNotFound'));
-    const payload = { [key]: value };
-    const { error: upErr } = await supabase
-      .from('companies')
-      .update(payload)
-      .eq('id', companyId);
-    if (upErr) throw upErr;
-    return true;
-  }, [t]);
+  const updateSetting = React.useCallback(
+    async (key, value) => {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error(t('errors_noDb'));
+      const {
+        data: { user },
+        error: authErr,
+      } = await supabase.auth.getUser();
+      if (authErr || !user) throw new Error(t('errors_noAuth'));
+      const { data: profile, error: profErr } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('id', user.id)
+        .single();
+      if (profErr) throw profErr;
+      const companyId = profile?.company_id;
+      if (!companyId) throw new Error(t('errors_companyNotFound'));
+      const payload = { [key]: value };
+      const { error: upErr } = await supabase.from('companies').update(payload).eq('id', companyId);
+      if (upErr) throw upErr;
+      return true;
+    },
+    [t],
+  );
 
   const onSubmitCompanyName = React.useCallback(() => {
     const name = String(companyName || '').trim();
     if (!name || name === companyNameInitial) return;
-    toast.promise(() => updateSetting('name', name), {
-      loading: t('toast_loading'),
-      success: t('toast_companyNameSaved'),
-      error: (e) => e?.message || t('toast_error'),
-    }).then(() => {
-      setCompanyNameInitial(name);
-    });
+    toast
+      .promise(() => updateSetting('name', name), {
+        loading: t('toast_loading'),
+        success: t('toast_companyNameSaved'),
+        error: (e) => e?.message || t('toast_error'),
+      })
+      .then(() => {
+        setCompanyNameInitial(name);
+      });
   }, [companyName, companyNameInitial, updateSetting, t]);
 
   // Time zones list
@@ -335,7 +452,7 @@ export default function CompanySettings() {
       const list = getAllTimeZones();
       const device = getDeviceTimeZone();
       const items = list.map((z) => zoneToItem(z, device, t));
-      items.sort((a, b) => (a.offsetMin - b.offsetMin) || a.city.localeCompare(b.city, 'ru'));
+      items.sort((a, b) => a.offsetMin - b.offsetMin || a.city.localeCompare(b.city, 'ru'));
       return items;
     } catch {
       const z = getDeviceTimeZone();
@@ -351,24 +468,30 @@ export default function CompanySettings() {
 
   const timeZoneLabel = tzMap.get(timeZone)?.label || timeZone;
 
-  const onPickTimeZone = React.useCallback((it) => {
-    setTimeZone(it.id);
-    setTzOpen(false);
-    toast.promise(() => updateSetting('timezone', it.id), {
-      loading: t('toast_loading'),
-      success: t('toast_timezoneSaved'),
-      error: (e) => e?.message || t('toast_error'),
-    });
-  }, [updateSetting, t]);
+  const onPickTimeZone = React.useCallback(
+    (it) => {
+      setTimeZone(it.id);
+      setTzOpen(false);
+      toast.promise(() => updateSetting('timezone', it.id), {
+        loading: t('toast_loading'),
+        success: t('toast_timezoneSaved'),
+        error: (e) => e?.message || t('toast_error'),
+      });
+    },
+    [updateSetting, t],
+  );
 
-  const onToggleDepartureTime = React.useCallback((val) => {
-    setUseDepartureTime(Boolean(val));
-    toast.promise(() => updateSetting('use_departure_time', Boolean(val)), {
-      loading: t('toast_loading'),
-      success: t('toast_settingsSaved'),
-      error: (e) => e?.message || t('toast_error'),
-    });
-  }, [updateSetting, t]);
+  const onToggleDepartureTime = React.useCallback(
+    (val) => {
+      setUseDepartureTime(Boolean(val));
+      toast.promise(() => updateSetting('use_departure_time', Boolean(val)), {
+        loading: t('toast_loading'),
+        success: t('toast_settingsSaved'),
+        error: (e) => e?.message || t('toast_error'),
+      });
+    },
+    [updateSetting, t],
+  );
 
   const phoneModeOptions = React.useMemo(() => {
     try {
@@ -380,133 +503,151 @@ export default function CompanySettings() {
       return [
         { id: 'always', label: t('settings_phone_mode_always') },
         { id: 'window', label: t('settings_phone_mode_window') },
-        { id: 'off',    label: t('settings_phone_mode_off')    },
+        { id: 'off', label: t('settings_phone_mode_off') },
       ];
     }
   }, [ver, t]);
 
-  const onPickPhoneMode = React.useCallback((it) => {
-    setPhoneModeOpen(false);
-    if (it.id === 'window') {
-      // Откроем модалку настройки интервала.
-      try {
-        const b = decomposeMinutes(windowBefore);
-        const a = decomposeMinutes(windowAfter);
-        setBeforeUnit(b.unit); setWindowBefore(b.val);
-        setAfterUnit(a.unit);  setWindowAfter(a.val);
-      } catch {}
-      setPhoneMode('window');
-      setWindowModalOpen(true);
-      return;
-    }
-    setPhoneMode(it.id);
-    toast.promise(() => updateSetting('worker_phone_mode', it.id), {
-      loading: t('toast_loading'),
-      success: t('toast_settingsSaved'),
-      error: (e) => e?.message || t('toast_error'),
-    });
-  }, [updateSetting, t, windowBefore, windowAfter, decomposeMinutes]);
+  const onPickPhoneMode = React.useCallback(
+    (it) => {
+      setPhoneModeOpen(false);
+      if (it.id === 'window') {
+        // Откроем модалку настройки интервала.
+        try {
+          const b = decomposeMinutes(windowBefore);
+          const a = decomposeMinutes(windowAfter);
+          setBeforeUnit(b.unit);
+          setWindowBefore(b.val);
+          setAfterUnit(a.unit);
+          setWindowAfter(a.val);
+        } catch {}
+        setPhoneMode('window');
+        setWindowModalOpen(true);
+        return;
+      }
+      setPhoneMode(it.id);
+      toast.promise(() => updateSetting('worker_phone_mode', it.id), {
+        loading: t('toast_loading'),
+        success: t('toast_settingsSaved'),
+        error: (e) => e?.message || t('toast_error'),
+      });
+    },
+    [updateSetting, t, windowBefore, windowAfter, decomposeMinutes],
+  );
 
   const phoneModeLabel = React.useMemo(() => {
-    const map = Object.fromEntries(phoneModeOptions.map(o => [o.id, o.label]));
+    const map = Object.fromEntries(phoneModeOptions.map((o) => [o.id, o.label]));
     return map[phoneMode] || '';
   }, [phoneMode, phoneModeOptions]);
 
-  
   const phoneModeItems = React.useMemo(() => {
     try {
       return (phoneModeOptions || []).map((o) => ({
         id: o.id,
         label: o.label,
-        right: o.id === phoneMode ? (<Feather name="check" size={18} color={theme.colors.primary} />) : null,
+        right:
+          o.id === phoneMode ? (
+            <Feather name="check" size={18} color={theme.colors.primary} />
+          ) : null,
       }));
     } catch {
       return [];
     }
   }, [phoneModeOptions, phoneMode, theme.colors.primary]);
-const go = React.useCallback((href) => () => router.push(href), [router]);
+  const go = React.useCallback((href) => () => router.push(href), [router]);
 
   // Section titles from i18n (do not trust constants' labels)
-  const sectionTitles = React.useMemo(() => ({
-    COMPANY: t('settings_sections_company_title'),
-    MANAGEMENT: t('settings_sections_management_title'),
-    DEPARTURE: t('settings_sections_departure_title'),
-    PHONE: t('settings_sections_phone_title'),
-  }), [ver, t]);
+  const sectionTitles = React.useMemo(
+    () => ({
+      COMPANY: t('settings_sections_company_title'),
+      MANAGEMENT: t('settings_sections_management_title'),
+      DEPARTURE: t('settings_sections_departure_title'),
+      PHONE: t('settings_sections_phone_title'),
+    }),
+    [ver, t],
+  );
 
   return (
     <Screen background="background">
-      <ScrollView contentContainerStyle={s.contentWrap} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={s.contentWrap}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* COMPANY */}
-<View style={s.sectionWrap}>
-  <Text style={s.sectionTitle}>{sectionTitles.COMPANY}</Text>
-  <View style={s.card}>
-    <SelectField
-      label={t('fields_company_name')}
-      value={companyName || t('common_specify')}
-      onPress={() => {
-        setCompanyNameDraft(companyName);
-        setCompanyNameError('');
-        setCompanyNameOpen(true);
-      }}
-    />
+        <View style={s.sectionWrap}>
+          <Text style={s.sectionTitle}>{sectionTitles.COMPANY}</Text>
+          <View style={s.card}>
+            <SelectField
+              label={t('fields_company_name')}
+              value={companyName || t('common_specify')}
+              onPress={() => {
+                setCompanyNameDraft(companyName);
+                setCompanyNameError('');
+                setCompanyNameOpen(true);
+              }}
+            />
 
-    <View style={s.sep} />
-    <SelectField
-      label={<Text style={s.itemLabel}>{t('settings_company_timezone')}</Text>}
-      value={timeZoneLabel}
-      onPress={() => setTzOpen(true)}
-    />
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_company_timezone')}</Text>}
+              value={timeZoneLabel}
+              onPress={() => setTzOpen(true)}
+            />
 
-    <View style={s.sep} />
-    <SelectField
-      label={<Text style={s.itemLabel}>{t('settings_company_users')}</Text>}
-      showValue={false}
-      onPress={go(SETTINGS_SECTIONS.COMPANY.items.find(i => i.key === 'employees').route)}
-    />
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_company_users')}</Text>}
+              showValue={false}
+              onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'employees').route)}
+            />
 
-    <View style={s.sep} />
+            <View style={s.sep} />
 
-    <SelectField
-      label={<Text style={s.itemLabel}>{t('settings_company_billing')}</Text>}
-      showValue={false}
-      onPress={go(SETTINGS_SECTIONS.COMPANY.items.find(i => i.key === 'billing').route)}
-    />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_company_billing')}</Text>}
+              showValue={false}
+              onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'billing').route)}
+            />
 
-    <View style={s.sep} />
-    <SelectField
-      label={<Text style={s.itemLabel}>{t('settings_management_work_types')}</Text>}
-      showValue={false}
-      onPress={go(SETTINGS_SECTIONS.MANAGEMENT.items.find(i => i.key === 'work_types').route)}
-    />
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_management_work_types')}</Text>}
+              showValue={false}
+              onPress={go(
+                SETTINGS_SECTIONS.MANAGEMENT.items.find((i) => i.key === 'work_types').route,
+              )}
+            />
 
-    <View style={s.sep} />
-    <SelectField
-      label={<Text style={s.itemLabel}>{t('settings_management_departments')}</Text>}
-      showValue={false}
-      onPress={go(SETTINGS_SECTIONS.MANAGEMENT.items.find(i => i.key === 'departments').route)}
-    />
-  </View>
-</View>
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_management_departments')}</Text>}
+              showValue={false}
+              onPress={go(
+                SETTINGS_SECTIONS.MANAGEMENT.items.find((i) => i.key === 'departments').route,
+              )}
+            />
+          </View>
+        </View>
 
         {/* MANAGEMENT */}
-<View style={s.sectionWrap}>
-  <Text style={s.sectionTitle}>{sectionTitles.MANAGEMENT}</Text>
-  <View style={s.card}>
-    {SETTINGS_SECTIONS.MANAGEMENT.items
-      .filter(it => !['work_types', 'departments'].includes(it.key))
-      .map((it, idx) => (
-        <React.Fragment key={it.key}>
-          {idx > 0 ? <View style={s.sep} /> : null}
-          <SelectField
-            label={<Text style={s.itemLabel}>{t(`settings_management_${it.key}`)}</Text>}
-            showValue={false}
-            onPress={go(it.route)}
-          />
-        </React.Fragment>
-      ))}
-  </View>
-</View>
+        <View style={s.sectionWrap}>
+          <Text style={s.sectionTitle}>{sectionTitles.MANAGEMENT}</Text>
+          <View style={s.card}>
+            {SETTINGS_SECTIONS.MANAGEMENT.items
+              .filter((it) => !['work_types', 'departments'].includes(it.key))
+              .map((it, idx) => (
+                <React.Fragment key={it.key}>
+                  {idx > 0 ? <View style={s.sep} /> : null}
+                  <SelectField
+                    label={<Text style={s.itemLabel}>{t(`settings_management_${it.key}`)}</Text>}
+                    showValue={false}
+                    onPress={go(it.route)}
+                  />
+                </React.Fragment>
+              ))}
+          </View>
+        </View>
 
         {/* DEPARTURE */}
         <View style={s.sectionWrap}>
@@ -521,12 +662,12 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
                 thumbColor={Platform.OS === 'android' ? theme.colors.surface : undefined}
               />
             </View>
-<View style={s.sep} />
-<SelectField
-  label={<Text style={s.itemLabel}>{t('settings_phone_mode')}</Text>}
-  value={phoneModeLabel}
-  onPress={() => setPhoneModeOpen(true)}
-/>
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_phone_mode')}</Text>}
+              value={phoneModeLabel}
+              onPress={() => setPhoneModeOpen(true)}
+            />
           </View>
         </View>
       </ScrollView>
@@ -538,7 +679,7 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
         onClose={closeCompanyEditor}
         title={t('modal_company_title')}
         maxHeightRatio={0.5}
-        footer={(
+        footer={
           <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
             <Pressable
               onPress={() => setCompanyNameOpen(false)}
@@ -556,16 +697,34 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
                 pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
               ]}
             >
-              <Text style={{ color: theme.colors.text, fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.medium }}>{t('btn_cancel')}</Text>
+              <Text
+                style={{
+                  color: theme.colors.text,
+                  fontSize: theme.typography.sizes.md,
+                  fontWeight: theme.typography.weight.medium,
+                }}
+              >
+                {t('btn_cancel')}
+              </Text>
             </Pressable>
             <UIButton
               variant="primary"
               size="md"
               onPress={async () => {
                 const name = String(companyNameDraft || '').trim();
-                if (!name) { setCompanyNameError(t('errors_companyName_required')); return; }
-                if (name.length > 64) { setCompanyNameError(t('errors_companyName_tooLong')); return; }
-                if (name === companyNameInitial) { setCompanyName(name); closeCompanyEditor(); return; }
+                if (!name) {
+                  setCompanyNameError(t('errors_companyName_required'));
+                  return;
+                }
+                if (name.length > 64) {
+                  setCompanyNameError(t('errors_companyName_tooLong'));
+                  return;
+                }
+                if (name === companyNameInitial) {
+                  setCompanyName(name);
+                  closeCompanyEditor();
+                  return;
+                }
                 setSavingCompany(true);
                 try {
                   await toast.promise(() => updateSetting('name', name), {
@@ -585,7 +744,7 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
               title={savingCompany ? t('btn_saving') : t('btn_save')}
             />
           </View>
-        )}
+        }
       >
         <View style={{ marginBottom: theme.spacing.sm }}>
           <TextField
@@ -601,9 +760,19 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
             maxLength={64}
             onSubmitEditing={() => {
               const name = String(companyNameDraft || '').trim();
-              if (!name) { setCompanyNameError(t('errors_companyName_required')); return; }
-              if (name.length > 64) { setCompanyNameError(t('errors_companyName_tooLong')); return; }
-              if (name === companyNameInitial) { setCompanyName(name); closeCompanyEditor(); return; }
+              if (!name) {
+                setCompanyNameError(t('errors_companyName_required'));
+                return;
+              }
+              if (name.length > 64) {
+                setCompanyNameError(t('errors_companyName_tooLong'));
+                return;
+              }
+              if (name === companyNameInitial) {
+                setCompanyName(name);
+                closeCompanyEditor();
+                return;
+              }
               (async () => {
                 setSavingCompany(true);
                 try {
@@ -624,11 +793,25 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
             }}
           />
           {companyNameError ? (
-            <Text style={{ color: theme.colors.danger, fontSize: theme.typography.sizes.xs, marginTop: theme.spacing.xs, marginLeft: theme.spacing.md }}>
+            <Text
+              style={{
+                color: theme.colors.danger,
+                fontSize: theme.typography.sizes.xs,
+                marginTop: theme.spacing.xs,
+                marginLeft: theme.spacing.md,
+              }}
+            >
               {companyNameError}
             </Text>
           ) : (
-            <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.xs, marginTop: theme.spacing.xs, marginLeft: theme.spacing.md }}>
+            <Text
+              style={{
+                color: theme.colors.textSecondary,
+                fontSize: theme.typography.sizes.xs,
+                marginTop: theme.spacing.xs,
+                marginLeft: theme.spacing.md,
+              }}
+            >
               {t('hints_company_name_visible')}
             </Text>
           )}
@@ -651,10 +834,13 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
         onClose={() => setWindowModalOpen(false)}
         title={t('modal_phoneWindow_title')}
         maxHeightRatio={0.6}
-        footer={(
+        footer={
           <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
             <Pressable
-              onPress={() => { setWindowModalOpen(false); setTimeout(() => setPhoneModeOpen(true), 200); }}
+              onPress={() => {
+                setWindowModalOpen(false);
+                setTimeout(() => setPhoneModeOpen(true), 200);
+              }}
               style={({ pressed }) => [
                 {
                   paddingVertical: theme.spacing.sm,
@@ -669,7 +855,13 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
                 pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
               ]}
             >
-              <Text style={{ color: theme.colors.text, fontSize: theme.typography.sizes.md, fontWeight: theme.typography.weight.medium }}>
+              <Text
+                style={{
+                  color: theme.colors.text,
+                  fontSize: theme.typography.sizes.md,
+                  fontWeight: theme.typography.weight.medium,
+                }}
+              >
                 {t('btn_cancel')}
               </Text>
             </Pressable>
@@ -680,30 +872,50 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
               disabled={!String(windowBefore).trim() || !String(windowAfter).trim()}
               onPress={() => {
                 const beforeM = toMinutes(windowBefore, beforeUnit);
-                const afterM  = toMinutes(windowAfter,  afterUnit);
-                toast.promise(() => updateSettings({
-                  worker_phone_mode: 'window',
-                  worker_phone_window_before_mins: beforeM,
-                  worker_phone_window_after_mins:  afterM,
-                }), {
-                  loading: t('toast_loading'),
-                  success: t('toast_settingsSaved'),
-                  error: (e) => e?.message || t('toast_error'),
-                }).then(() => {
-                  setWindowBefore(String(beforeM));
-                  setWindowAfter(String(afterM));
-                  setPhoneMode('window');
-                  setWindowModalOpen(false);
-                });
+                const afterM = toMinutes(windowAfter, afterUnit);
+                toast
+                  .promise(
+                    () =>
+                      updateSettings({
+                        worker_phone_mode: 'window',
+                        worker_phone_window_before_mins: beforeM,
+                        worker_phone_window_after_mins: afterM,
+                      }),
+                    {
+                      loading: t('toast_loading'),
+                      success: t('toast_settingsSaved'),
+                      error: (e) => e?.message || t('toast_error'),
+                    },
+                  )
+                  .then(() => {
+                    setWindowBefore(String(beforeM));
+                    setWindowAfter(String(afterM));
+                    setPhoneMode('window');
+                    setWindowModalOpen(false);
+                  });
               }}
             />
           </View>
-        )}
+        }
       >
         <View style={{ gap: theme.spacing.lg }}>
           {/* Группа: До выезда */}
-          <View style={{ backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, padding: theme.spacing.md }}>
-            <Text style={{ color: theme.colors.text, fontWeight: '700', marginBottom: theme.spacing.xs }}>
+          <View
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderRadius: theme.radii.lg,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              padding: theme.spacing.md,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.colors.text,
+                fontWeight: '700',
+                marginBottom: theme.spacing.xs,
+              }}
+            >
               {t('phone_window_before')}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: theme.spacing.sm }}>
@@ -711,7 +923,7 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
                 <TextField
                   label={t('common_value')}
                   value={windowBefore}
-                  onChangeText={(v)=>setWindowBefore(v.replace(/[^0-9]/g,''))}
+                  onChangeText={(v) => setWindowBefore(v.replace(/[^0-9]/g, ''))}
                   keyboardType="numeric"
                   returnKeyType="done"
                 />
@@ -719,7 +931,7 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
               <View style={{ width: 160 }}>
                 <SelectField
                   label={t('common_unit')}
-                  value={UNIT_ITEMS.find(u => u.id === beforeUnit)?.label}
+                  value={UNIT_ITEMS.find((u) => u.id === beforeUnit)?.label}
                   onPress={() => setBeforeUnitOpen(true)}
                 />
               </View>
@@ -727,8 +939,22 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
           </View>
 
           {/* Группа: После выезда */}
-          <View style={{ backgroundColor: theme.colors.surface, borderRadius: theme.radii.lg, borderWidth: 1, borderColor: theme.colors.border, padding: theme.spacing.md }}>
-            <Text style={{ color: theme.colors.text, fontWeight: '700', marginBottom: theme.spacing.xs }}>
+          <View
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderRadius: theme.radii.lg,
+              borderWidth: 1,
+              borderColor: theme.colors.border,
+              padding: theme.spacing.md,
+            }}
+          >
+            <Text
+              style={{
+                color: theme.colors.text,
+                fontWeight: '700',
+                marginBottom: theme.spacing.xs,
+              }}
+            >
               {t('phone_window_after')}
             </Text>
             <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: theme.spacing.sm }}>
@@ -736,7 +962,7 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
                 <TextField
                   label={t('common_value')}
                   value={windowAfter}
-                  onChangeText={(v)=>setWindowAfter(v.replace(/[^0-9]/g,''))}
+                  onChangeText={(v) => setWindowAfter(v.replace(/[^0-9]/g, ''))}
                   keyboardType="numeric"
                   returnKeyType="done"
                 />
@@ -744,7 +970,7 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
               <View style={{ width: 160 }}>
                 <SelectField
                   label={t('common_unit')}
-                  value={UNIT_ITEMS.find(u => u.id === afterUnit)?.label}
+                  value={UNIT_ITEMS.find((u) => u.id === afterUnit)?.label}
                   onPress={() => setAfterUnitOpen(true)}
                 />
               </View>
@@ -753,21 +979,51 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
 
           {/* Hint */}
           <View style={{ paddingHorizontal: 4 }}>
-            <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}>
-              {useDepartureTime ? t('phone_window_hint_with_time') : t('phone_window_hint_date_only')} {t('phone_window_hint_tz')}
+            <Text
+              style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}
+            >
+              {useDepartureTime
+                ? t('phone_window_hint_with_time')
+                : t('phone_window_hint_date_only')}{' '}
+              {t('phone_window_hint_tz')}
             </Text>
           </View>
 
           {/* Сводка текущего выбора */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm, paddingHorizontal: 4 }}>
-            <View style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              gap: theme.spacing.sm,
+              paddingHorizontal: 4,
+            }}
+          >
+            <View
+              style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+              }}
+            >
               <Text style={{ color: theme.colors.textSecondary }}>
-                {windowBefore} {UNIT_ITEMS.find(u => u.id === beforeUnit)?.label}
+                {windowBefore} {UNIT_ITEMS.find((u) => u.id === beforeUnit)?.label}
               </Text>
             </View>
-            <View style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface }}>
+            <View
+              style={{
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+              }}
+            >
               <Text style={{ color: theme.colors.textSecondary }}>
-                {windowAfter} {UNIT_ITEMS.find(u => u.id === afterUnit)?.label}
+                {windowAfter} {UNIT_ITEMS.find((u) => u.id === afterUnit)?.label}
               </Text>
             </View>
           </View>
@@ -778,8 +1034,11 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
       <SelectModal
         visible={beforeUnitOpen}
         title={t('modal_pick_unit')}
-        items={UNIT_ITEMS.map(u => ({ id: u.id, label: u.label }))}
-        onSelect={(it) => { setBeforeUnit(it.id); setBeforeUnitOpen(false); }}
+        items={UNIT_ITEMS.map((u) => ({ id: u.id, label: u.label }))}
+        onSelect={(it) => {
+          setBeforeUnit(it.id);
+          setBeforeUnitOpen(false);
+        }}
         onClose={() => setBeforeUnitOpen(false)}
         searchable={false}
       />
@@ -788,8 +1047,11 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
       <SelectModal
         visible={afterUnitOpen}
         title={t('modal_pick_unit')}
-        items={UNIT_ITEMS.map(u => ({ id: u.id, label: u.label }))}
-        onSelect={(it) => { setAfterUnit(it.id); setAfterUnitOpen(false); }}
+        items={UNIT_ITEMS.map((u) => ({ id: u.id, label: u.label }))}
+        onSelect={(it) => {
+          setAfterUnit(it.id);
+          setAfterUnitOpen(false);
+        }}
         onClose={() => setAfterUnitOpen(false)}
         searchable={false}
       />
@@ -807,34 +1069,39 @@ const go = React.useCallback((href) => () => router.push(href), [router]);
   );
 }
 
-const styles = (t) => StyleSheet.create({
-  contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
-  sectionWrap: { marginBottom: 0 },
-  sectionTitle: {
-    fontWeight: t.typography.weight.bold,
-    marginBottom: t.spacing[t.components.sectionTitle.mb],
-    marginLeft: t.spacing[t.components.sectionTitle.ml],
-    color: t.colors.text
-  },
-  card: {
-    backgroundColor: t.colors.surface,
-    borderRadius: t.radii.md,
-    borderWidth: t.components.card.borderWidth,
-    borderColor: t.colors.border,
-    paddingHorizontal: t.spacing[t.components.card.padX || 'md'],
-    paddingVertical: 0,
-    marginBottom: t.spacing.md,
-  },
-  sep: { height: t.components.listItem.dividerWidth, backgroundColor: t.colors.border },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    height: t.components.row.minHeight,
-    paddingVertical: t.components.row.py ? t.spacing[t.components.row.py] : 0,
-  },
-  rowLabel: { color: t.colors.textSecondary },
-  itemLabel: { color: t.colors.textSecondary, fontWeight: t.typography.weight.regular },
-  captionWrap: { paddingHorizontal: t.spacing[t.components.card.padX || 'md'], paddingBottom: t.spacing.md, paddingTop: t.spacing.xs },
-  caption: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm },
-});
+const styles = (t) =>
+  StyleSheet.create({
+    contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
+    sectionWrap: { marginBottom: 0 },
+    sectionTitle: {
+      fontWeight: t.typography.weight.bold,
+      marginBottom: t.spacing[t.components.sectionTitle.mb],
+      marginLeft: t.spacing[t.components.sectionTitle.ml],
+      color: t.colors.text,
+    },
+    card: {
+      backgroundColor: t.colors.surface,
+      borderRadius: t.radii.md,
+      borderWidth: t.components.card.borderWidth,
+      borderColor: t.colors.border,
+      paddingHorizontal: t.spacing[t.components.card.padX || 'md'],
+      paddingVertical: 0,
+      marginBottom: t.spacing.md,
+    },
+    sep: { height: t.components.listItem.dividerWidth, backgroundColor: t.colors.border },
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      height: t.components.row.minHeight,
+      paddingVertical: t.components.row.py ? t.spacing[t.components.row.py] : 0,
+    },
+    rowLabel: { color: t.colors.textSecondary },
+    itemLabel: { color: t.colors.textSecondary, fontWeight: t.typography.weight.regular },
+    captionWrap: {
+      paddingHorizontal: t.spacing[t.components.card.padX || 'md'],
+      paddingBottom: t.spacing.md,
+      paddingTop: t.spacing.xs,
+    },
+    caption: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm },
+  });

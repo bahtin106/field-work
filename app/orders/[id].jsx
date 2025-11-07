@@ -178,7 +178,7 @@ export default function OrderDetails() {
     if (!o) return null;
     if (o.assigned_to && EXECUTOR_NAME_CACHE.has(o.assigned_to))
       return EXECUTOR_NAME_CACHE.get(o.assigned_to);
-    
+
     const fromFields = [
       o.assigned_to_name,
       o.executor_name,
@@ -187,48 +187,90 @@ export default function OrderDetails() {
       o.assigned_name,
     ].find((v) => typeof v === 'string' && v.trim());
     if (fromFields) return String(fromFields).trim();
-    
+
     const join = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
-      const s = [obj.last_name, obj.first_name, obj.middle_name]
-        .filter(Boolean)
-        .join(' ')
-        .trim() || obj.full_name || obj.name;
+      const s =
+        [obj.last_name, obj.first_name, obj.middle_name].filter(Boolean).join(' ').trim() ||
+        obj.full_name ||
+        obj.name;
       return s ? String(s).trim() : null;
     };
-    
+
     return join(o.assigned_to_profile) || join(o.executor_profile) || join(o.assignee_profile);
   }, []);
 
-  const getValueForField = useCallback((key) => {
-    switch (key) {
-      case 'title': return (title || '').trim();
-      case 'comment': return (description || '').trim();
-      case 'fio': return (customerName || '').trim();
-      case 'customer_name': return (customerName || '').trim();
-      case 'phone': return (phone || '').trim();
-      case 'region': return (region || '').trim();
-      case 'city': return (city || '').trim();
-      case 'street': return (street || '').trim();
-      case 'house': return (house || '').trim();
-      case 'datetime': return departureDate;
-      case 'assigned_to': return toFeed ? null : assigneeId;
-      case 'price': return canEditFinances ? amount : (amount || '');
-      case 'fuel_cost': return canEditFinances ? gsm : (gsm || '');
-      case 'department_id': return departmentId;
-      default: return null;
-    }
-  }, [title, description, customerName, phone, region, city, street, house, departureDate, assigneeId, toFeed, amount, gsm, canEditFinances, departmentId]);
+  const getValueForField = useCallback(
+    (key) => {
+      switch (key) {
+        case 'title':
+          return (title || '').trim();
+        case 'comment':
+          return (description || '').trim();
+        case 'fio':
+          return (customerName || '').trim();
+        case 'customer_name':
+          return (customerName || '').trim();
+        case 'phone':
+          return (phone || '').trim();
+        case 'region':
+          return (region || '').trim();
+        case 'city':
+          return (city || '').trim();
+        case 'street':
+          return (street || '').trim();
+        case 'house':
+          return (house || '').trim();
+        case 'datetime':
+          return departureDate;
+        case 'assigned_to':
+          return toFeed ? null : assigneeId;
+        case 'price':
+          return canEditFinances ? amount : amount || '';
+        case 'fuel_cost':
+          return canEditFinances ? gsm : gsm || '';
+        case 'department_id':
+          return departmentId;
+        default:
+          return null;
+      }
+    },
+    [
+      title,
+      description,
+      customerName,
+      phone,
+      region,
+      city,
+      street,
+      house,
+      departureDate,
+      assigneeId,
+      toFeed,
+      amount,
+      gsm,
+      canEditFinances,
+      departmentId,
+    ],
+  );
 
-  const getField = useCallback((key) => {
-    const arr = schemaEdit?.fields || [];
-    const found = arr.find((f) => f.field_key === key);
-    if (found) return found;
-    if (key === 'datetime' || key === 'assigned_to' || key === 'status' || key === 'department_id') 
-      return { field_key: key };
-    if (arr.length === 0) return { field_key: key };
-    return null;
-  }, [schemaEdit]);
+  const getField = useCallback(
+    (key) => {
+      const arr = schemaEdit?.fields || [];
+      const found = arr.find((f) => f.field_key === key);
+      if (found) return found;
+      if (
+        key === 'datetime' ||
+        key === 'assigned_to' ||
+        key === 'status' ||
+        key === 'department_id'
+      )
+        return { field_key: key };
+      if (arr.length === 0) return { field_key: key };
+      return null;
+    },
+    [schemaEdit],
+  );
 
   const hasField = useCallback((key) => !!getField(key), [getField]);
 
@@ -236,14 +278,16 @@ export default function OrderDetails() {
     try {
       const arr = (schemaEdit?.fields || []).filter((f) => f?.required);
       if (!arr.length) return { ok: true };
-      
+
       const missing = [];
       for (const f of arr) {
         const k = f.field_key;
         const val = getValueForField(k);
-        
+
         if (k === 'phone') {
-          const raw = String(val || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
+          const raw = String(val || '')
+            .replace(/\D/g, '')
+            .replace(/^8(\d{10})$/, '7$1');
           if (!(raw.length === 11 && raw.startsWith('7'))) missing.push(f.label || k);
         } else if (k === 'datetime') {
           if (!val) missing.push(f.label || k);
@@ -253,17 +297,19 @@ export default function OrderDetails() {
           missing.push(f.label || k);
         }
       }
-      
-      return missing.length ? 
-        { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` } : 
-        { ok: true };
+
+      return missing.length
+        ? { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` }
+        : { ok: true };
     } catch {
       return { ok: true };
     }
   }, [schemaEdit, getValueForField, toFeed]);
 
   const parseMoney = useCallback((s) => {
-    const v = String(s ?? '').replace(/[^0-9.,]/g, '').replace(',', '.');
+    const v = String(s ?? '')
+      .replace(/[^0-9.,]/g, '')
+      .replace(',', '.');
     const n = parseFloat(v);
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
   }, []);
@@ -282,7 +328,7 @@ export default function OrderDetails() {
     const phoneDigits = ((o.phone ?? o.phone_visible) || '')
       .replace(/\D/g, '')
       .replace(/^8(\d{10})$/, '7$1');
-      
+
     return JSON.stringify({
       title: o.title || '',
       comment: o.comment || '',
@@ -316,7 +362,23 @@ export default function OrderDetails() {
       department_id: departmentId || null,
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
     });
-  }, [title, description, region, city, street, house, customerName, phone, departureDate, assigneeId, departmentId, canEditFinances, amount, gsm, parseMoney]);
+  }, [
+    title,
+    description,
+    region,
+    city,
+    street,
+    house,
+    customerName,
+    phone,
+    departureDate,
+    assigneeId,
+    departmentId,
+    canEditFinances,
+    amount,
+    gsm,
+    parseMoney,
+  ]);
 
   const formIsDirty = useCallback(() => {
     if (!order) return false;
@@ -462,9 +524,13 @@ export default function OrderDetails() {
           }
 
           initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
-          const rawDigits = ((fetchedOrder.phone ?? fetchedOrder.customer_phone_visible ?? fetchedOrder.phone_visible) || '')
-            .replace(/\D/g, '');
-            
+          const rawDigits = (
+            (fetchedOrder.phone ??
+              fetchedOrder.customer_phone_visible ??
+              fetchedOrder.phone_visible) ||
+            ''
+          ).replace(/\D/g, '');
+
           setTitle(fetchedOrder.title || '');
           setDescription(fetchedOrder.comment || '');
           setRegion(fetchedOrder.region || '');
@@ -479,8 +545,16 @@ export default function OrderDetails() {
           setUrgent(!!fetchedOrder.urgent);
           setDepartmentId(fetchedOrder.department_id || null);
           setWorkTypeId(fetchedOrder.work_type_id || null);
-          setAmount(fetchedOrder.price !== null && fetchedOrder.price !== undefined ? String(fetchedOrder.price) : '');
-          setGsm(fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined ? String(fetchedOrder.fuel_cost) : '');
+          setAmount(
+            fetchedOrder.price !== null && fetchedOrder.price !== undefined
+              ? String(fetchedOrder.price)
+              : '',
+          );
+          setGsm(
+            fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined
+              ? String(fetchedOrder.fuel_cost)
+              : '',
+          );
 
           if (fetchedOrder.assigned_to) {
             const { data: executorProfile } = await supabase
@@ -489,7 +563,8 @@ export default function OrderDetails() {
               .eq('id', fetchedOrder.assigned_to)
               .single();
             if (executorProfile) {
-              const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
+              const full =
+                `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
               EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
               setExecutorName(full);
             } else {
@@ -548,90 +623,96 @@ export default function OrderDetails() {
     });
   }, [order]);
 
-  const compressAndUpload = useCallback(async (category) => {
-    try {
-      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permissionResult.granted) {
-        showToast('Нет доступа к камере');
-        return;
-      }
+  const compressAndUpload = useCallback(
+    async (category) => {
+      try {
+        const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permissionResult.granted) {
+          showToast('Нет доступа к камере');
+          return;
+        }
 
-      const result = await ImagePicker.launchCameraAsync({ quality: 1 });
-      if (result.canceled) return;
+        const result = await ImagePicker.launchCameraAsync({ quality: 1 });
+        if (result.canceled) return;
 
-      const manipulated = await ImageManipulator.manipulateAsync(
-        result.assets[0].uri,
-        [{ resize: { width: 1280 } }],
-        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
-      );
+        const manipulated = await ImageManipulator.manipulateAsync(
+          result.assets[0].uri,
+          [{ resize: { width: 1280 } }],
+          { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+        );
 
-      const fileName = `${Date.now()}.jpg`;
-      const path = `orders/${order.id}/${category}/${fileName}`;
+        const fileName = `${Date.now()}.jpg`;
+        const path = `orders/${order.id}/${category}/${fileName}`;
 
-      const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      const arrayBuffer = decode(base64);
-
-      const { error: uploadError } = await supabase.storage
-        .from('orders-photos')
-        .upload(path, arrayBuffer, {
-          cacheControl: '3600',
-          upsert: true,
-          contentType: 'image/jpeg',
+        const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
+          encoding: FileSystem.EncodingType.Base64,
         });
+        const arrayBuffer = decode(base64);
 
-      if (uploadError) {
-        showToast('Ошибка загрузки фото');
-        return;
+        const { error: uploadError } = await supabase.storage
+          .from('orders-photos')
+          .upload(path, arrayBuffer, {
+            cacheControl: '3600',
+            upsert: true,
+            contentType: 'image/jpeg',
+          });
+
+        if (uploadError) {
+          showToast('Ошибка загрузки фото');
+          return;
+        }
+
+        const { data: publicData } = supabase.storage.from('orders-photos').getPublicUrl(path);
+        const publicUrl = publicData.publicUrl;
+
+        const updated = [...(order[category] || []), publicUrl];
+
+        const { error: updateError } = await supabase
+          .from('orders')
+          .update({ [category]: updated })
+          .eq('id', order.id);
+
+        if (updateError) {
+          showToast('Ошибка сохранения ссылки');
+          return;
+        }
+
+        setOrder({ ...order, [category]: updated });
+        showToast('Фото загружено');
+        await syncPhotosFromStorage();
+      } catch (e) {
+        console.warn('Upload error:', e);
+        showToast('Ошибка загрузки');
+      }
+    },
+    [order, showToast, syncPhotosFromStorage],
+  );
+
+  const removePhoto = useCallback(
+    async (category, index) => {
+      const updated = [...(order[category] || [])];
+      const [removed] = updated.splice(index, 1);
+
+      const relativePath = removed?.split('/storage/v1/object/public/orders-photos/')[1];
+      if (relativePath) {
+        await supabase.storage.from('orders-photos').remove([relativePath]);
       }
 
-      const { data: publicData } = supabase.storage.from('orders-photos').getPublicUrl(path);
-      const publicUrl = publicData.publicUrl;
-
-      const updated = [...(order[category] || []), publicUrl];
-
-      const { error: updateError } = await supabase
+      const { error } = await supabase
         .from('orders')
         .update({ [category]: updated })
         .eq('id', order.id);
 
-      if (updateError) {
-        showToast('Ошибка сохранения ссылки');
-        return;
+      if (!error) {
+        setOrder({ ...order, [category]: updated });
+        showToast('Фото удалено');
+        await syncPhotosFromStorage();
+      } else {
+        showToast('Ошибка удаления');
       }
-
-      setOrder({ ...order, [category]: updated });
-      showToast('Фото загружено');
-      await syncPhotosFromStorage();
-    } catch (e) {
-      console.warn('Upload error:', e);
-      showToast('Ошибка загрузки');
-    }
-  }, [order, showToast, syncPhotosFromStorage]);
-
-  const removePhoto = useCallback(async (category, index) => {
-    const updated = [...(order[category] || [])];
-    const [removed] = updated.splice(index, 1);
-
-    const relativePath = removed?.split('/storage/v1/object/public/orders-photos/')[1];
-    if (relativePath) {
-      await supabase.storage.from('orders-photos').remove([relativePath]);
-    }
-
-    const { error } = await supabase
-      .from('orders')
-      .update({ [category]: updated })
-      .eq('id', order.id);
-
-    if (!error) {
-      setOrder({ ...order, [category]: updated });
-      showToast('Фото удалено');
-      await syncPhotosFromStorage();
-    } else {
-      showToast('Ошибка удаления');
-    }
-  }, [order, showToast, syncPhotosFromStorage]);
+    },
+    [order, showToast, syncPhotosFromStorage],
+  );
 
   const canFinishOrder = useCallback(() => {
     const required = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
@@ -658,12 +739,12 @@ export default function OrderDetails() {
       .from('orders')
       .update({ status: 'Завершённая' })
       .eq('id', order.id);
-      
+
     if (error) {
       showToast('Ошибка при завершении');
       return;
     }
-    
+
     setOrder({ ...order, status: 'Завершённая' });
     showToast('Заявка завершена');
   }, [order, showToast]);
@@ -732,7 +813,7 @@ export default function OrderDetails() {
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
-    
+
     const targetId = order?.id ?? id;
     if (!targetId) {
       showToast('Id заявки не найден');
@@ -769,7 +850,7 @@ export default function OrderDetails() {
       setWorkTypeId(data.work_type_id || null);
 
       initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
-      
+
       if (data.assigned_to) {
         const sel = (users || []).find((u) => u.id === data.assigned_to);
         if (sel) {
@@ -781,49 +862,81 @@ export default function OrderDetails() {
               .select('first_name, last_name')
               .eq('id', data.assigned_to)
               .single();
-            setExecutorName(exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null);
+            setExecutorName(
+              exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null,
+            );
           } catch {}
         }
       }
-      
+
       setEditMode(false);
       showToast('Сохранено');
     }
-  }, [validateRequiredBySchemaEdit, canEdit, title, region, city, street, house, customerName, phone, departureDate, assigneeId, toFeed, order, urgent, departmentId, canEditFinances, amount, gsm, parseMoney, useWorkTypes, workTypeId, id, users, makeSnapshotFromOrder, showToast, showWarning]);
+  }, [
+    validateRequiredBySchemaEdit,
+    canEdit,
+    title,
+    region,
+    city,
+    street,
+    house,
+    customerName,
+    phone,
+    departureDate,
+    assigneeId,
+    toFeed,
+    order,
+    urgent,
+    departmentId,
+    canEditFinances,
+    amount,
+    gsm,
+    parseMoney,
+    useWorkTypes,
+    workTypeId,
+    id,
+    users,
+    makeSnapshotFromOrder,
+    showToast,
+    showWarning,
+  ]);
 
-  const updateStatus = useCallback(async (next) => {
-    if (!canEdit()) return;
-    try {
-      if (next === 'В ленте') {
-        const { error } = await supabase
-          .from('orders')
-          .update({ status: 'В ленте', assigned_to: null })
-          .eq('id', order.id);
+  const updateStatus = useCallback(
+    async (next) => {
+      if (!canEdit()) return;
+      try {
+        if (next === 'В ленте') {
+          const { error } = await supabase
+            .from('orders')
+            .update({ status: 'В ленте', assigned_to: null })
+            .eq('id', order.id);
+          if (error) {
+            showToast('Не удалось сменить статус');
+            return;
+          }
+          setOrder((prev) => ({ ...(prev || {}), status: 'В ленте', assigned_to: null }));
+          setAssigneeId(null);
+          setExecutorName(null);
+          setToFeed(true);
+          setStatusModalVisible(false);
+          showToast('Статус: В ленте');
+          return;
+        }
+
+        const { error } = await supabase.from('orders').update({ status: next }).eq('id', order.id);
         if (error) {
           showToast('Не удалось сменить статус');
           return;
         }
-        setOrder((prev) => ({ ...(prev || {}), status: 'В ленте', assigned_to: null }));
-        setAssigneeId(null);
-        setExecutorName(null);
-        setToFeed(true);
+        setOrder((prev) => ({ ...(prev || {}), status: next }));
         setStatusModalVisible(false);
-        showToast('Статус: В ленте');
-        return;
+        showToast('Статус обновлён');
+      } catch {
+        showToast('Ошибка сети');
       }
-
-      const { error } = await supabase.from('orders').update({ status: next }).eq('id', order.id);
-      if (error) {
-        showToast('Не удалось сменить статус');
-        return;
-      }
-      setOrder((prev) => ({ ...(prev || {}), status: next }));
-      setStatusModalVisible(false);
-      showToast('Статус обновлён');
-    } catch {
-      showToast('Ошибка сети');
-    }
-  }, [canEdit, order, showToast]);
+    },
+    [canEdit, order, showToast],
+  );
 
   const confirmCancel = useCallback(() => {
     setEditMode(false);
@@ -832,9 +945,11 @@ export default function OrderDetails() {
 
     if (order) {
       initialFormSnapshotRef.current = makeSnapshotFromOrder(order);
-      const rawDigits = ((order.phone ?? order.customer_phone_visible ?? order.phone_visible) || '')
-        .replace(/\D/g, '');
-        
+      const rawDigits = (
+        (order.phone ?? order.customer_phone_visible ?? order.phone_visible) ||
+        ''
+      ).replace(/\D/g, '');
+
       setTitle(order.title || '');
       setDescription(order.comment || '');
       setRegion(order.region || '');
@@ -850,7 +965,9 @@ export default function OrderDetails() {
       setDepartmentId(order.department_id || null);
       setWorkTypeId(order.work_type_id || null);
       setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
-      setGsm(order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '');
+      setGsm(
+        order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '',
+      );
     }
   }, [order, makeSnapshotFromOrder, applyNavBar]);
 
@@ -965,65 +1082,80 @@ export default function OrderDetails() {
     bgOpacity.value = 1;
   }, [scale, translateX, translateY, bgOpacity]);
 
-  const onDoubleTap = useCallback((e) => {
-    const { x, y } = e.nativeEvent;
-    const nextScale = scale.value > 1 ? 1 : 2.5;
-    if (nextScale === 1) {
-      scale.value = withTiming(1, { duration: 180 });
-      translateX.value = withTiming(0, { duration: 180 });
-      translateY.value = withTiming(0, { duration: 180 });
-    } else {
-      const dx = (SCREEN_W / 2 - x) * (nextScale - 1);
-      const dy = (SCREEN_H / 2 - y) * (nextScale - 1);
-      scale.value = withTiming(nextScale, { duration: 200 });
-      translateX.value = withTiming(dx, { duration: 200 });
-      translateY.value = withTiming(dy, { duration: 200 });
-    }
-  }, [scale, translateX, translateY]);
-
-  const onVerticalPan = useCallback(({ nativeEvent }) => {
-    if (scale.value > 1.01) return;
-    const { translationY, velocityY, state } = nativeEvent;
-    translateY.value = translationY;
-    bgOpacity.value = 1 - Math.min(Math.abs(translationY) / 300, 0.8);
-
-    if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
-      const shouldClose = Math.abs(translationY) > 120 || Math.abs(velocityY) > 600;
-      if (shouldClose) {
-        bgOpacity.value = withTiming(0, { duration: 160 }, () => runOnJS(closeViewer)());
+  const onDoubleTap = useCallback(
+    (e) => {
+      const { x, y } = e.nativeEvent;
+      const nextScale = scale.value > 1 ? 1 : 2.5;
+      if (nextScale === 1) {
+        scale.value = withTiming(1, { duration: 180 });
+        translateX.value = withTiming(0, { duration: 180 });
+        translateY.value = withTiming(0, { duration: 180 });
       } else {
-        translateY.value = withSpring(0);
-        bgOpacity.value = withTiming(1, { duration: 160 });
+        const dx = (SCREEN_W / 2 - x) * (nextScale - 1);
+        const dy = (SCREEN_H / 2 - y) * (nextScale - 1);
+        scale.value = withTiming(nextScale, { duration: 200 });
+        translateX.value = withTiming(dx, { duration: 200 });
+        translateY.value = withTiming(dy, { duration: 200 });
       }
-    }
-  }, [scale, bgOpacity, translateY, closeViewer]);
+    },
+    [scale, translateX, translateY],
+  );
 
-  const openViewer = useCallback((photos, index) => {
-    setViewerPhotos(photos);
-    setViewerIndex(index);
-    setViewerVisible(true);
-    scale.value = 1;
-    translateX.value = 0;
-    translateY.value = 0;
-    bgOpacity.value = 1;
-  }, [scale, translateX, translateY, bgOpacity]);
+  const onVerticalPan = useCallback(
+    ({ nativeEvent }) => {
+      if (scale.value > 1.01) return;
+      const { translationY, velocityY, state } = nativeEvent;
+      translateY.value = translationY;
+      bgOpacity.value = 1 - Math.min(Math.abs(translationY) / 300, 0.8);
 
-  const onPinchGestureEvent = useCallback((e) => {
-    const s = (e?.nativeEvent?.scale ?? 1);
-    scale.value = s;
-  }, [scale]);
-
-  const onPinchStateChange = useCallback((e) => {
-    const st = e?.nativeEvent?.state;
-    if (st === State.END || st === State.CANCELLED || st === State.FAILED) {
-      const next = Math.max(1, Math.min(3, scale.value));
-      scale.value = withTiming(next, { duration: 150 });
-      if (next === 1) {
-        translateX.value = withTiming(0, { duration: 150 });
-        translateY.value = withTiming(0, { duration: 150 });
+      if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
+        const shouldClose = Math.abs(translationY) > 120 || Math.abs(velocityY) > 600;
+        if (shouldClose) {
+          bgOpacity.value = withTiming(0, { duration: 160 }, () => runOnJS(closeViewer)());
+        } else {
+          translateY.value = withSpring(0);
+          bgOpacity.value = withTiming(1, { duration: 160 });
+        }
       }
-    }
-  }, [scale, translateX, translateY]);
+    },
+    [scale, bgOpacity, translateY, closeViewer],
+  );
+
+  const openViewer = useCallback(
+    (photos, index) => {
+      setViewerPhotos(photos);
+      setViewerIndex(index);
+      setViewerVisible(true);
+      scale.value = 1;
+      translateX.value = 0;
+      translateY.value = 0;
+      bgOpacity.value = 1;
+    },
+    [scale, translateX, translateY, bgOpacity],
+  );
+
+  const onPinchGestureEvent = useCallback(
+    (e) => {
+      const s = e?.nativeEvent?.scale ?? 1;
+      scale.value = s;
+    },
+    [scale],
+  );
+
+  const onPinchStateChange = useCallback(
+    (e) => {
+      const st = e?.nativeEvent?.state;
+      if (st === State.END || st === State.CANCELLED || st === State.FAILED) {
+        const next = Math.max(1, Math.min(3, scale.value));
+        scale.value = withTiming(next, { duration: 150 });
+        if (next === 1) {
+          translateX.value = withTiming(0, { duration: 150 });
+          translateY.value = withTiming(0, { duration: 150 });
+        }
+      }
+    },
+    [scale, translateX, translateY],
+  );
 
   const animatedImageStyle = useAnimatedStyle(() => ({
     transform: [
@@ -1050,94 +1182,104 @@ export default function OrderDetails() {
 
   const formatPhoneDisplay = useCallback((phone) => {
     const digitsRaw = (phone || '').replace(/\D/g, '');
-    const digits = digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
+    const digits =
+      digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
     if (digits.length !== 11 || !digits.startsWith('7')) return phone || '';
     return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
   }, []);
 
-  const getStatusMeta = useCallback((status) => {
-    const statusSet = theme?.colors?.status || theme?._raw?.colors?.status;
-    switch (status) {
-      case 'В ленте': {
-        const c = statusSet?.feed;
-        return { 
-          bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface, 
-          fg: c?.fg ?? theme.colors.warning ?? theme.colors.primary 
-        };
+  const getStatusMeta = useCallback(
+    (status) => {
+      const statusSet = theme?.colors?.status || theme?._raw?.colors?.status;
+      switch (status) {
+        case 'В ленте': {
+          const c = statusSet?.feed;
+          return {
+            bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
+            fg: c?.fg ?? theme.colors.warning ?? theme.colors.primary,
+          };
+        }
+        case 'Новый': {
+          const c = statusSet?.new;
+          return {
+            bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
+            fg: c?.fg ?? theme.colors.primary,
+          };
+        }
+        case 'В работе': {
+          const c = statusSet?.progress;
+          return {
+            bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
+            fg: c?.fg ?? theme.colors.success ?? theme.colors.primary,
+          };
+        }
+        case 'Завершённая': {
+          const c = statusSet?.done;
+          return {
+            bg: c?.bg ?? theme.colors.surface,
+            fg: c?.fg ?? theme.colors.textSecondary,
+          };
+        }
+        default:
+          return { bg: theme.colors.surface, fg: theme.colors.text };
       }
-      case 'Новый': {
-        const c = statusSet?.new;
-        return { 
-          bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface, 
-          fg: c?.fg ?? theme.colors.primary 
-        };
-      }
-      case 'В работе': {
-        const c = statusSet?.progress;
-        return { 
-          bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface, 
-          fg: c?.fg ?? theme.colors.success ?? theme.colors.primary 
-        };
-      }
-      case 'Завершённая': {
-        const c = statusSet?.done;
-        return { 
-          bg: c?.bg ?? theme.colors.surface, 
-          fg: c?.fg ?? theme.colors.textSecondary 
-        };
-      }
-      default:
-        return { bg: theme.colors.surface, fg: theme.colors.text };
-    }
-  }, [theme]);
+    },
+    [theme],
+  );
 
-  const renderPhotoRow = useCallback((titleText, category) => {
-    const photos = order[category] || [];
-    return (
-      <View style={styles.photosBlock}>
-        <View style={styles.photosHeader}>
-          <Text style={styles.photosTitle}>{titleText}</Text>
-          <Pressable
-            style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
-            onPress={() => compressAndUpload(category)}
+  const renderPhotoRow = useCallback(
+    (titleText, category) => {
+      const photos = order[category] || [];
+      return (
+        <View style={styles.photosBlock}>
+          <View style={styles.photosHeader}>
+            <Text style={styles.photosTitle}>{titleText}</Text>
+            <Pressable
+              style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
+              onPress={() => compressAndUpload(category)}
+            >
+              <Text style={styles.addChipText}>Добавить</Text>
+            </Pressable>
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.hRow}
           >
-            <Text style={styles.addChipText}>Добавить</Text>
-          </Pressable>
+            {photos.map((url, index) => (
+              <View key={index} style={styles.hItem}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.imagePressable,
+                    pressed && { transform: [{ scale: 0.98 }] },
+                  ]}
+                  onPress={() => openViewer(photos, index)}
+                >
+                  <Image source={{ uri: url }} style={styles.hImage} />
+                </Pressable>
+                <Pressable style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
+                  <Text style={styles.deleteText}>×</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
         </View>
+      );
+    },
+    [order, styles, compressAndUpload, openViewer, removePhoto],
+  );
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.hRow}
-        >
-          {photos.map((url, index) => (
-            <View key={index} style={styles.hItem}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.imagePressable,
-                  pressed && { transform: [{ scale: 0.98 }] },
-                ]}
-                onPress={() => openViewer(photos, index)}
-              >
-                <Image source={{ uri: url }} style={styles.hImage} />
-              </Pressable>
-              <Pressable style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
-                <Text style={styles.deleteText}>×</Text>
-              </Pressable>
-            </View>
-          ))}
-        </ScrollView>
+  const SafeRow = useCallback(
+    ({ children, ...rest }) => (
+      <View {...rest}>
+        {React.Children.map(children, (ch) =>
+          typeof ch === 'string' ? <Text style={styles.rowValue}>{ch}</Text> : ch,
+        )}
       </View>
-    );
-  }, [order, styles, compressAndUpload, openViewer, removePhoto]);
-
-  const SafeRow = useCallback(({ children, ...rest }) => (
-    <View {...rest}>
-      {React.Children.map(children, (ch) =>
-        typeof ch === 'string' ? <Text style={styles.rowValue}>{ch}</Text> : ch
-      )}
-    </View>
-  ), [styles]);
+    ),
+    [styles],
+  );
 
   useEffect(() => {
     applyNavBar();
@@ -1153,7 +1295,9 @@ export default function OrderDetails() {
         // silent fallback
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -1177,7 +1321,9 @@ export default function OrderDetails() {
         console.warn('workTypes bootstrap', e?.message || e);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -1231,12 +1377,16 @@ export default function OrderDetails() {
 
   useEffect(() => {
     const sub = navigation.addListener('beforeRemove', (e) => {
-    
-const actionType = e?.data?.action?.type;
-if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType !== 'POP_TO_TOP') {
-  // allow explicit navigations (e.g., bottom bar tabs using router.replace)
-  return;
-}
+      const actionType = e?.data?.action?.type;
+      if (
+        actionType &&
+        actionType !== 'GO_BACK' &&
+        actionType !== 'POP' &&
+        actionType !== 'POP_TO_TOP'
+      ) {
+        // allow explicit navigations (e.g., bottom bar tabs using router.replace)
+        return;
+      }
 
       if (returnTo && !isNavigatingRef.current && backTargetPath !== pathname) {
         e.preventDefault();
@@ -1245,7 +1395,16 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
       }
     });
     return sub;
-  }, [navigation, editMode, returnTo, backTargetPath, pathname, router, returnParams, requestCloseEdit]);
+  }, [
+    navigation,
+    editMode,
+    returnTo,
+    backTargetPath,
+    pathname,
+    router,
+    returnParams,
+    requestCloseEdit,
+  ]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1283,7 +1442,7 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <Screen background="background" edges={['top','bottom']}>
+      <Screen background="background" edges={['top', 'bottom']}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
             ref={detailsScrollRef}
@@ -1297,7 +1456,7 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
                 accessibilityRole="button"
                 accessibilityLabel="Назад"
               >
-                <View style={{flexDirection:'row',alignItems:'center',gap:6}}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                   <AntDesign name="left" size={18} color={theme.colors.primary} />
                   <Text style={styles.backText}>Назад</Text>
                 </View>
@@ -1305,7 +1464,9 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
 
               {canEdit() && !editMode && (
                 <Pressable
-                  onPress={() => { if (order?.id) router.push(`/orders/edit/${order.id}`); }}
+                  onPress={() => {
+                    if (order?.id) router.push(`/orders/edit/${order.id}`);
+                  }}
                   hitSlop={10}
                   style={styles.editBtn}
                 >
@@ -1375,7 +1536,7 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
                 <Text style={styles.rowValue}>{order.fio || order.customer_name || '—'}</Text>
               </SafeRow>
               <View style={styles.separator} />
-              
+
               <Pressable style={styles.row} onPress={openInYandex}>
                 <Text style={styles.rowLabel}>📍 Адрес</Text>
                 <Text style={[styles.rowValue, styles.linkText]} numberOfLines={2}>
@@ -1391,7 +1552,8 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
                   <SafeRow style={styles.row}>
                     <Text style={styles.rowLabel}>🏷️ Тип работ</Text>
                     <Text style={styles.rowValue}>
-                      {workTypes.find(w => w.id === (order.work_type_id ?? null))?.name || 'не выбран'}
+                      {workTypes.find((w) => w.id === (order.work_type_id ?? null))?.name ||
+                        'не выбран'}
                     </Text>
                   </SafeRow>
                   <View style={styles.separator} />
@@ -1424,12 +1586,13 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
                 </Text>
               </Pressable>
               <View style={styles.separator} />
-              
+
               <SafeRow style={styles.row}>
                 <Text style={styles.rowLabel}>📞 Телефон</Text>
                 {(() => {
                   const isAdmin = role === 'admin' || role === 'dispatcher';
-                  const visiblePhone = order?.customer_phone_visible || (isAdmin ? order?.phone : null);
+                  const visiblePhone =
+                    order?.customer_phone_visible || (isAdmin ? order?.phone : null);
                   const masked = order?.customer_phone_masked;
                   if (visiblePhone) {
                     return (
@@ -1444,13 +1607,13 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
                 })()}
               </SafeRow>
               <View style={styles.separator} />
-              
+
               <SafeRow style={styles.row}>
                 <Text style={styles.rowLabel}>💰 Сумма</Text>
                 <Text style={styles.rowValue}>{formatMoney(order.price)}</Text>
               </SafeRow>
               <View style={styles.separator} />
-              
+
               <SafeRow style={styles.row}>
                 <Text style={styles.rowLabel}>⛽ ГСМ</Text>
                 <Text style={styles.rowValue}>{formatMoney(order.fuel_cost)}</Text>
@@ -1537,7 +1700,9 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>Выберите тип работ</Text>
           {workTypes.length === 0 ? (
-            <Text style={styles.modalText}>Список пуст. Добавьте типы работ в настройках компании.</Text>
+            <Text style={styles.modalText}>
+              Список пуст. Добавьте типы работ в настройках компании.
+            </Text>
           ) : (
             workTypes.map((t) => (
               <Pressable
@@ -1704,7 +1869,10 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
               setAssigneeId(null);
               setAssigneeModalVisible(false);
             }}
-            style={({ pressed }) => [styles.assigneeOption, pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface }]}
+            style={({ pressed }) => [
+              styles.assigneeOption,
+              pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
+            ]}
           >
             <Text style={styles.assigneeText}>В общую ленту</Text>
           </Pressable>
@@ -1714,7 +1882,7 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
               key={user.id}
               onPress={() => {
                 setAssigneeId(user.id);
-                setExecutorName(`${user.first_name||''} ${user.last_name||''}`.trim());
+                setExecutorName(`${user.first_name || ''} ${user.last_name || ''}`.trim());
                 setToFeed(false);
                 setAssigneeModalVisible(false);
               }}
@@ -1761,7 +1929,11 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
             <Text style={styles.modalText}>Нет отделов</Text>
           )}
           <View style={[styles.modalActions, { marginTop: 8 }]}>
-            <Button title="Отмена" onPress={() => setDepartmentModalVisible(false)} variant="secondary" />
+            <Button
+              title="Отмена"
+              onPress={() => setDepartmentModalVisible(false)}
+              variant="secondary"
+            />
           </View>
         </View>
       </Modal>
@@ -1831,7 +2003,11 @@ if (actionType && actionType !== 'GO_BACK' && actionType !== 'POP' && actionType
             невозможно.
           </Text>
           <View style={styles.modalActions}>
-            <Button title="Остаться" onPress={() => setDeleteModalVisible(false)} variant="primary" />
+            <Button
+              title="Остаться"
+              onPress={() => setDeleteModalVisible(false)}
+              variant="primary"
+            />
             <Button
               title={deleteEnabled ? 'Удалить' : `Удалить (${deleteCountdown})`}
               onPress={deleteOrderCompletely}
@@ -1893,7 +2069,7 @@ function createStyles(theme) {
       backgroundColor: theme.colors.surface,
       borderRadius: 16,
       padding: 16,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
       marginBottom: 12,
       borderWidth: 1,
       borderColor: theme.colors.border,
@@ -1922,7 +2098,7 @@ function createStyles(theme) {
       overflow: 'hidden',
       borderWidth: 1,
       borderColor: theme.colors.border,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
     },
     row: {
       paddingHorizontal: 16,
@@ -1932,10 +2108,14 @@ function createStyles(theme) {
       justifyContent: 'space-between',
       gap: 12,
     },
-    rowLabel: { 
-      fontSize: 15, 
-      color: theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary, 
-      flexShrink: 0 
+    rowLabel: {
+      fontSize: 15,
+      color:
+        theme.text?.muted?.color ||
+        theme.colors.textSecondary ||
+        theme.colors.muted ||
+        theme.colors.textSecondary,
+      flexShrink: 0,
     },
     rowValue: { fontSize: 16, color: theme.colors.text, textAlign: 'right', flex: 1 },
     linkText: { color: theme.colors.primary, textDecorationLine: 'underline' },
@@ -1949,7 +2129,7 @@ function createStyles(theme) {
       borderColor: theme.colors.border,
       paddingHorizontal: 16,
       paddingVertical: 14,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
     },
     descTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
     descText: { fontSize: 16, color: theme.colors.text, lineHeight: 22 },
@@ -1961,7 +2141,7 @@ function createStyles(theme) {
       borderWidth: 1,
       borderColor: theme.colors.border,
       paddingVertical: 8,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
     },
     photosHeader: {
       paddingHorizontal: 16,
@@ -1983,7 +2163,7 @@ function createStyles(theme) {
     imagePressable: {
       borderRadius: 12,
       overflow: 'hidden',
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
     },
     hImage: { width: 116, height: 116, borderRadius: 12 },
     deletePhoto: {
@@ -2007,7 +2187,10 @@ function createStyles(theme) {
       alignItems: 'center',
     },
     finishButtonText: { color: theme.colors.onPrimary, fontSize: 16, fontWeight: '700' },
-    finishButtonDisabled: { backgroundColor: theme.colors.primaryDisabled || theme.colors.primary, opacity: 0.6 },
+    finishButtonDisabled: {
+      backgroundColor: theme.colors.primaryDisabled || theme.colors.primary,
+      opacity: 0.6,
+    },
     appButton: {
       paddingVertical: 12,
       paddingHorizontal: 16,
@@ -2017,20 +2200,24 @@ function createStyles(theme) {
     appButtonText: { fontSize: 16 },
     btnPrimary: { backgroundColor: theme.colors.primary },
     btnPrimaryText: { color: theme.colors.onPrimary, fontWeight: '600' },
-    btnSecondary: { 
-      backgroundColor: theme.colors.inputBg || theme.colors.surface, 
-      borderWidth: 1, 
-      borderColor: theme.colors.border 
+    btnSecondary: {
+      backgroundColor: theme.colors.inputBg || theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
     },
     btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
     btnDestructive: { backgroundColor: theme.colors.danger },
     btnDestructiveText: { color: theme.colors.onPrimary, fontWeight: '700' },
     modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
     modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
-    modalText: { 
-      fontSize: 15, 
-      color: theme.text?.muted?.color || theme.colors.textSecondary || theme.colors.muted || theme.colors.textSecondary, 
-      marginBottom: 20 
+    modalText: {
+      fontSize: 15,
+      color:
+        theme.text?.muted?.color ||
+        theme.colors.textSecondary ||
+        theme.colors.muted ||
+        theme.colors.textSecondary,
+      marginBottom: 20,
     },
     modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
     assigneeOption: { paddingVertical: 10 },
@@ -2065,7 +2252,7 @@ function createStyles(theme) {
       borderRadius: 12,
       paddingVertical: 12,
       paddingHorizontal: 16,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}), 
+      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
     },
     bannerText: { color: theme.colors.onPrimary, textAlign: 'center', fontWeight: '600' },
     card: {

@@ -1,27 +1,39 @@
 // app/users/[id].jsx
-import React, { useCallback, useEffect, useState, useLayoutEffect } from 'react';
-import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View, Pressable, Linking, Platform } from 'react-native';
-import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
-import { useFocusEffect } from '@react-navigation/native';
-import Screen from '../../components/layout/Screen';
-import { useTheme, } from '../../theme';
-import { supabase } from '../../lib/supabase';
 import { Feather } from '@expo/vector-icons';
-import { normalizeRu, formatRuMask, toE164 } from '../../components/ui/phone';
-import { listItemStyles } from '../../components/ui/listItemStyles';
+import { useFocusEffect } from '@react-navigation/native';
+import * as Clipboard from 'expo-clipboard';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import IconButton from '../../components/ui/IconButton';
-import * as Clipboard from 'expo-clipboard';
+import { listItemStyles } from '../../components/ui/listItemStyles';
+import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
 import { useToast } from '../../components/ui/ToastProvider';
-import { getLocale, useI18nVersion } from '../../src/i18n';
+import { supabase } from '../../lib/supabase';
+import { getDict, useI18nVersion } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { useTheme } from '../../theme';
 
 function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
     if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
       return color + alpha;
     }
     const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
@@ -44,7 +56,9 @@ export default function UserView() {
   const mountedRef = React.useRef(false);
   useEffect(() => {
     mountedRef.current = true;
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   const ver = useI18nVersion();
@@ -63,42 +77,51 @@ export default function UserView() {
   const [role, setRole] = useState('worker');
   const [departmentName, setDepartmentName] = useState(null);
   const [isSuspended, setIsSuspended] = useState(false);
-  const ROLE_LABELS = React.useMemo(() => ({ admin: t('role_admin','role_admin'), dispatcher: t('role_dispatcher','role_dispatcher'), worker: t('role_worker','role_worker') }), [ver]);
+  const ROLE_LABELS = React.useMemo(
+    () => ({
+      admin: t('role_admin', 'role_admin'),
+      dispatcher: t('role_dispatcher', 'role_dispatcher'),
+      worker: t('role_worker', 'role_worker'),
+    }),
+    [ver],
+  );
 
-  const roleLabel = ROLE_LABELS[role] || t('role_worker','role_worker');
+  const roleLabel = ROLE_LABELS[role] || t('role_worker', 'role_worker');
 
   useLayoutEffect(() => {
-    const routeTitle = t('routes.users/[id]','routes.users/[id]');
+    const routeTitle = t('routes.users/[id]', 'routes.users/[id]');
     navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
   }, [navigation, ver]);
 
   // Also set title in params so AppHeader picks it
   useEffect(() => {
-    const routeTitle = t('routes.users/[id]','routes.users/[id]');
+    const routeTitle = t('routes.users/[id]', 'routes.users/[id]');
     navigation.setParams({ title: routeTitle });
   }, [navigation, ver]);
 
   // Load viewed user's data
   const fetchUser = useCallback(async () => {
-        // Guard: ensure route param exists
+    // Guard: ensure route param exists
     if (!userId) {
       if (mountedRef.current) {
-        setErr(t('errors_user_not_found','errors_user_not_found'));
+        setErr(t('errors_user_not_found', 'errors_user_not_found'));
         setLoading(false);
       }
       return;
     }
-if (mountedRef.current) setLoading(true);
+    if (mountedRef.current) setLoading(true);
     if (mountedRef.current) setErr('');
     let __watchdog = null;
     try {
       __watchdog = setTimeout(() => {
         if (mountedRef.current) {
-          try { toast.error(t('errors_network','errors_network')); } catch {}
-          setErr(t('errors_network','errors_network'));
+          try {
+            toast.error(t('errors_network', 'errors_network'));
+          } catch {}
+          setErr(t('errors_network', 'errors_network'));
           setLoading(false);
         }
-      }, (theme?.timings?.requestTimeoutMs ?? 12000));
+      }, theme?.timings?.requestTimeoutMs ?? 12000);
       // Always know who is logged in for comparison
       const { data: auth } = await supabase.auth.getUser();
       const uid = auth?.user?.id || null;
@@ -110,7 +133,9 @@ if (mountedRef.current) setLoading(true);
         const { data: me } = await supabase.from('profiles').select('role').eq('id', uid).single();
         const iAmAdmin = me?.role === 'admin';
         if (iAmAdmin) {
-          const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', { target_user_id: userId });
+          const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', {
+            target_user_id: userId,
+          });
           rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
         }
         if (mountedRef.current) setMeIsAdmin(iAmAdmin);
@@ -120,7 +145,9 @@ if (mountedRef.current) setLoading(true);
       // Base profile fields (including birthdate + role for non-admins)
       const { data: prof } = await supabase
         .from('profiles')
-        .select('first_name, last_name, phone, avatar_url, department_id, is_suspended, suspended_at, birthdate, role')
+        .select(
+          'first_name, last_name, phone, avatar_url, department_id, is_suspended, suspended_at, birthdate, role',
+        )
         .eq('id', userId)
         .maybeSingle();
 
@@ -143,7 +170,11 @@ if (mountedRef.current) setLoading(true);
 
         const depId = prof?.department_id ?? null;
         if (depId) {
-          const { data: d } = await supabase.from('departments').select('name').eq('id', depId).maybeSingle();
+          const { data: d } = await supabase
+            .from('departments')
+            .select('name')
+            .eq('id', depId)
+            .maybeSingle();
           if (mountedRef.current) setDepartmentName(d?.name || null);
         } else if (mountedRef.current) {
           setDepartmentName(null);
@@ -160,13 +191,16 @@ if (mountedRef.current) setLoading(true);
       } else if (mountedRef.current) {
         setEmail('');
       }
-
     } catch (e) {
-      const msg = e?.message || t('errors_loadUser','errors_loadUser');
+      const msg = e?.message || t('errors_loadUser', 'errors_loadUser');
       if (mountedRef.current) setErr(msg);
-      try { toast.error(msg); } catch {}
+      try {
+        toast.error(msg);
+      } catch {}
     } finally {
-      try { clearTimeout(__watchdog); } catch {}
+      try {
+        clearTimeout(__watchdog);
+      } catch {}
       if (mountedRef.current) setLoading(false);
     }
   }, [userId]);
@@ -182,13 +216,22 @@ if (mountedRef.current) setLoading(true);
     navigation.setOptions({
       headerRight: canEdit
         ? () => (
-            <Button title={t('btn_edit','btn_edit')} onPress={handleEditPress} variant="secondary" size="md" />
+            <Button
+              title={t('btn_edit', 'btn_edit')}
+              onPress={handleEditPress}
+              variant="secondary"
+              size="md"
+            />
           )
         : undefined,
     });
     // Also set serializable header button params for our custom AppHeader
     if (canEdit) {
-      navigation.setParams({ headerButtonLabel: t('btn_edit','btn_edit'), headerButtonTo: `/users/${userId}/edit`, editLabel: null });
+      navigation.setParams({
+        headerButtonLabel: t('btn_edit', 'btn_edit'),
+        headerButtonTo: `/users/${userId}/edit`,
+        editLabel: null,
+      });
     }
     // Keep route params free of functions — we no longer pass onEditPress
     if (!canEdit) {
@@ -206,37 +249,49 @@ if (mountedRef.current) setLoading(true);
     const text = String(email);
     try {
       await Clipboard.setStringAsync(text);
-      try { toast.success(t('toast_email_copied','toast_email_copied')); } catch {}
+      try {
+        toast.success(t('toast_email_copied', 'toast_email_copied'));
+      } catch {}
       return true;
     } catch {
       if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
         try {
           await globalThis.navigator.clipboard.writeText(text);
-          try { toast.success(t('toast_email_copied','toast_email_copied')); } catch {}
+          try {
+            toast.success(t('toast_email_copied', 'toast_email_copied'));
+          } catch {}
           return true;
         } catch {}
       }
-      try { toast.error(t('toast_copy_email_fail','toast_copy_email_fail')); } catch {}
+      try {
+        toast.error(t('toast_copy_email_fail', 'toast_copy_email_fail'));
+      } catch {}
       return false;
     }
   }, [email, toast]);
 
   const onCopyPhone = React.useCallback(async () => {
     if (!phone) return false;
-    const text = toE164(phone) || ('+' + normalizeRu(phone));
+    const text = toE164(phone) || '+' + normalizeRu(phone);
     try {
       await Clipboard.setStringAsync(text);
-      try { toast.success(t('toast_phone_copied','toast_phone_copied')); } catch {}
+      try {
+        toast.success(t('toast_phone_copied', 'toast_phone_copied'));
+      } catch {}
       return true;
     } catch {
       if (Platform.OS === 'web' && globalThis?.navigator?.clipboard?.writeText) {
         try {
           await globalThis.navigator.clipboard.writeText(text);
-          try { toast.success(t('toast_phone_copied','toast_phone_copied')); } catch {}
+          try {
+            toast.success(t('toast_phone_copied', 'toast_phone_copied'));
+          } catch {}
           return true;
         } catch {}
       }
-      try { toast.error(t('toast_copy_phone_fail','toast_copy_phone_fail')); } catch {}
+      try {
+        toast.error(t('toast_copy_phone_fail', 'toast_copy_phone_fail'));
+      } catch {}
       return false;
     }
   }, [phone, toast]);
@@ -246,10 +301,11 @@ if (mountedRef.current) setLoading(true);
     React.useCallback(() => {
       fetchUser();
       return undefined;
-    }, [fetchUser])
+    }, [fetchUser]),
   );
 
-  const initials = `${(firstName || '').trim().slice(0,1)}${(lastName || '').trim().slice(0,1)}`.toUpperCase();
+  const initials =
+    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
   const statusColor = isSuspended ? theme.colors.danger : theme.colors.success;
 
   if (loading) {
@@ -273,7 +329,11 @@ if (mountedRef.current) setLoading(true);
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={s.contentWrap} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={s.contentWrap}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         {/* Top avatar on background */}
         <View style={s.avatarContainer}>
           <View style={s.avatarXl}>
@@ -285,72 +345,82 @@ if (mountedRef.current) setLoading(true);
           </View>
         </View>
 
-        <Text style={base.sectionTitle}>{t('section_personal','section_personal')}</Text>
+        <Text style={base.sectionTitle}>{t('section_personal', 'section_personal')}</Text>
         <Card paddedXOnly>
           <View style={base.row}>
-            <Text style={base.label}>{t('view_label_name','view_label_name')}</Text>
+            <Text style={base.label}>{t('view_label_name', 'view_label_name')}</Text>
             <View style={base.rightWrap}>
-              <Text style={base.value}>{(firstName || lastName) ? (`${firstName || ''} ${lastName || ''}`).trim() : t('common_dash','common_dash')}</Text>
+              <Text style={base.value}>
+                {firstName || lastName
+                  ? `${firstName || ''} ${lastName || ''}`.trim()
+                  : t('common_dash', 'common_dash')}
+              </Text>
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{t('view_label_email','view_label_email')}</Text>
+            <Text style={base.label}>{t('view_label_email', 'view_label_email')}</Text>
             <View style={base.rightWrap}>
               {email ? (
-                <Pressable accessibilityRole="link" onPress={async () => {
-                  const url = `mailto:${email}`;
-                  try {
-                    const ok = await Linking.canOpenURL(url);
-                    if (ok) await Linking.openURL(url);
-                    else toast.error(t('errors_openMail','errors_openMail'));
-                  } catch {
-                    toast.error(t('errors_openMail','errors_openMail'));
-                  }
-                }}>
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={async () => {
+                    const url = `mailto:${email}`;
+                    try {
+                      const ok = await Linking.canOpenURL(url);
+                      if (ok) await Linking.openURL(url);
+                      else toast.error(t('errors_openMail', 'errors_openMail'));
+                    } catch {
+                      toast.error(t('errors_openMail', 'errors_openMail'));
+                    }
+                  }}
+                >
                   <Text style={[base.value, s.link]}>{email}</Text>
                 </Pressable>
               ) : (
-                <Text style={base.value}>{t('common_dash','common_dash')}</Text>
+                <Text style={base.value}>{t('common_dash', 'common_dash')}</Text>
               )}
               {email ? (
                 <IconButton
                   style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyEmail}
-                  accessibilityLabel={t('a11y_copy_email','a11y_copy_email')}
+                  accessibilityLabel={t('a11y_copy_email', 'a11y_copy_email')}
                 >
-                  <Feather name='copy' size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                  <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                 </IconButton>
               ) : null}
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{t('view_label_phone','view_label_phone')}</Text>
+            <Text style={base.label}>{t('view_label_phone', 'view_label_phone')}</Text>
             <View style={base.rightWrap}>
               {phone ? (
-                <Pressable accessibilityRole="link" onPress={async () => {
-                  const url = `tel:${toE164(phone) || ('+' + normalizeRu(phone))}`;
-                  try {
-                    const ok = await Linking.canOpenURL(url);
-                    if (ok) await Linking.openURL(url);
-                    else toast.error(t('errors_callsUnavailable','errors_callsUnavailable'));
-                  } catch {
-                    toast.error(t('errors_callsUnavailable','errors_callsUnavailable'));
-                  }
-                }}>
+                <Pressable
+                  accessibilityRole="link"
+                  onPress={async () => {
+                    const url = `tel:${toE164(phone) || '+' + normalizeRu(phone)}`;
+                    try {
+                      const ok = await Linking.canOpenURL(url);
+                      if (ok) await Linking.openURL(url);
+                      else toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                    } catch {
+                      toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                    }
+                  }}
+                >
                   <Text style={[base.value, s.link]}>{formatRuMask(phone)}</Text>
                 </Pressable>
               ) : (
-                <Text style={base.value}>{t('common_dash','common_dash')}</Text>
+                <Text style={base.value}>{t('common_dash', 'common_dash')}</Text>
               )}
               {phone ? (
                 <IconButton
                   style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyPhone}
-                  accessibilityLabel={t('a11y_copy_phone','a11y_copy_phone')}
+                  accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
                 >
-                  <Feather name='copy' size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                  <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                 </IconButton>
               ) : null}
             </View>
@@ -358,33 +428,59 @@ if (mountedRef.current) setLoading(true);
 
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{t('label_birthdate','label_birthdate')}</Text>
+            <Text style={base.label}>{t('label_birthdate', 'label_birthdate')}</Text>
             <View style={base.rightWrap}>
-              <Text style={base.value}>{birthdate ? birthdate.toLocaleDateString((() => { try { return getLocale(); } catch { return 'ru-RU'; } })(), { day: '2-digit', month: 'long', year: 'numeric' }) : t('common_dash','common_dash')}</Text>
+              <Text style={base.value}>
+                {birthdate
+                  ? (() => {
+                      try {
+                        // Read optional offset from i18n dict (keeps parity with DateTimeModal)
+                        const dict = getDict?.() || {};
+                        const offset = Number(dict.month_label_offset ?? 0) || 0;
+                        const m = birthdate.getMonth(); // 0..11
+                        const keyIdx = (m + offset + 12) % 12;
+                        const monthName = t(
+                          `months_genitive.${keyIdx}`,
+                          `months_genitive.${keyIdx}`,
+                        );
+                        const day = birthdate.getDate();
+                        const year = birthdate.getFullYear();
+                        return `${day} ${monthName} ${year}`;
+                      } catch (e) {
+                        // Fallback to dash if anything goes wrong
+                        return t('common_dash', 'common_dash');
+                      }
+                    })()
+                  : t('common_dash', 'common_dash')}
+              </Text>
             </View>
           </View>
         </Card>
 
-        <Text style={base.sectionTitle}>{t('section_company_role','section_company_role')}</Text>
+        <Text style={base.sectionTitle}>{t('section_company_role', 'section_company_role')}</Text>
         <Card paddedXOnly>
           <View style={base.row}>
-            <Text style={base.label}>{t('label_department','label_department')}</Text>
+            <Text style={base.label}>{t('label_department', 'label_department')}</Text>
             <View style={base.rightWrap}>
-              <Text style={base.value}>{departmentName || t('common_dash','common_dash')}</Text>
+              <Text style={base.value}>{departmentName || t('common_dash', 'common_dash')}</Text>
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{t('label_role','label_role')}</Text>
+            <Text style={base.label}>{t('label_role', 'label_role')}</Text>
             <View style={base.rightWrap}>
               <Text style={base.value}>{roleLabel}</Text>
             </View>
           </View>
           <View style={base.sep} />
           <View style={base.row}>
-            <Text style={base.label}>{t('label_status','label_status')}</Text>
+            <Text style={base.label}>{t('label_status', 'label_status')}</Text>
             <View style={base.rightWrap}>
-              <Text style={[base.value, { color: statusColor }]}>{isSuspended ? t('status_suspended','status_suspended') : t('status_active','status_active')}</Text>
+              <Text style={[base.value, { color: statusColor }]}>
+                {isSuspended
+                  ? t('status_suspended', 'status_suspended')
+                  : t('status_active', 'status_active')}
+              </Text>
             </View>
           </View>
         </Card>
@@ -417,7 +513,7 @@ const styles = (t) => {
     avatarTextXl: {
       fontSize: Math.round(AV * 0.33),
       color: PRIMARY,
-      fontWeight: (t?.typography?.weight?.bold) || '700',
+      fontWeight: t?.typography?.weight?.bold || '700',
     },
     avatarImg: { width: '100%', height: '100%' },
     link: { color: PRIMARY },

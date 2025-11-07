@@ -1,40 +1,58 @@
+/* global setTimeout */
+
 // app/_layout.js
-import 'react-native-gesture-handler';
-import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { ActivityIndicator, View, AppState } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
-import Animated, { LinearTransition } from 'react-native-reanimated';
-import { initI18n, setLocale } from '../src/i18n';
-import { loadUserLocale } from '../lib/userLocale';
-import { supabase } from '../lib/supabase';
-import SettingsProvider from '../providers/SettingsProvider';
-import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
-import ToastProvider from '../components/ui/ToastProvider';
-import { PermissionsProvider } from '../lib/permissions';
-import BottomNav from '../components/navigation/BottomNav';
-import { getUserRole } from '../lib/getUserRole';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
+import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
+import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, Platform, View } from 'react-native';
+import 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { LinearTransition } from 'react-native-reanimated';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import BottomNav from '../components/navigation/BottomNav';
+import ToastProvider from '../components/ui/ToastProvider';
+import { getUserRole } from '../lib/getUserRole';
+import logger from '../lib/logger';
+import { PermissionsProvider } from '../lib/permissions';
+import { supabase } from '../lib/supabase';
+import { loadUserLocale } from '../lib/userLocale';
+import SettingsProvider from '../providers/SettingsProvider';
+import { initI18n, setLocale } from '../src/i18n';
+import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 
+// timeouts / intervals (keep centrally to ease tuning)
+const SESSION_TIMEOUT = 3500; // ms
+const I18N_TIMEOUT = 1500; // ms
+const LOCALE_TIMEOUT = 2000; // ms
+const ROLE_TIMEOUT = 5000; // ms
+const LAST_SEEN_INTERVAL = 60_000; // ms
+
+// app/_layout.js
+
 /** Mounts last-seen tracker only when rendered (iOS: avoids noise before auth) */
-import { Platform } from 'react-native';
 function LastSeenTracker() {
   // Монтируем "последний визит" только после логина, iOS не трогаем до авторизации
-  try { if (Platform.OS === 'ios' || Platform.OS === 'android') { useAppLastSeen(60_000); } } catch {}
+  try {
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
+      useAppLastSeen(LAST_SEEN_INTERVAL);
+    }
+  } catch (e) {
+    logger.warn('LastSeenTracker error:', e?.message || e);
+  }
   return null;
 }
 
-
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
-  SplashScreen.preventAutoHideAsync().catch(() => {});
+  SplashScreen.preventAutoHideAsync().catch((e) => {
+    logger.warn('preventAutoHideAsync error:', e?.message || e);
+  });
 }
 
 const queryClient = new QueryClient({
@@ -57,12 +75,14 @@ try {
   queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: 5 * 60 * 1000 });
   queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: 5 * 60 * 1000 });
   queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: 5 * 60 * 1000 });
-} catch {}
+} catch (e) {
+  logger.warn('setQueryDefaults error:', e?.message || e);
+}
 
 const persister = createAsyncStoragePersister({ storage: AsyncStorage });
 
 onlineManager.setEventListener((setOnline) =>
-  NetInfo.addEventListener((state) => setOnline(!!state.isConnected))
+  NetInfo.addEventListener((state) => setOnline(!!state.isConnected)),
 );
 
 focusManager.setEventListener((handleFocus) => {
@@ -83,6 +103,8 @@ function RootLayoutInner() {
 
   // Guard to avoid initial redirect flicker on first paint
   const didInitRef = useRef(false);
+  // Marker to skip auth-driven redirects during initial mount
+  const _authMountedRef = useRef(false);
 
   const splashHiddenRef = useRef(false);
   const hideSplashNow = useCallback(async () => {
@@ -90,7 +112,7 @@ function RootLayoutInner() {
     try {
       await SplashScreen.hideAsync();
     } catch (e) {
-      console.warn('hideSplash error:', e?.message || e);
+      logger.warn('hideSplash error:', e?.message || e);
     } finally {
       splashHiddenRef.current = true;
     }
@@ -99,7 +121,7 @@ function RootLayoutInner() {
   const ready = appReady && sessionReady;
 
   const onLayoutRootView = useCallback(async () => {
-    if (ready) await hideSplashNow();
+    await hideSplashNow();
   }, [ready, hideSplashNow]);
 
   useEffect(() => {
@@ -111,22 +133,24 @@ function RootLayoutInner() {
         const sessResult = await Promise.race([
           supabase.auth.getSession().catch((e) => {
             if (e?.message?.includes?.('Auth session missing')) {
-              console.log('No session, probably signed out');
+              logger.warn('No session, probably signed out');
               return { data: { session: null } };
             }
-            console.warn('getSession error:', e?.message || e);
+            logger.warn('getSession error:', e?.message || e);
             return { data: { session: null } };
           }),
           new Promise((resolve) =>
-            setTimeout(() => resolve({ data: { session: null } }), 3500)
+            setTimeout(() => resolve({ data: { session: null } }), SESSION_TIMEOUT),
           ),
         ]);
         const session = sessResult?.data?.session ?? null;
 
         // 2) i18n init (non-blocking with timeout)
         await Promise.race([
-          initI18n().catch(() => {}),
-          new Promise((resolve) => setTimeout(resolve, 1500)),
+          initI18n().catch((e) => {
+            logger.warn('i18n init error:', e?.message || e);
+          }),
+          new Promise((resolve) => setTimeout(resolve, I18N_TIMEOUT)),
         ]);
 
         // 3) locale sync
@@ -134,15 +158,18 @@ function RootLayoutInner() {
           try {
             const code = await Promise.race([
               loadUserLocale(),
-              new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+              new Promise((resolve) => setTimeout(() => resolve(null), LOCALE_TIMEOUT)),
             ]);
             if (code) await setLocale(code);
-          } catch {}
+          } catch (e) {
+            logger.warn('loadUserLocale error:', e?.message || e);
+          }
         }
 
         const logged = !!session?.user;
 
-        if (mounted) { setSessionReady(true);
+        if (mounted) {
+          setSessionReady(true);
           setIsLoggedIn(logged);
           if (!appReady) setAppReady(true);
 
@@ -150,7 +177,7 @@ function RootLayoutInner() {
             try {
               const userRolePromise = getUserRole();
               const timeoutPromise = new Promise((resolve) =>
-                setTimeout(() => resolve('worker'), 5000)
+                setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
               );
               const userRole = await Promise.race([userRolePromise, timeoutPromise]);
               if (mounted) setRole(userRole);
@@ -161,55 +188,91 @@ function RootLayoutInner() {
             if (mounted) setRole(null);
           }
         }
-      } catch (error) {
+      } catch (e) {
+        logger.warn('initializeApp error:', e?.message || e);
         if (mounted && !appReady) setAppReady(true);
       }
     };
 
     initializeApp();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (!mounted) return;
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
 
-        try { await queryClient.clear(); } catch {}
-
-        const logged = !!session?.user;
-        setIsLoggedIn(logged);
-        setSessionReady(true);
-        if (!appReady) setAppReady(true);
-
-        if (logged) {
-          try {
-            const code = await Promise.race([
-              loadUserLocale(),
-              new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
-            ]);
-            if (code) await setLocale(code);
-          } catch {}
-
-          try {
-            const userRolePromise = getUserRole();
-            const timeoutPromise = new Promise((resolve) =>
-              setTimeout(() => resolve('worker'), 5000)
-            );
-            const userRole = await Promise.race([userRolePromise, timeoutPromise]);
-            if (mounted) setRole(userRole);
-          } catch {
-            if (mounted) setRole(null);
-          }
-        } else {
-          if (mounted) setRole(null);
-        }
+      // Always try to get authoritative session state from supabase
+      let currentSession = session;
+      try {
+        const res = await supabase.auth.getSession();
+        currentSession = res?.data?.session ?? currentSession;
+      } catch (e) {
+        logger.warn('onAuthStateChange getSession error:', e?.message || e);
       }
-    );
+
+      try {
+        // Clear cache to avoid showing stale data after auth change
+        await queryClient.clear();
+      } catch (e) {
+        logger.warn('queryClient.clear error:', e?.message || e);
+      }
+
+      const logged = !!currentSession?.user;
+      setIsLoggedIn(logged);
+      setSessionReady(true);
+      if (!appReady) setAppReady(true);
+
+      if (!logged) {
+        try {
+          await persister.removeClient?.();
+        } catch (e) {
+          logger.warn('persister.removeClient error:', e?.message || e);
+        }
+        // clear role when logged out
+        if (mounted) setRole(null);
+        // Ensure we navigate to login after sign-out (some signOut flows don't trigger immediate UI redirects)
+        try {
+          router.replace('/(auth)/login');
+        } catch (e) {
+          logger.warn('router.replace (on logout) error:', e?.message || e);
+        }
+        return;
+      }
+
+      // On login: ensure locale and role are loaded and queries refreshed
+      try {
+        const code = await Promise.race([
+          loadUserLocale(),
+          new Promise((resolve) => setTimeout(() => resolve(null), LOCALE_TIMEOUT)),
+        ]);
+        if (code) await setLocale(code);
+      } catch (e) {
+        logger.warn('loadUserLocale (onAuth) error:', e?.message || e);
+      }
+
+      try {
+        const userRolePromise = getUserRole();
+        const timeoutPromise = new Promise((resolve) =>
+          setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
+        );
+        const userRole = await Promise.race([userRolePromise, timeoutPromise]);
+        if (mounted) setRole(userRole);
+      } catch (e) {
+        logger.warn('getUserRole (onAuth) error:', e?.message || e);
+        if (mounted) setRole(null);
+      }
+
+      // Trigger fresh queries for critical data
+      try {
+        queryClient.invalidateQueries({ queryKey: ['profile'] });
+        queryClient.invalidateQueries({ queryKey: ['userRole'] });
+      } catch (e) {
+        logger.warn('invalidateQueries error:', e?.message || e);
+      }
+    });
 
     const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
-      if (
-        appState.current?.match(/inactive|background/) &&
-        nextAppState === 'active' &&
-        ready
-      ) {
+      if (appState.current?.match(/inactive|background/) && nextAppState === 'active' && ready) {
         await hideSplashNow();
       }
       appState.current = nextAppState;
@@ -222,7 +285,33 @@ function RootLayoutInner() {
     };
   }, []);
 
-  useEffect(() => { if (ready) hideSplashNow(); }, [ready, hideSplashNow]);
+  useEffect(() => {
+    if (ready) hideSplashNow();
+  }, [ready, hideSplashNow]);
+
+  // Ensure immediate navigation on explicit auth changes (but skip initial mount)
+  useEffect(() => {
+    if (!_authMountedRef.current) {
+      _authMountedRef.current = true;
+      return;
+    }
+    if (!ready) return;
+    if (!rootNavigationState?.key) return;
+
+    try {
+      const seg0 = Array.isArray(segments) ? segments[0] : undefined;
+      const inAuth = seg0 === '(auth)';
+      if (!isLoggedIn && !inAuth) {
+        router.replace('/(auth)/login');
+        return;
+      }
+      if (isLoggedIn && inAuth) {
+        router.replace('/orders');
+      }
+    } catch (e) {
+      logger.warn('auth-change navigation error:', e?.message || e);
+    }
+  }, [isLoggedIn, ready, segments, router, rootNavigationState]);
 
   useEffect(() => {
     let enabled = false;
@@ -234,7 +323,9 @@ function RootLayoutInner() {
         ({ AvoidSoftInput } = await import('react-native-avoid-softinput'));
         AvoidSoftInput.setEnabled(true);
         enabled = true;
-      } catch {}
+      } catch (e) {
+        logger.warn('AvoidSoftInput init error:', e?.message || e);
+      }
     })();
     return () => {
       (async () => {
@@ -242,7 +333,9 @@ function RootLayoutInner() {
           if (enabled && AvoidSoftInput) {
             AvoidSoftInput.setEnabled(false);
           }
-        } catch {}
+        } catch (e) {
+          logger.warn('AvoidSoftInput teardown error:', e?.message || e);
+        }
       })();
     };
   }, []);
@@ -256,10 +349,10 @@ function RootLayoutInner() {
         if (Constants?.appOwnership === 'expo') return;
         const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
         const token = await registerAndSavePushToken();
-        console.log('✅ Expo push token (saved):', token);
+        logger.warn('✅ Expo push token (saved):', token);
         detach = attachNotificationLogs();
       } catch (e) {
-        console.warn('Push init error:', e?.message || e);
+        logger.warn('Push init error:', e?.message || e);
       }
     })();
     return () => detach?.();
@@ -270,25 +363,32 @@ function RootLayoutInner() {
     if (!rootNavigationState?.key) return;
     const seg0 = Array.isArray(segments) ? segments[0] : undefined;
     const inAuth = seg0 === '(auth)';
-    // iOS fix: only skip the FIRST unauth redirect to login (to avoid flicker),
-    // but still allow redirect to /orders immediately if user is already logged in.
+    // Обновлённая логика: один redirect на старте, без двойного перехода
     if (!didInitRef.current) {
       didInitRef.current = true;
-      if (!isLoggedIn && !inAuth) return;
+      return;
     }
     if (!isLoggedIn && !inAuth) {
-      try { router.replace('/(auth)/login'); } catch {}
+      try {
+        router.replace('/(auth)/login');
+      } catch (e) {
+        logger.warn('router.replace -> login error:', e?.message || e);
+      }
       return;
     }
     if (isLoggedIn && inAuth) {
-      try { router.replace('/orders'); } catch {}
+      try {
+        router.replace('/orders');
+      } catch (e) {
+        logger.warn('router.replace -> orders error:', e?.message || e);
+      }
     }
   }, [isLoggedIn, ready, segments, router, rootNavigationState]);
 
   if (!ready) {
     return (
       <SafeAreaView
-        edges={['top','left','right']}
+        edges={['top', 'left', 'right']}
         style={{ flex: 1, backgroundColor: theme.colors.background }}
         onLayout={onLayoutRootView}
       >
@@ -306,11 +406,12 @@ function RootLayoutInner() {
     >
       <PermissionsProvider>
         <SettingsProvider>
-          <SafeAreaView edges={['top','left','right']} style={{ flex: 1, backgroundColor: theme.colors.background }}>
+          <SafeAreaView
+            edges={['top', 'left', 'right']}
+            style={{ flex: 1, backgroundColor: theme.colors.background }}
+          >
             <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }}>
               <Stack
-                initialRouteName={isLoggedIn ? 'orders/index' : '(auth)'}
-                key={isLoggedIn ? 'app' : 'auth'}
                 screenOptions={{
                   headerShown: false,
                   animation: 'simple_push',
@@ -325,8 +426,8 @@ function RootLayoutInner() {
                 <Stack.Screen name="orders/index" options={{ gestureEnabled: false }} />
               </Stack>
               {isLoggedIn && role && <BottomNav />}
-                          {isLoggedIn ? <LastSeenTracker /> : null}
-</Animated.View>
+              {isLoggedIn ? <LastSeenTracker /> : null}
+            </Animated.View>
           </SafeAreaView>
         </SettingsProvider>
       </PermissionsProvider>
@@ -338,11 +439,23 @@ export default function RootLayout() {
   return (
     <PersistQueryClientProvider
       client={queryClient}
-      persistOptions={{ persister, maxAge: 7 * 24 * 60 * 60 * 1000, dehydrateOptions: { shouldDehydrateQuery: (q) => {
-              const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
-              if (key0 === 'session' || key0 === 'userRole' || key0 === 'profile' || key0 === 'perm-canViewAll') return false;
-              return q.state.status === 'success';
-            } } }}
+      persistOptions={{
+        persister,
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        dehydrateOptions: {
+          shouldDehydrateQuery: (q) => {
+            const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
+            if (
+              key0 === 'session' ||
+              key0 === 'userRole' ||
+              key0 === 'profile' ||
+              key0 === 'perm-canViewAll'
+            )
+              return false;
+            return q.state.status === 'success';
+          },
+        },
+      }}
     >
       <SafeAreaProvider>
         <ThemeProvider>

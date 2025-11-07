@@ -15,20 +15,39 @@ let _cfg = {
 
 let _supabase = null;
 
-function nowISO() { try { return new Date().toISOString(); } catch { return null; } }
+function nowISO() {
+  try {
+    return new Date().toISOString();
+  } catch {
+    return null;
+  }
+}
 function redact(s, keep = 6) {
   if (!s || typeof s !== 'string') return s;
   if (s.length <= keep) return '***';
   return s.slice(0, keep) + '…redacted';
 }
-function dlog(...a) { if (_cfg.debug) try { console.log('[telemetry]', ...a); } catch {} }
-function dwarn(...a) { try { console.warn('[telemetry]', ...a); } catch {} }
-function derr(...a) { try { console.error('[telemetry]', ...a); } catch {} }
+function dlog(...a) {
+  if (_cfg.debug)
+    try {
+      console.log('[telemetry]', ...a);
+    } catch {}
+}
+function dwarn(...a) {
+  try {
+    console.warn('[telemetry]', ...a);
+  } catch {}
+}
+function derr(...a) {
+  try {
+    console.error('[telemetry]', ...a);
+  } catch {}
+}
 
 function supabaseHeaders() {
   return {
     'Content-Type': 'application/json',
-    'Accept': 'application/json',
+    Accept: 'application/json',
     apikey: _cfg.supabaseAnonKey || '',
     Authorization: _cfg.supabaseAnonKey ? `Bearer ${_cfg.supabaseAnonKey}` : '',
     Prefer: 'return=representation',
@@ -89,7 +108,10 @@ export function initTelemetry(cfg = {}) {
   }
 }
 
-export function setDebug(v) { _cfg.debug = !!v; dlog('debug', { enabled: _cfg.debug }); }
+export function setDebug(v) {
+  _cfg.debug = !!v;
+  dlog('debug', { enabled: _cfg.debug });
+}
 
 export function setUser(userId) {
   _cfg.userId = userId || null;
@@ -98,7 +120,8 @@ export function setUser(userId) {
 
 function normalizeError(err) {
   if (!err) return { name: 'Error', message: 'Unknown error', stack: null };
-  if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack || null };
+  if (err instanceof Error)
+    return { name: err.name, message: err.message, stack: err.stack || null };
   try {
     const str = typeof err === 'string' ? err : JSON.stringify(err);
     return { name: 'NonError', message: str, stack: null };
@@ -120,14 +143,18 @@ async function insertWithClient(table, row) {
 }
 
 async function insertWithREST(table, row) {
-  if (!_cfg.supabaseUrl || !_cfg.supabaseAnonKey) return { ok: false, status: 0, error: 'no_rest_config' };
+  if (!_cfg.supabaseUrl || !_cfg.supabaseAnonKey)
+    return { ok: false, status: 0, error: 'no_rest_config' };
   const base = _cfg.supabaseUrl.replace(/\/$/, '');
   const url = `${base}/rest/v1/${encodeURIComponent(table)}`;
   const res = await postJSON(url, row, supabaseHeaders());
   if (!res.ok) {
-    const hint = res.status === 401
-      ? 'Unauthorized (401): проверь supabaseAnonKey и URL, ключ должен быть anon public.'
-      : (String(res.body||'').includes('row level security') ? 'RLS: нужна политика INSERT для anon на эту таблицу.' : undefined);
+    const hint =
+      res.status === 401
+        ? 'Unauthorized (401): проверь supabaseAnonKey и URL, ключ должен быть anon public.'
+        : String(res.body || '').includes('row level security')
+          ? 'RLS: нужна политика INSERT для anon на эту таблицу.'
+          : undefined;
     derr('REST insert failed', { table, status: res.status, body: res.body, hint });
   }
   return res;
@@ -154,20 +181,33 @@ export async function logEvent(type, payload = {}) {
 
   // 1) client
   let r = await insertWithClient(_cfg.eventsTable, event);
-  if (r.ok) { dlog('logEvent: client OK'); return true; }
+  if (r.ok) {
+    dlog('logEvent: client OK');
+    return true;
+  }
   if (r.error) dwarn('logEvent: client FAIL', r);
 
   // 2) REST
   r = await insertWithREST(_cfg.eventsTable, event);
-  if (r.ok) { dlog('logEvent: REST OK'); return true; }
+  if (r.ok) {
+    dlog('logEvent: REST OK');
+    return true;
+  }
   if (!r.ok) dwarn('logEvent: REST FAIL', r);
 
   // 3) webhook
   r = await tryWebhook('event', event);
-  if (r.ok) { dlog('logEvent: webhook OK'); return true; }
+  if (r.ok) {
+    dlog('logEvent: webhook OK');
+    return true;
+  }
 
   dwarn('logEvent: all paths failed', {
-    config: { hasClient: !!_supabase, hasREST: !!_cfg.supabaseUrl && !!_cfg.supabaseAnonKey, hasWebhook: !!_cfg.webhookUrl },
+    config: {
+      hasClient: !!_supabase,
+      hasREST: !!_cfg.supabaseUrl && !!_cfg.supabaseAnonKey,
+      hasWebhook: !!_cfg.webhookUrl,
+    },
   });
   return false;
 }
@@ -188,27 +228,44 @@ export async function logError(error, extra = {}) {
   dlog('logError: begin', { name: e.name });
 
   let r = await insertWithClient(_cfg.errorsTable, entry);
-  if (r.ok) { dlog('logError: client OK'); return true; }
+  if (r.ok) {
+    dlog('logError: client OK');
+    return true;
+  }
   if (r.error) dwarn('logError: client FAIL', r);
 
   r = await insertWithREST(_cfg.errorsTable, entry);
-  if (r.ok) { dlog('logError: REST OK'); return true; }
+  if (r.ok) {
+    dlog('logError: REST OK');
+    return true;
+  }
   if (!r.ok) dwarn('logError: REST FAIL', r);
 
   r = await tryWebhook('error', entry);
-  if (r.ok) { dlog('logError: webhook OK'); return true; }
+  if (r.ok) {
+    dlog('logError: webhook OK');
+    return true;
+  }
 
   dwarn('logError: all paths failed', {
-    config: { hasClient: !!_supabase, hasREST: !!_cfg.supabaseUrl && !!_cfg.supabaseAnonKey, hasWebhook: !!_cfg.webhookUrl },
+    config: {
+      hasClient: !!_supabase,
+      hasREST: !!_cfg.supabaseUrl && !!_cfg.supabaseAnonKey,
+      hasWebhook: !!_cfg.webhookUrl,
+    },
   });
   return false;
 }
 
 export function installGlobalHandlers({ captureRejections = true } = {}) {
   if (typeof window !== 'undefined') {
-    window.addEventListener('error', (e) => { logError(e?.error || e, { where: 'window.error' }); });
+    window.addEventListener('error', (e) => {
+      logError(e?.error || e, { where: 'window.error' });
+    });
     if (captureRejections) {
-      window.addEventListener('unhandledrejection', (e) => { logError(e?.reason || e, { where: 'unhandledrejection' }); });
+      window.addEventListener('unhandledrejection', (e) => {
+        logError(e?.reason || e, { where: 'unhandledrejection' });
+      });
     }
     dlog('global handlers installed');
   } else {

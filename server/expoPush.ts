@@ -34,13 +34,17 @@ async function invalidateToken(token: string, reason: string) {
 }
 
 /** Ретрай с экспоненциальной паузой */
-async function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+async function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 async function withRetry<T>(fn: () => Promise<T>, tries = 3, baseDelayMs = 500): Promise<T> {
   let lastErr: any;
   for (let i = 0; i < tries; i++) {
-    try { return await fn(); } catch (e: any) {
+    try {
+      return await fn();
+    } catch (e: any) {
       lastErr = e;
-      const retriable = e?.statusCode === 429 || (e?.statusCode >= 500);
+      const retriable = e?.statusCode === 429 || e?.statusCode >= 500;
       if (!retriable || i === tries - 1) throw e;
       await sleep(baseDelayMs * Math.pow(2, i));
     }
@@ -87,10 +91,17 @@ async function processReceipts(ticketIds: string[], tokenByTicketId: Map<string,
 }
 
 /** Публичное API: отправить юзеру (на все его устройства) */
-export async function sendToUser(userId: string, payload: {
-  title?: string; body?: string; data?: Record<string, any>;
-  sound?: 'default' | null; priority?: 'default' | 'high'; badge?: number;
-}) {
+export async function sendToUser(
+  userId: string,
+  payload: {
+    title?: string;
+    body?: string;
+    data?: Record<string, any>;
+    sound?: 'default' | null;
+    priority?: 'default' | 'high';
+    badge?: number;
+  },
+) {
   const tokens = await fetchUserTokens(userId);
   if (!tokens.length) return { sent: 0 };
 
@@ -138,7 +149,9 @@ export async function sendToTokens(tokens: string[], message: Omit<ExpoPushMessa
   const messages: ExpoPushMessage[] = valid.map((to) => ({ to, ...message }));
   const tokenByTicketId = new Map<string, string>();
   const tickets = await sendChunks(messages);
-  tickets.forEach((t, i) => { if ((t as any).id) tokenByTicketId.set((t as any).id, valid[i]); });
+  tickets.forEach((t, i) => {
+    if ((t as any).id) tokenByTicketId.set((t as any).id, valid[i]);
+  });
   const ticketIds = Array.from(tokenByTicketId.keys());
   if (ticketIds.length) await processReceipts(ticketIds, tokenByTicketId);
 }
