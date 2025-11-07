@@ -92,9 +92,11 @@ export default function LoginScreen() {
   // Ensure we have a session token before first DB queries
   async function waitForSession({ tries = 15, delay = 120 } = {}) {
     for (let i = 0; i < tries; i++) {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (session?.access_token) return session;
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise((r) => setTimeout(r, delay));
     }
     return null;
   }
@@ -157,7 +159,11 @@ export default function LoginScreen() {
                   <Pressable
                     onPress={() => setShowPassword((v) => !v)}
                     style={styles.eyeToggle}
-                    accessibilityLabel={showPassword ? T('auth.hide_password', 'auth.hide_password') : T('auth.show_password', 'auth.show_password')}
+                    accessibilityLabel={
+                      showPassword
+                        ? T('auth.hide_password', 'auth.hide_password')
+                        : T('auth.show_password', 'auth.show_password')
+                    }
                   >
                     <Feather
                       name={showPassword ? 'eye-off' : 'eye'}

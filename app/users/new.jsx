@@ -1,7 +1,17 @@
 import { AntDesign, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Keyboard, Platform, Pressable, ScrollView, StyleSheet, Text, View, Image } from 'react-native';
+import {
+  BackHandler,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  Image,
+} from 'react-native';
 import { useRouter, useNavigation } from 'expo-router';
 
 // Theme / layout / UI
@@ -31,12 +41,13 @@ const TABLES = {
 };
 
 const __IS_PROD = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
-const __pick = (val, devFallback) => (val != null ? val : (__IS_PROD ? null : devFallback));
+const __pick = (val, devFallback) => (val != null ? val : __IS_PROD ? null : devFallback);
 
 const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
 const AVA_MIME = AVATAR.MIME;
 
-const FN_CREATE_USER = process.env.EXPO_PUBLIC_FN_CREATE_USER || (APP_FUNCTIONS.CREATE_USER ?? 'create_user');
+const FN_CREATE_USER =
+  process.env.EXPO_PUBLIC_FN_CREATE_USER || (APP_FUNCTIONS.CREATE_USER ?? 'create_user');
 
 let ROLE_LABELS_LOCAL = ROLE_LABELS;
 try {
@@ -49,7 +60,9 @@ function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
     if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, '0');
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
       return color + alpha;
     }
     const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*$/i);
@@ -84,13 +97,20 @@ function isValidEmailStrict(raw) {
 }
 function formatDateRU(date, withYear = true) {
   try {
-    const d = (date instanceof Date) ? date : new Date(date);
+    const d = date instanceof Date ? date : new Date(date);
     if (isNaN(d.getTime())) return '';
-    const opts = withYear ? { day: 'numeric', month: 'long', year: 'numeric' } : { day: 'numeric', month: 'long' };
+    const opts = withYear
+      ? { day: 'numeric', month: 'long', year: 'numeric' }
+      : { day: 'numeric', month: 'long' };
     let s = d.toLocaleDateString('ru-RU', opts);
     s = s.replace(/\s*г\.?$/i, '');
-    return s.replace(/(\d+)\s+([А-ЯЁ][а-яё]+)/u, (m, day, month) => `${day} ${month.toLowerCase()}`);
-  } catch { return ''; }
+    return s.replace(
+      /(\d+)\s+([А-ЯЁ][а-яё]+)/u,
+      (m, day, month) => `${day} ${month.toLowerCase()}`,
+    );
+  } catch {
+    return '';
+  }
 }
 
 export default function NewUserScreen() {
@@ -151,75 +171,107 @@ export default function NewUserScreen() {
   const allowLeaveRef = useRef(false);
 
   const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
-  const MEDIA_QUALITY = (typeof theme.media?.quality === 'number') ? theme.media.quality : 0.85;
+  const MEDIA_QUALITY = typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85;
   const ICON_MD = theme.icons?.md ?? 22;
   const ICON_SM = theme.icons?.sm ?? 18;
   const ICONBUTTON_TOUCH = theme.components?.iconButton?.size ?? 32;
 
-  const styles = useMemo(() => StyleSheet.create({
-    container: { flex: 1, backgroundColor: theme.colors.background },
-    scroll: { paddingHorizontal: theme.spacing.lg, flexGrow: 1 },
-    headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md },
-    headerCard: { padding: theme.spacing.sm, marginBottom: theme.spacing.md },
-    avatar: {
-      width: theme.components.avatar.md,
-      height: theme.components.avatar.md,
-      borderRadius: theme.components.avatar.md / 2,
-      backgroundColor: withAlpha(theme.colors.primary, 0.12),
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: theme.components.card.borderWidth,
-      borderColor: withAlpha(theme.colors.primary, 0.24),
-      overflow: 'hidden'
-    },
-    avatarImg: { width: '100%', height: '100%' },
-    avatarCamBadge: {
-      position: 'absolute',
-      right: -(theme.components?.avatar?.badgeOffset ?? 2),
-      bottom: -(theme.components?.avatar?.badgeOffset ?? 2),
-      backgroundColor: theme.colors.primary,
-      borderRadius: theme.radii.md,
-      paddingHorizontal: theme.spacing.xs,
-      paddingVertical: theme.spacing.xs,
-      borderWidth: theme.components?.avatar?.border ?? theme.components.card.borderWidth,
-      borderColor: theme.colors.surface
-    },
-    avatarText: { color: theme.colors.primary, fontWeight: '700' },
-    nameTitle: { fontSize: theme.typography.sizes.md, fontWeight: '600', color: theme.colors.text },
-    section: { marginTop: theme.spacing.sm, marginBottom: theme.spacing.sm, fontWeight: '600', color: theme.colors.text },
-    field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
-    helperError: { color: theme.colors.danger, fontSize: theme.typography.sizes.xs, marginTop: theme.spacing.xs, marginLeft: theme.spacing.md },
-    errorCard: {
-      backgroundColor: withAlpha(theme.colors.danger, 0.12),
-      borderColor: theme.colors.danger,
-      borderWidth: theme.components.card.borderWidth,
-      padding: theme.spacing.md,
-      borderRadius: theme.radii.xl,
-      marginBottom: theme.spacing.md
-    },
-    errorTitle: { color: theme.colors.danger, fontWeight: '600' },
-    errorText: { color: theme.colors.danger, marginTop: theme.spacing.xs },
-    actionBar: {
-      flexDirection: 'row',
-      gap: theme.spacing.md,
-      // Match TextField width inside Card: content padding + card horizontal padding
-      paddingHorizontal: (theme.spacing.lg + theme.spacing[theme.components?.card?.padX ?? 'lg']),
-      paddingTop: theme.spacing.sm,
-      paddingBottom: (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl)
-    },
-    actionBtn: { alignSelf: 'stretch' },
-  }), [theme]);
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: theme.colors.background },
+        scroll: { paddingHorizontal: theme.spacing.lg, flexGrow: 1 },
+        headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md },
+        headerCard: { padding: theme.spacing.sm, marginBottom: theme.spacing.md },
+        avatar: {
+          width: theme.components.avatar.md,
+          height: theme.components.avatar.md,
+          borderRadius: theme.components.avatar.md / 2,
+          backgroundColor: withAlpha(theme.colors.primary, 0.12),
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderWidth: theme.components.card.borderWidth,
+          borderColor: withAlpha(theme.colors.primary, 0.24),
+          overflow: 'hidden',
+        },
+        avatarImg: { width: '100%', height: '100%' },
+        avatarCamBadge: {
+          position: 'absolute',
+          right: -(theme.components?.avatar?.badgeOffset ?? 2),
+          bottom: -(theme.components?.avatar?.badgeOffset ?? 2),
+          backgroundColor: theme.colors.primary,
+          borderRadius: theme.radii.md,
+          paddingHorizontal: theme.spacing.xs,
+          paddingVertical: theme.spacing.xs,
+          borderWidth: theme.components?.avatar?.border ?? theme.components.card.borderWidth,
+          borderColor: theme.colors.surface,
+        },
+        avatarText: { color: theme.colors.primary, fontWeight: '700' },
+        nameTitle: {
+          fontSize: theme.typography.sizes.md,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        section: {
+          marginTop: theme.spacing.sm,
+          marginBottom: theme.spacing.sm,
+          fontWeight: '600',
+          color: theme.colors.text,
+        },
+        field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
+        helperError: {
+          color: theme.colors.danger,
+          fontSize: theme.typography.sizes.xs,
+          marginTop: theme.spacing.xs,
+          marginLeft: theme.spacing.md,
+        },
+        errorCard: {
+          backgroundColor: withAlpha(theme.colors.danger, 0.12),
+          borderColor: theme.colors.danger,
+          borderWidth: theme.components.card.borderWidth,
+          padding: theme.spacing.md,
+          borderRadius: theme.radii.xl,
+          marginBottom: theme.spacing.md,
+        },
+        errorTitle: { color: theme.colors.danger, fontWeight: '600' },
+        errorText: { color: theme.colors.danger, marginTop: theme.spacing.xs },
+        actionBar: {
+          flexDirection: 'row',
+          gap: theme.spacing.md,
+          // Match TextField width inside Card: content padding + card horizontal padding
+          paddingHorizontal: theme.spacing.lg + theme.spacing[theme.components?.card?.padX ?? 'lg'],
+          paddingTop: theme.spacing.sm,
+          paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
+        },
+        actionBtn: { alignSelf: 'stretch' },
+      }),
+    [theme],
+  );
 
   const emailValid = useMemo(() => isValidEmailStrict(email), [email]);
   const passwordValid = useMemo(() => password.length >= 6, [password]);
-  const passwordsMatch = useMemo(() => !password || password === confirmPassword, [password, confirmPassword]);
+  const passwordsMatch = useMemo(
+    () => !password || password === confirmPassword,
+    [password, confirmPassword],
+  );
 
-  const initials = useMemo(() => `${(firstName || '').trim().slice(0,1)}${(lastName || '').trim().slice(0,1)}`.toUpperCase(), [firstName, lastName]);
+  const initials = useMemo(
+    () =>
+      `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
+    [firstName, lastName],
+  );
 
   const initialSnapRef = useRef('');
   useEffect(() => {
     initialSnapRef.current = JSON.stringify({
-      firstName: '', lastName: '', email: '', phone: '', role: ROLE.WORKER, password: false, birthdate: null, avatar: null
+      firstName: '',
+      lastName: '',
+      email: '',
+      phone: '',
+      role: ROLE.WORKER,
+      password: false,
+      birthdate: null,
+      avatar: null,
     });
   }, []);
   const isEmptyForm = useMemo(() => {
@@ -234,7 +286,17 @@ export default function NewUserScreen() {
       !avatarUrl &&
       (departmentId == null || departmentId === '')
     );
-  }, [firstName, lastName, email, phone, password, confirmPassword, birthdate, avatarUrl, departmentId]);
+  }, [
+    firstName,
+    lastName,
+    email,
+    phone,
+    password,
+    confirmPassword,
+    birthdate,
+    avatarUrl,
+    departmentId,
+  ]);
 
   const isDirty = useMemo(() => {
     const snap = JSON.stringify({
@@ -244,16 +306,19 @@ export default function NewUserScreen() {
       phone: String(phone || '').replace(/\D/g, ''),
       role,
       password: password.length > 0,
-      birthdate: birthdate ? new Date(birthdate).toISOString().slice(0,10) : null,
-      avatar: !!avatarUrl
+      birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null,
+      avatar: !!avatarUrl,
     });
     return snap !== initialSnapRef.current;
   }, [firstName, lastName, email, phone, role, password, birthdate, avatarUrl]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (allowLeaveRef.current || isEmptyForm || !isDirty) { return false; }
-      setCancelVisible(true); return true;
+      if (allowLeaveRef.current || isEmptyForm || !isDirty) {
+        return false;
+      }
+      setCancelVisible(true);
+      return true;
     });
     return () => sub.remove();
   }, [isDirty, isEmptyForm]);
@@ -267,9 +332,11 @@ export default function NewUserScreen() {
     return sub;
   }, [navigation, isDirty, isEmptyForm]);
 
-
   useEffect(() => {
-    setHeaderName(`${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() || t('placeholder_no_name'));
+    setHeaderName(
+      `${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() ||
+        t('placeholder_no_name'),
+    );
   }, [firstName, lastName, t]);
 
   const ensureCameraPerms = async () => {
@@ -287,11 +354,18 @@ export default function NewUserScreen() {
       const fileData = new Uint8Array(ab);
       const filename = `${AVA_PREFIX}${Date.now()}.jpg`;
       const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
-      const { error: upErr } = await supabase.storage.from(STORAGE.AVATORS || STORAGE.AVATARS).upload(path, fileData, { contentType: AVA_MIME, upsert: false });
+      const { error: upErr } = await supabase.storage
+        .from(STORAGE.AVATORS || STORAGE.AVATARS)
+        .upload(path, fileData, { contentType: AVA_MIME, upsert: false });
       if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from(STORAGE.AVATORS || STORAGE.AVATARS).getPublicUrl(path);
+      const { data: pub } = supabase.storage
+        .from(STORAGE.AVATORS || STORAGE.AVATARS)
+        .getPublicUrl(path);
       const publicUrl = pub?.publicUrl || null;
-      const { error: updErr } = await supabase.from(TABLES.profiles).update({ avatar_url: publicUrl }).eq('id', userId);
+      const { error: updErr } = await supabase
+        .from(TABLES.profiles)
+        .update({ avatar_url: publicUrl })
+        .eq('id', userId);
       if (updErr) throw updErr;
       setAvatarUrl(publicUrl);
       return publicUrl;
@@ -302,18 +376,34 @@ export default function NewUserScreen() {
   };
   const pickFromCamera = async () => {
     const ok = await ensureCameraPerms();
-    if (!ok) { setErr(t('error_camera_denied')); return; }
-    const res = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: MEDIA_ASPECT, quality: MEDIA_QUALITY, mediaTypes: ImagePicker.MediaTypeOptions.Images });
+    if (!ok) {
+      setErr(t('error_camera_denied'));
+      return;
+    }
+    const res = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: MEDIA_ASPECT,
+      quality: MEDIA_QUALITY,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    });
     if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
   };
   const pickFromLibrary = async () => {
     const ok = await ensureLibraryPerms();
-    if (!ok) { setErr(t('error_library_denied')); return; }
-    const res = await ImagePicker.launchImageLibraryAsync({ allowsEditing: true, aspect: MEDIA_ASPECT, quality: MEDIA_QUALITY, mediaTypes: ImagePicker.MediaTypeOptions.Images, selectionLimit: 1 });
+    if (!ok) {
+      setErr(t('error_library_denied'));
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      aspect: MEDIA_ASPECT,
+      quality: MEDIA_QUALITY,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      selectionLimit: 1,
+    });
     if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
   };
 
-  
   const fetchDepartments = useCallback(async () => {
     try {
       const { data, error } = await supabase
@@ -324,7 +414,9 @@ export default function NewUserScreen() {
     } catch {}
   }, []);
 
-  useEffect(() => { fetchDepartments(); }, [fetchDepartments]);
+  useEffect(() => {
+    fetchDepartments();
+  }, [fetchDepartments]);
 
   const warn = (key) => {
     toastInfo(t(key));
@@ -332,11 +424,26 @@ export default function NewUserScreen() {
 
   const handleCreate = useCallback(async () => {
     if (submitting) return;
-    if (!firstName.trim()) { warn('err_first_name'); return; }
-    if (!lastName.trim()) { warn('err_last_name'); return; }
-    if (!emailValid) { warn('err_email'); return; }
-    if (!passwordValid) { warn('err_password_short'); return; }
-    if (!passwordsMatch) { warn('err_password_mismatch'); return; }
+    if (!firstName.trim()) {
+      warn('err_first_name');
+      return;
+    }
+    if (!lastName.trim()) {
+      warn('err_last_name');
+      return;
+    }
+    if (!emailValid) {
+      warn('err_email');
+      return;
+    }
+    if (!passwordValid) {
+      warn('err_password_short');
+      return;
+    }
+    if (!passwordsMatch) {
+      warn('err_password_mismatch');
+      return;
+    }
 
     setErr('');
     setSubmitting(true);
@@ -353,15 +460,24 @@ export default function NewUserScreen() {
         headers: {
           'Content-Type': 'application/json',
           apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ email: String(email).trim().toLowerCase(), password: String(password), role })
+        body: JSON.stringify({
+          email: String(email).trim().toLowerCase(),
+          password: String(password),
+          role,
+        }),
       });
       const raw = await resp.text();
       let body = null;
-      try { body = raw ? JSON.parse(raw) : null; } catch {}
+      try {
+        body = raw ? JSON.parse(raw) : null;
+      } catch {}
       if (!resp.ok) {
-        const msg = (body && (body.message || body.error || body.details || body.hint)) || raw || `HTTP ${resp.status}`;
+        const msg =
+          (body && (body.message || body.error || body.details || body.hint)) ||
+          raw ||
+          `HTTP ${resp.status}`;
         if (/already exists|email/i.test(String(msg))) throw new Error(t('error_email_exists'));
         throw new Error(msg);
       }
@@ -369,15 +485,19 @@ export default function NewUserScreen() {
       if (!userId) throw new Error(t('error_profile_not_updated'));
 
       // Save profile fields
-      const bdate = birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
-      const { error: upErr } = await supabase.from(TABLES.profiles).update({
-        first_name: firstName.trim() || null,
-        last_name: lastName.trim() || null,
-        full_name: fullName || null,
-        phone: phoneNormalized,
-        birthdate: bdate,
-        role
-      }).eq('id', userId);
+      const bdate =
+        birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
+      const { error: upErr } = await supabase
+        .from(TABLES.profiles)
+        .update({
+          first_name: firstName.trim() || null,
+          last_name: lastName.trim() || null,
+          full_name: fullName || null,
+          phone: phoneNormalized,
+          birthdate: bdate,
+          role,
+        })
+        .eq('id', userId);
       if (upErr) throw upErr;
 
       // upload avatar if chosen
@@ -389,16 +509,41 @@ export default function NewUserScreen() {
       setTimeout(() => router.replace('/users'), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       const msg = String(e?.message || t('toast_generic_error'));
-      setErr(msg); toastError(msg);
+      setErr(msg);
+      toastError(msg);
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, firstName, lastName, email, password, passwordsMatch, emailValid, passwordValid, role, phone, birthdate, avatarUrl, router, theme.timings?.backDelayMs, t, toastSuccess, toastError]);
+  }, [
+    submitting,
+    firstName,
+    lastName,
+    email,
+    password,
+    passwordsMatch,
+    emailValid,
+    passwordValid,
+    role,
+    phone,
+    birthdate,
+    avatarUrl,
+    router,
+    theme.timings?.backDelayMs,
+    t,
+    toastSuccess,
+    toastError,
+  ]);
 
-  const roleItems = useMemo(() => ROLES.map(r => ({ id: r, label: ROLE_LABELS_LOCAL[r] || r })), []);
+  const roleItems = useMemo(
+    () => ROLES.map((r) => ({ id: r, label: ROLE_LABELS_LOCAL[r] || r })),
+    [],
+  );
 
   const onCancel = () => {
-    if (isDirty) { setCancelVisible(true); return; }
+    if (isDirty) {
+      setCancelVisible(true);
+      return;
+    }
     router.back();
   };
 
@@ -410,10 +555,17 @@ export default function NewUserScreen() {
           style={{ flex: 1 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          onScroll={(e) => { try { scrollYRef.current = e.nativeEvent.contentOffset.y || 0; } catch {} }}
+          onScroll={(e) => {
+            try {
+              scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+            } catch {}
+          }}
           scrollEventThrottle={16}
           contentInsetAdjustmentBehavior="always"
-          contentContainerStyle={[styles.scroll, { paddingBottom: (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) }]}
+          contentContainerStyle={[
+            styles.scroll,
+            { paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl },
+          ]}
           showsVerticalScrollIndicator={false}
         >
           <Card style={styles.headerCard}>
@@ -425,9 +577,20 @@ export default function NewUserScreen() {
                 accessibilityLabel={t('a11y_change_avatar')}
                 accessibilityHint={t('a11y_change_avatar_hint')}
               >
-                {avatarUrl ? <Image source={{ uri: avatarUrl }} style={styles.avatarImg} /> : <Text style={styles.avatarText}>{initials || '•'}</Text>}
+                {avatarUrl ? (
+                  <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+                ) : (
+                  <Text style={styles.avatarText}>{initials || '•'}</Text>
+                )}
                 <View style={styles.avatarCamBadge}>
-                  <AntDesign name="camera" size={Math.max(theme.icons?.minCamera ?? 12, Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)))} color={theme.colors.onPrimary} />
+                  <AntDesign
+                    name="camera"
+                    size={Math.max(
+                      theme.icons?.minCamera ?? 12,
+                      Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)),
+                    )}
+                    color={theme.colors.onPrimary}
+                  />
                 </View>
               </Pressable>
               <View style={{ flex: 1 }}>
@@ -454,7 +617,9 @@ export default function NewUserScreen() {
               value={firstName}
               onChangeText={setFirstName}
             />
-            {!firstName.trim() ? <Text style={styles.helperError}>{t('err_first_name')}</Text> : null}
+            {!firstName.trim() ? (
+              <Text style={styles.helperError}>{t('err_first_name')}</Text>
+            ) : null}
 
             <TextField
               ref={lastNameRef}
@@ -484,7 +649,9 @@ export default function NewUserScreen() {
             <PhoneInput
               ref={phoneRef}
               value={phone}
-              onChangeText={(val) => { setPhone(val); }}
+              onChangeText={(val) => {
+                setPhone(val);
+              }}
               error={undefined}
               style={styles.field}
             />
@@ -530,21 +697,36 @@ export default function NewUserScreen() {
                 autoCorrect={false}
                 error={undefined}
                 style={styles.field}
-                rightSlot={(
+                rightSlot={
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Pressable
-                      onPress={() => { setShowPassword(v => !v); }}
-                      accessibilityLabel={showPassword ? t('a11y_hide_password') : t('a11y_show_password')}
-                      hitSlop={{ top: theme.spacing.sm, bottom: theme.spacing.sm, left: theme.spacing.sm, right: theme.spacing.sm }}
+                      onPress={() => {
+                        setShowPassword((v) => !v);
+                      }}
+                      accessibilityLabel={
+                        showPassword ? t('a11y_hide_password') : t('a11y_show_password')
+                      }
+                      hitSlop={{
+                        top: theme.spacing.sm,
+                        bottom: theme.spacing.sm,
+                        left: theme.spacing.sm,
+                        right: theme.spacing.sm,
+                      }}
                       style={{ padding: theme.spacing.xs }}
                     >
-                      <Feather name={showPassword ? 'eye' : 'eye-off'} size={ICON_MD} color={theme.colors.textSecondary} />
+                      <Feather
+                        name={showPassword ? 'eye' : 'eye-off'}
+                        size={ICON_MD}
+                        color={theme.colors.textSecondary}
+                      />
                     </Pressable>
                   </View>
-                )}
+                }
               />
             </View>
-            {password.length > 0 && !passwordValid ? <Text style={styles.helperError}>{t('err_password_short')}</Text> : null}
+            {password.length > 0 && !passwordValid ? (
+              <Text style={styles.helperError}>{t('err_password_short')}</Text>
+            ) : null}
 
             <TextField
               value={confirmPassword}
@@ -556,7 +738,9 @@ export default function NewUserScreen() {
               error={undefined}
               style={styles.field}
             />
-            {confirmPassword.length > 0 && !passwordsMatch ? <Text style={styles.helperError}>{t('err_password_mismatch')}</Text> : null}
+            {confirmPassword.length > 0 && !passwordsMatch ? (
+              <Text style={styles.helperError}>{t('err_password_mismatch')}</Text>
+            ) : null}
           </Card>
           {/* action bar moved inside scroll so it scrolls with content */}
           <View style={styles.actionBar}>
@@ -568,8 +752,6 @@ export default function NewUserScreen() {
               title={submitting ? t('toast_saving') : t('btn_create_employee')}
             />
           </View>
-
-
         </ScrollView>
       </View>
 
@@ -581,7 +763,11 @@ export default function NewUserScreen() {
         confirmLabel={t('dlg_leave_confirm')}
         cancelLabel={t('dlg_leave_cancel')}
         confirmVariant="destructive"
-        onConfirm={() => { allowLeaveRef.current = true; setCancelVisible(false); router.back(); }}
+        onConfirm={() => {
+          allowLeaveRef.current = true;
+          setCancelVisible(false);
+          router.back();
+        }}
       />
 
       <SelectModal
@@ -589,9 +775,34 @@ export default function NewUserScreen() {
         onClose={() => setAvatarSheet(false)}
         title={t('profile_photo_title')}
         items={[
-          { id: 'camera', label: t('profile_photo_take'), onPress: () => { setAvatarSheet(false); pickFromCamera(); } },
-          { id: 'gallery', label: t('profile_photo_choose'), onPress: () => { setAvatarSheet(false); pickFromLibrary(); } },
-          ...(avatarUrl ? [{ id: 'remove', label: t('profile_photo_delete'), onPress: () => { setAvatarSheet(false); setAvatarUrl(null); } }] : []),
+          {
+            id: 'camera',
+            label: t('profile_photo_take'),
+            onPress: () => {
+              setAvatarSheet(false);
+              pickFromCamera();
+            },
+          },
+          {
+            id: 'gallery',
+            label: t('profile_photo_choose'),
+            onPress: () => {
+              setAvatarSheet(false);
+              pickFromLibrary();
+            },
+          },
+          ...(avatarUrl
+            ? [
+                {
+                  id: 'remove',
+                  label: t('profile_photo_delete'),
+                  onPress: () => {
+                    setAvatarSheet(false);
+                    setAvatarUrl(null);
+                  },
+                },
+              ]
+            : []),
         ]}
         searchable={false}
       />
@@ -602,7 +813,10 @@ export default function NewUserScreen() {
         title={t('user_department_title')}
         items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
         searchable={false}
-        onSelect={(it) => { setDepartmentId(it.id); setDeptModalVisible(false); }}
+        onSelect={(it) => {
+          setDepartmentId(it.id);
+          setDeptModalVisible(false);
+        }}
       />
 
       <SelectModal
@@ -610,7 +824,10 @@ export default function NewUserScreen() {
         title={t('user_role_title')}
         items={roleItems}
         searchable={false}
-        onSelect={(it) => { setRole(it.id); setShowRoles(false); }}
+        onSelect={(it) => {
+          setRole(it.id);
+          setShowRoles(false);
+        }}
       />
 
       <DateTimeModal

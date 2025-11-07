@@ -50,7 +50,7 @@ export default function MultiSelectModal({
   const s = useMemo(() => styles(theme), [theme]);
 
   // Local selection state; copy of value prop to allow undo
-  const [selected, setSelected] = useState(() => Array.isArray(value) ? [...value] : []);
+  const [selected, setSelected] = useState(() => (Array.isArray(value) ? [...value] : []));
   const [query, setQuery] = useState(initialSearch);
   React.useEffect(() => {
     if (visible) {
@@ -90,7 +90,11 @@ export default function MultiSelectModal({
         onPress={() => !disabled && toggleItem(item.value)}
         disabled={disabled}
         android_ripple={{ color: theme.colors.ripple || '#00000014' }}
-        style={({ pressed }) => [s.item, disabled && { opacity: 0.5 }, pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null]}
+        style={({ pressed }) => [
+          s.item,
+          disabled && { opacity: 0.5 },
+          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
+        ]}
         accessibilityRole="checkbox"
         accessibilityState={{ checked: isChecked, disabled }}
       >

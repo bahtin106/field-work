@@ -10,7 +10,7 @@ export function normalizeRu(raw = '') {
   if (d.length >= 1 && d[0] === '8') d = '7' + d.slice(1);
 
   // если начинается с 7 или 9 (часто вводят 9XXXXXXXXX)
-  if (d[0] === '9') d = '7' + d;            // 9XXXXXXXXX -> 79XXXXXXXXX
+  if (d[0] === '9') d = '7' + d; // 9XXXXXXXXX -> 79XXXXXXXXX
   if (d[0] !== '7') d = (d[0] ? '7' : '') + d.slice(1);
 
   // оставляем максимум 11 цифр

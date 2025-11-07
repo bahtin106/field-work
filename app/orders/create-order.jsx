@@ -36,7 +36,8 @@ export default function CreateOrderScreen() {
   const isDark = theme.name === 'dark' || theme.mode === 'dark';
 
   // palette available in render (icons etc.)
-  const palette = useMemo(() => ({
+  const palette = useMemo(
+    () => ({
       bg: theme.colors?.background ?? theme.colors?.surface,
       card: theme.colors?.surface,
       text: theme.colors?.text,
@@ -52,88 +53,95 @@ export default function CreateOrderScreen() {
       knob: theme.colors?.surface,
       icon: theme.colors?.textSecondary ?? theme.colors?.text,
       onPrimary: theme.colors?.onPrimary ?? theme.colors?.surface,
-  }), [theme]);
+    }),
+    [theme],
+  );
 
+  const styles = useMemo(
+    () =>
+      StyleSheet.create({
+        container: { flex: 1, backgroundColor: palette.bg },
+        scroll: { padding: 16, paddingBottom: 40 },
+        pageTitle: {
+          fontSize: 20,
+          fontWeight: '600',
+          marginBottom: 16,
+          textAlign: 'center',
+          color: palette.text,
+        },
 
-  const styles = useMemo(() => StyleSheet.create({
-      container: { flex: 1, backgroundColor: palette.bg },
-      scroll: { padding: 16, paddingBottom: 40 },
-      pageTitle: {
-        fontSize: 20,
-        fontWeight: '600',
-        marginBottom: 16,
-        textAlign: 'center',
-        color: palette.text,
-      },
+        card: {
+          backgroundColor: palette.card,
+          borderRadius: 12,
+          padding: 12,
+          borderColor: palette.borderSoft,
+          borderWidth: 1,
+          marginBottom: 12,
+        },
+        section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: palette.text },
+        label: {
+          fontWeight: '500',
+          marginBottom: 4,
+          marginTop: 12,
+          color: isDark ? '#E3E3E6' : '#333',
+        },
+        input: {
+          borderWidth: 1,
+          borderColor: palette.border,
+          backgroundColor: palette.inputBg,
+          color: palette.text,
+          borderRadius: 10,
+          padding: 10,
+        },
+        selectInput: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderColor: palette.border,
+          borderRadius: 10,
+          backgroundColor: palette.inputBg,
+          padding: 12,
+          marginTop: 4,
+        },
+        selectInputText: { fontSize: 16, color: palette.text },
+        modalContainer: { backgroundColor: palette.card, borderRadius: 12, padding: 20 },
+        modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: palette.text },
+        modalText: { fontSize: 15, color: palette.textMuted, marginBottom: 20 },
+        modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+        assigneeOption: { paddingVertical: 10 },
+        assigneeText: { fontSize: 16, color: palette.text },
 
-      card: {
-        backgroundColor: palette.card,
-        borderRadius: 12,
-        padding: 12,
-        borderColor: palette.borderSoft,
-        borderWidth: 1,
-        marginBottom: 12,
-      },
-      section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: palette.text },
-      label: {
-        fontWeight: '500',
-        marginBottom: 4,
-        marginTop: 12,
-        color: isDark ? '#E3E3E6' : '#333',
-      },
-      input: {
-        borderWidth: 1,
-        borderColor: palette.border,
-        backgroundColor: palette.inputBg,
-        color: palette.text,
-        borderRadius: 10,
-        padding: 10,
-      },
-      selectInput: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: palette.border,
-        borderRadius: 10,
-        backgroundColor: palette.inputBg,
-        padding: 12,
-        marginTop: 4,
-      },
-      selectInputText: { fontSize: 16, color: palette.text },
-      modalContainer: { backgroundColor: palette.card, borderRadius: 12, padding: 20 },
-      modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: palette.text },
-      modalText: { fontSize: 15, color: palette.textMuted, marginBottom: 20 },
-      modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-      assigneeOption: { paddingVertical: 10 },
-      assigneeText: { fontSize: 16, color: palette.text },
-
-      toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-      toggle: {
-        width: 42,
-        height: 26,
-        borderRadius: 13,
-        backgroundColor: palette.toggleTrack,
-        padding: 2,
-        justifyContent: 'center',
-      },
-      toggleOn: { backgroundColor: palette.toggleTrackOn },
-      knob: {
-        width: 22,
-        height: 22,
-        borderRadius: 11,
-        backgroundColor: palette.knob,
-        alignSelf: 'flex-start',
-      },
-      knobOn: { alignSelf: 'flex-end' },
-      toggleLabel: { fontSize: 14, color: palette.text },
-    }), [theme]);
+        toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
+        toggle: {
+          width: 42,
+          height: 26,
+          borderRadius: 13,
+          backgroundColor: palette.toggleTrack,
+          padding: 2,
+          justifyContent: 'center',
+        },
+        toggleOn: { backgroundColor: palette.toggleTrackOn },
+        knob: {
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          backgroundColor: palette.knob,
+          alignSelf: 'flex-start',
+        },
+        knobOn: { alignSelf: 'flex-end' },
+        toggleLabel: { fontSize: 14, color: palette.text },
+      }),
+    [theme],
+  );
 
   // deny access if no rights
   if (!has('canCreateOrders')) {
     return (
       <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ fontSize: 16, color: theme.colors?.textSecondary }}>У вас нет прав на создание заявок</Text>
+        <Text style={{ fontSize: 16, color: theme.colors?.textSecondary }}>
+          У вас нет прав на создание заявок
+        </Text>
       </SafeAreaView>
     );
   }
@@ -162,7 +170,6 @@ export default function CreateOrderScreen() {
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
-
 
   const scrollRef = useRef(null);
   const dateFieldRef = useRef(null);
@@ -250,7 +257,6 @@ export default function CreateOrderScreen() {
     };
   }, []);
 
-  
   // Загрузка companyId и списка видов работ
   useEffect(() => {
     let alive = true;
@@ -271,11 +277,11 @@ export default function CreateOrderScreen() {
       }
     })();
     return () => {
-      alive = false
-    }
+      alive = false;
+    };
   }, []);
 
-const getField = useCallback(
+  const getField = useCallback(
     (key) => (schema.fields || []).find((f) => f.field_key === key) || null,
     [schema],
   );
@@ -349,7 +355,9 @@ const getField = useCallback(
           mask="+7 (999) 999-99-99"
           keyboardType="phone-pad"
           placeholder="+7 (___) ___-__-__"
-          placeholderTextColor={theme.colors?.placeholder ?? theme.colors?.textSecondary ?? theme.colors?.text}
+          placeholderTextColor={
+            theme.colors?.placeholder ?? theme.colors?.textSecondary ?? theme.colors?.text
+          }
           value={val}
           onChangeText={(text, rawText) => setField(key, rawText)}
         />
@@ -479,16 +487,16 @@ const getField = useCallback(
                   >
                     <Text style={styles.selectInputText}>
                       {workTypeId
-                        ? (workTypes.find((w) => w.id === workTypeId)?.name || 'Выбран вид работ')
+                        ? workTypes.find((w) => w.id === workTypeId)?.name || 'Выбран вид работ'
                         : 'Выберите вид работ...'}
                     </Text>
                     <AntDesign name="down" size={16} color={palette.icon} />
                   </Pressable>
                 </View>
               )}
-</View>
+            </View>
 
-{/* АДРЕС */}
+            {/* АДРЕС */}
             <View style={styles.card}>
               <Text style={styles.section}>Адрес</Text>
               {renderTextInput('region', 'Например: Саратовская область')}
@@ -539,11 +547,7 @@ const getField = useCallback(
                         })
                       : 'Выберите дату'}
                   </Text>
-                  <AntDesign
-                    name="calendar"
-                    size={16}
-                    color={palette.icon}
-                  />
+                  <AntDesign name="calendar" size={16} color={palette.icon} />
                 </Pressable>
               </View>
               {showDatePicker && (
@@ -596,11 +600,7 @@ const getField = useCallback(
                         })
                       : 'Сначала выберите дату'}
                   </Text>
-                  <AntDesign
-                    name="clockcircleo"
-                    size={16}
-                    color={palette.icon}
-                  />
+                  <AntDesign name="clockcircleo" size={16} color={palette.icon} />
                 </Pressable>
               </View>
               {showTimePicker && departureDate && (
@@ -660,11 +660,7 @@ const getField = useCallback(
                       ? 'В общую ленту'
                       : 'Выберите исполнителя...'}
                 </Text>
-                <AntDesign
-                  name="down"
-                  size={16}
-                  color={palette.icon}
-                />
+                <AntDesign name="down" size={16} color={palette.icon} />
               </Pressable>
             </View>
 
@@ -694,7 +690,6 @@ const getField = useCallback(
           </View>
         </Modal>
 
-
         <Modal
           isVisible={workTypeModalVisible}
           onBackdropPress={() => setWorkTypeModalVisible(false)}
@@ -704,7 +699,9 @@ const getField = useCallback(
           <View style={styles.modalContainer}>
             <Text style={styles.modalTitle}>Выберите вид работ</Text>
             {workTypes.length === 0 ? (
-              <Text style={styles.modalText}>Список пуст. Добавьте виды работ в настройках компании.</Text>
+              <Text style={styles.modalText}>
+                Список пуст. Добавьте виды работ в настройках компании.
+              </Text>
             ) : (
               workTypes.map((t) => (
                 <Pressable
@@ -721,8 +718,6 @@ const getField = useCallback(
             )}
           </View>
         </Modal>
-
-
 
         <Modal
           isVisible={assigneeModalVisible}

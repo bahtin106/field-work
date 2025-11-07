@@ -17,10 +17,10 @@ export default function OrderSuccessScreen() {
           flex: 1,
           justifyContent: 'center',
           padding: 24,
-          backgroundColor: theme.colors.background,   // was theme.colors.bg
+          backgroundColor: theme.colors.background, // was theme.colors.bg
         },
         messageBox: {
-          backgroundColor: theme.colors.surface,      // was theme.colors.card
+          backgroundColor: theme.colors.surface, // was theme.colors.card
           padding: 32,
           borderRadius: 12,
           shadowColor: '#000',

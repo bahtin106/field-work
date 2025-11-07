@@ -31,16 +31,11 @@
         "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
       }
     },
-    "plugins": [
-      "expo-router",
-      "expo-splash-screen",
-      "expo-notifications",
-      "expo-navigation-bar"
-    ],
+    "plugins": ["expo-router", "expo-splash-screen", "expo-notifications", "expo-navigation-bar"],
     "androidNavigationBar": {
-  "backgroundColor": "#FFFFFF",
-  "barStyle": "dark-content"
-},
+      "backgroundColor": "#FFFFFF",
+      "barStyle": "dark-content"
+    },
     "androidStatusBar": {
       "backgroundColor": "#f2f6fa",
       "barStyle": "dark-content",

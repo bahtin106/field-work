@@ -46,8 +46,9 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
 
     try {
       // безопасный вызов без крашей при отсутствии сессии
-      const { data: { user } = {}, error: userErr } =
-        await supabase.auth.getUser().catch((e) => ({ error: e }));
+      const { data: { user } = {}, error: userErr } = await supabase.auth
+        .getUser()
+        .catch((e) => ({ error: e }));
 
       if (userErr?.message?.includes?.('Auth session missing')) {
         log(`${src}: no valid session (AuthSessionMissingError), skip`);
@@ -106,7 +107,7 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
 
     // события аутентификации
     const { data: authSub } = supabase.auth.onAuthStateChange((event, session) => {
-      log('auth event:', event, !!session?.user?.id ? 'has user' : 'no user');
+      log('auth event:', event, session?.user?.id ? 'has user' : 'no user');
       // сбрасываем троттлинг, чтобы сразу отправить свежий last_seen после логина
       lastSentAtRef.current = 0;
       if (session?.user?.id) ping('auth');
@@ -114,8 +115,12 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
 
     return () => {
       log('cleanup');
-      try { sub?.remove?.(); } catch {}
-      try { authSub?.subscription?.unsubscribe?.(); } catch {}
+      try {
+        sub?.remove?.();
+      } catch {}
+      try {
+        authSub?.subscription?.unsubscribe?.();
+      } catch {}
       clearInterval(timer);
       mountedRef.current = false;
     };

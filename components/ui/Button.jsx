@@ -1,5 +1,5 @@
 // components/ui/Button.jsx
-import React, { useRef } from "react";
+import React, { useRef } from 'react';
 import {
   Text,
   Animated,
@@ -8,14 +8,14 @@ import {
   Platform,
   TouchableOpacity,
   Easing,
-} from "react-native";
-import { useTheme } from "../../theme";
+} from 'react-native';
+import { useTheme } from '../../theme';
 
 export default function Button({
   title,
   onPress,
-  variant = "primary",
-  size = "md",
+  variant = 'primary',
+  size = 'md',
   disabled,
   loading,
   style,
@@ -63,39 +63,37 @@ export default function Button({
   // ---- tokens from theme.components.button ----
   const buttonTokens = theme?.components?.button || {};
 
-  const palettes =
-    buttonTokens.palette || {
-      primary: {
-        bg: theme.colors.primary,
-        fg: theme.colors.primaryTextOn,
-        border: theme.colors.primary,
-      },
-      secondary: {
-        bg: theme.colors.surface,
-        fg: theme.colors.text,
-        border: theme.colors.border,
-      },
-      ghost: { bg: "transparent", fg: theme.colors.text, border: "transparent" },
-      destructive: {
-        bg: theme.colors.danger,
-        fg: theme.colors.primaryTextOn,
-        border: theme.colors.danger,
-      },
-    };
+  const palettes = buttonTokens.palette || {
+    primary: {
+      bg: theme.colors.primary,
+      fg: theme.colors.primaryTextOn,
+      border: theme.colors.primary,
+    },
+    secondary: {
+      bg: theme.colors.surface,
+      fg: theme.colors.text,
+      border: theme.colors.border,
+    },
+    ghost: { bg: 'transparent', fg: theme.colors.text, border: 'transparent' },
+    destructive: {
+      bg: theme.colors.danger,
+      fg: theme.colors.primaryTextOn,
+      border: theme.colors.danger,
+    },
+  };
 
-  const sizesMap =
-    buttonTokens.sizes || {
-      md: {
-        h: 48,
-        f: theme.typography.sizes.md,
-        pad: theme.spacing.md,
-      },
-      lg: {
-        h: 56,
-        f: theme.typography.sizes.lg,
-        pad: theme.spacing.lg,
-      },
-    };
+  const sizesMap = buttonTokens.sizes || {
+    md: {
+      h: 48,
+      f: theme.typography.sizes.md,
+      pad: theme.spacing.md,
+    },
+    lg: {
+      h: 56,
+      f: theme.typography.sizes.lg,
+      pad: theme.spacing.lg,
+    },
+  };
 
   const palette = palettes[variant] || palettes.primary;
   const sizes = sizesMap[size] || sizesMap.md;
@@ -105,7 +103,7 @@ export default function Button({
   return (
     <TouchableOpacity
       onPress={onPress}
-      activeOpacity={1}              // сами управляем opacity анимацией
+      activeOpacity={1} // сами управляем opacity анимацией
       delayPressIn={0}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
@@ -132,15 +130,14 @@ const styles = (t, p, sz, disabled) =>
     btn: {
       height: sz.h,
       paddingHorizontal: sz.pad,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor:
-        disabled ? (p.bg === "transparent" ? t.colors.surface : p.bg + "CC") : p.bg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: disabled ? (p.bg === 'transparent' ? t.colors.surface : p.bg + 'CC') : p.bg,
       borderRadius: t.radii.lg,
-      borderWidth: p.border === "transparent" ? 0 : 1,
+      borderWidth: p.border === 'transparent' ? 0 : 1,
       borderColor: p.border,
       ...(p.bg === t.colors.surface
-        ? Platform.OS === "ios"
+        ? Platform.OS === 'ios'
           ? t.shadows.card.ios
           : t.shadows.card.android
         : null),

@@ -14,7 +14,7 @@ import {
   ScrollView,
   StyleSheet,
   TouchableOpacity,
-  Dimensions
+  Dimensions,
 } from 'react-native';
 
 import { Calendar } from 'react-native-calendars';
@@ -67,9 +67,11 @@ const fromISODate = (s) => {
 };
 
 const fRUB = (n) =>
-  new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 }).format(
-    Math.round(Number(n || 0)),
-  );
+  new Intl.NumberFormat('ru-RU', {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0,
+  }).format(Math.round(Number(n || 0)));
 
 const formatNumber = (n) => new Intl.NumberFormat('ru-RU').format(n);
 
@@ -123,16 +125,16 @@ export default function StatsScreen() {
       StyleSheet.create({
         container: { flex: 1, backgroundColor: TOK.BG },
         scrollContent: { paddingBottom: 28 },
-        
+
         // Header
         header: {
           paddingHorizontal: 20,
           paddingTop: 12,
           paddingBottom: 16,
         },
-        headerTitle: { 
-          fontSize: 28, 
-          fontWeight: '700', 
+        headerTitle: {
+          fontSize: 28,
+          fontWeight: '700',
           color: TOK.TEXT,
           marginBottom: 4,
         },
@@ -309,10 +311,10 @@ export default function StatsScreen() {
         },
 
         // Modals
-        modal: { 
-          flex: 1, 
-          backgroundColor: TOK.BG, 
-          paddingTop: insets.top 
+        modal: {
+          flex: 1,
+          backgroundColor: TOK.BG,
+          paddingTop: insets.top,
         },
         modalHeader: {
           flexDirection: 'row',
@@ -486,23 +488,23 @@ export default function StatsScreen() {
   // Period range calculation
   const periodRange = useMemo(() => {
     const now = new Date();
-    const periodConfig = PERIODS.find(p => p.key === period);
-    
+    const periodConfig = PERIODS.find((p) => p.key === period);
+
     if (period === 'custom' && rangeStart && rangeEnd) {
-      return { 
-        from: startOfDay(fromISODate(rangeStart)), 
-        to: endOfDay(fromISODate(rangeEnd)) 
+      return {
+        from: startOfDay(fromISODate(rangeStart)),
+        to: endOfDay(fromISODate(rangeEnd)),
       };
     }
-    
+
     if (periodConfig?.days) {
       return { from: addDays(now, -periodConfig.days), to: endOfDay(now) };
     }
-    
+
     if (period === 'ytd') {
       return { from: startOfYear(now), to: endOfDay(now) };
     }
-    
+
     return { from: null, to: endOfDay(now) };
   }, [period, rangeStart, rangeEnd]);
 
@@ -521,7 +523,7 @@ export default function StatsScreen() {
       completionRate: 0,
       efficiency: 0,
       avgRevenuePerOrder: 0,
-    }
+    },
   });
 
   const loadStats = useCallback(async () => {
@@ -550,13 +552,14 @@ export default function StatsScreen() {
 
       // Calculate statistics
       const totalOrders = orders?.length || 0;
-      const completedOrders = orders?.filter(o => o.status === 'Завершённая').length || 0;
-      const inProgressOrders = orders?.filter(o => o.status === 'В работе').length || 0;
-      const newOrders = orders?.filter(o => o.status === 'Новый').length || 0;
-      
-      const getRevenue = (o) => Number(
-        o.total_price ?? o.total ?? o.total_amount ?? o.amount_total ?? o.amount ?? o.price ?? 0
-      );
+      const completedOrders = orders?.filter((o) => o.status === 'Завершённая').length || 0;
+      const inProgressOrders = orders?.filter((o) => o.status === 'В работе').length || 0;
+      const newOrders = orders?.filter((o) => o.status === 'Новый').length || 0;
+
+      const getRevenue = (o) =>
+        Number(
+          o.total_price ?? o.total ?? o.total_amount ?? o.amount_total ?? o.amount ?? o.price ?? 0,
+        );
       const totalRevenue = orders?.reduce((sum, o) => sum + getRevenue(o), 0) || 0;
       const totalCosts = orders?.reduce((sum, o) => sum + (Number(o.fuel_cost) || 0), 0) || 0;
       const netProfit = totalRevenue - totalCosts;
@@ -566,13 +569,14 @@ export default function StatsScreen() {
         { status: 'Завершённая', count: completedOrders, color: TOK.SUCCESS, amount: totalRevenue },
         { status: 'В работе', count: inProgressOrders, color: TOK.WARNING, amount: 0 },
         { status: 'Новый', count: newOrders, color: TOK.INFO, amount: 0 },
-      ].filter(item => item.count > 0);
+      ].filter((item) => item.count > 0);
 
       // Performance metrics
-      const days = period === 'custom' && periodRange.from && periodRange.to 
-        ? Math.max(1, Math.ceil((periodRange.to - periodRange.from) / (24 * 60 * 60 * 1000)))
-        : (PERIODS.find(p => p.key === period)?.days || 365);
-      
+      const days =
+        period === 'custom' && periodRange.from && periodRange.to
+          ? Math.max(1, Math.ceil((periodRange.to - periodRange.from) / (24 * 60 * 60 * 1000)))
+          : PERIODS.find((p) => p.key === period)?.days || 365;
+
       const avgOrdersPerDay = totalOrders / days;
       const completionRate = totalOrders > 0 ? completedOrders / totalOrders : 0;
       const avgRevenuePerOrder = completedOrders > 0 ? totalRevenue / completedOrders : 0;
@@ -591,7 +595,7 @@ export default function StatsScreen() {
           completionRate,
           efficiency: completionRate * 100,
           avgRevenuePerOrder,
-        }
+        },
       });
     } catch (error) {
       console.error('Error loading stats:', error);
@@ -618,7 +622,7 @@ export default function StatsScreen() {
         if (isManager) loadUsers();
         loadStats();
       }
-    }, [me, isManager, selectedUserId, periodRange])
+    }, [me, isManager, selectedUserId, periodRange]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -684,7 +688,7 @@ export default function StatsScreen() {
     const end = rangeEnd ? fromISODate(rangeEnd) : start;
     const marks = {};
     const dayMS = 24 * 60 * 60 * 1000;
-    
+
     for (let t = start.getTime(); t <= end.getTime(); t += dayMS) {
       const d = new Date(t);
       const key = toISODate(d);
@@ -703,9 +707,9 @@ export default function StatsScreen() {
   const filteredUsers = useMemo(() => {
     const q = (usersSearch || '').trim().toLowerCase();
     if (!q) return users;
-    return users.filter(u =>
-      (u.full_name || '').toLowerCase().includes(q) ||
-      (u.role || '').toLowerCase().includes(q)
+    return users.filter(
+      (u) =>
+        (u.full_name || '').toLowerCase().includes(q) || (u.role || '').toLowerCase().includes(q),
     );
   }, [users, usersSearch]);
 
@@ -724,7 +728,7 @@ export default function StatsScreen() {
   return (
     <View style={styles.container}>
       <AppHeader options={{ title: 'Статистика' }} back />
-      
+
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={styles.scrollContent}
@@ -754,9 +758,7 @@ export default function StatsScreen() {
               <Text style={styles.statLabel}>Чистая прибыль</Text>
             </View>
             <View style={styles.statCard}>
-              <Text style={styles.statValue}>
-                {stats.performance.avgOrdersPerDay.toFixed(1)}
-              </Text>
+              <Text style={styles.statValue}>{stats.performance.avgOrdersPerDay.toFixed(1)}</Text>
               <Text style={styles.statLabel}>В день</Text>
             </View>
           </View>
@@ -769,22 +771,16 @@ export default function StatsScreen() {
               {PERIODS.map((p) => (
                 <TouchableOpacity
                   key={p.key}
-                  style={[
-                    styles.periodButton,
-                    period === p.key && styles.periodButtonActive,
-                  ]}
+                  style={[styles.periodButton, period === p.key && styles.periodButtonActive]}
                   onPress={() => setPeriod(p.key)}
                 >
-                  <Text style={[
-                    styles.periodText,
-                    period === p.key && styles.periodTextActive,
-                  ]}>
+                  <Text style={[styles.periodText, period === p.key && styles.periodTextActive]}>
                     {p.label}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
-            
+
             {period === 'custom' && (
               <TouchableOpacity onPress={openCustomPeriod}>
                 <Ionicons name="calendar" size={24} color={TOK.PRIMARY} />
@@ -811,22 +807,13 @@ export default function StatsScreen() {
               {stats.statusBreakdown.map((item, index) => (
                 <View key={item.status} style={styles.statusItem}>
                   <View style={styles.statusLeft}>
-                    <View 
-                      style={[
-                        styles.statusDot, 
-                        { backgroundColor: item.color }
-                      ]} 
-                    />
+                    <View style={[styles.statusDot, { backgroundColor: item.color }]} />
                     <Text style={styles.statusName}>{item.status}</Text>
                   </View>
                   <View style={styles.statusStats}>
-                    <Text style={styles.statusCount}>
-                      {formatNumber(item.count)}
-                    </Text>
+                    <Text style={styles.statusCount}>{formatNumber(item.count)}</Text>
                     {item.amount > 0 && (
-                      <Text style={styles.statusAmount}>
-                        {fRUB(item.amount)}
-                      </Text>
+                      <Text style={styles.statusAmount}>{fRUB(item.amount)}</Text>
                     )}
                   </View>
                 </View>
@@ -846,21 +833,15 @@ export default function StatsScreen() {
               <Text style={styles.metricLabel}>Выполнено</Text>
             </View>
             <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>
-                {fRUB(stats.performance.avgRevenuePerOrder)}
-              </Text>
+              <Text style={styles.metricValue}>{fRUB(stats.performance.avgRevenuePerOrder)}</Text>
               <Text style={styles.metricLabel}>Средний чек</Text>
             </View>
             <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>
-                {formatNumber(stats.inProgressOrders)}
-              </Text>
+              <Text style={styles.metricValue}>{formatNumber(stats.inProgressOrders)}</Text>
               <Text style={styles.metricLabel}>В работе</Text>
             </View>
             <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>
-                {formatNumber(stats.newOrders)}
-              </Text>
+              <Text style={styles.metricValue}>{formatNumber(stats.newOrders)}</Text>
               <Text style={styles.metricLabel}>Новые</Text>
             </View>
           </View>
@@ -889,11 +870,7 @@ export default function StatsScreen() {
       </ScrollView>
 
       {/* User Picker Modal */}
-      <Modal
-        visible={userPickerOpen}
-        animationType="slide"
-        onRequestClose={closeUserPicker}
-      >
+      <Modal visible={userPickerOpen} animationType="slide" onRequestClose={closeUserPicker}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Выбор сотрудника</Text>
@@ -914,17 +891,14 @@ export default function StatsScreen() {
             data={filteredUsers}
             keyExtractor={(item) => String(item.id)}
             renderItem={({ item }) => (
-              <TouchableOpacity 
-                style={styles.userItem} 
-                onPress={() => selectUser(item)}
-              >
-                <View style={[
-                  styles.selectedIndicator,
-                  { borderColor: selectedUserId === item.id ? TOK.PRIMARY : TOK.OUTLINE }
-                ]}>
-                  {selectedUserId === item.id && (
-                    <View style={styles.selectedDot} />
-                  )}
+              <TouchableOpacity style={styles.userItem} onPress={() => selectUser(item)}>
+                <View
+                  style={[
+                    styles.selectedIndicator,
+                    { borderColor: selectedUserId === item.id ? TOK.PRIMARY : TOK.OUTLINE },
+                  ]}
+                >
+                  {selectedUserId === item.id && <View style={styles.selectedDot} />}
                 </View>
                 <View style={styles.userInfo}>
                   <Text style={styles.userName}>{item.full_name}</Text>
@@ -943,11 +917,7 @@ export default function StatsScreen() {
       </Modal>
 
       {/* Custom Period Modal */}
-      <Modal
-        visible={customModalOpen}
-        animationType="slide"
-        onRequestClose={closeCustomPeriod}
-      >
+      <Modal visible={customModalOpen} animationType="slide" onRequestClose={closeCustomPeriod}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Выбор периода</Text>
@@ -958,10 +928,9 @@ export default function StatsScreen() {
 
           <View style={styles.rangeDisplay}>
             <Text style={styles.rangeText}>
-              {rangeStart && rangeEnd 
+              {rangeStart && rangeEnd
                 ? `${fmt(fromISODate(rangeStart))} — ${fmt(fromISODate(rangeEnd))}`
-                : 'Выберите диапазон дат'
-              }
+                : 'Выберите диапазон дат'}
             </Text>
           </View>
 
@@ -988,29 +957,22 @@ export default function StatsScreen() {
           </View>
 
           <View style={styles.modalActions}>
-            <TouchableOpacity 
-              style={[
-                styles.actionButton, 
-                styles.secondaryAction,
-              ]}
+            <TouchableOpacity
+              style={[styles.actionButton, styles.secondaryAction]}
               onPress={closeCustomPeriod}
             >
-              <Text style={[styles.actionText, styles.secondaryActionText]}>
-                Отмена
-              </Text>
+              <Text style={[styles.actionText, styles.secondaryActionText]}>Отмена</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
-                styles.actionButton, 
+                styles.actionButton,
                 styles.primaryAction,
                 !(rangeStart && rangeEnd) && styles.disabledAction,
               ]}
               onPress={applyCustomPeriod}
               disabled={!(rangeStart && rangeEnd)}
             >
-              <Text style={[styles.actionText, styles.primaryActionText]}>
-                Применить
-              </Text>
+              <Text style={[styles.actionText, styles.primaryActionText]}>Применить</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>

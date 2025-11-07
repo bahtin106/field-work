@@ -14,7 +14,7 @@ import {
   BackHandler,
 } from 'react-native';
 
-import DynamicOrderCard from '../../components/DynamicOrderCard'; 
+import DynamicOrderCard from '../../components/DynamicOrderCard';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 import { usePermissions } from '../../lib/permissions';
@@ -81,13 +81,15 @@ export default function MyOrdersScreen() {
   const router = useRouter();
 
   // Из вкладки «Мои» кнопка Назад ведёт на Главную
-  useFocusEffect(React.useCallback(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      router.replace('/orders');
-      return true;
-    });
-    return () => sub.remove();
-  }, []));
+  useFocusEffect(
+    React.useCallback(() => {
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        router.replace('/orders');
+        return true;
+      });
+      return () => sub.remove();
+    }, []),
+  );
 
   function __canSeePhone(o) {
     try {
@@ -100,8 +102,7 @@ export default function MyOrdersScreen() {
   // Shared caches
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
   LIST_CACHE.my ||= {};
-  const EXECUTOR_NAME_CACHE =
-    (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+  const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
   const [orders, setOrders] = useState([]);
   const [filter, setFilter] = useState('feed');
@@ -120,16 +121,12 @@ export default function MyOrdersScreen() {
     if (seedOnceRef.current) return;
     seedOnceRef.current = true;
     /* seed from cache */
-    const k =
-      typeof seedFilter === 'string' && seedFilter.length
-        ? seedFilter
-        : filter || 'all';
+    const k = typeof seedFilter === 'string' && seedFilter.length ? seedFilter : filter || 'all';
     if (LIST_CACHE.my[k]) {
       setOrders(LIST_CACHE.my[k]);
       hydratedRef.current = true;
     }
-    if (typeof seedFilter === 'string' && seedFilter.length)
-      setFilter(seedFilter);
+    if (typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
     if (typeof seedSearch === 'string') setSearchQuery(seedSearch);
   }, [seedFilter, seedSearch]);
 
@@ -229,21 +226,16 @@ export default function MyOrdersScreen() {
                 ]}
                 accessibilityRole="button"
               >
-                <Text
-                  style={[
-                    styles.chipText,
-                    filter === key && styles.chipTextActive,
-                  ]}
-                >
+                <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
                   {key === 'feed'
                     ? 'Лента'
                     : key === 'all'
-                    ? 'Все'
-                    : key === 'new'
-                    ? 'Новые'
-                    : key === 'progress'
-                    ? 'В работе'
-                    : 'Завершённые'}
+                      ? 'Все'
+                      : key === 'new'
+                        ? 'Новые'
+                        : key === 'progress'
+                          ? 'В работе'
+                          : 'Завершённые'}
                 </Text>
               </Pressable>
             ))}
@@ -257,7 +249,7 @@ export default function MyOrdersScreen() {
             style={styles.searchInput}
           />
 
-          {(loading && !hydratedRef.current) ? (
+          {loading && !hydratedRef.current ? (
             <ActivityIndicator
               size="large"
               color={theme.colors.primary}

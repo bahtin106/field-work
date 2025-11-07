@@ -1,21 +1,35 @@
 // app/app_settings/AppSettings.jsx
-import React, { useEffect, useMemo, useState, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, Platform, Linking, ActivityIndicator } from "react-native";
-import Constants from "expo-constants";
-import { useNavigation } from "expo-router";
-import Screen from "../../components/layout/Screen";
-import { useTheme } from "../../theme";
-import { useToast } from "../../components/ui/ToastProvider";
-import { SelectModal, BaseModal, DateTimeModal } from "../../components/ui/modals";
-import { Feather } from "@expo/vector-icons";
-import Card from "../../components/ui/Card";
-import Button from "../../components/ui/Button";
-import { supabase } from "../../lib/supabase";
-import { getUid, readProfile, readRolePerm, savePushToken as savePushTokenHelper, deletePushToken as deletePushTokenHelper } from "../../lib/supabaseHelpers";
-import { devWarn as __devLog } from "../../src/utils/dev";
-import { APP_DEFAULTS, ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME } from "../../config/notifications";
-import { SelectField, SwitchField } from "../../components/ui/TextField";
-import { listItemStyles } from "../../components/ui/listItemStyles";
+import React, { useEffect, useMemo, useState, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Platform,
+  Linking,
+  ActivityIndicator,
+} from 'react-native';
+import Constants from 'expo-constants';
+import { useNavigation } from 'expo-router';
+import Screen from '../../components/layout/Screen';
+import { useTheme } from '../../theme';
+import { useToast } from '../../components/ui/ToastProvider';
+import { SelectModal, BaseModal, DateTimeModal } from '../../components/ui/modals';
+import { Feather } from '@expo/vector-icons';
+import Card from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
+import { supabase } from '../../lib/supabase';
+import {
+  getUid,
+  readProfile,
+  readRolePerm,
+  savePushToken as savePushTokenHelper,
+  deletePushToken as deletePushTokenHelper,
+} from '../../lib/supabaseHelpers';
+import { devWarn as __devLog } from '../../src/utils/dev';
+import { APP_DEFAULTS, ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME } from '../../config/notifications';
+import { SelectField, SwitchField } from '../../components/ui/TextField';
+import { listItemStyles } from '../../components/ui/listItemStyles';
 
 import { getLocale, setLocale, useI18nVersion, availableLocales } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -34,12 +48,15 @@ const [DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE] = (() => {
 let installEdgeToEdgeWarnFilter;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  installEdgeToEdgeWarnFilter = require("../../src/utils/devWarnFilter")?.installEdgeToEdgeWarnFilter;
-} catch (e) { __devLog('devWarnFilter import failed:', e?.message || e); }
+  installEdgeToEdgeWarnFilter =
+    require('../../src/utils/devWarnFilter')?.installEdgeToEdgeWarnFilter;
+} catch (e) {
+  __devLog('devWarnFilter import failed:', e?.message || e);
+}
 import { saveUserLocale } from '../../lib/userLocale';
-import { TBL, PERM_KEYS } from "../../lib/constants";
+import { TBL, PERM_KEYS } from '../../lib/constants';
 
-if (__DEV__ && typeof installEdgeToEdgeWarnFilter === "function") {
+if (__DEV__ && typeof installEdgeToEdgeWarnFilter === 'function') {
   installEdgeToEdgeWarnFilter();
 }
 
@@ -57,13 +74,19 @@ async function ensurePushPermission() {
   try {
     // Web: expo-notifications не поддерживаются; не запускаем токен-флоу
     if (Platform.OS === 'web') {
-      try { if (Linking?.openSettings) await Linking.openSettings(); } catch (e) {}
+      try {
+        if (Linking?.openSettings) await Linking.openSettings();
+      } catch (e) {}
       return { granted: false, token: null };
     }
 
     const isExpoGo = Constants?.appOwnership === 'expo';
     if (isExpoGo) {
-      try { if (Linking?.openSettings) await Linking.openSettings(); } catch (e) { __devLog('openSettings failed:', e?.message || e); }
+      try {
+        if (Linking?.openSettings) await Linking.openSettings();
+      } catch (e) {
+        __devLog('openSettings failed:', e?.message || e);
+      }
       return { granted: false, token: null };
     }
 
@@ -84,15 +107,20 @@ async function ensurePushPermission() {
           importance: Notifications.AndroidImportance.MAX,
           sound: 'default',
         });
-      } catch (e) { __devLog('setNotificationChannelAsync failed:', e?.message || e); }
+      } catch (e) {
+        __devLog('setNotificationChannelAsync failed:', e?.message || e);
+      }
     }
 
     let token = null;
     try {
-      const projectId = (Constants?.expoConfig?.extra?.eas?.projectId) ?? (Constants?.easConfig?.projectId);
+      const projectId =
+        Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
       const resp = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
       token = resp?.data || null;
-    } catch (e) { __devLog('getExpoPushTokenAsync failed:', e?.message || e); }
+    } catch (e) {
+      __devLog('getExpoPushTokenAsync failed:', e?.message || e);
+    }
 
     return { granted, token };
   } catch (e) {
@@ -101,14 +129,16 @@ async function ensurePushPermission() {
   }
 }
 
-
 // ---- Local wrappers to replace deprecated imports ----
 function SingleSelectModal({ visible, title, options = [], selectedId, onSelect, onClose }) {
   const { theme } = useTheme();
   const mapped = (options || []).map((opt) => ({
     id: opt.id,
     label: opt.label,
-    right: selectedId === opt.id ? (<Feather name="check" size={18} color={theme.colors.primary} />) : null,
+    right:
+      selectedId === opt.id ? (
+        <Feather name="check" size={18} color={theme.colors.primary} />
+      ) : null,
   }));
   return (
     <SelectModal
@@ -139,10 +169,10 @@ function SwitchListModal({ visible, title, toggles = [], footer = null, onClose 
         ))}
       </View>
       {footer ? (
-  <View style={{ marginTop: theme.spacing.md, marginBottom: theme.spacing.lg }}>
-    {footer}
-  </View>
-) : null}
+        <View style={{ marginTop: theme.spacing.md, marginBottom: theme.spacing.lg }}>
+          {footer}
+        </View>
+      ) : null}
     </BaseModal>
   );
 }
@@ -155,14 +185,22 @@ export default function AppSettings() {
   useEffect(() => {
     try {
       nav.setParams({ headerTitle: t('routes.app_settings/AppSettings') });
-    } catch (e) { __devLog('nav.setParams failed:', e?.message || e); }
+    } catch (e) {
+      __devLog('nav.setParams failed:', e?.message || e);
+    }
   }, [ver]);
 
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const _curLocale = (() => { try { return getLocale(); } catch { return 'ru'; } })();
+  const _curLocale = (() => {
+    try {
+      return getLocale();
+    } catch {
+      return 'ru';
+    }
+  })();
   const _curLangLabel = t(`language_${_curLocale}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -186,15 +224,14 @@ export default function AppSettings() {
   const reopenTimer = useRef(null);
   useEffect(() => {
     mounted.current = true;
-    
-return () => {
+
+    return () => {
       mounted.current = false;
       if (reopenTimer.current) {
         clearTimeout(reopenTimer.current);
         reopenTimer.current = null;
       }
     };
-
   }, []);
   async function loadPrefs() {
     setLoadingPrefs(true);
@@ -229,22 +266,32 @@ return () => {
 
       // default quiet hours, если пусто
       try {
-        const qs = data?.quiet_start, qe = data?.quiet_end;
+        const qs = data?.quiet_start,
+          qe = data?.quiet_end;
         const bothEmpty = (!qs || String(qs).trim() === '') && (!qe || String(qe).trim() === '');
         if ((!data || bothEmpty) && mounted.current) {
-          const defaultPatch = { quiet_start: APP_DEFAULTS?.quietStart, quiet_end: APP_DEFAULTS?.quietEnd };
+          const defaultPatch = {
+            quiet_start: APP_DEFAULTS?.quietStart,
+            quiet_end: APP_DEFAULTS?.quietEnd,
+          };
           setPrefs((p) => ({ ...p, ...(data || {}), ...defaultPatch }));
         }
-      } catch (e) { __devLog('init default quiet hours failed:', e?.message || e); }
+      } catch (e) {
+        __devLog('init default quiet hours failed:', e?.message || e);
+      }
 
       // 3) Профиль/пермишены
       try {
         const prof = await readProfile(uid);
         if (prof?.company_id && prof?.role) {
           try {
-            const permValue = await readRolePerm(prof.company_id, prof.role, PERM_KEYS.CAN_CREATE_ORDERS);
+            const permValue = await readRolePerm(
+              prof.company_id,
+              prof.role,
+              PERM_KEYS.CAN_CREATE_ORDERS,
+            );
             const v = (permValue ?? '').toString().trim().toLowerCase();
-            mounted.current && setCanCreateOrders(v in { '1':1, 'true':1, 't':1, 'yes':1, 'y':1 });
+            mounted.current && setCanCreateOrders(v in { 1: 1, true: 1, t: 1, yes: 1, y: 1 });
           } catch (e) {
             __devLog('readRolePerm failed:', e?.message || e);
             mounted.current && setCanCreateOrders(false);
@@ -264,7 +311,9 @@ return () => {
     }
   }
 
-  useEffect(() => { loadPrefs(); }, []);
+  useEffect(() => {
+    loadPrefs();
+  }, []);
 
   async function savePrefs(patch) {
     try {
@@ -272,7 +321,7 @@ return () => {
       const next = { ...prefs, ...patch };
       const { error } = await supabase
         .from(TBL.NOTIF_PREFS)
-        .upsert({ user_id: uid, ...next }, { onConflict: "user_id", returning: 'minimal' });
+        .upsert({ user_id: uid, ...next }, { onConflict: 'user_id', returning: 'minimal' });
       if (error) {
         let msg = t('errors_saveGeneric');
         if (/permission denied/i.test(error.message)) msg = t('errors_noSettingsAccess');
@@ -282,24 +331,24 @@ return () => {
       }
       return { ok: true };
     } catch (e) {
-      const m = String(e?.message || e || "").toLowerCase();
+      const m = String(e?.message || e || '').toLowerCase();
       let msg = t('errors_saveShort');
-      if (m.includes("no_auth")) msg = t('errors_noAuth');
-      else if (m.includes("failed to fetch") || m.includes("network")) msg = t('errors_network');
+      if (m.includes('no_auth')) msg = t('errors_noAuth');
+      else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
       return { ok: false, message: msg };
     }
   }
 
   function toTimeStr(v) {
     if (!v) return null;
-    if (typeof v === "string") {
+    if (typeof v === 'string') {
       const m = v.match(/^(\d{2}):(\d{2})/);
       if (m) return `${m[1]}:${m[2]}`;
       return null;
     }
     if (v instanceof Date) {
-      const hh = String(v.getHours()).padStart(2, "0");
-      const mm = String(v.getMinutes()).padStart(2, "0");
+      const hh = String(v.getHours()).padStart(2, '0');
+      const mm = String(v.getMinutes()).padStart(2, '0');
       return `${hh}:${mm}`;
     }
     return null;
@@ -309,9 +358,17 @@ return () => {
     try {
       const now = new Date();
       if (!s || typeof s !== 'string' || !s.includes(':')) {
-        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE, 0, 0);
+        return new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate(),
+          DEFAULT_QUIET_HOUR,
+          DEFAULT_QUIET_MINUTE,
+          0,
+          0,
+        );
       }
-      const [hs, ms] = s.split(":");
+      const [hs, ms] = s.split(':');
       const hh = parseInt(hs, 10);
       const mm = parseInt(ms, 10);
       const H = Number.isFinite(hh) ? hh : DEFAULT_QUIET_HOUR;
@@ -320,7 +377,15 @@ return () => {
     } catch (e) {
       __devLog('toDateFromStr parse failed:', e?.message || e);
       const now = new Date();
-      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE, 0, 0);
+      return new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        DEFAULT_QUIET_HOUR,
+        DEFAULT_QUIET_MINUTE,
+        0,
+        0,
+      );
     }
   }
 
@@ -328,10 +393,11 @@ return () => {
 
   const openTimePicker = (which) => () => {
     const bothNull = !toTimeStr(prefs.quiet_start) && !toTimeStr(prefs.quiet_end);
-    const fallback = which === "start" ? APP_DEFAULTS?.quietStart : APP_DEFAULTS?.quietEnd;
-    const base = which === "start"
-      ? (prefs.quiet_start ?? (bothNull ? fallback : null))
-      : (prefs.quiet_end   ?? (bothNull ? fallback : null));
+    const fallback = which === 'start' ? APP_DEFAULTS?.quietStart : APP_DEFAULTS?.quietEnd;
+    const base =
+      which === 'start'
+        ? (prefs.quiet_start ?? (bothNull ? fallback : null))
+        : (prefs.quiet_end ?? (bothNull ? fallback : null));
     const d = toDateFromStr(toTimeStr(base));
     setTimeValue(d);
     setTimePickerOpen(which);
@@ -339,10 +405,13 @@ return () => {
 
   const onTimePicked = async (_ev, dateOrUndefined) => {
     if (!timePickerOpen) return;
-    if (!dateOrUndefined) { setTimePickerOpen(null); return; }
+    if (!dateOrUndefined) {
+      setTimePickerOpen(null);
+      return;
+    }
 
     const hhmm = toTimeStr(dateOrUndefined);
-    const patch = timePickerOpen === "start" ? { quiet_start: hhmm } : { quiet_end: hhmm };
+    const patch = timePickerOpen === 'start' ? { quiet_start: hhmm } : { quiet_end: hhmm };
 
     const prevPrefs = prefs;
     const next = { ...prefs, ...patch };
@@ -351,18 +420,18 @@ return () => {
     setTimePickerOpen(null);
 
     if (!bothQuietSet(next)) {
-      const missing = next.quiet_start ? "end" : "start";
+      const missing = next.quiet_start ? 'end' : 'start';
       const d = toDateFromStr(toTimeStr(next[missing]));
       setTimeValue(d);
-      
-if (mounted.current) {
+
+      if (mounted.current) {
         if (reopenTimer.current) clearTimeout(reopenTimer.current);
         reopenTimer.current = setTimeout(() => {
           if (mounted.current) setTimePickerOpen(missing);
         }, 0);
       }
 
-      toast.info(missing === "end" ? t('quiet_pickEnd') : t('quiet_pickStart'));
+      toast.info(missing === 'end' ? t('quiet_pickEnd') : t('quiet_pickStart'));
       return;
     }
 
@@ -486,7 +555,7 @@ if (mounted.current) {
     if (!ok) {
       setPrefs((p) => ({ ...p, [key]: prev }));
       toast.error(message || t('errors_saveGeneric'));
-      console.warn("notification_prefs save error:", message);
+      console.warn('notification_prefs save error:', message);
     }
   };
 
@@ -504,78 +573,95 @@ if (mounted.current) {
   };
 
   // --- UI sections (structure without hardcoded texts; titles/labels come from i18n) ---
-  const sectionBase = useMemo(() => [
-    {
-      key: "appearance",
-      items: [
-        { key: "theme",       type: "select", onPress: () => setThemeOpen(true) },
-        { key: "language",    type: "select", value: _curLangLabel, onPress: () => setLangOpen(true) },
-        { key: "bold-text",   switch: true,   disabled: true, onValueChange: futureFeature },
-      ],
-    },
-    {
-      key: "notifications",
-      items: [
-        { key: "allow",   switch: true, onValueChange: onToggleAllow },
-        { key: "sounds",  type: "select", disabled: true, onPress: futureFeature },
-        { key: "events",  type: "select", onPress: () => setEventsOpen(true) },
-      ],
-    },
-    {
-      key: "quiet",
-      items: [
-        { key: "quiet_start", type: "select", onPress: openTimePicker("start") },
-        { key: "quiet_end",   type: "select", onPress: openTimePicker("end") },
-        { key: "quiet_reset", type: "select", onPress: onResetQuietTimes },
-      ],
-    },
-    {
-      key: "privacy",
-      items: [
-        { key: "geo",            type: "select", disabled: true, onPress: futureFeature },
-        { key: "analytics",      type: "select", disabled: true, onPress: futureFeature },
-        { key: "private-search", switch: true,   disabled: true, onValueChange: futureFeature },
-      ],
-    },
-    {
-      key: "ai",
-      items: [
-        { key: "suggestions", type: "select", disabled: true, onPress: futureFeature },
-        { key: "avatars",     switch: true,   disabled: true, onValueChange: futureFeature },
-      ],
-    },
-  ].map((sec) => ({
-    ...sec,
-    title: t(`settings_sections_${sec.key}_title`),
-    items: sec.items.map((it) => ({
-      ...it,
-      label: t(`settings_sections_${sec.key}_items_${it.key}`, it.label),
-    })),
-  })), [_curLocale, theme, canCreateOrders, ver]);
+  const sectionBase = useMemo(
+    () =>
+      [
+        {
+          key: 'appearance',
+          items: [
+            { key: 'theme', type: 'select', onPress: () => setThemeOpen(true) },
+            {
+              key: 'language',
+              type: 'select',
+              value: _curLangLabel,
+              onPress: () => setLangOpen(true),
+            },
+            { key: 'bold-text', switch: true, disabled: true, onValueChange: futureFeature },
+          ],
+        },
+        {
+          key: 'notifications',
+          items: [
+            { key: 'allow', switch: true, onValueChange: onToggleAllow },
+            { key: 'sounds', type: 'select', disabled: true, onPress: futureFeature },
+            { key: 'events', type: 'select', onPress: () => setEventsOpen(true) },
+          ],
+        },
+        {
+          key: 'quiet',
+          items: [
+            { key: 'quiet_start', type: 'select', onPress: openTimePicker('start') },
+            { key: 'quiet_end', type: 'select', onPress: openTimePicker('end') },
+            { key: 'quiet_reset', type: 'select', onPress: onResetQuietTimes },
+          ],
+        },
+        {
+          key: 'privacy',
+          items: [
+            { key: 'geo', type: 'select', disabled: true, onPress: futureFeature },
+            { key: 'analytics', type: 'select', disabled: true, onPress: futureFeature },
+            { key: 'private-search', switch: true, disabled: true, onValueChange: futureFeature },
+          ],
+        },
+        {
+          key: 'ai',
+          items: [
+            { key: 'suggestions', type: 'select', disabled: true, onPress: futureFeature },
+            { key: 'avatars', switch: true, disabled: true, onValueChange: futureFeature },
+          ],
+        },
+      ].map((sec) => ({
+        ...sec,
+        title: t(`settings_sections_${sec.key}_title`),
+        items: sec.items.map((it) => ({
+          ...it,
+          label: t(`settings_sections_${sec.key}_items_${it.key}`, it.label),
+        })),
+      })),
+    [_curLocale, theme, canCreateOrders, ver],
+  );
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
-  const sections = useMemo(() => sectionBase.map((sec) => ({
-    ...sec,
-    items: sec.items.map((it) => {
-      if (sec.key === "notifications" && it.key === "allow") {
-        return { ...it, value: !!prefs.allow, disabled: !!loadingPrefs };
-      }
-      if (sec.key === "quiet" && it.key === "quiet_start") {
-        return { ...it, value: (toTimeStr(prefs.quiet_start) || t('common_off')) };
-      }
-      if (sec.key === "quiet" && it.key === "quiet_end") {
-        return { ...it, value: (toTimeStr(prefs.quiet_end) || t('common_off')) };
-      }
-      if (sec.key === "appearance" && it.key === "language") {
-        return { ...it, value: _curLangLabel };
-      }
-      return it;
-    })
-  })), [sectionBase, prefs, loadingPrefs, _curLangLabel]);
+  const sections = useMemo(
+    () =>
+      sectionBase.map((sec) => ({
+        ...sec,
+        items: sec.items.map((it) => {
+          if (sec.key === 'notifications' && it.key === 'allow') {
+            return { ...it, value: !!prefs.allow, disabled: !!loadingPrefs };
+          }
+          if (sec.key === 'quiet' && it.key === 'quiet_start') {
+            return { ...it, value: toTimeStr(prefs.quiet_start) || t('common_off') };
+          }
+          if (sec.key === 'quiet' && it.key === 'quiet_end') {
+            return { ...it, value: toTimeStr(prefs.quiet_end) || t('common_off') };
+          }
+          if (sec.key === 'appearance' && it.key === 'language') {
+            return { ...it, value: _curLangLabel };
+          }
+          return it;
+        }),
+      })),
+    [sectionBase, prefs, loadingPrefs, _curLangLabel],
+  );
 
   return (
     <Screen>
-      <ScrollView contentContainerStyle={s.contentWrap} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={s.contentWrap}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {loadingPrefs && (
           <View style={{ paddingVertical: 8 }}>
             <ActivityIndicator />
@@ -611,7 +697,7 @@ if (mounted.current) {
                         accessibilityLabel={it.label}
                       />
                     )}
-                    {!last && (<View style={base.sep} />)}
+                    {!last && <View style={base.sep} />}
                   </React.Fragment>
                 );
               })}
@@ -637,11 +723,32 @@ if (mounted.current) {
         visible={eventsOpen}
         title={t('settings_events_title')}
         toggles={[
-          { id: "new_orders", label: t('settings_events_newOrders'), value: !!prefs.new_orders, onChange: onToggleEvent("new_orders") },
-          { id: "feed_orders", label: t('settings_events_feedOrders'), value: !!prefs.feed_orders, onChange: onToggleEvent("feed_orders") },
-          ...(canCreateOrders ? [{ id: "reminders", label: t('settings_events_reminders'), value: !!prefs.reminders, onChange: onToggleEvent("reminders") }] : [])
+          {
+            id: 'new_orders',
+            label: t('settings_events_newOrders'),
+            value: !!prefs.new_orders,
+            onChange: onToggleEvent('new_orders'),
+          },
+          {
+            id: 'feed_orders',
+            label: t('settings_events_feedOrders'),
+            value: !!prefs.feed_orders,
+            onChange: onToggleEvent('feed_orders'),
+          },
+          ...(canCreateOrders
+            ? [
+                {
+                  id: 'reminders',
+                  label: t('settings_events_reminders'),
+                  value: !!prefs.reminders,
+                  onChange: onToggleEvent('reminders'),
+                },
+              ]
+            : []),
         ]}
-        footer={<Button variant="secondary" title={t('btn_apply')} onPress={() => setEventsOpen(false)} />}
+        footer={
+          <Button variant="secondary" title={t('btn_apply')} onPress={() => setEventsOpen(false)} />
+        }
         onClose={() => setEventsOpen(false)}
       />
 
@@ -650,12 +757,15 @@ if (mounted.current) {
         visible={themeOpen}
         title={t('settings_theme_title')}
         options={[
-          { id: "light", label: t('settings_theme_light') },
-          { id: "dark",  label: t('settings_theme_dark') },
-          { id: "system", label: t('settings_theme_system') }
+          { id: 'light', label: t('settings_theme_light') },
+          { id: 'dark', label: t('settings_theme_dark') },
+          { id: 'system', label: t('settings_theme_system') },
         ]}
         selectedId={mode}
-        onSelect={(id) => { setMode(id); setThemeOpen(false); }}
+        onSelect={(id) => {
+          setMode(id);
+          setThemeOpen(false);
+        }}
         onClose={() => setThemeOpen(false)}
       />
 
@@ -663,12 +773,16 @@ if (mounted.current) {
       <SingleSelectModal
         visible={langOpen}
         title={t('settings_language_title')}
-        options={availableLocales.map(id => ({ id, label: t(`language_${id}`) }))}
+        options={availableLocales.map((id) => ({ id, label: t(`language_${id}`) }))}
         selectedId={_curLocale}
         onSelect={async (id) => {
           try {
             await setLocale(id);
-            try { await saveUserLocale(id); } catch (e) { console.warn('saveUserLocale:', e?.message || e); }
+            try {
+              await saveUserLocale(id);
+            } catch (e) {
+              console.warn('saveUserLocale:', e?.message || e);
+            }
             toast.info(t('lang_changed') ?? 'Language changed');
           } finally {
             setLangOpen(false);
@@ -680,7 +794,8 @@ if (mounted.current) {
   );
 }
 
-const styles = (t) => StyleSheet.create({
-  contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
-  sectionWrap: { marginBottom: 0 },
-});
+const styles = (t) =>
+  StyleSheet.create({
+    contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
+    sectionWrap: { marginBottom: 0 },
+  });

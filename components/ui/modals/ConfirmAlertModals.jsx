@@ -1,10 +1,9 @@
-
 // components/ui/modals/ConfirmAlertModals.jsx
-import React from "react";
-import { View, Text, Pressable, Platform } from "react-native";
-import { useTheme } from "../../../theme";
-import UIButton from "../Button";
-import BaseModal from "./BaseModal";
+import React from 'react';
+import { View, Text, Pressable, Platform } from 'react-native';
+import { useTheme } from '../../../theme';
+import UIButton from '../Button';
+import BaseModal from './BaseModal';
 import { t as T } from '../../../src/i18n';
 
 export function ConfirmModal({
@@ -37,14 +36,22 @@ export function ConfirmModal({
           pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
         ]}
       >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{cancelLabel}</Text>
+        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>
+          {cancelLabel}
+        </Text>
       </Pressable>
       <UIButton
         variant={confirmVariant}
         size="md"
         onPress={() => {
-          try { onClose?.(); } finally {
-            setTimeout(() => { try { onConfirm?.(); } catch(_) {} }, 360);
+          try {
+            onClose?.();
+          } finally {
+            setTimeout(() => {
+              try {
+                onConfirm?.();
+              } catch (_) {}
+            }, 360);
           }
         }}
         title={loading ? confirmLabel : confirmLabel}
@@ -52,9 +59,17 @@ export function ConfirmModal({
     </View>
   );
   return (
-    <BaseModal visible={visible} onClose={onClose} title={title} maxHeightRatio={0.5} footer={footer}>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      maxHeightRatio={0.5}
+      footer={footer}
+    >
       <View style={{ marginBottom: theme.spacing.md }}>
-        <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>{message}</Text>
+        <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
+          {message}
+        </Text>
       </View>
     </BaseModal>
   );
@@ -68,9 +83,17 @@ export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'),
     </View>
   );
   return (
-    <BaseModal visible={visible} onClose={onClose} title={title} maxHeightRatio={0.45} footer={footer}>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      maxHeightRatio={0.45}
+      footer={footer}
+    >
       <View style={{ marginBottom: theme.spacing.md }}>
-        <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>{message}</Text>
+        <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
+          {message}
+        </Text>
       </View>
     </BaseModal>
   );

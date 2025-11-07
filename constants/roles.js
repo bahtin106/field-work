@@ -5,13 +5,17 @@ export const ROLE = Object.freeze({
   WORKER: 'worker',
 });
 
-export const EDITABLE_ROLES = (process.env.EXPO_PUBLIC_EDITABLE_ROLES || `${ROLE.DISPATCHER},${ROLE.WORKER}`)
-  .split(',').map(s => s.trim()).filter(Boolean);
+export const EDITABLE_ROLES = (
+  process.env.EXPO_PUBLIC_EDITABLE_ROLES || `${ROLE.DISPATCHER},${ROLE.WORKER}`
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 import { t as T } from '../src/i18n';
 
 export const ROLE_LABELS = {
   [ROLE.DISPATCHER]: T('role_dispatcher'),
-  [ROLE.WORKER]:     T('role_worker'),
-  [ROLE.ADMIN]:      T('role_admin'),
+  [ROLE.WORKER]: T('role_worker'),
+  [ROLE.ADMIN]: T('role_admin'),
 };

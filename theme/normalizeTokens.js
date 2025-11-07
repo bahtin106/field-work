@@ -3,7 +3,7 @@ import { Appearance } from 'react-native';
 import { tokens } from './tokens';
 
 export function buildTheme(mode) {
-  const effective = mode === 'system' ? (Appearance.getColorScheme?.() || 'light') : mode;
+  const effective = mode === 'system' ? Appearance.getColorScheme?.() || 'light' : mode;
   const base = effective === 'dark' ? tokens.dark : tokens.light;
 
   const colors = {
@@ -26,29 +26,34 @@ export function buildTheme(mode) {
     danger: base.colors.danger,
     worker: base.colors.worker ?? '#5856D6',
     bg: base.colors.background ?? base.colors.bg,
-    card: (base.colors.card ?? base.colors.surface) ?? '#FFFFFF',
+    card: base.colors.card ?? base.colors.surface ?? '#FFFFFF',
     accent: base.colors.primary ?? base.colors.accent,
     accentTextOn: base.colors.onPrimary ?? base.colors.primaryTextOn,
     navigationBarBg: base.colors.navigationBarBg ?? base.colors.navbar ?? base.colors.surface,
     navbar: base.colors.navbar ?? base.colors.navigationBarBg ?? base.colors.surface,
-    ripple: base.colors.ripple ?? (effective === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
+    ripple:
+      base.colors.ripple ?? (effective === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
     button: {
-      primaryBg: base.colors.button?.primaryBg ?? (base.colors.primary ?? '#007AFF'),
-      primaryText: base.colors.button?.primaryText ?? (base.colors.onPrimary ?? '#FFFFFF'),
-      secondaryBg: base.colors.button?.secondaryBg ?? (effective === 'dark' ? '#3A4254' : '#EEF1F6'),
-      secondaryText: base.colors.button?.secondaryText ?? (base.colors.text ?? '#0A0A0A'),
+      primaryBg: base.colors.button?.primaryBg ?? base.colors.primary ?? '#007AFF',
+      primaryText: base.colors.button?.primaryText ?? base.colors.onPrimary ?? '#FFFFFF',
+      secondaryBg:
+        base.colors.button?.secondaryBg ?? (effective === 'dark' ? '#3A4254' : '#EEF1F6'),
+      secondaryText: base.colors.button?.secondaryText ?? base.colors.text ?? '#0A0A0A',
       dangerBg: base.colors.button?.dangerBg ?? (effective === 'dark' ? '#FF453A' : '#FF3B30'),
       dangerText: base.colors.button?.dangerText ?? '#FFFFFF',
     },
   };
 
   const normalizedShadows = {
-    card:
-      base.shadows?.card ??
-      {
-        ios: { shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
-        android: { elevation: 2 },
+    card: base.shadows?.card ?? {
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.08,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
       },
+      android: { elevation: 2 },
+    },
     level1: base.shadows?.card ?? {},
     level2: base.shadows?.raised ?? {},
     ...(base.shadows || {}),
@@ -93,15 +98,15 @@ export function buildTheme(mode) {
 
   const components = {
     card: {
-      borderWidth: (base.components?.card?.borderWidth ?? 1),
-      padX: (base.components?.card?.padX ?? 'lg'),
-      padY: (base.components?.card?.padY ?? 'lg'),
+      borderWidth: base.components?.card?.borderWidth ?? 1,
+      padX: base.components?.card?.padX ?? 'lg',
+      padY: base.components?.card?.padY ?? 'lg',
     },
     listItem: {
-      height: (base.components?.listItem?.height ?? 48),
-      dividerWidth: (base.components?.listItem?.dividerWidth ?? 1),
-      disabledOpacity: (base.components?.listItem?.disabledOpacity ?? 0.5),
-      chevronSize: (base.components?.listItem?.chevronSize ?? 20),
+      height: base.components?.listItem?.height ?? 48,
+      dividerWidth: base.components?.listItem?.dividerWidth ?? 1,
+      disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
+      chevronSize: base.components?.listItem?.chevronSize ?? 20,
     },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
@@ -109,7 +114,7 @@ export function buildTheme(mode) {
       ml: base.components?.sectionTitle?.ml ?? 'sm', // spacing key
     },
     row: {
-      minHeight: base.components?.row?.minHeight ?? (base.components?.listItem?.height ?? 48),
+      minHeight: base.components?.row?.minHeight ?? base.components?.listItem?.height ?? 48,
       py: base.components?.row?.py ?? null, // optional vertical padding (we set fixed height in screen)
       gapX: base.components?.row?.gapX ?? 'sm', // spacing key
     },
@@ -119,29 +124,29 @@ export function buildTheme(mode) {
       md: base.components?.avatar?.md ?? 48,
       border: base.components?.avatar?.border ?? 1,
     },
-  
-iconButton: { size: (base.components?.iconButton?.size ?? 32) },
-input: { 
-  trailingSlotWidth: (base.components?.input?.trailingSlotWidth ?? undefined),
-  trailingGap: (base.components?.input?.trailingGap ?? 8),
-},
-toast: { anchorOffset: (base.components?.toast?.anchorOffset ?? 120) },
-scrollView: { paddingBottom: (base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24) },
-};
+
+    iconButton: { size: base.components?.iconButton?.size ?? 32 },
+    input: {
+      trailingSlotWidth: base.components?.input?.trailingSlotWidth ?? undefined,
+      trailingGap: base.components?.input?.trailingGap ?? 8,
+    },
+    toast: { anchorOffset: base.components?.toast?.anchorOffset ?? 120 },
+    scrollView: {
+      paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
+    },
+  };
 
   // Pass-through shared media config (used by ImagePicker, etc.)
   const media = {
-    aspect: (base.components?.media?.aspect ?? [1, 1]),
-    quality: (base.components?.media?.quality ?? 0.85),
+    aspect: base.components?.media?.aspect ?? [1, 1],
+    quality: base.components?.media?.quality ?? 0.85,
   };
 
-
-  
-const timings = {
-  requestTimeoutMs: (base.timings?.requestTimeoutMs ?? 12000),
-  backDelayMs: (base.timings?.backDelayMs ?? 300),
-};
-return {
+  const timings = {
+    requestTimeoutMs: base.timings?.requestTimeoutMs ?? 12000,
+    backDelayMs: base.timings?.backDelayMs ?? 300,
+  };
+  return {
     mode: effective,
     colors,
     shadows: normalizedShadows,

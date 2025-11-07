@@ -1,11 +1,10 @@
-
 // components/ui/modals/SelectModal.jsx
-import React, { useMemo, useState } from "react";
-import { View, Text, Pressable, FlatList, Platform, StyleSheet } from "react-native";
-import { Feather } from "@expo/vector-icons";
-import { useTheme } from "../../../theme";
-import BaseModal from "./BaseModal";
-import TextField from "../TextField";
+import React, { useMemo, useState } from 'react';
+import { View, Text, Pressable, FlatList, Platform, StyleSheet } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import { useTheme } from '../../../theme';
+import BaseModal from './BaseModal';
+import TextField from '../TextField';
 import { t as T } from '../../../src/i18n';
 
 export default function SelectModal({
@@ -17,22 +16,28 @@ export default function SelectModal({
   searchable = true,
   renderItem,
   footer,
-  initialSearch = "",
+  initialSearch = '',
   maxHeightRatio = 0.75,
 }) {
   const { theme } = useTheme();
   const s = useMemo(() => styles(theme), [theme]);
 
   const [query, setQuery] = useState(initialSearch);
-  React.useEffect(() => { if (!visible) setQuery(initialSearch || ""); }, [visible, initialSearch]);
+  React.useEffect(() => {
+    if (!visible) setQuery(initialSearch || '');
+  }, [visible, initialSearch]);
 
   const data = useMemo(() => {
     if (!query.trim()) return items;
     const q = query.trim().toLowerCase();
     return items.filter(
       (it) =>
-        String(it.label || "").toLowerCase().includes(q) ||
-        String(it.subtitle || "").toLowerCase().includes(q)
+        String(it.label || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(it.subtitle || '')
+          .toLowerCase()
+          .includes(q),
     );
   }, [items, query]);
 
@@ -46,13 +51,15 @@ export default function SelectModal({
         style={({ pressed }) => [
           s.item,
           { opacity: disabled ? 0.5 : 1 },
-          pressed && Platform.OS === "ios" ? { backgroundColor: theme.colors.ripple } : null,
+          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
         ]}
       >
         <View style={s.itemLeft}>
           {item.icon ? <View style={{ marginRight: theme.spacing.sm }}>{item.icon}</View> : null}
           <View style={{ flex: 1 }}>
-            <Text numberOfLines={1} style={[s.itemTitle, { color: theme.colors.text }]}>{item.label}</Text>
+            <Text numberOfLines={1} style={[s.itemTitle, { color: theme.colors.text }]}>
+              {item.label}
+            </Text>
             {item.subtitle ? (
               <Text numberOfLines={1} style={[s.itemSub, { color: theme.colors.textSecondary }]}>
                 {item.subtitle}
@@ -61,7 +68,11 @@ export default function SelectModal({
           </View>
         </View>
         <View style={s.itemRight}>
-          {item.right ? item.right : <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />}
+          {item.right ? (
+            item.right
+          ) : (
+            <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+          )}
         </View>
       </Pressable>
     );
@@ -91,7 +102,7 @@ export default function SelectModal({
         keyboardShouldPersistTaps="handled"
       />
 
-      {footer ? (<View style={{ marginTop: theme.spacing.sm }}>{footer}</View>) : null}
+      {footer ? <View style={{ marginTop: theme.spacing.sm }}>{footer}</View> : null}
     </BaseModal>
   );
 }
@@ -102,16 +113,16 @@ const styles = (t) =>
       minHeight: 52,
       paddingHorizontal: t.spacing.lg,
       paddingVertical: 10,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.surface,
       borderRadius: 12,
     },
-    itemLeft: { flexDirection: "row", alignItems: "center", flex: 1, paddingRight: 8 },
-    itemTitle: { fontSize: t.typography.sizes.md, fontWeight: "600" },
+    itemLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 8 },
+    itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
-    itemRight: { marginLeft: 8, alignSelf: "center" },
+    itemRight: { marginLeft: 8, alignSelf: 'center' },
   });

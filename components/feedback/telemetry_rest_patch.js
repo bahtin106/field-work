@@ -6,15 +6,17 @@ export async function __telemetryRestInsert({ url, anonKey, table, row }) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'apikey': anonKey,
-      'Authorization': `Bearer ${anonKey}`,
-      'Prefer': 'return=representation',
+      apikey: anonKey,
+      Authorization: `Bearer ${anonKey}`,
+      Prefer: 'return=representation',
     },
     body: JSON.stringify(row || {}),
   });
   const ok = res.ok;
   let body = null;
-  try { body = await res.json(); } catch {}
+  try {
+    body = await res.json();
+  } catch {}
   if (!ok) {
     const msg = `[telemetry] REST insert failed: status=${res.status} body=${JSON.stringify(body)}`;
     globalThis?.console?.error?.(msg);

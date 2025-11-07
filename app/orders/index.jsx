@@ -2,7 +2,16 @@
 import React from 'react';
 import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { View, Text, StyleSheet, Animated, Easing, Platform, ActivityIndicator, BackHandler } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Animated,
+  Easing,
+  Platform,
+  ActivityIndicator,
+  BackHandler,
+} from 'react-native';
 import { ToastAndroid } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import UniversalHome from '../../components/universalhome';
@@ -22,38 +31,50 @@ function PremiumLoader({ text = 'Подготавливаем рабочее п�
 
   React.useEffect(() => {
     const seq = Animated.stagger(160, [
-      Animated.loop(Animated.sequence([
-        Animated.timing(dot1, { toValue: 1, duration: 600, useNativeDriver: true }),
-        Animated.timing(dot1, { toValue: 0.4, duration: 600, useNativeDriver: true }),
-      ])),
-      Animated.loop(Animated.sequence([
-        Animated.timing(dot2, { toValue: 1, duration: 600, useNativeDriver: true }),
-        Animated.timing(dot2, { toValue: 0.4, duration: 600, useNativeDriver: true }),
-      ])),
-      Animated.loop(Animated.sequence([
-        Animated.timing(dot3, { toValue: 1, duration: 600, useNativeDriver: true }),
-        Animated.timing(dot3, { toValue: 0.4, duration: 600, useNativeDriver: true }),
-      ])),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(dot1, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(dot1, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        ]),
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(dot2, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(dot2, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        ]),
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(dot3, { toValue: 1, duration: 600, useNativeDriver: true }),
+          Animated.timing(dot3, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        ]),
+      ),
     ]);
     seq.start();
-    return () => { dot1.stopAnimation(); dot2.stopAnimation(); dot3.stopAnimation(); };
+    return () => {
+      dot1.stopAnimation();
+      dot2.stopAnimation();
+      dot3.stopAnimation();
+    };
   }, [dot1, dot2, dot3]);
 
   // На главной аппаратная кнопка "назад" ничего не делает
   useFocusEffect(
-  React.useCallback(() => {
-    const onBack = () => true;
-    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => sub.remove();
-  }, [])
-);
+    React.useCallback(() => {
+      const onBack = () => true;
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, []),
+  );
 
   // На главной «назад» ничего не делает (Android)
-  useFocusEffect(React.useCallback(() => {
-    const onBack = () => true;
-    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-    return () => sub.remove();
-  }, []));
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBack = () => true;
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, []),
+  );
 
   return (
     <View style={styles.loaderRoot} pointerEvents="none">
@@ -68,8 +89,6 @@ function PremiumLoader({ text = 'Подготавливаем рабочее п�
     </View>
   );
 }
-
-
 
 // --- Shared helpers to resolve permission "canViewAllOrders" ---
 function toBool(v) {
@@ -145,50 +164,85 @@ export default function IndexScreen() {
     return () => unsub && unsub();
   }, [qc]);
 
+  // Гарантированно прячем Expo Splash при заходе на экран (после логина)
+  useFocusEffect(
+    React.useCallback(() => {
+      let done = false;
+      (async () => {
+        try {
+          await SplashScreen.hideAsync();
+        } catch {}
+        // страховка: повторно через тик
+        setTimeout(() => {
+          if (!done) {
+            try {
+              SplashScreen.hideAsync();
+            } catch {}
+          }
+        }, 120);
+      })();
+      return () => {
+        done = true;
+      };
+    }, []),
+  );
 
-// Гарантированно прячем Expo Splash при заходе на экран (после логина)
-useFocusEffect(React.useCallback(() => {
-  let done = false;
-  (async () => {
-    try { await SplashScreen.hideAsync(); } catch {}
-    // страховка: повторно через тик
-    setTimeout(() => { if (!done) { try { SplashScreen.hideAsync(); } catch {} } }, 120);
-  })();
-  return () => { done = true; };
-}, []));
-
-
-  
-   // Управление единым оверлеем загрузки
-const initialSplash = React.useRef(!_GLOBAL_BOOT_FLAG.value).current;
+  // Управление единым оверлеем загрузки
+  const initialSplash = React.useRef(!_GLOBAL_BOOT_FLAG.value).current;
   const [splashVisible, setSplashVisible] = React.useState(initialSplash);
   const splashStart = React.useRef(Date.now());
-  const MIN_SPLASH_MS = 600;     // минимум 600мс, чтобы анимация выглядела «дорогой»
+  const MIN_SPLASH_MS = 600; // минимум 600мс, чтобы анимация выглядела «дорогой»
   const NET_IDLE_GRACE_MS = 280; // небольшой «люфт» после окончания запросов
 
-  
-React.useEffect(() => {
-  // После первого успешного показа не держим сплэш на последующих заходах
-  if (!initialSplash) { if (splashVisible) setSplashVisible(false); return; }
-  let t1 = null;
-  if (isFetching === 0) {
-    const elapsed = Date.now() - splashStart.current;
-    const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
-    t1 = setTimeout(() => { setSplashVisible(false); _GLOBAL_BOOT_FLAG.value = true; }, Math.max(waitMin, NET_IDLE_GRACE_MS));
-  } else {
-    setSplashVisible(true);
-  }
-  return () => { if (t1) clearTimeout(t1); };
-}, [isFetching, splashVisible, initialSplash]);
+  React.useEffect(() => {
+    // После первого успешного показа не держим сплэш на последующих заходах
+    if (!initialSplash) {
+      if (splashVisible) setSplashVisible(false);
+      return;
+    }
+    let t1 = null;
+    if (isFetching === 0) {
+      const elapsed = Date.now() - splashStart.current;
+      const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
+      t1 = setTimeout(
+        () => {
+          setSplashVisible(false);
+          _GLOBAL_BOOT_FLAG.value = true;
+        },
+        Math.max(waitMin, NET_IDLE_GRACE_MS),
+      );
+    } else {
+      setSplashVisible(true);
+    }
+    return () => {
+      if (t1) clearTimeout(t1);
+    };
+  }, [isFetching, splashVisible, initialSplash]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background }} onLayout={() => { try { SplashScreen.hideAsync(); } catch(e) {} }}>
+    <View
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      onLayout={() => {
+        try {
+          SplashScreen.hideAsync();
+        } catch (e) {}
+      }}
+    >
       {/* Рендерим контент только когда роль валидна, но под оверлеем */}
       <UniversalHome role={role} />
 
       {/* Единый «премиум» оверлей загрузки */}
       {splashVisible && (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: theme.colors.background, justifyContent: 'center', alignItems: 'center' }]}>
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              backgroundColor: theme.colors.background,
+              justifyContent: 'center',
+              alignItems: 'center',
+            },
+          ]}
+        >
           <PremiumLoader />
         </View>
       )}
@@ -208,7 +262,9 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: '#00000020',
     borderTopColor: '#00000070',
-    ...(Platform.OS === 'ios' ? { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6 } : { elevation: 2 }),
+    ...(Platform.OS === 'ios'
+      ? { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6 }
+      : { elevation: 2 }),
   },
   loaderTextRow: {
     flexDirection: 'row',

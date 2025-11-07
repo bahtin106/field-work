@@ -1,12 +1,27 @@
-
 // components/ui/modals/BaseModal.jsx
-import React, { useMemo, useRef, useState, useImperativeHandle, useEffect } from "react";
-import { View, Text, Modal, Pressable, StyleSheet, Dimensions, PanResponder, Platform, Keyboard } from "react-native";
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, Easing } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import React, { useMemo, useRef, useState, useImperativeHandle, useEffect } from 'react';
+import {
+  View,
+  Text,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Dimensions,
+  PanResponder,
+  Platform,
+  Keyboard,
+} from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  Easing,
+} from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // NavigationBar: dynamically imported on Android to avoid Expo Go iOS native-module error
-import { Feather } from "@expo/vector-icons";
-import { useTheme } from "../../../theme";
+import { Feather } from '@expo/vector-icons';
+import { useTheme } from '../../../theme';
 import { t as T } from '../../../src/i18n';
 
 export function withAlpha(color, a) {
@@ -51,17 +66,20 @@ const baseSheetStyles = (t) =>
     closeBtn: { position: 'absolute', right: 8, top: 6, padding: 8, borderRadius: 16 },
   });
 
-const BaseModalImpl = ({
-  visible,
-  onClose,
-  title = '',
-  children,
-  footer = null,
-  maxHeightRatio = 0.6,
-  showHandle = true,
-  disableBackdropClose = false,
-  disablePanClose = false,
-}, ref) => {
+const BaseModalImpl = (
+  {
+    visible,
+    onClose,
+    title = '',
+    children,
+    footer = null,
+    maxHeightRatio = 0.6,
+    showHandle = true,
+    disableBackdropClose = false,
+    disablePanClose = false,
+  },
+  ref,
+) => {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => baseSheetStyles(theme), [theme]);
@@ -74,7 +92,10 @@ const BaseModalImpl = ({
   const [kbTop, setKbTop] = useState(Dimensions.get('window').height);
 
   useEffect(() => {
-    if (!rnVisible) { setKbInset(0); return; }
+    if (!rnVisible) {
+      setKbInset(0);
+      return;
+    }
     const showE = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidShow';
     const hideE = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const subShow = Keyboard.addListener(showE, (e) => {
@@ -85,7 +106,7 @@ const BaseModalImpl = ({
         let top = screenH;
         if (isIOS) {
           const endY = e.endCoordinates?.screenY ?? screenH;
-          h = Math.max(0, endY < screenH ? (screenH - endY) : 0);
+          h = Math.max(0, endY < screenH ? screenH - endY : 0);
           top = endY;
         } else {
           h = Math.max(0, e.endCoordinates?.height ?? 0);
@@ -93,10 +114,18 @@ const BaseModalImpl = ({
         }
         setKbInset(h);
         setKbTop(top);
-      } catch(_) {}
+      } catch (_) {}
     });
-    const subHide = Keyboard.addListener(hideE, () => { setKbInset(0); setKbTop(Dimensions.get('window').height); });
-    return () => { try { subShow?.remove?.(); subHide?.remove?.(); } catch(_) {} };
+    const subHide = Keyboard.addListener(hideE, () => {
+      setKbInset(0);
+      setKbTop(Dimensions.get('window').height);
+    });
+    return () => {
+      try {
+        subShow?.remove?.();
+        subHide?.remove?.();
+      } catch (_) {}
+    };
   }, [rnVisible]);
 
   const screenH = Dimensions.get('window').height;
@@ -105,21 +134,20 @@ const BaseModalImpl = ({
   // Only push modal if keyboard overlaps the card's bottom edge.
   const baseBottomPad = theme.spacing.md + (insets?.bottom || 0);
 
-// Clamp to prevent the modal from moving beyond the top safe area.
-const minTopGap = Math.max(12, theme.spacing.sm);
-const maxExtraBottom = Math.max(
-  0,
-  screenH - sheetMaxH - (insets.top + minTopGap) - baseBottomPad
-);
+  // Clamp to prevent the modal from moving beyond the top safe area.
+  const minTopGap = Math.max(12, theme.spacing.sm);
+  const maxExtraBottom = Math.max(
+    0,
+    screenH - sheetMaxH - (insets.top + minTopGap) - baseBottomPad,
+  );
 
-const extraBottom = useMemo(() => {
-  // Baseline bottom edge without extra padding
-  const cardBottom = screenH - baseBottomPad;
-  const overlap = Math.max(0, cardBottom - kbTop);
-  const need = overlap > 0 ? (overlap + 8) : 0;
-  return Math.min(need, maxExtraBottom);
-}, [kbTop, screenH, baseBottomPad, maxExtraBottom]);
-
+  const extraBottom = useMemo(() => {
+    // Baseline bottom edge without extra padding
+    const cardBottom = screenH - baseBottomPad;
+    const overlap = Math.max(0, cardBottom - kbTop);
+    const need = overlap > 0 ? overlap + 8 : 0;
+    return Math.min(need, maxExtraBottom);
+  }, [kbTop, screenH, baseBottomPad, maxExtraBottom]);
 
   const op = useSharedValue(0);
   const ty = useSharedValue(24);
@@ -137,22 +165,28 @@ const extraBottom = useMemo(() => {
     op.value = withTiming(0, { duration: 220, easing: Easing.in(Easing.cubic) });
     setTimeout(() => {
       setRnVisible(false);
-      try { onClose?.(); } catch(_){}
+      try {
+        onClose?.();
+      } catch (_) {}
     }, 250);
   };
   useImperativeHandle(ref, () => ({ close }));
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
-  const aCard = useAnimatedStyle(() => ({ transform: [{ translateY: ty.value }, { scale: sc.value }] }));
-
+  const aCard = useAnimatedStyle(() => ({
+    transform: [{ translateY: ty.value }, { scale: sc.value }],
+  }));
 
   const dragY = useRef(0);
   const pan = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => !disablePanClose,
-      onMoveShouldSetPanResponder: (_e, g) => !disablePanClose && Math.abs(g.dy) > Math.abs(g.dx) && Math.abs(g.dy) > 2,
+      onMoveShouldSetPanResponder: (_e, g) =>
+        !disablePanClose && Math.abs(g.dy) > Math.abs(g.dx) && Math.abs(g.dy) > 2,
       onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => { dragY.current = 0; },
+      onPanResponderGrant: () => {
+        dragY.current = 0;
+      },
       onPanResponderMove: (_e, g) => {
         if (disablePanClose) return;
         const dy = Math.max(0, g.dy);
@@ -165,12 +199,15 @@ const extraBottom = useMemo(() => {
         if (shouldClose) close();
         else ty.value = withSpring(0, { damping: 22, stiffness: 420, mass: 0.6 });
       },
-    })
+    }),
   ).current;
 
   useEffect(() => {
     if (visible) {
-      op.value = 0; ty.value = 24; sc.value = 1; open();
+      op.value = 0;
+      ty.value = 24;
+      sc.value = 1;
+      open();
     } else if (rnVisible) {
       close();
     }
@@ -207,24 +244,44 @@ const extraBottom = useMemo(() => {
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={close}
-      onDismiss={() => { setRnVisible(false); try { onClose?.(); } catch(_){} }}
+      onDismiss={() => {
+        setRnVisible(false);
+        try {
+          onClose?.();
+        } catch (_) {}
+      }}
     >
       {/* Backdrop */}
       <Pressable
         style={s.backdrop}
-        onPress={() => { if (!disableBackdropClose) close(); }}
-        pointerEvents={rnVisible ? "auto" : "none"}
+        onPress={() => {
+          if (!disableBackdropClose) close();
+        }}
+        pointerEvents={rnVisible ? 'auto' : 'none'}
       >
-        <Animated.View style={[StyleSheet.absoluteFill, aBackdrop, { backgroundColor: overlayColor }]} />
+        <Animated.View
+          style={[StyleSheet.absoluteFill, aBackdrop, { backgroundColor: overlayColor }]}
+        />
       </Pressable>
 
       {/* Bottom container */}
-      <View style={[s.bottomWrap, { paddingHorizontal: theme.spacing.md, paddingBottom: (baseBottomPad + extraBottom) }]} pointerEvents="box-none">
+      <View
+        style={[
+          s.bottomWrap,
+          { paddingHorizontal: theme.spacing.md, paddingBottom: baseBottomPad + extraBottom },
+        ]}
+        pointerEvents="box-none"
+      >
         <Animated.View
           style={[
             s.cardWrap,
             aCard,
-            { alignSelf: 'stretch', maxHeight: sheetMaxH, backgroundColor: theme.colors.surface, borderColor: theme.colors.border },
+            {
+              alignSelf: 'stretch',
+              maxHeight: sheetMaxH,
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+            },
           ]}
         >
           {/* Drag handle */}
@@ -236,8 +293,15 @@ const extraBottom = useMemo(() => {
 
           {/* Header */}
           <View style={s.header}>
-            <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>{title}</Text>
-            <Pressable hitSlop={10} onPress={close} style={s.closeBtn} accessibilityLabel={T('btn_close')}>
+            <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+              {title}
+            </Text>
+            <Pressable
+              hitSlop={10}
+              onPress={close}
+              style={s.closeBtn}
+              accessibilityLabel={T('btn_close')}
+            >
               <Feather name="x" size={20} color={theme.colors.textSecondary} />
             </Pressable>
           </View>
@@ -247,7 +311,13 @@ const extraBottom = useMemo(() => {
 
           {/* Footer */}
           {footer ? (
-            <View style={{ paddingHorizontal: theme.spacing.lg, marginTop: theme.spacing.sm, marginBottom: theme.spacing.md }}>
+            <View
+              style={{
+                paddingHorizontal: theme.spacing.lg,
+                marginTop: theme.spacing.sm,
+                marginBottom: theme.spacing.md,
+              }}
+            >
               {footer}
             </View>
           ) : null}

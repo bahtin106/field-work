@@ -7,9 +7,17 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import TextField from '../../../components/ui/TextField';
-import {View, Text, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Switch} from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  Modal,
+  Switch,
+} from 'react-native';
 import { useColorScheme } from 'react-native';
-
 
 // If you have ThemeProvider — we use it. Otherwise, we fall back to system scheme.
 let useAppTheme;
@@ -30,7 +38,9 @@ try {
 
 const supabase = (typeof supabaseNamed !== 'undefined' && supabaseNamed) || supabaseDefault;
 if (!supabase) {
-  throw new Error('Supabase client import failed: check ../../../lib/supabase export (default or named).');
+  throw new Error(
+    'Supabase client import failed: check ../../../lib/supabase export (default or named).',
+  );
 }
 
 const TYPE_PRESETS = [
@@ -59,7 +69,6 @@ const CORE_KEYS = new Set([
   'address_street',
   'address_building',
 ]);
-
 
 function sanitizeKey(s) {
   return String(s || '')
@@ -137,11 +146,11 @@ export default function FormBuilderScreen() {
   }, [isAdmin, roleChecked, contextTab, companyId]);
 
   // ===== Phone visibility helpers (for field_key='phone') =====
-  const PHONE_ROLES = ['admin','dispatcher','worker'];
+  const PHONE_ROLES = ['admin', 'dispatcher', 'worker'];
   const PHONE_DEFAULTS = {
     admin: { mode: 'always', offset_minutes: 0 },
     dispatcher: { mode: 'always', offset_minutes: 0 },
-    worker: { mode: 'offset', offset_minutes: 24*60 },
+    worker: { mode: 'offset', offset_minutes: 24 * 60 },
   };
 
   async function loadPhoneVisibility() {
@@ -154,7 +163,7 @@ export default function FormBuilderScreen() {
         .eq('company_id', cid);
       if (error) throw error;
       const map = { ...PHONE_DEFAULTS };
-      (data || []).forEach(r => {
+      (data || []).forEach((r) => {
         map[r.role] = { mode: r.mode, offset_minutes: r.offset_minutes ?? 0 };
       });
       return map;
@@ -167,7 +176,7 @@ export default function FormBuilderScreen() {
     try {
       const cid = companyId;
       if (!cid) return { ok: false, msg: 'company_id пуст' };
-      const rows = PHONE_ROLES.map(role => ({
+      const rows = PHONE_ROLES.map((role) => ({
         company_id: cid,
         field_key: 'phone',
         role,
@@ -205,7 +214,10 @@ export default function FormBuilderScreen() {
       for (const a of attempts) {
         try {
           const { data: d, error: e } = await supabase.rpc('get_form_schema', a.payload);
-          if (!e && d) { data = d; break; }
+          if (!e && d) {
+            data = d;
+            break;
+          }
         } catch {}
       }
 
@@ -215,7 +227,7 @@ export default function FormBuilderScreen() {
         try {
           if (cid) {
             r = await supabase.from('app_form_fields').select('*').eq('company_id', cid);
-            if (r.error && /(column|does not exist|unknown)/i.test(String(r.error.message||''))) {
+            if (r.error && /(column|does not exist|unknown)/i.test(String(r.error.message || ''))) {
               r = await supabase.from('app_form_fields').select('*');
             }
           } else {
@@ -243,14 +255,14 @@ export default function FormBuilderScreen() {
           typeof f.order_index === 'number'
             ? f.order_index
             : typeof f.order === 'number'
-            ? f.order
-            : idx,
+              ? f.order
+              : idx,
         placeholder: f.placeholder || '',
         options: Array.isArray(f.options)
           ? f.options
           : typeof f.options === 'string'
-          ? safeParseArray(f.options)
-          : [],
+            ? safeParseArray(f.options)
+            : [],
         is_active: f.is_active ?? true,
       }));
       normalized.sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
@@ -465,7 +477,11 @@ export default function FormBuilderScreen() {
           .from('app_form_fields')
           .upsert(p, { onConflict: 'id' })
           .select();
-        if (!e) { data = d; lastErr = null; break; }
+        if (!e) {
+          data = d;
+          lastErr = null;
+          break;
+        }
         const msg = String(e.message || '');
         if (/(column|does not exist|unknown)/i.test(msg)) {
           lastErr = e;
@@ -485,12 +501,12 @@ export default function FormBuilderScreen() {
             (row.context || contextTab) +
             '|' +
             (row.company_id || cid || ''),
-          row
+          row,
         );
       setFields((prev) =>
         prev.map((f) => {
           const r = byKey.get(
-            f.key + '|' + (f.context || contextTab) + '|' + (f.company_id || cid || '')
+            f.key + '|' + (f.context || contextTab) + '|' + (f.company_id || cid || ''),
           );
           return r ? { ...f, id: r.id } : f;
         }),
@@ -506,7 +522,7 @@ export default function FormBuilderScreen() {
   // ===== UI =====
   if (!roleChecked) {
     return (
-      <Screen background="background" edges={['top','bottom']}>
+      <Screen background="background" edges={['top', 'bottom']}>
         <CenteredLoader colors={colors} text="Загрузка…" />
       </Screen>
     );
@@ -514,7 +530,7 @@ export default function FormBuilderScreen() {
 
   if (!isAdmin) {
     return (
-      <Screen background="background" edges={['top','bottom']}>
+      <Screen background="background" edges={['top', 'bottom']}>
         <HeaderLarge title="Конструктор формы" onBack={() => router.back()} colors={colors} />
         <CenteredLoader colors={colors} text="Только для администратора" />
       </Screen>
@@ -522,7 +538,7 @@ export default function FormBuilderScreen() {
   }
 
   return (
-    <Screen background="background" edges={['top','bottom']}>
+    <Screen background="background" edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
@@ -849,7 +865,9 @@ function ToggleChip({ label, value, onToggle, colors }) {
         opacity: pressed ? 0.86 : 1,
       })}
     >
-      <Text style={{ color: value ? colors.onPrimary : colors.text, fontSize: 12, fontWeight: '600' }}>
+      <Text
+        style={{ color: value ? colors.onPrimary : colors.text, fontSize: 12, fontWeight: '600' }}
+      >
         {label}
       </Text>
     </Button>
@@ -1097,7 +1115,9 @@ function RadioPill({ label, active, onPress, colors }) {
         opacity: pressed ? 0.86 : 1,
       })}
     >
-      <Text style={{ color: active ? colors.onPrimary : colors.text, fontWeight: '600' }}>{label}</Text>
+      <Text style={{ color: active ? colors.onPrimary : colors.text, fontWeight: '600' }}>
+        {label}
+      </Text>
     </Button>
   );
 }
@@ -1116,7 +1136,12 @@ function ConfirmModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
       <View
-        style={{ flex: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center' }}
+        style={{
+          flex: 1,
+          backgroundColor: colors.overlay,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
       >
         <View
           style={{
@@ -1171,7 +1196,9 @@ function SaveBar({ onSave, saving, colors }) {
         {saving ? (
           <ActivityIndicator color={colors.onPrimary} />
         ) : (
-          <Text style={{ color: colors.onPrimary, fontWeight: '800', fontSize: 16 }}>Сохранить изменения</Text>
+          <Text style={{ color: colors.onPrimary, fontWeight: '800', fontSize: 16 }}>
+            Сохранить изменения
+          </Text>
         )}
       </Button>
     </View>
@@ -1201,7 +1228,9 @@ function TypeSelector({ value, onChange, colors }) {
                 opacity: pressed ? 0.86 : 1,
               })}
             >
-              <Text style={{ color: active ? colors.onPrimary : colors.text, fontSize: 13 }}>{t}</Text>
+              <Text style={{ color: active ? colors.onPrimary : colors.text, fontSize: 13 }}>
+                {t}
+              </Text>
             </Button>
           );
         })}

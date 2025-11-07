@@ -1,13 +1,6 @@
 // components/universalhome.jsx
 import React, { useMemo, useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  Image,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../theme/ThemeProvider';
 import { supabase } from '../lib/supabase';
@@ -17,7 +10,12 @@ import Button from './ui/Button';
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-function isUuid(s){return typeof s==='string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);}
+function isUuid(s) {
+  return (
+    typeof s === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s)
+  );
+}
 
 // --- data fetchers ---
 async function fetchSession() {
@@ -138,7 +136,7 @@ export default function UniversalHome({ role }) {
 
   // ====== Счётчики ======
   const { data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
-    queryKey: ['counts','my', uid],
+    queryKey: ['counts', 'my', uid],
     queryFn: () => fetchCountsMy(uid),
     enabled: !!uid,
     staleTime: 30 * 1000,
@@ -147,7 +145,7 @@ export default function UniversalHome({ role }) {
   });
 
   const { data: allCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
-    queryKey: ['counts','all'],
+    queryKey: ['counts', 'all'],
     queryFn: fetchCountsAll,
     enabled: !!canViewAll,
     staleTime: 30 * 1000,
@@ -156,20 +154,22 @@ export default function UniversalHome({ role }) {
   });
 
   // ====== Навигация ======
-  const openSelfProfileEdit = () => { if (uid) router.push(`/users/${uid}`); };
+  const openSelfProfileEdit = () => {
+    if (uid) router.push(`/users/${uid}`);
+  };
   const openAppSettings = () => router.push('/app_settings/appsettings');
   const openCompanySettings = () => router.push('/company_settings');
   const openStats = () => router.push('/stats');
   const openCreateOrder = () => router.push('/orders/create-order');
   const handleLogout = async () => {
-  try {
-    await supabase.auth.signOut();
-    await qc.clear();
-    // Не вызываем router.replace — переход произойдёт автоматически через onAuthStateChange
-  } catch (e) {
-    console.warn('Logout error:', e);
-  }
-};
+    try {
+      await supabase.auth.signOut();
+      await qc.clear();
+      // Не вызываем router.replace — переход произойдёт автоматически через onAuthStateChange
+    } catch (e) {
+      console.warn('Logout error:', e);
+    }
+  };
 
   const openOrdersWithFilter = (key) => {
     if (scope === 'all' && canViewAll) {
@@ -180,18 +180,45 @@ export default function UniversalHome({ role }) {
     }
   };
 
-  const menuItems = useMemo(() => [
-    { key: 'app', title: 'Настройка приложения', icon: 'sliders', onPress: openAppSettings, visible: true },
-    { key: 'stats', title: 'Статистика', icon: 'bar-chart-2', onPress: openStats, visible: true },
-    { key: 'company', title: 'Настройки компании', icon: 'settings', onPress: openCompanySettings, visible: isAdmin },
-  ].filter(i => i.visible), [isAdmin]);
+  const menuItems = useMemo(
+    () =>
+      [
+        {
+          key: 'app',
+          title: 'Настройка приложения',
+          icon: 'sliders',
+          onPress: openAppSettings,
+          visible: true,
+        },
+        {
+          key: 'stats',
+          title: 'Статистика',
+          icon: 'bar-chart-2',
+          onPress: openStats,
+          visible: true,
+        },
+        {
+          key: 'company',
+          title: 'Настройки компании',
+          icon: 'settings',
+          onPress: openCompanySettings,
+          visible: isAdmin,
+        },
+      ].filter((i) => i.visible),
+    [isAdmin],
+  );
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const initials = useMemo(() => {
     const a = (firstName || '').trim().slice(0, 1);
     const b = (lastName || '').trim().slice(0, 1);
-    const fromFull = (fullName || '').trim().split(/\s+/).map(s => s.slice(0,1)).slice(0,2).join('');
+    const fromFull = (fullName || '')
+      .trim()
+      .split(/\s+/)
+      .map((s) => s.slice(0, 1))
+      .slice(0, 2)
+      .join('');
     return (a + b || fromFull || '•').toUpperCase();
   }, [firstName, lastName, fullName]);
 
@@ -218,14 +245,22 @@ export default function UniversalHome({ role }) {
 
           <View style={styles.profileInfo}>
             <Text style={styles.profileName} numberOfLines={1}>
-              {profileLoading ? '—' : (fullName || '—')}
+              {profileLoading ? '—' : fullName || '—'}
             </Text>
             <Text style={styles.profileRole} numberOfLines={1}>
-              {roleToShow === 'admin' ? 'Администратор' : roleToShow === 'dispatcher' ? 'Диспетчер' : 'Работник'}
+              {roleToShow === 'admin'
+                ? 'Администратор'
+                : roleToShow === 'dispatcher'
+                  ? 'Диспетчер'
+                  : 'Работник'}
             </Text>
           </View>
 
-          <FeatherIcon name="chevron-right" size={20} color={theme.colors.textSecondary || theme.colors.text} />
+          <FeatherIcon
+            name="chevron-right"
+            size={20}
+            color={theme.colors.textSecondary || theme.colors.text}
+          />
         </Pressable>
       </Card>
 
@@ -245,10 +280,19 @@ export default function UniversalHome({ role }) {
               accessibilityRole="button"
             >
               <View style={styles.menuContent}>
-                <FeatherIcon name={item.icon} size={20} color={theme.colors.text} style={styles.menuIcon} />
+                <FeatherIcon
+                  name={item.icon}
+                  size={20}
+                  color={theme.colors.text}
+                  style={styles.menuIcon}
+                />
                 <Text style={styles.menuLabel}>{item.title}</Text>
               </View>
-              <FeatherIcon name="chevron-right" size={20} color={theme.colors.textSecondary || theme.colors.text} />
+              <FeatherIcon
+                name="chevron-right"
+                size={20}
+                color={theme.colors.textSecondary || theme.colors.text}
+              />
             </Pressable>
           );
         })}
@@ -273,7 +317,11 @@ export default function UniversalHome({ role }) {
                 <FeatherIcon
                   name={s === 'my' ? 'user' : 'users'}
                   size={14}
-                  color={active ? (theme.colors.onPrimary || '#fff') : theme.colors.textSecondary || theme.colors.text}
+                  color={
+                    active
+                      ? theme.colors.onPrimary || '#fff'
+                      : theme.colors.textSecondary || theme.colors.text
+                  }
                   style={{ marginRight: 6 }}
                 />
                 <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
@@ -299,9 +347,7 @@ export default function UniversalHome({ role }) {
               style={({ pressed }) => [styles.summaryItem, pressed && styles.rowPressed]}
               accessibilityRole="button"
             >
-              <Text style={[styles.summaryNumber, { color: numberColor }]}>
-                {counts[key] ?? 0}
-              </Text>
+              <Text style={[styles.summaryNumber, { color: numberColor }]}>{counts[key] ?? 0}</Text>
               <Text style={styles.summaryLabel}>{labelMap[key]}</Text>
             </Pressable>
           );
@@ -341,32 +387,88 @@ const createStyles = (theme) =>
       paddingVertical: theme.spacing.md,
       justifyContent: 'space-between',
     },
-    avatarWrap: { width: 56, height: 56, borderRadius: 28, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.surface, marginRight: theme.spacing.md },
+    avatarWrap: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      marginRight: theme.spacing.md,
+    },
     avatarImg: { width: '100%', height: '100%' },
     avatarFallback: {
-      width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center',
-      backgroundColor: theme.colors.inputBg || theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, marginRight: theme.spacing.md,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.inputBg || theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      marginRight: theme.spacing.md,
     },
     avatarText: { fontSize: 18, fontWeight: '700', color: theme.colors.primary },
     profileInfo: { flex: 1, paddingRight: 8 },
-    profileName: { fontSize: theme.typography.sizes.lg, fontWeight: theme.typography.weight.semibold, color: theme.colors.text },
-    profileRole: { marginTop: 2, fontSize: theme.typography.sizes.sm, color: theme.colors.textSecondary || theme.colors.text },
+    profileName: {
+      fontSize: theme.typography.sizes.lg,
+      fontWeight: theme.typography.weight.semibold,
+      color: theme.colors.text,
+    },
+    profileRole: {
+      marginTop: 2,
+      fontSize: theme.typography.sizes.sm,
+      color: theme.colors.textSecondary || theme.colors.text,
+    },
     menuCard: {},
     menuRow: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: theme.spacing.lg, paddingVertical: theme.spacing.md, backgroundColor: theme.colors.surface,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: theme.spacing.lg,
+      paddingVertical: theme.spacing.md,
+      backgroundColor: theme.colors.surface,
     },
     menuRowBorder: { borderBottomWidth: 1, borderColor: theme.colors.border },
     menuContent: { flexDirection: 'row', alignItems: 'center' },
     menuIcon: { marginRight: theme.spacing.md },
     menuLabel: { fontSize: theme.typography.sizes.md, color: theme.colors.text },
-    scopeSwitch: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: theme.spacing.md },
-    scopePill: { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.onPrimary },
+    scopeSwitch: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: theme.spacing.md,
+    },
+    scopePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 6,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.onPrimary,
+    },
     scopePillActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
     scopeText: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
     scopeTextActive: { color: theme.colors.onPrimary || '#fff', fontWeight: '600' },
-    summaryContainer: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', marginBottom: theme.spacing.lg },
-    summaryItem: { flexBasis: '48%', backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: theme.radii.lg, paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.lg, marginBottom: theme.spacing.md },
+    summaryContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      marginBottom: theme.spacing.lg,
+    },
+    summaryItem: {
+      flexBasis: '48%',
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.lg,
+      paddingVertical: theme.spacing.md,
+      paddingHorizontal: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
+    },
     summaryNumber: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
     summaryLabel: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
     actionWrapper: { marginBottom: theme.spacing.md },

@@ -29,7 +29,9 @@ export default function WorkTypesSettings() {
 
   // Header
   React.useLayoutEffect(() => {
-    try { nav?.setParams?.({ title: 'Виды работ', headerTitle: 'Виды работ' }); } catch {}
+    try {
+      nav?.setParams?.({ title: 'Виды работ', headerTitle: 'Виды работ' });
+    } catch {}
   }, [nav]);
 
   // Initial load
@@ -62,7 +64,10 @@ export default function WorkTypesSettings() {
   const addType = async () => {
     if (!newName.trim()) return;
     try {
-      const t = await createWorkType(companyId, { name: newName.trim(), position: types.length + 1 });
+      const t = await createWorkType(companyId, {
+        name: newName.trim(),
+        position: types.length + 1,
+      });
       setTypes([...types, t]);
       setNewName('');
     } catch (e) {
@@ -73,7 +78,7 @@ export default function WorkTypesSettings() {
   const renameType = async (id, name) => {
     try {
       const t = await updateWorkType(id, { name });
-      setTypes(types.map(x => (x.id === id ? t : x)));
+      setTypes(types.map((x) => (x.id === id ? t : x)));
     } catch (e) {
       toast.error(e?.message || 'Не удалось переименовать');
     }
@@ -82,7 +87,7 @@ export default function WorkTypesSettings() {
   const removeType = async (id) => {
     try {
       await deleteWorkType(id);
-      setTypes(types.filter(x => x.id !== id));
+      setTypes(types.filter((x) => x.id !== id));
     } catch (e) {
       toast.error(e?.message || 'Не удалось удалить');
     }
@@ -98,9 +103,14 @@ export default function WorkTypesSettings() {
 
   return (
     <Screen>
-      <ScrollView style={{ flex: 1, backgroundColor: theme.colors.background }} contentContainerStyle={{ padding: 16 }}>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        contentContainerStyle={{ padding: 16 }}
+      >
         <Card>
-          <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}>
+          <Text
+            style={{ fontSize: 18, fontWeight: '600', marginBottom: 8, color: theme.colors.text }}
+          >
             Виды работ
           </Text>
 
@@ -115,10 +125,17 @@ export default function WorkTypesSettings() {
               {/* Список видов работ */}
               <View>
                 {types.map((item) => (
-                  <View key={item.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                  <View
+                    key={item.id}
+                    style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}
+                  >
                     <TextInput
                       value={item.name}
-                      onChangeText={(txt) => setTypes(prev => prev.map(x => x.id === item.id ? { ...x, name: txt } : x))}
+                      onChangeText={(txt) =>
+                        setTypes((prev) =>
+                          prev.map((x) => (x.id === item.id ? { ...x, name: txt } : x)),
+                        )
+                      }
                       onEndEditing={(e) => renameType(item.id, e.nativeEvent.text)}
                       style={{
                         flex: 1,

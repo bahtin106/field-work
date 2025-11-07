@@ -38,18 +38,20 @@ export function useCapsuleFeedback(opts = {}) {
   }, [scale, tint, spring, outDuration]);
 
   const containerStyle = React.useMemo(
-    () => [ { transform: [{ scale }] }, disabled && { opacity: 0.5 } ],
-    [scale, disabled]
+    () => [{ transform: [{ scale }] }, disabled && { opacity: 0.5 }],
+    [scale, disabled],
   );
 
   const overlayStyle = React.useMemo(
     () => [
       StyleSheet.absoluteFillObject,
-      { borderRadius: 999, backgroundColor: theme.colors.primary,
+      {
+        borderRadius: 999,
+        backgroundColor: theme.colors.primary,
         opacity: tint.interpolate({ inputRange: [0, 1], outputRange: [0, tintTo] }),
       },
     ],
-    [tint, theme.colors.primary, tintTo]
+    [tint, theme.colors.primary, tintTo],
   );
 
   const contentStyle = React.useMemo(() => ({}), []);
