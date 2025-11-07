@@ -18,6 +18,7 @@ import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider from '../components/ui/ToastProvider';
 import { getUserRole } from '../lib/getUserRole';
 import logger from '../lib/logger';
+import { onLogout } from '../lib/logoutBus';
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
@@ -302,6 +303,38 @@ function RootLayoutInner() {
       appState.current = nextAppState;
     });
 
+    // subscribe to explicit logout events (force immediate UI update)
+    const _unsubLogout = onLogout(() => {
+      try {
+        // mirror logout path from onAuthStateChange: clear cache, remove persister client, update state and navigate
+        (async () => {
+          try {
+            await queryClient.clear();
+          } catch (e) {
+            logger.warn('logoutBus: queryClient.clear error:', e?.message || e);
+          }
+          try {
+            await persister.removeClient?.();
+          } catch (e) {
+            logger.warn('logoutBus: persister.removeClient error:', e?.message || e);
+          }
+          if (mounted) {
+            setIsLoggedIn(false);
+            setRole(null);
+            setSessionReady(true);
+            if (!appReady) setAppReady(true);
+          }
+          try {
+            router.replace('/(auth)/login');
+          } catch (e) {
+            logger.warn('logoutBus: router.replace failed:', e?.message || e);
+          }
+        })();
+      } catch (e) {
+        void e;
+      }
+    });
+
     return () => {
       mounted = false;
       try {
@@ -313,6 +346,11 @@ function RootLayoutInner() {
         appStateSubscription?.remove?.();
       } catch (e) {
         logger.warn('appStateSubscription remove error:', e?.message || e);
+      }
+      try {
+        _unsubLogout?.();
+      } catch (e) {
+        void e;
       }
     };
   }, []);

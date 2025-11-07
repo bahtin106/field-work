@@ -183,6 +183,28 @@ export default function UniversalHome({ role }) {
         // use helper to centralize logout behavior
         const { logout } = await import('../lib/auth');
         await logout({ qc, router });
+        // Extra aggressive fallback: try calling global router directly and ensure replace is attempted
+        try {
+          const mod = await import('expo-router');
+          const grouter = mod?.router;
+          if (grouter && typeof grouter.replace === 'function') {
+            grouter.replace('/(auth)/login');
+          }
+        } catch (err) {
+          logger?.warn?.('logout: failed to call global router fallback:', err?.message || err);
+        }
+        try {
+          // attempt local router replace again after small delay
+          globalThis?.setTimeout?.(() => {
+            try {
+              router?.replace?.('/(auth)/login');
+            } catch (e) {
+              logger?.warn?.('logout: final local router.replace failed:', e?.message || e);
+            }
+          }, 120);
+        } catch (e) {
+          void e;
+        }
       } catch (err) {
         logger?.warn?.('logout helper failed, falling back to local replace:', err?.message || err);
         try {
