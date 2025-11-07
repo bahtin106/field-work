@@ -171,6 +171,7 @@ function RootLayoutInner() {
         if (mounted) {
           setSessionReady(true);
           setIsLoggedIn(logged);
+          logger?.warn?.('initializeApp: sessionReady set, isLoggedIn=', logged);
           if (!appReady) setAppReady(true);
 
           if (logged) {
@@ -181,6 +182,11 @@ function RootLayoutInner() {
               );
               const userRole = await Promise.race([userRolePromise, timeoutPromise]);
               if (mounted) setRole(userRole);
+              try {
+                logger?.warn?.('initializeApp: role loaded=', userRole);
+              } catch (e) {
+                void e;
+              }
             } catch {
               if (mounted) setRole(null);
             }
@@ -199,6 +205,11 @@ function RootLayoutInner() {
     let subscription = null;
     try {
       const onAuth = supabase.auth.onAuthStateChange(async (_event, session) => {
+        try {
+          logger?.warn?.('onAuthStateChange event:', _event, 'sessionUserId:', session?.user?.id);
+        } catch (e) {
+          void e;
+        }
         if (!mounted) return;
 
         // Always try to get authoritative session state from supabase
@@ -232,9 +243,11 @@ function RootLayoutInner() {
           if (mounted) setRole(null);
           // Ensure we navigate to login after sign-out (some signOut flows don't trigger immediate UI redirects)
           try {
+            logger?.warn?.('onAuthStateChange: scheduling router.replace to login (logout path)');
             // small delay to avoid racing with navigation readiness
             setTimeout(() => {
               try {
+                logger?.warn?.('onAuthStateChange: calling router.replace to /(auth)/login');
                 router.replace('/(auth)/login');
               } catch (err) {
                 logger.warn('router.replace (on logout) error:', err?.message || err);

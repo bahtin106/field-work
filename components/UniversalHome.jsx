@@ -163,21 +163,39 @@ export default function UniversalHome({ role }) {
   const openCreateOrder = () => router.push('/orders/create-order');
   const handleLogout = async () => {
     try {
+      logger?.warn?.('logout: initiating');
+    } catch {}
+    try {
       await supabase.auth.signOut();
-      await qc.clear();
+      try {
+        // clear react-query cache (may be synchronous)
+        await qc.clear();
+      } catch (e) {
+        console.warn('qc.clear error after signOut:', e);
+      }
+      try {
+        logger?.warn?.('logout: signOut completed, scheduling router.replace');
+      } catch {}
       // Принудительно перенаправляем на страницу логина сразу после signOut.
       // Некоторым устройствам/сетапам onAuthStateChange может обрабатываться с задержкой,
       // поэтому делаем небольшой setTimeout чтобы избежать гонки и обеспечить UX.
       try {
-        setTimeout(() => {
-          try {
-            router.replace('/(auth)/login');
-          } catch (err) {
-            console.warn('router.replace after logout failed:', err);
-          }
-        }, 50);
+        // use helper to centralize logout behavior
+        const { logout } = await import('../lib/auth');
+        await logout({ qc, router });
       } catch (err) {
-        console.warn('scheduling router.replace failed:', err);
+        logger?.warn?.('logout helper failed, falling back to local replace:', err?.message || err);
+        try {
+          globalThis?.setTimeout?.(() => {
+            try {
+              router.replace('/(auth)/login');
+            } catch (e) {
+              logger?.warn?.('fallback router.replace failed:', e?.message || e);
+            }
+          }, 60);
+        } catch (e) {
+          logger?.warn?.('scheduling fallback router.replace failed:', e?.message || e);
+        }
       }
     } catch (e) {
       console.warn('Logout error:', e);

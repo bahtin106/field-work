@@ -1,25 +1,25 @@
 // app/(auth)/login.jsx
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
-  TouchableWithoutFeedback,
-  Keyboard,
-  StatusBar,
   Pressable,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableWithoutFeedback,
+  View,
 } from 'react-native';
 import { supabase } from '../../lib/supabase';
-import { useTheme } from '../../theme';
 import { t as T } from '../../src/i18n';
+import { useTheme } from '../../theme';
 
+import { Feather } from '@expo/vector-icons';
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
 import { listItemStyles } from '../../components/ui/listItemStyles';
-import { Feather } from '@expo/vector-icons';
 
 import { useRouter } from 'expo-router';
 
