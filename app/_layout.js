@@ -19,7 +19,7 @@ import ToastProvider from '../components/ui/ToastProvider';
 import { getUserRole } from '../lib/getUserRole';
 import logger from '../lib/logger';
 import { onLogout } from '../lib/logoutBus';
-import { forceNavigate, setNavigationReady } from '../lib/navigation';
+
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
@@ -360,30 +360,58 @@ function RootLayoutInner() {
     if (ready) hideSplashNow();
   }, [ready, hideSplashNow]);
 
-  // Ensure immediate navigation on explicit auth changes (but skip initial mount)
+  // Единая логика навигации и эффектов
   useEffect(() => {
-    if (!_authMountedRef.current) {
-      _authMountedRef.current = true;
-      return;
-    }
-    if (!ready) return;
-    if (!rootNavigationState?.key) return;
+    if (!ready || !rootNavigationState?.key) return;
 
-    try {
+    // Обработка навигации
+    const handleNavigation = async () => {
       const seg0 = Array.isArray(segments) ? segments[0] : undefined;
       const inAuth = seg0 === '(auth)';
-      if (!isLoggedIn && !inAuth) {
-        router.replace('/(auth)/login');
-        return;
-      }
-      if (isLoggedIn && inAuth) {
-        router.replace('/orders');
-      }
-    } catch (e) {
-      logger.warn('auth-change navigation error:', e?.message || e);
-    }
-  }, [isLoggedIn, ready, segments, router, rootNavigationState]);
 
+      if (!isLoggedIn) {
+        // При выходе сначала очищаем все состояние
+        try {
+          await queryClient.clear();
+          await persister.removeClient();
+          setRole(null);
+        } catch (e) {
+          logger.warn('Logout cleanup error:', e);
+        }
+
+        // Затем делаем навигацию
+        if (!inAuth) {
+          logger.warn('Forcing navigation to login...');
+          await router.replace('/(auth)/login');
+        }
+      } else if (inAuth) {
+        logger.warn('Forcing navigation to orders...');
+        await router.replace('/orders');
+      }
+    };
+
+    handleNavigation();
+
+    // Инициализация push-уведомлений для залогиненных пользователей
+    if (isLoggedIn) {
+      let detach;
+      (async () => {
+        try {
+          const { default: Constants } = await import('expo-constants');
+          if (Constants?.appOwnership === 'expo') return;
+          const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
+          const token = await registerAndSavePushToken();
+          logger.warn('✅ Expo push token (saved):', token);
+          detach = attachNotificationLogs();
+        } catch (e) {
+          logger.warn('Push init error:', e);
+        }
+      })();
+      return () => detach?.();
+    }
+  }, [isLoggedIn, ready, segments, rootNavigationState]);
+
+  // Инициализация обработки клавиатуры
   useEffect(() => {
     let enabled = false;
     let AvoidSoftInput;
@@ -395,61 +423,15 @@ function RootLayoutInner() {
         AvoidSoftInput.setEnabled(true);
         enabled = true;
       } catch (e) {
-        logger.warn('AvoidSoftInput init error:', e?.message || e);
+        logger.warn('AvoidSoftInput init error:', e);
       }
     })();
     return () => {
-      (async () => {
-        try {
-          if (enabled && AvoidSoftInput) {
-            AvoidSoftInput.setEnabled(false);
-          }
-        } catch (e) {
-          logger.warn('AvoidSoftInput teardown error:', e?.message || e);
-        }
-      })();
+      if (enabled && AvoidSoftInput) {
+        AvoidSoftInput.setEnabled(false);
+      }
     };
   }, []);
-
-  useEffect(() => {
-    if (!isLoggedIn) return;
-    let detach;
-    (async () => {
-      try {
-        const { default: Constants } = await import('expo-constants');
-        if (Constants?.appOwnership === 'expo') return;
-        const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
-        const token = await registerAndSavePushToken();
-        logger.warn('✅ Expo push token (saved):', token);
-        detach = attachNotificationLogs();
-      } catch (e) {
-        logger.warn('Push init error:', e?.message || e);
-      }
-    })();
-    return () => detach?.();
-  }, [isLoggedIn]);
-
-  // Форсированная навигация при изменении статуса авторизации
-  // Обновляем статус навигации
-  useEffect(() => {
-    if (rootNavigationState?.key) {
-      setNavigationReady(true);
-    }
-  }, [rootNavigationState]);
-
-  // Обрабатываем изменение статуса логина
-  useEffect(() => {
-    if (!ready || !rootNavigationState?.key) return;
-
-    const seg0 = Array.isArray(segments) ? segments[0] : undefined;
-    const inAuth = seg0 === '(auth)';
-
-    if (!isLoggedIn && !inAuth) {
-      forceNavigate('/(auth)/login');
-    } else if (isLoggedIn && inAuth) {
-      forceNavigate('/orders');
-    }
-  }, [isLoggedIn, ready, segments, rootNavigationState]);
 
   if (!ready) {
     return (
