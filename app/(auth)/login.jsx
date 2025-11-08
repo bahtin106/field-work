@@ -106,27 +106,25 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
 
-    const { error: authErr } = await supabase.auth.signInWithPassword({ email, password });
-    if (authErr) {
-      setLoading(false);
-      setError(T('errors.invalid_credentials', 'errors.invalid_credentials'));
-      return;
-    }
-
-    await waitForSession();
-    setLoading(false);
-    // navigate to home; use small delay to avoid racing with RootLayout mount/navigation readiness
     try {
-      setTimeout(() => {
-        try {
-          router.replace('/orders');
-        } catch (err) {
-          console.warn('router.replace after login failed:', err);
-        }
-      }, 80);
-    } catch (err) {
-      console.warn('scheduling router.replace failed:', err);
+      const { error: authErr } = await supabase.auth.signInWithPassword({ email, password });
+      if (authErr) {
+        setError(T('errors.invalid_credentials', 'errors.invalid_credentials'));
+        return;
+      }
+
+      const session = await waitForSession();
+      if (!session) {
+        setError(T('errors.auth_timeout', 'Timeout waiting for session'));
+        return;
+      }
+
+      // Явно переходим на главную после успешного входа
       router.replace('/orders');
+    } catch (e) {
+      setError(T('errors.auth_error', 'Authentication error'));
+    } finally {
+      setLoading(false);
     }
   };
 
