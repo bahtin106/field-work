@@ -131,7 +131,7 @@ function RootLayoutInner() {
 
     const initializeApp = async () => {
       try {
-        // 1) session with timeout
+        // 1) session with timeout — получаем persisted session, но дополнительно проверяем её валидность
         const sessResult = await Promise.race([
           supabase.auth.getSession().catch((e) => {
             if (e?.message?.includes?.('Auth session missing')) {
@@ -147,6 +147,25 @@ function RootLayoutInner() {
         ]);
         const session = sessResult?.data?.session ?? null;
 
+        // Если есть session — дополнительно проверим пользователя через getUser (авторитетный источник)
+        let validatedUser = null;
+        if (session?.access_token) {
+          try {
+            const userResult = await Promise.race([
+              supabase.auth.getUser().catch((e) => {
+                logger.warn('getUser failed during init:', e?.message || e);
+                return { data: { user: null } };
+              }),
+              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
+            ]);
+            validatedUser = userResult?.data?.user ?? null;
+            if (!validatedUser) {
+              logger.warn('Session present but getUser returned no user — treating as signed out');
+            }
+          } catch (e) {
+            logger.warn('getUser (init) error:', e?.message || e);
+          }
+        }
         // 2) i18n init (non-blocking with timeout)
         await Promise.race([
           initI18n().catch((e) => {
@@ -168,9 +187,10 @@ function RootLayoutInner() {
           }
         }
 
-        const logged = !!session?.user;
+        const logged = !!validatedUser;
 
         if (mounted) {
+          // sessionReady означает, что авторизация была инициализирована (а не обязательно — что пользователь залогинен)
           setSessionReady(true);
           setIsLoggedIn(logged);
           logger?.warn?.('initializeApp: sessionReady set, isLoggedIn=', logged);
@@ -206,15 +226,23 @@ function RootLayoutInner() {
 
     let subscription = null;
     try {
-      const onAuth = supabase.auth.onAuthStateChange(async (_event, session) => {
-        logger?.warn?.('🔄 Auth state changed:', _event, session?.user?.id);
+      const onAuth = supabase.auth.onAuthStateChange(async (event, session) => {
+        logger?.warn?.(
+          '🔄 Auth state changed:',
+          event,
+          session?.user?.id ?? session?.user?.email ?? 'no-id',
+        );
         if (!mounted) return;
 
-        if (_event === 'SIGNED_OUT') {
-          // При выходе сразу очищаем состояние
-          logger.warn('📤 Clearing state on sign out...');
-          await queryClient.clear();
-          await persister.removeClient?.();
+        if (event === 'SIGNED_OUT') {
+          // При выходе: очистка и перевод в неавторизованное состояние
+          logger.warn('📤 SIGNED_OUT — clearing client state');
+          try {
+            await queryClient.clear();
+            await persister.removeClient?.();
+          } catch (e) {
+            logger.warn('Error clearing cache/persister on sign out:', e?.message || e);
+          }
           if (mounted) {
             setIsLoggedIn(false);
             setRole(null);
@@ -224,78 +252,51 @@ function RootLayoutInner() {
           return;
         }
 
-        // При входе инициализируем все данные перед обновлением состояния
-        if (_event === 'SIGNED_IN') {
-          logger.warn('📥 Sign in detected, initializing...');
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          // После входа/refresh: убедимся, что getUser возвращает реального пользователя
+          logger.warn('📥 SIGNED_IN/TOKEN_REFRESHED — validating user');
           try {
-            // Проверяем сессию
-            const {
-              data: { session: currentSession },
-            } = await supabase.auth.getSession();
-            if (!currentSession?.user) {
-              logger.warn('⚠️ No valid session after sign in');
+            const userResult = await Promise.race([
+              supabase.auth.getUser().catch((e) => {
+                logger.warn('getUser failed (onAuth):', e?.message || e);
+                return { data: { user: null } };
+              }),
+              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
+            ]);
+            const realUser = userResult?.data?.user ?? null;
+            if (!realUser) {
+              logger.warn('Auth event received but no user from getUser — skipping state update');
               return;
             }
 
-            if (mounted) {
-              // Загружаем все необходимые данные
+            // Load locale and role before flipping isLoggedIn to true
+            try {
               const [userRole] = await Promise.all([
                 getUserRole(),
                 loadUserLocale().then((code) => code && setLocale(code)),
               ]);
+              if (mounted) setRole(userRole);
+            } catch (e) {
+              logger.warn('Error loading role/locale after auth event:', e?.message || e);
+              if (mounted) setRole(null);
+            }
 
-              // После успешной загрузки данных обновляем состояние
-              if (mounted) {
-                logger.warn('✅ User data loaded, updating state...');
-                setRole(userRole);
-                setIsLoggedIn(true);
-                setSessionReady(true);
-                if (!appReady) setAppReady(true);
+            // Invalidate profile queries and mark logged in
+            try {
+              queryClient.invalidateQueries({ queryKey: ['profile'] });
+              queryClient.invalidateQueries({ queryKey: ['userRole'] });
+            } catch (e) {
+              logger.warn('invalidateQueries error (onAuth):', e?.message || e);
+            }
 
-                // Обновляем кэш
-                queryClient.invalidateQueries({ queryKey: ['profile'] });
-                queryClient.invalidateQueries({ queryKey: ['userRole'] });
-              }
+            if (mounted) {
+              setIsLoggedIn(true);
+              setSessionReady(true);
+              if (!appReady) setAppReady(true);
             }
           } catch (e) {
-            logger.warn('Failed to initialize user data:', e);
-            if (mounted) {
-              setIsLoggedIn(false);
-              setRole(null);
-              setSessionReady(true);
-            }
+            logger.warn('Error processing auth event:', e?.message || e);
           }
-        }
-
-        // On login: ensure locale and role are loaded and queries refreshed
-        try {
-          const code = await Promise.race([
-            loadUserLocale(),
-            new Promise((resolve) => setTimeout(() => resolve(null), LOCALE_TIMEOUT)),
-          ]);
-          if (code) await setLocale(code);
-        } catch (e) {
-          logger.warn('loadUserLocale (onAuth) error:', e?.message || e);
-        }
-
-        try {
-          const userRolePromise = getUserRole();
-          const timeoutPromise = new Promise((resolve) =>
-            setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
-          );
-          const userRole = await Promise.race([userRolePromise, timeoutPromise]);
-          if (mounted) setRole(userRole);
-        } catch (e) {
-          logger.warn('getUserRole (onAuth) error:', e?.message || e);
-          if (mounted) setRole(null);
-        }
-
-        // Trigger fresh queries for critical data
-        try {
-          queryClient.invalidateQueries({ queryKey: ['profile'] });
-          queryClient.invalidateQueries({ queryKey: ['userRole'] });
-        } catch (e) {
-          logger.warn('invalidateQueries error:', e?.message || e);
         }
       });
       subscription = onAuth?.data?.subscription ?? null;
