@@ -14,12 +14,11 @@ import 'react-native-gesture-handler';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import AuthNavigator from '../components/navigation/AuthNavigator';
+
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider from '../components/ui/ToastProvider';
 import { getUserRole } from '../lib/getUserRole';
 import logger from '../lib/logger';
-import { onLogout } from '../lib/logoutBus';
 
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
@@ -208,58 +207,64 @@ function RootLayoutInner() {
     let subscription = null;
     try {
       const onAuth = supabase.auth.onAuthStateChange(async (_event, session) => {
-        try {
-          logger?.warn?.('onAuthStateChange event:', _event, 'sessionUserId:', session?.user?.id);
-        } catch (e) {
-          void e;
-        }
+        logger?.warn?.('🔄 Auth state changed:', _event, session?.user?.id);
         if (!mounted) return;
 
-        // Always try to get authoritative session state from supabase
-        let currentSession = session;
-        try {
-          const res = await supabase.auth.getSession();
-          currentSession = res?.data?.session ?? currentSession;
-        } catch (e) {
-          logger.warn('onAuthStateChange getSession error:', e?.message || e);
-        }
-
-        try {
-          // Clear cache to avoid showing stale data after auth change
+        if (_event === 'SIGNED_OUT') {
+          // При выходе сразу очищаем состояние
+          logger.warn('📤 Clearing state on sign out...');
           await queryClient.clear();
-        } catch (e) {
-          logger.warn('queryClient.clear error:', e?.message || e);
-        }
-
-        const logged = !!currentSession?.user;
-        setIsLoggedIn(logged);
-        setSessionReady(true);
-        if (!appReady) setAppReady(true);
-
-        if (!logged) {
-          try {
-            await persister.removeClient?.();
-          } catch (e) {
-            logger.warn('persister.removeClient error:', e?.message || e);
-          }
-          // clear role when logged out
-          if (mounted) setRole(null);
-          // Ensure we navigate to login after sign-out (some signOut flows don't trigger immediate UI redirects)
-          try {
-            logger?.warn?.('onAuthStateChange: scheduling router.replace to login (logout path)');
-            // small delay to avoid racing with navigation readiness
-            setTimeout(() => {
-              try {
-                logger?.warn?.('onAuthStateChange: calling router.replace to /(auth)/login');
-                _router.replace('/(auth)/login');
-              } catch (err) {
-                logger.warn('router.replace (on logout) error:', err?.message || err);
-              }
-            }, 60);
-          } catch (e) {
-            logger.warn('router.replace (on logout) schedule error:', e?.message || e);
+          await persister.removeClient?.();
+          if (mounted) {
+            setIsLoggedIn(false);
+            setRole(null);
+            setSessionReady(true);
+            if (!appReady) setAppReady(true);
           }
           return;
+        }
+
+        // При входе инициализируем все данные перед обновлением состояния
+        if (_event === 'SIGNED_IN') {
+          logger.warn('📥 Sign in detected, initializing...');
+          try {
+            // Проверяем сессию
+            const {
+              data: { session: currentSession },
+            } = await supabase.auth.getSession();
+            if (!currentSession?.user) {
+              logger.warn('⚠️ No valid session after sign in');
+              return;
+            }
+
+            if (mounted) {
+              // Загружаем все необходимые данные
+              const [userRole] = await Promise.all([
+                getUserRole(),
+                loadUserLocale().then((code) => code && setLocale(code)),
+              ]);
+
+              // После успешной загрузки данных обновляем состояние
+              if (mounted) {
+                logger.warn('✅ User data loaded, updating state...');
+                setRole(userRole);
+                setIsLoggedIn(true);
+                setSessionReady(true);
+                if (!appReady) setAppReady(true);
+
+                // Обновляем кэш
+                queryClient.invalidateQueries({ queryKey: ['profile'] });
+                queryClient.invalidateQueries({ queryKey: ['userRole'] });
+              }
+            }
+          } catch (e) {
+            logger.warn('Failed to initialize user data:', e);
+            if (mounted) {
+              setIsLoggedIn(false);
+              setRole(null);
+              setSessionReady(true);
+            }
+          }
         }
 
         // On login: ensure locale and role are loaded and queries refreshed
@@ -305,37 +310,7 @@ function RootLayoutInner() {
       appState.current = nextAppState;
     });
 
-    // subscribe to explicit logout events (force immediate UI update)
-    const _unsubLogout = onLogout(() => {
-      try {
-        // mirror logout path from onAuthStateChange: clear cache, remove persister client, update state and navigate
-        (async () => {
-          try {
-            await queryClient.clear();
-          } catch (e) {
-            logger.warn('logoutBus: queryClient.clear error:', e?.message || e);
-          }
-          try {
-            await persister.removeClient?.();
-          } catch (e) {
-            logger.warn('logoutBus: persister.removeClient error:', e?.message || e);
-          }
-          if (mounted) {
-            setIsLoggedIn(false);
-            setRole(null);
-            setSessionReady(true);
-            if (!appReady) setAppReady(true);
-          }
-          try {
-            _router.replace('/(auth)/login');
-          } catch (e) {
-            logger.warn('logoutBus: router.replace failed:', e?.message || e);
-          }
-        })();
-      } catch (e) {
-        void e;
-      }
-    });
+    // Этот код больше не нужен, так как onAuthStateChange уже обрабатывает все события авторизации
 
     return () => {
       mounted = false;
@@ -349,11 +324,6 @@ function RootLayoutInner() {
       } catch (e) {
         logger.warn('appStateSubscription remove error:', e?.message || e);
       }
-      try {
-        _unsubLogout?.();
-      } catch (e) {
-        void e;
-      }
     };
   }, []);
 
@@ -361,19 +331,22 @@ function RootLayoutInner() {
     if (ready) hideSplashNow();
   }, [ready, hideSplashNow]);
 
-  // Обработчик успешной навигации
-  const handleNavigationComplete = useCallback(async () => {
-    // Обновляем состояние только если это выход
+  // Навигация на основе статуса авторизации
+  useEffect(() => {
+    if (!_rootNavigationState?.key || !ready) {
+      logger.warn('⏳ Navigation not ready yet');
+      return;
+    }
+
     if (!isLoggedIn) {
-      try {
-        await queryClient.clear();
-        await persister.removeClient();
-        setRole(null);
-      } catch (e) {
-        logger.warn('Logout cleanup error:', e);
+      const seg0 = Array.isArray(_segments) ? _segments[0] : undefined;
+      const inAuth = seg0 === '(auth)';
+      if (!inAuth) {
+        logger.warn('� Not logged in, redirecting to login...');
+        _router.replace('/(auth)/login');
       }
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, ready, _rootNavigationState?.key]);
 
   // Инициализация push-уведомлений для залогиненных пользователей
   useEffect(() => {
@@ -459,10 +432,6 @@ function RootLayoutInner() {
               </Stack>
               {isLoggedIn && role && <BottomNav />}
               {isLoggedIn ? <LastSeenTracker /> : null}
-              <AuthNavigator
-                isLoggedIn={isLoggedIn}
-                onNavigationComplete={handleNavigationComplete}
-              />
             </Animated.View>
           </SafeAreaView>
         </SettingsProvider>
