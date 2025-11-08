@@ -28,7 +28,7 @@
     "@tanstack/react-query-persist-client": "^5.87.4",
     "base64-arraybuffer": "^1.0.2",
     "date-fns": "^4.1.0",
-    "expo": "54.0.22",
+    "expo": "^54.0.23",
     "expo-application": "~7.0.7",
     "expo-blur": "~15.0.7",
     "expo-clipboard": "~8.0.7",
