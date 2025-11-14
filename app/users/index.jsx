@@ -48,8 +48,7 @@ function withAlpha(color, a) {
       return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
     }
   }
-  // Fallback won't be used because we always pass theme string colors
-  return `rgba(0,0,0,${a})`;
+  return color;
 }
 
 export default function UsersIndex() {
@@ -72,64 +71,21 @@ export default function UsersIndex() {
   // Initialize filters with a short TTL (~10 seconds). 1 hour is too long for this use case.
   // When filters are applied they will persist for roughly 10 seconds and then expire.
   // Note: ttlHours accepts hours, so 0.003 ≈ 10.8 seconds.
-  const filters = useFilters(
-    'users',
-    { departments: [], roles: [], suspended: null },
-    { ttlHours: 0.003 },
-  );
-  // Safe bridge for FiltersPanel -> useFilters API differences
-  const setFilterValue = useCallback(
-    (key, value) => {
-      if (filters && typeof filters.set === 'function') return filters.set(key, value);
-      if (filters && typeof filters.setValue === 'function') return filters.setValue(key, value);
-      if (filters && typeof filters.update === 'function') return filters.update(key, value);
-    },
-    [filters],
-  );
+  const filters = useFilters('users', { departments: [], roles: [], suspended: null });
 
-  // keep Android navigation bar buttons readable while modals are open
-  const applyNavBar = React.useCallback(async () => {
-    try {
-      await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
-    } catch {}
-  }, [theme.mode]);
-
-  React.useEffect(() => {
-    applyNavBar();
-  }, [applyNavBar]);
-
-  const openFiltersPanel = React.useCallback(() => {
-    setFiltersVisible(true);
-  }, []);
-  const c = theme.colors;
+    const c = theme.colors;
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
-  const controlH = theme.components?.input?.height ?? theme.components?.listItem?.height ?? 48;
-  const btnH =
-    theme.components?.button?.sizes?.md?.h ??
-    theme.components?.row?.minHeight ??
-    theme.components?.listItem?.height ??
-    48;
-
-  const styles = React.useMemo(
+  const controlH = theme.components.input.height;
+const styles = React.useMemo(
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: c.background },
         container: { flex: 1 },
-        loaderWrap: {
-          flex: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-          backgroundColor: c.background,
-        },
-        header: { paddingHorizontal: sz.lg, paddingTop: Math.max(4, sz.xs), paddingBottom: sz.sm },
-        title: {
-          fontSize: ty.sizes.xl,
-          fontWeight: ty.weight.bold,
-          color: c.text,
-          marginBottom: sz.sm,
-        },
+        loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: c.background },
+        header: { paddingHorizontal: sz.lg, paddingTop: sz.xs, paddingBottom: sz.sm },
+        title: { fontSize: ty.sizes.xl, fontWeight: ty.weight.bold, color: c.text, marginBottom: sz.sm },
         searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
         searchBox: {
           flex: 1,
@@ -138,32 +94,30 @@ export default function UsersIndex() {
           borderRadius: rad.lg,
           borderWidth: 1,
           borderColor: c.inputBorder,
-          height: btnH,
+          height: theme.components.listItem.height,
           justifyContent: 'center',
           paddingLeft: sz.sm,
           paddingRight: sz.md,
         },
         clearBtn: {
-          width: 28,
-          height: 28,
-          borderRadius: 14,
-          backgroundColor: withAlpha(c.border, 0.5),
+          width: theme.components.listItem.chevronSize,
+          height: theme.components.listItem.chevronSize,
+          borderRadius: theme.components.listItem.chevronSize / 2,
+          backgroundColor: c.surface,
+          borderWidth: 1,
+          borderColor: c.border,
           alignItems: 'center',
           justifyContent: 'center',
-          marginRight: -4,
+          marginRight: -Math.round(theme.spacing.sm / 2),
         },
         clearBtnText: {
-          fontSize: 20,
-          lineHeight: 20,
+          fontSize: theme.typography.sizes.lg,
+          lineHeight: theme.typography.sizes.lg,
           color: c.textSecondary,
           fontWeight: ty.weight.semibold,
-          marginTop: -2,
         },
         searchMask: {
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
+          position: 'absolute', left: 0, right: 0, bottom: 0,
           height: StyleSheet.hairlineWidth,
           backgroundColor: c.inputBg,
           borderBottomLeftRadius: rad.lg,
@@ -173,29 +127,15 @@ export default function UsersIndex() {
         metaText: { fontSize: ty.sizes.sm, color: c.textSecondary },
         errorCard: {
           marginTop: sz.xs,
-          backgroundColor: withAlpha(c.danger, 0.13),
-          borderColor: withAlpha(c.danger, 0.2),
+          backgroundColor: theme.colors.surfaceMutedDanger,
+          borderColor: theme.colors.danger,
           borderWidth: 1,
           paddingHorizontal: sz.sm,
           paddingVertical: sz.xs,
           borderRadius: rad.md,
         },
         errorText: { color: c.danger, fontSize: ty.sizes.sm },
-        listContent: {
-          paddingHorizontal: sz.lg,
-          paddingBottom: theme.components?.scrollView?.paddingBottom ?? sz.xl,
-        },
-        card: {
-          position: 'relative',
-          backgroundColor: c.surface,
-          padding: sz.sm,
-          borderRadius: rad.xl,
-          marginBottom: sz.sm,
-          ...((theme.shadows &&
-            theme.shadows.card &&
-            (Platform.OS === 'ios' ? theme.shadows.card.ios : theme.shadows.card.android)) ||
-            {}),
-        },
+        listContent: { paddingHorizontal: sz.lg, paddingBottom: theme.components.scrollView.paddingBottom },
         cardSuspended: {
           backgroundColor: theme.colors.surfaceMutedDanger,
           borderWidth: 0,
@@ -258,10 +198,10 @@ export default function UsersIndex() {
 
   // --- Debounce for search (theme.timings)
   useEffect(() => {
-    const ms = Number(theme.timings?.backDelayMs) || 300;
+    const ms = Number(theme.timings.backDelayMs);
     const tmr = setTimeout(
       () => setDebouncedQ(q.trim().toLowerCase()),
-      Math.max(120, Math.min(600, ms)),
+      ms,
     );
     return () => clearTimeout(tmr);
   }, [q, theme.timings?.backDelayMs]);
@@ -463,8 +403,8 @@ export default function UsersIndex() {
       container: [
         styles.rolePill,
         {
-          backgroundColor: withAlpha(color, 0.13),
-          borderColor: withAlpha(color, 0.2),
+          backgroundColor: c.surface,
+          borderColor: color,
         },
       ],
       text: [styles.rolePillText, { color }],
@@ -628,7 +568,7 @@ export default function UsersIndex() {
     } else if (filters.values.suspended === false) {
       parts.push(t('users_withoutSuspended', 'Без отстраненных'));
     }
-    return parts.join(' • ');
+    return parts.join(t('common_bullet'));
   }, [filters.values, departments, useDepartments]);
 
   // --- Presence helpers (i18n-driven, no hardcoded strings)
@@ -637,7 +577,7 @@ export default function UsersIndex() {
     const d = parsePgTs(ts);
     if (!d) return false;
     const diff = Date.now() - d.getTime(); // positive if past
-    return diff <= 2 * 60 * 1000 && diff >= -5 * 60 * 1000;
+    return diff <= Number(theme.timings.presenceOnlineWindowMs) && diff >= -Number(theme.timings.presenceFutureSkewMs);
   }, []);
 
   const formatPresence = React.useCallback(
@@ -734,7 +674,7 @@ export default function UsersIndex() {
     return (
       <SafeAreaView style={styles.safe} edges={['left', 'right']}>
         <View style={styles.loaderWrap}>
-          <ActivityIndicator size="large" />
+          <ActivityIndicator size={theme.components.activityIndicator.size} />
         </View>
       </SafeAreaView>
     );

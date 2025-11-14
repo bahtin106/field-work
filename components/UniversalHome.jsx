@@ -166,7 +166,7 @@ export default function UniversalHome({ role }) {
     try {
       logger.warn('Начинаем выход...');
       const { logout } = await import('../lib/auth');
-      await logout({ qc, router });
+      await logout({ qc });
     } catch (e) {
       logger.warn('Ошибка при выходе:', e);
     }
