@@ -1,25 +1,23 @@
+/* global console */
+
 // app/orders/index.jsx
-import React from 'react';
-import { router } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as SplashScreen from 'expo-splash-screen';
+import React from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  Animated,
-  Easing,
-  Platform,
   ActivityIndicator,
+  Animated,
   BackHandler,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
-import { ToastAndroid } from 'react-native';
-import { useTheme } from '../../theme/ThemeProvider';
 import UniversalHome from '../../components/universalhome';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
 import { supabase } from '../../lib/supabase';
-import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
-import { useRef } from 'react';
-import * as SplashScreen from 'expo-splash-screen';
+import { useTheme } from '../../theme/ThemeProvider';
 
 let _GLOBAL_BOOT_FLAG = { value: false };
 
@@ -192,6 +190,7 @@ export default function IndexScreen() {
   const [splashVisible, setSplashVisible] = React.useState(initialSplash);
   const splashStart = React.useRef(Date.now());
   const MIN_SPLASH_MS = 600; // минимум 600мс, чтобы анимация выглядела «дорогой»
+  const MAX_SPLASH_MS = 8000; // максимум 8 секунд, после чего принудительно скрываем
   const NET_IDLE_GRACE_MS = 280; // небольшой «люфт» после окончания запросов
 
   React.useEffect(() => {
@@ -200,9 +199,21 @@ export default function IndexScreen() {
       if (splashVisible) setSplashVisible(false);
       return;
     }
+
+    const elapsed = Date.now() - splashStart.current;
+
+    // Принудительное скрытие после MAX_SPLASH_MS
+    if (elapsed >= MAX_SPLASH_MS) {
+      if (splashVisible) {
+        console.warn('Force hiding splash after MAX_SPLASH_MS');
+        setSplashVisible(false);
+        _GLOBAL_BOOT_FLAG.value = true;
+      }
+      return;
+    }
+
     let t1 = null;
     if (isFetching === 0) {
-      const elapsed = Date.now() - splashStart.current;
       const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
       t1 = setTimeout(
         () => {
@@ -218,6 +229,21 @@ export default function IndexScreen() {
       if (t1) clearTimeout(t1);
     };
   }, [isFetching, splashVisible, initialSplash]);
+
+  // Дополнительная защита: принудительное скрытие после MAX_SPLASH_MS
+  React.useEffect(() => {
+    if (!initialSplash) return;
+
+    const forceHideTimer = setTimeout(() => {
+      if (splashVisible) {
+        console.warn('Force hiding splash by timeout');
+        setSplashVisible(false);
+        _GLOBAL_BOOT_FLAG.value = true;
+      }
+    }, MAX_SPLASH_MS);
+
+    return () => clearTimeout(forceHideTimer);
+  }, [initialSplash, MAX_SPLASH_MS]);
 
   return (
     <View
