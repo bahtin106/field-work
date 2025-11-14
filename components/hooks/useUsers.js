@@ -53,7 +53,9 @@ export function useUsers(options = {}) {
     queryKey,
     queryFn: fetchUsers,
     ttl: 5 * 60 * 1000, // 5 минут
+    staleTime: 2 * 60 * 1000, // 2 минуты считаем данные свежими
     enabled,
+    placeholderData: [], // Показываем пустой массив пока грузятся данные из кеша
   });
 
   // Автоматическая синхронизация через Realtime
