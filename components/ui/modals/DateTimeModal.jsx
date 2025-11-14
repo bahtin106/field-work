@@ -69,8 +69,8 @@ export default function DateTimeModal({
   // If a locale file doesn't contain these keys, t(...) will return the key itself
   // which helps to visually spot missing translations (no automatic Intl fallback).
   const _dict = getDict?.() || {};
-  const _srcShort = Array.from({ length: 12 }, (_, i) => T(`months_short.${i}`));
-  const _srcGen = Array.from({ length: 12 }, (_, i) => T(`months_genitive.${i}`));
+  const _srcShort = Array.from({ length: 12 }, (_, i) => T(`months_short_${i}`));
+  const _srcGen = Array.from({ length: 12 }, (_, i) => T(`months_genitive_${i}`));
 
   // Read label offset from dict if present (keeps existing behaviour).
   const _offset = Number(_dict.month_label_offset ?? 0) || 0;

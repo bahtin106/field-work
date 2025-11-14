@@ -225,52 +225,19 @@ function RootLayoutInner() {
     initializeApp();
 
     let subscription = null;
-    let authSuccessUnsubscribe = null;
-
-    // Subscribe to direct auth success notifications from login screen
-    (async () => {
-      try {
-        const { subscribeAuthSuccess } = await import('../lib/authState');
-        authSuccessUnsubscribe = subscribeAuthSuccess(async () => {
-          if (!mounted) return;
-          logger.warn('🔔 Received direct auth success notification');
-
-          try {
-            // Load role immediately
-            const userRole = await getUserRole();
-            if (mounted) {
-              setRole(userRole);
-              setIsLoggedIn(true);
-              setSessionReady(true);
-              if (!appReady) setAppReady(true);
-              logger.warn('✅ Auth state forcefully updated after direct notification');
-            }
-          } catch (e) {
-            logger.warn('Error loading role after direct notification:', e?.message || e);
-          }
-        });
-      } catch (e) {
-        logger.warn('Failed to subscribe to auth success:', e?.message || e);
-      }
-    })();
 
     try {
       const onAuth = supabase.auth.onAuthStateChange(async (event, session) => {
-        logger?.warn?.(
-          '🔄 Auth state changed:',
-          event,
-          session?.user?.id ?? session?.user?.email ?? 'no-id',
-        );
+        logger?.warn?.('🔄 Auth state changed:', event, session?.user?.id ?? 'no-id');
         if (!mounted) return;
 
         if (event === 'SIGNED_OUT') {
-          // При выходе: очистка и перевод в неавторизованное состояние
-          logger.warn('📤 SIGNED_OUT — clearing client state');
+          logger.warn('📤 SIGNED_OUT — clearing state');
           try {
             await queryClient.clear();
             await persister.removeClient?.();
           } catch (e) {
-            logger.warn('Error clearing cache/persister on sign out:', e?.message || e);
+            logger.warn('Error clearing cache:', e?.message || e);
           }
           if (mounted) {
             setIsLoggedIn(false);
@@ -278,61 +245,25 @@ function RootLayoutInner() {
             setSessionReady(true);
             if (!appReady) setAppReady(true);
           }
-          // Immediate navigation to login without delay
-          try {
-            _router.replace('/(auth)/login');
-            logger.warn('📤 Redirected to login after sign out');
-          } catch (e) {
-            logger.warn('Navigation to login failed:', e?.message || e);
-          }
           return;
         }
 
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          // После входа/refresh: убедимся, что getUser возвращает реального пользователя
-          logger.warn('📥 SIGNED_IN/TOKEN_REFRESHED — validating user');
+          logger.warn('📥 SIGNED_IN/TOKEN_REFRESHED — loading user data');
           try {
-            const userResult = await Promise.race([
-              supabase.auth.getUser().catch((e) => {
-                logger.warn('getUser failed (onAuth):', e?.message || e);
-                return { data: { user: null } };
-              }),
-              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
+            // Load role and locale
+            const [userRole] = await Promise.all([
+              getUserRole(),
+              loadUserLocale().then((code) => code && setLocale(code)),
             ]);
-            const realUser = userResult?.data?.user ?? null;
-            if (!realUser) {
-              logger.warn('Auth event received but no user from getUser — skipping state update');
-              return;
-            }
 
-            logger.warn('✅ User validated in onAuth:', realUser.id);
-
-            // Load locale and role before flipping isLoggedIn to true
-            try {
-              logger.warn('📚 Loading role and locale...');
-              const [userRole] = await Promise.all([
-                getUserRole(),
-                loadUserLocale().then((code) => code && setLocale(code)),
-              ]);
-              if (mounted) {
-                setRole(userRole);
-                logger.warn('✅ Role set:', userRole);
-              }
-            } catch (e) {
-              logger.warn('Error loading role/locale after auth event:', e?.message || e);
-              if (mounted) setRole(null);
-            }
-
-            // Invalidate profile queries and mark logged in
-            try {
-              queryClient.invalidateQueries({ queryKey: ['profile'] });
-              queryClient.invalidateQueries({ queryKey: ['userRole'] });
-            } catch (e) {
-              logger.warn('invalidateQueries error (onAuth):', e?.message || e);
-            }
+            // Invalidate queries
+            queryClient.invalidateQueries({ queryKey: ['profile'] });
+            queryClient.invalidateQueries({ queryKey: ['userRole'] });
 
             if (mounted) {
-              logger.warn('🎯 Setting isLoggedIn=true, sessionReady=true');
+              logger.warn('✅ Setting isLoggedIn=true, role=', userRole);
+              setRole(userRole);
               setIsLoggedIn(true);
               setSessionReady(true);
               if (!appReady) setAppReady(true);
@@ -354,19 +285,12 @@ function RootLayoutInner() {
       appState.current = nextAppState;
     });
 
-    // Этот код больше не нужен, так как onAuthStateChange уже обрабатывает все события авторизации
-
     return () => {
       mounted = false;
       try {
         subscription?.unsubscribe?.();
       } catch (e) {
         logger.warn('subscription unsubscribe error:', e?.message || e);
-      }
-      try {
-        if (authSuccessUnsubscribe) authSuccessUnsubscribe();
-      } catch (e) {
-        logger.warn('authSuccessUnsubscribe error:', e?.message || e);
       }
       try {
         appStateSubscription?.remove?.();
