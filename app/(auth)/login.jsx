@@ -1,5 +1,5 @@
 // app/(auth)/login.jsx
-import React, { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -92,6 +92,7 @@ export default function LoginScreen() {
     setLoading(true);
     setError('');
 
+    let isMounted = true;
     try {
       const { error: authErr } = await supabase.auth.signInWithPassword({ email, password });
 
@@ -101,12 +102,21 @@ export default function LoginScreen() {
         return;
       }
 
-      // Success! Supabase will fire SIGNED_IN event, _layout.js will handle navigation
-      // Component will unmount when navigation happens, so loading stays true
+      // Успех! Явно переходим на главный экран, чтобы не ждать только глобального события
+      try {
+        const { router } = await import('expo-router');
+        router.replace('/orders');
+      } catch (e) {
+        // fallback: ничего не делаем, глобальный обработчик сработает
+      }
+      if (isMounted) setLoading(false);
     } catch (e) {
       setError(T('errors.auth_error', 'Authentication error'));
       setLoading(false);
     }
+    return () => {
+      isMounted = false;
+    };
   };
 
   const isDisabled = !email || !password || loading;
