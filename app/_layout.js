@@ -225,6 +225,35 @@ function RootLayoutInner() {
     initializeApp();
 
     let subscription = null;
+    let authSuccessUnsubscribe = null;
+
+    // Subscribe to direct auth success notifications from login screen
+    (async () => {
+      try {
+        const { subscribeAuthSuccess } = await import('../lib/authState');
+        authSuccessUnsubscribe = subscribeAuthSuccess(async () => {
+          if (!mounted) return;
+          logger.warn('🔔 Received direct auth success notification');
+
+          try {
+            // Load role immediately
+            const userRole = await getUserRole();
+            if (mounted) {
+              setRole(userRole);
+              setIsLoggedIn(true);
+              setSessionReady(true);
+              if (!appReady) setAppReady(true);
+              logger.warn('✅ Auth state forcefully updated after direct notification');
+            }
+          } catch (e) {
+            logger.warn('Error loading role after direct notification:', e?.message || e);
+          }
+        });
+      } catch (e) {
+        logger.warn('Failed to subscribe to auth success:', e?.message || e);
+      }
+    })();
+
     try {
       const onAuth = supabase.auth.onAuthStateChange(async (event, session) => {
         logger?.warn?.(
@@ -249,6 +278,13 @@ function RootLayoutInner() {
             setSessionReady(true);
             if (!appReady) setAppReady(true);
           }
+          // Immediate navigation to login without delay
+          try {
+            _router.replace('/(auth)/login');
+            logger.warn('📤 Redirected to login after sign out');
+          } catch (e) {
+            logger.warn('Navigation to login failed:', e?.message || e);
+          }
           return;
         }
 
@@ -269,13 +305,19 @@ function RootLayoutInner() {
               return;
             }
 
+            logger.warn('✅ User validated in onAuth:', realUser.id);
+
             // Load locale and role before flipping isLoggedIn to true
             try {
+              logger.warn('📚 Loading role and locale...');
               const [userRole] = await Promise.all([
                 getUserRole(),
                 loadUserLocale().then((code) => code && setLocale(code)),
               ]);
-              if (mounted) setRole(userRole);
+              if (mounted) {
+                setRole(userRole);
+                logger.warn('✅ Role set:', userRole);
+              }
             } catch (e) {
               logger.warn('Error loading role/locale after auth event:', e?.message || e);
               if (mounted) setRole(null);
@@ -290,6 +332,7 @@ function RootLayoutInner() {
             }
 
             if (mounted) {
+              logger.warn('🎯 Setting isLoggedIn=true, sessionReady=true');
               setIsLoggedIn(true);
               setSessionReady(true);
               if (!appReady) setAppReady(true);
@@ -321,6 +364,11 @@ function RootLayoutInner() {
         logger.warn('subscription unsubscribe error:', e?.message || e);
       }
       try {
+        if (authSuccessUnsubscribe) authSuccessUnsubscribe();
+      } catch (e) {
+        logger.warn('authSuccessUnsubscribe error:', e?.message || e);
+      }
+      try {
         appStateSubscription?.remove?.();
       } catch (e) {
         logger.warn('appStateSubscription remove error:', e?.message || e);
@@ -339,15 +387,31 @@ function RootLayoutInner() {
       return;
     }
 
+    const seg0 = Array.isArray(_segments) ? _segments[0] : undefined;
+    const inAuth = seg0 === '(auth)';
+
+    logger.warn(
+      `🧭 Navigation effect: isLoggedIn=${isLoggedIn}, inAuth=${inAuth}, segment=${seg0}`,
+    );
+
     if (!isLoggedIn) {
-      const seg0 = Array.isArray(_segments) ? _segments[0] : undefined;
-      const inAuth = seg0 === '(auth)';
       if (!inAuth) {
-        logger.warn('� Not logged in, redirecting to login...');
+        logger.warn('🔒 Not logged in, redirecting to login...');
         _router.replace('/(auth)/login');
       }
+    } else {
+      // Пользователь залогинен
+      if (inAuth) {
+        logger.warn('✅ Logged in but on auth screen, IMMEDIATE redirect to /orders...');
+        try {
+          _router.replace('/orders');
+          logger.warn('✅ Navigation executed');
+        } catch (e) {
+          logger.warn('Navigation error:', e?.message || e);
+        }
+      }
     }
-  }, [isLoggedIn, ready, _rootNavigationState?.key]);
+  }, [isLoggedIn, ready, _rootNavigationState?.key, _segments, _router]);
 
   // Инициализация push-уведомлений для залогиненных пользователей
   useEffect(() => {

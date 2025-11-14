@@ -79,11 +79,14 @@ const light = {
     // Default row heights
     input: { height: 36 },
     listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 },
+    activityIndicator: { size: 'large' },
   },
 
   timings: {
     requestTimeoutMs: 12000,
     backDelayMs: 300,
+    presenceOnlineWindowMs: 120000,
+    presenceFutureSkewMs: 300000,
   },
 };
 
@@ -150,6 +153,8 @@ const dark = {
   timings: {
     requestTimeoutMs: 12000,
     backDelayMs: 300,
+    presenceOnlineWindowMs: 120000,
+    presenceFutureSkewMs: 300000,
   },
 };
 

@@ -386,4 +386,5 @@ export default {
   // Сдвиг меток месяцев. По умолчанию 0 — порядок в months_short / months_genitive
   // При необходимости можно установить e.g. 11 чтобы сдвинуть метки на -1.
   month_label_offset: 0,
+  common_bullet: ' • ',
 };

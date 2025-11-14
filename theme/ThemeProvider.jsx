@@ -169,6 +169,7 @@ function buildTheme(mode) {
     scrollView: {
       paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
     },
+    activityIndicator: { size: base.components?.activityIndicator?.size ?? 'large' },
   };
 
   // Pass-through shared media config (used by ImagePicker, etc.)
@@ -180,6 +181,8 @@ function buildTheme(mode) {
   const timings = {
     requestTimeoutMs: base.timings?.requestTimeoutMs ?? 12000,
     backDelayMs: base.timings?.backDelayMs ?? 300,
+    presenceOnlineWindowMs: base.timings?.presenceOnlineWindowMs ?? 120000,
+    presenceFutureSkewMs: base.timings?.presenceFutureSkewMs ?? 300000,
   };
   return {
     mode: effective,
