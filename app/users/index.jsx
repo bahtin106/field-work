@@ -68,11 +68,15 @@ export default function UsersIndex() {
 
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  // Initialize filters with a short TTL (~10 seconds). 1 hour is too long for this use case.
-  // When filters are applied they will persist for roughly 10 seconds and then expire.
-  // Note: ttlHours accepts hours, so 0.003 ≈ 10.8 seconds.
+  // Initialize filters with a 5-second TTL as requested by user.
+  // When user leaves and returns within 5 seconds, filters persist.
+  // After 5 seconds, filters reset to defaults automatically.
 
-  const filters = useFilters('users', { departments: [], roles: [], suspended: null });
+  const filters = useFilters({
+    screenKey: 'users',
+    defaults: { departments: [], roles: [], suspended: null },
+    ttl: 5000, // 5 seconds
+  });
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
   // Открыть панель фильтров
@@ -157,13 +161,23 @@ export default function UsersIndex() {
           paddingHorizontal: sz.lg,
           paddingBottom: theme.components.scrollView.paddingBottom,
         },
+        card: {
+          backgroundColor: c.surface,
+          borderRadius: rad.lg,
+          borderWidth: theme.components.card.borderWidth,
+          borderColor: c.border,
+          padding: sz.md,
+          marginBottom: sz.sm,
+          position: 'relative',
+          minHeight: sz.xl * 4,
+        },
         cardSuspended: {
           backgroundColor: theme.colors.surfaceMutedDanger,
           borderWidth: 0,
           borderColor: 'transparent',
         },
         cardRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-        cardTextWrap: { flexShrink: 1, paddingRight: sz.sm },
+        cardTextWrap: { flexShrink: 1, paddingRight: sz.xl * 3 },
         cardTitle: { fontSize: ty.sizes.md, fontWeight: ty.weight.semibold, color: c.text },
         rolePill: {
           paddingHorizontal: sz.sm,
@@ -172,11 +186,16 @@ export default function UsersIndex() {
           borderWidth: 1,
         },
         rolePillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold },
-        rolePillTopRight: { position: 'absolute', top: sz.xs, right: sz.xs, zIndex: 2 },
+        rolePillTopRight: {
+          position: 'absolute',
+          top: sz.md,
+          right: sz.md,
+          zIndex: 2,
+        },
         suspendedPill: {
           position: 'absolute',
-          right: sz.xs,
-          bottom: sz.xs,
+          right: sz.md,
+          bottom: sz.md,
           zIndex: 2,
           paddingHorizontal: sz.sm,
           paddingVertical: 6,
@@ -540,12 +559,12 @@ export default function UsersIndex() {
       type: 'select',
       props: {
         options: [
-          { id: 'all', value: null, label: t('users_showAll', 'Все') },
-          { id: 'onlySuspended', value: true, label: t('users_onlySuspended', 'Отстраненные') },
+          { id: 'all', value: null, label: t('users_showAll') },
+          { id: 'onlySuspended', value: true, label: t('users_onlySuspended') },
           {
             id: 'withoutSuspended',
             value: false,
-            label: t('users_withoutSuspended', 'Без отстраненных'),
+            label: t('users_withoutSuspended'),
           },
         ],
         searchable: false,
@@ -577,14 +596,14 @@ export default function UsersIndex() {
     if (Array.isArray(filters.values.roles) && filters.values.roles.length) {
       const roleNames = filters.values.roles.map((r) => ROLE_LABELS[r]).filter(Boolean);
       if (roleNames.length) {
-        parts.push(`${t('users_role', 'Роль')}: ${roleNames.join(', ')}`);
+        parts.push(`${t('users_role')}: ${roleNames.join(', ')}`);
       }
     }
     // Suspended summary
     if (filters.values.suspended === true) {
-      parts.push(t('users_onlySuspended', 'Отстраненные'));
+      parts.push(t('users_onlySuspended'));
     } else if (filters.values.suspended === false) {
-      parts.push(t('users_withoutSuspended', 'Без отстраненных'));
+      parts.push(t('users_withoutSuspended'));
     }
     return parts.join(t('common_bullet'));
   }, [filters.values, departments, useDepartments]);
@@ -654,7 +673,7 @@ export default function UsersIndex() {
                 <Text numberOfLines={1} style={styles.metaText}>
                   {(() => {
                     const d = departments.find((d) => String(d.id) === String(item.department_id));
-                    return d ? `${t('users_department')}: ${d.name}` : null;
+                    return d ? `${t('users_department')}: ${d.name}` : '';
                   })()}
                 </Text>
               ) : null}
@@ -673,18 +692,18 @@ export default function UsersIndex() {
           </View>
 
           <View style={[stylesPill.container, styles.rolePillTopRight]}>
-            <Text style={stylesPill.text}>{ROLE_LABELS[item.role] || '—'}</Text>
+            <Text style={stylesPill.text}>{t(`role_${item.role}`)}</Text>
           </View>
 
           {item?.is_suspended === true || !!item?.suspended_at ? (
             <View style={styles.suspendedPill}>
-              <Text style={styles.suspendedPillText}>Отстранен</Text>
+              <Text style={styles.suspendedPillText}>{t('status_suspended')}</Text>
             </View>
           ) : null}
         </Pressable>
       );
     },
-    [goToUser, theme.colors.border],
+    [goToUser, theme.colors.border, departments],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
@@ -759,7 +778,7 @@ export default function UsersIndex() {
                 android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
                 style={styles.filterBtn}
                 accessibilityRole="button"
-                accessibilityLabel={t('users_filterButton', 'Фильтры')}
+                accessibilityLabel={t('users_filterButton')}
               >
                 <Feather name="sliders" size={18} color={theme.colors.text} />
               </Pressable>
@@ -769,18 +788,12 @@ export default function UsersIndex() {
                     {filterSummary}
                   </Text>
                   <Pressable
-                    onPress={() => {
-                      // Manually clear all filters and persist the empty state.
-                      // Calling reset() alone only updates local state; we explicitly set
-                      // each filter to its default value and then apply to persist.
-                      if (setFilterValue) {
-                        setFilterValue('departments', []);
-                        setFilterValue('roles', []);
-                        setFilterValue('suspended', null);
-                      }
-                      filters.apply().then(() => {
-                        fetchUsers();
-                      });
+                    onPress={async () => {
+                      // Reset filters to defaults and get the reset values
+                      const resetValues = filters.reset();
+                      // Apply and persist the reset state immediately
+                      await filters.apply(resetValues);
+                      // Users will be refreshed automatically via useEffect
                     }}
                   >
                     <Text
@@ -790,7 +803,7 @@ export default function UsersIndex() {
                       ]}
                     >
                       {' '}
-                      {t('settings_sections_quiet_items_quiet_reset', 'Сбросить')}
+                      {t('settings_sections_quiet_items_quiet_reset')}
                     </Text>
                   </Pressable>
                 </>
@@ -848,7 +861,7 @@ export default function UsersIndex() {
         onApply={async () => {
           await filters.apply();
           setFiltersVisible(false);
-          fetchUsers();
+          // Users will be refreshed automatically via useEffect
         }}
       />
     </SafeAreaView>
