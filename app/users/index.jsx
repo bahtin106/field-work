@@ -1,33 +1,33 @@
+// ...existing code...
 // app/users/index.jsx
 
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
-  FlatList,
-  RefreshControl,
   ActivityIndicator,
-  TouchableWithoutFeedback,
+  FlatList,
   Keyboard,
-  StyleSheet,
   Platform,
   Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableWithoutFeedback,
+  View,
 } from 'react-native';
-import * as NavigationBar from 'expo-navigation-bar';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Feather } from '@expo/vector-icons';
 
 import AppHeader from '../../components/navigation/AppHeader';
 
-import { supabase } from '../../lib/supabase';
-import { useTheme } from '../../theme/ThemeProvider';
 import Button from '../../components/ui/Button';
 import UITextField from '../../components/ui/TextField';
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
-import { useFilters } from '../../components/hooks/useFilters';
 import FiltersPanel from '../../components/filters/FiltersPanel';
+import { useFilters } from '../../components/hooks/useFilters';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
@@ -71,21 +71,34 @@ export default function UsersIndex() {
   // Initialize filters with a short TTL (~10 seconds). 1 hour is too long for this use case.
   // When filters are applied they will persist for roughly 10 seconds and then expire.
   // Note: ttlHours accepts hours, so 0.003 ≈ 10.8 seconds.
-  const filters = useFilters('users', { departments: [], roles: [], suspended: null });
 
-    const c = theme.colors;
+  const filters = useFilters('users', { departments: [], roles: [], suspended: null });
+  // Проксирующая функция для совместимости с фильтрами
+  const setFilterValue = filters.setValue;
+
+  const c = theme.colors;
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
   const controlH = theme.components.input.height;
-const styles = React.useMemo(
+  const styles = React.useMemo(
     () =>
       StyleSheet.create({
         safe: { flex: 1, backgroundColor: c.background },
         container: { flex: 1 },
-        loaderWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: c.background },
+        loaderWrap: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+          backgroundColor: c.background,
+        },
         header: { paddingHorizontal: sz.lg, paddingTop: sz.xs, paddingBottom: sz.sm },
-        title: { fontSize: ty.sizes.xl, fontWeight: ty.weight.bold, color: c.text, marginBottom: sz.sm },
+        title: {
+          fontSize: ty.sizes.xl,
+          fontWeight: ty.weight.bold,
+          color: c.text,
+          marginBottom: sz.sm,
+        },
         searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
         searchBox: {
           flex: 1,
@@ -117,7 +130,10 @@ const styles = React.useMemo(
           fontWeight: ty.weight.semibold,
         },
         searchMask: {
-          position: 'absolute', left: 0, right: 0, bottom: 0,
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
           height: StyleSheet.hairlineWidth,
           backgroundColor: c.inputBg,
           borderBottomLeftRadius: rad.lg,
@@ -135,7 +151,10 @@ const styles = React.useMemo(
           borderRadius: rad.md,
         },
         errorText: { color: c.danger, fontSize: ty.sizes.sm },
-        listContent: { paddingHorizontal: sz.lg, paddingBottom: theme.components.scrollView.paddingBottom },
+        listContent: {
+          paddingHorizontal: sz.lg,
+          paddingBottom: theme.components.scrollView.paddingBottom,
+        },
         cardSuspended: {
           backgroundColor: theme.colors.surfaceMutedDanger,
           borderWidth: 0,
@@ -199,10 +218,7 @@ const styles = React.useMemo(
   // --- Debounce for search (theme.timings)
   useEffect(() => {
     const ms = Number(theme.timings.backDelayMs);
-    const tmr = setTimeout(
-      () => setDebouncedQ(q.trim().toLowerCase()),
-      ms,
-    );
+    const tmr = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), ms);
     return () => clearTimeout(tmr);
   }, [q, theme.timings?.backDelayMs]);
 
@@ -577,7 +593,10 @@ const styles = React.useMemo(
     const d = parsePgTs(ts);
     if (!d) return false;
     const diff = Date.now() - d.getTime(); // positive if past
-    return diff <= Number(theme.timings.presenceOnlineWindowMs) && diff >= -Number(theme.timings.presenceFutureSkewMs);
+    return (
+      diff <= Number(theme.timings.presenceOnlineWindowMs) &&
+      diff >= -Number(theme.timings.presenceFutureSkewMs)
+    );
   }, []);
 
   const formatPresence = React.useCallback(

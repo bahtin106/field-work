@@ -184,7 +184,7 @@ function formatDateRU(date, withYear = true) {
     const offset = Number(dict.month_label_offset ?? 0) || 0;
     const m = d.getMonth(); // 0..11
     const idx = (m + offset + 12) % 12;
-    const month = T(`months_genitive.${idx}`);
+    const month = T(`months_genitive_${idx}`);
     const day = d.getDate();
     const year = d.getFullYear();
     return withYear ? `${day} ${month} ${year}` : `${day} ${month}`;
@@ -1725,7 +1725,7 @@ export default function EditUser() {
             </View>
           </Card>
 
-          {!isSelfAdmin && (
+          {meIsAdmin && meId !== userId && (
             <UIButton
               title={t('btn_delete')}
               variant="destructive"

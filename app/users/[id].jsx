@@ -440,8 +440,8 @@ export default function UserView() {
                         const m = birthdate.getMonth(); // 0..11
                         const keyIdx = (m + offset + 12) % 12;
                         const monthName = t(
-                          `months_genitive.${keyIdx}`,
-                          `months_genitive.${keyIdx}`,
+                          `months_genitive_${keyIdx}`,
+                          `months_genitive_${keyIdx}`,
                         );
                         const day = birthdate.getDate();
                         const year = birthdate.getFullYear();
