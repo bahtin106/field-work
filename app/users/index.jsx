@@ -1,7 +1,7 @@
 // ...existing code...
 // app/users/index.jsx
 
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -15,7 +15,7 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Feather } from '@expo/vector-icons';
 
@@ -23,11 +23,13 @@ import AppHeader from '../../components/navigation/AppHeader';
 
 import Button from '../../components/ui/Button';
 import UITextField from '../../components/ui/TextField';
-import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useFilters } from '../../components/hooks/useFilters';
+// New cache-enabled hooks
+import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
+import { useUsers } from '../../components/hooks/useUsers';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
@@ -54,20 +56,14 @@ function withAlpha(color, a) {
 export default function UsersIndex() {
   const { theme } = useTheme();
   useTranslation(); // subscribe to i18n changes without re-plumbing
-  const { top: headerHeight } = useSafeAreaInsets();
   const router = useRouter();
-  const [list, setList] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const [departments, setDepartments] = useState([]);
-  const [useDepartments, setUseDepartments] = useState(false);
-  const [flagReady, setFlagReady] = useState(false);
 
   const [filtersVisible, setFiltersVisible] = useState(false);
-
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
+  const [companyId, setCompanyId] = useState(null);
+  const [useDepartments, setUseDepartments] = useState(false);
+
   // Initialize filters with a 5-second TTL as requested by user.
   // When user leaves and returns within 5 seconds, filters persist.
   // After 5 seconds, filters reset to defaults automatically.
@@ -76,6 +72,51 @@ export default function UsersIndex() {
     screenKey: 'users',
     defaults: { departments: [], roles: [], suspended: null },
     ttl: 5000, // 5 seconds
+  });
+
+  // Load company settings once
+  useEffect(() => {
+    (async () => {
+      try {
+        const cid = await getMyCompanyId();
+        setCompanyId(cid);
+
+        if (cid) {
+          // Check if departments are enabled
+          try {
+            const { count } = await import('../../lib/supabase').then((m) =>
+              m.supabase
+                .from('departments')
+                .select('id', { count: 'exact', head: true })
+                .eq('company_id', cid),
+            );
+            setUseDepartments(typeof count === 'number' && count > 0);
+          } catch {
+            setUseDepartments(false);
+          }
+        }
+      } catch {
+        setCompanyId(null);
+        setUseDepartments(false);
+      }
+    })();
+  }, []);
+
+  // Use new cache-enabled hooks
+  const {
+    users,
+    isLoading,
+    isRefreshing,
+    refresh: refreshUsers,
+  } = useUsers({
+    filters: filters.values,
+    enabled: !!companyId,
+  });
+
+  const { departments } = useDepartmentsHook({
+    companyId,
+    enabled: useDepartments && !!companyId,
+    onlyEnabled: true,
   });
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
@@ -233,9 +274,6 @@ export default function UsersIndex() {
     [theme],
   );
 
-  // Avoid fullscreen loader flicker after first content paint
-  const hasShownContent = React.useRef(false);
-
   // --- Debounce for search (theme.timings)
   useEffect(() => {
     const ms = Number(theme.timings.backDelayMs);
@@ -243,172 +281,14 @@ export default function UsersIndex() {
     return () => clearTimeout(tmr);
   }, [q, theme.timings?.backDelayMs]);
 
-  const loadCompanyFlag = useCallback(async () => {
-    // Ensure we always resolve flagReady to avoid splash flicker / stuck loader
-    try {
-      let enabled = false;
-      const cid = await getMyCompanyId();
-      if (cid) {
-        try {
-          // Try direct flag
-          const { data, error } = await supabase
-            .from('companies')
-            .select('use_departments')
-            .eq('id', cid)
-            .single();
-          if (!error) {
-            enabled = !!data?.use_departments;
-          }
-        } catch {}
-        if (!enabled) {
-          // Fallback: enable if company has any departments
-          try {
-            const { count, error: deptErr } = await supabase
-              .from('departments')
-              .select('id', { count: 'exact', head: true })
-              .eq('company_id', cid);
-            if (!deptErr && typeof count === 'number' && count > 0) {
-              enabled = true;
-            }
-          } catch {}
-        }
-      }
-      setUseDepartments(enabled);
-    } catch {
-      setUseDepartments(false);
-    } finally {
-      // Mark flag as resolved to render full UI without flicker
-      setFlagReady(true);
-    }
-  }, []);
-
-  const fetchDepartments = useCallback(async () => {
-    if (!useDepartments) {
-      setDepartments([]);
-      return;
-    }
-    try {
-      const { data, error } = await supabase
-        .from('departments')
-        .select('id, name, is_enabled')
-        .order('name');
-      if (error) throw error;
-      const enabledOnly = (Array.isArray(data) ? data : []).filter((d) => d.is_enabled !== false);
-      setDepartments(enabledOnly);
-    } catch {
-      // silent
-      setDepartments([]);
-    }
-  }, [useDepartments]);
-
-  const fetchUsers = useCallback(async () => {
-    setErrorMsg('');
-    setLoading(true);
-    try {
-      let query = supabase
-        .from('profiles')
-        .select(
-          'id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at',
-        )
-        .order('full_name', { ascending: true, nullsFirst: false });
-
-      // Apply selected filters
-      // Departments: use .in() for multi-select
-      if (
-        useDepartments &&
-        Array.isArray(filters.values.departments) &&
-        filters.values.departments.length > 0
-      ) {
-        const deptIds = filters.values.departments.map((d) =>
-          typeof d === 'number' ? d : String(d),
-        );
-        query = query.in('department_id', deptIds);
-      }
-      // Roles: multi-select by role codes
-      if (Array.isArray(filters.values.roles) && filters.values.roles.length > 0) {
-        query = query.in('role', filters.values.roles);
-      }
-      // Suspended: tri-state filter
-      if (filters.values.suspended === true) {
-        // Show only suspended users (either is_suspended true or suspended_at not null)
-        query = query.or('is_suspended.eq.true,suspended_at.not.is.null');
-      } else if (filters.values.suspended === false) {
-        // Show only active users (not suspended and no suspended_at)
-        query = query.eq('is_suspended', false).is('suspended_at', null);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        setList([]);
-        setErrorMsg(t('errors_loadUsers'));
-      } else {
-        setList(Array.isArray(data) ? data : []);
-      }
-    } catch {
-      setList([]);
-      setErrorMsg(t('errors_network'));
-    } finally {
-      setLoading(false);
-    }
-  }, [filters.values, useDepartments]);
-
-  // Initial load
-  useEffect(() => {
-    (async () => {
-      await loadCompanyFlag();
-    })();
-  }, [loadCompanyFlag]);
-
-  useEffect(() => {
-    if (!flagReady) return;
-    (async () => {
-      await Promise.all([fetchUsers(), fetchDepartments()]);
-    })();
-  }, [fetchUsers, fetchDepartments, flagReady]);
-
-  // Realtime auto-refresh
-  useEffect(() => {
-    const channel = supabase
-      .channel('rt-users')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        fetchUsers();
-      });
-
-    if (useDepartments) {
-      channel.on('postgres_changes', { event: '*', schema: 'public', table: 'departments' }, () => {
-        fetchDepartments();
-      });
-    }
-
-    const sub = channel.subscribe();
-    return () => {
-      try {
-        sub.unsubscribe();
-      } catch {}
-    };
-  }, [fetchUsers, fetchDepartments, useDepartments]);
-
-  // Refresh when screen regains focus
-  useFocusEffect(
-    useCallback(() => {
-      if (!flagReady) return () => {};
-      (async () => {
-        await Promise.all([fetchUsers(), fetchDepartments()]);
-      })();
-      return () => {};
-    }, [fetchUsers, fetchDepartments, flagReady]),
-  );
-
+  // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await Promise.all([fetchUsers(), fetchDepartments(), loadCompanyFlag()]);
-    setRefreshing(false);
-  }, [fetchUsers, fetchDepartments, loadCompanyFlag]);
+    await refreshUsers();
+  }, [refreshUsers]);
 
   const filtered = useMemo(() => {
-    if (!debouncedQ) return list;
-    return list.filter((u) => {
+    if (!debouncedQ) return users;
+    return users.filter((u) => {
       const name = (
         `${u.first_name || ''} ${u.last_name || ''}`.trim() ||
         u.full_name ||
@@ -420,7 +300,7 @@ export default function UsersIndex() {
         name.includes(debouncedQ) || roleCode.includes(debouncedQ) || roleTitle.includes(debouncedQ)
       );
     });
-  }, [debouncedQ, list]);
+  }, [debouncedQ, users]);
 
   const goToUser = useCallback(
     (id) => {
@@ -462,8 +342,6 @@ export default function UsersIndex() {
       }
       return new Date(utcMs); // treat no-TZ as UTC
     };
-
-    // (Filter schema and summary definitions removed from inside parsePgTs; they will be defined outside this function.)
 
     try {
       if (typeof ts === 'string') {
@@ -518,61 +396,6 @@ export default function UsersIndex() {
   }
 
   // --- Filter definitions ---
-  // Build schema for filter modal: dynamic according to available options.
-  // We define this outside of parsePgTs so it has access to current state hooks.
-  const filterSchema = useMemo(() => {
-    const schema = [];
-    // Show department filter only if the company uses departments
-    if (useDepartments) {
-      schema.push({
-        name: 'departments',
-        label: 'users_department',
-        type: 'multiselect',
-        props: {
-          options: departments.map((d) => ({
-            id: String(d.id),
-            value: String(d.id),
-            label: d.name,
-          })),
-          searchable: false,
-        },
-      });
-    }
-    // Roles filter: multi-select among available roles
-    schema.push({
-      name: 'roles',
-      label: 'users_role',
-      type: 'multiselect',
-      props: {
-        options: Object.keys(ROLE_LABELS).map((r) => ({
-          id: r,
-          value: r,
-          label: ROLE_LABELS[r] || r,
-        })),
-        searchable: false,
-      },
-    });
-    // Suspended filter: tri-state (all, only suspended, without suspended)
-    schema.push({
-      name: 'suspended',
-      label: 'users_suspended',
-      type: 'select',
-      props: {
-        options: [
-          { id: 'all', value: null, label: t('users_showAll') },
-          { id: 'onlySuspended', value: true, label: t('users_onlySuspended') },
-          {
-            id: 'withoutSuspended',
-            value: false,
-            label: t('users_withoutSuspended'),
-          },
-        ],
-        searchable: false,
-      },
-    });
-    return schema;
-  }, [useDepartments, departments, t]);
-
   // Compose summary string for active filters to display in UI
   const filterSummary = useMemo(() => {
     const parts = [];
@@ -643,8 +466,6 @@ export default function UsersIndex() {
     [isOnlineNow, t],
   );
 
-  // Exact "last seen" formatter: always shows full date & time (local), robust to small clock skews
-
   const renderItem = useCallback(
     ({ item }) => {
       const stylesPill = rolePillStyle(item.role);
@@ -708,9 +529,7 @@ export default function UsersIndex() {
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  // Derived: department name is now handled via filter summary
-
-  if ((!hasShownContent.current && loading) || !flagReady) {
+  if (isLoading && !companyId) {
     return (
       <SafeAreaView style={styles.safe} edges={['left', 'right']}>
         <View style={styles.loaderWrap}>
@@ -723,7 +542,7 @@ export default function UsersIndex() {
   const EmptyState = () => (
     <View style={styles.emptyWrap}>
       <Text style={styles.emptyText}>
-        {list.length === 0 ? t('empty_noData') : t('empty_noResults')}
+        {users.length === 0 ? t('empty_noData') : t('empty_noResults')}
       </Text>
     </View>
   );
@@ -814,15 +633,11 @@ export default function UsersIndex() {
               <Text style={styles.metaText}>
                 {debouncedQ
                   ? `${t('users_found')}: ${filtered.length}`
-                  : `${t('users_total')}: ${list.length}`}
+                  : `${t('users_total')}: ${users.length}`}
               </Text>
             </View>
 
-            {!!errorMsg && (
-              <View style={styles.errorCard}>
-                <Text style={styles.errorText}>{errorMsg}</Text>
-              </View>
-            )}
+            {/* Removed error display - errors now handled by hooks */}
           </View>
 
           <FlatList
@@ -833,7 +648,7 @@ export default function UsersIndex() {
             renderItem={renderItem}
             refreshControl={
               <RefreshControl
-                refreshing={refreshing}
+                refreshing={isRefreshing}
                 onRefresh={onRefresh}
                 tintColor={theme.colors.primary}
                 colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
