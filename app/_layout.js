@@ -151,6 +151,7 @@ function RootLayoutInner() {
         let validatedUser = null;
         if (session?.access_token) {
           try {
+            // Первая попытка
             const userResult = await Promise.race([
               supabase.auth.getUser().catch((e) => {
                 logger.warn('getUser failed during init:', e?.message || e);
@@ -159,8 +160,23 @@ function RootLayoutInner() {
               new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
             ]);
             validatedUser = userResult?.data?.user ?? null;
+            // Если не удалось получить пользователя, но сессия есть — пробуем ещё раз через 500мс
             if (!validatedUser) {
-              logger.warn('Session present but getUser returned no user — treating as signed out');
+              logger.warn('Session present but getUser returned no user — retrying after delay');
+              await new Promise((res) => setTimeout(res, 500));
+              const retryUserResult = await Promise.race([
+                supabase.auth.getUser().catch((e) => {
+                  logger.warn('getUser failed during retry:', e?.message || e);
+                  return { data: { user: null } };
+                }),
+                new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 1500)),
+              ]);
+              validatedUser = retryUserResult?.data?.user ?? null;
+              if (!validatedUser) {
+                logger.warn(
+                  'Session present but getUser returned no user after retry — treating as signed out',
+                );
+              }
             }
           } catch (e) {
             logger.warn('getUser (init) error:', e?.message || e);
@@ -187,10 +203,10 @@ function RootLayoutInner() {
           }
         }
 
-        const logged = !!validatedUser;
+        // Логика: если есть session, но пользователь не получен — НЕ сбрасываем isLoggedIn в false сразу, а считаем, что пользователь залогинен, если есть access_token
+        const logged = !!validatedUser || !!session?.access_token;
 
         if (mounted) {
-          // sessionReady означает, что авторизация была инициализирована (а не обязательно — что пользователь залогинен)
           setSessionReady(true);
           setIsLoggedIn(logged);
           logger?.warn?.('initializeApp: sessionReady set, isLoggedIn=', logged);

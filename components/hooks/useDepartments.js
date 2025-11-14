@@ -42,7 +42,9 @@ export function useDepartments(options = {}) {
     queryKey,
     queryFn: fetchDepartments,
     ttl: 10 * 60 * 1000, // 10 минут (отделы меняются реже)
+    staleTime: 5 * 60 * 1000, // 5 минут считаем данные свежими
     enabled: enabled && !!companyId,
+    placeholderData: [], // Показываем пустой массив пока грузятся данные из кеша
   });
 
   // Автоматическая синхронизация через Realtime

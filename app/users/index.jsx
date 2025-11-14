@@ -105,7 +105,7 @@ export default function UsersIndex() {
   // Use new cache-enabled hooks
   const {
     users,
-    isLoading,
+    isLoading: usersLoading,
     isRefreshing,
     refresh: refreshUsers,
   } = useUsers({
@@ -113,11 +113,15 @@ export default function UsersIndex() {
     enabled: !!companyId,
   });
 
-  const { departments } = useDepartmentsHook({
+  const { departments, isLoading: departmentsLoading } = useDepartmentsHook({
     companyId,
     enabled: useDepartments && !!companyId,
     onlyEnabled: true,
   });
+
+  // Combined loading state - wait for both users and departments (if needed)
+  const isLoading = usersLoading || (useDepartments && departmentsLoading);
+
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
   // Открыть панель фильтров
@@ -466,6 +470,15 @@ export default function UsersIndex() {
     [isOnlineNow, t],
   );
 
+  // Memoized department map for fast lookup
+  const departmentMap = useMemo(() => {
+    const map = new Map();
+    departments.forEach((dept) => {
+      map.set(String(dept.id), dept.name);
+    });
+    return map;
+  }, [departments]);
+
   const renderItem = useCallback(
     ({ item }) => {
       const stylesPill = rolePillStyle(item.role);
@@ -474,6 +487,11 @@ export default function UsersIndex() {
         item.full_name ||
         ''
       ).trim();
+
+      // Fast department lookup from memoized map
+      const deptName = item?.department_id ? departmentMap.get(String(item.department_id)) : null;
+      const departmentText = deptName ? `${t('users_department')}: ${deptName}` : '';
+
       return (
         <Pressable
           android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
@@ -490,12 +508,9 @@ export default function UsersIndex() {
               <Text numberOfLines={1} style={styles.cardTitle}>
                 {fullName || t('common_noName')}
               </Text>
-              {item?.department_id ? (
+              {departmentText ? (
                 <Text numberOfLines={1} style={styles.metaText}>
-                  {(() => {
-                    const d = departments.find((d) => String(d.id) === String(item.department_id));
-                    return d ? `${t('users_department')}: ${d.name}` : '';
-                  })()}
+                  {departmentText}
                 </Text>
               ) : null}
               <Text
@@ -524,12 +539,22 @@ export default function UsersIndex() {
         </Pressable>
       );
     },
-    [goToUser, theme.colors.border, departments],
+    [
+      goToUser,
+      theme.colors.border,
+      departmentMap,
+      styles,
+      rolePillStyle,
+      formatPresence,
+      isOnlineNow,
+      t,
+    ],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  if (isLoading && !companyId) {
+  // Show loader only on initial load (when we don't have cached data yet)
+  if (isLoading && users.length === 0) {
     return (
       <SafeAreaView style={styles.safe} edges={['left', 'right']}>
         <View style={styles.loaderWrap}>

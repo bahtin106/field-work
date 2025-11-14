@@ -35,6 +35,7 @@ export function useQueryWithCache(options) {
     queryKey,
     queryFn,
     ttl = 5 * 60 * 1000, // 5 минут по умолчанию
+    staleTime = 30 * 1000, // 30 секунд до повторной загрузки
     enabled = true,
     retry = 3,
     retryDelay = 1000,
@@ -50,7 +51,7 @@ export function useQueryWithCache(options) {
 
   const [data, setData] = useState(() => {
     // Пытаемся получить данные из кэша при инициализации
-    const cached = globalCache.get(queryKey);
+    const cached = globalCache.get(queryKey, staleTime);
     if (cached?.data) {
       return cached.data;
     }
@@ -59,7 +60,7 @@ export function useQueryWithCache(options) {
 
   const [isLoading, setIsLoading] = useState(() => {
     // Если есть кэшированные данные, не показываем loader
-    const cached = globalCache.get(queryKey);
+    const cached = globalCache.get(queryKey, staleTime);
     return !cached?.data && enabled;
   });
 
@@ -78,7 +79,7 @@ export function useQueryWithCache(options) {
 
       // Проверяем кэш перед загрузкой
       if (!skipCache && !isRefresh) {
-        const cached = globalCache.get(queryKey);
+        const cached = globalCache.get(queryKey, staleTime);
         if (cached && !cached.isStale) {
           // Данные свежие, используем кэш
           if (mountedRef.current) {
@@ -164,7 +165,7 @@ export function useQueryWithCache(options) {
 
       return requestPromise;
     },
-    [queryKey, queryFn, ttl, retry, retryDelay, onSuccess, onError],
+    [queryKey, queryFn, ttl, staleTime, retry, retryDelay, onSuccess, onError],
   );
 
   // Pull-to-refresh функция
@@ -238,7 +239,7 @@ export function useQueryWithCache(options) {
     if (!refetchOnFocus || !enabled) return;
 
     const handleAppStateChange = () => {
-      const cached = globalCache.get(queryKey);
+      const cached = globalCache.get(queryKey, staleTime);
       if (cached?.isStale) {
         fetchData({ skipCache: true });
       }
