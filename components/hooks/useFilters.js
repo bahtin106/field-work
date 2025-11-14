@@ -30,8 +30,8 @@
  *   // then pass visible/open/close/values/etc to your FilterModal component
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 // TTL default: 1 hour (in ms). If the stored filter state is older than
 // this, defaults will be used instead.
@@ -84,21 +84,30 @@ export function useFilters({ screenKey, defaults = {}, ttl = DEFAULT_TTL }) {
     setValues((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  // Reset all values back to defaults (does not affect persisted state until apply)
+  // Reset all values back to defaults and return them for immediate use
   const reset = useCallback(() => {
-    setValues({ ...defaults });
+    const resetValues = { ...defaults };
+    setValues(resetValues);
+    return resetValues;
   }, [defaults]);
 
-  // Apply – persist current values to storage and close the modal. Returns a
-  // promise to allow callers to await completion.
-  const apply = useCallback(async () => {
-    try {
-      await AsyncStorage.setItem(storageKey, JSON.stringify({ ts: Date.now(), values }));
-    } catch (err) {
-      console.warn('[useFilters] failed to save filters:', err?.message || err);
-    }
-    setVisible(false);
-  }, [storageKey, values]);
+  // Apply – persist current values (or provided values) to storage and close the modal.
+  // Returns a promise to allow callers to await completion.
+  const apply = useCallback(
+    async (valuesToPersist) => {
+      const finalValues = valuesToPersist || values;
+      try {
+        await AsyncStorage.setItem(
+          storageKey,
+          JSON.stringify({ ts: Date.now(), values: finalValues }),
+        );
+      } catch (err) {
+        console.warn('[useFilters] failed to save filters:', err?.message || err);
+      }
+      setVisible(false);
+    },
+    [storageKey, values],
+  );
 
   // Expose API to consumer
   return useMemo(
