@@ -75,6 +75,8 @@ export default function UsersIndex() {
   const filters = useFilters('users', { departments: [], roles: [], suspended: null });
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
+  // Открыть панель фильтров
+  const openFiltersPanel = () => setFiltersVisible(true);
 
   const c = theme.colors;
   const sz = theme.spacing;
