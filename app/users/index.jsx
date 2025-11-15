@@ -30,11 +30,11 @@ import { useFilters } from '../../components/hooks/useFilters';
 // New cache-enabled hooks
 import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
 import { useUsers } from '../../components/hooks/useUsers';
+import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
-import { UserCard } from '../../components/users/UserCard';
 
 // Safe alpha helper for both hex/rgb strings and dynamic PlatformColor objects
 function withAlpha(color, a) {

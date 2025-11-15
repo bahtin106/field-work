@@ -205,7 +205,6 @@ export default function IndexScreen() {
     // Принудительное скрытие после MAX_SPLASH_MS
     if (elapsed >= MAX_SPLASH_MS) {
       if (splashVisible) {
-        console.warn('Force hiding splash after MAX_SPLASH_MS');
         setSplashVisible(false);
         _GLOBAL_BOOT_FLAG.value = true;
       }
@@ -236,7 +235,6 @@ export default function IndexScreen() {
 
     const forceHideTimer = setTimeout(() => {
       if (splashVisible) {
-        console.warn('Force hiding splash by timeout');
         setSplashVisible(false);
         _GLOBAL_BOOT_FLAG.value = true;
       }

@@ -217,11 +217,6 @@ function RootLayoutInner() {
               );
               const userRole = await Promise.race([userRolePromise, timeoutPromise]);
               if (mounted) setRole(userRole);
-              try {
-                logger?.warn?.('initializeApp: role loaded=', userRole);
-              } catch (e) {
-                void e;
-              }
 
               // Предзагружаем отделы в глобальный кэш, чтобы они были мгновенно доступны
               try {
