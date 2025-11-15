@@ -66,7 +66,10 @@ export default function LoginScreen() {
           top: 0,
           bottom: 0,
           justifyContent: 'center',
-          paddingHorizontal: theme?.spacing?.xs ?? 6,
+          alignItems: 'center',
+          paddingHorizontal: theme?.spacing?.sm ?? 12,
+          paddingVertical: theme?.spacing?.xs ?? 8,
+          borderRadius: theme?.radii?.md ?? 8,
         },
         error: {
           color: theme?.colors?.danger ?? theme?.colors?.primary,
@@ -155,6 +158,10 @@ export default function LoginScreen() {
                     onChangeText={setPassword}
                     placeholder={T('fields_password', 'Пароль')}
                     secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="password"
+                    textContentType="password"
                     returnKeyType="done"
                     onSubmitEditing={handleLogin}
                   />
@@ -162,16 +169,23 @@ export default function LoginScreen() {
                   <Pressable
                     onPress={() => setShowPassword((v) => !v)}
                     style={styles.eyeToggle}
+                    android_ripple={{
+                      color: theme?.colors?.border ?? '#00000020',
+                      borderless: false,
+                      radius: 24,
+                    }}
                     accessibilityLabel={
                       showPassword
                         ? T('auth_hide_password', 'Скрыть пароль')
                         : T('auth_show_password', 'Показать пароль')
                     }
+                    accessibilityRole="button"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Feather
                       name={showPassword ? 'eye-off' : 'eye'}
-                      size={theme?.components?.listItem?.chevronSize}
-                      color={theme?.colors?.textSecondary ?? theme?.colors?.text}
+                      size={theme?.components?.listItem?.chevronSize ?? 20}
+                      color={theme?.colors?.primary ?? theme?.colors?.text}
                     />
                   </Pressable>
                 </View>

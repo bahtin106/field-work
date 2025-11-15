@@ -1690,21 +1690,27 @@ export default function EditUser() {
                         pwdRef.current?.blur();
                         setShowPassword((v) => !v);
                       }}
+                      android_ripple={{
+                        color: theme?.colors?.border ?? '#00000020',
+                        borderless: false,
+                        radius: 24,
+                      }}
                       accessibilityLabel={
                         showPassword ? t('a11y_hide_password') : t('a11y_show_password')
                       }
+                      accessibilityRole="button"
                       hitSlop={{
                         top: theme.spacing.sm,
                         bottom: theme.spacing.sm,
                         left: theme.spacing.sm,
                         right: theme.spacing.sm,
                       }}
-                      style={{ padding: theme.spacing.xs }}
+                      style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
                     >
                       <Feather
-                        name={showPassword ? 'eye' : 'eye-off'}
+                        name={showPassword ? 'eye-off' : 'eye'}
                         size={ICON_MD}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.primary ?? theme.colors.text}
                       />
                     </Pressable>
                     {!!newPassword && (
