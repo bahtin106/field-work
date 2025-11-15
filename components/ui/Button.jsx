@@ -1,13 +1,13 @@
 // components/ui/Button.jsx
 import React, { useRef } from 'react';
 import {
-  Text,
-  Animated,
   ActivityIndicator,
-  StyleSheet,
-  Platform,
-  TouchableOpacity,
+  Animated,
   Easing,
+  Platform,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
 } from 'react-native';
 import { useTheme } from '../../theme';
 
@@ -132,10 +132,15 @@ const styles = (t, p, sz, disabled) =>
       paddingHorizontal: sz.pad,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: disabled ? (p.bg === 'transparent' ? t.colors.surface : p.bg + 'CC') : p.bg,
+      backgroundColor: disabled
+        ? p.bg === 'transparent'
+          ? (t.colors.surfaceAlt ?? t.colors.surface)
+          : p.bg + '66'
+        : p.bg,
       borderRadius: t.radii.lg,
       borderWidth: p.border === 'transparent' ? 0 : 1,
-      borderColor: p.border,
+      borderColor: disabled ? t.colors.border + '66' : p.border,
+      opacity: disabled ? 0.6 : 1,
       ...(p.bg === t.colors.surface
         ? Platform.OS === 'ios'
           ? t.shadows.card.ios
@@ -143,7 +148,7 @@ const styles = (t, p, sz, disabled) =>
         : null),
     },
     title: {
-      color: p.fg,
+      color: disabled ? p.fg + 'CC' : p.fg,
       fontSize: sz.f,
       fontWeight: t.typography.weight.semibold,
     },

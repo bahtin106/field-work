@@ -49,12 +49,26 @@ const TextField = forwardRef(function TextField(
     [onChangeText],
   );
 
+  // Мемоизируем стиль input'а для избежания мигания при смене secureTextEntry
+  const inputStyle = React.useMemo(
+    () => [s.input, secureTextEntry && value ? { color: 'transparent', opacity: 0 } : null],
+    [s.input, secureTextEntry, value],
+  );
+
   return (
     <View style={style}>
       {label ? <Text style={s.topLabel}>{label}</Text> : null}
       <View style={s.wrap}>
         {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
         <View style={s.inputBox}>
+          {secureTextEntry && value ? (
+            <Text
+              style={[s.input, { color: theme.colors.text, position: 'absolute', width: '100%' }]}
+              numberOfLines={1}
+            >
+              {'•'.repeat(String(value).length)}
+            </Text>
+          ) : null}
           <TextInput
             ref={inputRef}
             value={value}
@@ -62,7 +76,7 @@ const TextField = forwardRef(function TextField(
             placeholder={placeholder}
             placeholderTextColor={theme.colors.inputPlaceholder}
             keyboardType={keyboardType || 'default'}
-            secureTextEntry={secureTextEntry}
+            secureTextEntry={false}
             autoCorrect={false}
             autoComplete={secureTextEntry ? 'password' : undefined}
             textContentType={secureTextEntry ? 'password' : undefined}
@@ -83,7 +97,7 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
             onSubmitEditing={onSubmitEditing}
-            style={s.input}
+            style={inputStyle}
             includeFontPadding={false}
             textAlignVertical="center"
           />
