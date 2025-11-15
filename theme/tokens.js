@@ -80,6 +80,14 @@ const light = {
     input: { height: 36 },
     listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 },
     activityIndicator: { size: 'large' },
+
+    // Interactive elements (buttons, pressables, toggles)
+    interactive: {
+      hitSlop: { top: 8, bottom: 8, left: 8, right: 8 },
+      pressRetentionOffset: { top: 16, bottom: 16, left: 16, right: 16 },
+      rippleRadius: 24,
+      rippleBorderless: false,
+    },
   },
 
   timings: {
