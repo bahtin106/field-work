@@ -27,7 +27,9 @@ import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useFilters } from '../../components/hooks/useFilters';
-// New cache-enabled hooks
+// ПРОФЕССИОНАЛЬНОЕ РЕШЕНИЕ: параллельная загрузка данных
+import { useParallelDataLoad } from '../../components/hooks/useParallelDataLoad';
+// Cache-enabled hooks
 import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
 import { useUsers } from '../../components/hooks/useUsers';
 import { UserCard } from '../../components/users/UserCard';
@@ -103,26 +105,29 @@ export default function UsersIndex() {
     })();
   }, []);
 
-  // Use new cache-enabled hooks
-  const {
-    users,
+  // ПРОФЕССИОНАЛЬНОЕ РЕШЕНИЕ: Параллельная загрузка пользователей и отделов
+  // Все данные загружаются одновременно, с использованием глобального кеша
+  const { 
+    users, 
+    departments,
     isLoading: usersLoading,
+    departmentsLoading,
     isRefreshing,
-    refresh: refreshUsers,
-  } = useUsers({
-    filters: filters.values,
-    enabled: !!companyId,
+    refreshAll,
+  } = useParallelDataLoad({
+    users: { 
+      hook: useUsers, 
+      options: { filters: filters.values, enabled: !!companyId } 
+    },
+    departments: { 
+      hook: useDepartmentsHook, 
+      options: { companyId, enabled: !!companyId, onlyEnabled: true } 
+    },
   });
 
-  // ВСЕГДА загружаем отделы в кеш, но показываем их условно в UI
-  const { departments, isLoading: departmentsLoading } = useDepartmentsHook({
-    companyId,
-    enabled: !!companyId, // Загружаем ВСЕГДА, это быстро и они кешируются
-    onlyEnabled: true,
-  });
-
-  // Combined loading state - wait for both users AND departments (всегда ждём оба)
-  const isLoading = usersLoading || departmentsLoading;
+  // Combined loading state - wait for initial data from both sources
+  // Once cached data is available, show it immediately (stale-while-revalidate pattern)
+  const isLoading = usersLoading && departmentsLoading;
 
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
@@ -289,8 +294,8 @@ export default function UsersIndex() {
 
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
-    await refreshUsers();
-  }, [refreshUsers]);
+    await refreshAll();
+  }, [refreshAll]);
 
   const filtered = useMemo(() => {
     if (!debouncedQ) return users;
