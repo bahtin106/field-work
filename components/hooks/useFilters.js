@@ -32,6 +32,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import logger from '../../lib/logger';
 
 // TTL default: 1 hour (in ms). If the stored filter state is older than
 // this, defaults will be used instead.
@@ -67,7 +68,7 @@ export function useFilters({ screenKey, defaults = {}, ttl = DEFAULT_TTL }) {
         }
       } catch (err) {
         // Fail silently – invalid JSON or storage errors should not break UI
-        console.warn('[useFilters] failed to load filters:', err?.message || err);
+        logger?.warn?.('[useFilters] failed to load filters:', err?.message || err);
       }
     })();
     return () => {
@@ -102,7 +103,7 @@ export function useFilters({ screenKey, defaults = {}, ttl = DEFAULT_TTL }) {
           JSON.stringify({ ts: Date.now(), values: finalValues }),
         );
       } catch (err) {
-        console.warn('[useFilters] failed to save filters:', err?.message || err);
+        logger?.warn?.('[useFilters] failed to save filters:', err?.message || err);
       }
       setVisible(false);
     },

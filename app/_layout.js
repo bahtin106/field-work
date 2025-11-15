@@ -19,6 +19,8 @@ import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider from '../components/ui/ToastProvider';
 import { getUserRole } from '../lib/getUserRole';
 import logger from '../lib/logger';
+import { preloadDepartments } from '../lib/preloadDepartments';
+import { getMyCompanyId } from '../lib/workTypes';
 
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
@@ -97,6 +99,7 @@ function RootLayoutInner() {
   const [sessionReady, setSessionReady] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true); // новый флаг
   const { theme } = useTheme();
   const _router = useRouter();
   const _segments = useSegments();
@@ -130,6 +133,7 @@ function RootLayoutInner() {
     let mounted = true;
 
     const initializeApp = async () => {
+      setAuthChecking(true);
       try {
         // 1) session with timeout — получаем persisted session, но дополнительно проверяем её валидность
         const sessResult = await Promise.race([
@@ -211,6 +215,7 @@ function RootLayoutInner() {
           setIsLoggedIn(logged);
           logger?.warn?.('initializeApp: sessionReady set, isLoggedIn=', logged);
           if (!appReady) setAppReady(true);
+          setAuthChecking(false);
 
           if (logged) {
             try {
@@ -225,6 +230,19 @@ function RootLayoutInner() {
               } catch (e) {
                 void e;
               }
+
+              // Предзагружаем отделы в глобальный кэш, чтобы они были мгновенно доступны
+              try {
+                const companyId = await Promise.race([
+                  getMyCompanyId(),
+                  new Promise((resolve) => setTimeout(() => resolve(null), 2000)),
+                ]);
+                if (companyId) {
+                  await preloadDepartments(companyId);
+                }
+              } catch (e) {
+                logger?.warn?.('preloadDepartments during init error:', e?.message || e);
+              }
             } catch {
               if (mounted) setRole(null);
             }
@@ -235,6 +253,7 @@ function RootLayoutInner() {
       } catch (e) {
         logger.warn('initializeApp error:', e?.message || e);
         if (mounted && !appReady) setAppReady(true);
+        setAuthChecking(false);
       }
     };
 
@@ -322,7 +341,7 @@ function RootLayoutInner() {
 
   // Навигация на основе статуса авторизации
   useEffect(() => {
-    if (!_rootNavigationState?.key || !ready) {
+    if (!_rootNavigationState?.key || !ready || authChecking) {
       logger.warn('⏳ Navigation not ready yet');
       return;
     }
@@ -351,7 +370,7 @@ function RootLayoutInner() {
         }
       }
     }
-  }, [isLoggedIn, ready, _rootNavigationState?.key, _segments, _router]);
+  }, [isLoggedIn, ready, authChecking, _rootNavigationState?.key, _segments, _router]);
 
   // Инициализация push-уведомлений для залогиненных пользователей
   useEffect(() => {
