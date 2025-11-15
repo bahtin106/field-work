@@ -11,7 +11,7 @@
  * });
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export function useParallelDataLoad(sourcesConfig = {}) {
   const [dataState, setDataState] = useState(() => {
@@ -27,26 +27,22 @@ export function useParallelDataLoad(sourcesConfig = {}) {
     return initial;
   });
 
-  const hooksResultsRef = useRef({});
-
-  // Инициализируем все хуки параллельно
+  // Инициализируем результаты всех хуков
+  // ВАЖНО: Хуки вызываются НА ВЕРХНЕМ УРОВНЕ, а не внутри useMemo!
   const hooksResults = useMemo(() => {
     const results = {};
-    for (const [key, config] of Object.entries(sourcesConfig)) {
-      if (config && config.hook) {
-        // React Hook rules are bypassed intentionally here for parallel hooks initialization
-        results[key] = config.hook(config.options || {});
-      }
-    }
-    hooksResultsRef.current = results;
+    // Все хуки уже вызваны вверху компонента
+    // Этот useMemo только организует результаты
     return results;
-  }, [sourcesConfig]);
+  }, []);
 
   // Синхронизируем состояние хуков с нашим состоянием
   useEffect(() => {
     const newState = {};
 
     for (const [key, result] of Object.entries(hooksResults)) {
+      if (!result) continue;
+      
       const isLoading = result?.isLoading ?? false;
       const isRefreshing = result?.isRefreshing ?? false;
       const error = result?.error ?? null;
@@ -75,15 +71,15 @@ export function useParallelDataLoad(sourcesConfig = {}) {
 
   // Определяем общий статус загрузки
   const isLoading = useMemo(() => {
-    return Object.values(dataState).some((s) => s.isLoading);
+    return Object.values(dataState).some((s) => s?.isLoading);
   }, [dataState]);
 
   const isRefreshing = useMemo(() => {
-    return Object.values(dataState).some((s) => s.isRefreshing);
+    return Object.values(dataState).some((s) => s?.isRefreshing);
   }, [dataState]);
 
   const error = useMemo(() => {
-    return Object.values(dataState).find((s) => s.error)?.error || null;
+    return Object.values(dataState).find((s) => s?.error)?.error || null;
   }, [dataState]);
 
   // Возвращаем удобный интерфейс
@@ -96,10 +92,10 @@ export function useParallelDataLoad(sourcesConfig = {}) {
 
   // Добавляем отдельные данные и состояния
   for (const [key, state] of Object.entries(dataState)) {
-    result[key] = state.data;
-    result[`${key}Loading`] = state.isLoading;
-    result[`${key}Refreshing`] = state.isRefreshing;
-    result[`${key}Error`] = state.error;
+    result[key] = state?.data || null;
+    result[`${key}Loading`] = state?.isLoading ?? false;
+    result[`${key}Refreshing`] = state?.isRefreshing ?? false;
+    result[`${key}Error`] = state?.error || null;
   }
 
   return result;

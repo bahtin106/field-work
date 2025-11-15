@@ -4,7 +4,7 @@
 
 ✅ Отделы больше не мерцают при каждом визите  
 ✅ Все данные загружаются одновременно  
-✅ Используется глобальный кеш (TTL: 60 минут)  
+✅ Используется глобальный кеш (TTL: 60 минут)
 
 ### Где это реализовано?
 
@@ -21,13 +21,13 @@ import { useDepartments } from '../../components/hooks/useDepartments';
 
 // В компоненте:
 const { users, departments, isLoading, refreshAll } = useParallelDataLoad({
-  users: { 
-    hook: useUsers, 
-    options: { filters: {...}, enabled: true } 
+  users: {
+    hook: useUsers,
+    options: { filters: {...}, enabled: true }
   },
-  departments: { 
-    hook: useDepartments, 
-    options: { companyId, enabled: true } 
+  departments: {
+    hook: useDepartments,
+    options: { companyId, enabled: true }
   },
   // Добавьте любые другие источники данных...
 });
