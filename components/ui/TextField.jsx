@@ -1,10 +1,10 @@
 // components/ui/TextField.jsx
-import React, { useState, forwardRef } from 'react';
-import { View, Text, TextInput, StyleSheet, Platform, Pressable, Switch } from 'react-native';
 import FeatherIcon from '@expo/vector-icons/Feather';
-import { useTheme } from '../../theme';
+import React, { forwardRef, useState } from 'react';
+import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { t as T } from '../../src/i18n';
-import { listItemStyles, CHEVRON_GAP } from './listItemStyles';
+import { useTheme } from '../../theme';
+import { CHEVRON_GAP, listItemStyles } from './listItemStyles';
 
 const TextField = forwardRef(function TextField(
   {
@@ -28,6 +28,7 @@ const TextField = forwardRef(function TextField(
     onBlur,
     pressable = false,
     onPress,
+    hidePasswordImmediately = false, // новый проп для немедленной маскировки
   },
   ref,
 ) {
@@ -63,6 +64,9 @@ const TextField = forwardRef(function TextField(
             keyboardType={keyboardType || 'default'}
             secureTextEntry={secureTextEntry}
             autoCorrect={false}
+            autoComplete={secureTextEntry ? 'password' : undefined}
+            textContentType={secureTextEntry ? 'password' : undefined}
+            importantForAutofill={secureTextEntry ? 'yes' : 'auto'}
             multiline={multiline}
             numberOfLines={numberOfLines}
             underlineColorAndroid="transparent"
@@ -79,12 +83,7 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
             onSubmitEditing={onSubmitEditing}
-            style={[
-              s.input,
-              secureTextEntry && Platform.OS === 'android'
-                ? { color: theme.colors.transparent }
-                : null,
-            ]}
+            style={s.input}
             includeFontPadding={false}
             textAlignVertical="center"
           />

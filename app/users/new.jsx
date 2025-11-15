@@ -1,38 +1,36 @@
 import { AntDesign, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { useNavigation, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
-  Keyboard,
+  Image,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  Image,
 } from 'react-native';
-import { useRouter, useNavigation } from 'expo-router';
 
 // Theme / layout / UI
-import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
-import Card from '../../components/ui/Card';
-import TextField from '../../components/ui/TextField';
 import UIButton from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
+import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import PhoneInput from '../../components/ui/PhoneInput';
-import IconButton from '../../components/ui/IconButton';
-import { SelectModal, ConfirmModal, AlertModal, DateTimeModal } from '../../components/ui/modals';
+import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
+import { useTheme } from '../../theme/ThemeProvider';
 
 // i18n
-import { useTranslation } from '../../src/i18n/useTranslation';
 import { useI18nVersion } from '../../src/i18n';
+import { useTranslation } from '../../src/i18n/useTranslation';
 
 // data / constants
-import { supabase } from '../../lib/supabase';
-import { TBL, STORAGE, FUNCTIONS as APP_FUNCTIONS, AVATAR } from '../../lib/constants';
 import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../constants/roles';
+import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
+import { supabase } from '../../lib/supabase';
 
 // --- locals / env-driven ---
 const TABLES = {
@@ -703,21 +701,27 @@ export default function NewUserScreen() {
                       onPress={() => {
                         setShowPassword((v) => !v);
                       }}
+                      android_ripple={{
+                        color: theme?.colors?.border ?? '#00000020',
+                        borderless: false,
+                        radius: 24,
+                      }}
                       accessibilityLabel={
                         showPassword ? t('a11y_hide_password') : t('a11y_show_password')
                       }
+                      accessibilityRole="button"
                       hitSlop={{
                         top: theme.spacing.sm,
                         bottom: theme.spacing.sm,
                         left: theme.spacing.sm,
                         right: theme.spacing.sm,
                       }}
-                      style={{ padding: theme.spacing.xs }}
+                      style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
                     >
                       <Feather
-                        name={showPassword ? 'eye' : 'eye-off'}
+                        name={showPassword ? 'eye-off' : 'eye'}
                         size={ICON_MD}
-                        color={theme.colors.textSecondary}
+                        color={theme.colors.primary ?? theme.colors.text}
                       />
                     </Pressable>
                   </View>
