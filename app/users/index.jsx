@@ -27,8 +27,6 @@ import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useFilters } from '../../components/hooks/useFilters';
-// ПРОФЕССИОНАЛЬНОЕ РЕШЕНИЕ: параллельная загрузка данных
-import { useParallelDataLoad } from '../../components/hooks/useParallelDataLoad';
 // Cache-enabled hooks
 import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
 import { useUsers } from '../../components/hooks/useUsers';
@@ -105,29 +103,38 @@ export default function UsersIndex() {
     })();
   }, []);
 
-  // ПРОФЕССИОНАЛЬНОЕ РЕШЕНИЕ: Параллельная загрузка пользователей и отделов
-  // Все данные загружаются одновременно, с использованием глобального кеша
-  const { 
-    users, 
-    departments,
+  // ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА: оба хука вызываются одновременно на верхнем уровне компонента
+  // Это обеспечивает параллельную загрузку данных
+  const {
+    users,
     isLoading: usersLoading,
-    departmentsLoading,
-    isRefreshing,
-    refreshAll,
-  } = useParallelDataLoad({
-    users: { 
-      hook: useUsers, 
-      options: { filters: filters.values, enabled: !!companyId } 
-    },
-    departments: { 
-      hook: useDepartmentsHook, 
-      options: { companyId, enabled: !!companyId, onlyEnabled: true } 
-    },
+    isRefreshing: usersRefreshing,
+    refresh: refreshUsers,
+  } = useUsers({
+    filters: filters.values,
+    enabled: !!companyId,
+  });
+
+  const {
+    departments,
+    isLoading: departmentsLoading,
+    isRefreshing: departmentsRefreshing,
+    refresh: refreshDepartments,
+  } = useDepartmentsHook({
+    companyId,
+    enabled: !!companyId,
+    onlyEnabled: true,
   });
 
   // Combined loading state - wait for initial data from both sources
   // Once cached data is available, show it immediately (stale-while-revalidate pattern)
   const isLoading = usersLoading && departmentsLoading;
+  const isRefreshing = usersRefreshing || departmentsRefreshing;
+
+  // Pull-to-refresh обновляет оба источника одновременно
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshUsers(), refreshDepartments()]);
+  }, [refreshUsers, refreshDepartments]);
 
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
@@ -414,7 +421,8 @@ export default function UsersIndex() {
     if (
       useDepartments &&
       Array.isArray(filters.values.departments) &&
-      filters.values.departments.length
+      filters.values.departments.length &&
+      Array.isArray(departments)
     ) {
       const names = filters.values.departments
         .map((id) => {
@@ -480,9 +488,11 @@ export default function UsersIndex() {
   // Memoized department map for fast lookup
   const departmentMap = useMemo(() => {
     const map = new Map();
-    departments.forEach((dept) => {
-      map.set(String(dept.id), dept.name);
-    });
+    if (Array.isArray(departments)) {
+      departments.forEach((dept) => {
+        map.set(String(dept.id), dept.name);
+      });
+    }
     return map;
   }, [departments]);
 
