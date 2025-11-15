@@ -97,7 +97,7 @@ export default function LoginScreen() {
       const { error: authErr } = await supabase.auth.signInWithPassword({ email, password });
 
       if (authErr) {
-        setError(T('errors.invalid_credentials', 'Invalid credentials'));
+        setError(T('errors_invalid_credentials', 'Неверный e-mail или пароль'));
         setLoading(false);
         return;
       }
@@ -111,7 +111,7 @@ export default function LoginScreen() {
       }
       if (isMounted) setLoading(false);
     } catch (e) {
-      setError(T('errors.auth_error', 'Authentication error'));
+      setError(T('errors_auth_error', 'Ошибка авторизации'));
       setLoading(false);
     }
     return () => {
@@ -132,13 +132,15 @@ export default function LoginScreen() {
           <View style={{ flex: 1 }}>
             <View style={styles.container}>
               <View style={styles.centerBlock}>
-                <Text style={styles.title}>{T('login.title', 'login.title')}</Text>
-                <Text style={styles.subtitle}>{T('login.subtitle', 'login.subtitle')}</Text>
+                <Text style={styles.title}>{T('login_title', 'Вход в систему')}</Text>
+                <Text style={styles.subtitle}>
+                  {T('login_subtitle', 'Введите ваши учётные данные')}
+                </Text>
 
                 <TextField
                   value={email}
                   onChangeText={setEmail}
-                  placeholder={T('fields.email', 'fields.email')}
+                  placeholder={T('fields_email', 'E-mail')}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   returnKeyType="next"
@@ -151,7 +153,7 @@ export default function LoginScreen() {
                     ref={passwordRef}
                     value={password}
                     onChangeText={setPassword}
-                    placeholder={T('fields.password', 'fields.password')}
+                    placeholder={T('fields_password', 'Пароль')}
                     secureTextEntry={!showPassword}
                     returnKeyType="done"
                     onSubmitEditing={handleLogin}
@@ -162,8 +164,8 @@ export default function LoginScreen() {
                     style={styles.eyeToggle}
                     accessibilityLabel={
                       showPassword
-                        ? T('auth.hide_password', 'auth.hide_password')
-                        : T('auth.show_password', 'auth.show_password')
+                        ? T('auth_hide_password', 'Скрыть пароль')
+                        : T('auth_show_password', 'Показать пароль')
                     }
                   >
                     <Feather

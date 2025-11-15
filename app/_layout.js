@@ -31,7 +31,7 @@ import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 
 // timeouts / intervals (keep centrally to ease tuning)
-const SESSION_TIMEOUT = 3500; // ms
+const SESSION_TIMEOUT = 5000; // ms - увеличен для холодного старта
 const I18N_TIMEOUT = 1500; // ms
 const LOCALE_TIMEOUT = 2000; // ms
 const ROLE_TIMEOUT = 5000; // ms
@@ -136,6 +136,7 @@ function RootLayoutInner() {
       setAuthChecking(true);
       try {
         // 1) session with timeout — получаем persisted session, но дополнительно проверяем её валидность
+        logger.warn('🚀 Initializing app, checking for persisted session...');
         const sessResult = await Promise.race([
           supabase.auth.getSession().catch((e) => {
             if (e?.message?.includes?.('Auth session missing')) {
@@ -150,35 +151,39 @@ function RootLayoutInner() {
           ),
         ]);
         const session = sessResult?.data?.session ?? null;
+        logger.warn(
+          '📋 Session from storage:',
+          session ? `present (expires: ${session.expires_at})` : 'null',
+        );
 
         // Если есть session — дополнительно проверим пользователя через getUser (авторитетный источник)
         let validatedUser = null;
         if (session?.access_token) {
           try {
-            // Первая попытка
+            // Первая попытка с увеличенным таймаутом для холодного старта
             const userResult = await Promise.race([
               supabase.auth.getUser().catch((e) => {
                 logger.warn('getUser failed during init:', e?.message || e);
                 return { data: { user: null } };
               }),
-              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
+              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 3000)),
             ]);
             validatedUser = userResult?.data?.user ?? null;
-            // Если не удалось получить пользователя, но сессия есть — пробуем ещё раз через 500мс
-            if (!validatedUser) {
+            // Если не удалось получить пользователя, но сессия есть — пробуем ещё раз через 800мс
+            if (!validatedUser && session?.access_token) {
               logger.warn('Session present but getUser returned no user — retrying after delay');
-              await new Promise((res) => setTimeout(res, 500));
+              await new Promise((res) => setTimeout(res, 800));
               const retryUserResult = await Promise.race([
                 supabase.auth.getUser().catch((e) => {
                   logger.warn('getUser failed during retry:', e?.message || e);
                   return { data: { user: null } };
                 }),
-                new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 1500)),
+                new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
               ]);
               validatedUser = retryUserResult?.data?.user ?? null;
               if (!validatedUser) {
                 logger.warn(
-                  'Session present but getUser returned no user after retry — treating as signed out',
+                  'Session present but getUser returned no user after retry — session may be expired',
                 );
               }
             }
@@ -207,8 +212,9 @@ function RootLayoutInner() {
           }
         }
 
-        // Логика: если есть session, но пользователь не получен — НЕ сбрасываем isLoggedIn в false сразу, а считаем, что пользователь залогинен, если есть access_token
-        const logged = !!validatedUser || !!session?.access_token;
+        // Логика: пользователь залогинен только если validatedUser получен успешно
+        // НЕ доверяем только наличию access_token, т.к. токен может быть устаревшим
+        const logged = !!validatedUser;
 
         if (mounted) {
           setSessionReady(true);
@@ -267,6 +273,14 @@ function RootLayoutInner() {
         if (!mounted) return;
 
         if (event === 'SIGNED_OUT') {
+          // Защита от ложных SIGNED_OUT при холодном старте:
+          // Игнорируем SIGNED_OUT, если приложение только что инициализировалось
+          // и пользователь был залогинен (возможен race condition с инициализацией)
+          if (!sessionReady) {
+            logger.warn('📤 SIGNED_OUT ignored - app still initializing');
+            return;
+          }
+
           logger.warn('📤 SIGNED_OUT — clearing state');
           try {
             await queryClient.clear();

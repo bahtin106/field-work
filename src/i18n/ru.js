@@ -29,6 +29,8 @@ export default {
   btn_deleting: 'Удаляю…',
   btn_applying: 'Применяю…',
   btn_delete_employee: 'Удалить пользователя',
+  btn_login: 'Войти',
+  btn_create: 'Создать',
   header_cancel: 'Закрыть',
   header_save: 'Сохранить',
 
@@ -82,6 +84,8 @@ export default {
   errors_openMail: 'Невозможно открыть почтовый клиент',
   errors_callsUnavailable: 'Звонки недоступны на этом устройстве',
   errors_loadUser: 'Не удалось загрузить пользователя',
+  errors_invalid_credentials: 'Неверный e-mail или пароль',
+  errors_auth_error: 'Ошибка авторизации',
   err_first_name: 'Укажите имя',
   err_last_name: 'Укажите фамилию',
   err_email: 'Укажите корректный e-mail',
@@ -122,6 +126,13 @@ export default {
   common_dash: '—',
   common_search: 'Поиск',
   common_start_typing: 'Начните вводить…',
+
+  // Авторизация
+  login_title: 'Монитор',
+  login_subtitle: 'Введите ваши учётные данные',
+  auth_hide_password: 'Скрыть пароль',
+  auth_show_password: 'Показать пароль',
+
   picker_department_title: 'Выбор отдела',
   picker_role_title: 'Выбор роли',
   action_take_photo: 'Сделать фото',
@@ -258,6 +269,8 @@ export default {
   company_settings_modals_phoneMode_options_window: 'Только в интервале',
   fields_phone: 'Телефон',
   fields_dob: 'Дата рождения',
+  fields_email: 'E-mail',
+  fields_password: 'Пароль',
   toast_loading: 'Сохраняю…',
   toast_success: 'Сохранено',
   toast_error: 'Не удалось выполнить действие',
@@ -327,7 +340,6 @@ export default {
 
   // Users index (flat keys for t('...') in app/users/index.jsx)
   routes_users_index: 'Сотрудники',
-  btn_create: 'Создать',
   users_search_placeholder: 'Поиск сотрудника',
   users_allDepartments: 'Все отделы',
   users_department: 'Отдел',
