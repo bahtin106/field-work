@@ -14,14 +14,15 @@ import {
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
-import { listItemStyles } from '../../components/ui/listItemStyles';
 import { useAuthLogin } from '../../hooks/useAuthLogin';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
 const createStyles = (theme) =>
   StyleSheet.create({
-    flex: { flex: 1 },
+    flex: {
+      flex: 1,
+    },
     container: {
       flex: 1,
       paddingHorizontal: theme.spacing.xl,
@@ -49,6 +50,12 @@ const createStyles = (theme) =>
     passwordContainer: {
       position: 'relative',
     },
+    separator: {
+      height: theme.components?.listItem?.dividerWidth ?? 1,
+      backgroundColor: theme.colors.border,
+      marginLeft: theme.spacing.xs,
+      marginRight: theme.spacing.xs,
+    },
     eyeButton: {
       position: 'absolute',
       right: theme.spacing.sm,
@@ -62,8 +69,8 @@ const createStyles = (theme) =>
     errorText: {
       color: theme.colors.danger,
       textAlign: 'center',
-      marginTop: -4,
       marginBottom: theme.spacing.sm,
+      marginTop: theme.spacing.xs,
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.medium,
     },
@@ -72,7 +79,6 @@ const createStyles = (theme) =>
 function LoginScreenContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const ls = listItemStyles(theme);
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const { email, setEmail, password, setPassword, error, loading, canSubmit, handleLogin } =
@@ -85,7 +91,7 @@ function LoginScreenContent() {
   }, []);
 
   return (
-    <Screen background="background" edges={['top', 'bottom', 'left', 'right']}>
+    <Screen background="background">
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -106,7 +112,7 @@ function LoginScreenContent() {
                 accessibilityLabel={t('fields_email')}
                 editable={!loading}
               />
-              <View style={ls.sep} />
+              <View style={styles.separator} />
 
               <View style={styles.passwordContainer}>
                 <TextField
@@ -124,20 +130,35 @@ function LoginScreenContent() {
                   accessibilityLabel={t('fields_password')}
                   editable={!loading}
                 />
-                <View style={ls.sep} />
+                <View style={styles.separator} />
                 <Pressable
                   onPress={handleTogglePassword}
                   style={styles.eyeButton}
                   android_ripple={{
                     color: theme.colors.border,
-                    borderless: false,
-                    radius: 24,
+                    borderless: theme.components.interactive?.rippleBorderless ?? false,
+                    radius: theme.components.interactive?.rippleRadius ?? 24,
                   }}
                   accessibilityLabel={
                     showPassword ? t('auth_hide_password') : t('auth_show_password')
                   }
                   accessibilityRole="button"
-                  hitSlop={theme.interactive?.hitSlop || { top: 8, bottom: 8, left: 8, right: 8 }}
+                  hitSlop={
+                    theme.components.interactive?.hitSlop ?? {
+                      top: 8,
+                      bottom: 8,
+                      left: 8,
+                      right: 8,
+                    }
+                  }
+                  pressRetentionOffset={
+                    theme.components.interactive?.pressRetentionOffset ?? {
+                      top: 16,
+                      bottom: 16,
+                      left: 16,
+                      right: 16,
+                    }
+                  }
                   disabled={loading}
                 >
                   <Feather
