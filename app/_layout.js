@@ -17,6 +17,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider from '../components/ui/ToastProvider';
+import { globalCache } from '../lib/cache/DataCache';
 import { getUserRole } from '../lib/getUserRole';
 import logger from '../lib/logger';
 import { preloadDepartments } from '../lib/preloadDepartments';
@@ -100,6 +101,7 @@ function RootLayoutInner() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);
   const [authChecking, setAuthChecking] = useState(true); // новый флаг
+  const [appKey, setAppKey] = useState(0); // Ключ для перемонтирования приложения
   const { theme } = useTheme();
   const _router = useRouter();
   const _segments = useSegments();
@@ -273,52 +275,102 @@ function RootLayoutInner() {
         if (!mounted) return;
 
         if (event === 'SIGNED_OUT') {
-          // Защита от ложных SIGNED_OUT при холодном старте:
-          // Игнорируем SIGNED_OUT, если приложение только что инициализировалось
-          // и пользователь был залогинен (возможен race condition с инициализацией)
-          if (!sessionReady) {
-            logger.warn('📤 SIGNED_OUT ignored - app still initializing');
-            return;
-          }
+          logger.warn('📤 SIGNED_OUT — clearing state and redirecting to login');
 
-          logger.warn('📤 SIGNED_OUT — clearing state');
+          // Очищаем все данные
           try {
             await queryClient.clear();
             await persister.removeClient?.();
+            globalCache.clear(); // Очищаем кастомный кэш
+            logger.warn('✅ All caches cleared on SIGNED_OUT');
           } catch (e) {
             logger.warn('Error clearing cache:', e?.message || e);
           }
+
+          // Обновляем состояние
           if (mounted) {
             setIsLoggedIn(false);
             setRole(null);
             setSessionReady(true);
+            setAuthChecking(false);
             if (!appReady) setAppReady(true);
+            // Увеличиваем ключ для полного перемонтирования приложения
+            setAppKey((prev) => prev + 1);
           }
+
+          // Принудительная переадресация на экран входа
+          try {
+            _router.replace('/(auth)/login');
+            logger.warn('✅ Redirected to login screen');
+          } catch (e) {
+            logger.warn('Navigation error during logout:', e?.message || e);
+          }
+
           return;
         }
 
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           logger.warn('📥 SIGNED_IN/TOKEN_REFRESHED — loading user data');
+
+          // При SIGNED_IN очищаем персистер и полностью удаляем все запросы из кэша
+          if (event === 'SIGNED_IN') {
+            logger.warn('🧹 SIGNED_IN — removing persister and clearing ALL queries from cache');
+            try {
+              // Удаляем персистер, чтобы не загружались старые данные
+              await persister.removeClient?.();
+
+              // Очищаем кастомный кэш
+              globalCache.clear();
+
+              // Полностью удаляем ВСЕ запросы из кэша (не инвалидируем, а удаляем)
+              // Это гарантирует, что при монтировании компонентов данные будут загружены заново
+              queryClient.removeQueries();
+
+              // Дополнительно очищаем query cache
+              queryClient.getQueryCache().clear();
+
+              // Даём время на полную очистку перед навигацией
+              await new Promise((resolve) => setTimeout(resolve, 100));
+
+              logger.warn(
+                '✅ Persister removed, globalCache cleared, ALL queries removed from cache',
+              );
+            } catch (e) {
+              logger.warn('Error clearing on SIGNED_IN:', e?.message || e);
+            }
+          }
+
+          // Сначала помечаем пользователя как залогиненного
+          if (mounted) {
+            setIsLoggedIn(true);
+            setSessionReady(true);
+            if (!appReady) setAppReady(true);
+            // Увеличиваем ключ для полного перемонтирования приложения
+            setAppKey((prev) => prev + 1);
+          }
+
           try {
             // Load role and locale
             const [userRole] = await Promise.all([
-              getUserRole(),
-              loadUserLocale().then((code) => code && setLocale(code)),
+              getUserRole().catch((e) => {
+                logger.warn('getUserRole failed:', e?.message || e);
+                return 'worker'; // fallback роль
+              }),
+              loadUserLocale()
+                .then((code) => code && setLocale(code))
+                .catch((e) => {
+                  logger.warn('loadUserLocale failed:', e?.message || e);
+                }),
             ]);
 
-            // Invalidate queries
-            queryClient.invalidateQueries({ queryKey: ['profile'] });
-            queryClient.invalidateQueries({ queryKey: ['userRole'] });
-
             if (mounted) {
-              logger.warn('✅ Setting isLoggedIn=true, role=', userRole);
+              logger.warn('✅ Role loaded:', userRole);
               setRole(userRole);
-              setIsLoggedIn(true);
-              setSessionReady(true);
-              if (!appReady) setAppReady(true);
             }
           } catch (e) {
             logger.warn('Error processing auth event:', e?.message || e);
+            // Даже если упало - пользователь залогинен, просто без роли
+            if (mounted) setRole('worker');
           }
         }
       });
@@ -453,8 +505,9 @@ function RootLayoutInner() {
             edges={['top', 'left', 'right']}
             style={{ flex: 1, backgroundColor: theme.colors.background }}
           >
-            <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }}>
+            <Animated.View layout={LinearTransition.duration(220)} style={{ flex: 1 }} key={appKey}>
               <Stack
+                key={`stack-${appKey}`}
                 screenOptions={{
                   headerShown: false,
                   animation: 'simple_push',
