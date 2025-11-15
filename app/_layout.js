@@ -48,7 +48,7 @@ function LastSeenTracker() {
       useAppLastSeen(LAST_SEEN_INTERVAL);
     }
   } catch (e) {
-    logger.warn('LastSeenTracker error:', e?.message || e);
+    // silent catch
   }
   return null;
 }
@@ -56,7 +56,7 @@ function LastSeenTracker() {
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
   SplashScreen.preventAutoHideAsync().catch((e) => {
-    logger.warn('preventAutoHideAsync error:', e?.message || e);
+    // silent catch
   });
 }
 
@@ -81,7 +81,7 @@ try {
   queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: 5 * 60 * 1000 });
   queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: 5 * 60 * 1000 });
 } catch (e) {
-  logger.warn('setQueryDefaults error:', e?.message || e);
+  // silent catch
 }
 
 const persister = createAsyncStoragePersister({ storage: AsyncStorage });
@@ -119,7 +119,7 @@ function RootLayoutInner() {
     try {
       await SplashScreen.hideAsync();
     } catch (e) {
-      logger.warn('hideSplash error:', e?.message || e);
+      // silent catch
     } finally {
       splashHiddenRef.current = true;
     }
@@ -138,14 +138,11 @@ function RootLayoutInner() {
       setAuthChecking(true);
       try {
         // 1) session with timeout — получаем persisted session, но дополнительно проверяем её валидность
-        logger.warn('🚀 Initializing app, checking for persisted session...');
         const sessResult = await Promise.race([
           supabase.auth.getSession().catch((e) => {
             if (e?.message?.includes?.('Auth session missing')) {
-              logger.warn('No session, probably signed out');
               return { data: { session: null } };
             }
-            logger.warn('getSession error:', e?.message || e);
             return { data: { session: null } };
           }),
           new Promise((resolve) =>
@@ -153,10 +150,6 @@ function RootLayoutInner() {
           ),
         ]);
         const session = sessResult?.data?.session ?? null;
-        logger.warn(
-          '📋 Session from storage:',
-          session ? `present (expires: ${session.expires_at})` : 'null',
-        );
 
         // Если есть session — дополнительно проверим пользователя через getUser (авторитетный источник)
         let validatedUser = null;
@@ -165,7 +158,6 @@ function RootLayoutInner() {
             // Первая попытка с увеличенным таймаутом для холодного старта
             const userResult = await Promise.race([
               supabase.auth.getUser().catch((e) => {
-                logger.warn('getUser failed during init:', e?.message || e);
                 return { data: { user: null } };
               }),
               new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 3000)),
@@ -173,30 +165,23 @@ function RootLayoutInner() {
             validatedUser = userResult?.data?.user ?? null;
             // Если не удалось получить пользователя, но сессия есть — пробуем ещё раз через 800мс
             if (!validatedUser && session?.access_token) {
-              logger.warn('Session present but getUser returned no user — retrying after delay');
               await new Promise((res) => setTimeout(res, 800));
               const retryUserResult = await Promise.race([
                 supabase.auth.getUser().catch((e) => {
-                  logger.warn('getUser failed during retry:', e?.message || e);
                   return { data: { user: null } };
                 }),
                 new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
               ]);
               validatedUser = retryUserResult?.data?.user ?? null;
-              if (!validatedUser) {
-                logger.warn(
-                  'Session present but getUser returned no user after retry — session may be expired',
-                );
-              }
             }
           } catch (e) {
-            logger.warn('getUser (init) error:', e?.message || e);
+            // silent catch
           }
         }
         // 2) i18n init (non-blocking with timeout)
         await Promise.race([
           initI18n().catch((e) => {
-            logger.warn('i18n init error:', e?.message || e);
+            // silent catch
           }),
           new Promise((resolve) => setTimeout(resolve, I18N_TIMEOUT)),
         ]);
@@ -210,7 +195,7 @@ function RootLayoutInner() {
             ]);
             if (code) await setLocale(code);
           } catch (e) {
-            logger.warn('loadUserLocale error:', e?.message || e);
+            // silent catch
           }
         }
 
@@ -221,7 +206,6 @@ function RootLayoutInner() {
         if (mounted) {
           setSessionReady(true);
           setIsLoggedIn(logged);
-          logger?.warn?.('initializeApp: sessionReady set, isLoggedIn=', logged);
           if (!appReady) setAppReady(true);
           setAuthChecking(false);
 
@@ -259,7 +243,7 @@ function RootLayoutInner() {
           }
         }
       } catch (e) {
-        logger.warn('initializeApp error:', e?.message || e);
+        // silent catch
         if (mounted && !appReady) setAppReady(true);
         setAuthChecking(false);
       }
@@ -271,20 +255,16 @@ function RootLayoutInner() {
 
     try {
       const onAuth = supabase.auth.onAuthStateChange(async (event, session) => {
-        logger?.warn?.('🔄 Auth state changed:', event, session?.user?.id ?? 'no-id');
         if (!mounted) return;
 
         if (event === 'SIGNED_OUT') {
-          logger.warn('📤 SIGNED_OUT — clearing state and redirecting to login');
-
           // Очищаем все данные
           try {
             await queryClient.clear();
             await persister.removeClient?.();
             globalCache.clear(); // Очищаем кастомный кэш
-            logger.warn('✅ All caches cleared on SIGNED_OUT');
           } catch (e) {
-            logger.warn('Error clearing cache:', e?.message || e);
+            // silent catch
           }
 
           // Обновляем состояние
@@ -301,20 +281,16 @@ function RootLayoutInner() {
           // Принудительная переадресация на экран входа
           try {
             _router.replace('/(auth)/login');
-            logger.warn('✅ Redirected to login screen');
           } catch (e) {
-            logger.warn('Navigation error during logout:', e?.message || e);
+            // silent catch
           }
 
           return;
         }
 
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          logger.warn('📥 SIGNED_IN/TOKEN_REFRESHED — loading user data');
-
           // При SIGNED_IN очищаем персистер и полностью удаляем все запросы из кэша
           if (event === 'SIGNED_IN') {
-            logger.warn('🧹 SIGNED_IN — removing persister and clearing ALL queries from cache');
             try {
               // Удаляем персистер, чтобы не загружались старые данные
               await persister.removeClient?.();
@@ -331,12 +307,8 @@ function RootLayoutInner() {
 
               // Даём время на полную очистку перед навигацией
               await new Promise((resolve) => setTimeout(resolve, 100));
-
-              logger.warn(
-                '✅ Persister removed, globalCache cleared, ALL queries removed from cache',
-              );
             } catch (e) {
-              logger.warn('Error clearing on SIGNED_IN:', e?.message || e);
+              // silent catch
             }
           }
 
@@ -353,22 +325,20 @@ function RootLayoutInner() {
             // Load role and locale
             const [userRole] = await Promise.all([
               getUserRole().catch((e) => {
-                logger.warn('getUserRole failed:', e?.message || e);
                 return 'worker'; // fallback роль
               }),
               loadUserLocale()
                 .then((code) => code && setLocale(code))
                 .catch((e) => {
-                  logger.warn('loadUserLocale failed:', e?.message || e);
+                  // silent catch
                 }),
             ]);
 
             if (mounted) {
-              logger.warn('✅ Role loaded:', userRole);
               setRole(userRole);
             }
           } catch (e) {
-            logger.warn('Error processing auth event:', e?.message || e);
+            // silent catch
             // Даже если упало - пользователь залогинен, просто без роли
             if (mounted) setRole('worker');
           }
@@ -376,7 +346,7 @@ function RootLayoutInner() {
       });
       subscription = onAuth?.data?.subscription ?? null;
     } catch (e) {
-      logger.warn('onAuthStateChange subscribe error:', e?.message || e);
+      // silent catch
     }
 
     const appStateSubscription = AppState.addEventListener('change', async (nextAppState) => {
@@ -391,12 +361,12 @@ function RootLayoutInner() {
       try {
         subscription?.unsubscribe?.();
       } catch (e) {
-        logger.warn('subscription unsubscribe error:', e?.message || e);
+        // silent catch
       }
       try {
         appStateSubscription?.remove?.();
       } catch (e) {
-        logger.warn('appStateSubscription remove error:', e?.message || e);
+        // silent catch
       }
     };
   }, []);
@@ -408,31 +378,23 @@ function RootLayoutInner() {
   // Навигация на основе статуса авторизации
   useEffect(() => {
     if (!_rootNavigationState?.key || !ready || authChecking) {
-      logger.warn('⏳ Navigation not ready yet');
       return;
     }
 
     const seg0 = Array.isArray(_segments) ? _segments[0] : undefined;
     const inAuth = seg0 === '(auth)';
 
-    logger.warn(
-      `🧭 Navigation effect: isLoggedIn=${isLoggedIn}, inAuth=${inAuth}, segment=${seg0}`,
-    );
-
     if (!isLoggedIn) {
       if (!inAuth) {
-        logger.warn('🔒 Not logged in, redirecting to login...');
         _router.replace('/(auth)/login');
       }
     } else {
       // Пользователь залогинен
       if (inAuth) {
-        logger.warn('✅ Logged in but on auth screen, IMMEDIATE redirect to /orders...');
         try {
           _router.replace('/orders');
-          logger.warn('✅ Navigation executed');
         } catch (e) {
-          logger.warn('Navigation error:', e?.message || e);
+          // silent catch
         }
       }
     }
@@ -449,10 +411,9 @@ function RootLayoutInner() {
         if (Constants?.appOwnership === 'expo') return;
         const { registerAndSavePushToken, attachNotificationLogs } = await import('../lib/push');
         const token = await registerAndSavePushToken();
-        logger.warn('✅ Expo push token (saved):', token);
         detach = attachNotificationLogs();
       } catch (e) {
-        logger.warn('Push init error:', e);
+        // silent catch
       }
     })();
     return () => detach?.();
@@ -470,7 +431,7 @@ function RootLayoutInner() {
         AvoidSoftInput.setEnabled(true);
         enabled = true;
       } catch (e) {
-        logger.warn('AvoidSoftInput init error:', e);
+        // silent catch
       }
     })();
     return () => {

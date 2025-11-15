@@ -34,7 +34,7 @@ import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
-import { UserCard } from './UserCard';
+import { UserCard } from '../../components/users/UserCard';
 
 // Safe alpha helper for both hex/rgb strings and dynamic PlatformColor objects
 function withAlpha(color, a) {
