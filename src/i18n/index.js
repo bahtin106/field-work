@@ -1,7 +1,7 @@
 // src/i18n/index.js
-import ru from './ru';
-import React from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import React from 'react';
+import ru from './ru';
 
 // --- simple global store ---
 let _dict = ru; // default dictionary
@@ -76,7 +76,6 @@ export async function setLocale(next) {
     notify();
     return true;
   } catch (e) {
-    console.warn('[i18n] setLocale failed:', e?.message || e);
     return false;
   }
 }

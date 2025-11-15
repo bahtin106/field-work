@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -18,11 +18,9 @@ import { useAuthLogin } from '../../hooks/useAuthLogin';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
-const createStyles = (theme) =>
-  StyleSheet.create({
-    flex: {
-      flex: 1,
-    },
+const createStyles = (theme) => {
+  return StyleSheet.create({
+    flex: { flex: 1 },
     container: {
       flex: 1,
       paddingHorizontal: theme.spacing.xl,
@@ -47,9 +45,7 @@ const createStyles = (theme) =>
       fontSize: theme.typography.sizes.sm,
       marginBottom: theme.spacing.xl,
     },
-    passwordContainer: {
-      position: 'relative',
-    },
+    passwordContainer: { position: 'relative' },
     separator: {
       height: theme.components?.listItem?.dividerWidth ?? 1,
       backgroundColor: theme.colors.border,
@@ -75,11 +71,18 @@ const createStyles = (theme) =>
       fontWeight: theme.typography.weight.medium,
     },
   });
+};
 
 function LoginScreenContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const interactive = theme.components?.interactive || {
+    hitSlop: { top: 8, bottom: 8, left: 8, right: 8 },
+    pressRetentionOffset: { top: 16, bottom: 16, left: 16, right: 16 },
+    rippleRadius: 24,
+    rippleBorderless: false,
+  };
 
   const { email, setEmail, password, setPassword, error, loading, canSubmit, handleLogin } =
     useAuthLogin();
@@ -136,29 +139,15 @@ function LoginScreenContent() {
                   style={styles.eyeButton}
                   android_ripple={{
                     color: theme.colors.border,
-                    borderless: theme.components.interactive?.rippleBorderless ?? false,
-                    radius: theme.components.interactive?.rippleRadius ?? 24,
+                    borderless: interactive.rippleBorderless,
+                    radius: interactive.rippleRadius,
                   }}
                   accessibilityLabel={
                     showPassword ? t('auth_hide_password') : t('auth_show_password')
                   }
                   accessibilityRole="button"
-                  hitSlop={
-                    theme.components.interactive?.hitSlop ?? {
-                      top: 8,
-                      bottom: 8,
-                      left: 8,
-                      right: 8,
-                    }
-                  }
-                  pressRetentionOffset={
-                    theme.components.interactive?.pressRetentionOffset ?? {
-                      top: 16,
-                      bottom: 16,
-                      left: 16,
-                      right: 16,
-                    }
-                  }
+                  hitSlop={interactive.hitSlop}
+                  pressRetentionOffset={interactive.pressRetentionOffset}
                   disabled={loading}
                 >
                   <Feather
@@ -187,4 +176,4 @@ function LoginScreenContent() {
   );
 }
 
-export default memo(LoginScreenContent);
+export default LoginScreenContent;
