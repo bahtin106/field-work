@@ -34,6 +34,7 @@ import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { getMyCompanyId } from '../../lib/workTypes';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { UserCard } from './UserCard';
 
 // Safe alpha helper for both hex/rgb strings and dynamic PlatformColor objects
 function withAlpha(color, a) {
@@ -113,14 +114,15 @@ export default function UsersIndex() {
     enabled: !!companyId,
   });
 
+  // ВСЕГДА загружаем отделы в кеш, но показываем их условно в UI
   const { departments, isLoading: departmentsLoading } = useDepartmentsHook({
     companyId,
-    enabled: useDepartments && !!companyId,
+    enabled: !!companyId, // Загружаем ВСЕГДА, это быстро и они кешируются
     onlyEnabled: true,
   });
 
-  // Combined loading state - wait for both users and departments (if needed)
-  const isLoading = usersLoading || (useDepartments && departmentsLoading);
+  // Combined loading state - wait for both users AND departments (всегда ждём оба)
+  const isLoading = usersLoading || departmentsLoading;
 
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;
@@ -481,74 +483,22 @@ export default function UsersIndex() {
 
   const renderItem = useCallback(
     ({ item }) => {
-      const stylesPill = rolePillStyle(item.role);
-      const fullName = (
-        `${item.first_name || ''} ${item.last_name || ''}`.trim() ||
-        item.full_name ||
-        ''
-      ).trim();
-
       // Fast department lookup from memoized map
       const deptName = item?.department_id ? departmentMap.get(String(item.department_id)) : null;
-      const departmentText = deptName ? `${t('users_department')}: ${deptName}` : '';
 
       return (
-        <Pressable
-          android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
-          onPress={() => goToUser(item.id)}
-          style={[
-            styles.card,
-            item?.is_suspended === true || !!item?.suspended_at ? styles.cardSuspended : null,
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={`${t('users_openUser')} ${fullName || t('common_noName')}`}
-        >
-          <View style={styles.cardRow}>
-            <View style={styles.cardTextWrap}>
-              <Text numberOfLines={1} style={styles.cardTitle}>
-                {fullName || t('common_noName')}
-              </Text>
-              {departmentText ? (
-                <Text numberOfLines={1} style={styles.metaText}>
-                  {departmentText}
-                </Text>
-              ) : null}
-              <Text
-                numberOfLines={1}
-                style={[
-                  styles.metaText,
-                  isOnlineNow(item?.last_seen_at)
-                    ? { color: theme.colors.success, fontWeight: theme.typography.weight.semibold }
-                    : null,
-                ]}
-              >
-                {formatPresence(item?.last_seen_at)}
-              </Text>
-            </View>
-          </View>
-
-          <View style={[stylesPill.container, styles.rolePillTopRight]}>
-            <Text style={stylesPill.text}>{t(`role_${item.role}`)}</Text>
-          </View>
-
-          {item?.is_suspended === true || !!item?.suspended_at ? (
-            <View style={styles.suspendedPill}>
-              <Text style={styles.suspendedPillText}>{t('status_suspended')}</Text>
-            </View>
-          ) : null}
-        </Pressable>
+        <UserCard
+          item={item}
+          departmentName={deptName}
+          onPress={goToUser}
+          rolePillStyle={rolePillStyle}
+          formatPresence={formatPresence}
+          isOnlineNow={isOnlineNow}
+          translate={t}
+        />
       );
     },
-    [
-      goToUser,
-      theme.colors.border,
-      departmentMap,
-      styles,
-      rolePillStyle,
-      formatPresence,
-      isOnlineNow,
-      t,
-    ],
+    [departmentMap, goToUser, rolePillStyle, formatPresence, isOnlineNow, t],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
