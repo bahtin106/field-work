@@ -32,7 +32,7 @@ function withAlpha(color, a) {
         .padStart(2, '0');
       return color + alpha;
     }
-    const rgb = color.match(/^rgb\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$/i);
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
     if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
   }
   return `rgba(0,0,0,${a})`;
@@ -64,6 +64,21 @@ export default function FiltersPanel({
   const ty = theme.typography;
   const rad = theme.radii;
   const sh = theme.shadows;
+
+  // Animation and UI constants with fallbacks
+  const ANIMATION_DURATION_IN = theme?.timings?.modalSlideIn ?? 220;
+  const ANIMATION_DURATION_OUT = theme?.timings?.modalSlideOut ?? 200;
+  const CATEGORY_TTL = theme?.timings?.filterCategoryTTL ?? 5000; // 5 seconds
+  const ICON_SIZE_CHECK = theme?.components?.icon?.sizeXs ?? 14;
+  const ICON_SIZE_CHEVRON = theme?.components?.icon?.sizeMd ?? 22;
+  const BACK_BUTTON_SIZE = theme?.components?.header?.backButtonSize ?? 36;
+  const CHECKBOX_SIZE = theme?.components?.checkbox?.size ?? 20;
+  const OVERLAY_Z_INDEX = theme?.zIndices?.modal ?? 1000;
+  const ALPHA_RIPPLE = theme?.components?.ripple?.alpha ?? 0.13;
+  const ALPHA_PRESSED = theme?.components?.pressable?.pressedAlpha ?? 0.07;
+  const ALPHA_CHECKBOX_SELECTED = theme?.components?.checkbox?.selectedAlpha ?? 0.15;
+  const RATIO_MIN = theme?.components?.filtersPanel?.minColumnRatio ?? 0.2;
+  const RATIO_MAX = theme?.components?.filtersPanel?.maxColumnRatio ?? 0.5;
 
   // --- Draft state: accumulate edits locally; apply on button press ---
   const [draft, setDraft] = useState({
@@ -100,21 +115,21 @@ export default function FiltersPanel({
       setMounted(true);
       Animated.timing(tx, {
         toValue: 0,
-        duration: 220,
+        duration: ANIMATION_DURATION_IN,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start();
     } else {
       Animated.timing(tx, {
         toValue: SCREEN_W,
-        duration: 200,
+        duration: ANIMATION_DURATION_OUT,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
       }).start(({ finished }) => {
         if (finished) setMounted(false);
       });
     }
-  }, [visible, tx]);
+  }, [visible, tx, ANIMATION_DURATION_IN, ANIMATION_DURATION_OUT]);
 
   // Intercept hardware back button and swipe-back when panel is visible
   useEffect(() => {
@@ -151,8 +166,7 @@ export default function FiltersPanel({
           if (stored) {
             const { categoryKey, timestamp } = JSON.parse(stored);
             const age = Date.now() - timestamp;
-            const ttl = 5000; // 5 seconds, matching filter TTL
-            if (age <= ttl && categories.some((c) => c.key === categoryKey)) {
+            if (age <= CATEGORY_TTL && categories.some((c) => c.key === categoryKey)) {
               setActiveCat(categoryKey);
               return;
             }
@@ -168,7 +182,7 @@ export default function FiltersPanel({
       // Reset active category when panel closes to ensure clean state on next open
       setActiveCat(null);
     }
-  }, [visible, categories]);
+  }, [visible, categories, CATEGORY_TTL]);
 
   // Save active category to storage when it changes
   useEffect(() => {
@@ -234,14 +248,14 @@ export default function FiltersPanel({
   const styles = useMemo(() => {
     const leftRatioRaw = theme?.components?.filtersPanel?.leftColumnRatio;
     const leftRatio = typeof leftRatioRaw === 'number' ? leftRatioRaw : 1 / 3;
-    const safeRatio = Math.max(0.2, Math.min(0.5, leftRatio));
+    const safeRatio = Math.max(RATIO_MIN, Math.min(RATIO_MAX, leftRatio));
     const leftWidth = Math.round(SCREEN_W * safeRatio);
     const rightWidth = SCREEN_W - leftWidth;
     return StyleSheet.create({
       overlay: {
         ...StyleSheet.absoluteFillObject,
-        zIndex: 1000,
-        elevation: 1000,
+        zIndex: OVERLAY_Z_INDEX,
+        elevation: OVERLAY_Z_INDEX,
       },
       backdrop: {
         ...StyleSheet.absoluteFillObject,
@@ -272,14 +286,14 @@ export default function FiltersPanel({
         backgroundColor: c.background,
       },
       backBtn: {
-        padding: 4,
-        borderRadius: 20,
+        padding: sz.xs || 4,
+        borderRadius: (BACK_BUTTON_SIZE + (sz.xs || 4) * 2) / 2,
         marginRight: sz.xs,
       },
       backCircle: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: BACK_BUTTON_SIZE,
+        height: BACK_BUTTON_SIZE,
+        borderRadius: BACK_BUTTON_SIZE / 2,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'transparent',
@@ -350,8 +364,8 @@ export default function FiltersPanel({
 
   const checkboxBase = useMemo(
     () => ({
-      width: 20,
-      height: 20,
+      width: CHECKBOX_SIZE,
+      height: CHECKBOX_SIZE,
       borderRadius: rad.md,
       borderWidth: 1,
       borderColor: c.border,
@@ -360,15 +374,15 @@ export default function FiltersPanel({
       marginRight: sz.md,
       backgroundColor: c.surface,
     }),
-    [c.border, c.surface, rad.md, sz.md],
+    [c.border, c.surface, rad.md, sz.md, CHECKBOX_SIZE],
   );
 
   const checkboxSelected = useMemo(
     () => ({
       borderColor: c.primary,
-      backgroundColor: withAlpha(c.primary, 0.15),
+      backgroundColor: withAlpha(c.primary, ALPHA_CHECKBOX_SELECTED),
     }),
-    [c.primary],
+    [c.primary, ALPHA_CHECKBOX_SELECTED],
   );
 
   const renderOptions = () => {
@@ -392,11 +406,11 @@ export default function FiltersPanel({
               onPress={() => setDraft((d) => ({ ...d, departments: [] }))}
               style={({ pressed }) => [
                 optionRow,
-                pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
               ]}
             >
               <View style={[checkboxBase, allSelected && checkboxSelected]}>
-                {allSelected && <Feather name="check" size={14} color={c.onPrimary} />}
+                {allSelected && <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} />}
               </View>
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
@@ -412,11 +426,13 @@ export default function FiltersPanel({
                   onPress={() => toggleDepartment(d.id)}
                   style={({ pressed }) => [
                     optionRow,
-                    pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                    pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
                   ]}
                 >
                   <View style={[checkboxBase, selected && checkboxSelected]}>
-                    {selected && <Feather name="check" size={14} color={c.onPrimary} />}
+                    {selected && (
+                      <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} />
+                    )}
                   </View>
                   <Text
                     style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}
@@ -439,11 +455,13 @@ export default function FiltersPanel({
               onPress={() => setDraft((d) => ({ ...d, roles: [] }))}
               style={({ pressed }) => [
                 optionRow,
-                pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
               ]}
             >
               <View style={[checkboxBase, rolesAllSelected && checkboxSelected]}>
-                {rolesAllSelected && <Feather name="check" size={14} color={c.onPrimary} />}
+                {rolesAllSelected && (
+                  <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} />
+                )}
               </View>
               <Text style={[optionLabel, rolesAllSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
@@ -457,11 +475,13 @@ export default function FiltersPanel({
                   onPress={() => toggleRole(r.value)}
                   style={({ pressed }) => [
                     optionRow,
-                    pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                    pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
                   ]}
                 >
                   <View style={[checkboxBase, selected && checkboxSelected]}>
-                    {selected && <Feather name="check" size={14} color={c.onPrimary} />}
+                    {selected && (
+                      <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} />
+                    )}
                   </View>
                   <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
                     {r.label}
@@ -485,11 +505,11 @@ export default function FiltersPanel({
               onPress={() => selectSuspended(opt.value)}
               style={({ pressed }) => [
                 optionRow,
-                pressed && { backgroundColor: withAlpha(c.border, 0.07) },
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
               ]}
             >
               <View style={[checkboxBase, selected && checkboxSelected]}>
-                {selected && <Feather name="check" size={14} color={c.onPrimary} />}
+                {selected && <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} />}
               </View>
               <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
                 {opt.label}
@@ -529,7 +549,7 @@ export default function FiltersPanel({
             accessibilityLabel={t('common_back')}
           >
             <View style={styles.backCircle}>
-              <Feather name="chevron-left" size={22} color={c.text} />
+              <Feather name="chevron-left" size={ICON_SIZE_CHEVRON} color={c.text} />
             </View>
           </Pressable>
 
@@ -565,7 +585,7 @@ export default function FiltersPanel({
                 }
                 // Do not call onClose here; keep panel open per UX request.
               }}
-              android_ripple={{ borderless: false, color: withAlpha(c.border, 0.13) }}
+              android_ripple={{ borderless: false, color: withAlpha(c.border, ALPHA_RIPPLE) }}
               style={styles.resetBtn}
               accessibilityRole="button"
               accessibilityLabel={t('settings_sections_quiet_items_quiet_reset')}
@@ -587,7 +607,7 @@ export default function FiltersPanel({
                 <Pressable
                   key={cat.key}
                   onPress={() => setActiveCat(cat.key)}
-                  android_ripple={{ borderless: false, color: withAlpha(c.border, 0.13) }}
+                  android_ripple={{ borderless: false, color: withAlpha(c.border, ALPHA_RIPPLE) }}
                   style={[styles.categoryItem, active && styles.categoryItemActive]}
                 >
                   <Text style={[styles.categoryLabel, active && styles.categoryLabelActive]}>
