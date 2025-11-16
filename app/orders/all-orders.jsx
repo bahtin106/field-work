@@ -1,29 +1,30 @@
 // app/orders/all-orders.jsx
 
-import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
+  Modal,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   View,
-  Pressable,
-  BackHandler,
 } from 'react-native';
-import { Modal } from 'react-native';
 
+import DynamicOrderCard from '../../components/DynamicOrderCard';
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
-import DynamicOrderCard from '../../components/DynamicOrderCard';
-import { supabase } from '../../lib/supabase';
-import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
-import { useTheme } from '../../theme/ThemeProvider';
 import { usePermissions } from '../../lib/permissions';
+import { supabase } from '../../lib/supabase';
+import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import { useTheme } from '../../theme/ThemeProvider';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
@@ -93,6 +94,7 @@ export default function AllOrdersScreen() {
   const { theme } = useTheme();
   const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
   const { has } = usePermissions();
+  const queryClient = useQueryClient();
 
   const styles = useMemo(
     () =>
@@ -529,6 +531,16 @@ export default function AllOrdersScreen() {
     const tick = async () => {
       const cached = LIST_CACHE.all[cacheKey];
       const freshNeeded = !cached || Date.now() - (cached.ts || 0) > CACHE_TTL_MS;
+
+      // Проверяем React Query кэш ПЕРВЫМ (быстрее globalThis)
+      const queryKey = ['orders', 'all', cacheKey];
+      const cachedQueryData = queryClient.getQueryData(queryKey);
+      if (cachedQueryData && !freshNeeded) {
+        setOrders(cachedQueryData);
+        setLoading(false);
+        return;
+      }
+
       if (!freshNeeded) {
         // Serve from cache immediately to reflect UI change
         if (cached) {
@@ -554,8 +566,10 @@ export default function AllOrdersScreen() {
         const ids = await getOrderIdsByWorkTypes(workTypeFilter);
         if (!ids.length) {
           if (!alive) return;
-          setOrders([]);
-          LIST_CACHE.all[cacheKey] = { data: [], ts: Date.now() };
+          const emptyResult = [];
+          setOrders(emptyResult);
+          LIST_CACHE.all[cacheKey] = { data: emptyResult, ts: Date.now() };
+          queryClient.setQueryData(queryKey, emptyResult); // Сохраняем в React Query
           setLoading(false);
           return;
         }
@@ -565,8 +579,10 @@ export default function AllOrdersScreen() {
       const { data, error } = await query.order('datetime', { ascending: false });
       if (!alive) return;
       if (!error) {
-        setOrders(data || []);
-        LIST_CACHE.all[cacheKey] = { data: data || [], ts: Date.now() };
+        const result = data || [];
+        setOrders(result);
+        LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
+        queryClient.setQueryData(queryKey, result); // Сохраняем в React Query кэш!
       }
       setLoading(false);
     };
@@ -576,7 +592,15 @@ export default function AllOrdersScreen() {
       alive = false;
       clearInterval(id);
     };
-  }, [cacheKey]);
+  }, [
+    cacheKey,
+    statusFilter,
+    executorFilter,
+    departmentFilter,
+    workTypeFilter,
+    useWorkTypes,
+    queryClient,
+  ]);
 
   const onRefresh = async () => {
     try {

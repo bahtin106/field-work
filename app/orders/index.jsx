@@ -1,4 +1,4 @@
-/* global console */
+/* global console, __DEV__ */
 
 // app/orders/index.jsx
 import { useFocusEffect } from '@react-navigation/native';
@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import UniversalHome from '../../components/universalhome';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
+import { prefetchManager } from '../../lib/prefetch';
 import { onSessionEpoch } from '../../lib/sessionEpoch';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -187,6 +188,22 @@ export default function IndexScreen() {
     }, []),
   );
 
+  // Запуск фоновой предзагрузки данных (профессиональный подход)
+  React.useEffect(() => {
+    // Инициализируем prefetch с QueryClient
+    prefetchManager.init(qc);
+
+    // Запускаем через 2 секунды, когда основная загрузка точно завершена
+    const timer = setTimeout(() => {
+      prefetchManager.start();
+    }, 2000);
+
+    return () => {
+      clearTimeout(timer);
+      prefetchManager.stop();
+    };
+  }, [qc]);
+
   // Новая логика bootstrap: независимая от глобального флага, действует на каждую сессию
   // Состояния:
   //  - 'boot': начальное после навигации на экран
@@ -194,7 +211,7 @@ export default function IndexScreen() {
   //  - 'ready': основное содержимое доступно
   const [bootState, setBootState] = React.useState('boot');
   const mountTsRef = React.useRef(Date.now());
-  const MIN_BOOT_MS = 600; // минимальное время показа для премиального ощущения
+  const MIN_BOOT_MS = 200; // Уменьшено с 600 до 200ms - быстрый старт благодаря кэшу!
   const MAX_BOOT_MS = 5000; // жёсткий верхний предел (снижен для лучшего UX)
 
   // activeFetching НЕ включает !role, т.к. роль может быть в кэше мгновенно

@@ -2,7 +2,7 @@
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -113,9 +113,10 @@ export default function UniversalHome({ role }) {
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
-    staleTime: 60 * 1000, // кэшируем на минуту вместо 0
-    gcTime: 5 * 60 * 1000,
+    staleTime: 5 * 60 * 1000, // 5 минут (было 1 минута)
+    gcTime: 10 * 60 * 1000,
     refetchOnMount: 'stale',
+    placeholderData: (prev) => prev, // Мгновенный показ старых данных
   });
 
   const currentProfile = uid && profile ? profile : null;
@@ -152,18 +153,20 @@ export default function UniversalHome({ role }) {
     queryKey: ['counts', 'my', uid],
     queryFn: () => fetchCountsMy(uid),
     enabled: readyForCounts,
-    staleTime: 30 * 1000,
+    staleTime: 2 * 60 * 1000, // 2 минуты (было 30 сек)
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
+    placeholderData: (prev) => prev, // Показываем старые данные мгновенно
   });
 
   const { data: allCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts', 'all'],
     queryFn: fetchCountsAll,
     enabled: readyForCounts && canViewAll,
-    staleTime: 30 * 1000,
+    staleTime: 2 * 60 * 1000, // 2 минуты (было 30 сек)
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
+    placeholderData: (prev) => prev, // Показываем старые данные мгновенно
   });
 
   // ====== Навигация ======
