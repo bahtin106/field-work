@@ -36,7 +36,7 @@ const SESSION_TIMEOUT = 5000; // ms - увеличен для холодного
 const I18N_TIMEOUT = 1500; // ms
 const LOCALE_TIMEOUT = 2000; // ms
 const ROLE_TIMEOUT = 5000; // ms
-const LAST_SEEN_INTERVAL = 60_000; // ms
+const LAST_SEEN_INTERVAL = 30_000; // ms - уменьшен с 60s до 30s для более частых обновлений онлайн-статуса
 
 // app/_layout.js
 

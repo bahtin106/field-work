@@ -90,6 +90,11 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       if (session?.user?.id) ping('auth');
     });
 
+    // периодический пинг каждые minIntervalMs миллисекунд (например, 30 секунд)
+    const intervalId = setInterval(() => {
+      ping('interval');
+    }, minIntervalMs);
+
     return () => {
       try {
         sub?.remove?.();
@@ -97,6 +102,7 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       try {
         authSub?.subscription?.unsubscribe?.();
       } catch {}
+      clearInterval(intervalId);
       mountedRef.current = false;
     };
   }, [minIntervalMs]);
