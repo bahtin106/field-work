@@ -34,26 +34,31 @@ const TextField = forwardRef(function TextField(
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
-  // Для управления видимостью пароля - используется when showPassword is true
-  const [internalShowPassword, setInternalShowPassword] = useState(false);
+  // Для управления видимостью пароля через toggle кнопку
+  const [showPassword, setShowPassword] = useState(false);
 
   const isRequired = /\*/.test(String(label || ''));
   const requiredEmpty = isRequired && touched && !String(value || '').trim();
   const isErr = !!error || requiredEmpty;
   const s = styles(theme, isErr, focused);
   const inputRef = React.useRef(null);
+
   React.useImperativeHandle(ref, () => ({
     ...inputRef.current,
-    togglePasswordVisibility: () => setInternalShowPassword((prev) => !prev),
-    showPassword: () => setInternalShowPassword(true),
-    hidePassword: () => setInternalShowPassword(false),
+    togglePasswordVisibility: () => setShowPassword((prev) => !prev),
+    showPassword: () => setShowPassword(true),
+    hidePassword: () => setShowPassword(false),
   }));
+
   const handleChangeText = React.useCallback(
     (t) => {
       onChangeText?.(t);
     },
     [onChangeText],
   );
+
+  // Правильное вычисление secureTextEntry: скрываем пароль ТОЛЬКО если это поле пароля И showPassword=false
+  const effectiveSecureTextEntry = secureTextEntry ? !showPassword : false;
 
   return (
     <View style={style}>
@@ -68,7 +73,7 @@ const TextField = forwardRef(function TextField(
             placeholder={placeholder}
             placeholderTextColor={theme.colors.inputPlaceholder}
             keyboardType={keyboardType || 'default'}
-            secureTextEntry={secureTextEntry && !internalShowPassword}
+            secureTextEntry={effectiveSecureTextEntry}
             autoCorrect={false}
             autoComplete={secureTextEntry ? 'password' : undefined}
             textContentType={secureTextEntry ? 'password' : undefined}

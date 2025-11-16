@@ -10,11 +10,13 @@
 
 import { useCallback } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from './useAuth';
 import { useQueryWithCache } from './useQueryWithCache';
 import { useRealtimeSync } from './useRealtimeSync';
 
 export function useDepartments(options = {}) {
   const { companyId, enabled = true, onlyEnabled = true } = options;
+  const { isAuthenticated } = useAuth();
 
   const queryKey = `departments:${companyId}:${onlyEnabled}`;
 
@@ -56,12 +58,13 @@ export function useDepartments(options = {}) {
   });
 
   // Автоматическая синхронизация через Realtime
+  // ⚠️ Важно: не подписываемся если пользователь не аутентифицирован
   useRealtimeSync({
     supabaseClient: supabase,
     table: 'departments',
     queryKey,
     onUpdate: refresh,
-    enabled: enabled && !!companyId,
+    enabled: enabled && !!companyId && isAuthenticated,
   });
 
   return {
