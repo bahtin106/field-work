@@ -393,27 +393,77 @@ export default function UsersIndex() {
     );
   }, []);
 
+  /**
+   * Helper: Format relative time for last seen
+   * Returns: "2 минуты назад", "5 часов назад", "1 день назад", etc.
+   * Up to 3 days uses relative format, 4+ days shows date only
+   */
+  const getRelativeTime = React.useCallback(
+    (now, past) => {
+      const diffMs = now - past;
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+      const diffHour = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHour / 24);
+
+      // Minutes (1-59 min)
+      if (diffMin < 1) {
+        return t('users_relativeTime_now') ?? 'сейчас';
+      }
+      if (diffMin < 60) {
+        const n = diffMin;
+        if (n === 1) return '1 минуту назад';
+        if (n >= 2 && n <= 4) return `${n} минуты назад`;
+        return `${n} минут назад`;
+      }
+
+      // Hours (1-23 hours)
+      if (diffHour < 24) {
+        const n = diffHour;
+        if (n === 1) return '1 час назад';
+        if (n >= 2 && n <= 4) return `${n} часа назад`;
+        return `${n} часов назад`;
+      }
+
+      // Days (1-3 days)
+      if (diffDay <= 3) {
+        const n = diffDay;
+        if (n === 1) return '1 день назад';
+        if (n >= 2 && n <= 4) return `${n} дня назад`;
+        return `${n} дней назад`;
+      }
+
+      // 4+ days: return null to signal date-only format should be used
+      return null;
+    },
+    [t],
+  );
+
   const formatPresence = React.useCallback(
     (ts) => {
-      // Returns either "В сети" or "Был в сети: 03.10.2025 в 23:59" or "Был в сети: никогда"
+      // Returns either "В сети" or "Был в сети: [relative_time]" or "Был в сети: [date]" or "Был в сети: никогда"
       if (isOnlineNow(ts)) return t('users_online');
 
       if (!ts) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
       const d = parsePgTs(ts);
       if (!d) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
 
+      const relativeTime = getRelativeTime(Date.now(), d.getTime());
+
+      // If within 3 days, use relative time format
+      if (relativeTime) {
+        return `${t('users_lastSeen_prefix')} ${relativeTime}`;
+      }
+
+      // For 4+ days, use date-only format (no time)
       const datePart = new Intl.DateTimeFormat('ru-RU', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
       }).format(d);
-      const timePart = new Intl.DateTimeFormat('ru-RU', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }).format(d);
-      return `${t('users_lastSeen_prefix')} ${datePart} ${t('common_at')} ${timePart}`;
+      return `${t('users_lastSeen_prefix')} ${datePart}`;
     },
-    [isOnlineNow, t],
+    [isOnlineNow, getRelativeTime, t],
   );
 
   // Memoized department map for fast lookup
