@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  BackHandler,
   Dimensions,
   Easing,
   Pressable,
@@ -114,6 +115,18 @@ export default function FiltersPanel({
       });
     }
   }, [visible, tx]);
+
+  // Intercept hardware back button and swipe-back when panel is visible
+  useEffect(() => {
+    if (!visible) return;
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (onClose) onClose();
+      return true; // Prevent default back navigation
+    });
+
+    return () => backHandler.remove();
+  }, [visible, onClose]);
 
   // Categories composition
   const categories = useMemo(() => {
@@ -560,12 +573,14 @@ export default function FiltersPanel({
                   setValue('suspended', draft.suspended ?? null);
                 }
                 if (onApply) onApply();
-                // update baseline to reflect applied state so button hides if staying open
+                // update baseline to reflect applied state
                 setBaseline({
                   departments: Array.isArray(draft.departments) ? draft.departments : [],
                   roles: Array.isArray(draft.roles) ? draft.roles : [],
                   suspended: draft.suspended ?? null,
                 });
+                // Close the panel after applying
+                if (onClose) onClose();
               }}
               variant="primary"
               size="md"
