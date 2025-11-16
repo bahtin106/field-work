@@ -56,7 +56,7 @@ const subscriptionManager = {
 };
 
 /**
- * useRealtimeSync - Хук для автоматической синхронизации данных через Realtime
+ * useRealtimeSync - Хок для автоматической синхронизации данных через Realtime
  *
  * @param {Object} options
  * @param {Object} options.supabaseClient - Экземпляр Supabase клиента
@@ -64,7 +64,7 @@ const subscriptionManager = {
  * @param {string} options.queryKey - Ключ кэша для обновления
  * @param {Function} options.onUpdate - Callback для обновления данных
  * @param {string} options.channel - Опциональное имя канала (для множественных подписок)
- * @param {boolean} options.enabled - Включена ли синхронизация
+ * @param {boolean} options.enabled - Включена ли синхронизация (проверяйте auth перед вызовом!)
  * @param {Array<string>} options.events - Массив событий для прослушивания ['INSERT', 'UPDATE', 'DELETE', '*']
  */
 export function useRealtimeSync(options) {
@@ -87,7 +87,16 @@ export function useRealtimeSync(options) {
   }, [onUpdate]);
 
   useEffect(() => {
-    if (!enabled || !supabaseClient || !table) return;
+    // Не подписываемся если:
+    // 1. хук отключен (enabled=false)
+    // 2. нет supabaseClient
+    // 3. нет названия таблицы
+    //
+    // ВАЖНО: Убедитесь, что enabled=false при отсутствии аутентификации!
+    // Контролируйте это на уровне вызывающего хука (useUsers, useDepartments)
+    if (!enabled || !supabaseClient || !table) {
+      return;
+    }
 
     const actualChannelName = channelName || `realtime:${table}:${queryKey}`;
 
@@ -126,7 +135,10 @@ export function useRealtimeSync(options) {
         if (status === 'SUBSCRIBED') {
           // Realtime subscribed successfully
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.error(`Realtime connection error for ${table}:`, status);
+          // Silently handle realtime errors - data will still load via regular fetch
+          if (status === 'CHANNEL_ERROR') {
+            console.warn(`Realtime connection error for ${table}, falling back to regular fetch`);
+          }
         }
       });
 

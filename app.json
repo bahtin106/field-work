@@ -2,44 +2,16 @@
   "expo": {
     "name": "Монитор",
     "slug": "work-orders-app",
-    "icon": "./icon.png",
     "version": "1.0.1",
-    "orientation": "portrait",
-    "scheme": "workorders",
-    "platforms": ["android", "ios"],
+    "platforms": ["android"],
     "jsEngine": "hermes",
-    "userInterfaceStyle": "automatic",
     "assetBundlePatterns": ["**/*"],
-    "splash": {
-      "image": "./assets/splash/splashscreen_logo.png",
-      "backgroundColor": "#f2f6fa",
-      "resizeMode": "contain"
-    },
-    "android": {
-      "softwareKeyboardLayoutMode": "resize",
-      "package": "com.bahtin106.workordersapp",
-      "backgroundColor": "#f2f6fa",
-      "googleServicesFile": "./google-services.json"
-    },
-    "ios": {
-      "bundleIdentifier": "com.bahtin106.workordersapp"
-    },
     "extra": {
       "supabaseUrl": "https://fopalcvzdkftsvhqszcx.supabase.co",
       "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvcGFsY3Z6ZGtmdHN2aHFzemN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyOTk5OTIsImV4cCI6MjA2OTg3NTk5Mn0.GJ7W9E_Oap78oBtDTl_ATpb1zcz3UI-dl7x9Ujv9QlY",
       "eas": {
         "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
       }
-    },
-    "plugins": ["expo-router", "expo-splash-screen", "expo-notifications", "expo-navigation-bar"],
-    "androidNavigationBar": {
-      "backgroundColor": "#FFFFFF",
-      "barStyle": "dark-content"
-    },
-    "androidStatusBar": {
-      "backgroundColor": "#f2f6fa",
-      "barStyle": "dark-content",
-      "translucent": false
     },
     "owner": "bahtin106"
   }

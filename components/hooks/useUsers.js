@@ -5,11 +5,13 @@
 
 import { useCallback, useMemo } from 'react';
 import { supabase } from '../../lib/supabase';
+import { useAuth } from './useAuth';
 import { useQueryWithCache } from './useQueryWithCache';
 import { useRealtimeSync } from './useRealtimeSync';
 
 export function useUsers(options = {}) {
   const { filters = {}, enabled = true } = options;
+  const { isAuthenticated } = useAuth();
 
   // Генерируем уникальный ключ кэша на основе фильтров
   const queryKey = useMemo(() => {
@@ -59,12 +61,13 @@ export function useUsers(options = {}) {
   });
 
   // Автоматическая синхронизация через Realtime
+  // ⚠️ Важно: не подписываемся если пользователь не аутентифицирован
   useRealtimeSync({
     supabaseClient: supabase,
     table: 'profiles',
     queryKey,
     onUpdate: refresh,
-    enabled,
+    enabled: enabled && isAuthenticated,
   });
 
   return {
