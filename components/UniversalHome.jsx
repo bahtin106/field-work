@@ -3,7 +3,15 @@ import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import logger from '../lib/logger';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
@@ -97,20 +105,20 @@ export default function UniversalHome({ role }) {
     queryKey: ['session'],
     queryFn: fetchSession,
     staleTime: 0,
-    refetchOnMount: true,
+    refetchOnMount: 'stale',
   });
   const uid = isUuid(session?.user?.id) ? session.user.id : null;
 
-  const { data: profile } = useQuery({
+  const { data: profile, isLoading: profileLoading } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
-    cacheTime: 0,
-    staleTime: 0,
+    staleTime: 60 * 1000, // кэшируем на минуту вместо 0
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: 'stale',
   });
 
-  const currentProfile = uid ? profile : null;
-  const profileLoading = uid && typeof profile === 'undefined';
+  const currentProfile = uid && profile ? profile : null;
 
   const fullName =
     currentProfile?.full_name ||
@@ -119,11 +127,12 @@ export default function UniversalHome({ role }) {
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_url || null;
 
-  // Роль для отображения
-  const roleToShow = roleFromPerms || currentProfile?.role || role;
+  // Роль: сначала проверяем roleFromPerms (более свежая), потом profile, потом prop
+  // При холодном запуске roleFromPerms может быть undefined, поэтому используем profile.role или prop
+  const resolvedRole = roleFromPerms || currentProfile?.role || role;
 
   // Админ без ожидания пермишенов
-  const isAdmin = roleToShow === 'admin';
+  const isAdmin = resolvedRole === 'admin';
 
   // Область просмотра
   const canViewAll = isAdmin || (!permsLoading && has?.('canViewAllOrders') === true);
@@ -136,10 +145,13 @@ export default function UniversalHome({ role }) {
   }, [canViewAll, scope]);
 
   // ====== Счётчики ======
+  // Гарантируем, что счётчики загружаются только когда у нас есть валидная сессия, профиль И роль
+  const readyForCounts = !!uid && !profileLoading && !!resolvedRole;
+
   const { data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts', 'my', uid],
     queryFn: () => fetchCountsMy(uid),
-    enabled: !!uid,
+    enabled: readyForCounts,
     staleTime: 30 * 1000,
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
@@ -148,7 +160,7 @@ export default function UniversalHome({ role }) {
   const { data: allCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts', 'all'],
     queryFn: fetchCountsAll,
-    enabled: !!canViewAll,
+    enabled: readyForCounts && canViewAll,
     staleTime: 30 * 1000,
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
@@ -225,6 +237,15 @@ export default function UniversalHome({ role }) {
 
   const counts = scope === 'all' && canViewAll ? allCounts : myCounts;
 
+  // Не показываем контент до загрузки профиля (избегаем пустых экранов при холодном старте)
+  if (uid && profileLoading && !currentProfile) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
       <Card style={styles.cardRounded} padded={false}>
@@ -249,9 +270,9 @@ export default function UniversalHome({ role }) {
               {profileLoading ? '—' : fullName || '—'}
             </Text>
             <Text style={styles.profileRole} numberOfLines={1}>
-              {roleToShow === 'admin'
+              {resolvedRole === 'admin'
                 ? 'Администратор'
-                : roleToShow === 'dispatcher'
+                : resolvedRole === 'dispatcher'
                   ? 'Диспетчер'
                   : 'Работник'}
             </Text>

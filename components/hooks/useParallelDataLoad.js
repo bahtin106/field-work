@@ -42,7 +42,7 @@ export function useParallelDataLoad(sourcesConfig = {}) {
 
     for (const [key, result] of Object.entries(hooksResults)) {
       if (!result) continue;
-      
+
       const isLoading = result?.isLoading ?? false;
       const isRefreshing = result?.isRefreshing ?? false;
       const error = result?.error ?? null;

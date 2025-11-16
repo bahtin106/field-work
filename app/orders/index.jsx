@@ -150,7 +150,7 @@ export default function IndexScreen() {
     queryKey: ['userRole'],
     queryFn: getUserRole,
     staleTime: 5 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: 'stale',
     placeholderData: (prev) => prev,
   });
 
@@ -253,7 +253,8 @@ export default function IndexScreen() {
       }}
     >
       {/* Рендерим контент только когда роль валидна, но под оверлеем */}
-      <UniversalHome role={role} />
+      {/* При холодном запуске показываем сплэш, пока не загрузится роль и не завершится fetch */}
+      {role ? <UniversalHome role={role} /> : <View style={{ flex: 1 }} />}
 
       {/* Единый «премиум» оверлей загрузки */}
       {splashVisible && (
