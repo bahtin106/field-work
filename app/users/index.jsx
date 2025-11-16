@@ -20,7 +20,6 @@ import { Feather } from '@expo/vector-icons';
 
 import AppHeader from '../../components/navigation/AppHeader';
 
-import Button from '../../components/ui/Button';
 import UITextField from '../../components/ui/TextField';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
@@ -97,6 +96,12 @@ export default function UsersIndex() {
     enabled: !!companyId,
     onlyEnabled: true,
   });
+
+  // Включаем фильтрацию по отделам, когда они загружены
+  useEffect(() => {
+    const hasDepartments = Array.isArray(departments) && departments.length > 0;
+    if (hasDepartments && !useDepartments) setUseDepartments(true);
+  }, [departments, useDepartments]);
 
   // Combined loading state - wait for initial data from both sources
   // Once cached data is available, show it immediately (stale-while-revalidate pattern)
@@ -217,7 +222,7 @@ export default function UsersIndex() {
           borderWidth: 1,
           borderColor: c.border,
           backgroundColor: c.surface,
-          marginRight: sz.sm,
+          marginLeft: sz.sm,
         }, // keep default TTL (1h) for filter persistence
       }),
     [theme],
@@ -522,10 +527,18 @@ export default function UsersIndex() {
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
       <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
         <View style={styles.container}>
-          <AppHeader back options={{ headerTitleAlign: 'left', title: t('routes_users_index') }} />
+          <AppHeader
+            back
+            options={{
+              headerTitleAlign: 'left',
+              title: t('routes_users_index'),
+              rightTextLabel: t('btn_create'),
+              onRightPress: () => router.push('/users/new'),
+            }}
+          />
 
           <View style={styles.header}>
-            {/* Search + Create */}
+            {/* Search + Filters */}
             <View style={styles.searchRow}>
               <View style={styles.searchBox}>
                 <UITextField
@@ -552,17 +565,6 @@ export default function UsersIndex() {
                   }
                 />
               </View>
-
-              <Button
-                title={t('btn_create')}
-                onPress={() => router.push('/users/new')}
-                variant="primary"
-                size="md"
-              />
-            </View>
-
-            {/* Filter row: icon to open modal and summary + reset when active */}
-            <View style={styles.toolbarRow}>
               <Pressable
                 onPress={openFiltersPanel}
                 android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
@@ -572,33 +574,31 @@ export default function UsersIndex() {
               >
                 <Feather name="sliders" size={18} color={theme.colors.text} />
               </Pressable>
-              {filterSummary ? (
-                <>
-                  <Text style={[styles.metaText, { flexShrink: 1 }]} numberOfLines={2}>
-                    {filterSummary}
-                  </Text>
-                  <Pressable
-                    onPress={async () => {
-                      // Reset filters to defaults and get the reset values
-                      const resetValues = filters.reset();
-                      // Apply and persist the reset state immediately
-                      await filters.apply(resetValues);
-                      // Users will be refreshed automatically via useEffect
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.metaText,
-                        { color: theme.colors.primary, marginLeft: theme.spacing.sm },
-                      ]}
-                    >
-                      {' '}
-                      {t('settings_sections_quiet_items_quiet_reset')}
-                    </Text>
-                  </Pressable>
-                </>
-              ) : null}
             </View>
+
+            {/* Filter summary + reset when active */}
+            {filterSummary ? (
+              <View style={styles.toolbarRow}>
+                <Text style={[styles.metaText, { flexShrink: 1 }]} numberOfLines={2}>
+                  {filterSummary}
+                </Text>
+                <Pressable
+                  onPress={async () => {
+                    const resetValues = filters.reset();
+                    await filters.apply(resetValues);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.metaText,
+                      { color: theme.colors.primary, marginLeft: theme.spacing.sm },
+                    ]}
+                  >
+                    {t('settings_sections_quiet_items_quiet_reset')}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             <View style={styles.metaRow}>
               <Text style={styles.metaText}>
