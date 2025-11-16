@@ -269,7 +269,7 @@ export default function FiltersPanel({
         paddingHorizontal: sz.md,
         // remove header separator line per request
         borderBottomWidth: 0,
-        backgroundColor: c.surface,
+        backgroundColor: c.background,
       },
       backBtn: {
         padding: 4,
@@ -578,7 +578,7 @@ export default function FiltersPanel({
         </View>
 
         <View style={styles.content}>
-          <ScrollView style={styles.categories} contentContainerStyle={{ paddingVertical: sz.sm }}>
+          <ScrollView style={styles.categories} contentContainerStyle={{ paddingBottom: sz.sm }}>
             {categories.map((cat) => {
               const active = cat.key === activeCat;
               return (
@@ -596,7 +596,7 @@ export default function FiltersPanel({
             })}
           </ScrollView>
 
-          <ScrollView style={styles.options} contentContainerStyle={{ paddingVertical: sz.sm }}>
+          <ScrollView style={styles.options} contentContainerStyle={{ paddingBottom: sz.sm }}>
             {renderOptions()}
           </ScrollView>
         </View>
