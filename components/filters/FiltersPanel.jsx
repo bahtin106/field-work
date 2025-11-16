@@ -164,6 +164,9 @@ export default function FiltersPanel({
         setActiveCat(categories[0].key);
       };
       restoreCategory();
+    } else if (!visible) {
+      // Reset active category when panel closes to ensure clean state on next open
+      setActiveCat(null);
     }
   }, [visible, categories]);
 
@@ -200,6 +203,18 @@ export default function FiltersPanel({
     if ((draft.suspended ?? null) !== (baseline.suspended ?? null)) return true;
     return false;
   }, [draft, baseline]);
+
+  // Check if any filters are active (different from defaults)
+  const hasActiveFilters = useMemo(() => {
+    const defaultDeps = Array.isArray(defaults.departments) ? defaults.departments.map(String) : [];
+    const defaultRoles = Array.isArray(defaults.roles) ? defaults.roles : [];
+    const defaultSuspended = defaults.suspended ?? null;
+
+    if (!eqArrays(draft.departments || [], defaultDeps)) return true;
+    if (!eqArrays(draft.roles || [], defaultRoles)) return true;
+    if ((draft.suspended ?? null) !== defaultSuspended) return true;
+    return false;
+  }, [draft, defaults]);
 
   const toggleDepartment = (id) => {
     const current = Array.isArray(draft.departments) ? draft.departments : [];
@@ -255,6 +270,19 @@ export default function FiltersPanel({
         // remove header separator line per request
         borderBottomWidth: 0,
         backgroundColor: c.surface,
+      },
+      backBtn: {
+        padding: 4,
+        borderRadius: 20,
+        marginRight: sz.xs,
+      },
+      backCircle: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
       },
       headerTitle: {
         flex: 1,
@@ -369,7 +397,6 @@ export default function FiltersPanel({
                 {allSelected && <Feather name="check" size={14} color={c.onPrimary} />}
               </View>
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
-                {' '}
                 {t('users_showAll')}
               </Text>
             </Pressable>
@@ -486,12 +513,30 @@ export default function FiltersPanel({
 
       <Animated.View style={[styles.page, { transform: [{ translateX: tx }] }]}>
         <View style={styles.header}>
-          {/* Left arrow intentionally removed per spec; title stays in place */}
-          <Text style={styles.headerTitle}>{t('common_filter')}</Text>
+          {/* Back arrow on left: discard changes and close panel */}
           <Pressable
+            hitSlop={12}
             onPress={() => {
-              // Reset filters when button is pressed (do NOT close the panel)
-              if (hasChanges) {
+              // Discard any changes by restoring baseline values
+              setDraft(baseline);
+              // Close the panel without applying changes
+              if (onClose) onClose();
+            }}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t('common_back')}
+          >
+            <View style={styles.backCircle}>
+              <Feather name="chevron-left" size={22} color={c.text} />
+            </View>
+          </Pressable>
+
+          <Text style={styles.headerTitle}>{t('common_filter')}</Text>
+
+          {/* Reset button on right: visible when any filter is active (not default) */}
+          {hasActiveFilters ? (
+            <Pressable
+              onPress={() => {
                 const emptyDeps = Array.isArray(defaults.departments)
                   ? defaults.departments.map(String)
                   : [];
@@ -516,23 +561,20 @@ export default function FiltersPanel({
                   // Call onApply to let parent persist the cleared filters. Do not close the panel.
                   onApply();
                 }
-                // Do not call onReset or onClose here; keep panel open per UX request.
-              } else {
-                // No changes: close the panel
-                if (onClose) onClose();
-              }
-            }}
-            android_ripple={{ borderless: false, color: withAlpha(c.border, 0.13) }}
-            style={styles.resetBtn}
-            accessibilityRole="button"
-            accessibilityLabel={
-              hasChanges ? t('settings_sections_quiet_items_quiet_reset') : t('common_close')
-            }
-          >
-            <Text style={styles.resetBtnText}>
-              {hasChanges ? t('settings_sections_quiet_items_quiet_reset') : t('common_close')}
-            </Text>
-          </Pressable>
+                // Do not call onClose here; keep panel open per UX request.
+              }}
+              android_ripple={{ borderless: false, color: withAlpha(c.border, 0.13) }}
+              style={styles.resetBtn}
+              accessibilityRole="button"
+              accessibilityLabel={t('settings_sections_quiet_items_quiet_reset')}
+            >
+              <Text style={styles.resetBtnText}>
+                {t('settings_sections_quiet_items_quiet_reset')}
+              </Text>
+            </Pressable>
+          ) : (
+            <View style={styles.resetBtn} />
+          )}
         </View>
 
         <View style={styles.content}>
