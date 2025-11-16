@@ -3,6 +3,7 @@
 // Stays mounted; visibility is controlled by Animated slide. Matches "отдельная страница" UX.
 
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -125,9 +126,50 @@ export default function FiltersPanel({
     return cats;
   }, [departments, t]);
 
-  // Do not preselect any category on open — require explicit user choice so
-  // the active row is highlighted only when the user taps it.
+  // Active category: restore from storage if recent (TTL 5s), otherwise select first
   const [activeCat, setActiveCat] = useState(null);
+
+  // Restore last active category when panel opens (if within TTL)
+  useEffect(() => {
+    if (visible && categories.length > 0) {
+      const restoreCategory = async () => {
+        try {
+          const stored = await AsyncStorage.getItem('@filtersPanelLastCategory');
+          if (stored) {
+            const { categoryKey, timestamp } = JSON.parse(stored);
+            const age = Date.now() - timestamp;
+            const ttl = 5000; // 5 seconds, matching filter TTL
+            if (age <= ttl && categories.some((c) => c.key === categoryKey)) {
+              setActiveCat(categoryKey);
+              return;
+            }
+          }
+        } catch (e) {
+          // Ignore storage errors
+        }
+        // Default to first category if no valid stored value
+        setActiveCat(categories[0].key);
+      };
+      restoreCategory();
+    }
+  }, [visible, categories]);
+
+  // Save active category to storage when it changes
+  useEffect(() => {
+    if (activeCat) {
+      const saveCategory = async () => {
+        try {
+          await AsyncStorage.setItem(
+            '@filtersPanelLastCategory',
+            JSON.stringify({ categoryKey: activeCat, timestamp: Date.now() }),
+          );
+        } catch (e) {
+          // Ignore storage errors
+        }
+      };
+      saveCategory();
+    }
+  }, [activeCat]);
 
   // Shallow set compares
   const eqArrays = (a = [], b = []) => {
