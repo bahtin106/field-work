@@ -21,32 +21,37 @@ function UserCardContent({
   const sz = theme.spacing;
   const ty = theme.typography;
 
+  const rad = theme.radii;
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
         card: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingHorizontal: sz.md,
-          paddingVertical: sz.sm,
           backgroundColor: c.surface,
-          borderBottomWidth: 1,
-          borderBottomColor: c.border,
+          borderRadius: rad.lg,
+          borderWidth: theme.components.card.borderWidth,
+          borderColor: c.border,
+          padding: sz.md,
+          marginBottom: sz.sm,
+          position: 'relative',
+          minHeight: sz.xl * 4,
         },
         cardSuspended: {
-          backgroundColor: withAlpha(c.danger, 0.05),
+          backgroundColor: theme.colors.surfaceMutedDanger,
+          borderWidth: 0,
+          borderColor: 'transparent',
         },
         cardRow: {
-          flex: 1,
           flexDirection: 'row',
+          justifyContent: 'space-between',
           alignItems: 'center',
-          columnGap: sz.sm,
         },
         cardTextWrap: {
-          flex: 1,
+          flexShrink: 1,
+          paddingRight: sz.xl * 3,
         },
         cardTitle: {
-          fontSize: ty.sizes.base,
+          fontSize: ty.sizes.md,
           fontWeight: ty.weight.semibold,
           color: c.text,
         },
@@ -57,8 +62,8 @@ function UserCardContent({
         },
         rolePill: {
           paddingHorizontal: sz.sm,
-          paddingVertical: 4,
-          borderRadius: 6,
+          paddingVertical: 6,
+          borderRadius: rad.md,
           borderWidth: 1,
         },
         rolePillText: {
@@ -67,18 +72,20 @@ function UserCardContent({
         },
         rolePillTopRight: {
           position: 'absolute',
-          top: sz.sm,
+          top: sz.md,
           right: sz.md,
+          zIndex: 2,
         },
         suspendedPill: {
           position: 'absolute',
-          bottom: sz.sm,
           right: sz.md,
+          bottom: sz.md,
+          zIndex: 2,
           paddingHorizontal: sz.sm,
-          paddingVertical: 4,
-          borderRadius: 6,
-          backgroundColor: withAlpha(c.danger, 0.1),
+          paddingVertical: 6,
+          borderRadius: rad.md,
           borderWidth: 1,
+          backgroundColor: withAlpha(c.danger, 0.13),
           borderColor: withAlpha(c.danger, 0.2),
         },
         suspendedPillText: {
