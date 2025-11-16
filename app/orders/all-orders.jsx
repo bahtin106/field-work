@@ -4,10 +4,11 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  FlatList,
   Modal,
   Platform,
   Pressable,
@@ -397,6 +398,12 @@ export default function AllOrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [executorFilter, setExecutorFilter] = useState(executor || null);
 
+  // Пагинация (как в Instagram/Telegram)
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 10;
+
   const [departmentFilter, setDepartmentFilter] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [departmentSearch, setDepartmentSearch] = useState('');
@@ -661,12 +668,15 @@ export default function AllOrdersScreen() {
         query = query.in('id', ids);
       }
 
-      const { data, error } = await query.order('datetime', { ascending: false });
+      const { data, error } = await query
+        .order('datetime', { ascending: false })
+        .range(0, PAGE_SIZE - 1); // ПАГИНАЦИЯ: только первые 10!
       if (!alive) return;
       if (!error) {
         const result = data || [];
         if (__DEV__) console.warn(`[Orders] 🌐 Loaded from network (${result.length} items)`);
         setOrders(result);
+        setHasMore(result.length === PAGE_SIZE); // Есть ли ещё данные?
         LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
         queryClient.setQueryData(queryKey, result); // Сохраняем в React Query кэш!
       }
@@ -692,6 +702,9 @@ export default function AllOrdersScreen() {
     try {
       setRefreshing(true);
       setLoading(true);
+      setPage(1); // Сброс пагинации
+      setHasMore(true);
+
       let query = supabase.from('orders_secure').select('*');
       if (statusFilter === 'feed') {
         query = query.is('assigned_to', null);
@@ -706,15 +719,20 @@ export default function AllOrdersScreen() {
         const ids = await getOrderIdsByWorkTypes(workTypeFilter);
         if (!ids.length) {
           setOrders([]);
+          setHasMore(false);
           LIST_CACHE.all[cacheKey] = { data: [], ts: Date.now() };
           return;
         }
         query = query.in('id', ids);
       }
-      const { data, error } = await query.order('datetime', { ascending: false });
+      const { data, error } = await query
+        .order('datetime', { ascending: false })
+        .range(0, PAGE_SIZE - 1); // ПАГИНАЦИЯ
       if (!error) {
-        setOrders(data || []);
-        LIST_CACHE.all[cacheKey] = { data: data || [], ts: Date.now() };
+        const result = data || [];
+        setOrders(result);
+        setHasMore(result.length === PAGE_SIZE);
+        LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
       }
     } finally {
       setRefreshing(false);
@@ -781,8 +799,160 @@ export default function AllOrdersScreen() {
     return haystack.includes(q);
   });
 
+  // Ленивая загрузка при скролле (как в Instagram/Telegram)
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || loading) return;
+
+    if (__DEV__) {
+      console.warn(`[Orders] 📄 Loading page ${page + 1}...`);
+    }
+
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    setPage(nextPage);
+
+    try {
+      let query = supabase.from('orders_secure').select('*');
+      if (statusFilter === 'feed') {
+        query = query.is('assigned_to', null);
+      } else {
+        const statusValue = mapStatusToDB(statusFilter);
+        if (statusValue) query = query.eq('status', statusValue);
+        if (executorFilter) query = query.eq('assigned_to', executorFilter);
+      }
+      if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
+
+      if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
+        const ids = await getOrderIdsByWorkTypes(workTypeFilter);
+        if (!ids.length) {
+          setHasMore(false);
+          setLoadingMore(false);
+          return;
+        }
+        query = query.in('id', ids);
+      }
+
+      const from = (nextPage - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data, error } = await query.order('datetime', { ascending: false }).range(from, to);
+
+      if (!error && Array.isArray(data)) {
+        setOrders((prev) => [...prev, ...data]);
+        setHasMore(data.length === PAGE_SIZE);
+
+        if (__DEV__) {
+          console.warn(`[Orders] ✓ Loaded ${data.length} more orders`);
+        }
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [
+    loadingMore,
+    hasMore,
+    loading,
+    page,
+    statusFilter,
+    executorFilter,
+    departmentFilter,
+    workTypeFilter,
+    useWorkTypes,
+  ]);
+
+  // Рендер элемента списка
+  const renderItem = useCallback(
+    ({ item: order }) => (
+      <DynamicOrderCard
+        order={order}
+        context="all_orders"
+        onPress={() =>
+          router.push({
+            pathname: `/orders/${order.id}`,
+            params: {
+              returnTo: '/orders/all-orders',
+              returnParams: JSON.stringify({
+                filter: statusFilter,
+                executor: executorFilter,
+                department: departmentFilter,
+                search: searchQuery,
+              }),
+            },
+          })
+        }
+      />
+    ),
+    [router, statusFilter, executorFilter, departmentFilter, searchQuery],
+  );
+
+  // Футер со спиннером при загрузке
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    return (
+      <View style={{ paddingVertical: 20 }}>
+        <ActivityIndicator size="small" color={theme.colors.primary} />
+      </View>
+    );
+  }, [loadingMore, theme.colors.primary]);
+
+  const keyExtractor = useCallback((item) => String(item.id), []);
+
+  // Заголовок списка с фильтрами
+  const ListHeaderComponent = useCallback(
+    () => (
+      <View style={{ padding: 16 }}>
+        <Text style={styles.header}>Все заявки</Text>
+
+        <View style={styles.filterContainer}>
+          {['feed', 'all', 'new', 'in_progress', 'done'].map((key) => (
+            <Pressable
+              key={key}
+              onPress={() => {
+                setStatusFilter(key);
+                setPage(1);
+                setHasMore(true);
+                router.setParams({ filter: key });
+              }}
+              style={[styles.chip, statusFilter === key && styles.chipActive]}
+            >
+              <Text style={[styles.chipText, statusFilter === key && styles.chipTextActive]}>
+                {getStatusLabel(key)}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <TextField
+          placeholder="Поиск по названию, городу, телефону..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          style={{ marginBottom: 12 }}
+        />
+
+        <Button
+          variant="secondary"
+          onPress={() => {
+            setTmpWorkType(workTypeFilter || []);
+            setTmpMaterials([]);
+            setTmpExecutor(executorFilter || null);
+            setFilterModalVisible(true);
+          }}
+          style={{ marginBottom: 16 }}
+          title={
+            useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length
+              ? `Виды работ: ${workTypeFilter.length}`
+              : executorFilter
+                ? 'Сотрудник выбран'
+                : 'Фильтры'
+          }
+        />
+      </View>
+    ),
+    [styles, statusFilter, searchQuery, workTypeFilter, executorFilter, useWorkTypes, router],
+  );
+
   return (
-    <Screen>
+    <Screen scroll={false}>
       {allowed === null ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -801,52 +971,36 @@ export default function AllOrdersScreen() {
           </Text>
         </View>
       ) : (
-        <ScrollView
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          style={{ backgroundColor: theme.colors.background }}
-          contentContainerStyle={styles.container}
-        >
-          <Text style={styles.header}>Все заявки</Text>
-
-          <View style={styles.filterContainer}>
-            {['feed', 'all', 'new', 'in_progress', 'done'].map((key) => (
-              <Pressable
-                key={key}
-                onPress={() => {
-                  setStatusFilter(key);
-                  router.setParams({ filter: key });
-                }}
-                style={[styles.chip, statusFilter === key && styles.chipActive]}
-              >
-                <Text style={[styles.chipText, statusFilter === key && styles.chipTextActive]}>
-                  {getStatusLabel(key)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <TextField
-            placeholder="Поиск по названию, городу, телефону..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            style={{ marginBottom: 12 }}
-          />
-
-          <Button
-            variant="secondary"
-            onPress={() => {
-              setTmpWorkType(workTypeFilter || []);
-              setTmpMaterials([]);
-              setTmpExecutor(executorFilter || null);
-              setFilterModalVisible(true);
-            }}
-            style={{ marginBottom: 16 }}
-            title={
-              useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length
-                ? `Виды работ: ${workTypeFilter.length}`
-                : executorFilter
-                  ? 'Сотрудник выбран'
-                  : 'Фильтры'
+        <>
+          <FlatList
+            data={filteredOrders}
+            renderItem={renderItem}
+            keyExtractor={keyExtractor}
+            ListHeaderComponent={ListHeaderComponent}
+            ListFooterComponent={renderFooter}
+            ListEmptyComponent={
+              loading ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={theme.colors.primary} />
+                </View>
+              ) : (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <Text style={styles.emptyText}>Заявок не найдено</Text>
+                </View>
+              )
+            }
+            contentContainerStyle={[styles.container, filteredOrders.length === 0 && { flex: 1 }]}
+            style={{ flex: 1, backgroundColor: theme.colors.background }}
+            showsVerticalScrollIndicator={false}
+            onEndReached={loadMore}
+            onEndReachedThreshold={0.5}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={theme.colors.primary}
+                colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
+              />
             }
           />
 
@@ -991,39 +1145,7 @@ export default function AllOrdersScreen() {
               </View>
             </View>
           </Modal>
-
-          {loading ? (
-            <ActivityIndicator
-              size="large"
-              color={theme.colors.primary}
-              style={{ marginTop: 40 }}
-            />
-          ) : orders.length === 0 ? (
-            <Text style={styles.emptyText}>Заявок не найдено</Text>
-          ) : (
-            filteredOrders.map((order) => (
-              <DynamicOrderCard
-                key={order.id}
-                order={order}
-                context="all_orders"
-                onPress={() =>
-                  router.push({
-                    pathname: `/orders/${order.id}`,
-                    params: {
-                      returnTo: '/orders/all-orders',
-                      returnParams: JSON.stringify({
-                        filter: statusFilter,
-                        executor: executorFilter,
-                        department: departmentFilter,
-                        search: searchQuery,
-                      }),
-                    },
-                  })
-                }
-              />
-            ))
-          )}
-        </ScrollView>
+        </>
       )}
     </Screen>
   );
