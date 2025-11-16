@@ -1,5 +1,5 @@
 import { Feather } from '@expo/vector-icons';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -87,10 +87,10 @@ function LoginScreenContent() {
   const { email, setEmail, password, setPassword, error, loading, canSubmit, handleLogin } =
     useAuthLogin();
 
-  const [showPassword, setShowPassword] = useState(false);
+  const passwordFieldRef = useRef(null);
 
   const handleTogglePassword = useCallback(() => {
-    setShowPassword((prev) => !prev);
+    passwordFieldRef.current?.togglePasswordVisibility();
   }, []);
 
   return (
@@ -119,11 +119,11 @@ function LoginScreenContent() {
 
               <View style={styles.passwordContainer}>
                 <TextField
+                  ref={passwordFieldRef}
                   value={password}
                   onChangeText={setPassword}
                   placeholder={t('fields_password')}
-                  secureTextEntry={!showPassword}
-                  keyboardType="visible-password"
+                  secureTextEntry={true}
                   autoCapitalize="none"
                   autoCorrect={false}
                   autoComplete="password"
@@ -142,16 +142,14 @@ function LoginScreenContent() {
                     borderless: interactive.rippleBorderless,
                     radius: interactive.rippleRadius,
                   }}
-                  accessibilityLabel={
-                    showPassword ? t('auth_hide_password') : t('auth_show_password')
-                  }
+                  accessibilityLabel={t('auth_show_password')}
                   accessibilityRole="button"
                   hitSlop={interactive.hitSlop}
                   pressRetentionOffset={interactive.pressRetentionOffset}
                   disabled={loading}
                 >
                   <Feather
-                    name={showPassword ? 'eye-off' : 'eye'}
+                    name="eye"
                     size={theme.components.listItem.chevronSize}
                     color={theme.colors.primary}
                   />

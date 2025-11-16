@@ -28,31 +28,31 @@ const TextField = forwardRef(function TextField(
     onBlur,
     pressable = false,
     onPress,
-    hidePasswordImmediately = false, // новый проп для немедленной маскировки
   },
   ref,
 ) {
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
+  // Для управления видимостью пароля - используется when showPassword is true
+  const [internalShowPassword, setInternalShowPassword] = useState(false);
 
   const isRequired = /\*/.test(String(label || ''));
   const requiredEmpty = isRequired && touched && !String(value || '').trim();
   const isErr = !!error || requiredEmpty;
   const s = styles(theme, isErr, focused);
   const inputRef = React.useRef(null);
-  React.useImperativeHandle(ref, () => inputRef.current);
+  React.useImperativeHandle(ref, () => ({
+    ...inputRef.current,
+    togglePasswordVisibility: () => setInternalShowPassword((prev) => !prev),
+    showPassword: () => setInternalShowPassword(true),
+    hidePassword: () => setInternalShowPassword(false),
+  }));
   const handleChangeText = React.useCallback(
     (t) => {
       onChangeText?.(t);
     },
     [onChangeText],
-  );
-
-  // Мемоизируем стиль input'а для избежания мигания при смене secureTextEntry
-  const inputStyle = React.useMemo(
-    () => [s.input, secureTextEntry && value ? { color: 'transparent', opacity: 0 } : null],
-    [s.input, secureTextEntry, value],
   );
 
   return (
@@ -61,14 +61,6 @@ const TextField = forwardRef(function TextField(
       <View style={s.wrap}>
         {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
         <View style={s.inputBox}>
-          {secureTextEntry && value ? (
-            <Text
-              style={[s.input, { color: theme.colors.text, position: 'absolute', width: '100%' }]}
-              numberOfLines={1}
-            >
-              {'•'.repeat(String(value).length)}
-            </Text>
-          ) : null}
           <TextInput
             ref={inputRef}
             value={value}
@@ -76,7 +68,7 @@ const TextField = forwardRef(function TextField(
             placeholder={placeholder}
             placeholderTextColor={theme.colors.inputPlaceholder}
             keyboardType={keyboardType || 'default'}
-            secureTextEntry={false}
+            secureTextEntry={secureTextEntry && !internalShowPassword}
             autoCorrect={false}
             autoComplete={secureTextEntry ? 'password' : undefined}
             textContentType={secureTextEntry ? 'password' : undefined}
@@ -97,7 +89,7 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
             onSubmitEditing={onSubmitEditing}
-            style={inputStyle}
+            style={s.input}
             includeFontPadding={false}
             textAlignVertical="center"
           />
