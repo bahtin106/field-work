@@ -269,8 +269,8 @@ export default function UsersIndex() {
       container: [
         styles.rolePill,
         {
-          backgroundColor: c.surface,
-          borderColor: color,
+          backgroundColor: withAlpha(color, 0.13),
+          borderColor: withAlpha(color, 0.2),
         },
       ],
       text: [styles.rolePillText, { color }],
