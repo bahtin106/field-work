@@ -44,7 +44,7 @@ function withAlpha(color, a) {
         .padStart(2, '0');
       return color + alpha;
     }
-    const rgb = color.match(/^rgb\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$/i);
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
     if (rgb) {
       return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
     }
@@ -122,7 +122,17 @@ export default function UsersIndex() {
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
-  const controlH = theme.components.input.height;
+  const controlH = theme?.components?.input?.height ?? 44;
+  const listItemHeight = theme?.components?.listItem?.height ?? 44;
+  const chevronSize = theme?.components?.listItem?.chevronSize ?? 20;
+  const scrollPaddingBottom = theme?.components?.scrollView?.paddingBottom ?? 80;
+  const activityIndicatorSize = theme?.components?.activityIndicator?.size ?? 'large';
+  const iconSizeSm = theme?.components?.icon?.sizeSm ?? 18;
+
+  // UI constants from theme with fallbacks
+  const ALPHA_RIPPLE = theme?.components?.ripple?.alpha ?? 0.13;
+  const ALPHA_PILL_BG = theme?.components?.pill?.backgroundAlpha ?? 0.13;
+  const ALPHA_PILL_BORDER = theme?.components?.pill?.borderAlpha ?? 0.2;
   const styles = React.useMemo(
     () =>
       StyleSheet.create({
@@ -149,25 +159,25 @@ export default function UsersIndex() {
           borderRadius: rad.lg,
           borderWidth: 1,
           borderColor: c.inputBorder,
-          height: theme.components.listItem.height,
+          height: listItemHeight,
           justifyContent: 'center',
           paddingLeft: sz.sm,
           paddingRight: sz.md,
         },
         clearBtn: {
-          width: theme.components.listItem.chevronSize,
-          height: theme.components.listItem.chevronSize,
-          borderRadius: theme.components.listItem.chevronSize / 2,
+          width: chevronSize,
+          height: chevronSize,
+          borderRadius: chevronSize / 2,
           backgroundColor: c.surface,
           borderWidth: 1,
           borderColor: c.border,
           alignItems: 'center',
           justifyContent: 'center',
-          marginRight: -Math.round(theme.spacing.sm / 2),
+          marginRight: -Math.round(sz.sm / 2),
         },
         clearBtnText: {
-          fontSize: theme.typography.sizes.lg,
-          lineHeight: theme.typography.sizes.lg,
+          fontSize: ty.sizes.lg,
+          lineHeight: ty.sizes.lg,
           color: c.textSecondary,
           fontWeight: ty.weight.semibold,
         },
@@ -195,11 +205,11 @@ export default function UsersIndex() {
         errorText: { color: c.danger, fontSize: ty.sizes.sm },
         listContent: {
           paddingHorizontal: sz.lg,
-          paddingBottom: theme.components.scrollView.paddingBottom,
+          paddingBottom: scrollPaddingBottom,
         },
         rolePill: {
           paddingHorizontal: sz.sm,
-          paddingVertical: 6,
+          paddingVertical: sz.xs || 6,
           borderRadius: rad.md,
           borderWidth: 1,
         },
@@ -230,10 +240,10 @@ export default function UsersIndex() {
 
   // --- Debounce for search (theme.timings)
   useEffect(() => {
-    const ms = Number(theme.timings.backDelayMs);
+    const ms = Number(theme?.timings?.backDelayMs ?? 300);
     const tmr = setTimeout(() => setDebouncedQ(q.trim().toLowerCase()), ms);
     return () => clearTimeout(tmr);
-  }, [q, theme.timings?.backDelayMs]);
+  }, [q, theme?.timings?.backDelayMs]);
 
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
@@ -274,8 +284,8 @@ export default function UsersIndex() {
       container: [
         styles.rolePill,
         {
-          backgroundColor: withAlpha(color, 0.13),
-          borderColor: withAlpha(color, 0.2),
+          backgroundColor: withAlpha(color, ALPHA_PILL_BG),
+          borderColor: withAlpha(color, ALPHA_PILL_BORDER),
         },
       ],
       text: [styles.rolePillText, { color }],
@@ -387,62 +397,61 @@ export default function UsersIndex() {
   }, [filters.values, departments, useDepartments]);
 
   // --- Presence helpers (i18n-driven, no hardcoded strings)
-  const isOnlineNow = React.useCallback((ts) => {
-    // online if last_seen within past 2 minutes (allow small future skew up to 5 min)
-    const d = parsePgTs(ts);
-    if (!d) return false;
-    const diff = Date.now() - d.getTime(); // positive if past
-    return (
-      diff <= Number(theme.timings.presenceOnlineWindowMs) &&
-      diff >= -Number(theme.timings.presenceFutureSkewMs)
-    );
-  }, []);
+  const isOnlineNow = React.useCallback(
+    (ts) => {
+      // online if last_seen within past 2 minutes (allow small future skew up to 5 min)
+      const d = parsePgTs(ts);
+      if (!d) return false;
+      const diff = Date.now() - d.getTime(); // positive if past
+      const onlineWindowMs = Number(theme?.timings?.presenceOnlineWindowMs ?? 120000); // 2 min default
+      const futureSkewMs = Number(theme?.timings?.presenceFutureSkewMs ?? 300000); // 5 min default
+      return diff <= onlineWindowMs && diff >= -futureSkewMs;
+    },
+    [theme?.timings?.presenceOnlineWindowMs, theme?.timings?.presenceFutureSkewMs],
+  );
 
   /**
    * Helper: Format relative time for last seen
    * Returns: "2 минуты назад", "5 часов назад", "1 день назад", etc.
    * Up to 3 days uses relative format, 4+ days shows date only
    */
-  const getRelativeTime = React.useCallback(
-    (now, past) => {
-      const diffMs = now - past;
-      const diffSec = Math.floor(diffMs / 1000);
-      const diffMin = Math.floor(diffSec / 60);
-      const diffHour = Math.floor(diffMin / 60);
-      const diffDay = Math.floor(diffHour / 24);
+  const getRelativeTime = React.useCallback((now, past) => {
+    const diffMs = now - past;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
 
-      // Minutes (1-59 min)
-      if (diffMin < 1) {
-        return t('users_relativeTime_now');
-      }
-      if (diffMin < 60) {
-        const n = diffMin;
-        if (n === 1) return t('users_relativeTime_1min');
-        if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_mins_2_4')}`;
-        return `${n} ${t('users_relativeTime_mins')}`;
-      }
+    // Minutes (1-59 min)
+    if (diffMin < 1) {
+      return t('users_relativeTime_now');
+    }
+    if (diffMin < 60) {
+      const n = diffMin;
+      if (n === 1) return t('users_relativeTime_1min');
+      if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_mins_2_4')}`;
+      return `${n} ${t('users_relativeTime_mins')}`;
+    }
 
-      // Hours (1-23 hours)
-      if (diffHour < 24) {
-        const n = diffHour;
-        if (n === 1) return t('users_relativeTime_1hour');
-        if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_hours_2_4')}`;
-        return `${n} ${t('users_relativeTime_hours')}`;
-      }
+    // Hours (1-23 hours)
+    if (diffHour < 24) {
+      const n = diffHour;
+      if (n === 1) return t('users_relativeTime_1hour');
+      if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_hours_2_4')}`;
+      return `${n} ${t('users_relativeTime_hours')}`;
+    }
 
-      // Days (1-3 days)
-      if (diffDay <= 3) {
-        const n = diffDay;
-        if (n === 1) return t('users_relativeTime_1day');
-        if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_days_2_4')}`;
-        return `${n} ${t('users_relativeTime_days')}`;
-      }
+    // Days (1-3 days)
+    if (diffDay <= 3) {
+      const n = diffDay;
+      if (n === 1) return t('users_relativeTime_1day');
+      if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_days_2_4')}`;
+      return `${n} ${t('users_relativeTime_days')}`;
+    }
 
-      // 4+ days: return null to signal date-only format should be used
-      return null;
-    },
-    [t],
-  );
+    // 4+ days: return null to signal date-only format should be used
+    return null;
+  }, []);
 
   const formatPresence = React.useCallback(
     (ts) => {
@@ -509,7 +518,7 @@ export default function UsersIndex() {
     return (
       <SafeAreaView style={styles.safe} edges={['left', 'right']}>
         <View style={styles.loaderWrap}>
-          <ActivityIndicator size={theme.components.activityIndicator.size} />
+          <ActivityIndicator size={activityIndicatorSize} />
         </View>
       </SafeAreaView>
     );
@@ -552,7 +561,7 @@ export default function UsersIndex() {
                       <Pressable
                         android_ripple={{
                           borderless: false,
-                          color: withAlpha(theme.colors.border, 0.13),
+                          color: withAlpha(theme.colors.border, ALPHA_RIPPLE),
                         }}
                         onPress={() => setQ('')}
                         style={styles.clearBtn}
@@ -567,12 +576,15 @@ export default function UsersIndex() {
               </View>
               <Pressable
                 onPress={openFiltersPanel}
-                android_ripple={{ borderless: false, color: withAlpha(theme.colors.border, 0.13) }}
+                android_ripple={{
+                  borderless: false,
+                  color: withAlpha(theme.colors.border, ALPHA_RIPPLE),
+                }}
                 style={styles.filterBtn}
                 accessibilityRole="button"
                 accessibilityLabel={t('users_filterButton')}
               >
-                <Feather name="sliders" size={18} color={theme.colors.text} />
+                <Feather name="sliders" size={iconSizeSm} color={theme.colors.text} />
               </Pressable>
             </View>
 
