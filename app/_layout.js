@@ -589,7 +589,6 @@ function RootLayoutInner() {
                 }}
               >
                 <Stack.Screen name="(auth)" />
-                <Stack.Screen name="orders/index" options={{ gestureEnabled: false }} />
               </Stack>
               {isLoggedIn && role && <BottomNav />}
               {isLoggedIn ? <LastSeenTracker /> : null}

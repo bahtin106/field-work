@@ -7,13 +7,11 @@ import {
   ActivityIndicator,
   BackHandler,
   FlatList,
-  Keyboard,
   Platform,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 
@@ -265,9 +263,7 @@ export default function MyOrdersScreen() {
       }
       // Фоновое обновление полного списка через небольшую задержку
       const timer = setTimeout(() => {
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.warn('[MyOrders] 🔄 Background refresh start after delay');
-        }
+        // Background refresh
         fetchUserAndOrders(true);
       }, 1200);
       return () => clearTimeout(timer);
@@ -283,9 +279,7 @@ export default function MyOrdersScreen() {
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || loading) return;
 
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      console.warn(`[MyOrders] 📄 Loading page ${page + 1}...`);
-    }
+    // Loading next page silently
 
     setLoadingMore(true);
     const nextPage = page + 1;
@@ -321,9 +315,7 @@ export default function MyOrdersScreen() {
       setOrders((prev) => [...prev, ...data]);
       setHasMore(data.length === PAGE_SIZE);
 
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn(`[MyOrders] ✓ Loaded ${data.length} more orders`);
-      }
+      // Loaded successfully
     }
 
     setLoadingMore(false);
@@ -485,29 +477,27 @@ export default function MyOrdersScreen() {
 
   return (
     <Screen scroll={false}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <FlatList
-          data={filteredOrders}
-          renderItem={renderItem}
-          keyExtractor={keyExtractor}
-          ListHeaderComponent={ListHeaderComponent}
-          ListFooterComponent={renderFooter}
-          ListEmptyComponent={ListEmptyComponent}
-          contentContainerStyle={styles.container}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
-          refreshControl={
-            <RefreshControl
-              refreshing={bgRefreshing}
-              onRefresh={onRefresh}
-              tintColor={theme.colors.primary}
-              colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
-            />
-          }
-        />
-      </TouchableWithoutFeedback>
+      <FlatList
+        data={filteredOrders}
+        renderItem={renderItem}
+        keyExtractor={keyExtractor}
+        ListHeaderComponent={ListHeaderComponent}
+        ListFooterComponent={renderFooter}
+        ListEmptyComponent={ListEmptyComponent}
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        refreshControl={
+          <RefreshControl
+            refreshing={bgRefreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
+          />
+        }
+      />
     </Screen>
   );
 }
