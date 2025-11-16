@@ -24,6 +24,9 @@ import { useTheme } from '../../theme/ThemeProvider';
 // Убираем глобальный «одноразовый» флаг и делаем состояние загрузки привязанным к сессии
 // Это предотвращает белый экран при повторном логине: каждый логин имеет собственный bootstrap.
 
+// Глобальное состояние загрузки, сохраняется между навигациями
+const globalBootState = { current: 'boot', mountTs: Date.now() };
+
 // --- PremiumLoader: минималистичный «дорогой» экран загрузки (без мерцаний) ---
 function PremiumLoader({ text = 'Подготавливаем рабочее пространство' }) {
   const dot1 = React.useRef(new Animated.Value(0.4)).current;
@@ -209,8 +212,8 @@ export default function IndexScreen() {
   //  - 'boot': начальное после навигации на экран
   //  - 'fetching': активные сетевые запросы / роль ещё не определена
   //  - 'ready': основное содержимое доступно
-  const [bootState, setBootState] = React.useState('boot');
-  const mountTsRef = React.useRef(Date.now());
+  // Используем глобальный объект для сохранения между навигациями
+  const [bootState, setBootState] = React.useState(() => globalBootState.current);
   const MIN_BOOT_MS = 200; // Уменьшено с 600 до 200ms - быстрый старт благодаря кэшу!
   const MAX_BOOT_MS = 5000; // жёсткий верхний предел (снижен для лучшего UX)
 
@@ -220,22 +223,30 @@ export default function IndexScreen() {
   // Сброс bootstrap при смене session epoch (повторный логин / логаут)
   React.useEffect(() => {
     const unsub = onSessionEpoch(() => {
+      globalBootState.current = 'boot';
+      globalBootState.mountTs = Date.now();
       setBootState('boot');
-      mountTsRef.current = Date.now();
     });
     return unsub;
   }, []);
 
   // Основной эффект: переход в ready когда загрузки завершены + минимальное время прошло
   React.useEffect(() => {
-    if (bootState === 'ready') return;
+    if (bootState === 'ready') {
+      globalBootState.current = 'ready';
+      return;
+    }
 
     if (!activeFetching) {
-      const elapsed = Date.now() - mountTsRef.current;
+      const elapsed = Date.now() - globalBootState.mountTs;
       const wait = Math.max(0, MIN_BOOT_MS - elapsed);
-      const t = setTimeout(() => setBootState('ready'), wait);
+      const t = setTimeout(() => {
+        globalBootState.current = 'ready';
+        setBootState('ready');
+      }, wait);
       return () => clearTimeout(t);
     } else if (bootState !== 'fetching') {
+      globalBootState.current = 'fetching';
       setBootState('fetching');
     }
   }, [activeFetching, bootState]);
@@ -244,6 +255,7 @@ export default function IndexScreen() {
   React.useEffect(() => {
     if (bootState === 'ready') return;
     const forceTimer = setTimeout(() => {
+      globalBootState.current = 'ready';
       setBootState('ready');
     }, MAX_BOOT_MS);
     return () => clearTimeout(forceTimer);
