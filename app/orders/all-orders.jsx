@@ -4,7 +4,7 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -352,46 +352,62 @@ export default function AllOrdersScreen() {
     return JSON.stringify({ status: initialStatus, ex: null, dept: null, wt: '' });
   }, [filter]);
 
+  const hydratedRef = useRef(false);
+
   const [orders, setOrders] = useState(() => {
-    // Проверяем React Query кэш первым
+    // 1. Проверяем prefetch кэш для быстрого старта
+    const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
+    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
+      hydratedRef.current = true; // Сразу помечаем как гидратированный!
+      if (__DEV__)
+        console.warn(`[AllOrders] 🚀 MOUNT: Found ${prefetchData.length} items in prefetch cache!`);
+      return prefetchData;
+    }
+
+    // 2. Проверяем React Query кэш с фильтрами
     const queryKey = ['orders', 'all', cacheKeyInitial];
     const cachedQueryData = queryClient.getQueryData(queryKey);
     if (cachedQueryData) {
       if (__DEV__)
         console.warn(
-          `[Orders] 🚀 MOUNT: Found ${cachedQueryData.length} items in React Query cache!`,
+          `[AllOrders] 🚀 MOUNT: Found ${cachedQueryData.length} items in React Query cache!`,
         );
       return cachedQueryData;
     }
 
-    // Fallback на globalThis
+    // 3. Fallback на globalThis
     const cached = LIST_CACHE.all[cacheKeyInitial];
     if (cached?.data) {
       if (__DEV__)
-        console.warn(`[Orders] MOUNT: Found ${cached.data.length} items in globalThis cache`);
+        console.warn(`[AllOrders] MOUNT: Found ${cached.data.length} items in globalThis cache`);
       return cached.data;
     }
 
-    if (__DEV__) console.warn(`[Orders] ❌ MOUNT: No cache found - will load from network`);
     return [];
   });
 
   const [loading, setLoading] = useState(() => {
+    // Если есть prefetch данные - не показываем лоадер
+    const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
+    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
+      if (__DEV__) console.warn(`[AllOrders] MOUNT: loading=false (prefetch cache hit)`);
+      return false;
+    }
+
     // Если есть данные в кэше - не показываем лоадер
     const queryKey = ['orders', 'all', cacheKeyInitial];
     const cachedQueryData = queryClient.getQueryData(queryKey);
     if (cachedQueryData) {
-      if (__DEV__) console.warn(`[Orders] MOUNT: loading=false (React Query cache hit)`);
+      if (__DEV__) console.warn(`[AllOrders] MOUNT: loading=false (React Query cache hit)`);
       return false;
     }
 
     const cached = LIST_CACHE.all[cacheKeyInitial];
     if (cached?.data) {
-      if (__DEV__) console.warn(`[Orders] MOUNT: loading=false (globalThis cache hit)`);
+      if (__DEV__) console.warn(`[AllOrders] MOUNT: loading=false (globalThis cache hit)`);
       return false;
     }
 
-    if (__DEV__) console.warn(`[Orders] MOUNT: loading=true (no cache)`);
     return true;
   });
 
@@ -617,7 +633,7 @@ export default function AllOrdersScreen() {
         if (age < staleTime) {
           if (__DEV__)
             console.warn(
-              `[Orders] ✓ Using React Query cache (${cachedQueryData.length} items, age: ${Math.round(age / 1000)}s)`,
+              `[AllOrders] ✓ Using React Query cache (${cachedQueryData.length} items, age: ${Math.round(age / 1000)}s)`,
             );
           setOrders(cachedQueryData);
           setLoading(false);
@@ -632,7 +648,7 @@ export default function AllOrdersScreen() {
       if (!freshNeeded && cached) {
         if (__DEV__)
           console.warn(
-            `[Orders] ✓ Loaded from globalThis cache (${cached.data?.length || 0} items)`,
+            `[AllOrders] ✓ Loaded from globalThis cache (${cached.data?.length || 0} items)`,
           );
         setOrders(cached.data || []);
         setLoading(false);
@@ -640,7 +656,14 @@ export default function AllOrdersScreen() {
       }
 
       // Если дошли сюда - нужно загрузить с сервера
-      if (__DEV__) console.warn(`[Orders] Loading from network...`);
+      // Если есть prefetch данные и это первая загрузка - используем их
+      if (hydratedRef.current && orders.length > 0 && !cached) {
+        if (__DEV__) console.warn('[AllOrders] ⏭ Skip network load (using prefetch data)');
+        setLoading(false);
+        return;
+      }
+
+      if (__DEV__) console.warn(`[AllOrders] Loading from network...`);
 
       // Build base query
       let query = supabase.from('orders_secure').select('*');
@@ -674,7 +697,7 @@ export default function AllOrdersScreen() {
       if (!alive) return;
       if (!error) {
         const result = data || [];
-        if (__DEV__) console.warn(`[Orders] 🌐 Loaded from network (${result.length} items)`);
+        if (__DEV__) console.warn(`[AllOrders] 🌐 Loaded from network (${result.length} items)`);
         setOrders(result);
         setHasMore(result.length === PAGE_SIZE); // Есть ли ещё данные?
         LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
@@ -682,10 +705,45 @@ export default function AllOrdersScreen() {
       }
       setLoading(false);
     };
-    const id = setInterval(tick, 5 * 60 * 1000); // check every 5 минут (совпадает с staleTime)
-    tick(); // initial check
+
+    // ВСЕГДА проверяем prefetch СНАЧАЛА и откладываем загрузку
+    const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
+    if (
+      hydratedRef.current &&
+      orders.length > 0 &&
+      Array.isArray(prefetchData) &&
+      prefetchData.length > 0
+    ) {
+      if (__DEV__) {
+        console.warn(
+          '[AllOrders] ⏭ Skip immediate fetch (prefetch satisfied), schedule background refresh',
+        );
+      }
+      // Фоновое обновление через задержку (как в my-orders)
+      const timer = setTimeout(() => {
+        if (__DEV__) console.warn('[AllOrders] 🔄 Background refresh start');
+        tick();
+      }, 1200);
+
+      // Периодическая проверка каждые 5 минут
+      const id = setInterval(tick, 5 * 60 * 1000);
+
+      return () => {
+        alive = false;
+        clearTimeout(timer);
+        clearInterval(id);
+      };
+    }
+
+    // Если нет prefetch - тоже откладываем на 1200ms (даем время для кэша)
+    const timer = setTimeout(() => {
+      tick();
+    }, 1200);
+    const id = setInterval(tick, 5 * 60 * 1000);
+
     return () => {
       alive = false;
+      clearTimeout(timer);
       clearInterval(id);
     };
   }, [
@@ -696,6 +754,7 @@ export default function AllOrdersScreen() {
     workTypeFilter,
     useWorkTypes,
     queryClient,
+    orders.length,
   ]);
 
   const onRefresh = async () => {
@@ -803,9 +862,7 @@ export default function AllOrdersScreen() {
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || loading) return;
 
-    if (__DEV__) {
-      console.warn(`[Orders] 📄 Loading page ${page + 1}...`);
-    }
+    // Loading next page
 
     setLoadingMore(true);
     const nextPage = page + 1;
@@ -841,9 +898,7 @@ export default function AllOrdersScreen() {
         setOrders((prev) => [...prev, ...data]);
         setHasMore(data.length === PAGE_SIZE);
 
-        if (__DEV__) {
-          console.warn(`[Orders] ✓ Loaded ${data.length} more orders`);
-        }
+        // Loaded successfully
       }
     } finally {
       setLoadingMore(false);
