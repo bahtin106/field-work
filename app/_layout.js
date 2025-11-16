@@ -24,6 +24,7 @@ import { preloadDepartments } from '../lib/preloadDepartments';
 import { getMyCompanyId } from '../lib/workTypes';
 
 import { PermissionsProvider } from '../lib/permissions';
+import { bumpSessionEpoch } from '../lib/sessionEpoch';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
 import SettingsProvider from '../providers/SettingsProvider';
@@ -158,24 +159,38 @@ function RootLayoutInner() {
             // Первая попытка с увеличенным таймаутом для холодного старта
             const userResult = await Promise.race([
               supabase.auth.getUser().catch((e) => {
-                return { data: { user: null } };
+                logger?.warn?.('getUser attempt 1 failed:', e?.message || e);
+                return { data: { user: null }, error: e };
               }),
-              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 3000)),
+              new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 4000)),
             ]);
             validatedUser = userResult?.data?.user ?? null;
-            // Если не удалось получить пользователя, но сессия есть — пробуем ещё раз через 800мс
+
+            // Если не удалось получить пользователя, но сессия есть — пробуем ещё раз
             if (!validatedUser && session?.access_token) {
-              await new Promise((res) => setTimeout(res, 800));
+              logger?.warn?.('Retrying getUser after 1s delay...');
+              await new Promise((res) => setTimeout(res, 1000));
               const retryUserResult = await Promise.race([
                 supabase.auth.getUser().catch((e) => {
-                  return { data: { user: null } };
+                  logger?.warn?.('getUser attempt 2 failed:', e?.message || e);
+                  return { data: { user: null }, error: e };
                 }),
-                new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 2000)),
+                new Promise((resolve) => setTimeout(() => resolve({ data: { user: null } }), 3000)),
               ]);
               validatedUser = retryUserResult?.data?.user ?? null;
             }
+
+            // Финальная попытка: если сессия есть, но getUser не работает — используем данные из session
+            if (!validatedUser && session?.user) {
+              logger?.warn?.('Using user from session object as fallback');
+              validatedUser = session.user;
+            }
           } catch (e) {
-            // silent catch
+            logger?.warn?.('getUser error:', e?.message || e);
+            // Если есть session.user — используем его как fallback
+            if (session?.user) {
+              validatedUser = session.user;
+            }
           }
         }
         // 2) i18n init (non-blocking with timeout)
@@ -231,7 +246,15 @@ function RootLayoutInner() {
                 setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
               );
               const userRole = await Promise.race([userRolePromise, timeoutPromise]);
-              if (mounted) setRole(userRole);
+              if (mounted) {
+                setRole(userRole);
+                // Мгновенно кладём роль в кэш для быстрого доступа
+                try {
+                  queryClient.setQueryData(['userRole'], userRole);
+                } catch (e) {
+                  logger?.warn?.('Failed to cache userRole:', e?.message || e);
+                }
+              }
 
               // Предзагружаем отделы в глобальный кэш, чтобы они были мгновенно доступны
               try {
@@ -288,6 +311,11 @@ function RootLayoutInner() {
             setAppKey((prev) => prev + 1);
           }
 
+          // Инкрементируем session epoch — экраны сбросят свои bootstrap состояния
+          try {
+            bumpSessionEpoch();
+          } catch (e) {}
+
           // Принудительная переадресация на экран входа
           try {
             _router.replace('/(auth)/login');
@@ -299,49 +327,21 @@ function RootLayoutInner() {
         }
 
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          // При SIGNED_IN очищаем персистер и полностью удаляем все запросы из кэша
-          if (event === 'SIGNED_IN') {
-            try {
-              // Удаляем персистер, чтобы не загружались старые данные
-              await persister.removeClient?.();
+          logger?.warn?.(`🔐 Auth event: ${event}`);
 
-              // Очищаем кастомный кэш
-              globalCache.clear();
-
-              // Полностью удаляем ВСЕ запросы из кэша (не инвалидируем, а удаляем)
-              // Это гарантирует, что при монтировании компонентов данные будут загружены заново
-              queryClient.removeQueries();
-
-              // Дополнительно очищаем query cache
-              queryClient.getQueryCache().clear();
-
-              // Даём время на полную очистку перед навигацией
-              await new Promise((resolve) => setTimeout(resolve, 100));
-            } catch (e) {
-              // silent catch
-            }
-          }
-
-          // Сначала помечаем пользователя как залогиненного
-          if (mounted) {
-            setIsLoggedIn(true);
-            setSessionReady(true);
-            if (!appReady) setAppReady(true);
-            // Увеличиваем ключ для полного перемонтирования приложения
-            setAppKey((prev) => prev + 1);
-          }
+          // При SIGNED_IN сначала ЗАГРУЖАЕМ критические данные, ПОТОМ чистим кэш и перемонтируем
+          let userRole = 'worker';
+          let profileData = null;
 
           try {
             // Получаем пользователя для последующей загрузки профиля
             const { data: { user: currentUser } = {} } = await supabase.auth.getUser();
+            logger?.warn?.(`👤 Current user: ${currentUser?.id || 'none'}`);
 
-            // Гарантируем загрузку профиля до отображения контента
+            // Гарантируем загрузку профиля и роли ДО очистки кэша
             if (currentUser?.id) {
               try {
-                // Очищаем кэш профиля для гарантированной перезагрузки
-                queryClient.removeQueries({ queryKey: ['profile'] });
-
-                // Загружаем профиль явно (это заполнит React Query)
+                // Загружаем профиль явно
                 const { data: prof } = await supabase
                   .from('profiles')
                   .select('full_name, first_name, last_name, avatar_url, role')
@@ -349,17 +349,20 @@ function RootLayoutInner() {
                   .maybeSingle();
 
                 if (prof) {
-                  // Кэшируем профиль в React Query, чтобы UniversalHome получил его мгновенно
-                  queryClient.setQueryData(['profile', currentUser.id], prof);
+                  profileData = { userId: currentUser.id, data: prof };
+                  logger?.warn?.(`✅ Profile loaded: role=${prof.role}`);
+                } else {
+                  logger?.warn?.('⚠️ Profile not found in database');
                 }
               } catch (e) {
                 logger?.warn?.('Failed to preload profile:', e?.message || e);
               }
             }
 
-            // Load role and locale
-            const [userRole] = await Promise.all([
+            // Load role and locale параллельно
+            const [fetchedRole] = await Promise.all([
               getUserRole().catch((e) => {
+                logger?.warn?.('getUserRole failed:', e?.message || e);
                 return 'worker'; // fallback роль
               }),
               loadUserLocale()
@@ -368,15 +371,66 @@ function RootLayoutInner() {
                   // silent catch
                 }),
             ]);
+            userRole = fetchedRole;
+            logger?.warn?.(`🎭 User role resolved: ${userRole}`);
+          } catch (e) {
+            // silent catch - используем fallback роль
+            logger?.warn?.('Error loading user data:', e?.message || e);
+            userRole = 'worker';
+          }
 
-            if (mounted) {
-              setRole(userRole);
+          // ТЕПЕРЬ чистим кэш, НО сразу же восстанавливаем критические данные
+          if (event === 'SIGNED_IN') {
+            try {
+              // Удаляем персистер, чтобы не загружались старые данные
+              await persister.removeClient?.();
+
+              // Очищаем кастомный кэш
+              globalCache.clear();
+
+              // Полностью удаляем ВСЕ запросы из кэша
+              queryClient.removeQueries();
+              queryClient.getQueryCache().clear();
+            } catch (e) {
+              // silent catch
+            }
+          }
+
+          // Мгновенно восстанавливаем роль и профиль в кэш ПЕРЕД перемонтированием
+          try {
+            queryClient.setQueryData(['userRole'], userRole);
+            logger?.warn?.(`📦 Cached userRole: ${userRole}`);
+            if (profileData) {
+              queryClient.setQueryData(['profile', profileData.userId], profileData.data);
+              logger?.warn?.(`📦 Cached profile for user: ${profileData.userId}`);
             }
           } catch (e) {
-            // silent catch
-            // Даже если упало - пользователь залогинен, просто без роли
-            if (mounted) setRole('worker');
+            logger?.warn?.('Failed to cache data:', e?.message || e);
           }
+
+          // Обновляем состояние
+          if (mounted) {
+            setRole(userRole);
+            setIsLoggedIn(true);
+            setSessionReady(true);
+            if (!appReady) setAppReady(true);
+            logger?.warn?.(`✅ State updated: isLoggedIn=true, role=${userRole}`);
+          }
+
+          // Небольшая пауза для стабилизации перед перемонтированием
+          await new Promise((resolve) => setTimeout(resolve, 50));
+
+          // ТЕПЕРЬ перемонтируем приложение — роль уже в кэше
+          if (mounted) {
+            setAppKey((prev) => prev + 1);
+            logger?.warn?.('🔄 App remounted with new key');
+          }
+
+          // Инкрементируем session epoch — экраны сбросят bootstrap
+          try {
+            bumpSessionEpoch();
+            logger?.warn?.('⏰ Session epoch bumped');
+          } catch (e) {}
         }
       });
       subscription = onAuth?.data?.subscription ?? null;
