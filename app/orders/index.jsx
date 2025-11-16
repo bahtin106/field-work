@@ -193,10 +193,10 @@ export default function IndexScreen() {
     // Инициализируем prefetch с QueryClient
     prefetchManager.init(qc);
 
-    // Запускаем через 2 секунды, когда основная загрузка точно завершена
+    // Запускаем через 500ms - данные должны быть готовы до открытия страниц
     const timer = setTimeout(() => {
       prefetchManager.start();
-    }, 2000);
+    }, 500);
 
     return () => {
       clearTimeout(timer);

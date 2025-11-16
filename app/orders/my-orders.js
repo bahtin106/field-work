@@ -1,28 +1,31 @@
-import { useRouter, useLocalSearchParams } from 'expo-router';
+/* global __DEV__ */
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
+  ActivityIndicator,
+  BackHandler,
+  Keyboard,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
-  Pressable,
-  ActivityIndicator,
-  Keyboard,
+  Text,
   TouchableWithoutFeedback,
-  Platform,
-  BackHandler,
+  View,
 } from 'react-native';
 
 import DynamicOrderCard from '../../components/DynamicOrderCard';
-import { supabase } from '../../lib/supabase';
-import { useTheme } from '../../theme/ThemeProvider';
-import { usePermissions } from '../../lib/permissions';
 import Screen from '../../components/layout/Screen';
 import TextField from '../../components/ui/TextField';
+import { usePermissions } from '../../lib/permissions';
+import { supabase } from '../../lib/supabase';
+import { useTheme } from '../../theme/ThemeProvider';
 
 export default function MyOrdersScreen() {
   const { theme } = useTheme();
+  const queryClient = useQueryClient();
 
   const mutedColor =
     theme?.text?.muted?.color ??
@@ -104,15 +107,49 @@ export default function MyOrdersScreen() {
   LIST_CACHE.my ||= {};
   const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
-  const [orders, setOrders] = useState([]);
-  const [filter, setFilter] = useState('feed');
+  // Инициализируем orders из prefetch кэша если есть
+  const [orders, setOrders] = useState(() => {
+    // Проверяем prefetch кэш для "Моих заказов"
+    const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
+    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(`[MyOrders] 🚀 Found ${prefetchData.length} orders in prefetch cache!`);
+      }
+      return prefetchData;
+    }
+    return [];
+  });
+  // Начальный фильтр ставим 'all' (мои заказы), чтобы совпадал с предзагруженными первыми 10
+  const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(() => {
+    // Если есть данные в prefetch - не показываем loader
+    const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
+    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(`[MyOrders] MOUNT: loading=false (prefetch cache hit)`);
+      }
+      return false;
+    }
     const key = 'feed';
     return LIST_CACHE.my[key] ? false : true;
   });
   const [userId, setUserId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hydratedRef = useRef(false);
+  // Если мы стартуем на фильтре 'all' и уже есть prefetch данные – считаем экран гидратированным
+  useEffect(() => {
+    if (filter === 'all' && !hydratedRef.current) {
+      const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
+      if (prefetchData && prefetchData.length) {
+        hydratedRef.current = true;
+        if (orders.length === 0) setOrders(prefetchData);
+        setLoading(false);
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[MyOrders] ✅ Instant hydrate from prefetch');
+        }
+      }
+    }
+  }, [filter, orders.length, queryClient]);
   const [bgRefreshing, setBgRefreshing] = useState(false);
 
   const { seedFilter, seedSearch } = useLocalSearchParams();

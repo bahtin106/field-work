@@ -1,3 +1,4 @@
+/* global __DEV__ */
 // app/orders/all-orders.jsx
 
 import { useFocusEffect } from '@react-navigation/native';
@@ -322,20 +323,10 @@ export default function AllOrdersScreen() {
   );
 
   // Global cache with TTL
-  const CACHE_TTL_MS = 45000;
+  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 минут (совпадает с React Query staleTime)
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
   LIST_CACHE.all ||= {};
   const { filter, executor, department, search, work_type, materials } = useLocalSearchParams();
-  const [orders, setOrders] = useState(() => {
-    const key = JSON.stringify({ status: 'feed', ex: null });
-    const cached = LIST_CACHE.all[key];
-    return cached?.data || [];
-  });
-  const [loading, setLoading] = useState(() => {
-    const key = JSON.stringify({ status: 'feed', ex: null });
-    return LIST_CACHE.all[key] ? false : true;
-  });
-  const [refreshing, setRefreshing] = useState(false);
 
   const [statusFilter, setStatusFilter] = useState(
     filter === 'completed'
@@ -346,6 +337,64 @@ export default function AllOrdersScreen() {
           ? 'new'
           : filter || 'all',
   );
+
+  // Вычисляем начальный cacheKey на основе реального statusFilter
+  const cacheKeyInitial = useMemo(() => {
+    const initialStatus =
+      filter === 'completed'
+        ? 'done'
+        : filter === 'in_progress'
+          ? 'in_progress'
+          : filter === 'new'
+            ? 'new'
+            : filter || 'all';
+    return JSON.stringify({ status: initialStatus, ex: null, dept: null, wt: '' });
+  }, [filter]);
+
+  const [orders, setOrders] = useState(() => {
+    // Проверяем React Query кэш первым
+    const queryKey = ['orders', 'all', cacheKeyInitial];
+    const cachedQueryData = queryClient.getQueryData(queryKey);
+    if (cachedQueryData) {
+      if (__DEV__)
+        console.warn(
+          `[Orders] 🚀 MOUNT: Found ${cachedQueryData.length} items in React Query cache!`,
+        );
+      return cachedQueryData;
+    }
+
+    // Fallback на globalThis
+    const cached = LIST_CACHE.all[cacheKeyInitial];
+    if (cached?.data) {
+      if (__DEV__)
+        console.warn(`[Orders] MOUNT: Found ${cached.data.length} items in globalThis cache`);
+      return cached.data;
+    }
+
+    if (__DEV__) console.warn(`[Orders] ❌ MOUNT: No cache found - will load from network`);
+    return [];
+  });
+
+  const [loading, setLoading] = useState(() => {
+    // Если есть данные в кэше - не показываем лоадер
+    const queryKey = ['orders', 'all', cacheKeyInitial];
+    const cachedQueryData = queryClient.getQueryData(queryKey);
+    if (cachedQueryData) {
+      if (__DEV__) console.warn(`[Orders] MOUNT: loading=false (React Query cache hit)`);
+      return false;
+    }
+
+    const cached = LIST_CACHE.all[cacheKeyInitial];
+    if (cached?.data) {
+      if (__DEV__) console.warn(`[Orders] MOUNT: loading=false (globalThis cache hit)`);
+      return false;
+    }
+
+    if (__DEV__) console.warn(`[Orders] MOUNT: loading=true (no cache)`);
+    return true;
+  });
+
+  const [refreshing, setRefreshing] = useState(false);
   const [executorFilter, setExecutorFilter] = useState(executor || null);
 
   const [departmentFilter, setDepartmentFilter] = useState(null);
@@ -464,14 +513,33 @@ export default function AllOrdersScreen() {
 
   // ✅ Serve cached data immediately when filters change (fix for stale list after toggling chips)
   useEffect(() => {
+    // Проверяем React Query кэш ПЕРВЫМ
+    const queryKey = ['orders', 'all', cacheKey];
+    const cachedQueryData = queryClient.getQueryData(queryKey);
+
+    if (cachedQueryData) {
+      if (__DEV__)
+        console.warn(
+          `[Orders] Filter changed - loaded from React Query cache (${cachedQueryData.length} items)`,
+        );
+      setOrders(cachedQueryData);
+      setLoading(false);
+      return;
+    }
+
+    // Fallback на globalThis
     const cached = LIST_CACHE.all[cacheKey];
     if (cached) {
+      if (__DEV__)
+        console.warn(
+          `[Orders] Filter changed - loaded from globalThis cache (${cached.data?.length || 0} items)`,
+        );
       setOrders(cached.data || []);
       setLoading(false);
     } else {
       setLoading(true);
     }
-  }, [cacheKey]);
+  }, [cacheKey, queryClient]);
 
   useEffect(() => {
     const fetchExecutors = async () => {
@@ -529,26 +597,43 @@ export default function AllOrdersScreen() {
   useEffect(() => {
     let alive = true;
     const tick = async () => {
+      // Проверяем React Query кэш ПЕРВЫМ
+      const queryKey = ['orders', 'all', cacheKey];
+      const cachedQueryData = queryClient.getQueryData(queryKey);
+      const queryState = queryClient.getQueryState(queryKey);
+
+      // Если данные есть в React Query И они свежие (< 5 минут) - НЕ ЗАГРУЖАЕМ!
+      if (cachedQueryData && queryState?.dataUpdatedAt) {
+        const age = Date.now() - queryState.dataUpdatedAt;
+        const staleTime = 5 * 60 * 1000; // 5 минут (совпадает с prefetch!)
+
+        if (age < staleTime) {
+          if (__DEV__)
+            console.warn(
+              `[Orders] ✓ Using React Query cache (${cachedQueryData.length} items, age: ${Math.round(age / 1000)}s)`,
+            );
+          setOrders(cachedQueryData);
+          setLoading(false);
+          return; // НЕ загружаем с сервера!
+        }
+      }
+
+      // Fallback: проверяем globalThis cache
       const cached = LIST_CACHE.all[cacheKey];
       const freshNeeded = !cached || Date.now() - (cached.ts || 0) > CACHE_TTL_MS;
 
-      // Проверяем React Query кэш ПЕРВЫМ (быстрее globalThis)
-      const queryKey = ['orders', 'all', cacheKey];
-      const cachedQueryData = queryClient.getQueryData(queryKey);
-      if (cachedQueryData && !freshNeeded) {
-        setOrders(cachedQueryData);
+      if (!freshNeeded && cached) {
+        if (__DEV__)
+          console.warn(
+            `[Orders] ✓ Loaded from globalThis cache (${cached.data?.length || 0} items)`,
+          );
+        setOrders(cached.data || []);
         setLoading(false);
         return;
       }
 
-      if (!freshNeeded) {
-        // Serve from cache immediately to reflect UI change
-        if (cached) {
-          setOrders(cached.data || []);
-        }
-        setLoading(false);
-        return;
-      }
+      // Если дошли сюда - нужно загрузить с сервера
+      if (__DEV__) console.warn(`[Orders] Loading from network...`);
 
       // Build base query
       let query = supabase.from('orders_secure').select('*');
@@ -580,13 +665,14 @@ export default function AllOrdersScreen() {
       if (!alive) return;
       if (!error) {
         const result = data || [];
+        if (__DEV__) console.warn(`[Orders] 🌐 Loaded from network (${result.length} items)`);
         setOrders(result);
         LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
         queryClient.setQueryData(queryKey, result); // Сохраняем в React Query кэш!
       }
       setLoading(false);
     };
-    const id = setInterval(tick, 15000); // check every 15s
+    const id = setInterval(tick, 5 * 60 * 1000); // check every 5 минут (совпадает с staleTime)
     tick(); // initial check
     return () => {
       alive = false;
