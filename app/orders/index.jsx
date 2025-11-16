@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import UniversalHome from '../../components/universalhome';
+import appReadyState from '../../lib/appReadyState';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
 import { prefetchManager } from '../../lib/prefetch';
 import { onSessionEpoch } from '../../lib/sessionEpoch';
@@ -23,9 +24,6 @@ import { useTheme } from '../../theme/ThemeProvider';
 
 // Убираем глобальный «одноразовый» флаг и делаем состояние загрузки привязанным к сессии
 // Это предотвращает белый экран при повторном логине: каждый логин имеет собственный bootstrap.
-
-// Глобальное состояние загрузки, сохраняется между навигациями
-const globalBootState = { current: 'boot', mountTs: Date.now() };
 
 // --- PremiumLoader: минималистичный «дорогой» экран загрузки (без мерцаний) ---
 function PremiumLoader({ text = 'Подготавливаем рабочее пространство' }) {
@@ -212,8 +210,25 @@ export default function IndexScreen() {
   //  - 'boot': начальное после навигации на экран
   //  - 'fetching': активные сетевые запросы / роль ещё не определена
   //  - 'ready': основное содержимое доступно
-  // Используем глобальный объект для сохранения между навигациями
-  const [bootState, setBootState] = React.useState(() => globalBootState.current);
+  // Используем централизованное состояние для синхронизации с bottom bar
+  const [bootState, setBootState] = React.useState(() => {
+    // При инициализации проверяем: если есть кэшированные данные - сразу ready
+    const cachedRole = qc.getQueryData(['userRole']);
+    const globalState = appReadyState.getBootState();
+    if (cachedRole && globalState === 'ready') {
+      return 'ready';
+    }
+    return 'boot';
+  });
+
+  // Подписываемся на изменения глобального состояния для синхронизации
+  React.useEffect(() => {
+    const unsubscribe = appReadyState.subscribe((newState) => {
+      setBootState(newState);
+    });
+    return unsubscribe;
+  }, []);
+
   const MIN_BOOT_MS = 200; // Уменьшено с 600 до 200ms - быстрый старт благодаря кэшу!
   const MAX_BOOT_MS = 5000; // жёсткий верхний предел (снижен для лучшего UX)
 
@@ -223,8 +238,7 @@ export default function IndexScreen() {
   // Сброс bootstrap при смене session epoch (повторный логин / логаут)
   React.useEffect(() => {
     const unsub = onSessionEpoch(() => {
-      globalBootState.current = 'boot';
-      globalBootState.mountTs = Date.now();
+      appReadyState.reset();
       setBootState('boot');
     });
     return unsub;
@@ -233,30 +247,27 @@ export default function IndexScreen() {
   // Основной эффект: переход в ready когда загрузки завершены + минимальное время прошло
   React.useEffect(() => {
     if (bootState === 'ready') {
-      globalBootState.current = 'ready';
+      appReadyState.setBootState('ready');
       return;
     }
 
     if (!activeFetching) {
-      const elapsed = Date.now() - globalBootState.mountTs;
+      const elapsed = Date.now() - appReadyState.getMountTs();
       const wait = Math.max(0, MIN_BOOT_MS - elapsed);
       const t = setTimeout(() => {
-        globalBootState.current = 'ready';
-        setBootState('ready');
+        appReadyState.setBootState('ready');
       }, wait);
       return () => clearTimeout(t);
     } else if (bootState !== 'fetching') {
-      globalBootState.current = 'fetching';
-      setBootState('fetching');
+      appReadyState.setBootState('fetching');
     }
-  }, [activeFetching, bootState]);
+  }, [activeFetching, bootState, MIN_BOOT_MS]);
 
   // Независимый таймаут принудительного снятия лоадера (защита от зависания)
   React.useEffect(() => {
     if (bootState === 'ready') return;
     const forceTimer = setTimeout(() => {
-      globalBootState.current = 'ready';
-      setBootState('ready');
+      appReadyState.setBootState('ready');
     }, MAX_BOOT_MS);
     return () => clearTimeout(forceTimer);
   }, [bootState, MAX_BOOT_MS]);

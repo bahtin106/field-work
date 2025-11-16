@@ -1,8 +1,9 @@
 // components/navigation/BottomNav.jsx
-import React, { memo, useMemo, useEffect, useState, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, Animated, Easing, AppState } from 'react-native';
-import { usePathname, router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
+import React, { memo, useEffect, useMemo, useRef } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import appReadyState from '../../lib/appReadyState';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useToast } from '../ui/ToastProvider';
@@ -67,9 +68,23 @@ function BottomNavInner() {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const { setAnchorOffset } = useToast();
-  const { role, canAll, roleLoading, canAllLoading, isFetching } = useUserPermissions();
+  const { role, canAll, roleLoading, canAllLoading } = useUserPermissions();
+
+  // Синхронизация с глобальным состоянием готовности главной страницы
+  const [appReady, setAppReady] = React.useState(() => appReadyState.isReady());
+
+  // Подписываемся на изменения глобального состояния
+  React.useEffect(() => {
+    const unsubscribe = appReadyState.subscribe((state) => {
+      setAppReady(state === 'ready');
+    });
+    return unsubscribe;
+  }, []);
+
+  // Локальная видимость бара (для плавной анимации появления)
   const [navVisible, setNavVisible] = React.useState(false);
   const appear = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     if (navVisible) {
       Animated.timing(appear, {
@@ -82,10 +97,6 @@ function BottomNavInner() {
       appear.setValue(0);
     }
   }, [navVisible, appear]);
-  // Тайминги в унисон с главным экраном
-  const navStartRef = useRef(Date.now());
-  const MIN_SPLASH_MS = 600;
-  const NET_IDLE_GRACE_MS = 280;
 
   const colors = useMemo(() => {
     const bg =
@@ -109,22 +120,21 @@ function BottomNavInner() {
     const bottomOffset = theme?.spacing?.xs ?? 6;
     return { itemHeight, ph, indicatorH, indicatorW, indicatorRadius, bottomOffset };
   }, [theme]);
-  // «страховочный» короткий пуллинг после события (5 раз по 2с)
-  // Показать нижний бар строго синхронно с главным экраном (с тем же grace):
+
+  // Показываем бар синхронно с главной страницей
+  // Ждём: 1) готовность данных (роль, пермишены) 2) глобальное состояние 'ready'
   useEffect(() => {
-    if (navVisible) return; // показали — больше не прячем
-    const ready = !roleLoading && !canAllLoading;
-    let t;
-    if (ready && isFetching === 0) {
-      const elapsed = Date.now() - navStartRef.current;
-      const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
-      const delay = Math.max(waitMin, NET_IDLE_GRACE_MS);
-      t = setTimeout(() => setNavVisible(true), delay);
+    if (navVisible) return; // уже показали
+
+    const dataReady = !roleLoading && !canAllLoading && !!role;
+
+    // Показываем строго когда главная страница тоже готова
+    if (dataReady && appReady) {
+      // Небольшая задержка для плавности (синхронно с анимацией главной)
+      const t = setTimeout(() => setNavVisible(true), 0);
+      return () => clearTimeout(t);
     }
-    return () => {
-      if (t) clearTimeout(t);
-    };
-  }, [navVisible, roleLoading, canAllLoading, isFetching]);
+  }, [navVisible, roleLoading, canAllLoading, role, appReady]);
 
   // скрываем бар на экранах авторизации
   if (pathname.startsWith('/(auth)')) return null;
