@@ -209,8 +209,23 @@ function RootLayoutInner() {
           if (!appReady) setAppReady(true);
           setAuthChecking(false);
 
-          if (logged) {
+          if (logged && validatedUser?.id) {
             try {
+              // Предварительно загружаем профиль для сессии
+              const { data: prof } = await Promise.race([
+                supabase
+                  .from('profiles')
+                  .select('full_name, first_name, last_name, avatar_url, role')
+                  .eq('id', validatedUser.id)
+                  .maybeSingle(),
+                new Promise((resolve) => setTimeout(() => resolve({ data: null }), 2000)),
+              ]);
+
+              if (prof && mounted) {
+                // Кэшируем профиль для немедленного использования в UniversalHome
+                queryClient.setQueryData(['profile', validatedUser.id], prof);
+              }
+
               const userRolePromise = getUserRole();
               const timeoutPromise = new Promise((resolve) =>
                 setTimeout(() => resolve('worker'), ROLE_TIMEOUT),
@@ -317,6 +332,31 @@ function RootLayoutInner() {
           }
 
           try {
+            // Получаем пользователя для последующей загрузки профиля
+            const { data: { user: currentUser } = {} } = await supabase.auth.getUser();
+
+            // Гарантируем загрузку профиля до отображения контента
+            if (currentUser?.id) {
+              try {
+                // Очищаем кэш профиля для гарантированной перезагрузки
+                queryClient.removeQueries({ queryKey: ['profile'] });
+
+                // Загружаем профиль явно (это заполнит React Query)
+                const { data: prof } = await supabase
+                  .from('profiles')
+                  .select('full_name, first_name, last_name, avatar_url, role')
+                  .eq('id', currentUser.id)
+                  .maybeSingle();
+
+                if (prof) {
+                  // Кэшируем профиль в React Query, чтобы UniversalHome получил его мгновенно
+                  queryClient.setQueryData(['profile', currentUser.id], prof);
+                }
+              } catch (e) {
+                logger?.warn?.('Failed to preload profile:', e?.message || e);
+              }
+            }
+
             // Load role and locale
             const [userRole] = await Promise.all([
               getUserRole().catch((e) => {

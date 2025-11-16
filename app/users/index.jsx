@@ -1,4 +1,3 @@
-// ...existing code...
 // app/users/index.jsx
 
 import { useRouter } from 'expo-router';
@@ -32,7 +31,7 @@ import { useDepartments as useDepartmentsHook } from '../../components/hooks/use
 import { useUsers } from '../../components/hooks/useUsers';
 import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
-import { getMyCompanyId } from '../../lib/workTypes';
+import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
@@ -57,12 +56,11 @@ function withAlpha(color, a) {
 export default function UsersIndex() {
   const { theme } = useTheme();
   useTranslation(); // subscribe to i18n changes without re-plumbing
-  const router = useRouter();
 
+  const router = useRouter();
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const [companyId, setCompanyId] = useState(null);
   const [useDepartments, setUseDepartments] = useState(false);
 
   // Initialize filters with a 5-second TTL as requested by user.
@@ -75,33 +73,7 @@ export default function UsersIndex() {
     ttl: 5000, // 5 seconds
   });
 
-  // Load company settings once
-  useEffect(() => {
-    (async () => {
-      try {
-        const cid = await getMyCompanyId();
-        setCompanyId(cid);
-
-        if (cid) {
-          // Check if departments are enabled
-          try {
-            const { count } = await import('../../lib/supabase').then((m) =>
-              m.supabase
-                .from('departments')
-                .select('id', { count: 'exact', head: true })
-                .eq('company_id', cid),
-            );
-            setUseDepartments(typeof count === 'number' && count > 0);
-          } catch {
-            setUseDepartments(false);
-          }
-        }
-      } catch {
-        setCompanyId(null);
-        setUseDepartments(false);
-      }
-    })();
-  }, []);
+  const { companyId, loading: companyIdLoading } = useMyCompanyId();
 
   // ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА: оба хука вызываются одновременно на верхнем уровне компонента
   // Это обеспечивает параллельную загрузку данных
