@@ -369,14 +369,14 @@ export default {
   // Relative time format for last seen
   users_relativeTime_now: 'сейчас',
   users_relativeTime_1min: '1 минуту назад',
-  users_relativeTime_mins: 'минут назад',      // "5 минут назад"
-  users_relativeTime_mins_2_4: 'минуты назад',  // "2 минуты назад"
+  users_relativeTime_mins: 'минут назад', // "5 минут назад"
+  users_relativeTime_mins_2_4: 'минуты назад', // "2 минуты назад"
   users_relativeTime_1hour: '1 час назад',
-  users_relativeTime_hours: 'часов назад',      // "5 часов назад"
-  users_relativeTime_hours_2_4: 'часа назад',   // "2 часа назад"
+  users_relativeTime_hours: 'часов назад', // "5 часов назад"
+  users_relativeTime_hours_2_4: 'часа назад', // "2 часа назад"
   users_relativeTime_1day: '1 день назад',
-  users_relativeTime_days: 'дней назад',        // "5 дней назад"
-  users_relativeTime_days_2_4: 'дня назад',     // "2 дня назад"
+  users_relativeTime_days: 'дней назад', // "5 дней назад"
+  users_relativeTime_days_2_4: 'дня назад', // "2 дня назад"
 
   // Месяцы (для DateTimeModal и других компонентов)
   // months_short — короткие названия (индекс 0 = январь)
