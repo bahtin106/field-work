@@ -2,14 +2,15 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  FlatList,
   Keyboard,
   Platform,
   Pressable,
-  ScrollView,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableWithoutFeedback,
@@ -136,6 +137,12 @@ export default function MyOrdersScreen() {
   const [userId, setUserId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hydratedRef = useRef(false);
+
+  // Пагинация (как в Instagram/Telegram)
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE_SIZE = 10;
   // Если мы стартуем на фильтре 'all' и уже есть prefetch данные – считаем экран гидратированным
   useEffect(() => {
     if (filter === 'all' && !hydratedRef.current) {
@@ -174,21 +181,24 @@ export default function MyOrdersScreen() {
   }, [filter, searchQuery]);
 
   useEffect(() => {
-    const fetchUserAndOrders = async (isBackground = false) => {
+    const fetchUserAndOrders = async (isBackground = false, pageNum = 1) => {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
-      const cached = LIST_CACHE.my[key];
-      if (cached && cached.length) {
-        setOrders(cached);
-        hydratedRef.current = true;
-        if (isBackground) {
-          // Если это фон, не трогаем основной loading; отмечаем bgRefreshing
-          setBgRefreshing(true);
+
+      // Первая страница - проверяем кэш
+      if (pageNum === 1) {
+        const cached = LIST_CACHE.my[key];
+        if (cached && cached.length) {
+          setOrders(cached);
+          hydratedRef.current = true;
+          if (isBackground) {
+            setBgRefreshing(true);
+          } else {
+            setLoading(false);
+            setBgRefreshing(true);
+          }
         } else {
-          setLoading(false);
-          setBgRefreshing(true);
+          setLoading(true);
         }
-      } else {
-        setLoading(true);
       }
 
       const { data: sessionData } = await supabase.auth.getSession();
@@ -216,14 +226,29 @@ export default function MyOrdersScreen() {
         }
       }
 
-      const { data, error } = await query.order('datetime', { ascending: false });
+      // ПАГИНАЦИЯ: грузим только нужную порцию
+      const from = (pageNum - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data, error } = await query.order('datetime', { ascending: false }).range(from, to);
+
       if (!error && Array.isArray(data)) {
-        setOrders(data);
-        LIST_CACHE.my[key] = data; // update cache
+        if (pageNum === 1) {
+          setOrders(data);
+          LIST_CACHE.my[key] = data;
+        } else {
+          // Добавляем к существующим (пагинация)
+          setOrders((prev) => [...prev, ...data]);
+        }
         hydratedRef.current = true;
+
+        // Проверяем, есть ли ещё данные
+        setHasMore(data.length === PAGE_SIZE);
       }
+
       setBgRefreshing(false);
       setLoading(false);
+      setLoadingMore(false);
     };
 
     // Гард: если уже гидратировано из prefetch и выбран 'all', пропускаем мгновенный сетевой вызов
@@ -248,8 +273,61 @@ export default function MyOrdersScreen() {
       return () => clearTimeout(timer);
     }
 
+    // Сбрасываем пагинацию при смене фильтра
+    setPage(1);
+    setHasMore(true);
     fetchUserAndOrders();
   }, [filter]);
+
+  // Загрузка следующей страницы при достижении конца списка
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore || loading) return;
+
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.warn(`[MyOrders] 📄 Loading page ${page + 1}...`);
+    }
+
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    setPage(nextPage);
+
+    const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+    const { data: sessionData } = await supabase.auth.getSession();
+    const uid = sessionData?.session?.user?.id;
+    if (!uid) return;
+
+    let query = supabase.from('orders_secure').select('*');
+    if (key === 'feed') {
+      query = query.is('assigned_to', null);
+    } else if (key === 'all') {
+      query = query.eq('assigned_to', uid);
+    } else {
+      query = query.eq('assigned_to', uid);
+      if (key === 'new') {
+        query = query.or('status.is.null,status.eq.Новый');
+      } else if (key === 'progress') {
+        query = query.eq('status', 'В работе');
+      } else if (key === 'done') {
+        query = query.eq('status', 'Завершённая');
+      }
+    }
+
+    const from = (nextPage - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await query.order('datetime', { ascending: false }).range(from, to);
+
+    if (!error && Array.isArray(data)) {
+      setOrders((prev) => [...prev, ...data]);
+      setHasMore(data.length === PAGE_SIZE);
+
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(`[MyOrders] ✓ Loaded ${data.length} more orders`);
+      }
+    }
+
+    setLoadingMore(false);
+  }, [loadingMore, hasMore, loading, page, filter]);
 
   const filteredOrders = (orders || []).filter((o) => {
     const q = searchQuery.trim().toLowerCase();
@@ -270,79 +348,165 @@ export default function MyOrdersScreen() {
     return haystack.includes(q);
   });
 
+  // Рендер элемента списка
+  const renderItem = useCallback(
+    ({ item: order }) => (
+      <DynamicOrderCard
+        order={order}
+        context="my_orders"
+        onPress={() =>
+          router.push({
+            pathname: `/orders/${order.id}`,
+            params: {
+              returnTo: '/orders/my-orders',
+              returnParams: JSON.stringify({
+                seedFilter: filter,
+                seedSearch: searchQuery,
+              }),
+            },
+          })
+        }
+      />
+    ),
+    [router, filter, searchQuery],
+  );
+
+  // Футер со спиннером при загрузке
+  const renderFooter = useCallback(() => {
+    if (!loadingMore) return null;
+    return (
+      <View style={{ paddingVertical: 20 }}>
+        <ActivityIndicator size="small" color={theme.colors.primary} />
+      </View>
+    );
+  }, [loadingMore, theme.colors.primary]);
+
+  // Заголовок с фильтрами и поиском
+  const ListHeaderComponent = useCallback(
+    () => (
+      <View>
+        <View style={styles.filterContainer}>
+          {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
+            <Pressable
+              key={key}
+              onPress={() => setFilter(key)}
+              style={({ pressed }) => [
+                styles.chip,
+                filter === key && styles.chipActive,
+                pressed && { opacity: 0.9 },
+              ]}
+              accessibilityRole="button"
+            >
+              <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
+                {key === 'feed'
+                  ? 'Лента'
+                  : key === 'all'
+                    ? 'Все'
+                    : key === 'new'
+                      ? 'Новые'
+                      : key === 'progress'
+                        ? 'В работе'
+                        : 'Завершённые'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <TextField
+          placeholder="Поиск по названию, городу, телефону..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          returnKeyType="search"
+          style={styles.searchInput}
+        />
+      </View>
+    ),
+    [filter, searchQuery, styles],
+  );
+
+  // Пустой список
+  const ListEmptyComponent = useCallback(
+    () => (
+      <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+        {loading && !hydratedRef.current ? (
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        ) : (
+          <Text style={styles.emptyText}>У вас пока нет заказов</Text>
+        )}
+      </View>
+    ),
+    [loading, styles.emptyText, theme.colors.primary],
+  );
+
+  const keyExtractor = useCallback((item) => String(item.id), []);
+
+  // Pull-to-refresh
+  const onRefresh = useCallback(async () => {
+    setBgRefreshing(true);
+    setPage(1);
+    setHasMore(true);
+
+    const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+    const { data: sessionData } = await supabase.auth.getSession();
+    const uid = sessionData?.session?.user?.id;
+    if (!uid) {
+      setBgRefreshing(false);
+      return;
+    }
+
+    let query = supabase.from('orders_secure').select('*');
+    if (key === 'feed') {
+      query = query.is('assigned_to', null);
+    } else if (key === 'all') {
+      query = query.eq('assigned_to', uid);
+    } else {
+      query = query.eq('assigned_to', uid);
+      if (key === 'new') {
+        query = query.or('status.is.null,status.eq.Новый');
+      } else if (key === 'progress') {
+        query = query.eq('status', 'В работе');
+      } else if (key === 'done') {
+        query = query.eq('status', 'Завершённая');
+      }
+    }
+
+    const { data, error } = await query
+      .order('datetime', { ascending: false })
+      .range(0, PAGE_SIZE - 1);
+
+    if (!error && Array.isArray(data)) {
+      setOrders(data);
+      LIST_CACHE.my[key] = data;
+      setHasMore(data.length === PAGE_SIZE);
+    }
+
+    setBgRefreshing(false);
+  }, [filter]);
+
   return (
-    <Screen>
+    <Screen scroll={false}>
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView
+        <FlatList
+          data={filteredOrders}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          ListHeaderComponent={ListHeaderComponent}
+          ListFooterComponent={renderFooter}
+          ListEmptyComponent={ListEmptyComponent}
           contentContainerStyle={styles.container}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-        >
-          <View style={styles.filterContainer}>
-            {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
-              <Pressable
-                key={key}
-                onPress={() => setFilter(key)}
-                style={({ pressed }) => [
-                  styles.chip,
-                  filter === key && styles.chipActive,
-                  pressed && { opacity: 0.9 },
-                ]}
-                accessibilityRole="button"
-              >
-                <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
-                  {key === 'feed'
-                    ? 'Лента'
-                    : key === 'all'
-                      ? 'Все'
-                      : key === 'new'
-                        ? 'Новые'
-                        : key === 'progress'
-                          ? 'В работе'
-                          : 'Завершённые'}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
-          <TextField
-            placeholder="Поиск по названию, городу, телефону..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            returnKeyType="search"
-            style={styles.searchInput}
-          />
-
-          {loading && !hydratedRef.current ? (
-            <ActivityIndicator
-              size="large"
-              color={theme.colors.primary}
-              style={{ marginTop: 40 }}
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          refreshControl={
+            <RefreshControl
+              refreshing={bgRefreshing}
+              onRefresh={onRefresh}
+              tintColor={theme.colors.primary}
+              colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
             />
-          ) : filteredOrders.length === 0 ? (
-            <Text style={styles.emptyText}>У вас пока нет заказов</Text>
-          ) : (
-            filteredOrders.map((order) => (
-              <DynamicOrderCard
-                key={order.id}
-                order={order}
-                context="my_orders"
-                onPress={() =>
-                  router.push({
-                    pathname: `/orders/${order.id}`,
-                    params: {
-                      returnTo: '/orders/my-orders',
-                      returnParams: JSON.stringify({
-                        seedFilter: filter,
-                        seedSearch: searchQuery,
-                      }),
-                    },
-                  })
-                }
-              />
-            ))
-          )}
-        </ScrollView>
+          }
+        />
       </TouchableWithoutFeedback>
     </Screen>
   );
