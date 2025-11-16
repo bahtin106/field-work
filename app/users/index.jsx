@@ -408,29 +408,29 @@ export default function UsersIndex() {
 
       // Minutes (1-59 min)
       if (diffMin < 1) {
-        return t('users_relativeTime_now') ?? 'сейчас';
+        return t('users_relativeTime_now');
       }
       if (diffMin < 60) {
         const n = diffMin;
-        if (n === 1) return '1 минуту назад';
-        if (n >= 2 && n <= 4) return `${n} минуты назад`;
-        return `${n} минут назад`;
+        if (n === 1) return t('users_relativeTime_1min');
+        if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_mins_2_4')}`;
+        return `${n} ${t('users_relativeTime_mins')}`;
       }
 
       // Hours (1-23 hours)
       if (diffHour < 24) {
         const n = diffHour;
-        if (n === 1) return '1 час назад';
-        if (n >= 2 && n <= 4) return `${n} часа назад`;
-        return `${n} часов назад`;
+        if (n === 1) return t('users_relativeTime_1hour');
+        if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_hours_2_4')}`;
+        return `${n} ${t('users_relativeTime_hours')}`;
       }
 
       // Days (1-3 days)
       if (diffDay <= 3) {
         const n = diffDay;
-        if (n === 1) return '1 день назад';
-        if (n >= 2 && n <= 4) return `${n} дня назад`;
-        return `${n} дней назад`;
+        if (n === 1) return t('users_relativeTime_1day');
+        if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_days_2_4')}`;
+        return `${n} ${t('users_relativeTime_days')}`;
       }
 
       // 4+ days: return null to signal date-only format should be used
