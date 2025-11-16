@@ -6,7 +6,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { Stack, useRootNavigationState, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, View } from 'react-native';
@@ -101,18 +101,12 @@ function RootLayoutInner() {
   const [sessionReady, setSessionReady] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [role, setRole] = useState(null);
-  const [authChecking, setAuthChecking] = useState(true); // новый флаг
-  const [appKey, setAppKey] = useState(0); // Ключ для перемонтирования приложения
+  const [authChecking, setAuthChecking] = useState(true);
+  const [appKey, setAppKey] = useState(0);
   const { theme } = useTheme();
-  const _router = useRouter();
-  const _segments = useSegments();
-  const _rootNavigationState = useRootNavigationState();
+  const router = useRouter();
+  const segments = useSegments();
   const appState = useRef(AppState.currentState);
-
-  // Guard to avoid initial redirect flicker on first paint
-  const _didInitRef = useRef(false);
-  // Marker to skip auth-driven redirects during initial mount
-  const _authMountedRef = useRef(false);
 
   const splashHiddenRef = useRef(false);
   const hideSplashNow = useCallback(async () => {
@@ -284,6 +278,14 @@ function RootLayoutInner() {
 
     initializeApp();
 
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // Подписка на события авторизации
+  useEffect(() => {
+    let mounted = true;
     let subscription = null;
 
     try {
@@ -316,121 +318,149 @@ function RootLayoutInner() {
             bumpSessionEpoch();
           } catch (e) {}
 
-          // Принудительная переадресация на экран входа
-          try {
-            _router.replace('/(auth)/login');
-          } catch (e) {
-            // silent catch
-          }
-
+          // Навигация произойдет через useEffect
           return;
         }
 
         if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
           logger?.warn?.(`🔐 Auth event: ${event}`);
 
-          // При SIGNED_IN сначала ЗАГРУЖАЕМ критические данные, ПОТОМ чистим кэш и перемонтируем
-          let userRole = 'worker';
-          let profileData = null;
+          // КРИТИЧНО: Сбрасываем authChecking СРАЗУ для разблокировки UI
+          if (mounted) {
+            setAuthChecking(false);
+          }
 
-          try {
-            // Получаем пользователя для последующей загрузки профиля
-            const { data: { user: currentUser } = {} } = await supabase.auth.getUser();
-            logger?.warn?.(`👤 Current user: ${currentUser?.id || 'none'}`);
+          // Запускаем тяжёлую работу асинхронно, не блокируя основной поток
+          (async () => {
+            logger?.warn?.('🚀 Starting async IIFE in SIGNED_IN handler');
+            try {
+              // При SIGNED_IN сначала ЗАГРУЖАЕМ критические данные, ПОТОМ чистим кэш и перемонтируем
+              let userRole = 'worker';
+              let profileData = null;
 
-            // Гарантируем загрузку профиля и роли ДО очистки кэша
-            if (currentUser?.id) {
               try {
-                // Загружаем профиль явно
-                const { data: prof } = await supabase
-                  .from('profiles')
-                  .select('full_name, first_name, last_name, avatar_url, role')
-                  .eq('id', currentUser.id)
-                  .maybeSingle();
+                // Получаем пользователя для последующей загрузки профиля
+                const { data: { user: currentUser } = {} } = await supabase.auth.getUser();
+                logger?.warn?.(`👤 Current user: ${currentUser?.id || 'none'}`);
 
-                if (prof) {
-                  profileData = { userId: currentUser.id, data: prof };
-                  logger?.warn?.(`✅ Profile loaded: role=${prof.role}`);
-                } else {
-                  logger?.warn?.('⚠️ Profile not found in database');
+                // Гарантируем загрузку профиля и роли ДО очистки кэша
+                if (currentUser?.id) {
+                  try {
+                    // Загружаем профиль явно
+                    const { data: prof } = await supabase
+                      .from('profiles')
+                      .select('full_name, first_name, last_name, avatar_url, role')
+                      .eq('id', currentUser.id)
+                      .maybeSingle();
+
+                    if (prof) {
+                      profileData = { userId: currentUser.id, data: prof };
+                      logger?.warn?.(`✅ Profile loaded: role=${prof.role}`);
+                    } else {
+                      logger?.warn?.('⚠️ Profile not found in database');
+                    }
+                  } catch (e) {
+                    logger?.warn?.('Failed to preload profile:', e?.message || e);
+                  }
+                }
+
+                // Load role and locale параллельно
+                const [fetchedRole] = await Promise.all([
+                  getUserRole().catch((e) => {
+                    logger?.warn?.('getUserRole failed:', e?.message || e);
+                    return 'worker'; // fallback роль
+                  }),
+                  loadUserLocale()
+                    .then((code) => code && setLocale(code))
+                    .catch((e) => {
+                      // silent catch
+                    }),
+                ]);
+                userRole = fetchedRole;
+                logger?.warn?.(`🎭 User role resolved: ${userRole}`);
+              } catch (e) {
+                // silent catch - используем fallback роль
+                logger?.warn?.('Error loading user data:', e?.message || e);
+                userRole = 'worker';
+              }
+
+              // ТЕПЕРЬ чистим кэш, НО сразу же восстанавливаем критические данные
+              if (event === 'SIGNED_IN') {
+                try {
+                  // Удаляем персистер, чтобы не загружались старые данные
+                  await persister.removeClient?.();
+
+                  // Очищаем кастомный кэш
+                  globalCache.clear();
+
+                  // Полностью удаляем ВСЕ запросы из кэша
+                  queryClient.removeQueries();
+                  queryClient.getQueryCache().clear();
+                } catch (e) {
+                  // silent catch
+                }
+              }
+
+              // Мгновенно восстанавливаем роль и профиль в кэш ПЕРЕД перемонтированием
+              try {
+                queryClient.setQueryData(['userRole'], userRole);
+                logger?.warn?.(`📦 Cached userRole: ${userRole}`);
+                if (profileData) {
+                  queryClient.setQueryData(['profile', profileData.userId], profileData.data);
+                  logger?.warn?.(`📦 Cached profile for user: ${profileData.userId}`);
                 }
               } catch (e) {
-                logger?.warn?.('Failed to preload profile:', e?.message || e);
+                logger?.warn?.('Failed to cache data:', e?.message || e);
+              }
+
+              // ТЕПЕРЬ обновляем состояние после загрузки данных
+              if (mounted) {
+                setRole(userRole);
+                setIsLoggedIn(true);
+                setSessionReady(true);
+                if (!appReady) setAppReady(true);
+                logger?.warn?.(`✅ State updated: isLoggedIn=true, role=${userRole}`);
+              }
+
+              // Небольшая пауза для стабилизации перед перемонтированием
+              await new Promise((resolve) => setTimeout(resolve, 50));
+
+              // ТЕПЕРЬ перемонтируем приложение — роль уже в кэше
+              if (mounted) {
+                setAppKey((prev) => prev + 1);
+                logger?.warn?.('🔄 App remounted with new key');
+              }
+
+              // Инкрементируем session epoch — экраны сбросят bootstrap
+              try {
+                bumpSessionEpoch();
+                logger?.warn?.('⏰ Session epoch bumped');
+              } catch (e) {}
+
+              // КРИТИЧНО: Сбрасываем appReadyState для нового цикла загрузки
+              try {
+                const { default: appReadyState } = await import('../lib/appReadyState');
+                appReadyState.reset();
+                logger?.warn?.('🔄 appReadyState reset for new login');
+              } catch (e) {
+                logger?.warn?.('Failed to reset appReadyState:', e?.message || e);
+              }
+
+              // Навигация произойдет через useEffect редирект-хук
+              logger?.warn?.('✅ SIGNED_IN processing complete');
+            } catch (error) {
+              logger?.warn?.('❌ Error in SIGNED_IN handler:', error?.message || error);
+              // Гарантируем разблокировку даже при ошибке
+              if (mounted) {
+                setAuthChecking(false);
+                setIsLoggedIn(false); // При ошибке не логиним
+                setSessionReady(true);
+                if (!appReady) setAppReady(true);
               }
             }
+          })();
 
-            // Load role and locale параллельно
-            const [fetchedRole] = await Promise.all([
-              getUserRole().catch((e) => {
-                logger?.warn?.('getUserRole failed:', e?.message || e);
-                return 'worker'; // fallback роль
-              }),
-              loadUserLocale()
-                .then((code) => code && setLocale(code))
-                .catch((e) => {
-                  // silent catch
-                }),
-            ]);
-            userRole = fetchedRole;
-            logger?.warn?.(`🎭 User role resolved: ${userRole}`);
-          } catch (e) {
-            // silent catch - используем fallback роль
-            logger?.warn?.('Error loading user data:', e?.message || e);
-            userRole = 'worker';
-          }
-
-          // ТЕПЕРЬ чистим кэш, НО сразу же восстанавливаем критические данные
-          if (event === 'SIGNED_IN') {
-            try {
-              // Удаляем персистер, чтобы не загружались старые данные
-              await persister.removeClient?.();
-
-              // Очищаем кастомный кэш
-              globalCache.clear();
-
-              // Полностью удаляем ВСЕ запросы из кэша
-              queryClient.removeQueries();
-              queryClient.getQueryCache().clear();
-            } catch (e) {
-              // silent catch
-            }
-          }
-
-          // Мгновенно восстанавливаем роль и профиль в кэш ПЕРЕД перемонтированием
-          try {
-            queryClient.setQueryData(['userRole'], userRole);
-            logger?.warn?.(`📦 Cached userRole: ${userRole}`);
-            if (profileData) {
-              queryClient.setQueryData(['profile', profileData.userId], profileData.data);
-              logger?.warn?.(`📦 Cached profile for user: ${profileData.userId}`);
-            }
-          } catch (e) {
-            logger?.warn?.('Failed to cache data:', e?.message || e);
-          }
-
-          // Обновляем состояние
-          if (mounted) {
-            setRole(userRole);
-            setIsLoggedIn(true);
-            setSessionReady(true);
-            if (!appReady) setAppReady(true);
-            logger?.warn?.(`✅ State updated: isLoggedIn=true, role=${userRole}`);
-          }
-
-          // Небольшая пауза для стабилизации перед перемонтированием
-          await new Promise((resolve) => setTimeout(resolve, 50));
-
-          // ТЕПЕРЬ перемонтируем приложение — роль уже в кэше
-          if (mounted) {
-            setAppKey((prev) => prev + 1);
-            logger?.warn?.('🔄 App remounted with new key');
-          }
-
-          // Инкрементируем session epoch — экраны сбросят bootstrap
-          try {
-            bumpSessionEpoch();
-            logger?.warn?.('⏰ Session epoch bumped');
-          } catch (e) {}
+          return;
         }
       });
       subscription = onAuth?.data?.subscription ?? null;
@@ -464,30 +494,20 @@ function RootLayoutInner() {
     if (ready) hideSplashNow();
   }, [ready, hideSplashNow]);
 
-  // Навигация на основе статуса авторизации
+  // Навигация на основе состояния авторизации
   useEffect(() => {
-    if (!_rootNavigationState?.key || !ready || authChecking) {
-      return;
-    }
+    if (!ready) return;
 
-    const seg0 = Array.isArray(_segments) ? _segments[0] : undefined;
-    const inAuth = seg0 === '(auth)';
+    const inAuthGroup = segments[0] === '(auth)';
 
-    if (!isLoggedIn) {
-      if (!inAuth) {
-        _router.replace('/(auth)/login');
-      }
-    } else {
-      // Пользователь залогинен
-      if (inAuth) {
-        try {
-          _router.replace('/orders');
-        } catch (e) {
-          // silent catch
-        }
-      }
+    if (!isLoggedIn && !inAuthGroup) {
+      // Не залогинен и не на auth → редирект
+      router.replace('/(auth)/login');
+    } else if (isLoggedIn && inAuthGroup) {
+      // Залогинен и на auth → редирект
+      router.replace('/orders');
     }
-  }, [isLoggedIn, ready, authChecking, _rootNavigationState?.key, _segments, _router]);
+  }, [isLoggedIn, ready, segments, router]);
 
   // Инициализация push-уведомлений для залогиненных пользователей
   useEffect(() => {
