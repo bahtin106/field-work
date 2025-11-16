@@ -3,6 +3,7 @@
     "name": "Монитор",
     "slug": "work-orders-app",
     "version": "1.0.1",
+    "scheme": "workorders",
     "platforms": ["android"],
     "jsEngine": "hermes",
     "assetBundlePatterns": ["**/*"],
