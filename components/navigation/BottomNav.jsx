@@ -85,6 +85,14 @@ function BottomNavInner() {
   const [navVisible, setNavVisible] = React.useState(false);
   const appear = useRef(new Animated.Value(0)).current;
 
+  // При изменении appReady на false (логаут/новый логин) - скрываем бар
+  React.useEffect(() => {
+    if (!appReady && navVisible) {
+      setNavVisible(false);
+      appear.setValue(0);
+    }
+  }, [appReady, navVisible, appear]);
+
   useEffect(() => {
     if (navVisible) {
       Animated.timing(appear, {

@@ -238,10 +238,26 @@ export default function IndexScreen() {
   // Сброс bootstrap при смене session epoch (повторный логин / логаут)
   React.useEffect(() => {
     const unsub = onSessionEpoch(() => {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn('[IndexScreen] Session epoch changed, resetting bootstrap');
+      }
       appReadyState.reset();
       setBootState('boot');
     });
     return unsub;
+  }, []);
+
+  // Страховка: при первом монтировании проверяем состояние
+  React.useEffect(() => {
+    const currentState = appReadyState.getBootState();
+    if (currentState !== bootState) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(
+          `[IndexScreen] State mismatch on mount: local=${bootState}, global=${currentState}`,
+        );
+      }
+      setBootState(currentState);
+    }
   }, []);
 
   // Основной эффект: переход в ready когда загрузки завершены + минимальное время прошло

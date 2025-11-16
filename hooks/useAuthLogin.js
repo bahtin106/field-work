@@ -108,15 +108,16 @@ export function useAuthLogin() {
       }
 
       logger.info('Login successful', { email: emailTrim, hasSession: !!data.session });
-      // (_layout.js обработает редирект на основе auth state SIGNED_IN)
 
-      // Оставляем loading=true на короткое время, пока не сработает навигация
-      // Это предотвращает мерцание кнопки перед переходом
+      // КРИТИЧНО: Снимаем loading НЕМЕДЛЕННО после успешного ответа
+      // Навигация произойдёт в _layout.js, компонент размонтируется
+      // Если компонент не размонтируется за 100мс - пользователь увидит что кнопка разблокировалась
       setTimeout(() => {
         if (isMountedRef.current) {
           setLoading(false);
+          logger.debug('Loading cleared immediately after successful login');
         }
-      }, 1000);
+      }, 100);
     } catch (err) {
       if (!isMountedRef.current || abortControllerRef.current?.signal.aborted) {
         logger.debug('Login error abandoned (unmounted or aborted)');
