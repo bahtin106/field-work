@@ -162,6 +162,11 @@ export default function FiltersPanel({
   const selectSuspended = (val) => setDraft((d) => ({ ...d, suspended: val }));
 
   const styles = useMemo(() => {
+    const leftRatioRaw = theme?.components?.filtersPanel?.leftColumnRatio;
+    const leftRatio = typeof leftRatioRaw === 'number' ? leftRatioRaw : 1 / 3;
+    const safeRatio = Math.max(0.2, Math.min(0.5, leftRatio));
+    const leftWidth = Math.round(SCREEN_W * safeRatio);
+    const rightWidth = SCREEN_W - leftWidth;
     return StyleSheet.create({
       overlay: {
         ...StyleSheet.absoluteFillObject,
@@ -206,8 +211,7 @@ export default function FiltersPanel({
       },
       content: { flexDirection: 'row', flex: 1 },
       categories: {
-        flex: 1, // 1/3 of right column width (ratio 1:3)
-        // remove column separator per request
+        width: leftWidth,
         borderRightWidth: 0,
         backgroundColor: c.background,
       },
@@ -226,7 +230,7 @@ export default function FiltersPanel({
       },
       categoryItemActive: { backgroundColor: c.inputBg },
       categoryLabelActive: { color: c.text, fontWeight: ty.weight.semibold },
-      options: { flex: 3, backgroundColor: c.inputBg },
+      options: { width: rightWidth, backgroundColor: c.inputBg },
       applyBar: {
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: c.border,
@@ -431,8 +435,7 @@ export default function FiltersPanel({
           <Text style={styles.headerTitle}>{t('common_filter')}</Text>
           <Pressable
             onPress={() => {
-              // If there are changes, only reset filters (do NOT close the panel).
-              // If there are no changes, close the panel.
+              // Reset filters when button is pressed (do NOT close the panel)
               if (hasChanges) {
                 const emptyDeps = Array.isArray(defaults.departments)
                   ? defaults.departments.map(String)
@@ -459,10 +462,10 @@ export default function FiltersPanel({
                   onApply();
                 }
                 // Do not call onReset or onClose here; keep panel open per UX request.
-                return;
+              } else {
+                // No changes: close the panel
+                if (onClose) onClose();
               }
-              // No changes: just close
-              if (onClose) onClose();
             }}
             android_ripple={{ borderless: false, color: withAlpha(c.border, 0.13) }}
             style={styles.resetBtn}
