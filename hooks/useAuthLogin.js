@@ -99,14 +99,24 @@ export function useAuthLogin() {
         return;
       }
 
-      // Успешный логин — состояние очистится автоматически при редиректе
-      logger.info('Login successful', { email: emailTrim });
-      // (_layout.js обработает редирект на основе auth state)
-
-      // Гарантируем, что loading будет сброшен только если компонент ещё смонтирован
-      if (isMountedRef.current) {
+      // Успешный логин — проверяем что сессия действительно создана
+      if (!data?.session?.access_token) {
+        logger.warn('Login succeeded but no session token received');
+        setError(t(AUTH_ERRORS.UNKNOWN_ERROR, AUTH_ERROR_MESSAGES[AUTH_ERRORS.UNKNOWN_ERROR]));
         setLoading(false);
+        return;
       }
+
+      logger.info('Login successful', { email: emailTrim, hasSession: !!data.session });
+      // (_layout.js обработает редирект на основе auth state SIGNED_IN)
+
+      // Оставляем loading=true на короткое время, пока не сработает навигация
+      // Это предотвращает мерцание кнопки перед переходом
+      setTimeout(() => {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }, 1000);
     } catch (err) {
       if (!isMountedRef.current || abortControllerRef.current?.signal.aborted) {
         logger.debug('Login error abandoned (unmounted or aborted)');

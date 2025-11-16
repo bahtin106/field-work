@@ -16,10 +16,12 @@ import {
 } from 'react-native';
 import UniversalHome from '../../components/universalhome';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
+import { onSessionEpoch } from '../../lib/sessionEpoch';
 import { supabase } from '../../lib/supabase';
 import { useTheme } from '../../theme/ThemeProvider';
 
-let _GLOBAL_BOOT_FLAG = { value: false };
+// Убираем глобальный «одноразовый» флаг и делаем состояние загрузки привязанным к сессии
+// Это предотвращает белый экран при повторном логине: каждый логин имеет собственный bootstrap.
 
 // --- PremiumLoader: минималистичный «дорогой» экран загрузки (без мерцаний) ---
 function PremiumLoader({ text = 'Подготавливаем рабочее пространство' }) {
@@ -185,63 +187,52 @@ export default function IndexScreen() {
     }, []),
   );
 
-  // Управление единым оверлеем загрузки
-  const initialSplash = React.useRef(!_GLOBAL_BOOT_FLAG.value).current;
-  const [splashVisible, setSplashVisible] = React.useState(initialSplash);
-  const splashStart = React.useRef(Date.now());
-  const MIN_SPLASH_MS = 600; // минимум 600мс, чтобы анимация выглядела «дорогой»
-  const MAX_SPLASH_MS = 8000; // максимум 8 секунд, после чего принудительно скрываем
-  const NET_IDLE_GRACE_MS = 280; // небольшой «люфт» после окончания запросов
+  // Новая логика bootstrap: независимая от глобального флага, действует на каждую сессию
+  // Состояния:
+  //  - 'boot': начальное после навигации на экран
+  //  - 'fetching': активные сетевые запросы / роль ещё не определена
+  //  - 'ready': основное содержимое доступно
+  const [bootState, setBootState] = React.useState('boot');
+  const mountTsRef = React.useRef(Date.now());
+  const MIN_BOOT_MS = 600; // минимальное время показа для премиального ощущения
+  const MAX_BOOT_MS = 5000; // жёсткий верхний предел (снижен для лучшего UX)
 
+  // activeFetching НЕ включает !role, т.к. роль может быть в кэше мгновенно
+  const activeFetching = isFetching > 0 || isLoading || isPermLoading;
+
+  // Сброс bootstrap при смене session epoch (повторный логин / логаут)
   React.useEffect(() => {
-    // После первого успешного показа не держим сплэш на последующих заходах
-    if (!initialSplash) {
-      if (splashVisible) setSplashVisible(false);
-      return;
-    }
+    const unsub = onSessionEpoch(() => {
+      setBootState('boot');
+      mountTsRef.current = Date.now();
+    });
+    return unsub;
+  }, []);
 
-    const elapsed = Date.now() - splashStart.current;
-
-    // Принудительное скрытие после MAX_SPLASH_MS
-    if (elapsed >= MAX_SPLASH_MS) {
-      if (splashVisible) {
-        setSplashVisible(false);
-        _GLOBAL_BOOT_FLAG.value = true;
-      }
-      return;
-    }
-
-    let t1 = null;
-    if (isFetching === 0) {
-      const waitMin = Math.max(0, MIN_SPLASH_MS - elapsed);
-      t1 = setTimeout(
-        () => {
-          setSplashVisible(false);
-          _GLOBAL_BOOT_FLAG.value = true;
-        },
-        Math.max(waitMin, NET_IDLE_GRACE_MS),
-      );
-    } else {
-      setSplashVisible(true);
-    }
-    return () => {
-      if (t1) clearTimeout(t1);
-    };
-  }, [isFetching, splashVisible, initialSplash]);
-
-  // Дополнительная защита: принудительное скрытие после MAX_SPLASH_MS
+  // Основной эффект: переход в ready когда загрузки завершены + минимальное время прошло
   React.useEffect(() => {
-    if (!initialSplash) return;
+    if (bootState === 'ready') return;
 
-    const forceHideTimer = setTimeout(() => {
-      if (splashVisible) {
-        setSplashVisible(false);
-        _GLOBAL_BOOT_FLAG.value = true;
-      }
-    }, MAX_SPLASH_MS);
+    if (!activeFetching) {
+      const elapsed = Date.now() - mountTsRef.current;
+      const wait = Math.max(0, MIN_BOOT_MS - elapsed);
+      const t = setTimeout(() => setBootState('ready'), wait);
+      return () => clearTimeout(t);
+    } else if (bootState !== 'fetching') {
+      setBootState('fetching');
+    }
+  }, [activeFetching, bootState]);
 
-    return () => clearTimeout(forceHideTimer);
-  }, [initialSplash, MAX_SPLASH_MS]);
+  // Независимый таймаут принудительного снятия лоадера (защита от зависания)
+  React.useEffect(() => {
+    if (bootState === 'ready') return;
+    const forceTimer = setTimeout(() => {
+      setBootState('ready');
+    }, MAX_BOOT_MS);
+    return () => clearTimeout(forceTimer);
+  }, [bootState, MAX_BOOT_MS]);
+
+  const showLoader = bootState !== 'ready';
 
   return (
     <View
@@ -254,10 +245,11 @@ export default function IndexScreen() {
     >
       {/* Рендерим контент только когда роль валидна, но под оверлеем */}
       {/* При холодном запуске показываем сплэш, пока не загрузится роль и не завершится fetch */}
-      {role ? <UniversalHome role={role} /> : <View style={{ flex: 1 }} />}
+      {/* Показываем рабочий интерфейс сразу, роль может быть fallback пока не уточнена */}
+      <UniversalHome role={role || 'worker'} />
 
       {/* Единый «премиум» оверлей загрузки */}
-      {splashVisible && (
+      {showLoader && (
         <View
           style={[
             StyleSheet.absoluteFill,
