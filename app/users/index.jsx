@@ -192,6 +192,13 @@ export default function UsersIndex() {
           paddingHorizontal: sz.lg,
           paddingBottom: theme.components.scrollView.paddingBottom,
         },
+        rolePill: {
+          paddingHorizontal: sz.sm,
+          paddingVertical: 6,
+          borderRadius: rad.md,
+          borderWidth: 1,
+        },
+        rolePillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold },
         emptyWrap: { padding: sz.lg, alignItems: 'center' },
         emptyText: { color: c.textSecondary },
         // --- Departments UI

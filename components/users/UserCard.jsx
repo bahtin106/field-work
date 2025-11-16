@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -23,6 +23,10 @@ function UserCardContent({
 
   const rad = theme.radii;
 
+  // Получаем тени из темы для текущей платформы
+  const cardShadows =
+    Platform.OS === 'ios' ? (theme.shadows?.card?.ios ?? {}) : (theme.shadows?.card?.android ?? {});
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -35,11 +39,13 @@ function UserCardContent({
           marginBottom: sz.sm,
           position: 'relative',
           minHeight: sz.xl * 4,
+          ...cardShadows,
         },
         cardSuspended: {
           backgroundColor: theme.colors.surfaceMutedDanger,
           borderWidth: 0,
           borderColor: 'transparent',
+          ...cardShadows,
         },
         cardRow: {
           flexDirection: 'row',
@@ -94,7 +100,7 @@ function UserCardContent({
           color: c.danger,
         },
       }),
-    [theme],
+    [theme, cardShadows],
   );
 
   const fullName = (
