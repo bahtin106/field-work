@@ -162,9 +162,6 @@ export default function FiltersPanel({
   const selectSuspended = (val) => setDraft((d) => ({ ...d, suspended: val }));
 
   const styles = useMemo(() => {
-    // Reduce left column: previous base was sz.lg * 3; first reduced to 60%,
-    // now reduce further by 30% of that (total ~42% of base).
-    const computedLeft = Math.max(1, Math.round(sz.lg * 3 * 0.6 * 0.7));
     return StyleSheet.create({
       overlay: {
         ...StyleSheet.absoluteFillObject,
@@ -209,10 +206,9 @@ export default function FiltersPanel({
       },
       content: { flexDirection: 'row', flex: 1 },
       categories: {
-        width: computedLeft,
+        flex: 1, // 1/3 of right column width (ratio 1:3)
         // remove column separator per request
         borderRightWidth: 0,
-        // keep left column visually distinct in light theme: use theme background
         backgroundColor: c.background,
       },
       categoryItem: {
@@ -230,7 +226,7 @@ export default function FiltersPanel({
       },
       categoryItemActive: { backgroundColor: c.inputBg },
       categoryLabelActive: { color: c.text, fontWeight: ty.weight.semibold },
-      options: { flex: 1, backgroundColor: c.inputBg },
+      options: { flex: 3, backgroundColor: c.inputBg },
       applyBar: {
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: c.border,
