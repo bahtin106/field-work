@@ -646,7 +646,6 @@ export default function UsersIndex() {
         onReset={() => filters.reset()}
         onApply={async () => {
           await filters.apply();
-          setFiltersVisible(false);
           // Users will be refreshed automatically via useEffect
         }}
       />
