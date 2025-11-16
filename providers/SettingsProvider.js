@@ -2,12 +2,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
-  useState,
-  useCallback,
   useRef,
+  useState,
 } from 'react';
 import { AppState } from 'react-native';
 
@@ -67,6 +67,13 @@ export default function SettingsProvider({ children }) {
   }, []);
 
   const fetchRemote = useCallback(async () => {
+    // Если нет активной сессии — пропускаем удалённый вызов (иначе прилетает permission denied)
+    try {
+      const { data: ses } = await supabase.auth.getSession();
+      if (!ses?.session) return null;
+    } catch (e) {
+      return null; // ошибки получения сессии не критичны здесь
+    }
     const { data, error } = await supabase.rpc('get_active_settings');
     if (error) throw error;
     return data || null;
@@ -96,6 +103,7 @@ export default function SettingsProvider({ children }) {
           await saveToCache(data);
         }
       } catch (e) {
+        // Только логируем реальные ошибки, отсутствие сессии больше не вызывает исключение
         globalThis?.console?.warn?.('Initial fetch failed:', e?.message || e);
       } finally {
         if (mounted) setReady(true);
