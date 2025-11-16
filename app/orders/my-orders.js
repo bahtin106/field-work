@@ -174,14 +174,19 @@ export default function MyOrdersScreen() {
   }, [filter, searchQuery]);
 
   useEffect(() => {
-    const fetchUserAndOrders = async () => {
+    const fetchUserAndOrders = async (isBackground = false) => {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
       const cached = LIST_CACHE.my[key];
       if (cached && cached.length) {
         setOrders(cached);
         hydratedRef.current = true;
-        setLoading(false);
-        setBgRefreshing(true);
+        if (isBackground) {
+          // Если это фон, не трогаем основной loading; отмечаем bgRefreshing
+          setBgRefreshing(true);
+        } else {
+          setLoading(false);
+          setBgRefreshing(true);
+        }
       } else {
         setLoading(true);
       }
@@ -220,6 +225,28 @@ export default function MyOrdersScreen() {
       setBgRefreshing(false);
       setLoading(false);
     };
+
+    // Гард: если уже гидратировано из prefetch и выбран 'all', пропускаем мгновенный сетевой вызов
+    if (
+      filter === 'all' &&
+      hydratedRef.current &&
+      orders.length > 0 &&
+      Array.isArray(queryClient.getQueryData(['orders', 'my', 'recent']))
+    ) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn(
+          '[MyOrders] ⏭ Skip immediate fetch (prefetch satisfied), schedule background refresh',
+        );
+      }
+      // Фоновое обновление полного списка через небольшую задержку
+      const timer = setTimeout(() => {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[MyOrders] 🔄 Background refresh start after delay');
+        }
+        fetchUserAndOrders(true);
+      }, 1200);
+      return () => clearTimeout(timer);
+    }
 
     fetchUserAndOrders();
   }, [filter]);
