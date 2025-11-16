@@ -315,11 +315,13 @@ export default function FiltersPanel({
       categoryLabelActive: { color: c.text, fontWeight: ty.weight.semibold },
       options: { width: rightWidth, backgroundColor: c.inputBg },
       applyBar: {
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: c.border,
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
         paddingHorizontal: sz.lg,
-        paddingVertical: sz.md,
-        backgroundColor: c.surface,
+        paddingBottom: sz.lg,
+        paddingTop: sz.md,
       },
       resetBtn: { paddingHorizontal: sz.sm, paddingVertical: sz.xs },
       resetBtnText: { color: c.primary, fontSize: ty.sizes.sm, fontWeight: ty.weight.semibold },
@@ -602,7 +604,7 @@ export default function FiltersPanel({
         </View>
 
         {hasChanges && (
-          <View style={styles.applyBar}>
+          <View style={styles.applyBar} pointerEvents="box-none">
             <Button
               title={t('btn_apply')}
               onPress={() => {
