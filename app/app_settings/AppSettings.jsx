@@ -654,7 +654,7 @@ export default function AppSettings() {
         ...sec,
         items: sec.items.map((it) => {
           if (sec.key === 'notifications' && it.key === 'allow') {
-            return { ...it, value: !!prefs.allow, disabled: !!loadingPrefs };
+            return { ...it, value: !!prefs.allow, disabled: !!isLoadingPrefs };
           }
           if (sec.key === 'quiet' && it.key === 'quiet_start') {
             return { ...it, value: toTimeStr(prefs.quiet_start) || t('common_off') };
@@ -671,8 +671,6 @@ export default function AppSettings() {
     [sectionBase, prefs, isLoadingPrefs, _curLangLabel],
   );
 
-  const loadingPrefs = isLoadingPrefs;
-
   return (
     <Screen>
       <ScrollView
@@ -680,7 +678,7 @@ export default function AppSettings() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {loadingPrefs && (
+        {isLoadingPrefs && (
           <View style={{ paddingVertical: 8 }}>
             <ActivityIndicator />
           </View>
