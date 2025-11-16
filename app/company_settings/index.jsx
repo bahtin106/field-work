@@ -1,40 +1,30 @@
 // app/company_settings/index.jsx
+import { useRoute } from '@react-navigation/native';
+import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
 import {
-  View,
-  Text,
-  Switch,
-  StyleSheet,
+  Keyboard,
   Platform,
   Pressable,
-  Keyboard,
   ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  View,
 } from 'react-native';
-import { useRouter, useNavigation } from 'expo-router';
-import { useRoute } from '@react-navigation/native';
-import { useTheme } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
-import { SelectModal, BaseModal } from '../../components/ui/modals';
-import TextField, { SelectField } from '../../components/ui/TextField';
-import { SETTINGS_SECTIONS, PHONE_MODE_OPTIONS } from '../../constants/settings';
-import { useToast } from '../../components/ui/ToastProvider';
 import UIButton from '../../components/ui/Button';
-import { useTranslation } from '../../src/i18n/useTranslation';
+import { BaseModal, SelectModal } from '../../components/ui/modals';
+import TextField, { SelectField } from '../../components/ui/TextField';
+import { useToast } from '../../components/ui/ToastProvider';
+import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
 import { useI18nVersion } from '../../src/i18n';
+import { useTranslation } from '../../src/i18n/useTranslation';
+import { useTheme } from '../../theme/ThemeProvider';
 
 import { Feather } from '@expo/vector-icons';
-// Lazy-load Supabase client to avoid breaking other screens if path differs.
-let __sbClient = null;
-async function getSupabase() {
-  if (__sbClient) return __sbClient;
-  try {
-    const mod = await import('../../lib/supabase');
-    __sbClient = mod.supabase || mod.default || null;
-  } catch (e) {
-    // keep silent; UI remains functional without backend
-  }
-  return __sbClient;
-}
+import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
+import { supabase } from '../../lib/supabase';
 
 /* Helpers */
 const getDeviceTimeZone = () => {
@@ -264,6 +254,47 @@ export default function CompanySettings() {
   const router = useRouter();
   const { t } = useTranslation();
   const ver = useI18nVersion();
+
+  // Загружаем настройки компании с кешем
+  const {
+    data: companyData,
+    isLoading: isLoadingCompany,
+    refresh: refreshCompany,
+  } = useQueryWithCache({
+    queryKey: 'companySettings',
+    queryFn: async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return null;
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id, timezone')
+        .eq('id', user.id)
+        .single();
+
+      const companyId = profile?.company_id;
+      if (!companyId) return null;
+
+      const { data: companyRow } = await supabase
+        .from('companies')
+        .select(
+          'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins',
+        )
+        .eq('id', companyId)
+        .single();
+
+      return companyRow;
+    },
+    ttl: 5 * 60 * 1000, // 5 минут
+    staleTime: 2 * 60 * 1000, // 2 минуты
+    placeholderData: null,
+    enableRealtime: true,
+    realtimeTable: 'companies',
+    supabaseClient: supabase,
+  });
+
   // Единицы времени и преобразователи — зависят от t, поэтому внутри компонента
   const UNIT_ITEMS = React.useMemo(
     () => [
@@ -293,7 +324,6 @@ export default function CompanySettings() {
   // Батч-обновление нескольких полей компаний
   const updateSettings = React.useCallback(
     async (patch) => {
-      const supabase = await getSupabase();
       if (!supabase) throw new Error(t('errors_noDb'));
       const {
         data: { user },
@@ -308,15 +338,21 @@ export default function CompanySettings() {
       if (!companyId) throw new Error(t('errors_companyNotFound'));
       const { error } = await supabase.from('companies').update(patch).eq('id', companyId);
       if (error) throw error;
+
+      // Обновляем кеш после успешного сохранения
+      await refreshCompany();
+
       return true;
     },
-    [t],
+    [t, refreshCompany],
   );
 
   const s = React.useMemo(() => styles(theme), [theme]);
 
-  const [timeZone, setTimeZone] = React.useState(() => getDeviceTimeZone());
-  const [tzOpen, setTzOpen] = React.useState(false);
+  // Инициализация state из кеша
+  const [timeZone, setTimeZone] = React.useState(
+    () => companyData?.timezone || getDeviceTimeZone(),
+  );
   const [companyName, setCompanyName] = React.useState('');
   const [companyNameInitial, setCompanyNameInitial] = React.useState('');
   const [companyNameOpen, setCompanyNameOpen] = React.useState(false);
@@ -350,6 +386,7 @@ export default function CompanySettings() {
   const [afterUnitOpen, setAfterUnitOpen] = React.useState(false);
   const [beforeUnit, setBeforeUnit] = React.useState('min');
   const [afterUnit, setAfterUnit] = React.useState('min');
+  const [tzOpen, setTzOpen] = React.useState(false);
 
   React.useLayoutEffect(() => {
     try {
@@ -359,57 +396,29 @@ export default function CompanySettings() {
       nav.setParams({ headerTitle: title });
     } catch {}
   }, [ver, t]);
-  // Load current company settings
+
+  // Обновляем state когда приходят данные из кеша
   React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const supabase = await getSupabase();
-        if (!supabase) return;
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) return;
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('company_id, timezone')
-          .eq('id', user.id)
-          .single();
-        const companyId = profile?.company_id;
-        if (!companyId) return;
-        const { data: companyRow } = await supabase
-          .from('companies')
-          .select(
-            'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins',
-          )
-          .eq('id', companyId)
-          .single();
-        if (!alive) return;
-        if (companyRow?.timezone) setTimeZone(companyRow.timezone);
-        if (typeof companyRow?.name === 'string') {
-          setCompanyName(companyRow.name);
-          setCompanyNameInitial(companyRow.name);
-        }
-        if (typeof companyRow?.use_departure_time === 'boolean')
-          setUseDepartureTime(companyRow.use_departure_time);
-        if (typeof companyRow?.worker_phone_mode === 'string')
-          setPhoneMode(companyRow.worker_phone_mode);
-        const _b = companyRow?.worker_phone_window_before_mins ?? null;
-        const _a = companyRow?.worker_phone_window_after_mins ?? null;
-        if (_b != null) setWindowBefore(String(_b));
-        if (_a != null) setWindowAfter(String(_a));
-      } catch (e) {
-        // silent
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
+    if (!companyData) return;
+
+    if (companyData.timezone) setTimeZone(companyData.timezone);
+    if (typeof companyData.name === 'string') {
+      setCompanyName(companyData.name);
+      setCompanyNameInitial(companyData.name);
+    }
+    if (typeof companyData.use_departure_time === 'boolean')
+      setUseDepartureTime(companyData.use_departure_time);
+    if (typeof companyData.worker_phone_mode === 'string')
+      setPhoneMode(companyData.worker_phone_mode);
+
+    const _b = companyData.worker_phone_window_before_mins ?? null;
+    const _a = companyData.worker_phone_window_after_mins ?? null;
+    if (_b != null) setWindowBefore(String(_b));
+    if (_a != null) setWindowAfter(String(_a));
+  }, [companyData]);
 
   const updateSetting = React.useCallback(
     async (key, value) => {
-      const supabase = await getSupabase();
       if (!supabase) throw new Error(t('errors_noDb'));
       const {
         data: { user },
@@ -427,9 +436,13 @@ export default function CompanySettings() {
       const payload = { [key]: value };
       const { error: upErr } = await supabase.from('companies').update(payload).eq('id', companyId);
       if (upErr) throw upErr;
+
+      // Обновляем кеш после успешного сохранения
+      await refreshCompany();
+
       return true;
     },
-    [t],
+    [t, refreshCompany],
   );
 
   const onSubmitCompanyName = React.useCallback(() => {

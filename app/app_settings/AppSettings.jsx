@@ -1,37 +1,40 @@
 // app/app_settings/AppSettings.jsx
-import React, { useEffect, useMemo, useState, useRef } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Platform,
-  Linking,
-  ActivityIndicator,
-} from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useNavigation } from 'expo-router';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Linking,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
 import Screen from '../../components/layout/Screen';
-import { useTheme } from '../../theme';
-import { useToast } from '../../components/ui/ToastProvider';
-import { SelectModal, BaseModal, DateTimeModal } from '../../components/ui/modals';
-import { Feather } from '@expo/vector-icons';
-import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
+import { SelectField, SwitchField } from '../../components/ui/TextField';
+import { useToast } from '../../components/ui/ToastProvider';
+import { listItemStyles } from '../../components/ui/listItemStyles';
+import { BaseModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import { ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME, APP_DEFAULTS } from '../../config/notifications';
 import { supabase } from '../../lib/supabase';
 import {
+  deletePushToken as deletePushTokenHelper,
   getUid,
   readProfile,
   readRolePerm,
   savePushToken as savePushTokenHelper,
-  deletePushToken as deletePushTokenHelper,
 } from '../../lib/supabaseHelpers';
 import { devWarn as __devLog } from '../../src/utils/dev';
-import { APP_DEFAULTS, ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME } from '../../config/notifications';
-import { SelectField, SwitchField } from '../../components/ui/TextField';
-import { listItemStyles } from '../../components/ui/listItemStyles';
+import { useTheme } from '../../theme';
 
-import { getLocale, setLocale, useI18nVersion, availableLocales } from '../../src/i18n';
+import { PERM_KEYS, TBL } from '../../lib/constants';
+import { saveUserLocale } from '../../lib/userLocale';
+import { availableLocales, getLocale, setLocale, useI18nVersion } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
@@ -53,8 +56,6 @@ try {
 } catch (e) {
   __devLog('devWarnFilter import failed:', e?.message || e);
 }
-import { saveUserLocale } from '../../lib/userLocale';
-import { TBL, PERM_KEYS } from '../../lib/constants';
 
 if (__DEV__ && typeof installEdgeToEdgeWarnFilter === 'function') {
   installEdgeToEdgeWarnFilter();
@@ -233,23 +234,24 @@ export default function AppSettings() {
       }
     };
   }, []);
-  async function loadPrefs() {
-    setLoadingPrefs(true);
-    try {
-      // 1) UID
+
+  // Кеширование настроек уведомлений с Realtime
+  const {
+    data: prefsData,
+    isLoading: isLoadingPrefs,
+    refresh: refreshPrefs,
+  } = useQueryWithCache({
+    queryKey: 'appSettings:notifPrefs',
+    queryFn: async () => {
       let uid = null;
       try {
         uid = await getUid();
       } catch (e) {
         const m = String(e?.message || e || '').toLowerCase();
-        if (m.includes('no_auth')) {
-          // пользователь ещё не авторизован / сессия не прогрузилась
-          return;
-        }
+        if (m.includes('no_auth')) return null;
         throw e;
       }
 
-      // 2) Prefs
       const { data, error: prefsErr } = await supabase
         .from(TBL.NOTIF_PREFS)
         .select('allow, new_orders, feed_orders, reminders, quiet_start, quiet_end')
@@ -258,62 +260,74 @@ export default function AppSettings() {
 
       if (prefsErr) {
         __devLog('NOTIF_PREFS load error:', prefsErr.message || prefsErr);
-        toast.error(t('errors_loadSettings'));
-        return;
+        throw prefsErr;
       }
-
-      if (data && mounted.current) setPrefs((p) => ({ ...p, ...data }));
 
       // default quiet hours, если пусто
-      try {
-        const qs = data?.quiet_start,
-          qe = data?.quiet_end;
-        const bothEmpty = (!qs || String(qs).trim() === '') && (!qe || String(qe).trim() === '');
-        if ((!data || bothEmpty) && mounted.current) {
-          const defaultPatch = {
-            quiet_start: APP_DEFAULTS?.quietStart,
-            quiet_end: APP_DEFAULTS?.quietEnd,
-          };
-          setPrefs((p) => ({ ...p, ...(data || {}), ...defaultPatch }));
-        }
-      } catch (e) {
-        __devLog('init default quiet hours failed:', e?.message || e);
+      const qs = data?.quiet_start,
+        qe = data?.quiet_end;
+      const bothEmpty = (!qs || String(qs).trim() === '') && (!qe || String(qe).trim() === '');
+      if (!data || bothEmpty) {
+        const defaultPatch = {
+          quiet_start: APP_DEFAULTS?.quietStart,
+          quiet_end: APP_DEFAULTS?.quietEnd,
+        };
+        return { ...(data || {}), ...defaultPatch };
       }
 
-      // 3) Профиль/пермишены
+      return data;
+    },
+    ttl: 5 * 60 * 1000, // 5 минут
+    staleTime: 2 * 60 * 1000, // 2 минуты
+    placeholderData: null,
+    enableRealtime: true,
+    realtimeTable: TBL.NOTIF_PREFS,
+    supabaseClient: supabase,
+    onError: (e) => {
+      __devLog('loadPrefs error:', e?.message || e);
+      toast.error(t('errors_loadSettings'));
+    },
+  });
+
+  // Обновляем local state когда приходят данные из кеша
+  useEffect(() => {
+    if (prefsData && mounted.current) {
+      setPrefs((p) => ({ ...p, ...prefsData }));
+    }
+  }, [prefsData]);
+
+  // Загрузка разрешений пользователя с кешем
+  const { data: permData } = useQueryWithCache({
+    queryKey: 'appSettings:userPerm',
+    queryFn: async () => {
       try {
+        const uid = await getUid();
         const prof = await readProfile(uid);
         if (prof?.company_id && prof?.role) {
-          try {
-            const permValue = await readRolePerm(
-              prof.company_id,
-              prof.role,
-              PERM_KEYS.CAN_CREATE_ORDERS,
-            );
-            const v = (permValue ?? '').toString().trim().toLowerCase();
-            mounted.current && setCanCreateOrders(v in { 1: 1, true: 1, t: 1, yes: 1, y: 1 });
-          } catch (e) {
-            __devLog('readRolePerm failed:', e?.message || e);
-            mounted.current && setCanCreateOrders(false);
-          }
-        } else {
-          mounted.current && setCanCreateOrders(false);
+          const permValue = await readRolePerm(
+            prof.company_id,
+            prof.role,
+            PERM_KEYS.CAN_CREATE_ORDERS,
+          );
+          const v = (permValue ?? '').toString().trim().toLowerCase();
+          return v in { 1: 1, true: 1, t: 1, yes: 1, y: 1 };
         }
+        return false;
       } catch (e) {
-        __devLog('readProfile failed:', e?.message || e);
-        mounted.current && setCanCreateOrders(false);
+        __devLog('readRolePerm failed:', e?.message || e);
+        return false;
       }
-    } catch (e) {
-      __devLog('loadPrefs fatal:', e?.message || e);
-      toast.error(t('errors_loadSettings'));
-    } finally {
-      if (mounted.current) setLoadingPrefs(false);
-    }
-  }
+    },
+    ttl: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    placeholderData: false,
+  });
 
   useEffect(() => {
-    loadPrefs();
-  }, []);
+    if (permData !== undefined && mounted.current) {
+      setCanCreateOrders(permData);
+    }
+  }, [permData]);
 
   async function savePrefs(patch) {
     try {
@@ -329,6 +343,8 @@ export default function AppSettings() {
         else if (/timeout|network|failed to fetch/i.test(error.message)) msg = t('errors_network');
         return { ok: false, message: msg };
       }
+      // Обновляем кеш после сохранения
+      await refreshPrefs();
       return { ok: true };
     } catch (e) {
       const m = String(e?.message || e || '').toLowerCase();
@@ -652,8 +668,10 @@ export default function AppSettings() {
           return it;
         }),
       })),
-    [sectionBase, prefs, loadingPrefs, _curLangLabel],
+    [sectionBase, prefs, isLoadingPrefs, _curLangLabel],
   );
+
+  const loadingPrefs = isLoadingPrefs;
 
   return (
     <Screen>

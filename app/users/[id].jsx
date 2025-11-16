@@ -1,9 +1,8 @@
 // app/users/[id].jsx
 import { Feather } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,6 +14,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
@@ -63,20 +63,118 @@ export default function UserView() {
 
   const ver = useI18nVersion();
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState('');
   const [meIsAdmin, setMeIsAdmin] = useState(false);
   const [myUid, setMyUid] = useState(null);
 
-  const [avatarUrl, setAvatarUrl] = useState(null);
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [birthdate, setBirthdate] = useState(null);
-  const [role, setRole] = useState('worker');
-  const [departmentName, setDepartmentName] = useState(null);
-  const [isSuspended, setIsSuspended] = useState(false);
+  // Кеширование профиля пользователя с Realtime
+  const {
+    data: userData,
+    isLoading: loading,
+    error: loadError,
+  } = useQueryWithCache({
+    queryKey: `user:${userId}`,
+    queryFn: async () => {
+      if (!userId) throw new Error(t('errors_user_not_found', 'errors_user_not_found'));
+
+      // Always know who is logged in for comparison
+      const { data: auth } = await supabase.auth.getUser();
+      const uid = auth?.user?.id || null;
+      const authEmail = auth?.user?.email || '';
+
+      // Try to get extended data via RPC ONLY if admin (RLS-safe)
+      let rpcRow = null;
+      let iAmAdmin = false;
+      if (uid) {
+        const { data: me } = await supabase.from('profiles').select('role').eq('id', uid).single();
+        iAmAdmin = me?.role === 'admin';
+        if (iAmAdmin) {
+          const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', {
+            target_user_id: userId,
+          });
+          rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
+        }
+      }
+
+      // Base profile fields
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select(
+          'first_name, last_name, phone, avatar_url, department_id, is_suspended, suspended_at, birthdate, role',
+        )
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!prof) throw new Error(t('errors_user_not_found', 'errors_user_not_found'));
+
+      // Load department name
+      let departmentName = null;
+      const depId = prof?.department_id ?? null;
+      if (depId) {
+        const { data: d } = await supabase
+          .from('departments')
+          .select('name')
+          .eq('id', depId)
+          .maybeSingle();
+        departmentName = d?.name || null;
+      }
+
+      // email logic: admin sees all, non-admin only their own
+      let email = '';
+      if (rpcRow?.email) {
+        email = rpcRow.email;
+      } else if (uid && userId === uid && authEmail) {
+        email = authEmail;
+      }
+
+      // birthdate: prefer profiles, fallback to RPC for admins
+      const bd = prof?.birthdate ?? rpcRow?.birthdate ?? null;
+      let birthdate = null;
+      if (bd) {
+        const d = new Date(bd);
+        birthdate = !isNaN(d.getTime()) ? d : null;
+      }
+
+      return {
+        firstName: prof.first_name || '',
+        lastName: prof.last_name || '',
+        avatarUrl: prof.avatar_url || null,
+        phone: String(prof.phone || ''),
+        isSuspended: !!(prof?.is_suspended || prof?.suspended_at),
+        role: prof.role || rpcRow?.user_role || 'worker',
+        birthdate,
+        departmentName,
+        email,
+        meIsAdmin: iAmAdmin,
+        myUid: uid,
+      };
+    },
+    ttl: 3 * 60 * 1000, // 3 минуты (профиль может меняться)
+    staleTime: 1 * 60 * 1000, // 1 минута
+    placeholderData: null,
+    enableRealtime: true,
+    realtimeTable: 'profiles',
+    supabaseClient: supabase,
+    enabled: !!userId,
+  });
+
+  // Sync кешированных данных в state
+  useEffect(() => {
+    if (userData && mountedRef.current) {
+      setMeIsAdmin(userData.meIsAdmin);
+      setMyUid(userData.myUid);
+    }
+  }, [userData]);
+
+  const avatarUrl = userData?.avatarUrl || null;
+  const firstName = userData?.firstName || '';
+  const lastName = userData?.lastName || '';
+  const email = userData?.email || '';
+  const phone = userData?.phone || '';
+  const birthdate = userData?.birthdate || null;
+  const role = userData?.role || 'worker';
+  const departmentName = userData?.departmentName || null;
+  const isSuspended = userData?.isSuspended || false;
+  const err = loadError?.message || '';
   const ROLE_LABELS = React.useMemo(
     () => ({
       admin: t('role_admin', 'role_admin'),
@@ -99,111 +197,7 @@ export default function UserView() {
     navigation.setParams({ title: routeTitle });
   }, [navigation, ver]);
 
-  // Load viewed user's data
-  const fetchUser = useCallback(async () => {
-    // Guard: ensure route param exists
-    if (!userId) {
-      if (mountedRef.current) {
-        setErr(t('errors_user_not_found', 'errors_user_not_found'));
-        setLoading(false);
-      }
-      return;
-    }
-    if (mountedRef.current) setLoading(true);
-    if (mountedRef.current) setErr('');
-    let __watchdog = null;
-    try {
-      __watchdog = setTimeout(() => {
-        if (mountedRef.current) {
-          try {
-            toast.error(t('errors_network', 'errors_network'));
-          } catch {}
-          setErr(t('errors_network', 'errors_network'));
-          setLoading(false);
-        }
-      }, theme?.timings?.requestTimeoutMs ?? 12000);
-      // Always know who is logged in for comparison
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id || null;
-      const authEmail = auth?.user?.email || '';
-
-      // Try to get extended data via RPC ONLY if admin (RLS-safe)
-      let rpcRow = null;
-      if (uid) {
-        const { data: me } = await supabase.from('profiles').select('role').eq('id', uid).single();
-        const iAmAdmin = me?.role === 'admin';
-        if (iAmAdmin) {
-          const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', {
-            target_user_id: userId,
-          });
-          rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
-        }
-        if (mountedRef.current) setMeIsAdmin(iAmAdmin);
-        if (mountedRef.current) setMyUid(uid);
-      }
-
-      // Base profile fields (including birthdate + role for non-admins)
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select(
-          'first_name, last_name, phone, avatar_url, department_id, is_suspended, suspended_at, birthdate, role',
-        )
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (prof) {
-        if (mountedRef.current) setFirstName(prof.first_name || '');
-        if (mountedRef.current) setLastName(prof.last_name || '');
-        if (mountedRef.current) setAvatarUrl(prof.avatar_url || null);
-        if (mountedRef.current) setPhone(String(prof.phone || ''));
-        if (mountedRef.current) setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
-        if (mountedRef.current) setRole(prof.role || rpcRow?.user_role || 'worker');
-
-        // birthdate: prefer profiles (RLS allows self), fallback to RPC for admins
-        const bd = prof?.birthdate ?? rpcRow?.birthdate ?? null;
-        if (bd) {
-          const d = new Date(bd);
-          if (mountedRef.current) setBirthdate(!isNaN(d.getTime()) ? d : null);
-        } else if (mountedRef.current) {
-          setBirthdate(null);
-        }
-
-        const depId = prof?.department_id ?? null;
-        if (depId) {
-          const { data: d } = await supabase
-            .from('departments')
-            .select('name')
-            .eq('id', depId)
-            .maybeSingle();
-          if (mountedRef.current) setDepartmentName(d?.name || null);
-        } else if (mountedRef.current) {
-          setDepartmentName(null);
-        }
-      }
-
-      // email logic:
-      // - admin sees email of any user via RPC
-      // - non-admin sees email only for own profile from auth
-      if (rpcRow?.email) {
-        if (mountedRef.current) setEmail(rpcRow.email);
-      } else if (uid && userId === uid && authEmail) {
-        if (mountedRef.current) setEmail(authEmail);
-      } else if (mountedRef.current) {
-        setEmail('');
-      }
-    } catch (e) {
-      const msg = e?.message || t('errors_loadUser', 'errors_loadUser');
-      if (mountedRef.current) setErr(msg);
-      try {
-        toast.error(msg);
-      } catch {}
-    } finally {
-      try {
-        clearTimeout(__watchdog);
-      } catch {}
-      if (mountedRef.current) setLoading(false);
-    }
-  }, [userId]);
+  // useQueryWithCache автоматически обновляет данные при focus через refetchOnFocus
 
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
   const handleEditPress = React.useCallback(() => {
@@ -296,13 +290,7 @@ export default function UserView() {
     }
   }, [phone, toast]);
 
-  // Refetch when screen regains focus (after editing)
-  useFocusEffect(
-    React.useCallback(() => {
-      fetchUser();
-      return undefined;
-    }, [fetchUser]),
-  );
+  // useQueryWithCache автоматически обновляет при focus благодаря refetchOnFocus: true
 
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
