@@ -1,12 +1,14 @@
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
-import Screen from '../../components/layout/Screen';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import AppHeader from '../../components/navigation/AppHeader';
 import UIButton from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import ClearButton from '../../components/ui/ClearButton';
@@ -91,21 +93,6 @@ export default function NewUserScreen() {
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
 
-  // Header: align with other pages (title only, chevron back)
-  useLayoutEffect(() => {
-    const title = t('routes.users/new');
-    try {
-      navigation.setOptions({ title, headerTitle: title });
-    } catch {}
-  }, [navigation, ver, t]);
-  useEffect(() => {
-    try {
-      const title = t('routes.users/new');
-      // Only set explicit localized title so AppHeader shows it; keep default back chevron
-      navigation.setParams({ title });
-    } catch {}
-  }, [navigation, ver, t]);
-
   // state
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -157,7 +144,7 @@ export default function NewUserScreen() {
     () =>
       StyleSheet.create({
         container: { flex: 1, backgroundColor: theme.colors.background },
-        scroll: { paddingHorizontal: theme.spacing.lg, flexGrow: 1 },
+        scroll: { paddingHorizontal: theme.spacing?.lg ?? 16, flexGrow: 1 },
         headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md },
         headerCard: { padding: theme.spacing.sm, marginBottom: theme.spacing.md },
         avatar: {
@@ -526,313 +513,327 @@ export default function NewUserScreen() {
   };
 
   return (
-    <Screen
-      background="background"
-      scroll={true}
-      scrollRef={scrollRef}
-      onScroll={(e) => {
-        try {
-          scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-        } catch {}
-      }}
-      scrollEventThrottle={16}
-      contentContainerStyle={[
-        styles.scroll,
-        {
-          paddingBottom:
-            (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
-            (insets?.bottom ?? 0),
-        },
-      ]}
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      edges={['left', 'right']}
     >
-      <Card style={styles.headerCard}>
-        <View style={styles.headerRow}>
-          <Pressable
-            style={styles.avatar}
-            onPress={() => setAvatarSheet(true)}
-            accessibilityRole="button"
-            accessibilityLabel={t('a11y_change_avatar')}
-            accessibilityHint={t('a11y_change_avatar_hint')}
-          >
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
-            ) : (
-              <Text style={styles.avatarText}>{initials || '•'}</Text>
-            )}
-            <View style={styles.avatarCamBadge}>
-              <Feather
-                name="camera"
-                size={Math.max(
-                  theme.icons?.minCamera ?? 12,
-                  Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)),
-                )}
-                color={theme.colors.onPrimary}
-              />
+      <AppHeader
+        back
+        options={{
+          headerTitleAlign: 'left',
+          title: t('routes.users/new'),
+        }}
+      />
+      <KeyboardAwareScrollView
+        ref={scrollRef}
+        contentContainerStyle={[
+          styles.scroll,
+          {
+            paddingBottom:
+              (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
+              (insets?.bottom ?? 0),
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        showsVerticalScrollIndicator={false}
+        bottomOffset={40}
+        onScroll={(e) => {
+          try {
+            scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+          } catch {}
+        }}
+        scrollEventThrottle={16}
+      >
+        <Card style={styles.headerCard}>
+          <View style={styles.headerRow}>
+            <Pressable
+              style={styles.avatar}
+              onPress={() => setAvatarSheet(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t('a11y_change_avatar')}
+              accessibilityHint={t('a11y_change_avatar_hint')}
+            >
+              {avatarUrl ? (
+                <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+              ) : (
+                <Text style={styles.avatarText}>{initials || '•'}</Text>
+              )}
+              <View style={styles.avatarCamBadge}>
+                <Feather
+                  name="camera"
+                  size={Math.max(
+                    theme.icons?.minCamera ?? 12,
+                    Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)),
+                  )}
+                  color={theme.colors.onPrimary}
+                />
+              </View>
+            </Pressable>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.nameTitle}>{headerName}</Text>
             </View>
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.nameTitle}>{headerName}</Text>
           </View>
-        </View>
-      </Card>
+        </Card>
 
-      {err ? (
-        <View style={styles.errorCard}>
-          <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
-          <Text style={styles.errorText}>{err}</Text>
-        </View>
-      ) : null}
+        {err ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
+            <Text style={styles.errorText}>{err}</Text>
+          </View>
+        ) : null}
 
-      <Text style={base.sectionTitle}>{t('section_personal')}</Text>
-      <Card paddedXOnly>
-        <TextField
-          ref={firstNameRef}
-          label={t('label_first_name')}
-          placeholder={t('placeholder_first_name')}
-          style={styles.field}
-          value={firstName}
-          onChangeText={setFirstName}
-          forceValidation={submittedAttempt}
-          error={!firstName.trim() ? 'required' : undefined}
-        />
-        <TextField
-          ref={lastNameRef}
-          label={t('label_last_name')}
-          placeholder={t('placeholder_last_name')}
-          style={styles.field}
-          value={lastName}
-          onChangeText={setLastName}
-          forceValidation={submittedAttempt}
-          error={!lastName.trim() ? 'required' : undefined}
-        />
-        <TextField
-          ref={emailRef}
-          label={t('label_email')}
-          placeholder={t('placeholder_email')}
-          style={styles.field}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={email}
-          onChangeText={setEmail}
-          forceValidation={submittedAttempt}
-          error={!emailValid ? 'invalid' : undefined}
-        />
-        <PhoneInput
-          ref={phoneRef}
-          value={phone}
-          onChangeText={(val) => {
-            setPhone(val);
-          }}
-          error={undefined}
-          style={styles.field}
-        />
-        <TextField
-          label={t('label_birthdate')}
-          value={
-            birthdate
-              ? String(formatDateRU(birthdate, withYear))
-              : String(t('placeholder_birthdate'))
-          }
-          style={styles.field}
-          pressable
-          onPress={() => setDobModalVisible(true)}
-          rightSlot={
-            birthdate ? (
-              <ClearButton
-                onPress={() => setBirthdate(null)}
-                accessibilityLabel={t('common_clear')}
-              />
-            ) : null
-          }
-        />
-      </Card>
-
-      <Text style={base.sectionTitle}>{t('section_company_role')}</Text>
-      <Card paddedXOnly>
-        <TextField
-          label={t('label_department')}
-          value={String(activeDeptName || t('placeholder_department'))}
-          style={styles.field}
-          pressable
-          onPress={() => setDeptModalVisible(true)}
-        />
-
-        <TextField
-          label={t('label_role')}
-          value={String(ROLE_LABELS_LOCAL[role] || role)}
-          style={styles.field}
-          pressable
-          onPress={() => setShowRoles(true)}
-        />
-      </Card>
-
-      <Text style={base.sectionTitle}>{t('section_password')}</Text>
-      <Card paddedXOnly>
-        <View style={{ position: 'relative' }}>
+        <Text style={base.sectionTitle}>{t('section_personal')}</Text>
+        <Card paddedXOnly>
           <TextField
-            ref={pwdRef}
-            label={t('label_password_new')}
-            value={password}
-            onChangeText={setPassword}
-            placeholder={t('placeholder_new_password')}
+            ref={firstNameRef}
+            label={t('label_first_name')}
+            placeholder={t('placeholder_first_name')}
+            style={styles.field}
+            value={firstName}
+            onChangeText={setFirstName}
+            forceValidation={submittedAttempt}
+            error={!firstName.trim() ? 'required' : undefined}
+          />
+          <TextField
+            ref={lastNameRef}
+            label={t('label_last_name')}
+            placeholder={t('placeholder_last_name')}
+            style={styles.field}
+            value={lastName}
+            onChangeText={setLastName}
+            forceValidation={submittedAttempt}
+            error={!lastName.trim() ? 'required' : undefined}
+          />
+          <TextField
+            ref={emailRef}
+            label={t('label_email')}
+            placeholder={t('placeholder_email')}
+            style={styles.field}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={email}
+            onChangeText={setEmail}
+            forceValidation={submittedAttempt}
+            error={!emailValid ? 'invalid' : undefined}
+          />
+          <PhoneInput
+            ref={phoneRef}
+            value={phone}
+            onChangeText={(val) => {
+              setPhone(val);
+            }}
+            error={undefined}
+            style={styles.field}
+          />
+          <TextField
+            label={t('label_birthdate')}
+            value={
+              birthdate
+                ? String(formatDateRU(birthdate, withYear))
+                : String(t('placeholder_birthdate'))
+            }
+            style={styles.field}
+            pressable
+            onPress={() => setDobModalVisible(true)}
+            rightSlot={
+              birthdate ? (
+                <ClearButton
+                  onPress={() => setBirthdate(null)}
+                  accessibilityLabel={t('common_clear')}
+                />
+              ) : null
+            }
+          />
+        </Card>
+
+        <Text style={base.sectionTitle}>{t('section_company_role')}</Text>
+        <Card paddedXOnly>
+          <TextField
+            label={t('label_department')}
+            value={String(activeDeptName || t('placeholder_department'))}
+            style={styles.field}
+            pressable
+            onPress={() => setDeptModalVisible(true)}
+          />
+
+          <TextField
+            label={t('label_role')}
+            value={String(ROLE_LABELS_LOCAL[role] || role)}
+            style={styles.field}
+            pressable
+            onPress={() => setShowRoles(true)}
+          />
+        </Card>
+
+        <Text style={base.sectionTitle}>{t('section_password')}</Text>
+        <Card paddedXOnly>
+          <View style={{ position: 'relative' }}>
+            <TextField
+              ref={pwdRef}
+              label={t('label_password_new')}
+              value={password}
+              onChangeText={setPassword}
+              placeholder={t('placeholder_new_password')}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.field}
+              forceValidation={submittedAttempt}
+              error={!passwordValid ? 'invalid' : undefined}
+              rightSlot={
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Pressable
+                    onPress={() => {
+                      setShowPassword((v) => !v);
+                    }}
+                    android_ripple={{
+                      color: theme?.colors?.border ?? '#00000020',
+                      borderless: false,
+                      radius: 24,
+                    }}
+                    accessibilityLabel={
+                      showPassword ? t('a11y_hide_password') : t('a11y_show_password')
+                    }
+                    accessibilityRole="button"
+                    hitSlop={{
+                      top: theme.spacing.sm,
+                      bottom: theme.spacing.sm,
+                      left: theme.spacing.sm,
+                      right: theme.spacing.sm,
+                    }}
+                    style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
+                  >
+                    <Feather
+                      name={showPassword ? 'eye-off' : 'eye'}
+                      size={ICON_MD}
+                      color={theme.colors.primary ?? theme.colors.text}
+                    />
+                  </Pressable>
+                </View>
+              }
+            />
+          </View>
+
+          <TextField
+            label={t('label_password_repeat')}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            placeholder={t('placeholder_repeat_password')}
             secureTextEntry={!showPassword}
             autoCapitalize="none"
             autoCorrect={false}
             style={styles.field}
             forceValidation={submittedAttempt}
-            error={!passwordValid ? 'invalid' : undefined}
-            rightSlot={
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Pressable
-                  onPress={() => {
-                    setShowPassword((v) => !v);
-                  }}
-                  android_ripple={{
-                    color: theme?.colors?.border ?? '#00000020',
-                    borderless: false,
-                    radius: 24,
-                  }}
-                  accessibilityLabel={
-                    showPassword ? t('a11y_hide_password') : t('a11y_show_password')
-                  }
-                  accessibilityRole="button"
-                  hitSlop={{
-                    top: theme.spacing.sm,
-                    bottom: theme.spacing.sm,
-                    left: theme.spacing.sm,
-                    right: theme.spacing.sm,
-                  }}
-                  style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
-                >
-                  <Feather
-                    name={showPassword ? 'eye-off' : 'eye'}
-                    size={ICON_MD}
-                    color={theme.colors.primary ?? theme.colors.text}
-                  />
-                </Pressable>
-              </View>
-            }
+            error={!passwordsMatch ? 'mismatch' : undefined}
+          />
+        </Card>
+        {/* action bar moved inside scroll so it scrolls with content */}
+        <View style={styles.actionBar}>
+          <UIButton
+            variant="primary"
+            onPress={handleCreate}
+            disabled={submitting}
+            style={styles.actionBtn}
+            title={submitting ? t('toast_saving') : t('btn_create_employee')}
           />
         </View>
 
-        <TextField
-          label={t('label_password_repeat')}
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          placeholder={t('placeholder_repeat_password')}
-          secureTextEntry={!showPassword}
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.field}
-          forceValidation={submittedAttempt}
-          error={!passwordsMatch ? 'mismatch' : undefined}
+        <ConfirmModal
+          visible={cancelVisible}
+          onClose={() => setCancelVisible(false)}
+          title={t('dlg_leave_title')}
+          message={t('dlg_leave_msg')}
+          confirmLabel={t('dlg_leave_confirm')}
+          cancelLabel={t('dlg_leave_cancel')}
+          confirmVariant="destructive"
+          onConfirm={() => {
+            allowLeaveRef.current = true;
+            setCancelVisible(false);
+            router.back();
+          }}
         />
-      </Card>
-      {/* action bar moved inside scroll so it scrolls with content */}
-      <View style={styles.actionBar}>
-        <UIButton
-          variant="primary"
-          onPress={handleCreate}
-          disabled={submitting}
-          style={styles.actionBtn}
-          title={submitting ? t('toast_saving') : t('btn_create_employee')}
-        />
-      </View>
 
-      <ConfirmModal
-        visible={cancelVisible}
-        onClose={() => setCancelVisible(false)}
-        title={t('dlg_leave_title')}
-        message={t('dlg_leave_msg')}
-        confirmLabel={t('dlg_leave_confirm')}
-        cancelLabel={t('dlg_leave_cancel')}
-        confirmVariant="destructive"
-        onConfirm={() => {
-          allowLeaveRef.current = true;
-          setCancelVisible(false);
-          router.back();
-        }}
-      />
-
-      <SelectModal
-        visible={avatarSheet}
-        onClose={() => setAvatarSheet(false)}
-        title={t('profile_photo_title')}
-        items={[
-          {
-            id: 'camera',
-            label: t('profile_photo_take'),
-            onPress: () => {
-              setAvatarSheet(false);
-              pickFromCamera();
+        <SelectModal
+          visible={avatarSheet}
+          onClose={() => setAvatarSheet(false)}
+          title={t('profile_photo_title')}
+          items={[
+            {
+              id: 'camera',
+              label: t('profile_photo_take'),
+              onPress: () => {
+                setAvatarSheet(false);
+                pickFromCamera();
+              },
             },
-          },
-          {
-            id: 'gallery',
-            label: t('profile_photo_choose'),
-            onPress: () => {
-              setAvatarSheet(false);
-              pickFromLibrary();
+            {
+              id: 'gallery',
+              label: t('profile_photo_choose'),
+              onPress: () => {
+                setAvatarSheet(false);
+                pickFromLibrary();
+              },
             },
-          },
-          ...(avatarUrl
-            ? [
-                {
-                  id: 'remove',
-                  label: t('profile_photo_delete'),
-                  onPress: () => {
-                    setAvatarSheet(false);
-                    setAvatarUrl(null);
+            ...(avatarUrl
+              ? [
+                  {
+                    id: 'remove',
+                    label: t('profile_photo_delete'),
+                    onPress: () => {
+                      setAvatarSheet(false);
+                      setAvatarUrl(null);
+                    },
                   },
-                },
-              ]
-            : []),
-        ]}
-        searchable={false}
-      />
+                ]
+              : []),
+          ]}
+          searchable={false}
+        />
 
-      <SelectModal
-        visible={deptModalVisible}
-        onClose={() => setDeptModalVisible(false)}
-        title={t('user_department_title')}
-        items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
-        searchable={false}
-        onSelect={(it) => {
-          setDepartmentId(it.id);
-          setDeptModalVisible(false);
-        }}
-      />
+        <SelectModal
+          visible={deptModalVisible}
+          onClose={() => setDeptModalVisible(false)}
+          title={t('user_department_title')}
+          items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
+          searchable={false}
+          onSelect={(it) => {
+            setDepartmentId(it.id);
+            setDeptModalVisible(false);
+          }}
+        />
 
-      <SelectModal
-        visible={showRoles}
-        onClose={() => setShowRoles(false)}
-        title={t('user_role_title')}
-        items={roleItems}
-        searchable={false}
-        onSelect={(it) => {
-          setRole(it.id);
-          setShowRoles(false);
-        }}
-      />
+        <SelectModal
+          visible={showRoles}
+          onClose={() => setShowRoles(false)}
+          title={t('user_role_title')}
+          items={roleItems}
+          searchable={false}
+          onSelect={(it) => {
+            setRole(it.id);
+            setShowRoles(false);
+          }}
+        />
 
-      <DateTimeModal
-        visible={dobModalVisible}
-        onClose={() => setDobModalVisible(false)}
-        mode="date"
-        allowOmitYear={true}
-        omitYearDefault={withYear}
-        initial={birthdate || new Date()}
-        onApply={(dateObj, extra) => {
-          try {
-            const d = new Date(dateObj);
-            setBirthdate(d);
-            if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
-          } finally {
-            setDobModalVisible(false);
-          }
-        }}
-      />
-    </Screen>
+        <DateTimeModal
+          visible={dobModalVisible}
+          onClose={() => setDobModalVisible(false)}
+          mode="date"
+          allowOmitYear={true}
+          omitYearDefault={withYear}
+          initial={birthdate || new Date()}
+          onApply={(dateObj, extra) => {
+            try {
+              const d = new Date(dateObj);
+              setBirthdate(d);
+              if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
+            } finally {
+              setDobModalVisible(false);
+            }
+          }}
+        />
+      </KeyboardAwareScrollView>
+    </SafeAreaView>
   );
 }
