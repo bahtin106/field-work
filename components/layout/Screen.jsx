@@ -31,12 +31,14 @@ export default function Screen({
   useI18nVersion(); // subscribe to i18n changes to re-render screen
 
   // Объединяем route params с переданными headerOptions (приоритет у headerOptions)
-  const mergedRoute = headerOptions
-    ? {
-        ...route,
-        params: { ...route?.params, ...headerOptions },
-      }
-    : route;
+  // Безопасно обрабатываем случай когда route или route.params могут быть undefined
+  const mergedRoute = React.useMemo(() => {
+    if (!headerOptions) return route;
+    return {
+      ...route,
+      params: { ...(route?.params || {}), ...headerOptions },
+    };
+  }, [route, headerOptions]);
 
   const edges = isAuthScreen ? ['top', 'left', 'right', 'bottom'] : ['left', 'right'];
 
