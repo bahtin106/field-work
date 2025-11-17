@@ -3,8 +3,8 @@
 // Создаёт пользователя в Auth, проставляет роль и имя в profiles.
 // Доступно только администратору (проверка по таблице profiles).
 
-import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -65,31 +65,115 @@ Deno.serve(async (req) => {
       return new Response('password must be at least 8 chars', { status: 400, headers: cors });
     }
 
-    // 4) Создаём пользователя в Auth (email подтверждаем сразу)
+    // 4) Создаём пользователя в Auth
+    console.log('Creating user with email:', email);
+
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
-      user_metadata: { full_name },
+      user_metadata: {},
     });
-    if (createErr || !created?.user) {
+
+    if (createErr) {
+      console.error('Auth createUser failed:', {
+        error: createErr,
+        message: createErr?.message,
+        status: createErr?.status,
+        code: createErr?.code,
+        name: createErr?.name,
+      });
+
+      // Если ошибка связана с дублированием email
+      if (createErr.message?.includes('already') || createErr.message?.includes('exists')) {
+        return new Response('User with this email already exists', {
+          status: 400,
+          headers: cors,
+        });
+      }
+
       return new Response(`Auth create error: ${createErr?.message ?? 'unknown'}`, {
         status: 400,
         headers: cors,
       });
     }
 
+    if (!created?.user) {
+      console.error('Created user is null/undefined');
+      return new Response('Auth create error: User not created', {
+        status: 400,
+        headers: cors,
+      });
+    }
+
     const userId = created.user.id;
+    console.log('User created successfully:', userId);
 
-    // 5) Записываем профиль с ролью и именем
-    const { error: upsertErr } = await supabaseAdmin
+    // 5) Получаем company_id создателя
+    const { data: creatorProfile } = await supabaseAdmin
       .from('profiles')
-      .upsert({ id: userId, role, full_name }, { onConflict: 'id' });
+      .select('company_id')
+      .eq('id', caller.user.id)
+      .single();
 
-    if (upsertErr) {
+    const companyId = creatorProfile?.company_id;
+
+    if (!companyId) {
+      console.error('Creator has no company_id');
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      return new Response('Creator must have company_id', {
+        status: 400,
+        headers: cors,
+      });
+    }
+
+    // 6) Ждем немного, чтобы триггер успел создать профиль (если есть)
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Проверяем существует ли профиль
+    console.log('Checking if profile exists...');
+    const { data: existingProfile, error: checkErr } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (checkErr) {
+      console.error('Error checking profile:', checkErr);
+    }
+
+    let profileErr = null;
+
+    if (existingProfile) {
+      // Профиль уже есть (создан триггером) - обновляем
+      console.log('Profile exists, updating...');
+      const { error } = await supabaseAdmin
+        .from('profiles')
+        .update({ role, full_name, company_id: companyId })
+        .eq('id', userId);
+      profileErr = error;
+    } else {
+      // Профиля нет - создаем
+      console.log('Profile does not exist, inserting...');
+      const { error } = await supabaseAdmin.from('profiles').insert({
+        id: userId,
+        role,
+        full_name,
+        email,
+        company_id: companyId,
+      });
+      profileErr = error;
+    }
+
+    if (profileErr) {
+      console.error('Profile create/update failed:', {
+        error: profileErr,
+        message: profileErr.message,
+        code: profileErr.code,
+      });
       // откат, чтобы не оставлять "голого" юзера без профиля
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      return new Response(`Profile upsert error: ${upsertErr.message}`, {
+      return new Response(`Profile error: ${profileErr.message}`, {
         status: 400,
         headers: cors,
       });

@@ -25,6 +25,7 @@ import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/mo
 import PhoneInput from '../../components/ui/PhoneInput';
 import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
+import ValidationAlert from '../../components/ui/ValidationAlert';
 import { useTheme } from '../../theme';
 
 // i18n
@@ -33,7 +34,13 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 
 // data / constants
 import { ROLE, ROLE_LABELS, EDITABLE_ROLES as ROLES } from '../../constants/roles';
-import { AUTH_CONSTRAINTS, isValidEmail as isValidEmailShared } from '../../lib/authValidation';
+import {
+  AUTH_CONSTRAINTS,
+  filterPasswordInput,
+  getPasswordValidationErrors,
+  isValidEmail as isValidEmailShared,
+  isValidPassword,
+} from '../../lib/authValidation';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
 import { getDict, t as T } from '../../src/i18n';
@@ -133,6 +140,11 @@ export default function NewUserScreen() {
   const [cancelVisible, setCancelVisible] = useState(false);
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
 
+  // Validation states
+  const [validationErrors, setValidationErrors] = useState([]);
+  const [emailCheckStatus, setEmailCheckStatus] = useState(null); // null | 'checking' | 'available' | 'taken'
+  const [invalidCharWarning, setInvalidCharWarning] = useState(false);
+
   const firstNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
@@ -141,6 +153,7 @@ export default function NewUserScreen() {
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const allowLeaveRef = useRef(false);
+  const emailCheckTimeoutRef = useRef(null);
 
   const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
   const MEDIA_QUALITY = typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85;
@@ -185,22 +198,6 @@ export default function NewUserScreen() {
           color: theme.colors.text,
         },
         field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
-        helperError: {
-          color: theme.colors.danger,
-          fontSize: theme.typography.sizes.xs,
-          marginTop: theme.spacing.xs,
-          marginLeft: theme.spacing.md,
-        },
-        errorCard: {
-          backgroundColor: withAlpha(theme.colors.danger, 0.12),
-          borderColor: theme.colors.danger,
-          borderWidth: theme.components.card.borderWidth,
-          padding: theme.spacing.md,
-          borderRadius: theme.radii.xl,
-          marginBottom: theme.spacing.md,
-        },
-        errorTitle: { color: theme.colors.danger, fontWeight: '600' },
-        errorText: { color: theme.colors.danger, marginTop: theme.spacing.xs },
         actionBar: {
           flexDirection: 'row',
           gap: theme.spacing.md,
@@ -218,15 +215,143 @@ export default function NewUserScreen() {
     const sharedMin = Number(AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH || 0) || 0;
     return Math.max(sharedMin, envVal || 6);
   }, []);
+
   const emailValid = useMemo(() => isValidEmailShared(email), [email]);
-  const passwordValid = useMemo(
-    () => password.length >= MIN_PASSWORD_LENGTH,
-    [password, MIN_PASSWORD_LENGTH],
-  );
+  const passwordValid = useMemo(() => isValidPassword(password), [password]);
   const passwordsMatch = useMemo(
     () => !password || password === confirmPassword,
     [password, confirmPassword],
   );
+
+  // Проверка email на существование (debounced)
+  const checkEmailAvailability = useCallback(
+    async (emailToCheck) => {
+      if (!emailToCheck || !isValidEmailShared(emailToCheck)) {
+        setEmailCheckStatus(null);
+        return;
+      }
+
+      try {
+        setEmailCheckStatus('checking');
+
+        const { data, error } = await supabase
+          .from(TABLES.profiles)
+          .select('id')
+          .eq('email', emailToCheck.trim().toLowerCase())
+          .limit(1)
+          .single();
+
+        if (error && error.code !== 'PGRST116') {
+          // PGRST116 = no rows returned (email available)
+          console.warn('Email check error:', error);
+          setEmailCheckStatus(null);
+          return;
+        }
+
+        setEmailCheckStatus(data ? 'taken' : 'available');
+      } catch (e) {
+        console.warn('Email check failed:', e);
+        setEmailCheckStatus(null);
+      }
+    },
+    [TABLES.profiles],
+  );
+
+  // Debounced email check
+  useEffect(() => {
+    if (emailCheckTimeoutRef.current) {
+      clearTimeout(emailCheckTimeoutRef.current);
+    }
+
+    if (!email || !emailValid) {
+      setEmailCheckStatus(null);
+      return;
+    }
+
+    // Задержка 800ms перед проверкой
+    emailCheckTimeoutRef.current = setTimeout(() => {
+      checkEmailAvailability(email.trim().toLowerCase());
+    }, 800);
+
+    return () => {
+      if (emailCheckTimeoutRef.current) {
+        clearTimeout(emailCheckTimeoutRef.current);
+      }
+    };
+  }, [email, emailValid, checkEmailAvailability]);
+
+  // Сбор всех ошибок валидации для отображения
+  useEffect(() => {
+    const errors = [];
+    const requiredFieldsMissing = [];
+
+    // Проверяем обязательные поля (помеченные звездочкой)
+    if (submittedAttempt) {
+      if (!firstName.trim()) requiredFieldsMissing.push('firstName');
+      if (!lastName.trim()) requiredFieldsMissing.push('lastName');
+      if (!email.trim()) requiredFieldsMissing.push('email');
+      if (!password.trim()) requiredFieldsMissing.push('password');
+      if (!confirmPassword.trim()) requiredFieldsMissing.push('confirmPassword');
+    }
+
+    // Если есть незаполненные обязательные поля - показываем общее сообщение
+    if (requiredFieldsMissing.length > 0) {
+      errors.push(t('err_required_fields'));
+    }
+
+    // Проверяем специфичные ошибки валидации (формат, соответствие и т.д.)
+
+    // Email: если заполнен, но неверный формат
+    if (email.trim() && !emailValid) {
+      errors.push(t('err_email_invalid_format'));
+    }
+
+    // Email: если уже занят
+    if (emailCheckStatus === 'taken') {
+      errors.push(t('warn_email_already_taken'));
+    }
+
+    // Пароль: если заполнен, но не соответствует требованиям
+    if (password.length > 0) {
+      const pwdValidation = getPasswordValidationErrors(password);
+      if (!pwdValidation.valid) {
+        if (pwdValidation.errors.includes('password_too_short')) {
+          errors.push(t('err_password_short'));
+        }
+        if (pwdValidation.errors.includes('password_invalid_chars')) {
+          errors.push(t('err_password_invalid_chars'));
+        }
+      }
+    }
+
+    // Пароли не совпадают (если оба заполнены)
+    if (password.length > 0 && confirmPassword.length > 0 && !passwordsMatch) {
+      errors.push(t('err_password_mismatch'));
+    }
+
+    setValidationErrors(errors);
+  }, [
+    firstName,
+    lastName,
+    email,
+    emailValid,
+    password,
+    confirmPassword,
+    passwordsMatch,
+    submittedAttempt,
+    emailCheckStatus,
+    t,
+  ]);
+
+  // Обработчик недопустимых символов в пароле
+  const handleInvalidPasswordInput = useCallback(() => {
+    setInvalidCharWarning(true);
+
+    // Автоскрытие предупреждения через 3 секунды
+    setTimeout(() => {
+      setInvalidCharWarning(false);
+    }, 3000);
+  }, []);
 
   const initials = useMemo(
     () =>
@@ -399,23 +524,25 @@ export default function NewUserScreen() {
     if (submitting) return;
     Keyboard.dismiss(); // Закрываем клавиатуру при создании
     setSubmittedAttempt(true);
-    // Aggregate required field checks AFTER marking attempt
+
+    // Проверка всех обязательных полей
     const missingFirst = !firstName.trim();
     const missingLast = !lastName.trim();
     const invalidEmail = !emailValid;
-    const shortPwd = !passwordValid;
+    const invalidPwd = !passwordValid;
     const mismatchPwd = !passwordsMatch;
+    const emailTaken = emailCheckStatus === 'taken';
 
-    if (missingFirst || missingLast || invalidEmail || shortPwd || mismatchPwd) {
-      // Only toast one generic guidance or first issue (simplified UX)
-      const order = [
-        missingFirst && 'err_first_name',
-        missingLast && 'err_last_name',
-        invalidEmail && 'err_email',
-        shortPwd && 'err_password_short',
-        mismatchPwd && 'err_password_mismatch',
-      ].filter(Boolean);
-      if (order[0]) warn(order[0]);
+    // Если email уже занят - показываем ошибку сразу
+    if (emailTaken) {
+      toastError(t('error_email_exists'));
+      return;
+    }
+
+    // Проверяем все обязательные поля
+    if (missingFirst || missingLast || invalidEmail || invalidPwd || mismatchPwd) {
+      // Прокручиваем к началу чтобы показать ошибки
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
       return;
     }
 
@@ -452,7 +579,36 @@ export default function NewUserScreen() {
           (body && (body.message || body.error || body.details || body.hint)) ||
           raw ||
           `HTTP ${resp.status}`;
-        if (/already exists|email/i.test(String(msg))) throw new Error(t('error_email_exists'));
+
+        // Логируем для отладки
+        console.error('Create user error:', { status: resp.status, msg, raw });
+
+        // Переводим типичные ошибки на русский
+        if (/already exists|email.*taken|user.*exists/i.test(String(msg))) {
+          throw new Error(t('error_email_exists'));
+        }
+        if (/password must be at least.*chars|password.*short/i.test(String(msg))) {
+          throw new Error(t('error_password_too_short'));
+        }
+        if (/invalid role/i.test(String(msg))) {
+          throw new Error(t('error_invalid_role'));
+        }
+        if (/unauthorized/i.test(String(msg))) {
+          throw new Error('Ошибка авторизации. Попробуйте выйти и войти снова.');
+        }
+        if (/forbidden/i.test(String(msg))) {
+          throw new Error('У вас нет прав для создания пользователей.');
+        }
+        if (/auth create error/i.test(String(msg))) {
+          // Показываем детали ошибки создания
+          const details = msg.match(/Auth create error: (.+)/i);
+          if (details && details[1]) {
+            throw new Error(`Не удалось создать пользователя: ${details[1]}`);
+          }
+          throw new Error(t('error_auth_failed'));
+        }
+
+        // Если не удалось распознать - показываем исходную ошибку для отладки
         throw new Error(msg);
       }
       const userId = body?.user_id;
@@ -497,6 +653,7 @@ export default function NewUserScreen() {
     passwordsMatch,
     emailValid,
     passwordValid,
+    emailCheckStatus,
     role,
     phone,
     birthdate,
@@ -506,6 +663,7 @@ export default function NewUserScreen() {
     t,
     toastSuccess,
     toastError,
+    scrollRef,
   ]);
 
   const roleItems = useMemo(
@@ -587,12 +745,41 @@ export default function NewUserScreen() {
           </View>
         </Card>
 
+        {/* Ошибки БД */}
         {err ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
-            <Text style={styles.errorText}>{err}</Text>
-          </View>
+          <ValidationAlert
+            messages={[err]}
+            type="error"
+            style={{ marginBottom: theme.spacing.md }}
+          />
         ) : null}
+
+        {/* Ошибки валидации */}
+        {validationErrors.length > 0 && (
+          <ValidationAlert
+            messages={validationErrors}
+            type="error"
+            style={{ marginBottom: theme.spacing.md }}
+          />
+        )}
+
+        {/* Предупреждение о недопустимых символах в пароле */}
+        {invalidCharWarning && (
+          <ValidationAlert
+            messages={[t('err_password_invalid_chars')]}
+            type="warning"
+            style={{ marginBottom: theme.spacing.md }}
+          />
+        )}
+
+        {/* Статус проверки email */}
+        {emailCheckStatus === 'checking' && emailValid && (
+          <ValidationAlert
+            messages={[t('warn_checking_email')]}
+            type="info"
+            style={{ marginBottom: theme.spacing.md }}
+          />
+        )}
 
         <Text style={base.sectionTitle}>{t('section_personal')}</Text>
         <Card paddedXOnly>
@@ -604,7 +791,7 @@ export default function NewUserScreen() {
             value={firstName}
             onChangeText={setFirstName}
             forceValidation={submittedAttempt}
-            error={!firstName.trim() ? 'required' : undefined}
+            error={submittedAttempt && !firstName.trim() ? 'required' : undefined}
           />
           <TextField
             ref={lastNameRef}
@@ -614,7 +801,7 @@ export default function NewUserScreen() {
             value={lastName}
             onChangeText={setLastName}
             forceValidation={submittedAttempt}
-            error={!lastName.trim() ? 'required' : undefined}
+            error={submittedAttempt && !lastName.trim() ? 'required' : undefined}
           />
           <TextField
             ref={emailRef}
@@ -627,7 +814,15 @@ export default function NewUserScreen() {
             value={email}
             onChangeText={setEmail}
             forceValidation={submittedAttempt}
-            error={!emailValid ? 'invalid' : undefined}
+            error={
+              submittedAttempt && !email.trim()
+                ? 'required'
+                : email.trim() && !emailValid
+                  ? 'invalid'
+                  : emailCheckStatus === 'taken'
+                    ? 'taken'
+                    : undefined
+            }
           />
           <PhoneInput
             ref={phoneRef}
@@ -692,7 +887,16 @@ export default function NewUserScreen() {
               autoCorrect={false}
               style={styles.field}
               forceValidation={submittedAttempt}
-              error={!passwordValid ? 'invalid' : undefined}
+              error={
+                submittedAttempt && !password.trim()
+                  ? 'required'
+                  : password.length > 0 && !passwordValid
+                    ? 'invalid'
+                    : undefined
+              }
+              filterInput={filterPasswordInput}
+              onInvalidInput={handleInvalidPasswordInput}
+              maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
               rightSlot={
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Pressable
@@ -737,7 +941,15 @@ export default function NewUserScreen() {
             autoCorrect={false}
             style={styles.field}
             forceValidation={submittedAttempt}
-            error={!passwordsMatch ? 'mismatch' : undefined}
+            error={
+              submittedAttempt && !confirmPassword.trim()
+                ? 'required'
+                : confirmPassword.length > 0 && !passwordsMatch
+                  ? 'mismatch'
+                  : undefined
+            }
+            filterInput={filterPasswordInput}
+            maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
           />
         </Card>
 

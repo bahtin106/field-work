@@ -123,15 +123,41 @@ function RootLayoutInner() {
 
   const ready = appReady && sessionReady;
 
+  // КРИТИЧНО: Дополнительная защита - force ready через 12 секунд после монтирования
+  useEffect(() => {
+    const forceReadyTimeout = setTimeout(() => {
+      if (!appReady || !sessionReady) {
+        logger?.warn?.('🚨 FORCE READY TIMEOUT - Unblocking UI after 12s');
+        setAppReady(true);
+        setSessionReady(true);
+        setAuthChecking(false);
+      }
+    }, 12000);
+
+    return () => clearTimeout(forceReadyTimeout);
+  }, []);
+
   const onLayoutRootView = useCallback(async () => {
     await hideSplashNow();
   }, [ready, hideSplashNow]);
 
   useEffect(() => {
     let mounted = true;
+    let maxTimeoutId = null;
 
     const initializeApp = async () => {
       setAuthChecking(true);
+
+      // КРИТИЧНО: Гарантированный таймаут для разблокировки UI
+      maxTimeoutId = setTimeout(() => {
+        if (mounted) {
+          logger?.warn?.('⏰ MAX TIMEOUT REACHED - Force unblock UI');
+          setSessionReady(true);
+          setAuthChecking(false);
+          if (!appReady) setAppReady(true);
+        }
+      }, 10000); // 10 секунд - абсолютный максимум
+
       try {
         // 1) session with timeout — получаем persisted session, но дополнительно проверяем её валидность
         const sessResult = await Promise.race([
@@ -272,8 +298,18 @@ function RootLayoutInner() {
         }
       } catch (e) {
         // silent catch
+        logger?.warn?.('⚠️ initializeApp error:', e?.message || e);
         if (mounted && !appReady) setAppReady(true);
+        if (mounted) setSessionReady(true);
         setAuthChecking(false);
+      } finally {
+        // КРИТИЧНО: Гарантируем разблокировку UI даже при любых ошибках
+        if (maxTimeoutId) clearTimeout(maxTimeoutId);
+        if (mounted) {
+          setSessionReady(true);
+          setAuthChecking(false);
+          if (!appReady) setAppReady(true);
+        }
       }
     };
 
@@ -281,6 +317,7 @@ function RootLayoutInner() {
 
     return () => {
       mounted = false;
+      if (maxTimeoutId) clearTimeout(maxTimeoutId);
     };
   }, []);
 
@@ -329,10 +366,12 @@ function RootLayoutInner() {
           // КРИТИЧНО: Сбрасываем authChecking СРАЗУ для разблокировки UI
           if (mounted) {
             setAuthChecking(false);
+            setSessionReady(true);
+            if (!appReady) setAppReady(true);
           }
 
-          // Запускаем тяжёлую работу асинхронно, не блокируя основной поток
-          (async () => {
+          // Запускаем тяжёлую работу асинхронно с ГАРАНТИРОВАННЫМ таймаутом
+          const asyncWorkPromise = (async () => {
             logger?.warn?.('🚀 Starting async IIFE in SIGNED_IN handler');
             try {
               // При SIGNED_IN сначала ЗАГРУЖАЕМ критические данные, ПОТОМ чистим кэш и перемонтируем
@@ -454,12 +493,32 @@ function RootLayoutInner() {
               // Гарантируем разблокировку даже при ошибке
               if (mounted) {
                 setAuthChecking(false);
-                setIsLoggedIn(false); // При ошибке не логиним
                 setSessionReady(true);
                 if (!appReady) setAppReady(true);
+                // При ошибке сохраняем состояние логина если session есть
+                // setIsLoggedIn(false); - НЕ сбрасываем, т.к. уже установлено выше
               }
             }
           })();
+
+          // КРИТИЧНО: Гарантированный таймаут 8 секунд для async работы
+          const timeoutPromise = new Promise((resolve) => {
+            setTimeout(() => {
+              logger?.warn?.('⏰ SIGNED_IN async work timeout - force finish');
+              resolve();
+            }, 8000);
+          });
+
+          // Запускаем race между async работой и таймаутом
+          Promise.race([asyncWorkPromise, timeoutPromise]).finally(() => {
+            if (mounted) {
+              // Гарантируем, что состояние разблокировано
+              setAuthChecking(false);
+              setSessionReady(true);
+              if (!appReady) setAppReady(true);
+              logger?.warn?.('✅ SIGNED_IN fully complete (with timeout safety)');
+            }
+          });
 
           return;
         }
