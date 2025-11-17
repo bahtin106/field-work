@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Platform, View } from 'react-native';
 import 'react-native-gesture-handler';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -528,28 +529,6 @@ function RootLayoutInner() {
     return () => detach?.();
   }, [isLoggedIn]);
 
-  // Инициализация обработки клавиатуры
-  useEffect(() => {
-    let enabled = false;
-    let AvoidSoftInput;
-    (async () => {
-      try {
-        const { default: Constants } = await import('expo-constants');
-        if (Constants?.appOwnership === 'expo') return;
-        ({ AvoidSoftInput } = await import('react-native-avoid-softinput'));
-        AvoidSoftInput.setEnabled(true);
-        enabled = true;
-      } catch (e) {
-        // silent catch
-      }
-    })();
-    return () => {
-      if (enabled && AvoidSoftInput) {
-        AvoidSoftInput.setEnabled(false);
-      }
-    };
-  }, []);
-
   if (!ready) {
     return (
       <SafeAreaView
@@ -623,11 +602,13 @@ export default function RootLayout() {
       }}
     >
       <SafeAreaProvider>
-        <ThemeProvider>
-          <ToastProvider>
-            <RootLayoutInner />
-          </ToastProvider>
-        </ThemeProvider>
+        <KeyboardProvider>
+          <ThemeProvider>
+            <ToastProvider>
+              <RootLayoutInner />
+            </ToastProvider>
+          </ThemeProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </PersistQueryClientProvider>
   );

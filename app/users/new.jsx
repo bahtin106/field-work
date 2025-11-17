@@ -1,36 +1,31 @@
-import { AntDesign, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  BackHandler,
-  Image,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 
 // Theme / layout / UI
 import Screen from '../../components/layout/Screen';
 import UIButton from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
+import { listItemStyles } from '../../components/ui/listItemStyles';
 import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import PhoneInput from '../../components/ui/PhoneInput';
 import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
-import { useTheme } from '../../theme/ThemeProvider';
+import { useTheme } from '../../theme';
 
 // i18n
 import { useI18nVersion } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 // data / constants
-import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../constants/roles';
+import { ROLE, ROLE_LABELS, EDITABLE_ROLES as ROLES } from '../../constants/roles';
+import { AUTH_CONSTRAINTS, isValidEmail as isValidEmailShared } from '../../lib/authValidation';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
+import { getDict, t as T } from '../../src/i18n';
 
 // --- locals / env-driven ---
 const TABLES = {
@@ -68,44 +63,18 @@ function withAlpha(color, a) {
   }
   return `rgba(0,0,0,${a})`;
 }
-function isValidEmailStrict(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return false;
-  if (s.length > 254) return false;
-  if (/\s/.test(s)) return false;
-  const parts = s.split('@');
-  if (parts.length !== 2) return false;
-  const [local, domain] = parts;
-  if (!local || !domain) return false;
-  if (local.length > 64) return false;
-  if (local.startsWith('.') || local.endsWith('.')) return false;
-  if (local.includes('..')) return false;
-  if (!/^[A-Za-z0-9._%+-]+$/.test(local)) return false;
-  const labels = domain.split('.');
-  if (labels.length < 2) return false;
-  for (const lab of labels) {
-    if (!lab) return false;
-    if (lab.length > 63) return false;
-    if (!/^[A-Za-z0-9-]+$/.test(lab)) return false;
-    if (lab.startsWith('-') || lab.endsWith('-')) return false;
-  }
-  const tld = labels[labels.length - 1];
-  if (tld.length < 2 || tld.length > 24) return false;
-  return true;
-}
 function formatDateRU(date, withYear = true) {
   try {
     const d = date instanceof Date ? date : new Date(date);
     if (isNaN(d.getTime())) return '';
-    const opts = withYear
-      ? { day: 'numeric', month: 'long', year: 'numeric' }
-      : { day: 'numeric', month: 'long' };
-    let s = d.toLocaleDateString('ru-RU', opts);
-    s = s.replace(/\s*г\.?$/i, '');
-    return s.replace(
-      /(\d+)\s+([А-ЯЁ][а-яё]+)/u,
-      (m, day, month) => `${day} ${month.toLowerCase()}`,
-    );
+    const dict = getDict?.() || {};
+    const offset = Number(dict.month_label_offset ?? 0) || 0;
+    const m = d.getMonth();
+    const idx = (m + offset + 12) % 12;
+    const month = T(`months_genitive_${idx}`);
+    const day = d.getDate();
+    const year = d.getFullYear();
+    return withYear ? `${day} ${month} ${year}` : `${day} ${month}`;
   } catch {
     return '';
   }
@@ -118,13 +87,20 @@ export default function NewUserScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const base = useMemo(() => listItemStyles(theme), [theme]);
 
-  // header title like Edit
+  // Header: align with other pages (title only, chevron back)
   useLayoutEffect(() => {
-    const title = t('routes.users/new', 'routes.users/new');
+    const title = t('routes.users/new');
     try {
-      navigation.setOptions({ title, headerTitle: title, headerTitleAlign: 'center' });
-      navigation.setParams({ title, leftTextOnly: true, centerTitle: true });
+      navigation.setOptions({ title, headerTitle: title });
+    } catch {}
+  }, [navigation, ver, t]);
+  useEffect(() => {
+    try {
+      const title = t('routes.users/new');
+      // Only set explicit localized title so AppHeader shows it; keep default back chevron
+      navigation.setParams({ title });
     } catch {}
   }, [navigation, ver, t]);
 
@@ -158,6 +134,7 @@ export default function NewUserScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState('');
   const [cancelVisible, setCancelVisible] = useState(false);
+  const [submittedAttempt, setSubmittedAttempt] = useState(false);
 
   const firstNameRef = useRef(null);
   const lastNameRef = useRef(null);
@@ -182,9 +159,9 @@ export default function NewUserScreen() {
         headerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md },
         headerCard: { padding: theme.spacing.sm, marginBottom: theme.spacing.md },
         avatar: {
-          width: theme.components.avatar.md,
-          height: theme.components.avatar.md,
-          borderRadius: theme.components.avatar.md / 2,
+          width: theme.components?.avatar?.md ?? 96,
+          height: theme.components?.avatar?.md ?? 96,
+          borderRadius: (theme.components?.avatar?.md ?? 96) / 2,
           backgroundColor: withAlpha(theme.colors.primary, 0.12),
           alignItems: 'center',
           justifyContent: 'center',
@@ -210,12 +187,6 @@ export default function NewUserScreen() {
           fontWeight: '600',
           color: theme.colors.text,
         },
-        section: {
-          marginTop: theme.spacing.sm,
-          marginBottom: theme.spacing.sm,
-          fontWeight: '600',
-          color: theme.colors.text,
-        },
         field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
         helperError: {
           color: theme.colors.danger,
@@ -236,7 +207,6 @@ export default function NewUserScreen() {
         actionBar: {
           flexDirection: 'row',
           gap: theme.spacing.md,
-          // Match TextField width inside Card: content padding + card horizontal padding
           paddingHorizontal: theme.spacing.lg + theme.spacing[theme.components?.card?.padX ?? 'lg'],
           paddingTop: theme.spacing.sm,
           paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
@@ -246,8 +216,16 @@ export default function NewUserScreen() {
     [theme],
   );
 
-  const emailValid = useMemo(() => isValidEmailStrict(email), [email]);
-  const passwordValid = useMemo(() => password.length >= 6, [password]);
+  const MIN_PASSWORD_LENGTH = useMemo(() => {
+    const envVal = Number(process.env.EXPO_PUBLIC_PASSWORD_MIN_LENGTH || 0) || 0;
+    const sharedMin = Number(AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH || 0) || 0;
+    return Math.max(sharedMin, envVal || 6);
+  }, []);
+  const emailValid = useMemo(() => isValidEmailShared(email), [email]);
+  const passwordValid = useMemo(
+    () => password.length >= MIN_PASSWORD_LENGTH,
+    [password, MIN_PASSWORD_LENGTH],
+  );
   const passwordsMatch = useMemo(
     () => !password || password === confirmPassword,
     [password, confirmPassword],
@@ -422,24 +400,24 @@ export default function NewUserScreen() {
 
   const handleCreate = useCallback(async () => {
     if (submitting) return;
-    if (!firstName.trim()) {
-      warn('err_first_name');
-      return;
-    }
-    if (!lastName.trim()) {
-      warn('err_last_name');
-      return;
-    }
-    if (!emailValid) {
-      warn('err_email');
-      return;
-    }
-    if (!passwordValid) {
-      warn('err_password_short');
-      return;
-    }
-    if (!passwordsMatch) {
-      warn('err_password_mismatch');
+    setSubmittedAttempt(true);
+    // Aggregate required field checks AFTER marking attempt
+    const missingFirst = !firstName.trim();
+    const missingLast = !lastName.trim();
+    const invalidEmail = !emailValid;
+    const shortPwd = !passwordValid;
+    const mismatchPwd = !passwordsMatch;
+
+    if (missingFirst || missingLast || invalidEmail || shortPwd || mismatchPwd) {
+      // Only toast one generic guidance or first issue (simplified UX)
+      const order = [
+        missingFirst && 'err_first_name',
+        missingLast && 'err_last_name',
+        invalidEmail && 'err_email',
+        shortPwd && 'err_password_short',
+        mismatchPwd && 'err_password_mismatch',
+      ].filter(Boolean);
+      if (order[0]) warn(order[0]);
       return;
     }
 
@@ -548,11 +526,12 @@ export default function NewUserScreen() {
   return (
     <Screen background="background" scroll={false}>
       <View style={styles.container}>
-        <ScrollView
+        <KeyboardAwareScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          bottomOffset={40}
           onScroll={(e) => {
             try {
               scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
@@ -562,7 +541,11 @@ export default function NewUserScreen() {
           contentInsetAdjustmentBehavior="always"
           contentContainerStyle={[
             styles.scroll,
-            { paddingBottom: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl },
+            {
+              paddingBottom:
+                (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
+                (insets?.bottom ?? 0),
+            },
           ]}
           showsVerticalScrollIndicator={false}
         >
@@ -581,7 +564,7 @@ export default function NewUserScreen() {
                   <Text style={styles.avatarText}>{initials || '•'}</Text>
                 )}
                 <View style={styles.avatarCamBadge}>
-                  <AntDesign
+                  <Feather
                     name="camera"
                     size={Math.max(
                       theme.icons?.minCamera ?? 12,
@@ -604,46 +587,41 @@ export default function NewUserScreen() {
             </View>
           ) : null}
 
-          <Text style={styles.section}>{t('section_personal')}</Text>
-          <Card>
+          <Text style={base.sectionTitle}>{t('section_personal')}</Text>
+          <Card paddedXOnly>
             <TextField
               ref={firstNameRef}
               label={t('label_first_name')}
               placeholder={t('placeholder_first_name')}
-              placeholderTextColor={theme.colors.inputPlaceholder}
               style={styles.field}
               value={firstName}
               onChangeText={setFirstName}
+              forceValidation={submittedAttempt}
+              error={!firstName.trim() ? 'required' : undefined}
             />
-            {!firstName.trim() ? (
-              <Text style={styles.helperError}>{t('err_first_name')}</Text>
-            ) : null}
-
             <TextField
               ref={lastNameRef}
               label={t('label_last_name')}
               placeholder={t('placeholder_last_name')}
-              placeholderTextColor={theme.colors.inputPlaceholder}
               style={styles.field}
               value={lastName}
               onChangeText={setLastName}
+              forceValidation={submittedAttempt}
+              error={!lastName.trim() ? 'required' : undefined}
             />
-            {!lastName.trim() ? <Text style={styles.helperError}>{t('err_last_name')}</Text> : null}
-
             <TextField
               ref={emailRef}
               label={t('label_email')}
               placeholder={t('placeholder_email')}
-              placeholderTextColor={theme.colors.inputPlaceholder}
               style={styles.field}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               value={email}
               onChangeText={setEmail}
-            />
-            {!emailValid ? <Text style={styles.helperError}>{t('err_email')}</Text> : null}
-
+              forceValidation={submittedAttempt}
+              error={!emailValid ? 'invalid' : undefined}
+            />{' '}
             <PhoneInput
               ref={phoneRef}
               value={phone}
@@ -653,21 +631,24 @@ export default function NewUserScreen() {
               error={undefined}
               style={styles.field}
             />
-
             <TextField
               label={t('label_birthdate')}
-              value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
+              value={
+                birthdate
+                  ? String(formatDateRU(birthdate, withYear))
+                  : String(t('placeholder_birthdate'))
+              }
               style={styles.field}
               pressable
               onPress={() => setDobModalVisible(true)}
             />
           </Card>
 
-          <Text style={styles.section}>{t('section_company_role')}</Text>
-          <Card>
+          <Text style={base.sectionTitle}>{t('section_company_role')}</Text>
+          <Card paddedXOnly>
             <TextField
               label={t('label_department')}
-              value={activeDeptName || t('placeholder_department')}
+              value={String(activeDeptName || t('placeholder_department'))}
               style={styles.field}
               pressable
               onPress={() => setDeptModalVisible(true)}
@@ -675,26 +656,28 @@ export default function NewUserScreen() {
 
             <TextField
               label={t('label_role')}
-              value={ROLE_LABELS_LOCAL[role] || role}
+              value={String(ROLE_LABELS_LOCAL[role] || role)}
               style={styles.field}
               pressable
               onPress={() => setShowRoles(true)}
             />
           </Card>
 
-          <Text style={styles.section}>{t('section_password')}</Text>
-          <Card>
+          <Text style={base.sectionTitle}>{t('section_password')}</Text>
+          <Card paddedXOnly>
             <View style={{ position: 'relative' }}>
               <TextField
                 ref={pwdRef}
+                label={t('label_password_new')}
                 value={password}
                 onChangeText={setPassword}
                 placeholder={t('placeholder_new_password')}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
-                error={undefined}
                 style={styles.field}
+                forceValidation={submittedAttempt}
+                error={!passwordValid ? 'invalid' : undefined}
                 rightSlot={
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Pressable
@@ -728,23 +711,19 @@ export default function NewUserScreen() {
                 }
               />
             </View>
-            {password.length > 0 && !passwordValid ? (
-              <Text style={styles.helperError}>{t('err_password_short')}</Text>
-            ) : null}
 
             <TextField
+              label={t('label_password_repeat')}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               placeholder={t('placeholder_repeat_password')}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
-              error={undefined}
               style={styles.field}
+              forceValidation={submittedAttempt}
+              error={!passwordsMatch ? 'mismatch' : undefined}
             />
-            {confirmPassword.length > 0 && !passwordsMatch ? (
-              <Text style={styles.helperError}>{t('err_password_mismatch')}</Text>
-            ) : null}
           </Card>
           {/* action bar moved inside scroll so it scrolls with content */}
           <View style={styles.actionBar}>
@@ -756,7 +735,7 @@ export default function NewUserScreen() {
               title={submitting ? t('toast_saving') : t('btn_create_employee')}
             />
           </View>
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </View>
 
       <ConfirmModal
@@ -824,6 +803,7 @@ export default function NewUserScreen() {
       />
 
       <SelectModal
+        visible={showRoles}
         onClose={() => setShowRoles(false)}
         title={t('user_role_title')}
         items={roleItems}

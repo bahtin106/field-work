@@ -1,11 +1,11 @@
 // components/ui/modals/SelectModal.jsx
-import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, FlatList, Platform, StyleSheet } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useTheme } from '../../../theme';
-import BaseModal from './BaseModal';
-import TextField from '../TextField';
+import React, { useMemo, useState } from 'react';
+import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { t as T } from '../../../src/i18n';
+import { useTheme } from '../../../theme';
+import TextField from '../TextField';
+import BaseModal from './BaseModal';
 
 export default function SelectModal({
   visible,
@@ -58,11 +58,11 @@ export default function SelectModal({
           {item.icon ? <View style={{ marginRight: theme.spacing.sm }}>{item.icon}</View> : null}
           <View style={{ flex: 1 }}>
             <Text numberOfLines={1} style={[s.itemTitle, { color: theme.colors.text }]}>
-              {item.label}
+              {String(item.label || '')}
             </Text>
             {item.subtitle ? (
               <Text numberOfLines={1} style={[s.itemSub, { color: theme.colors.textSecondary }]}>
-                {item.subtitle}
+                {String(item.subtitle || '')}
               </Text>
             ) : null}
           </View>
