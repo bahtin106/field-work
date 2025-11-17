@@ -7,6 +7,7 @@ export default function AuthLayout() {
     <View style={{ flex: 1 }}>
       <Stack initialRouteName="login" screenOptions={{ headerShown: false }}>
         <Stack.Screen name="login" />
+        <Stack.Screen name="register" />
       </Stack>
     </View>
   );
