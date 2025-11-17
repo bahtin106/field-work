@@ -31,6 +31,7 @@ import { useUsers } from '../../components/hooks/useUsers';
 import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
+import { pluralizeRu } from '../../lib/pluralize';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
@@ -412,7 +413,7 @@ export default function UsersIndex() {
 
   /**
    * Helper: Format relative time for last seen
-   * Returns: "2 минуты назад", "5 часов назад", "1 день назад", etc.
+   * Returns: "2 минуты назад", "22 часа назад", "1 день назад", etc.
    * Up to 3 days uses relative format, 4+ days shows date only
    */
   const getRelativeTime = React.useCallback((now, past) => {
@@ -422,31 +423,45 @@ export default function UsersIndex() {
     const diffHour = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHour / 24);
 
-    // Minutes (1-59 min)
+    // Сейчас (меньше минуты)
     if (diffMin < 1) {
       return t('users_relativeTime_now');
     }
+
+    // Минуты (1-59 мин)
     if (diffMin < 60) {
       const n = diffMin;
-      if (n === 1) return t('users_relativeTime_1min');
-      if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_mins_2_4')}`;
-      return `${n} ${t('users_relativeTime_mins')}`;
+      const word = pluralizeRu(
+        n,
+        t('users_relativeTime_min_1'), // минуту
+        t('users_relativeTime_min_2_4'), // минуты
+        t('users_relativeTime_min_5'), // минут
+      );
+      return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
-    // Hours (1-23 hours)
+    // Часы (1-23 часа)
     if (diffHour < 24) {
       const n = diffHour;
-      if (n === 1) return t('users_relativeTime_1hour');
-      if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_hours_2_4')}`;
-      return `${n} ${t('users_relativeTime_hours')}`;
+      const word = pluralizeRu(
+        n,
+        t('users_relativeTime_hour_1'), // час
+        t('users_relativeTime_hour_2_4'), // часа
+        t('users_relativeTime_hour_5'), // часов
+      );
+      return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
-    // Days (1-3 days)
+    // Дни (1-3 дня)
     if (diffDay <= 3) {
       const n = diffDay;
-      if (n === 1) return t('users_relativeTime_1day');
-      if (n >= 2 && n <= 4) return `${n} ${t('users_relativeTime_days_2_4')}`;
-      return `${n} ${t('users_relativeTime_days')}`;
+      const word = pluralizeRu(
+        n,
+        t('users_relativeTime_day_1'), // день
+        t('users_relativeTime_day_2_4'), // дня
+        t('users_relativeTime_day_5'), // дней
+      );
+      return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
     // 4+ days: return null to signal date-only format should be used
