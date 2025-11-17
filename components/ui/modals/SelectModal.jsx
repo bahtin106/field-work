@@ -43,9 +43,20 @@ export default function SelectModal({
 
   const renderDefaultItem = ({ item }) => {
     const disabled = !!item.disabled;
+    const handlePress = () => {
+      if (disabled) return;
+      // Если у элемента есть свой onPress, вызываем его
+      if (item.onPress) {
+        item.onPress(item);
+      } else if (onSelect) {
+        // Иначе вызываем общий onSelect
+        onSelect(item);
+      }
+    };
+
     return (
       <Pressable
-        onPress={() => !disabled && onSelect?.(item)}
+        onPress={handlePress}
         disabled={disabled}
         android_ripple={{ color: theme.colors.ripple }}
         style={({ pressed }) => [
