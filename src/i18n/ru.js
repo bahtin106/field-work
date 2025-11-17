@@ -51,7 +51,8 @@ export default {
   // Секции
   section_personal: 'Личные данные',
   section_company_role: 'Роль в компании',
-  section_password: 'Новый пароль (мин. 6 символов)',
+  section_password: 'Новый пароль',
+  section_password_template: 'Новый пароль (мин. {n} символов)',
 
   // Лейблы полей
   view_label_name: 'Имя',
