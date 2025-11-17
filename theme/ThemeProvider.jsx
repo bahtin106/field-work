@@ -1,7 +1,7 @@
 // theme/ThemeProvider.jsx
-import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from 'react';
-import { Appearance } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { Appearance } from 'react-native';
 import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
@@ -164,6 +164,13 @@ function buildTheme(mode) {
       height: base.components?.input?.height ?? base.components?.listItem?.height ?? 48,
       trailingSlotWidth: base.components?.input?.trailingSlotWidth ?? undefined,
       trailingGap: base.components?.input?.trailingGap ?? 8,
+      separator: {
+        insetX: base.components?.input?.separator?.insetX ?? 'lg',
+        height:
+          base.components?.input?.separator?.height ?? base.components?.listItem?.dividerWidth ?? 1,
+        alpha: base.components?.input?.separator?.alpha ?? 0.18,
+        errorAlpha: base.components?.input?.separator?.errorAlpha ?? 0.28,
+      },
     },
     toast: { anchorOffset: base.components?.toast?.anchorOffset ?? 120 },
     scrollView: {

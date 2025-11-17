@@ -13,11 +13,11 @@ import {
   Keyboard,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
@@ -382,15 +382,9 @@ export default function EditUser() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const ver = useI18nVersion();
-  useEffect(() => {
-    const routeTitle = t('routes.users/[id]/edit');
-    navigation.setParams({
-      title: routeTitle,
-      leftTextOnly: true,
+  const router = useRouter();
+  const navigation = useNavigation();
 
-      centerTitle: true,
-    });
-  }, [navigation, ver]);
   const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(
     () => ({
       [ROLE.DISPATCHER]: ROLE_DESCRIPTIONS[ROLE.DISPATCHER] ?? t('role_desc_dispatcher'),
@@ -420,7 +414,6 @@ export default function EditUser() {
     theme.components?.radio?.dot ??
     Math.max(theme.components?.radio?.dotMin ?? 6, Math.round(RADIO_SIZE / 2 - 3));
   const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
-  const EXTRA_SCROLL_PAD = 50; // Увеличиваем отступ для гарантии
   const styles = React.useMemo(() => {
     return StyleSheet.create({
       container: { flex: 1, backgroundColor: theme.colors.background },
@@ -604,16 +597,10 @@ export default function EditUser() {
     loading: toastLoading,
     promise: toastPromise,
   } = useToast();
-  const router = useRouter();
-  const navigation = useNavigation();
-
-  useLayoutEffect(() => {
-    const routeTitle = t('routes.users/[id]/edit');
-    navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
-  }, [navigation, ver]);
 
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
+
   const [meIsAdmin, setMeIsAdmin] = useState(false);
   const [meId, setMeId] = useState(null);
   const [meLoaded, setMeLoaded] = useState(false);
@@ -651,6 +638,7 @@ export default function EditUser() {
   const [showRoles, setShowRoles] = useState(false);
 
   const [err, setErr] = useState('');
+  const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const ensureCameraPerms = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     return status === 'granted';
@@ -769,25 +757,55 @@ export default function EditUser() {
   const insets = useSafeAreaInsets();
   const scrollYRef = useRef(0);
   const ensureVisible = (ref) => {
-    try {
-      if (!ref?.current || !scrollRef?.current) return;
-      requestAnimationFrame(() => {
-        try {
-          ref.current.measureInWindow((x, y, w, h) => {
-            const screenH = Dimensions.get('window').height;
-            const keyboardHeight = kbInset > 0 ? kbInset : 300; // Минимальная высота клавиатуры как fallback
-            const bottom = (y || 0) + (h || 0);
-            const visibleH = screenH - keyboardHeight - EXTRA_SCROLL_PAD;
+    if (!ref?.current || !scrollRef?.current) return;
 
-            if (bottom > visibleH) {
-              const delta = bottom - visibleH + EXTRA_SCROLL_PAD;
-              const currentY = scrollYRef?.current || 0;
-              scrollRef.current.scrollTo({ y: currentY + delta, animated: true });
+    // Увеличиваем задержку для стабильности на Android
+    const delay = Platform.OS === 'android' ? 300 : 150;
+
+    setTimeout(() => {
+      try {
+        ref.current.measureLayout(
+          scrollRef.current,
+          (x, y, width, height) => {
+            const screenHeight = Dimensions.get('window').height;
+            const keyboardHeight = kbInset > 0 ? kbInset : 300;
+            const headerHeight = theme?.components?.header?.height ?? 56;
+            const safeAreaBottom = insets?.bottom ?? 0;
+
+            // Вычисляем видимую область
+            const visibleAreaHeight = screenHeight - keyboardHeight - headerHeight - safeAreaBottom;
+
+            // Позиция поля относительно ScrollView
+            const fieldTop = y;
+            const fieldBottom = y + height;
+
+            // Текущая позиция скролла
+            const currentScrollY = scrollYRef.current || 0;
+
+            // Определяем нужно ли скроллить
+            const fieldTopInViewport = fieldTop - currentScrollY;
+            const fieldBottomInViewport = fieldBottom - currentScrollY;
+
+            // Если поле ниже видимой области - скроллим вниз
+            if (fieldBottomInViewport > visibleAreaHeight - 50) {
+              const scrollTo = fieldBottom - visibleAreaHeight + 100;
+              scrollRef.current.scrollTo({ y: Math.max(0, scrollTo), animated: true });
             }
-          });
-        } catch (e) {}
-      });
-    } catch (e) {}
+            // Если поле выше видимой области - скроллим вверх
+            else if (fieldTopInViewport < 50) {
+              const scrollTo = fieldTop - 100;
+              scrollRef.current.scrollTo({ y: Math.max(0, scrollTo), animated: true });
+            }
+          },
+          () => {
+            // Fallback если measureLayout не сработал
+            scrollRef.current.scrollToEnd({ animated: true });
+          },
+        );
+      } catch (e) {
+        console.warn('ensureVisible error:', e);
+      }
+    }, delay);
   };
 
   const isDirty = useMemo(() => {
@@ -865,59 +883,6 @@ export default function EditUser() {
     }
   };
 
-  const saveRef = useRef(null);
-  const cancelRef = useRef(null);
-  const onPressSave = React.useCallback(() => {
-    if (saveRef.current) return saveRef.current();
-  }, []);
-
-  useEffect(() => {
-    if (!globalThis.__headerActions) globalThis.__headerActions = {};
-    const actionId = `save-${String(userId || 'edit')}`;
-    globalThis.__headerActions[actionId] = onPressSave;
-    navigation.setParams({ rightTextLabel: t('header_save'), onRightPressId: actionId });
-    return () => {
-      try {
-        delete globalThis.__headerActions[actionId];
-      } catch (_) {}
-    };
-  }, [navigation, ver, onPressSave, t, userId]);
-  const onPressCancel = React.useCallback(() => {
-    if (cancelRef.current) return cancelRef.current();
-  }, []);
-  useEffect(() => {
-    saveRef.current = handleSave;
-    cancelRef.current = handleCancelPress;
-  });
-  const handleSave = async () => {
-    setErr('');
-    if (!firstName.trim()) {
-      showWarning(t('err_first_name'));
-      return;
-    }
-    if (!lastName.trim()) {
-      showWarning(t('err_last_name'));
-      return;
-    }
-    if (!emailValid) {
-      showWarning(t('err_email'));
-      return;
-    }
-    if (String(phone || '').trim() && !isValidPhone(String(phone || ''))) {
-      showWarning(t('err_phone'));
-      return;
-    }
-    if (!passwordValid) {
-      showWarning(t('err_password_short'));
-      return;
-    }
-    if (newPassword && newPassword.length > 0) {
-      setPendingSave(true);
-      setConfirmPwdVisible(true);
-      return;
-    }
-    await proceedSave();
-  };
   const proceedSave = async () => {
     try {
       setSaving(true);
@@ -1004,63 +969,99 @@ export default function EditUser() {
     }
   };
 
-  const [kbInset, setKbInset] = useState(0);
-  useEffect(() => {
-    const showE = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideE = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const onShow = (e) => {
-      const h = Math.max(0, e?.endCoordinates?.height || 0);
-      setKbInset(h);
+  const handleSave = async () => {
+    Keyboard.dismiss(); // Закрываем клавиатуру при сохранении
+    setErr('');
+    setSubmittedAttempt(true);
+    if (!firstName.trim()) {
+      showWarning(t('err_first_name'));
+      return;
+    }
+    if (!lastName.trim()) {
+      showWarning(t('err_last_name'));
+      return;
+    }
+    if (!emailValid) {
+      showWarning(t('err_email'));
+      return;
+    }
+    if (String(phone || '').trim() && !isValidPhone(String(phone || ''))) {
+      showWarning(t('err_phone'));
+      return;
+    }
+    if (!passwordValid) {
+      showWarning(t('err_password_short'));
+      return;
+    }
+    if (newPassword && newPassword.length > 0) {
+      setPendingSave(true);
+      setConfirmPwdVisible(true);
+      return;
+    }
+    await proceedSave();
+  };
 
-      // Автоматический скролл к активному полю с увеличенной задержкой для стабильности
-      setTimeout(() => {
-        if (focusFirst && firstNameRef.current) ensureVisible(firstNameRef);
-        else if (focusLast && lastNameRef.current) ensureVisible(lastNameRef);
-        else if (focusEmail && emailRef.current) ensureVisible(emailRef);
-        else if (focusPhone && phoneRef.current) ensureVisible(phoneRef);
-        else if (focusPwd && pwdRef.current) ensureVisible(pwdRef);
-      }, 150); // Увеличиваем задержку для полной стабилизации клавиатуры
-    };
-    const onHide = () => setKbInset(0);
-    const s1 = Keyboard.addListener(showE, onShow);
-    const s2 = Keyboard.addListener(hideE, onHide);
-    return () => {
-      try {
-        s1.remove();
-        s2.remove();
-      } catch (_) {}
-    };
+  const cancelRef = useRef(null);
+  const handleSaveRef = useRef(null);
+
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  });
+
+  const handleSavePress = useCallback(() => {
+    if (handleSaveRef.current) {
+      handleSaveRef.current();
+    }
   }, []);
 
-  // Дополнительная защита - пересчет позиции при изменении kbInset
-  useEffect(() => {
-    if (kbInset > 0) {
-      setTimeout(() => {
-        if (focusFirst && firstNameRef.current) ensureVisible(firstNameRef);
-        else if (focusLast && lastNameRef.current) ensureVisible(lastNameRef);
-        else if (focusEmail && emailRef.current) ensureVisible(emailRef);
-        else if (focusPhone && phoneRef.current) ensureVisible(phoneRef);
-        else if (focusPwd && pwdRef.current) ensureVisible(pwdRef);
-      }, 200);
-    }
-  }, [kbInset, focusFirst, focusLast, focusEmail, focusPhone, focusPwd]);
+  useLayoutEffect(() => {
+    const routeTitle = t('routes.users/[id]/edit');
+    navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
+  }, [navigation, ver, t]);
 
   useEffect(() => {
-    try {
-      // Keep params serializable only
-      navigation.setParams({
-        rightTextLabel: t('header_save'),
-        centerTitle: true,
-        leftTextOnly: true,
-        headerBackTitle: t('header_cancel'),
-      });
-      // Put callbacks and alignment into screen options
+    const routeTitle = t('routes.users/[id]/edit');
+    navigation.setParams({ title: routeTitle });
+  }, [navigation, ver, t]);
 
-      navigation.setOptions({
-        headerTitleAlign: 'center',
-      });
-    } catch (e) {}
-  }, [navigation, ver, onPressSave, t]);
+  useLayoutEffect(() => {
+    if (!globalThis.__headerActions) globalThis.__headerActions = {};
+    const actionId = `save-edit-${userId}`;
+    globalThis.__headerActions[actionId] = handleSavePress;
+
+    navigation.setOptions({
+      headerRight: () => (
+        <UIButton
+          title={t('header_save')}
+          onPress={handleSavePress}
+          variant="secondary"
+          size="md"
+        />
+      ),
+    });
+
+    return () => {
+      try {
+        delete globalThis.__headerActions[actionId];
+      } catch (_) {}
+    };
+  }, [navigation, handleSavePress, t, userId]);
+
+  useEffect(() => {
+    navigation.setParams({
+      rightTextLabel: t('header_save'),
+      onRightPressId: `save-edit-${userId}`,
+    });
+  }, [navigation, t, userId]);
+
+  const onPressCancel = React.useCallback(() => {
+    if (cancelRef.current) return cancelRef.current();
+  }, []);
+
+  useEffect(() => {
+    cancelRef.current = handleCancelPress;
+  });
+
   useEffect(() => {
     const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || !isDirty) return;
@@ -1430,25 +1431,24 @@ export default function EditUser() {
   return (
     <Screen background="background" scroll={false}>
       <View style={styles.container}>
-        <ScrollView
+        <KeyboardAwareScrollView
           ref={scrollRef}
           style={{ flex: 1 }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          bottomOffset={40}
           onScroll={(e) => {
             try {
               scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
             } catch (_) {}
           }}
           scrollEventThrottle={16}
-          contentInsetAdjustmentBehavior="always"
           contentContainerStyle={[
             styles.scroll,
             {
               paddingBottom:
                 (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
-                (insets?.bottom ?? 0) +
-                (kbInset > 0 ? Math.max(kbInset, 250) + EXTRA_SCROLL_PAD : EXTRA_SCROLL_PAD), // Гарантируем минимальную высоту для клавиатуры
+                (insets?.bottom ?? 0),
             },
           ]}
           showsVerticalScrollIndicator={false}
@@ -1571,10 +1571,9 @@ export default function EditUser() {
                 setTimeout(() => ensureVisible(firstNameRef), 150); // Увеличиваем задержку
               }}
               onBlur={() => setFocusFirst(false)}
+              forceValidation={submittedAttempt}
+              error={!firstName.trim() ? 'required' : undefined}
             />
-            {!firstName.trim() ? (
-              <Text style={styles.helperError}>{t('err_first_name')}</Text>
-            ) : null}
             <TextField
               ref={lastNameRef}
               label={t('label_last_name')}
@@ -1588,8 +1587,9 @@ export default function EditUser() {
                 setTimeout(() => ensureVisible(lastNameRef), 150); // Увеличиваем задержку
               }}
               onBlur={() => setFocusLast(false)}
+              forceValidation={submittedAttempt}
+              error={!lastName.trim() ? 'required' : undefined}
             />
-            {!lastName.trim() ? <Text style={styles.helperError}>{t('err_last_name')}</Text> : null}
             <TextField
               ref={emailRef}
               label={t('label_email')}
@@ -1606,8 +1606,9 @@ export default function EditUser() {
                 setTimeout(() => ensureVisible(emailRef), 150); // Увеличиваем задержку
               }}
               onBlur={() => setFocusEmail(false)}
+              forceValidation={submittedAttempt}
+              error={!emailValid ? 'invalid' : undefined}
             />
-            {!emailValid ? <Text style={styles.helperError}>{t('err_email')}</Text> : null}
             <PhoneInput
               ref={phoneRef}
               value={phone}
@@ -1751,7 +1752,7 @@ export default function EditUser() {
               {t('err_password_short')}
             </Text>
           ) : null}
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </View>
       {/* Exit without saving confirmation */}
       <ConfirmModal

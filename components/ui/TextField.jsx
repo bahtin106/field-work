@@ -4,6 +4,7 @@ import React, { forwardRef, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { t as T } from '../../src/i18n';
 import { useTheme } from '../../theme';
+import { withAlpha } from '../../theme/colors';
 import { CHEVRON_GAP, listItemStyles } from './listItemStyles';
 
 const TextField = forwardRef(function TextField(
@@ -28,6 +29,7 @@ const TextField = forwardRef(function TextField(
     onBlur,
     pressable = false,
     onPress,
+    forceValidation = false,
   },
   ref,
 ) {
@@ -38,8 +40,8 @@ const TextField = forwardRef(function TextField(
   const [showPassword, setShowPassword] = useState(false);
 
   const isRequired = /\*/.test(String(label || ''));
-  const requiredEmpty = isRequired && touched && !String(value || '').trim();
-  const isErr = !!error || requiredEmpty;
+  const requiredEmpty = isRequired && (touched || forceValidation) && !String(value || '').trim();
+  const isErr = (touched || forceValidation) && (!!error || requiredEmpty);
   const s = styles(theme, isErr, focused);
   const inputRef = React.useRef(null);
 
@@ -62,15 +64,15 @@ const TextField = forwardRef(function TextField(
 
   return (
     <View style={style}>
-      {label ? <Text style={s.topLabel}>{label}</Text> : null}
+      {label && <Text style={s.topLabel}>{String(label)}</Text>}
       <View style={s.wrap}>
-        {leftSlot ? <View style={s.slot}>{leftSlot}</View> : null}
+        {leftSlot && <View style={s.slot}>{leftSlot}</View>}
         <View style={s.inputBox}>
           <TextInput
             ref={inputRef}
-            value={value}
+            value={value != null ? String(value) : ''}
             onChangeText={handleChangeText}
-            placeholder={placeholder}
+            placeholder={placeholder ? String(placeholder) : undefined}
             placeholderTextColor={theme.colors.inputPlaceholder}
             keyboardType={keyboardType || 'default'}
             secureTextEntry={effectiveSecureTextEntry}
@@ -109,16 +111,25 @@ const TextField = forwardRef(function TextField(
             />
           ) : null}
         </View>
-        {rightSlot ? <View style={s.slot}>{rightSlot}</View> : null}
+        {rightSlot && <View style={s.slot}>{rightSlot}</View>}
       </View>
+      <View style={s.separator} />
     </View>
   );
 });
 
 export default TextField;
 
-const styles = (t, isError, focused) =>
-  StyleSheet.create({
+const styles = (t, isError, focused) => {
+  const sep = t.components?.input?.separator || {};
+  const insetKey = sep.insetX || 'lg';
+  const sepHeight = sep.height ?? t.components?.listItem?.dividerWidth ?? 1;
+  const alpha = isError ? (sep.errorAlpha ?? 0.28) : (sep.alpha ?? 0.18);
+  const sepColor = withAlpha(isError ? t.colors.danger : t.colors.primary, alpha);
+  const ml = Number(t.spacing?.[insetKey] ?? 0) || 0;
+  const mr = Number(t.spacing?.[insetKey] ?? 0) || 0;
+
+  return StyleSheet.create({
     wrap: {
       position: 'relative',
       flexDirection: 'row',
@@ -126,15 +137,17 @@ const styles = (t, isError, focused) =>
       backgroundColor: 'transparent',
       borderBottomWidth: 0,
       borderBottomColor: 'transparent',
-      paddingHorizontal: 12,
+      paddingHorizontal: ml,
       height: t.components?.input?.height ?? t.components?.listItem?.height ?? 48,
     },
     topLabel: {
       fontWeight: '500',
       marginBottom: 1,
       marginTop: 1,
-      color: t.colors.textSecondary,
+      color: isError ? t.colors.danger : t.colors.textSecondary,
       fontSize: t.typography.sizes.sm,
+      marginLeft: ml,
+      marginRight: mr,
     },
     input: {
       flex: 1,
@@ -148,7 +161,14 @@ const styles = (t, isError, focused) =>
     },
     slot: { marginHorizontal: 4 },
     inputBox: { flex: 1, justifyContent: 'center', position: 'relative' },
+    separator: {
+      height: sepHeight,
+      backgroundColor: sepColor,
+      marginLeft: ml,
+      marginRight: mr,
+    },
   });
+};
 
 // Unified Settings-like select row, styled to match AppSettings.jsx rows.
 // Usage:
@@ -327,7 +347,8 @@ export const DateOfBirthField = ({
                 paddingVertical: Math.max(
                   4,
                   Math.round(
-                    (t.components?.input?.height ?? t.components?.listItem?.height ?? 48) * 0.25,
+                    (theme.components?.input?.height ?? theme.components?.listItem?.height ?? 48) *
+                      0.25,
                   ),
                 ),
               },
@@ -337,6 +358,7 @@ export const DateOfBirthField = ({
           </Text>
         </View>
       </View>
+      <View style={s.separator} />
     </View>
   );
 };

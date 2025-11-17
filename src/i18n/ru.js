@@ -12,6 +12,7 @@ export default {
     users: 'Сотрудники',
     'users/[id]': 'Пользователь',
     'users/[id]/edit': 'Редактирование',
+    'users/new': 'Новый сотрудник',
     '(auth)/sign-in': 'Вход',
     'app_settings/AppSettings': 'Настройки приложения',
   },
@@ -31,6 +32,8 @@ export default {
   btn_delete_employee: 'Удалить пользователя',
   btn_login: 'Войти',
   btn_create: 'Создать',
+  btn_create_employee: 'Создать сотрудника',
+  btn_choose: 'Выбрать',
   header_cancel: 'Закрыть',
   header_save: 'Сохранить',
 
@@ -61,6 +64,8 @@ export default {
   label_role: 'Роль',
   label_status: 'Статус',
   label_birthdate: 'Дата рождения',
+  label_password_new: 'Новый пароль *',
+  label_password_repeat: 'Повтор пароля *',
 
   // Плейсхолдеры
   placeholder_birthdate: 'Выберите дату',
@@ -70,6 +75,7 @@ export default {
   placeholder_last_name: 'Петров',
   placeholder_email: 'ivan.petrov@example.com',
   placeholder_new_password: 'Введите новый пароль',
+  placeholder_repeat_password: 'Повторите пароль',
 
   // Доступность (a11y)
   a11y_copy_email: 'Скопировать e-mail',
@@ -79,6 +85,10 @@ export default {
   a11y_copy_password: 'Скопировать пароль',
   a11y_show_password: 'Показать пароль',
   a11y_hide_password: 'Скрыть пароль',
+  profile_photo_title: 'Фото профиля',
+  profile_photo_take: 'Сделать фото',
+  profile_photo_choose: 'Выбрать из галереи',
+  profile_photo_delete: 'Удалить фото',
 
   // Ошибки/подсказки
   errors_openMail: 'Невозможно открыть почтовый клиент',
@@ -91,8 +101,13 @@ export default {
   err_email: 'Укажите корректный e-mail',
   err_phone: 'Телефон должен быть в формате +7 9XX XXX-XX-XX',
   err_password_short: 'Пароль должен быть не короче 6 символов',
+  err_password_mismatch: 'Пароли не совпадают',
   err_successor_required: 'Выберите правопреемника',
   err_unsuspend_failed: 'Не удалось снять отстранение',
+  error_camera_denied: 'Нет доступа к камере',
+  error_library_denied: 'Нет доступа к медиатеке',
+  error_email_exists: 'Пользователь с таким e-mail уже существует',
+  error_profile_not_updated: 'Не удалось обновить профиль пользователя',
 
   // Диалоги/кнопки
   dlg_alert_title: 'Внимание',
@@ -103,6 +118,7 @@ export default {
   dlg_leave_cancel: 'Остаться',
   dlg_confirm_pwd_title: 'Обновить пароль пользователя?',
   dlg_confirm_pwd_msg: 'Вы изменяете пароль. Сохранить изменения?',
+  dlg_ok: 'ОК',
   dlg_unsuspend_title: 'Снять отстранение?',
   dlg_unsuspend_msg: 'Сотрудник снова сможет пользоваться приложением.',
   dlg_unsuspend_confirm: 'Снять отстранение',
@@ -117,6 +133,7 @@ export default {
   toast_deleted: 'Сотрудник удалён',
   toast_saving: 'Сохраняю…',
   toast_password_copied: 'Пароль скопирован',
+  toast_avatar_updated: 'Аватар обновлён',
 
   // Статусы
   status_active: 'Активен',
@@ -154,9 +171,14 @@ export default {
   picker_user_title: 'Выбор сотрудника',
   user_department_title: 'Выберите отдел',
   user_role_title: 'Выберите роль в компании',
+  user_changeStatus_title: 'Изменение статуса',
+  user_block_keepOrders: 'Оставить заявки как есть',
+  user_block_reassign: 'Переназначить заявки',
   error_no_access: 'Доступ только для администратора',
   user_delete_title: 'Удаление пользователя',
   user_delete_needSuccessor: 'Нужно придумать описание',
+  user_delete_confirm_title: 'Удалить сотрудника?',
+  user_delete_confirm_message: 'Все заявки будут переназначены выбранному сотруднику. Продолжить?',
 
   // Настройки приложения (app/app_settings/AppSettings)
   // Общие
@@ -278,6 +300,8 @@ export default {
   // Company Settings — generated keys
 
   'routes.company_settings': 'Настройки компании',
+  'routes.users/new': 'Новый сотрудник',
+  'routes.users/[id]/edit': 'Редактирование',
   settings_sections_company_title: 'Компания',
   settings_sections_management_title: 'Управление',
   settings_sections_departure_title: 'Параметры выезда',

@@ -1,13 +1,13 @@
 // components/layout/Screen.jsx
+import { useRoute } from '@react-navigation/native';
+import { useNavigation, usePathname } from 'expo-router';
 import React from 'react';
-import { View, Platform } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { Platform, View } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useI18nVersion } from '../../src/i18n';
 import { useTheme } from '../../theme/ThemeProvider';
 import AppHeader from '../navigation/AppHeader';
-import { useNavigation, usePathname } from 'expo-router';
-import { useI18nVersion } from '../../src/i18n';
-import { useRoute } from '@react-navigation/native';
 
 export default function Screen({ children, style, scroll = true }) {
   const { theme } = useTheme();
@@ -30,12 +30,11 @@ export default function Screen({ children, style, scroll = true }) {
     >
       {useScroll ? (
         <KeyboardAwareScrollView
-          contentContainerStyle={{ flexGrow: 1 }}
+          contentContainerStyle={{ flexGrow: 1, paddingBottom: insets.bottom + 20 }}
           keyboardShouldPersistTaps="handled"
-          enableOnAndroid
-          enableAutomaticScroll
-          keyboardOpeningTime={0}
-          extraScrollHeight={-(insets?.bottom || 0)}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          showsVerticalScrollIndicator={false}
+          bottomOffset={40}
         >
           {showHeader && <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />}
           <View style={{ flex: 1 }}>{children}</View>
