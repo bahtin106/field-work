@@ -9,7 +9,15 @@ import { useI18nVersion } from '../../src/i18n';
 import { useTheme } from '../../theme/ThemeProvider';
 import AppHeader from '../navigation/AppHeader';
 
-export default function Screen({ children, style, scroll = true }) {
+export default function Screen({
+  children,
+  style,
+  scroll = true,
+  scrollRef,
+  contentContainerStyle,
+  onScroll,
+  scrollEventThrottle,
+}) {
   const { theme } = useTheme();
   const nav = useNavigation();
   const route = useRoute();
@@ -30,11 +38,17 @@ export default function Screen({ children, style, scroll = true }) {
     >
       {useScroll ? (
         <KeyboardAwareScrollView
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: insets.bottom + 20 }}
+          ref={scrollRef}
+          contentContainerStyle={[
+            { flexGrow: 1, paddingBottom: insets.bottom + 20 },
+            contentContainerStyle,
+          ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           showsVerticalScrollIndicator={false}
           bottomOffset={40}
+          onScroll={onScroll}
+          scrollEventThrottle={scrollEventThrottle}
         >
           {showHeader && <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />}
           <View style={{ flex: 1 }}>{children}</View>

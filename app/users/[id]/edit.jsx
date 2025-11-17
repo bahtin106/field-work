@@ -17,7 +17,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
@@ -768,7 +767,7 @@ export default function EditUser() {
           scrollRef.current,
           (x, y, width, height) => {
             const screenHeight = Dimensions.get('window').height;
-            const keyboardHeight = kbInset > 0 ? kbInset : 300;
+            const keyboardHeight = 300;
             const headerHeight = theme?.components?.header?.height ?? 56;
             const safeAreaBottom = insets?.bottom ?? 0;
 
@@ -1429,331 +1428,321 @@ export default function EditUser() {
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
   return (
-    <Screen background="background" scroll={false}>
-      <View style={styles.container}>
-        <KeyboardAwareScrollView
-          ref={scrollRef}
-          style={{ flex: 1 }}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          bottomOffset={40}
-          onScroll={(e) => {
-            try {
-              scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-            } catch (_) {}
-          }}
-          scrollEventThrottle={16}
-          contentContainerStyle={[
-            styles.scroll,
-            {
-              paddingBottom:
-                (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
-                (insets?.bottom ?? 0),
-            },
-          ]}
-          showsVerticalScrollIndicator={false}
-        >
-          <View
-            style={[
-              styles.card,
-              styles.headerCard,
-              isSuspended ? styles.headerCardSuspended : null,
-            ]}
+    <Screen
+      background="background"
+      scroll={true}
+      scrollRef={scrollRef}
+      onScroll={(e) => {
+        try {
+          scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+        } catch (_) {}
+      }}
+      scrollEventThrottle={16}
+      contentContainerStyle={[
+        styles.scroll,
+        {
+          paddingBottom:
+            (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
+            (insets?.bottom ?? 0),
+        },
+      ]}
+    >
+      <View
+        style={[styles.card, styles.headerCard, isSuspended ? styles.headerCardSuspended : null]}
+      >
+        <View style={styles.headerRow}>
+          <Pressable
+            style={styles.avatar}
+            onPress={() => {
+              setAvatarKey((k) => k + 1);
+              setAvatarSheet(true);
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t('a11y_change_avatar')}
+            accessibilityHint={t('a11y_change_avatar_hint')}
           >
-            <View style={styles.headerRow}>
-              <Pressable
-                style={styles.avatar}
-                onPress={() => {
-                  setAvatarKey((k) => k + 1);
-                  setAvatarSheet(true);
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={t('a11y_change_avatar')}
-                accessibilityHint={t('a11y_change_avatar_hint')}
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+            ) : (
+              <Text style={styles.avatarText}>{initials || '•'}</Text>
+            )}
+            <View style={styles.avatarCamBadge}>
+              <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
+            </View>
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.nameTitle}>{headerName}</Text>
+            <View
+              style={{
+                flexDirection: 'row',
+                gap: theme.spacing.sm,
+                marginTop: theme.spacing.xs,
+                alignItems: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
+              <View
+                style={[
+                  styles.rolePillHeader,
+                  {
+                    borderColor: withAlpha(
+                      isSuspended ? theme.colors.danger : theme.colors.success,
+                      0.2,
+                    ),
+                    backgroundColor: withAlpha(
+                      isSuspended ? theme.colors.danger : theme.colors.success,
+                      0.13,
+                    ),
+                  },
+                ]}
               >
-                {avatarUrl ? (
-                  <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
-                ) : (
-                  <Text style={styles.avatarText}>{initials || '•'}</Text>
-                )}
-                <View style={styles.avatarCamBadge}>
-                  <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
-                </View>
-              </Pressable>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.nameTitle}>{headerName}</Text>
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    gap: theme.spacing.sm,
-                    marginTop: theme.spacing.xs,
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                  }}
+                <Text
+                  style={[
+                    styles.rolePillHeaderText,
+                    { color: isSuspended ? theme.colors.danger : theme.colors.success },
+                  ]}
                 >
+                  {isSuspended ? t('status_suspended') : t('status_active')}
+                </Text>
+              </View>
+              {role === ROLE.ADMIN ? (
+                <View
+                  style={[
+                    styles.rolePillHeader,
+                    {
+                      borderColor: withAlpha(roleColor('admin'), 0.2),
+                      backgroundColor: withAlpha(roleColor('admin'), 0.13),
+                    },
+                  ]}
+                >
+                  <Text style={[styles.rolePillHeaderText, { color: roleColor('admin') }]}>
+                    {t('role_admin')}
+                  </Text>
+                </View>
+              ) : (
+                !isSelfAdmin && (
                   <View
                     style={[
                       styles.rolePillHeader,
                       {
-                        borderColor: withAlpha(
-                          isSuspended ? theme.colors.danger : theme.colors.success,
-                          0.2,
-                        ),
-                        backgroundColor: withAlpha(
-                          isSuspended ? theme.colors.danger : theme.colors.success,
-                          0.13,
-                        ),
+                        borderColor: withAlpha(roleColor(role), 0.2),
+                        backgroundColor: withAlpha(roleColor(role), 0.13),
                       },
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.rolePillHeaderText,
-                        { color: isSuspended ? theme.colors.danger : theme.colors.success },
-                      ]}
-                    >
-                      {isSuspended ? t('status_suspended') : t('status_active')}
+                    <Text style={[styles.rolePillHeaderText, { color: roleColor(role) }]}>
+                      {t(`role_${role}`)}
                     </Text>
                   </View>
-                  {role === ROLE.ADMIN ? (
-                    <View
-                      style={[
-                        styles.rolePillHeader,
-                        {
-                          borderColor: withAlpha(roleColor('admin'), 0.2),
-                          backgroundColor: withAlpha(roleColor('admin'), 0.13),
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.rolePillHeaderText, { color: roleColor('admin') }]}>
-                        {t('role_admin')}
-                      </Text>
-                    </View>
-                  ) : (
-                    !isSelfAdmin && (
-                      <View
-                        style={[
-                          styles.rolePillHeader,
-                          {
-                            borderColor: withAlpha(roleColor(role), 0.2),
-                            backgroundColor: withAlpha(roleColor(role), 0.13),
-                          },
-                        ]}
-                      >
-                        <Text style={[styles.rolePillHeaderText, { color: roleColor(role) }]}>
-                          {t(`role_${role}`)}
-                        </Text>
-                      </View>
-                    )
-                  )}
-                </View>
-              </View>
+                )
+              )}
             </View>
           </View>
-          {err ? (
-            <View style={styles.errorCard}>
-              <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
-              <Text style={styles.errorText}>{err}</Text>
-            </View>
-          ) : null}
-          <Text style={styles.section}>{t('section_personal')}</Text>
+        </View>
+      </View>
+      {err ? (
+        <View style={styles.errorCard}>
+          <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
+          <Text style={styles.errorText}>{err}</Text>
+        </View>
+      ) : null}
+      <Text style={styles.section}>{t('section_personal')}</Text>
+      <Card>
+        <TextField
+          ref={firstNameRef}
+          label={t('label_first_name')}
+          placeholder={t('placeholder_first_name')}
+          placeholderTextColor={theme.colors.inputPlaceholder}
+          style={styles.field}
+          value={firstName}
+          onChangeText={setFirstName}
+          onFocus={() => {
+            setFocusFirst(true);
+            setTimeout(() => ensureVisible(firstNameRef), 150); // Увеличиваем задержку
+          }}
+          onBlur={() => setFocusFirst(false)}
+          forceValidation={submittedAttempt}
+          error={!firstName.trim() ? 'required' : undefined}
+        />
+        <TextField
+          ref={lastNameRef}
+          label={t('label_last_name')}
+          placeholder={t('placeholder_last_name')}
+          placeholderTextColor={theme.colors.inputPlaceholder}
+          style={styles.field}
+          value={lastName}
+          onChangeText={setLastName}
+          onFocus={() => {
+            setFocusLast(true);
+            setTimeout(() => ensureVisible(lastNameRef), 150); // Увеличиваем задержку
+          }}
+          onBlur={() => setFocusLast(false)}
+          forceValidation={submittedAttempt}
+          error={!lastName.trim() ? 'required' : undefined}
+        />
+        <TextField
+          ref={emailRef}
+          label={t('label_email')}
+          placeholder={t('placeholder_email')}
+          placeholderTextColor={theme.colors.inputPlaceholder}
+          style={styles.field}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={email}
+          onChangeText={setEmail}
+          onFocus={() => {
+            setFocusEmail(true);
+            setTimeout(() => ensureVisible(emailRef), 150); // Увеличиваем задержку
+          }}
+          onBlur={() => setFocusEmail(false)}
+          forceValidation={submittedAttempt}
+          error={!emailValid ? 'invalid' : undefined}
+        />
+        <PhoneInput
+          ref={phoneRef}
+          value={phone}
+          onChangeText={(val, meta) => {
+            setPhone(val);
+          }}
+          error={!isValidPhone(String(phone || '')) ? t('err_phone') : undefined}
+          style={styles.field}
+          onFocus={() => {
+            setFocusPhone(true);
+            setTimeout(() => ensureVisible(phoneRef), 150); // Увеличиваем задержку
+          }}
+          onBlur={() => setFocusPhone(false)}
+        />
+        <TextField
+          label={t('label_birthdate')}
+          value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
+          style={styles.field}
+          pressable
+          onPress={() => setDobModalVisible(true)}
+        />
+      </Card>
+
+      {meIsAdmin && (
+        <>
+          <Text style={styles.section}>{t('section_company_role')}</Text>
           <Card>
             <TextField
-              ref={firstNameRef}
-              label={t('label_first_name')}
-              placeholder={t('placeholder_first_name')}
-              placeholderTextColor={theme.colors.inputPlaceholder}
-              style={styles.field}
-              value={firstName}
-              onChangeText={setFirstName}
-              onFocus={() => {
-                setFocusFirst(true);
-                setTimeout(() => ensureVisible(firstNameRef), 150); // Увеличиваем задержку
-              }}
-              onBlur={() => setFocusFirst(false)}
-              forceValidation={submittedAttempt}
-              error={!firstName.trim() ? 'required' : undefined}
-            />
-            <TextField
-              ref={lastNameRef}
-              label={t('label_last_name')}
-              placeholder={t('placeholder_last_name')}
-              placeholderTextColor={theme.colors.inputPlaceholder}
-              style={styles.field}
-              value={lastName}
-              onChangeText={setLastName}
-              onFocus={() => {
-                setFocusLast(true);
-                setTimeout(() => ensureVisible(lastNameRef), 150); // Увеличиваем задержку
-              }}
-              onBlur={() => setFocusLast(false)}
-              forceValidation={submittedAttempt}
-              error={!lastName.trim() ? 'required' : undefined}
-            />
-            <TextField
-              ref={emailRef}
-              label={t('label_email')}
-              placeholder={t('placeholder_email')}
-              placeholderTextColor={theme.colors.inputPlaceholder}
-              style={styles.field}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              value={email}
-              onChangeText={setEmail}
-              onFocus={() => {
-                setFocusEmail(true);
-                setTimeout(() => ensureVisible(emailRef), 150); // Увеличиваем задержку
-              }}
-              onBlur={() => setFocusEmail(false)}
-              forceValidation={submittedAttempt}
-              error={!emailValid ? 'invalid' : undefined}
-            />
-            <PhoneInput
-              ref={phoneRef}
-              value={phone}
-              onChangeText={(val, meta) => {
-                setPhone(val);
-              }}
-              error={!isValidPhone(String(phone || '')) ? t('err_phone') : undefined}
-              style={styles.field}
-              onFocus={() => {
-                setFocusPhone(true);
-                setTimeout(() => ensureVisible(phoneRef), 150); // Увеличиваем задержку
-              }}
-              onBlur={() => setFocusPhone(false)}
-            />
-            <TextField
-              label={t('label_birthdate')}
-              value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
+              label={t('label_department')}
+              value={activeDeptName || t('placeholder_department')}
               style={styles.field}
               pressable
-              onPress={() => setDobModalVisible(true)}
+              onPress={() => setDeptModalVisible(true)}
             />
-          </Card>
 
-          {meIsAdmin && (
-            <>
-              <Text style={styles.section}>{t('section_company_role')}</Text>
-              <Card>
+            {!isSelfAdmin && (
+              <>
                 <TextField
-                  label={t('label_department')}
-                  value={activeDeptName || t('placeholder_department')}
+                  label={t('label_role')}
+                  value={ROLE_LABELS_LOCAL[role] || role}
                   style={styles.field}
                   pressable
-                  onPress={() => setDeptModalVisible(true)}
+                  onPress={() => setShowRoles(true)}
                 />
-
-                {!isSelfAdmin && (
-                  <>
-                    <TextField
-                      label={t('label_role')}
-                      value={ROLE_LABELS_LOCAL[role] || role}
-                      style={styles.field}
-                      pressable
-                      onPress={() => setShowRoles(true)}
-                    />
-                    <TextField
-                      label={t('label_status')}
-                      value={isSuspended ? t('status_suspended') : t('status_active')}
-                      style={styles.field}
-                      pressable
-                      onPress={() => (isSuspended ? onAskUnsuspend : onAskSuspend)()}
-                    />
-                  </>
-                )}
-              </Card>
-            </>
-          )}
-
-          <Text style={styles.section}>{t('section_password')}</Text>
-          <Card>
-            <View style={{ position: 'relative' }}>
-              <TextField
-                ref={pwdRef}
-                onFocus={() => {
-                  setFocusPwd(true);
-                  setTimeout(() => ensureVisible(pwdRef), 150); // Увеличиваем задержку
-                }}
-                onBlur={() => setFocusPwd(false)}
-                value={newPassword}
-                onChangeText={setNewPassword}
-                placeholder={t('placeholder_new_password')}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                error={undefined}
-                style={styles.field}
-                rightSlot={
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Pressable
-                      onPress={() => {
-                        pwdRef.current?.blur();
-                        setShowPassword((v) => !v);
-                      }}
-                      android_ripple={{
-                        color: theme?.colors?.border ?? '#00000020',
-                        borderless: false,
-                        radius: 24,
-                      }}
-                      accessibilityLabel={
-                        showPassword ? t('a11y_hide_password') : t('a11y_show_password')
-                      }
-                      accessibilityRole="button"
-                      hitSlop={{
-                        top: theme.spacing.sm,
-                        bottom: theme.spacing.sm,
-                        left: theme.spacing.sm,
-                        right: theme.spacing.sm,
-                      }}
-                      style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
-                    >
-                      <Feather
-                        name={showPassword ? 'eye-off' : 'eye'}
-                        size={ICON_MD}
-                        color={theme.colors.primary ?? theme.colors.text}
-                      />
-                    </Pressable>
-                    {!!newPassword && (
-                      <IconButton
-                        onPress={async () => {
-                          await Clipboard.setStringAsync(newPassword || '');
-                          toastSuccess(t('toast_password_copied'));
-                        }}
-                        accessibilityLabel={t('a11y_copy_password')}
-                        size={ICONBUTTON_TOUCH}
-                      >
-                        <Feather name="copy" size={ICON_SM} />
-                      </IconButton>
-                    )}
-                  </View>
-                }
-              />
-            </View>
+                <TextField
+                  label={t('label_status')}
+                  value={isSuspended ? t('status_suspended') : t('status_active')}
+                  style={styles.field}
+                  pressable
+                  onPress={() => (isSuspended ? onAskUnsuspend : onAskSuspend)()}
+                />
+              </>
+            )}
           </Card>
+        </>
+      )}
 
-          {meIsAdmin && meId !== userId && (
-            <UIButton
-              title={t('btn_delete')}
-              variant="destructive"
-              onPress={onAskDelete}
-              style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
-            />
-          )}
+      <Text style={styles.section}>{t('section_password')}</Text>
+      <Card>
+        <View style={{ position: 'relative' }}>
+          <TextField
+            ref={pwdRef}
+            onFocus={() => {
+              setFocusPwd(true);
+              setTimeout(() => ensureVisible(pwdRef), 150); // Увеличиваем задержку
+            }}
+            onBlur={() => setFocusPwd(false)}
+            value={newPassword}
+            onChangeText={setNewPassword}
+            placeholder={t('placeholder_new_password')}
+            secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+            error={undefined}
+            style={styles.field}
+            rightSlot={
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Pressable
+                  onPress={() => {
+                    pwdRef.current?.blur();
+                    setShowPassword((v) => !v);
+                  }}
+                  android_ripple={{
+                    color: theme?.colors?.border ?? '#00000020',
+                    borderless: false,
+                    radius: 24,
+                  }}
+                  accessibilityLabel={
+                    showPassword ? t('a11y_hide_password') : t('a11y_show_password')
+                  }
+                  accessibilityRole="button"
+                  hitSlop={{
+                    top: theme.spacing.sm,
+                    bottom: theme.spacing.sm,
+                    left: theme.spacing.sm,
+                    right: theme.spacing.sm,
+                  }}
+                  style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
+                >
+                  <Feather
+                    name={showPassword ? 'eye-off' : 'eye'}
+                    size={ICON_MD}
+                    color={theme.colors.primary ?? theme.colors.text}
+                  />
+                </Pressable>
+                {!!newPassword && (
+                  <IconButton
+                    onPress={async () => {
+                      await Clipboard.setStringAsync(newPassword || '');
+                      toastSuccess(t('toast_password_copied'));
+                    }}
+                    accessibilityLabel={t('a11y_copy_password')}
+                    size={ICONBUTTON_TOUCH}
+                  >
+                    <Feather name="copy" size={ICON_SM} />
+                  </IconButton>
+                )}
+              </View>
+            }
+          />
+        </View>
+      </Card>
 
-          {newPassword.length > 0 && !passwordValid ? (
-            <Text
-              style={{
-                marginTop: theme.spacing.xs,
-                color: theme.colors.danger,
-                fontSize: theme.typography.sizes.xs,
-              }}
-            >
-              {t('err_password_short')}
-            </Text>
-          ) : null}
-        </KeyboardAwareScrollView>
-      </View>
+      {meIsAdmin && meId !== userId && (
+        <UIButton
+          title={t('btn_delete')}
+          variant="destructive"
+          onPress={onAskDelete}
+          style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
+        />
+      )}
+
+      {newPassword.length > 0 && !passwordValid ? (
+        <Text
+          style={{
+            marginTop: theme.spacing.xs,
+            color: theme.colors.danger,
+            fontSize: theme.typography.sizes.xs,
+          }}
+        >
+          {t('err_password_short')}
+        </Text>
+      ) : null}
+
       {/* Exit without saving confirmation */}
       <ConfirmModal
         key={`cancel-${cancelKey}`}
