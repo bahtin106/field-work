@@ -14,9 +14,8 @@ import {
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import PhoneInput from '../../components/ui/PhoneInput';
@@ -78,7 +77,9 @@ function formatDateRU(date, withYear = true) {
   }
 }
 
-const createStyles = (theme) => {
+const createStyles = (theme, insets = {}) => {
+  const horizontalPadding = theme.spacing?.lg ?? 16;
+  const ACCOUNT_BTN_HEIGHT = (theme.components?.listItem?.minHeight ?? 60) + theme.spacing.sm; // унифицированная высота
   return StyleSheet.create({
     flex: { flex: 1 },
     container: {
@@ -86,7 +87,10 @@ const createStyles = (theme) => {
       paddingHorizontal: theme.spacing.xl,
     },
     content: {
-      paddingVertical: theme.spacing.xl,
+      paddingHorizontal: horizontalPadding,
+      // Минимизируем верхний паддинг — убираем ощущение пустого хедера
+      paddingTop: theme.spacing.xs,
+      paddingBottom: (insets.bottom || 0) + theme.spacing.lg,
       gap: theme.spacing.md,
     },
     title: {
@@ -94,17 +98,12 @@ const createStyles = (theme) => {
       color: theme.colors.text,
       fontSize: theme.typography.sizes.xxl,
       fontWeight: theme.typography.weight.bold,
-      marginBottom: theme.spacing.xs,
-    },
-    subtitle: {
-      textAlign: 'center',
-      color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.sm,
-      marginBottom: theme.spacing.lg,
+      // Уменьшаем нижний отступ
+      marginBottom: theme.spacing.sm,
     },
     avatarContainer: {
       alignItems: 'center',
-      marginBottom: theme.spacing.lg,
+      marginBottom: theme.spacing.md,
     },
     avatar: {
       width: 120,
@@ -141,10 +140,13 @@ const createStyles = (theme) => {
       fontWeight: theme.typography.weight.semibold,
       color: theme.colors.textSecondary,
       textTransform: 'uppercase',
-      marginBottom: theme.spacing.sm,
-      marginTop: theme.spacing.md,
+      // Ещё плотнее сверху
+      marginTop: theme.spacing.xs,
+      // Почти вплотную к полям
+      marginBottom: theme.spacing.xs,
+      marginLeft: theme.spacing[theme.components.sectionTitle.ml],
     },
-    field: { marginVertical: theme.spacing.xs },
+    field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
     separator: {
       height: 1,
       backgroundColor: theme.colors.border,
@@ -156,7 +158,10 @@ const createStyles = (theme) => {
     companyTypeButton: {
       flexDirection: 'row',
       alignItems: 'center',
-      padding: theme.spacing.md,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.md,
+      height: ACCOUNT_BTN_HEIGHT,
+      width: '100%',
       borderRadius: theme.radii.md,
       borderWidth: 2,
       borderColor: theme.colors.border,
@@ -169,6 +174,7 @@ const createStyles = (theme) => {
     companyTypeContent: {
       flex: 1,
       marginLeft: theme.spacing.sm,
+      justifyContent: 'center',
     },
     companyTypeTitle: {
       fontSize: theme.typography.sizes.md,
@@ -179,6 +185,8 @@ const createStyles = (theme) => {
     companyTypeDesc: {
       fontSize: theme.typography.sizes.sm,
       color: theme.colors.textSecondary,
+      // Фиксируем высоту блока по двум строкам посредством lineHeight * 2, упрощая выравнивание
+      lineHeight: theme.typography.sizes.sm * 1.3,
     },
     checkCircle: {
       width: 24,
@@ -201,7 +209,18 @@ const createStyles = (theme) => {
       fontWeight: theme.typography.weight.medium,
     },
     backButton: {
-      marginTop: theme.spacing.md,
+      marginTop: theme.spacing.sm,
+    },
+    backLink: {
+      marginTop: theme.spacing.sm,
+      alignSelf: 'center',
+      paddingVertical: theme.spacing.xs,
+      paddingHorizontal: theme.spacing.sm,
+    },
+    backLinkText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
     },
   });
 };
@@ -211,8 +230,8 @@ export default function RegisterScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const { success: toastSuccess, error: toastError } = useToast();
-  const styles = useMemo(() => createStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
+  const styles = useMemo(() => createStyles(theme, insets), [theme, insets]);
 
   // Form state
   const [firstName, setFirstName] = useState('');
@@ -568,7 +587,10 @@ export default function RegisterScreen() {
   ]);
 
   return (
-    <Screen background="background">
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      edges={['left', 'right', 'top', 'bottom']}
+    >
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -576,12 +598,11 @@ export default function RegisterScreen() {
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
             style={styles.flex}
-            contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 20 }]}
+            contentContainerStyle={styles.content}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
             <Text style={styles.title}>{t('register_title')}</Text>
-            <Text style={styles.subtitle}>{t('register_subtitle')}</Text>
 
             {/* Avatar */}
             <View style={styles.avatarContainer}>
@@ -773,7 +794,12 @@ export default function RegisterScreen() {
             )}
 
             {/* Password */}
-            <Text style={styles.sectionTitle}>{t('section_password')}</Text>
+            <Text style={styles.sectionTitle}>
+              {(t('section_password_template') || t('section_password')).replace(
+                '{n}',
+                AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH ?? 8,
+              )}
+            </Text>
             <Card paddedXOnly>
               <TextField
                 ref={pwdRef}
@@ -849,15 +875,15 @@ export default function RegisterScreen() {
               loading={submitting}
               style={{ marginTop: theme.spacing.lg }}
             />
-
-            <Button
-              title={t('register_back_to_login')}
-              variant="secondary"
-              size="lg"
+            <Pressable
               onPress={() => router.back()}
               disabled={submitting}
-              style={styles.backButton}
-            />
+              accessibilityRole="button"
+              accessibilityLabel={t('register_back_to_login')}
+              style={styles.backLink}
+            >
+              <Text style={styles.backLinkText}>{t('register_back_to_login')}</Text>
+            </Pressable>
 
             {/* Modals */}
             <SelectModal
@@ -917,6 +943,6 @@ export default function RegisterScreen() {
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
-    </Screen>
+    </SafeAreaView>
   );
 }
