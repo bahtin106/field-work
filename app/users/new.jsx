@@ -2,14 +2,22 @@ import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Image, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  BackHandler,
+  Image,
+  Keyboard,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
-import UIButton from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import ClearButton from '../../components/ui/ClearButton';
 import { listItemStyles } from '../../components/ui/listItemStyles';
@@ -389,6 +397,7 @@ export default function NewUserScreen() {
 
   const handleCreate = useCallback(async () => {
     if (submitting) return;
+    Keyboard.dismiss(); // Закрываем клавиатуру при создании
     setSubmittedAttempt(true);
     // Aggregate required field checks AFTER marking attempt
     const missingFirst = !firstName.trim();
@@ -522,6 +531,8 @@ export default function NewUserScreen() {
         options={{
           headerTitleAlign: 'left',
           title: t('routes.users/new'),
+          rightTextLabel: submitting ? t('toast_saving') : t('btn_create'),
+          onRightPress: handleCreate,
         }}
       />
       <KeyboardAwareScrollView
@@ -729,16 +740,6 @@ export default function NewUserScreen() {
             error={!passwordsMatch ? 'mismatch' : undefined}
           />
         </Card>
-        {/* action bar moved inside scroll so it scrolls with content */}
-        <View style={styles.actionBar}>
-          <UIButton
-            variant="primary"
-            onPress={handleCreate}
-            disabled={submitting}
-            style={styles.actionBtn}
-            title={submitting ? t('toast_saving') : t('btn_create_employee')}
-          />
-        </View>
 
         <ConfirmModal
           visible={cancelVisible}

@@ -607,6 +607,7 @@ export default function EditUser() {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [initialAvatarUrl, setInitialAvatarUrl] = useState(null); // Изначальный аватар из БД
   const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Временный аватар до сохранения
+  const avatarSaveTimestampRef = useRef(0); // Timestamp последнего сохранения аватара
   const [avatarSheet, setAvatarSheet] = useState(false);
   const [avatarKey, setAvatarKey] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -676,8 +677,9 @@ export default function EditUser() {
   const deleteAvatar = async () => {
     try {
       setErr('');
-      // Не удаляем из БД сразу, только убираем отображение
-      setPendingAvatarUrl(null);
+      // Устанавливаем пустую строку для явного указания на удаление
+      // null означает "нет изменений", '' означает "удалить"
+      setPendingAvatarUrl('');
       setAvatarUrl(null);
       toastInfo(t('toast_avatar_pending'));
     } catch (e) {
@@ -882,10 +884,11 @@ export default function EditUser() {
       setErr('');
       toastInfo(t('toast_saving'), { sticky: true });
 
-      // Сохраняем изменения аватара в БД
-      if (pendingAvatarUrl !== initialAvatarUrl) {
-        if (pendingAvatarUrl === null || pendingAvatarUrl === '') {
-          // Удаляем аватар
+      // Сохраняем изменения аватара в БД только если есть реальные изменения
+      // pendingAvatarUrl === null означает "нет изменений", а не "удалить"
+      if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
+        if (pendingAvatarUrl === '') {
+          // Пользователь явно удалил аватар (через deleteAvatar)
           const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
           const { data: list, error: listErr } = await supabase.storage
             .from(STORAGE.AVATARS)
@@ -907,9 +910,14 @@ export default function EditUser() {
             .eq('id', userId);
           if (updErr) throw updErr;
         }
-        // Обновляем изначальный аватар после успешного сохранения
-        setInitialAvatarUrl(pendingAvatarUrl);
+        // Обновляем все состояния аватара после успешного сохранения
+        // Если удалили (pendingAvatarUrl === ''), сохраняем null как финальное значение
+        const finalAvatarUrl = pendingAvatarUrl === '' ? null : pendingAvatarUrl;
+        setAvatarUrl(finalAvatarUrl);
+        setInitialAvatarUrl(finalAvatarUrl);
         setPendingAvatarUrl(null);
+        // Запоминаем время сохранения для защиты от race condition
+        avatarSaveTimestampRef.current = Date.now();
       }
 
       // Если админ редактирует другого пользователя — используем edge-функцию для всего
@@ -1170,11 +1178,23 @@ export default function EditUser() {
         setLastName(prof.last_name || '');
         setDepartmentId(prof?.department_id ?? null);
         if (typeof prof.avatar_url !== 'undefined') {
+          // Защита от race condition: не обновляем аватар в течение 3 секунд после сохранения
+          const timeSinceLastSave = Date.now() - (avatarSaveTimestampRef.current || 0);
+          const AVATAR_SAVE_PROTECTION_MS = 3000; // 3 секунды
+
+          if (timeSinceLastSave < AVATAR_SAVE_PROTECTION_MS) {
+            // Недавно сохранили аватар, пропускаем обновление из БД
+            return;
+          }
+
           // Сохраняем текущий pendingAvatarUrl чтобы не потерять его при Realtime обновлениях
           setPendingAvatarUrl((current) => {
-            // Если есть временный аватар (не сохранён в БД), сохраняем его
+            // Если есть временный аватар (загружен или помечен на удаление), сохраняем его
+            // current === '' означает "пользователь удалил, но не сохранил"
+            // current === "url" означает "пользователь загрузил, но не сохранил"
             if (current !== null) {
-              setAvatarUrl(current);
+              // Для отображения: если помечен на удаление (''), показываем null
+              setAvatarUrl(current === '' ? null : current);
               setInitialAvatarUrl(prof.avatar_url || null);
               return current;
             }
