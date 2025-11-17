@@ -39,7 +39,10 @@ export default function Screen({
     };
   }, [route, headerOptions]);
 
-  const edges = isAuthScreen ? ['top', 'left', 'right', 'bottom'] : ['left', 'right'];
+  // Используем стабильные edges для предотвращения изменений отступов при навигации
+  const edges = React.useMemo(() => {
+    return isAuthScreen ? ['top', 'left', 'right', 'bottom'] : ['left', 'right'];
+  }, [isAuthScreen]);
 
   return (
     <SafeAreaView

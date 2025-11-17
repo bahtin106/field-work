@@ -1,8 +1,8 @@
 // components/navigation/AppHeader.jsx
-import React, { useRef, useCallback, useMemo } from 'react';
-import { View, Text, Pressable, StyleSheet, Animated } from 'react-native';
-import { useNavigation, usePathname, router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { router, useNavigation, usePathname } from 'expo-router';
+import React, { useCallback, useMemo, useRef } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
@@ -104,7 +104,10 @@ export default function AppHeader({ options = {}, back, route }) {
     outputRange: [withAlpha(theme.colors.text, 0), withAlpha(theme.colors.text, 0.08)], // аккуратный кружок из палитры
   });
 
-  const headerHeight = theme?.components?.header?.height ?? theme?.sizes?.header ?? 56;
+  // Используем фиксированную высоту хедера для стабильности
+  const headerHeight = React.useMemo(() => {
+    return theme?.components?.header?.height ?? theme?.sizes?.header ?? 56;
+  }, [theme?.components?.header?.height, theme?.sizes?.header]);
 
   return (
     <View style={[s.container, { height: headerHeight }]}>

@@ -1,8 +1,8 @@
-// app/users/[id].jsx
+// app/users/[id]/index.jsx
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -14,18 +14,18 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
-import Screen from '../../components/layout/Screen';
-import Button from '../../components/ui/Button';
-import Card from '../../components/ui/Card';
-import IconButton from '../../components/ui/IconButton';
-import { listItemStyles } from '../../components/ui/listItemStyles';
-import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
-import { useToast } from '../../components/ui/ToastProvider';
-import { supabase } from '../../lib/supabase';
-import { getDict, useI18nVersion } from '../../src/i18n';
-import { useTranslation } from '../../src/i18n/useTranslation';
-import { useTheme } from '../../theme';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryWithCache } from '../../../components/hooks/useQueryWithCache';
+import AppHeader from '../../../components/navigation/AppHeader';
+import Card from '../../../components/ui/Card';
+import IconButton from '../../../components/ui/IconButton';
+import { listItemStyles } from '../../../components/ui/listItemStyles';
+import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
+import { useToast } from '../../../components/ui/ToastProvider';
+import { supabase } from '../../../lib/supabase';
+import { getDict, useI18nVersion } from '../../../src/i18n';
+import { useTranslation } from '../../../src/i18n/useTranslation';
+import { useTheme } from '../../../theme';
 
 function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -204,56 +204,11 @@ export default function UserView() {
 
   const roleLabel = ROLE_LABELS[role] || t('role_worker', 'role_worker');
 
-  useLayoutEffect(() => {
-    const routeTitle = t('routes.users/[id]', 'routes.users/[id]');
-    navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
-  }, [navigation, ver]);
-
-  // Also set title in params so AppHeader picks it
-  useEffect(() => {
-    const routeTitle = t('routes.users/[id]', 'routes.users/[id]');
-    navigation.setParams({ title: routeTitle });
-  }, [navigation, ver]);
-
-  // useQueryWithCache автоматически обновляет данные при focus через refetchOnFocus
-
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
+  const canEdit = meIsAdmin || (myUid && myUid === userId);
   const handleEditPress = React.useCallback(() => {
     router.push(`/users/${userId}/edit`);
   }, [router, userId]);
-
-  useLayoutEffect(() => {
-    const canEdit = meIsAdmin || (myUid && myUid === userId);
-    // Move action into header options (serializable params stay clean)
-    navigation.setOptions({
-      headerRight: canEdit
-        ? () => (
-            <Button
-              title={t('btn_edit', 'btn_edit')}
-              onPress={handleEditPress}
-              variant="secondary"
-              size="md"
-            />
-          )
-        : undefined,
-    });
-    // Also set serializable header button params for our custom AppHeader
-    if (canEdit) {
-      navigation.setParams({
-        headerButtonLabel: t('btn_edit', 'btn_edit'),
-        headerButtonTo: `/users/${userId}/edit`,
-        editLabel: null,
-      });
-    }
-    // Keep route params free of functions — we no longer pass onEditPress
-    if (!canEdit) {
-      navigation.setParams({
-        editLabel: null,
-        headerButtonLabel: null,
-        headerButtonTo: null,
-      });
-    }
-  }, [navigation, userId, meIsAdmin, myUid, handleEditPress]);
 
   // Copy helpers
   const onCopyEmail = React.useCallback(async () => {
@@ -316,25 +271,43 @@ export default function UserView() {
 
   if (loading) {
     return (
-      <Screen>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        edges={['left', 'right']}
+      >
         <View style={s.center}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      </Screen>
+      </SafeAreaView>
     );
   }
   if (err) {
     return (
-      <Screen>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        edges={['left', 'right']}
+      >
         <View style={{ padding: theme.spacing.lg }}>
           <Text style={{ color: theme.colors.danger }}>{err}</Text>
         </View>
-      </Screen>
+      </SafeAreaView>
     );
   }
 
   return (
-    <Screen>
+    <SafeAreaView
+      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      edges={['left', 'right']}
+    >
+      <AppHeader
+        back
+        options={{
+          headerTitleAlign: 'left',
+          title: t('routes.users/[id]', 'routes.users/[id]'),
+          rightTextLabel: canEdit ? t('btn_edit', 'btn_edit') : undefined,
+          onRightPress: canEdit ? handleEditPress : undefined,
+        }}
+      />
       <ScrollView
         contentContainerStyle={s.contentWrap}
         keyboardShouldPersistTaps="handled"
@@ -491,7 +464,7 @@ export default function UserView() {
           </View>
         </Card>
       </ScrollView>
-    </Screen>
+    </SafeAreaView>
   );
 }
 
