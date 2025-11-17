@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Screen from '../../../components/layout/Screen';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import ClearButton from '../../../components/ui/ClearButton';
 import IconButton from '../../../components/ui/IconButton';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import TextField from '../../../components/ui/TextField';
@@ -1658,6 +1659,14 @@ export default function EditUser() {
           style={styles.field}
           pressable
           onPress={() => setDobModalVisible(true)}
+          rightSlot={
+            birthdate ? (
+              <ClearButton
+                onPress={() => setBirthdate(null)}
+                accessibilityLabel={t('common_clear')}
+              />
+            ) : null
+          }
         />
       </Card>
 

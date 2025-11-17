@@ -30,6 +30,7 @@ const TextField = forwardRef(function TextField(
     pressable = false,
     onPress,
     forceValidation = false,
+    hideSeparator = false,
   },
   ref,
 ) {
@@ -113,7 +114,7 @@ const TextField = forwardRef(function TextField(
         </View>
         {rightSlot && <View style={s.slot}>{rightSlot}</View>}
       </View>
-      <View style={s.separator} />
+      {!hideSeparator && <View style={s.separator} />}
     </View>
   );
 });
