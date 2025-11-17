@@ -360,7 +360,7 @@ export default function NewUserScreen() {
     }
     const res = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
-      aspect: MEDIA_ASPECT,
+      aspect: [1, 1],
       quality: MEDIA_QUALITY,
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
     });
@@ -374,7 +374,7 @@ export default function NewUserScreen() {
     }
     const res = await ImagePicker.launchImageLibraryAsync({
       allowsEditing: true,
-      aspect: MEDIA_ASPECT,
+      aspect: [1, 1],
       quality: MEDIA_QUALITY,
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       selectionLimit: 1,

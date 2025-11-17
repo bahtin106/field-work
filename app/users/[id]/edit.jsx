@@ -4,7 +4,7 @@ import { AntDesign, Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -229,19 +229,28 @@ function isValidEmailStrict(raw) {
 }
 
 // === Lightweight wrappers for split modals (local to this screen) ===
-function AvatarSheetModal({ visible, onTakePhoto, onPickFromLibrary, onDeletePhoto, onClose }) {
+function AvatarSheetModal({
+  visible,
+  hasAvatar,
+  onTakePhoto,
+  onPickFromLibrary,
+  onDeletePhoto,
+  onClose,
+}) {
   const { t } = useTranslation();
 
   const items = [
     { id: 'camera', label: t('profile_photo_take') },
     { id: 'library', label: t('profile_photo_choose') },
-    { id: 'delete', label: t('profile_photo_delete') },
+    // Показываем опцию удаления только если фото есть
+    ...(hasAvatar ? [{ id: 'delete', label: t('profile_photo_delete') }] : []),
   ];
   return (
     <SelectModal
       visible={visible}
       title={t('profile_photo_title')}
       items={items}
+      searchable={false}
       onSelect={(it) => {
         try {
           if (it.id === 'camera') onTakePhoto?.();
@@ -606,6 +615,8 @@ export default function EditUser() {
   const [meLoaded, setMeLoaded] = useState(false);
   const canEdit = meIsAdmin || (meId && meId === userId);
   const [avatarUrl, setAvatarUrl] = useState(null);
+  const [initialAvatarUrl, setInitialAvatarUrl] = useState(null); // Изначальный аватар из БД
+  const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Временный аватар до сохранения
   const [avatarSheet, setAvatarSheet] = useState(false);
   const [avatarKey, setAvatarKey] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -660,13 +671,10 @@ export default function EditUser() {
       if (upErr) throw upErr;
       const { data: pub } = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
       const publicUrl = pub?.publicUrl || null;
-      const { error: updErr } = await supabase
-        .from(TABLES.profiles)
-        .update({ avatar_url: publicUrl })
-        .eq('id', userId);
-      if (updErr) throw updErr;
+      // Не обновляем БД сразу, только сохраняем временный URL
+      setPendingAvatarUrl(publicUrl);
       setAvatarUrl(publicUrl);
-      toastSuccess(t('toast_avatar_updated'));
+      toastInfo(t('toast_avatar_pending'));
     } catch (e) {
       setErr(e?.message || t('toast_generic_error'));
     }
@@ -674,22 +682,10 @@ export default function EditUser() {
   const deleteAvatar = async () => {
     try {
       setErr('');
-      toastInfo(t('toast_saving'), { sticky: true });
-      const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
-      const { data: list, error: listErr } = await supabase.storage
-        .from(STORAGE.AVATARS)
-        .list(prefix);
-      if (!listErr && Array.isArray(list) && list.length) {
-        const paths = list.map((f) => `${prefix}/${f.name}`);
-        await supabase.storage.from(STORAGE.AVATARS).remove(paths);
-      }
-      const { error: updErr } = await supabase
-        .from(TABLES.profiles)
-        .update({ avatar_url: null })
-        .eq('id', userId);
-      if (updErr) throw updErr;
+      // Не удаляем из БД сразу, только убираем отображение
+      setPendingAvatarUrl(null);
       setAvatarUrl(null);
-      toastSuccess(t('toast_success'));
+      toastInfo(t('toast_avatar_pending'));
     } catch (e) {
       setErr(e?.message || t('toast_generic_error'));
     }
@@ -702,7 +698,7 @@ export default function EditUser() {
     }
     const res = await ImagePicker.launchCameraAsync({
       allowsEditing: true,
-      aspect: MEDIA_ASPECT,
+      aspect: [1, 1],
       quality: MEDIA_QUALITY,
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
     });
@@ -718,7 +714,7 @@ export default function EditUser() {
     }
     const res = await ImagePicker.launchImageLibraryAsync({
       allowsEditing: true,
-      aspect: MEDIA_ASPECT,
+      aspect: [1, 1],
       quality: MEDIA_QUALITY,
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       selectionLimit: 1,
@@ -862,6 +858,9 @@ export default function EditUser() {
   };
   const confirmCancel = () => {
     setCancelVisible(false);
+    // Восстанавливаем изначальный аватар при отмене
+    setAvatarUrl(initialAvatarUrl);
+    setPendingAvatarUrl(null);
     allowLeaveRef.current = true;
     if (navigation && typeof navigation.goBack === 'function') {
       navigation.goBack();
@@ -888,6 +887,36 @@ export default function EditUser() {
       setSaving(true);
       setErr('');
       toastInfo(t('toast_saving'), { sticky: true });
+
+      // Сохраняем изменения аватара в БД
+      if (pendingAvatarUrl !== initialAvatarUrl) {
+        if (pendingAvatarUrl === null || pendingAvatarUrl === '') {
+          // Удаляем аватар
+          const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
+          const { data: list, error: listErr } = await supabase.storage
+            .from(STORAGE.AVATARS)
+            .list(prefix);
+          if (!listErr && Array.isArray(list) && list.length) {
+            const paths = list.map((f) => `${prefix}/${f.name}`);
+            await supabase.storage.from(STORAGE.AVATARS).remove(paths);
+          }
+          const { error: updErr } = await supabase
+            .from(TABLES.profiles)
+            .update({ avatar_url: null })
+            .eq('id', userId);
+          if (updErr) throw updErr;
+        } else {
+          // Обновляем аватар в БД
+          const { error: updErr } = await supabase
+            .from(TABLES.profiles)
+            .update({ avatar_url: pendingAvatarUrl })
+            .eq('id', userId);
+          if (updErr) throw updErr;
+        }
+        // Обновляем изначальный аватар после успешного сохранения
+        setInitialAvatarUrl(pendingAvatarUrl);
+        setPendingAvatarUrl(null);
+      }
 
       // Если админ редактирует другого пользователя — используем edge-функцию для всего
       if (meIsAdmin && meId && userId && meId !== userId && APP_FUNCTIONS.UPDATE_USER) {
@@ -1053,45 +1082,27 @@ export default function EditUser() {
     }
   }, []);
 
-  useLayoutEffect(() => {
-    const routeTitle = t('routes.users/[id]/edit');
-    navigation.setOptions({ title: routeTitle, headerTitle: routeTitle });
-  }, [navigation, ver, t]);
-
+  // Регистрируем action в глобальном реестре
+  const actionId = `save-edit-${userId}`;
   useEffect(() => {
-    const routeTitle = t('routes.users/[id]/edit');
-    navigation.setParams({ title: routeTitle });
-  }, [navigation, ver, t]);
-
-  useLayoutEffect(() => {
     if (!globalThis.__headerActions) globalThis.__headerActions = {};
-    const actionId = `save-edit-${userId}`;
     globalThis.__headerActions[actionId] = handleSavePress;
-
-    navigation.setOptions({
-      headerRight: () => (
-        <UIButton
-          title={t('header_save')}
-          onPress={handleSavePress}
-          variant="secondary"
-          size="md"
-        />
-      ),
-    });
-
     return () => {
       try {
         delete globalThis.__headerActions[actionId];
       } catch (_) {}
     };
-  }, [navigation, handleSavePress, t, userId]);
+  }, [actionId, handleSavePress]);
 
-  useEffect(() => {
-    navigation.setParams({
+  // Готовим headerOptions для прямой передачи в Screen
+  const headerOptions = useMemo(
+    () => ({
+      title: t('routes.users/[id]/edit'),
       rightTextLabel: t('header_save'),
-      onRightPressId: `save-edit-${userId}`,
-    });
-  }, [navigation, t, userId]);
+      onRightPressId: actionId,
+    }),
+    [t, actionId],
+  );
 
   const onPressCancel = React.useCallback(() => {
     if (cancelRef.current) return cancelRef.current();
@@ -1188,7 +1199,11 @@ export default function EditUser() {
         setLastName(prof.last_name || '');
         setHeaderName(formatName(prof));
         setDepartmentId(prof?.department_id ?? null);
-        if (typeof prof.avatar_url !== 'undefined') setAvatarUrl(prof.avatar_url || null);
+        if (typeof prof.avatar_url !== 'undefined') {
+          setAvatarUrl(prof.avatar_url || null);
+          setInitialAvatarUrl(prof.avatar_url || null);
+          setPendingAvatarUrl(null);
+        }
         if (typeof prof.phone !== 'undefined')
           setPhone(String(prof.phone || '').replace(/\D/g, ''));
         setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
@@ -1472,6 +1487,7 @@ export default function EditUser() {
       background="background"
       scroll={true}
       scrollRef={scrollRef}
+      headerOptions={headerOptions}
       onScroll={(e) => {
         try {
           scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
@@ -1888,7 +1904,7 @@ export default function EditUser() {
       <AvatarSheetModal
         key={`avatar-${avatarKey}`}
         visible={avatarSheet}
-        avatarUrl={avatarUrl}
+        hasAvatar={!!avatarUrl}
         onTakePhoto={pickFromCamera}
         onPickFromLibrary={pickFromLibrary}
         onDeletePhoto={deleteAvatar}

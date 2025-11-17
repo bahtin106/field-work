@@ -134,6 +134,7 @@ export default {
   toast_saving: 'Сохраняю…',
   toast_password_copied: 'Пароль скопирован',
   toast_avatar_updated: 'Аватар обновлён',
+  toast_avatar_pending: 'Изменения аватара будут сохранены при нажатии "Сохранить"',
 
   // Статусы
   status_active: 'Активен',

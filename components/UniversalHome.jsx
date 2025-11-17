@@ -3,15 +3,7 @@ import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import logger from '../lib/logger';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
@@ -128,9 +120,9 @@ export default function UniversalHome({ role }) {
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_url || null;
 
-  // Роль: сначала проверяем roleFromPerms (более свежая), потом profile, потом prop
-  // При холодном запуске roleFromPerms может быть undefined, поэтому используем profile.role или prop
-  const resolvedRole = roleFromPerms || currentProfile?.role || role;
+  // Роль: приоритет отдаем prop (из _layout кэша), потом profile, потом roleFromPerms
+  // Это гарантирует что UI не зависнет в ожидании permissions
+  const resolvedRole = role || currentProfile?.role || roleFromPerms || 'worker';
 
   // Админ без ожидания пермишенов
   const isAdmin = resolvedRole === 'admin';
@@ -146,8 +138,9 @@ export default function UniversalHome({ role }) {
   }, [canViewAll, scope]);
 
   // ====== Счётчики ======
-  // Гарантируем, что счётчики загружаются только когда у нас есть валидная сессия, профиль И роль
-  const readyForCounts = !!uid && !profileLoading && !!resolvedRole;
+  // Гарантируем, что счётчики загружаются когда есть uid И роль определена
+  // profileLoading НЕ блокирует счетчики - они могут загружаться параллельно
+  const readyForCounts = !!uid && !!resolvedRole;
 
   const { data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts', 'my', uid],
@@ -240,14 +233,8 @@ export default function UniversalHome({ role }) {
 
   const counts = scope === 'all' && canViewAll ? allCounts : myCounts;
 
-  // Не показываем контент до загрузки профиля (избегаем пустых экранов при холодном старте)
-  if (uid && profileLoading && !currentProfile) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
-    );
-  }
+  // Убрали блокирующий спиннер - показываем UI сразу, даже если профиль загружается
+  // Плейсхолдеры в тексте покажут "—" пока данные грузятся
 
   return (
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>

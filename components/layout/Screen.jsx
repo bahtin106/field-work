@@ -17,6 +17,7 @@ export default function Screen({
   contentContainerStyle,
   onScroll,
   scrollEventThrottle,
+  headerOptions, // Новый prop для прямой передачи опций header
 }) {
   const { theme } = useTheme();
   const nav = useNavigation();
@@ -28,6 +29,14 @@ export default function Screen({
   const useScroll = scroll !== false && !isAuthScreen;
   const title = route?.name ?? '';
   useI18nVersion(); // subscribe to i18n changes to re-render screen
+
+  // Объединяем route params с переданными headerOptions (приоритет у headerOptions)
+  const mergedRoute = headerOptions
+    ? {
+        ...route,
+        params: { ...route?.params, ...headerOptions },
+      }
+    : route;
 
   const edges = isAuthScreen ? ['top', 'left', 'right', 'bottom'] : ['left', 'right'];
 
@@ -50,12 +59,16 @@ export default function Screen({
           onScroll={onScroll}
           scrollEventThrottle={scrollEventThrottle}
         >
-          {showHeader && <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />}
+          {showHeader && (
+            <AppHeader options={{ title }} back={nav.canGoBack()} route={mergedRoute} />
+          )}
           <View style={{ flex: 1 }}>{children}</View>
         </KeyboardAwareScrollView>
       ) : (
         <>
-          {showHeader && <AppHeader options={{ title }} back={nav.canGoBack()} route={route} />}
+          {showHeader && (
+            <AppHeader options={{ title }} back={nav.canGoBack()} route={mergedRoute} />
+          )}
           <View style={{ flex: 1 }}>{children}</View>
         </>
       )}
