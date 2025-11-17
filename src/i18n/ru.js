@@ -96,11 +96,15 @@ export default {
   errors_loadUser: 'Не удалось загрузить пользователя',
   errors_invalid_credentials: 'Неверный e-mail или пароль',
   errors_auth_error: 'Ошибка авторизации',
+  err_required_fields: 'Укажите необходимые данные',
   err_first_name: 'Укажите имя',
   err_last_name: 'Укажите фамилию',
   err_email: 'Укажите корректный e-mail',
+  err_email_invalid_format: 'Неверный формат e-mail',
   err_phone: 'Телефон должен быть в формате +7 9XX XXX-XX-XX',
-  err_password_short: 'Пароль должен быть не короче 6 символов',
+  err_password_short: 'Пароль должен быть не короче 8 символов',
+  err_password_invalid_chars:
+    'Пароль содержит недопустимые символы. Используйте только латинские буквы, цифры и спецсимволы',
   err_password_mismatch: 'Пароли не совпадают',
   err_successor_required: 'Выберите правопреемника',
   err_unsuspend_failed: 'Не удалось снять отстранение',
@@ -108,6 +112,11 @@ export default {
   error_library_denied: 'Нет доступа к медиатеке',
   error_email_exists: 'Пользователь с таким e-mail уже существует',
   error_profile_not_updated: 'Не удалось обновить профиль пользователя',
+  error_password_too_short: 'Пароль должен быть не короче 8 символов',
+  error_invalid_role: 'Неверная роль пользователя',
+  error_auth_failed: 'Не удалось создать пользователя',
+  warn_checking_email: 'Проверяем доступность email...',
+  warn_email_already_taken: 'Этот e-mail уже зарегистрирован',
 
   // Диалоги/кнопки
   dlg_alert_title: 'Внимание',

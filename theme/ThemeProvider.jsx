@@ -57,6 +57,7 @@ function buildTheme(mode) {
     overlayNavBar: base.colors.overlayNavBar ?? base.colors.overlay ?? 'rgba(0,0,0,0.35)',
     success: base.colors.success,
     warning: base.colors.warning,
+    info: base.colors.info ?? (effective === 'dark' ? '#64B5F6' : '#2196F3'),
     danger: base.colors.danger,
     worker: base.colors.worker ?? '#5856D6',
     bg: base.colors.background ?? base.colors.bg,

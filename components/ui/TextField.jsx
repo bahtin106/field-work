@@ -31,6 +31,8 @@ const TextField = forwardRef(function TextField(
     onPress,
     forceValidation = false,
     hideSeparator = false,
+    filterInput, // Функция для фильтрации ввода (например, для паролей)
+    onInvalidInput, // Callback когда пользователь вводит недопустимый символ
   },
   ref,
 ) {
@@ -54,10 +56,24 @@ const TextField = forwardRef(function TextField(
   }));
 
   const handleChangeText = React.useCallback(
-    (t) => {
-      onChangeText?.(t);
+    (text) => {
+      let processedText = text;
+
+      // Если указана функция фильтрации (например, для паролей)
+      if (filterInput) {
+        const filtered = filterInput(text);
+
+        // Если текст изменился после фильтрации - были недопустимые символы
+        if (filtered !== text && onInvalidInput) {
+          onInvalidInput(text, filtered);
+        }
+
+        processedText = filtered;
+      }
+
+      onChangeText?.(processedText);
     },
-    [onChangeText],
+    [onChangeText, filterInput, onInvalidInput],
   );
 
   // Правильное вычисление secureTextEntry: скрываем пароль ТОЛЬКО если это поле пароля И showPassword=false
