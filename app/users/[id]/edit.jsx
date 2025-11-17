@@ -887,40 +887,77 @@ export default function EditUser() {
       setSaving(true);
       setErr('');
       toastInfo(t('toast_saving'), { sticky: true });
-      const payload = {
-        first_name: firstName.trim(),
-        last_name: lastName.trim(),
-        phone: String(phone || '').replace(/\D/g, '') || null,
-        birthdate: birthdate ? __ymdLocal(birthdate) : null,
-        department_id: meIsAdmin ? departmentId || null : undefined,
-        role: meIsAdmin && !(meId && meId === userId) ? role : undefined,
-      };
-      Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
-      const { data: updRows, error: updProfileErr } = await supabase
-        .from(TABLES.profiles)
-        .update(payload)
-        .eq('id', userId)
-        .select('id');
-      if (updProfileErr) throw updProfileErr;
-      if (!Array.isArray(updRows) || updRows.length === 0) {
-        throw new Error(t('error_profile_not_updated'));
-      }
-      try {
+
+      // Если админ редактирует другого пользователя — используем edge-функцию для всего
+      if (meIsAdmin && meId && userId && meId !== userId && APP_FUNCTIONS.UPDATE_USER) {
         const { data: sess } = await supabase.auth.getSession();
         const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
         const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
-        if (
-          APP_FUNCTIONS.UPDATE_USER &&
-          FN_URL &&
-          FN_URL.includes('/functions/v1/') &&
-          FN_URL.startsWith('http')
-        ) {
+
+        const body = {
+          user_id: userId,
+          email: String(email || '').trim() || undefined,
+          password: newPassword && newPassword.length ? newPassword : undefined,
+          role,
+          profile: {
+            first_name: firstName.trim() || null,
+            last_name: lastName.trim() || null,
+            phone: String(phone || '').replace(/\D/g, '') || null,
+            birthdate: birthdate ? __ymdLocal(birthdate) : null,
+            department_id: departmentId || null,
+          },
+        };
+
+        const res = await fetch(FN_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+        const result = await res.json();
+
+        if (!res.ok || result?.ok === false) {
+          const msg = result?.message || result?.error || result?.details || null;
+          throw new Error(msg || t('error_profile_not_updated'));
+        }
+      } else {
+        // Пользователь редактирует себя — прямое обновление профиля
+        const payload = {
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          phone: String(phone || '').replace(/\D/g, '') || null,
+          birthdate: birthdate ? __ymdLocal(birthdate) : null,
+          department_id: meIsAdmin ? departmentId || null : undefined,
+        };
+        Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+
+        const { data: updRows, error: updProfileErr } = await supabase
+          .from(TABLES.profiles)
+          .update(payload)
+          .eq('id', userId)
+          .select('id');
+
+        if (updProfileErr) throw updProfileErr;
+        if (!Array.isArray(updRows) || updRows.length === 0) {
+          throw new Error(t('error_profile_not_updated'));
+        }
+
+        // Обновление email/password через edge-функцию (если заполнены)
+        if ((String(email || '').trim() || newPassword) && APP_FUNCTIONS.UPDATE_USER) {
+          const { data: sess } = await supabase.auth.getSession();
+          const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+          const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
+
           const body = {
             user_id: userId,
             email: String(email || '').trim() || undefined,
             password: newPassword && newPassword.length ? newPassword : undefined,
-            role: meIsAdmin ? role : undefined,
           };
+
           const res = await fetch(FN_URL, {
             method: 'POST',
             headers: {
@@ -930,14 +967,16 @@ export default function EditUser() {
             },
             body: JSON.stringify(body),
           });
-          if (!res.ok) {
-            try {
-              const j = await res.json();
-              console.warn('Edge update_user failed:', j);
-            } catch (e) {}
+
+          const result = await res.json();
+
+          if (!res.ok || result?.ok === false) {
+            const msg = result?.message || result?.error || result?.details || null;
+            throw new Error(msg || t('error_auth_update_failed'));
           }
         }
-      } catch (e) {}
+      }
+
       setNewPassword('');
       setConfirmPwdVisible(false);
       setPendingSave(false);

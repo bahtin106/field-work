@@ -12,7 +12,17 @@ type ReqBody = {
   user_id: string;
   email?: string | null;
   new_password?: string | null;
+  password?: string | null;
   role?: string | null;
+  profile?: {
+    first_name?: string | null;
+    last_name?: string | null;
+    phone?: string | null;
+    birthdate?: string | null;
+    department_id?: string | null;
+  } | null;
+  is_suspended?: boolean | null;
+  suspended_at?: string | null;
 };
 
 const cors = {
@@ -45,18 +55,41 @@ serve(async (req: Request) => {
       global: { headers: { 'x-application': 'edge-update-user' } },
     });
 
-    const { user_id, email, new_password, role } = body;
+    const { user_id, email, new_password, password, role, profile, is_suspended, suspended_at } =
+      body;
 
-    // 1) Роль — в public.profiles (если передана)
+    // 1) Обновление полей профиля (если переданы)
+    const profilePatch: any = {};
+    if (profile && typeof profile === 'object') {
+      if ('first_name' in profile) profilePatch.first_name = profile.first_name;
+      if ('last_name' in profile) profilePatch.last_name = profile.last_name;
+      if ('phone' in profile) profilePatch.phone = profile.phone;
+      if ('birthdate' in profile) profilePatch.birthdate = profile.birthdate;
+      if ('department_id' in profile) profilePatch.department_id = profile.department_id;
+    }
     if (typeof role === 'string' && role.length > 0) {
-      const { error: profErr } = await admin.from('profiles').update({ role }).eq('id', user_id);
+      profilePatch.role = role;
+    }
+    if (typeof is_suspended === 'boolean') {
+      profilePatch.is_suspended = is_suspended;
+    }
+    if (suspended_at !== undefined) {
+      profilePatch.suspended_at = suspended_at;
+    }
+
+    if (Object.keys(profilePatch).length > 0) {
+      const { error: profErr } = await admin
+        .from('profiles')
+        .update(profilePatch)
+        .eq('id', user_id);
       if (profErr) throw new Error('Profiles update failed: ' + profErr.message);
     }
 
     // 2) Email/пароль — только в auth (если переданы)
     const authPatch: { email?: string; password?: string } = {};
     if (email && email.trim().length > 0) authPatch.email = email.trim();
-    if (new_password && new_password.length >= 6) authPatch.password = new_password;
+    const pwd = password || new_password;
+    if (pwd && pwd.length >= 6) authPatch.password = pwd;
 
     if (Object.keys(authPatch).length > 0) {
       const { error: authErr } = await admin.auth.admin.updateUserById(user_id, authPatch);

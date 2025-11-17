@@ -390,17 +390,24 @@ export default {
   users_lastLogin_never: 'никогда',
   common_at: 'в',
 
-  // Relative time format for last seen
+  // Relative time format for last seen - правильное склонение числительных
   users_relativeTime_now: 'сейчас',
-  users_relativeTime_1min: '1 минуту назад',
-  users_relativeTime_mins: 'минут назад', // "5 минут назад"
-  users_relativeTime_mins_2_4: 'минуты назад', // "2 минуты назад"
-  users_relativeTime_1hour: '1 час назад',
-  users_relativeTime_hours: 'часов назад', // "5 часов назад"
-  users_relativeTime_hours_2_4: 'часа назад', // "2 часа назад"
-  users_relativeTime_1day: '1 день назад',
-  users_relativeTime_days: 'дней назад', // "5 дней назад"
-  users_relativeTime_days_2_4: 'дня назад', // "2 дня назад"
+  users_relativeTime_ago: 'назад',
+
+  // Минуты: 1 минуту, 2 минуты, 5 минут, 22 минуты
+  users_relativeTime_min_1: 'минуту', // 1, 21, 31, 41...
+  users_relativeTime_min_2_4: 'минуты', // 2-4, 22-24, 32-34...
+  users_relativeTime_min_5: 'минут', // 0, 5-20, 25-30...
+
+  // Часы: 1 час, 2 часа, 5 часов, 22 часа
+  users_relativeTime_hour_1: 'час', // 1, 21, 31...
+  users_relativeTime_hour_2_4: 'часа', // 2-4, 22-24...
+  users_relativeTime_hour_5: 'часов', // 0, 5-20, 25-30...
+
+  // Дни: 1 день, 2 дня, 5 дней
+  users_relativeTime_day_1: 'день', // 1, 21, 31...
+  users_relativeTime_day_2_4: 'дня', // 2-4, 22-24...
+  users_relativeTime_day_5: 'дней', // 0, 5-20, 25-30...
 
   // Месяцы (для DateTimeModal и других компонентов)
   // months_short — короткие названия (индекс 0 = январь)

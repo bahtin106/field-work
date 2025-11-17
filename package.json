@@ -57,7 +57,7 @@
     "react-native-image-pan-zoom": "^2.1.12",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-aware-scroll-view": "^0.9.5",
-    "react-native-keyboard-controller": "^1.19.5",
+    "react-native-keyboard-controller": "^1.18.5",
     "react-native-mask-text": "^0.15.0",
     "react-native-modal": "^14.0.0-rc.1",
     "react-native-modal-datetime-picker": "^18.0.0",

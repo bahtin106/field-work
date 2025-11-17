@@ -1,7 +1,7 @@
 // app/users/[id].jsx
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React, { useEffect, useLayoutEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -71,6 +71,7 @@ export default function UserView() {
     data: userData,
     isLoading: loading,
     error: loadError,
+    refresh,
   } = useQueryWithCache({
     queryKey: `user:${userId}`,
     queryFn: async () => {
@@ -156,6 +157,23 @@ export default function UserView() {
     supabaseClient: supabase,
     enabled: !!userId,
   });
+
+  // Гарантируем обновление при возврате на экран (после редактирования)
+  // Используем ref для refresh чтобы избежать бесконечной перезагрузки
+  const refreshRef = React.useRef(refresh);
+  React.useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (userId && refreshRef.current) {
+        try {
+          refreshRef.current();
+        } catch {}
+      }
+    }, [userId]),
+  );
 
   // Sync кешированных данных в state
   useEffect(() => {
