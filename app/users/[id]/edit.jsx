@@ -623,7 +623,7 @@ export default function EditUser() {
   const [saving, setSaving] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [headerName, setHeaderName] = useState(t('placeholder_no_name'));
+  const [headerName, setHeaderName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [birthdate, setBirthdate] = useState(null);
@@ -1097,11 +1097,11 @@ export default function EditUser() {
   // Готовим headerOptions для прямой передачи в Screen
   const headerOptions = useMemo(
     () => ({
-      title: t('routes.users/[id]/edit'),
+      title: headerName,
       rightTextLabel: t('header_save'),
       onRightPressId: actionId,
     }),
-    [t, actionId],
+    [headerName, t, actionId],
   );
 
   const onPressCancel = React.useCallback(() => {

@@ -27,7 +27,6 @@ export default function Screen({
   const showHeader = !isAuthScreen;
   const insets = useSafeAreaInsets();
   const useScroll = scroll !== false && !isAuthScreen;
-  const title = route?.name ?? '';
   useI18nVersion(); // subscribe to i18n changes to re-render screen
 
   // Объединяем route params с переданными headerOptions (приоритет у headerOptions)
@@ -61,16 +60,12 @@ export default function Screen({
           onScroll={onScroll}
           scrollEventThrottle={scrollEventThrottle}
         >
-          {showHeader && (
-            <AppHeader options={{ title }} back={nav.canGoBack()} route={mergedRoute} />
-          )}
+          {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} />}
           <View style={{ flex: 1 }}>{children}</View>
         </KeyboardAwareScrollView>
       ) : (
         <>
-          {showHeader && (
-            <AppHeader options={{ title }} back={nav.canGoBack()} route={mergedRoute} />
-          )}
+          {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} />}
           <View style={{ flex: 1 }}>{children}</View>
         </>
       )}
