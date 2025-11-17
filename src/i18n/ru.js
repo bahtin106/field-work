@@ -386,7 +386,7 @@ export default {
   common_select: 'Выбрать',
   errors_loadUsers: 'Не удалось загрузить список сотрудников',
   users_online: 'В сети',
-  users_lastSeen_prefix: 'Был в сети:',
+  users_lastSeen_prefix: 'Был(а) в сети:',
   users_lastLogin_never: 'никогда',
   common_at: 'в',
 

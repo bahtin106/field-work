@@ -571,6 +571,7 @@ export default function UsersIndex() {
                   placeholder={t('users_search_placeholder')}
                   returnKeyType="search"
                   onSubmitEditing={Keyboard.dismiss}
+                  hideSeparator={true}
                   rightSlot={
                     !!q ? (
                       <Pressable
