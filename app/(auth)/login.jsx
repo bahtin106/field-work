@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef } from 'react';
 import {
   Keyboard,
@@ -70,12 +71,26 @@ const createStyles = (theme) => {
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.medium,
     },
+    registerButton: {
+      marginTop: theme.spacing.md,
+    },
+    registerText: {
+      textAlign: 'center',
+      marginTop: theme.spacing.lg,
+      fontSize: theme.typography.sizes.sm,
+      color: theme.colors.textSecondary,
+    },
+    registerLink: {
+      color: theme.colors.primary,
+      fontWeight: theme.typography.weight.semibold,
+    },
   });
 };
 
 function LoginScreenContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const router = useRouter();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const interactive = theme.components?.interactive || {
     hitSlop: { top: 8, bottom: 8, left: 8, right: 8 },
@@ -166,6 +181,16 @@ function LoginScreenContent() {
                 disabled={!canSubmit}
                 loading={loading}
               />
+
+              <Text style={styles.registerText}>
+                {t('register_back_to_login').split('?')[0]}?{' '}
+                <Text
+                  style={styles.registerLink}
+                  onPress={() => !loading && router.push('/(auth)/register')}
+                >
+                  {t('register_link')}
+                </Text>
+              </Text>
             </View>
           </View>
         </TouchableWithoutFeedback>
