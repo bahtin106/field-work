@@ -147,6 +147,9 @@ const styles = (t, isError, focused) => {
   const ml = Number(t.spacing?.[insetKey] ?? 0) || 0;
   const mr = Number(t.spacing?.[insetKey] ?? 0) || 0;
 
+  // Используем labelSpacing из токенов или fallback
+  const labelSpacing = t.components?.input?.labelSpacing ?? t.spacing?.xs ?? 4;
+
   return StyleSheet.create({
     wrap: {
       position: 'relative',
@@ -160,8 +163,8 @@ const styles = (t, isError, focused) => {
     },
     topLabel: {
       fontWeight: '500',
-      marginBottom: 1,
-      marginTop: 1,
+      marginBottom: labelSpacing,
+      marginTop: 0,
       color: isError ? t.colors.danger : t.colors.textSecondary,
       fontSize: t.typography.sizes.sm,
       marginLeft: ml,
