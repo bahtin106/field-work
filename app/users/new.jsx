@@ -10,6 +10,7 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import Card from '../../components/ui/Card';
+import ConsentCheckbox from '../../components/ui/ConsentCheckbox';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import PhoneInput from '../../components/ui/PhoneInput';
@@ -130,6 +131,9 @@ export default function NewUserScreen() {
   const [err, setErr] = useState('');
   const [cancelVisible, setCancelVisible] = useState(false);
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
+
+  // Согласие с политикой
+  const [consentChecked, setConsentChecked] = useState(false);
 
   // Validation states
   const [validationErrors, setValidationErrors] = useState([]);
@@ -528,14 +532,25 @@ export default function NewUserScreen() {
     const emailTaken = emailCheckStatus === 'taken';
 
     // Если email уже занят - показываем ошибку сразу
+
     if (emailTaken) {
       toastError(t('error_email_exists'));
       return;
     }
 
-    // Проверяем все обязательные поля
-    if (missingFirst || missingLast || invalidEmail || invalidPwd || mismatchPwd) {
+    // Проверяем все обязательные поля и согласие
+    if (
+      missingFirst ||
+      missingLast ||
+      invalidEmail ||
+      invalidPwd ||
+      mismatchPwd ||
+      !consentChecked
+    ) {
       // Прокручиваем к началу чтобы показать ошибки
+      if (!consentChecked) {
+        toastError('Для регистрации необходимо согласие с политикой конфиденциальности');
+      }
       scrollRef.current?.scrollTo({ y: 0, animated: true });
       return;
     }
@@ -866,6 +881,8 @@ export default function NewUserScreen() {
             onPress={() => setShowRoles(true)}
           />
         </Card>
+
+        <ConsentCheckbox checked={consentChecked} onChange={setConsentChecked} />
 
         <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
         <Card paddedXOnly>
