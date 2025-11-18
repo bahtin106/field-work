@@ -102,18 +102,41 @@ export default function DateTimeModal({
   };
   const years = React.useMemo(() => {
     const y = new Date().getFullYear();
-    return range(1900, y + 10);
+    return range(1900, y);
   }, []);
   const [dYearIdx, setDYearIdx] = React.useState(0);
   const [dMonthIdx, setDMonthIdx] = React.useState(0);
   const [dDayIdx, setDDayIdx] = React.useState(0);
 
   const [withYear, setWithYear] = React.useState(omitYearDefault);
-  const days = React.useMemo(
-    () =>
-      range(1, daysInMonth(dMonthIdx, withYear ? years[dYearIdx] || baseDate.getFullYear() : null)),
-    [dMonthIdx, dYearIdx, years, withYear],
-  );
+
+  // Получаем текущие дату для ограничения выбора
+  const today = React.useMemo(() => new Date(), []);
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+  const currentDay = today.getDate();
+
+  // Ограничиваем месяцы, если выбран текущий год
+  const availableMonths = React.useMemo(() => {
+    const selectedYear = years[dYearIdx];
+    if (withYear && selectedYear === currentYear) {
+      // Если выбран текущий год, доступны только месяцы до текущего включительно
+      return range(0, currentMonth);
+    }
+    return range(0, 11);
+  }, [dYearIdx, years, withYear, currentYear, currentMonth]);
+
+  const days = React.useMemo(() => {
+    const selectedYear = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
+    const maxDay = daysInMonth(dMonthIdx, selectedYear);
+
+    // Если выбран текущий год и текущий месяц, ограничиваем дни
+    if (withYear && years[dYearIdx] === currentYear && dMonthIdx === currentMonth) {
+      return range(1, Math.min(maxDay, currentDay));
+    }
+
+    return range(1, maxDay);
+  }, [dMonthIdx, dYearIdx, years, withYear, currentYear, currentMonth, currentDay]);
 
   const minutesData = React.useMemo(() => range(0, 59).filter((m) => m % step === 0), [step]);
   const [tHourIdx, setTHourIdx] = React.useState(0);
@@ -124,11 +147,30 @@ export default function DateTimeModal({
   React.useEffect(() => {
     if (!visible) return;
     const y = years.indexOf(baseDate.getFullYear());
-    setDYearIdx(y >= 0 ? y : 0);
+    const yearIdx = y >= 0 ? y : 0;
+    setDYearIdx(yearIdx);
     setWithYear(allowOmitYear ? omitYearDefault : true);
-    setDMonthIdx(baseDate.getMonth());
-    const maxD = daysInMonth(baseDate.getMonth(), baseDate.getFullYear());
-    setDDayIdx(Math.max(0, Math.min(baseDate.getDate() - 1, maxD - 1)));
+
+    const selectedYear = years[yearIdx];
+    const initMonth = baseDate.getMonth();
+    const initDay = baseDate.getDate();
+
+    // Если это текущий год, проверяем ограничения
+    if ((allowOmitYear ? omitYearDefault : true) && selectedYear === currentYear) {
+      // Ограничиваем месяц
+      const month = Math.min(initMonth, currentMonth);
+      setDMonthIdx(month);
+
+      // Ограничиваем день
+      const maxD = daysInMonth(month, selectedYear);
+      const maxAllowedDay = month === currentMonth ? currentDay : maxD;
+      setDDayIdx(Math.max(0, Math.min(initDay - 1, maxAllowedDay - 1)));
+    } else {
+      setDMonthIdx(initMonth);
+      const maxD = daysInMonth(initMonth, baseDate.getFullYear());
+      setDDayIdx(Math.max(0, Math.min(initDay - 1, maxD - 1)));
+    }
+
     setTHourIdx(baseDate.getHours());
     const mi = Math.round(baseDate.getMinutes() / step);
     const minuteVal = Math.min(59, mi * step);
@@ -273,15 +315,7 @@ export default function DateTimeModal({
                 }}
               >
                 <Wheel
-                  data={Array.from(
-                    {
-                      length: daysInMonth(
-                        dMonthIdx,
-                        withYear ? years[dYearIdx] || baseDate.getFullYear() : null,
-                      ),
-                    },
-                    (_, i) => String(i + 1),
-                  )}
+                  data={days.map(String)}
                   activeColor={theme.colors.primary}
                   inactiveColor={theme.colors.textSecondary}
                   index={dDayIdx}
@@ -289,21 +323,21 @@ export default function DateTimeModal({
                   width={W3}
                 />
                 <Wheel
-                  data={MONTHS_ABBR}
+                  data={availableMonths.map((m) => MONTHS_ABBR[m])}
                   activeColor={theme.colors.primary}
                   inactiveColor={theme.colors.textSecondary}
-                  index={dMonthIdx}
+                  index={availableMonths.indexOf(dMonthIdx)}
                   onIndexChange={(i) => {
-                    setDMonthIdx(i);
-                    setDDayIdx((d) =>
-                      Math.min(
-                        d,
-                        daysInMonth(
-                          i,
-                          withYear ? years[dYearIdx] || baseDate.getFullYear() : null,
-                        ) - 1,
-                      ),
-                    );
+                    const newMonth = availableMonths[i];
+                    setDMonthIdx(newMonth);
+                    // Корректируем день, если он выходит за пределы месяца
+                    setDDayIdx((d) => {
+                      const maxDayInNewMonth = daysInMonth(
+                        newMonth,
+                        withYear ? years[dYearIdx] || baseDate.getFullYear() : null,
+                      );
+                      return Math.min(d, maxDayInNewMonth - 1);
+                    });
                   }}
                   width={W3}
                 />
@@ -312,7 +346,21 @@ export default function DateTimeModal({
                   activeColor={theme.colors.primary}
                   inactiveColor={theme.colors.textSecondary}
                   index={dYearIdx}
-                  onIndexChange={setDYearIdx}
+                  onIndexChange={(i) => {
+                    setDYearIdx(i);
+                    // При смене года корректируем месяц и день
+                    const newYear = years[i];
+                    if (withYear && newYear === currentYear) {
+                      // Если выбран текущий год, проверяем месяц
+                      if (dMonthIdx > currentMonth) {
+                        setDMonthIdx(currentMonth);
+                      }
+                      // Проверяем день
+                      if (dMonthIdx === currentMonth && dDayIdx >= currentDay) {
+                        setDDayIdx(currentDay - 1);
+                      }
+                    }
+                  }}
                   width={W3}
                   enabled={withYear}
                 />
