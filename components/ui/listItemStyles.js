@@ -53,8 +53,8 @@ export const listItemStyles = (t) =>
       color: t.colors.text,
       fontSize: t.typography.sizes.sm,
       fontWeight: t.typography.weight?.bold || '700',
-      marginLeft: t.spacing.lg, // выравниваем с контентом
-      marginTop: t.spacing.md,
-      marginBottom: t.spacing.xs,
+      marginLeft: t.spacing?.[t.components?.sectionTitle?.ml] ?? t.spacing.lg,
+      marginTop: 0,
+      marginBottom: 0,
     },
   });

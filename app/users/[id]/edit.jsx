@@ -25,8 +25,10 @@ import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
 import IconButton from '../../../components/ui/IconButton';
 import PhoneInput from '../../../components/ui/PhoneInput';
+import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { listItemStyles } from '../../../components/ui/listItemStyles';
 import {
   AlertModal,
   ConfirmModal,
@@ -424,6 +426,7 @@ export default function EditUser() {
     theme.components?.radio?.dot ??
     Math.max(theme.components?.radio?.dotMin ?? 6, Math.round(RADIO_SIZE / 2 - 3));
   const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
+  const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const styles = React.useMemo(() => {
     const horizontalPadding = theme.spacing?.lg ?? 16; // Фиксированное значение как fallback
     return StyleSheet.create({
@@ -498,13 +501,7 @@ export default function EditUser() {
         borderWidth: theme.components.card.borderWidth,
         marginBottom: theme.spacing.md,
       },
-      section: {
-        marginTop: theme.spacing.xs,
-        marginBottom: theme.spacing.sm,
-        marginLeft: theme.spacing[theme.components.sectionTitle.ml],
-        fontWeight: '600',
-        color: theme.colors.text,
-      },
+      // section: используем base.sectionTitle из listItemStyles
       label: {
         fontWeight: '500',
         marginBottom: theme.spacing.xs,
@@ -1625,7 +1622,9 @@ export default function EditUser() {
             <Text style={styles.errorText}>{err}</Text>
           </View>
         ) : null}
-        <Text style={styles.section}>{t('section_personal')}</Text>
+        <SectionHeader topSpacing="xs" bottomSpacing="xs">
+          {t('section_personal')}
+        </SectionHeader>
         <Card>
           <TextField
             ref={firstNameRef}
@@ -1711,7 +1710,7 @@ export default function EditUser() {
 
         {meIsAdmin && (
           <>
-            <Text style={styles.section}>{t('section_company_role')}</Text>
+            <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
             <Card>
               <TextField
                 label={t('label_department')}
@@ -1743,7 +1742,7 @@ export default function EditUser() {
           </>
         )}
 
-        <Text style={styles.section}>{t('section_password')}</Text>
+        <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
         <Card>
           <View style={{ position: 'relative' }}>
             <TextField

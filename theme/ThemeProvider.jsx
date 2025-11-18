@@ -145,8 +145,16 @@ function buildTheme(mode) {
     },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
-      mb: base.components?.sectionTitle?.mb ?? 'sm', // spacing key
-      ml: base.components?.sectionTitle?.ml ?? 'sm', // spacing key
+      // Левый отступ заголовка секции
+      ml: base.components?.sectionTitle?.ml ?? 'lg',
+      // Фолбэки для совместимости (если где-то читают mt/mb)
+      mt: base.components?.sectionTitle?.mt ?? 'xs',
+      mb: base.components?.sectionTitle?.mb ?? 'xs',
+    },
+    // Единые отступы вокруг заголовков секций (обертка SectionHeader)
+    sectionHeader: {
+      top: base.components?.sectionHeader?.top ?? 'md',
+      bottom: base.components?.sectionHeader?.bottom ?? 'xs',
     },
     row: {
       minHeight: base.components?.row?.minHeight ?? base.components?.listItem?.height ?? 48,

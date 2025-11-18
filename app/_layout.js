@@ -331,6 +331,8 @@ function RootLayoutInner() {
         if (!mounted) return;
 
         if (event === 'SIGNED_OUT') {
+          logger?.warn?.('🚪 SIGNED_OUT event received');
+
           // Очищаем все данные
           try {
             await queryClient.clear();
@@ -347,8 +349,8 @@ function RootLayoutInner() {
             setSessionReady(true);
             setAuthChecking(false);
             if (!appReady) setAppReady(true);
-            // Увеличиваем ключ для полного перемонтирования приложения
-            setAppKey((prev) => prev + 1);
+            // НЕ перемонтируем приложение - это ломает навигацию
+            // setAppKey((prev) => prev + 1); - УБРАНО
           }
 
           // Инкрементируем session epoch — экраны сбросят свои bootstrap состояния
@@ -356,7 +358,9 @@ function RootLayoutInner() {
             bumpSessionEpoch();
           } catch (e) {}
 
-          // Навигация произойдет через useEffect
+          // Навигация после logout - через простой replace
+          // НЕ делаем ничего здесь - пусть useEffect ниже обработает
+
           return;
         }
 
@@ -486,7 +490,9 @@ function RootLayoutInner() {
                 logger?.warn?.('Failed to reset appReadyState:', e?.message || e);
               }
 
-              // Навигация произойдет через useEffect редирект-хук
+              // Навигация после входа - через простой replace
+              // НЕ делаем ничего здесь - пусть useEffect ниже обработает
+
               logger?.warn?.('✅ SIGNED_IN processing complete');
             } catch (error) {
               logger?.warn?.('❌ Error in SIGNED_IN handler:', error?.message || error);
@@ -554,17 +560,35 @@ function RootLayoutInner() {
     if (ready) hideSplashNow();
   }, [ready, hideSplashNow]);
 
-  // Навигация на основе состояния авторизации
+  // Навигация при изменении состояния авторизации
+  // КРИТИЧНО: Срабатывает ТОЛЬКО при изменении isLoggedIn, НЕ зависит от segments
+  useEffect(() => {
+    if (!ready) return;
+
+    // Простая логика: изменился isLoggedIn -> навигируем
+    if (!isLoggedIn) {
+      logger?.warn?.('🔀 Auth state changed: navigating to login');
+      router.replace('/(auth)/login');
+    } else {
+      logger?.warn?.('🔀 Auth state changed: navigating to home');
+      router.replace('/orders');
+    }
+  }, [isLoggedIn, ready, router]);
+
+  // Дополнительная защита на основе segments (fallback)
   useEffect(() => {
     if (!ready) return;
 
     const inAuthGroup = segments[0] === '(auth)';
 
+    // Защита: если не залогинен и не на auth странице - редирект
     if (!isLoggedIn && !inAuthGroup) {
-      // Не залогинен и не на auth → редирект
+      logger?.debug?.('Guard: Not logged in and not on auth page');
       router.replace('/(auth)/login');
-    } else if (isLoggedIn && inAuthGroup) {
-      // Залогинен и на auth → редирект
+    }
+    // Защита: если залогинен и на auth странице - редирект на главную
+    else if (isLoggedIn && inAuthGroup) {
+      logger?.debug?.('Guard: Logged in but on auth page');
       router.replace('/orders');
     }
   }, [isLoggedIn, ready, segments, router]);

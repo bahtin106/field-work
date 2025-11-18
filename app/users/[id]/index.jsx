@@ -14,13 +14,14 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueryWithCache } from '../../../components/hooks/useQueryWithCache';
 import AppHeader from '../../../components/navigation/AppHeader';
 import Card from '../../../components/ui/Card';
 import IconButton from '../../../components/ui/IconButton';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
+import SectionHeader from '../../../components/ui/SectionHeader';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { supabase } from '../../../lib/supabase';
 import { getDict, useI18nVersion } from '../../../src/i18n';
@@ -46,6 +47,7 @@ export default function UserView() {
   const { theme } = useTheme();
   const s = React.useMemo(() => styles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
   const toast = useToast();
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
@@ -309,7 +311,14 @@ export default function UserView() {
         }}
       />
       <ScrollView
-        contentContainerStyle={s.contentWrap}
+        contentContainerStyle={[
+          s.contentWrap,
+          {
+            paddingBottom:
+              (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
+              (insets?.bottom ?? 0),
+          },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -324,7 +333,7 @@ export default function UserView() {
           </View>
         </View>
 
-        <Text style={base.sectionTitle}>{t('section_personal', 'section_personal')}</Text>
+        <SectionHeader>{t('section_personal', 'section_personal')}</SectionHeader>
         <Card paddedXOnly>
           <View style={base.row}>
             <Text style={base.label}>{t('view_label_name', 'view_label_name')}</Text>
@@ -436,7 +445,7 @@ export default function UserView() {
           </View>
         </Card>
 
-        <Text style={base.sectionTitle}>{t('section_company_role', 'section_company_role')}</Text>
+        <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader>
         <Card paddedXOnly>
           <View style={base.row}>
             <Text style={base.label}>{t('label_department', 'label_department')}</Text>
@@ -473,10 +482,9 @@ const styles = (t) => {
   const BORDER = Number(t?.components?.avatar?.border ?? StyleSheet.hairlineWidth);
   const PRIMARY = t?.colors?.primary ?? '#007AFF';
   const SPACING_LG = Number(t?.spacing?.lg ?? 16);
-  const SPACING_XL = Number(t?.spacing?.xl ?? 24);
   return StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    contentWrap: { padding: SPACING_LG, paddingBottom: SPACING_XL },
+    contentWrap: { paddingHorizontal: SPACING_LG },
     avatarXl: {
       width: AV,
       height: AV,
@@ -488,7 +496,7 @@ const styles = (t) => {
       borderColor: withAlpha(PRIMARY, 0.24),
       overflow: 'hidden',
     },
-    avatarContainer: { alignItems: 'center', marginBottom: SPACING_XL },
+    avatarContainer: { alignItems: 'center', marginBottom: t.spacing?.xl ?? 24 },
     avatarTextXl: {
       fontSize: Math.round(AV * 0.33),
       color: PRIMARY,
