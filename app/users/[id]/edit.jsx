@@ -509,7 +509,10 @@ export default function EditUser() {
         color: theme.colors.textSecondary,
       },
 
-      field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
+      field: {
+        marginHorizontal: 0,
+        marginVertical: theme.components?.input?.fieldSpacing ?? theme.spacing.sm,
+      },
       errorCard: {
         backgroundColor: withAlpha(theme.colors.danger, 0.12),
         borderColor: theme.colors.danger,

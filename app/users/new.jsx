@@ -188,7 +188,10 @@ export default function NewUserScreen() {
           fontWeight: '600',
           color: theme.colors.text,
         },
-        field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
+        field: {
+          marginHorizontal: 0,
+          marginVertical: theme.components?.input?.fieldSpacing ?? theme.spacing.sm,
+        },
         actionBar: {
           flexDirection: 'row',
           gap: theme.spacing.md,

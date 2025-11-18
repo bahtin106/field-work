@@ -45,7 +45,7 @@ const light = {
     bannerBg: '#E6F0FF',
   },
   radii: { xs: 6, sm: 8, md: 10, lg: 12, xl: 16, pill: 999 },
-  spacing: { xs: 6, sm: 10, md: 14, lg: 18, xl: 24, xxl: 32 },
+  spacing: { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32 },
   typography: {
     fontFamily: 'System',
     sizes: { xs: 12, sm: 14, md: 16, lg: 20, xl: 24, xxl: 28, display: 34 },
@@ -74,14 +74,20 @@ const light = {
   },
   icons: { sm: 18, md: 22, lg: 28 },
   components: {
-    card: { borderWidth: 1 },
+    card: {
+      borderWidth: 1,
+      padX: 'lg', // 16px - стандарт iOS/Material
+      padY: 'md', // 12px - компактный вертикальный паддинг
+    },
     media: { aspect: [1, 1], quality: 0.85 },
 
     // Default row heights
     input: {
-      height: 56,
+      height: 48, // Оптимальная высота для touch (44-52px стандарт)
+      labelSpacing: 6, // Отступ между лейблом и полем
+      fieldSpacing: 8, // Вертикальный отступ между полями внутри карточек
       separator: {
-        insetX: 'md',
+        insetX: 'md', // 12px - компактный инсет
         height: 1,
         alpha: 0.18,
         errorAlpha: 0.28,
@@ -89,6 +95,9 @@ const light = {
     },
     listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 },
     activityIndicator: { size: 'large' },
+    scrollView: {
+      paddingBottom: 24, // Стандартный нижний отступ для скроллов
+    },
 
     // Interactive elements (buttons, pressables, toggles)
     interactive: {
