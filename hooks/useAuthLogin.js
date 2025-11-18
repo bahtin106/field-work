@@ -9,7 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isValidEmail, isValidPassword } from '../lib/authValidation';
+import { isValidEmail, isValidPasswordForLogin } from '../lib/authValidation';
 import { logger } from '../lib/logger';
 import { supabase } from '../lib/supabase';
 import {
@@ -37,7 +37,7 @@ export function useAuthLogin() {
 
   // Валидация (мемоизированная для зависимостей)
   const emailValid = isValidEmail(email);
-  const passwordValid = isValidPassword(password);
+  const passwordValid = isValidPasswordForLogin(password); // Для входа - без минимальной длины
   const canSubmit = emailValid && passwordValid && !loading;
 
   // Очищаем ошибку при изменении входных данных
@@ -65,22 +65,11 @@ export function useAuthLogin() {
     setError('');
 
     try {
-      logger.debug('Attempting login', { email: emailTrim });
-
       // Выполняем запрос на авторизацию
       const { data, error: authErr } = await supabase.auth.signInWithPassword({
         email: emailTrim,
         password: passwordValue,
-      });
-
-      logger.debug('Login response received', {
-        hasData: !!data,
-        hasError: !!authErr,
-        dataSession: !!data?.session,
-        dataUser: !!data?.user,
-      });
-
-      // Проверяем, смонтирован ли компонент и не был ли отменён запрос
+      }); // Проверяем, смонтирован ли компонент и не был ли отменён запрос
       if (!isMountedRef.current || abortControllerRef.current?.signal.aborted) {
         logger.debug('Login request abandoned (unmounted or aborted)');
         return;

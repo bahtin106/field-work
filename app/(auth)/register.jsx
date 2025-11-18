@@ -1,9 +1,7 @@
 import { Feather } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -18,11 +16,10 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
-import PhoneInput from '../../components/ui/PhoneInput';
+import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import ValidationAlert from '../../components/ui/ValidationAlert';
-import { DateTimeModal, SelectModal } from '../../components/ui/modals';
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
@@ -30,7 +27,6 @@ import {
   isValidEmail,
   isValidPassword,
 } from '../../lib/authValidation';
-import { AVATAR, STORAGE } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
@@ -88,10 +84,10 @@ const createStyles = (theme, insets = {}) => {
     },
     content: {
       paddingHorizontal: horizontalPadding,
-      // Минимизируем верхний паддинг — убираем ощущение пустого хедера
-      paddingTop: theme.spacing.xs,
-      paddingBottom: (insets.bottom || 0) + theme.spacing.lg,
-      gap: theme.spacing.md,
+      // Убираем верхний паддинг полностью
+      paddingTop: 0,
+      paddingBottom:
+        (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) + (insets.bottom || 0),
     },
     title: {
       textAlign: 'center',
@@ -101,52 +97,11 @@ const createStyles = (theme, insets = {}) => {
       // Уменьшаем нижний отступ
       marginBottom: theme.spacing.sm,
     },
-    avatarContainer: {
-      alignItems: 'center',
-      marginBottom: theme.spacing.md,
-    },
-    avatar: {
-      width: 120,
-      height: 120,
-      borderRadius: 60,
-      backgroundColor: withAlpha(theme.colors.primary, 0.12),
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: withAlpha(theme.colors.primary, 0.24),
-      overflow: 'hidden',
-    },
-    avatarImg: { width: '100%', height: '100%' },
-    avatarCamBadge: {
-      position: 'absolute',
-      right: -2,
-      bottom: -2,
-      backgroundColor: theme.colors.primary,
-      borderRadius: theme.radii.md,
-      padding: theme.spacing.xs,
-      borderWidth: 2,
-      borderColor: theme.colors.background,
-    },
-    avatarText: {
-      color: theme.colors.primary,
-      fontWeight: '700',
-      fontSize: theme.typography.sizes.xxl,
-    },
     section: {
       marginBottom: theme.spacing.sm,
     },
-    sectionTitle: {
-      fontSize: theme.typography.sizes.sm,
-      fontWeight: theme.typography.weight.semibold,
-      color: theme.colors.textSecondary,
-      textTransform: 'uppercase',
-      // Ещё плотнее сверху
-      marginTop: theme.spacing.xs,
-      // Почти вплотную к полям
-      marginBottom: theme.spacing.xs,
-      marginLeft: theme.spacing[theme.components.sectionTitle.ml],
-    },
     field: { marginHorizontal: 0, marginVertical: theme.spacing.sm },
+    firstField: { marginTop: theme.spacing.xs / 2 },
     separator: {
       height: 1,
       backgroundColor: theme.colors.border,
@@ -232,14 +187,10 @@ export default function RegisterScreen() {
   const { success: toastSuccess, error: toastError } = useToast();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(theme, insets), [theme, insets]);
-
   // Form state
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [birthdate, setBirthdate] = useState(null);
-  const [withYear, setWithYear] = useState(true);
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -248,12 +199,7 @@ export default function RegisterScreen() {
   const [accountType, setAccountType] = useState(null); // 'solo' | 'company'
   const [companyName, setCompanyName] = useState('');
 
-  // Avatar state
-  const [avatarUrl, setAvatarUrl] = useState(null);
-  const [avatarSheet, setAvatarSheet] = useState(false);
-
   // UI state
-  const [dobModalVisible, setDobModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
@@ -266,7 +212,6 @@ export default function RegisterScreen() {
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
   const pwdRef = useRef(null);
-  const phoneRef = useRef(null);
 
   const emailValid = useMemo(() => isValidEmail(email), [email]);
   const passwordValid = useMemo(() => isValidPassword(password), [password]);
@@ -395,72 +340,6 @@ export default function RegisterScreen() {
     }, 3000);
   }, []);
 
-  const ensureCameraPerms = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    return status === 'granted';
-  };
-
-  const ensureLibraryPerms = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    return status === 'granted';
-  };
-
-  const pickFromCamera = async () => {
-    const ok = await ensureCameraPerms();
-    if (!ok) {
-      setError(t('error_camera_denied'));
-      return;
-    }
-    const res = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    });
-    if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
-  };
-
-  const pickFromLibrary = async () => {
-    const ok = await ensureLibraryPerms();
-    if (!ok) {
-      setError(t('error_library_denied'));
-      return;
-    }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.85,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      selectionLimit: 1,
-    });
-    if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
-  };
-
-  const uploadAvatar = async (userId, uri) => {
-    try {
-      const resp = await fetch(uri);
-      const ab = await resp.arrayBuffer();
-      const fileData = new Uint8Array(ab);
-      const filename = `${AVATAR.FILENAME_PREFIX}${Date.now()}.jpg`;
-      const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
-      const { error: upErr } = await supabase.storage
-        .from(STORAGE.AVATARS)
-        .upload(path, fileData, { contentType: AVATAR.MIME, upsert: false });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
-      const publicUrl = pub?.publicUrl || null;
-      const { error: updErr } = await supabase
-        .from('profiles')
-        .update({ avatar_url: publicUrl })
-        .eq('id', userId);
-      if (updErr) throw updErr;
-      return publicUrl;
-    } catch (e) {
-      console.error('Avatar upload error:', e);
-      return null;
-    }
-  };
-
   const handleRegister = useCallback(async () => {
     if (submitting) return;
     Keyboard.dismiss();
@@ -494,7 +373,6 @@ export default function RegisterScreen() {
 
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
-      const phoneNormalized = String(phone || '').replace(/\D/g, '') || null;
 
       // Call register edge function
       const url = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/register_user`;
@@ -510,9 +388,6 @@ export default function RegisterScreen() {
           first_name: firstName.trim(),
           last_name: lastName.trim(),
           full_name: fullName,
-          phone: phoneNormalized,
-          birthdate:
-            birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null,
           account_type: accountType,
           company_name: accountType === 'company' ? companyName.trim() : null,
         }),
@@ -538,11 +413,6 @@ export default function RegisterScreen() {
 
       const userId = body?.user_id;
       if (!userId) throw new Error(t('error_profile_not_updated'));
-
-      // Upload avatar if chosen
-      if (avatarUrl && avatarUrl.startsWith('file')) {
-        await uploadAvatar(userId, avatarUrl);
-      }
 
       // Auto login
       const { error: loginErr } = await supabase.auth.signInWithPassword({
@@ -577,9 +447,6 @@ export default function RegisterScreen() {
     emailCheckStatus,
     accountType,
     companyName,
-    phone,
-    birthdate,
-    avatarUrl,
     router,
     t,
     toastSuccess,
@@ -589,7 +456,8 @@ export default function RegisterScreen() {
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
-      edges={['left', 'right', 'top', 'bottom']}
+      // Делаем как в new/edit: управляем нижним отступом сами через contentContainerStyle
+      edges={['left', 'right']}
     >
       <KeyboardAvoidingView
         style={styles.flex}
@@ -604,28 +472,7 @@ export default function RegisterScreen() {
           >
             <Text style={styles.title}>{t('register_title')}</Text>
 
-            {/* Avatar */}
-            <View style={styles.avatarContainer}>
-              <Pressable
-                style={styles.avatar}
-                onPress={() => setAvatarSheet(true)}
-                accessibilityRole="button"
-                accessibilityLabel={t('a11y_change_avatar')}
-              >
-                {avatarUrl ? (
-                  <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
-                ) : (
-                  <Text style={styles.avatarText}>{initials || '•'}</Text>
-                )}
-                <View style={styles.avatarCamBadge}>
-                  <Feather
-                    name="camera"
-                    size={16}
-                    color={theme.colors.onPrimary || theme.colors.primaryTextOn}
-                  />
-                </View>
-              </Pressable>
-            </View>
+            {/* Avatar - removed */}
 
             {/* Errors */}
             {error ? (
@@ -657,7 +504,7 @@ export default function RegisterScreen() {
             )}
 
             {/* Personal info */}
-            <Text style={styles.sectionTitle}>{t('section_personal')}</Text>
+            <SectionHeader bottomSpacing="xs">{t('section_personal')}</SectionHeader>
             <Card paddedXOnly>
               <TextField
                 ref={firstNameRef}
@@ -703,29 +550,10 @@ export default function RegisterScreen() {
                 }
                 editable={!submitting}
               />
-              <PhoneInput
-                ref={phoneRef}
-                value={phone}
-                onChangeText={setPhone}
-                style={styles.field}
-                editable={!submitting}
-              />
-              <TextField
-                label={t('label_birthdate')}
-                value={
-                  birthdate
-                    ? String(formatDateRU(birthdate, withYear))
-                    : String(t('placeholder_birthdate'))
-                }
-                style={styles.field}
-                pressable
-                onPress={() => !submitting && setDobModalVisible(true)}
-                editable={!submitting}
-              />
             </Card>
 
             {/* Account type */}
-            <Text style={styles.sectionTitle}>{t('register_section_account_type')}</Text>
+            <SectionHeader bottomSpacing="xs">{t('register_section_account_type')}</SectionHeader>
             <View style={styles.companyTypeContainer}>
               <Pressable
                 style={[
@@ -794,12 +622,12 @@ export default function RegisterScreen() {
             )}
 
             {/* Password */}
-            <Text style={styles.sectionTitle}>
+            <SectionHeader bottomSpacing="xs">
               {(t('section_password_template') || t('section_password')).replace(
                 '{n}',
                 AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH ?? 8,
               )}
-            </Text>
+            </SectionHeader>
             <Card paddedXOnly>
               <TextField
                 ref={pwdRef}
@@ -884,62 +712,6 @@ export default function RegisterScreen() {
             >
               <Text style={styles.backLinkText}>{t('register_back_to_login')}</Text>
             </Pressable>
-
-            {/* Modals */}
-            <SelectModal
-              visible={avatarSheet}
-              onClose={() => setAvatarSheet(false)}
-              title={t('profile_photo_title')}
-              items={[
-                {
-                  id: 'camera',
-                  label: t('profile_photo_take'),
-                  onPress: () => {
-                    setAvatarSheet(false);
-                    pickFromCamera();
-                  },
-                },
-                {
-                  id: 'gallery',
-                  label: t('profile_photo_choose'),
-                  onPress: () => {
-                    setAvatarSheet(false);
-                    pickFromLibrary();
-                  },
-                },
-                ...(avatarUrl
-                  ? [
-                      {
-                        id: 'remove',
-                        label: t('profile_photo_delete'),
-                        onPress: () => {
-                          setAvatarSheet(false);
-                          setAvatarUrl(null);
-                        },
-                      },
-                    ]
-                  : []),
-              ]}
-              searchable={false}
-            />
-
-            <DateTimeModal
-              visible={dobModalVisible}
-              onClose={() => setDobModalVisible(false)}
-              mode="date"
-              allowOmitYear={true}
-              omitYearDefault={withYear}
-              initial={birthdate || new Date()}
-              onApply={(dateObj, extra) => {
-                try {
-                  const d = new Date(dateObj);
-                  setBirthdate(d);
-                  if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
-                } finally {
-                  setDobModalVisible(false);
-                }
-              }}
-            />
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>

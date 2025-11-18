@@ -1,17 +1,8 @@
 import { Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  BackHandler,
-  Image,
-  Keyboard,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
@@ -19,10 +10,10 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import Card from '../../components/ui/Card';
-import ClearButton from '../../components/ui/ClearButton';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import PhoneInput from '../../components/ui/PhoneInput';
+import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import ValidationAlert from '../../components/ui/ValidationAlert';
@@ -781,7 +772,7 @@ export default function NewUserScreen() {
           />
         )}
 
-        <Text style={base.sectionTitle}>{t('section_personal')}</Text>
+        <SectionHeader bottomSpacing="xs">{t('section_personal')}</SectionHeader>
         <Card paddedXOnly>
           <TextField
             ref={firstNameRef}
@@ -854,7 +845,7 @@ export default function NewUserScreen() {
           />
         </Card>
 
-        <Text style={base.sectionTitle}>{t('section_company_role')}</Text>
+        <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
         <Card paddedXOnly>
           <TextField
             label={t('label_department')}
@@ -873,7 +864,7 @@ export default function NewUserScreen() {
           />
         </Card>
 
-        <Text style={base.sectionTitle}>{t('section_password')}</Text>
+        <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
         <Card paddedXOnly>
           <View style={{ position: 'relative' }}>
             <TextField
