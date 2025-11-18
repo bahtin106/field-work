@@ -79,7 +79,7 @@ const light = {
 
     // Default row heights
     input: {
-      height: 36,
+      height: 56,
       separator: {
         insetX: 'md',
         height: 1,

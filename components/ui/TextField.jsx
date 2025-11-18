@@ -100,6 +100,7 @@ const TextField = forwardRef(function TextField(
             multiline={multiline}
             numberOfLines={numberOfLines}
             underlineColorAndroid="transparent"
+            scrollEnabled={false}
             onFocus={(e) => {
               setFocused(true);
               onFocus?.(e);

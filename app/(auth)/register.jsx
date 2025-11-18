@@ -10,12 +10,12 @@ import {
   StyleSheet,
   Text,
   TouchableWithoutFeedback,
-  View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
+import RadioGroupField from '../../components/ui/RadioGroupField';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
@@ -31,63 +31,20 @@ import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
-function withAlpha(color, a) {
-  if (typeof color === 'string') {
-    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-    if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
-        .toString(16)
-        .padStart(2, '0');
-      return color + alpha;
-    }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*$/i);
-    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
-  }
-  return `rgba(0,0,0,${a})`;
-}
-
-function formatDateRU(date, withYear = true) {
-  try {
-    const d = date instanceof Date ? date : new Date(date);
-    if (isNaN(d.getTime())) return '';
-    const months = [
-      'января',
-      'февраля',
-      'марта',
-      'апреля',
-      'мая',
-      'июня',
-      'июля',
-      'августа',
-      'сентября',
-      'октября',
-      'ноября',
-      'декабря',
-    ];
-    const month = months[d.getMonth()];
-    const day = d.getDate();
-    const year = d.getFullYear();
-    return withYear ? `${day} ${month} ${year}` : `${day} ${month}`;
-  } catch {
-    return '';
-  }
-}
+// no local color/date utils here — keep file free of literals
 
 const createStyles = (theme, insets = {}) => {
-  const horizontalPadding = theme.spacing?.lg ?? 16;
-  const ACCOUNT_BTN_HEIGHT = (theme.components?.listItem?.minHeight ?? 60) + theme.spacing.sm; // унифицированная высота
   return StyleSheet.create({
     flex: { flex: 1 },
     container: {
       flex: 1,
-      paddingHorizontal: theme.spacing.xl,
+      paddingHorizontal: theme.spacing.lg,
     },
     content: {
-      paddingHorizontal: horizontalPadding,
+      paddingHorizontal: theme.spacing.lg,
       // Убираем верхний паддинг полностью
       paddingTop: 0,
-      paddingBottom:
-        (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) + (insets.bottom || 0),
+      paddingBottom: theme.components.scrollView.paddingBottom + insets.bottom,
     },
     title: {
       textAlign: 'center',
@@ -107,55 +64,7 @@ const createStyles = (theme, insets = {}) => {
       backgroundColor: theme.colors.border,
       marginVertical: theme.spacing.xs,
     },
-    companyTypeContainer: {
-      gap: theme.spacing.sm,
-    },
-    companyTypeButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: theme.spacing.md,
-      paddingVertical: theme.spacing.md,
-      height: ACCOUNT_BTN_HEIGHT,
-      width: '100%',
-      borderRadius: theme.radii.md,
-      borderWidth: 2,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-    },
-    companyTypeButtonActive: {
-      borderColor: theme.colors.primary,
-      backgroundColor: withAlpha(theme.colors.primary, 0.08),
-    },
-    companyTypeContent: {
-      flex: 1,
-      marginLeft: theme.spacing.sm,
-      justifyContent: 'center',
-    },
-    companyTypeTitle: {
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
-      color: theme.colors.text,
-      marginBottom: theme.spacing.xs / 2,
-    },
-    companyTypeDesc: {
-      fontSize: theme.typography.sizes.sm,
-      color: theme.colors.textSecondary,
-      // Фиксируем высоту блока по двум строкам посредством lineHeight * 2, упрощая выравнивание
-      lineHeight: theme.typography.sizes.sm * 1.3,
-    },
-    checkCircle: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      borderWidth: 2,
-      borderColor: theme.colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    checkCircleActive: {
-      borderColor: theme.colors.primary,
-      backgroundColor: theme.colors.primary,
-    },
+    // legacy styles removed (radio group replaces old layout)
     errorText: {
       color: theme.colors.danger,
       textAlign: 'center',
@@ -269,7 +178,7 @@ export default function RegisterScreen() {
 
     emailCheckTimeoutRef.current = setTimeout(() => {
       checkEmailAvailability(email.trim().toLowerCase());
-    }, 800);
+    }, theme.timings.emailDebounceMs);
 
     return () => {
       if (emailCheckTimeoutRef.current) {
@@ -337,7 +246,7 @@ export default function RegisterScreen() {
     setInvalidCharWarning(true);
     setTimeout(() => {
       setInvalidCharWarning(false);
-    }, 3000);
+    }, theme.timings.invalidInputWarningMs);
   }, []);
 
   const handleRegister = useCallback(async () => {
@@ -422,13 +331,13 @@ export default function RegisterScreen() {
 
       if (loginErr) {
         toastSuccess(t('register_success_please_login'));
-        setTimeout(() => router.replace('/(auth)/login'), 1000);
+        setTimeout(() => router.replace('/(auth)/login'), theme.timings.postRegisterNavDelayMs);
       } else {
         toastSuccess(t('register_success'));
         // Navigation will happen automatically via _layout
       }
     } catch (e) {
-      const msg = String(e?.message || t('toast_generic_error'));
+      const msg = e?.message ? String(e.message) : t('toast_generic_error');
       setError(msg);
       toastError(msg);
     } finally {
@@ -476,14 +385,18 @@ export default function RegisterScreen() {
 
             {/* Errors */}
             {error ? (
-              <ValidationAlert messages={[error]} type="error" style={{ marginBottom: 12 }} />
+              <ValidationAlert
+                messages={[error]}
+                type="error"
+                style={{ marginBottom: theme.spacing.sm }}
+              />
             ) : null}
 
             {validationErrors.length > 0 && (
               <ValidationAlert
                 messages={validationErrors}
                 type="error"
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: theme.spacing.sm }}
               />
             )}
 
@@ -491,7 +404,7 @@ export default function RegisterScreen() {
               <ValidationAlert
                 messages={[t('err_password_invalid_chars')]}
                 type="warning"
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: theme.spacing.sm }}
               />
             )}
 
@@ -499,7 +412,7 @@ export default function RegisterScreen() {
               <ValidationAlert
                 messages={[t('warn_checking_email')]}
                 type="info"
-                style={{ marginBottom: 12 }}
+                style={{ marginBottom: theme.spacing.sm }}
               />
             )}
 
@@ -554,87 +467,60 @@ export default function RegisterScreen() {
 
             {/* Account type */}
             <SectionHeader bottomSpacing="xs">{t('register_section_account_type')}</SectionHeader>
-            <View style={styles.companyTypeContainer}>
-              <Pressable
-                style={[
-                  styles.companyTypeButton,
-                  accountType === 'solo' && styles.companyTypeButtonActive,
-                ]}
-                onPress={() => !submitting && setAccountType('solo')}
+            <Card paddedXOnly>
+              <RadioGroupField
+                value={accountType}
+                onChange={setAccountType}
                 disabled={submitting}
-              >
-                <View
-                  style={[styles.checkCircle, accountType === 'solo' && styles.checkCircleActive]}
-                >
-                  {accountType === 'solo' && (
-                    <Feather name="check" size={16} color={theme.colors.onPrimary} />
-                  )}
-                </View>
-                <View style={styles.companyTypeContent}>
-                  <Text style={styles.companyTypeTitle}>{t('register_account_solo')}</Text>
-                  <Text style={styles.companyTypeDesc}>{t('register_account_solo_desc')}</Text>
-                </View>
-              </Pressable>
-
-              <Pressable
-                style={[
-                  styles.companyTypeButton,
-                  accountType === 'company' && styles.companyTypeButtonActive,
+                options={[
+                  {
+                    id: 'solo',
+                    title: t('register_account_solo'),
+                    subtitle: t('register_account_solo_desc'),
+                  },
+                  {
+                    id: 'company',
+                    title: t('register_account_company'),
+                    subtitle: t('register_account_company_desc'),
+                  },
                 ]}
-                onPress={() => !submitting && setAccountType('company')}
-                disabled={submitting}
-              >
-                <View
-                  style={[
-                    styles.checkCircle,
-                    accountType === 'company' && styles.checkCircleActive,
-                  ]}
-                >
-                  {accountType === 'company' && (
-                    <Feather name="check" size={16} color={theme.colors.onPrimary} />
-                  )}
-                </View>
-                <View style={styles.companyTypeContent}>
-                  <Text style={styles.companyTypeTitle}>{t('register_account_company')}</Text>
-                  <Text style={styles.companyTypeDesc}>{t('register_account_company_desc')}</Text>
-                </View>
-              </Pressable>
-            </View>
+                renderExpanded={(id) =>
+                  id === 'company' ? (
+                    <TextField
+                      label={t('register_company_name')}
+                      placeholder={t('register_company_name_placeholder')}
+                      style={styles.field}
+                      value={companyName}
+                      onChangeText={setCompanyName}
+                      forceValidation={submittedAttempt}
+                      error={
+                        submittedAttempt && accountType === 'company' && !companyName.trim()
+                          ? 'required'
+                          : undefined
+                      }
+                      editable={!submitting}
+                    />
+                  ) : null
+                }
+              />
+            </Card>
 
-            {/* Company name if needed */}
-            {accountType === 'company' && (
-              <Card paddedXOnly style={{ marginTop: theme.spacing.md }}>
-                <TextField
-                  label={t('register_company_name')}
-                  placeholder={t('register_company_name_placeholder')}
-                  style={styles.field}
-                  value={companyName}
-                  onChangeText={setCompanyName}
-                  forceValidation={submittedAttempt}
-                  error={
-                    submittedAttempt && accountType === 'company' && !companyName.trim()
-                      ? 'required'
-                      : undefined
-                  }
-                  editable={!submitting}
-                />
-              </Card>
-            )}
+            {/* Company name handled inside RadioGroupField when 'company' selected */}
 
             {/* Password */}
             <SectionHeader bottomSpacing="xs">
-              {(t('section_password_template') || t('section_password')).replace(
+              {t('section_password_template').replace(
                 '{n}',
-                AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH ?? 8,
+                String(AUTH_CONSTRAINTS.PASSWORD.MIN_LENGTH),
               )}
             </SectionHeader>
             <Card paddedXOnly>
               <TextField
                 ref={pwdRef}
-                label={t('label_password_new')}
+                label={t('register_label_password')}
                 value={password}
                 onChangeText={setPassword}
-                placeholder={t('placeholder_new_password')}
+                placeholder={t('register_placeholder_password')}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -662,7 +548,7 @@ export default function RegisterScreen() {
                   >
                     <Feather
                       name={showPassword ? 'eye-off' : 'eye'}
-                      size={theme.icons?.md ?? 22}
+                      size={theme.components?.listItem?.chevronSize}
                       color={theme.colors.primary}
                     />
                   </Pressable>
