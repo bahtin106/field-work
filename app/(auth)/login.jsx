@@ -126,6 +126,7 @@ function LoginScreenContent() {
                   accessibilityLabel={t('fields_email')}
                   editable={!loading}
                   hideSeparator={true}
+                  style={{ minHeight: 52 }}
                 />
               </Card>
 
@@ -145,6 +146,7 @@ function LoginScreenContent() {
                   accessibilityLabel={t('fields_password')}
                   editable={!loading}
                   hideSeparator={true}
+                  style={{ minHeight: 52 }}
                 />
                 <Pressable
                   onPress={handleTogglePassword}

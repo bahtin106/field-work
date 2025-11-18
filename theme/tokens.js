@@ -83,9 +83,9 @@ const light = {
 
     // Default row heights
     input: {
-      height: 48, // Оптимальная высота для touch (44-52px стандарт)
-      labelSpacing: 6, // Отступ между лейблом и полем
-      fieldSpacing: 8, // Вертикальный отступ между полями внутри карточек
+      height: 44, // Минимальная высота для touch по Apple HIG
+      labelSpacing: 4, // Отступ между лейблом и полем
+      fieldSpacing: 2, // Вертикальный отступ между полями внутри карточек
       separator: {
         insetX: 'md', // 12px - компактный инсет
         height: 1,
