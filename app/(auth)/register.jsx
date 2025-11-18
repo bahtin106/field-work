@@ -15,6 +15,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
+import ConsentCheckbox from '../../components/ui/ConsentCheckbox';
+import PrivacyPolicyModal from '../../components/ui/modals/PrivacyPolicyModal';
 import RadioGroupField from '../../components/ui/RadioGroupField';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
@@ -116,8 +118,11 @@ export default function RegisterScreen() {
   const [error, setError] = useState('');
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const [validationErrors, setValidationErrors] = useState([]);
+  // Согласие с политикой
+  const [consentChecked, setConsentChecked] = useState(false);
   const [emailCheckStatus, setEmailCheckStatus] = useState(null);
   const [invalidCharWarning, setInvalidCharWarning] = useState(false);
+  const [policyVisible, setPolicyVisible] = useState(false);
 
   const emailCheckTimeoutRef = useRef(null);
   const firstNameRef = useRef(null);
@@ -274,9 +279,12 @@ export default function RegisterScreen() {
       invalidPwd ||
       mismatchPwd ||
       noAccountType ||
-      needsCompanyName
+      needsCompanyName ||
+      !consentChecked
     ) {
       if (emailTaken) toastError(t('error_email_exists'));
+      if (!consentChecked)
+        toastError('Для регистрации необходимо согласие с политикой конфиденциальности');
       return;
     }
 
@@ -582,6 +590,11 @@ export default function RegisterScreen() {
               />
             </Card>
 
+            <ConsentCheckbox
+              checked={consentChecked}
+              onChange={setConsentChecked}
+              onShowPolicy={() => setPolicyVisible(true)}
+            />
             {/* Actions */}
             <Button
               title={t('register_button')}
@@ -601,6 +614,7 @@ export default function RegisterScreen() {
             >
               <Text style={styles.backLinkText}>{t('register_back_to_login')}</Text>
             </Pressable>
+            <PrivacyPolicyModal visible={policyVisible} onClose={() => setPolicyVisible(false)} />
           </ScrollView>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
