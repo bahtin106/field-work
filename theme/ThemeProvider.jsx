@@ -1,7 +1,7 @@
 // theme/ThemeProvider.jsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Appearance } from 'react-native';
+import { Appearance, FlatList, Platform, ScrollView, SectionList } from 'react-native';
 import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
@@ -199,6 +199,10 @@ function buildTheme(mode) {
     backDelayMs: base.timings?.backDelayMs ?? 300,
     presenceOnlineWindowMs: base.timings?.presenceOnlineWindowMs ?? 120000,
     presenceFutureSkewMs: base.timings?.presenceFutureSkewMs ?? 300000,
+    // App-specific UX timings
+    emailDebounceMs: base.timings?.emailDebounceMs ?? 800,
+    invalidInputWarningMs: base.timings?.invalidInputWarningMs ?? 3000,
+    postRegisterNavDelayMs: base.timings?.postRegisterNavDelayMs ?? 1000,
   };
   return {
     mode: effective,
@@ -259,6 +263,24 @@ export const ThemeProvider = ({ children }) => {
 
   const toggle = useCallback(() => {
     setMode((m) => (m === 'light' ? 'dark' : 'light'));
+  }, []);
+
+  // Global scroll UX defaults: helps when drag starts on TextInput
+  useEffect(() => {
+    try {
+      const setDefaults = (Comp, props) => {
+        // Preserve existing defaults while applying ours
+        Comp.defaultProps = { ...(Comp.defaultProps || {}), ...props };
+      };
+      const common = {
+        keyboardShouldPersistTaps: 'always',
+        keyboardDismissMode: 'on-drag',
+        ...(Platform.OS === 'android' ? { nestedScrollEnabled: true } : null),
+      };
+      setDefaults(ScrollView, common);
+      setDefaults(FlatList, common);
+      setDefaults(SectionList, common);
+    } catch {}
   }, []);
 
   return (

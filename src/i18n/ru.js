@@ -51,8 +51,8 @@ export default {
   // Секции
   section_personal: 'Личные данные',
   section_company_role: 'Роль в компании',
-  section_password: 'Новый пароль',
-  section_password_template: 'Новый пароль (мин. {n} символов)',
+  section_password: 'Пароль',
+  section_password_template: 'Пароль (мин. {n} символов)',
 
   // Лейблы полей
   view_label_name: 'Имя',
@@ -158,6 +158,7 @@ export default {
   // Авторизация
   login_title: 'Монитор',
   login_subtitle: 'Введите ваши учётные данные',
+  login_no_account: 'Нет аккаунта?',
   auth_hide_password: 'Скрыть пароль',
   auth_show_password: 'Показать пароль',
 
@@ -167,6 +168,8 @@ export default {
   register_button: 'Зарегистрироваться',
   register_back_to_login: 'Уже есть аккаунт? Войти',
   register_section_account_type: 'Тип аккаунта',
+  register_label_password: 'Пароль *',
+  register_placeholder_password: 'Введите пароль',
   register_account_solo: 'Работаю один',
   register_account_solo_desc: 'Личный аккаунт без создания компании',
   register_account_company: 'У меня компания',

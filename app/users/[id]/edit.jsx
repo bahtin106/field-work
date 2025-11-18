@@ -1512,9 +1512,11 @@ export default function EditUser() {
             ),
           },
         ]}
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
+        scrollEnabled={true}
         bottomOffset={40}
         onScroll={(e) => {
           try {

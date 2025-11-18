@@ -14,6 +14,7 @@ import {
 
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
 import TextField from '../../components/ui/TextField';
 import { useAuthLogin } from '../../hooks/useAuthLogin';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -24,7 +25,7 @@ const createStyles = (theme) => {
     flex: { flex: 1 },
     container: {
       flex: 1,
-      paddingHorizontal: theme.spacing.xl,
+      paddingHorizontal: theme.spacing.lg,
       justifyContent: 'center',
     },
     content: {
@@ -46,22 +47,19 @@ const createStyles = (theme) => {
       fontSize: theme.typography.sizes.sm,
       marginBottom: theme.spacing.xl,
     },
-    passwordContainer: { position: 'relative' },
-    separator: {
-      height: theme.components?.listItem?.dividerWidth ?? 1,
-      backgroundColor: theme.colors.border,
-      marginLeft: theme.spacing.xs,
-      marginRight: theme.spacing.xs,
+    fieldCard: {
+      position: 'relative',
     },
     eyeButton: {
       position: 'absolute',
-      right: theme.spacing.sm,
+      right: theme.spacing.md,
       top: 0,
       bottom: 0,
       justifyContent: 'center',
       alignItems: 'center',
       paddingHorizontal: theme.spacing.sm,
       paddingVertical: theme.spacing.xs,
+      zIndex: 10,
     },
     errorText: {
       color: theme.colors.danger,
@@ -71,12 +69,9 @@ const createStyles = (theme) => {
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.medium,
     },
-    registerButton: {
-      marginTop: theme.spacing.md,
-    },
     registerText: {
       textAlign: 'center',
-      marginTop: theme.spacing.lg,
+      marginTop: theme.spacing.sm,
       fontSize: theme.typography.sizes.sm,
       color: theme.colors.textSecondary,
     },
@@ -120,19 +115,21 @@ function LoginScreenContent() {
               <Text style={styles.title}>{t('login_title')}</Text>
               <Text style={styles.subtitle}>{t('login_subtitle')}</Text>
 
-              <TextField
-                value={email}
-                onChangeText={setEmail}
-                placeholder={t('fields_email')}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                returnKeyType="next"
-                accessibilityLabel={t('fields_email')}
-                editable={!loading}
-              />
-              <View style={styles.separator} />
+              <Card paddedXOnly style={styles.fieldCard}>
+                <TextField
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder={t('fields_email')}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  returnKeyType="next"
+                  accessibilityLabel={t('fields_email')}
+                  editable={!loading}
+                  hideSeparator={true}
+                />
+              </Card>
 
-              <View style={styles.passwordContainer}>
+              <Card paddedXOnly style={styles.fieldCard}>
                 <TextField
                   ref={passwordFieldRef}
                   value={password}
@@ -147,8 +144,8 @@ function LoginScreenContent() {
                   onSubmitEditing={handleLogin}
                   accessibilityLabel={t('fields_password')}
                   editable={!loading}
+                  hideSeparator={true}
                 />
-                <View style={styles.separator} />
                 <Pressable
                   onPress={handleTogglePassword}
                   style={styles.eyeButton}
@@ -169,7 +166,7 @@ function LoginScreenContent() {
                     color={theme.colors.primary}
                   />
                 </Pressable>
-              </View>
+              </Card>
 
               {error && <Text style={styles.errorText}>{error}</Text>}
 
@@ -183,7 +180,7 @@ function LoginScreenContent() {
               />
 
               <Text style={styles.registerText}>
-                {t('register_back_to_login').split('?')[0]}?{' '}
+                {t('login_no_account')}{' '}
                 <Text
                   style={styles.registerLink}
                   onPress={() => !loading && router.push('/(auth)/register')}
