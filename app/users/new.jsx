@@ -10,7 +10,6 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import Card from '../../components/ui/Card';
-import ConsentCheckbox from '../../components/ui/ConsentCheckbox';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import PhoneInput from '../../components/ui/PhoneInput';
@@ -882,7 +881,7 @@ export default function NewUserScreen() {
           />
         </Card>
 
-        <ConsentCheckbox checked={consentChecked} onChange={setConsentChecked} />
+        {/* ConsentCheckbox удалён для экрана создания нового пользователя */}
 
         <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
         <Card paddedXOnly>
