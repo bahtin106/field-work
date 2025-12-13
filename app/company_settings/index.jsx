@@ -23,6 +23,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 import { Feather } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
 import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
 import { supabase } from '../../lib/supabase';
 
@@ -254,6 +255,7 @@ export default function CompanySettings() {
   const router = useRouter();
   const { t } = useTranslation();
   const ver = useI18nVersion();
+  const queryClient = useQueryClient();
 
   // Загружаем настройки компании с кешем
   const {
@@ -440,9 +442,12 @@ export default function CompanySettings() {
       // Обновляем кеш после успешного сохранения
       await refreshCompany();
 
+      // Инвалидируем кеш настроек компании для немедленного обновления UI
+      await queryClient.invalidateQueries({ queryKey: ['companySettings'] });
+
       return true;
     },
-    [t, refreshCompany],
+    [t, refreshCompany, queryClient],
   );
 
   const onSubmitCompanyName = React.useCallback(() => {

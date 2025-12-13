@@ -47,6 +47,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { fetchFormSchema } from '../../lib/settings';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
@@ -72,6 +73,7 @@ export default function OrderDetails() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { has } = usePermissions();
+  const { useDepartureTime } = useCompanySettings();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
 
@@ -1662,7 +1664,11 @@ export default function OrderDetails() {
                   <View style={base.rightWrap}>
                     <Text style={[base.value, styles.link]}>
                       {order.datetime
-                        ? format(new Date(order.datetime), 'd MMMM yyyy, HH:mm', { locale: ru })
+                        ? format(
+                            new Date(order.datetime),
+                            useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
+                            { locale: ru },
+                          )
                         : t('order_details_departure_not_specified')}
                     </Text>
                   </View>

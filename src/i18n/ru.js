@@ -7,6 +7,7 @@ export default {
     orders: 'Заявки',
     'orders/index': 'Заявки',
     'orders/[id]': 'Заявка',
+    'orders/edit/[id]': 'Редактирование',
     'orders/my-orders': 'Мои заявки',
     'orders/all-orders': 'Все заявки',
     'orders/calendar': 'Календарь',
@@ -586,6 +587,19 @@ export default {
   order_toast_status_updated: 'Статус обновлён',
   order_toast_order_deleted: 'Заявка удалена',
   order_toast_add_photos: 'Добавьте: {items}',
+
+  // Редактирование заявки (app/orders/edit/[id].jsx)
+  order_field_title: 'Название заявки *',
+  order_placeholder_title: 'Например: Обрезка деревьев',
+  order_field_description: 'Описание',
+  order_placeholder_description: 'Подробности (если есть)',
+  order_field_region: 'Регион',
+  order_field_city: 'Город',
+  order_field_street: 'Улица',
+  order_field_house: 'Дом',
+  order_field_customer_name: 'Имя заказчика',
+  order_field_departure_date: 'Дата выезда *',
+  order_field_departure_time: 'Время выезда',
 
   // Валидация заявки
   order_validation_fill_required: 'Заполните обязательные поля: {fields}',

@@ -17,6 +17,7 @@ export default function DateTimeModal({
   allowOmitYear = false,
   omitYearDefault = true,
   omitYearLabel = T('datetime_omit_year'),
+  allowFutureDates = false,
 }) {
   const modalRef = React.useRef(null);
   const { theme } = useTheme();
@@ -102,8 +103,9 @@ export default function DateTimeModal({
   };
   const years = React.useMemo(() => {
     const y = new Date().getFullYear();
-    return range(1900, y);
-  }, []);
+    const maxYear = allowFutureDates ? y + 10 : y; // Добавляем 10 лет в будущее для заявок
+    return range(1900, maxYear);
+  }, [allowFutureDates]);
   const [dYearIdx, setDYearIdx] = React.useState(0);
   const [dMonthIdx, setDMonthIdx] = React.useState(0);
   const [dDayIdx, setDDayIdx] = React.useState(0);
@@ -119,24 +121,38 @@ export default function DateTimeModal({
   // Ограничиваем месяцы, если выбран текущий год
   const availableMonths = React.useMemo(() => {
     const selectedYear = years[dYearIdx];
-    if (withYear && selectedYear === currentYear) {
+    if (!allowFutureDates && withYear && selectedYear === currentYear) {
       // Если выбран текущий год, доступны только месяцы до текущего включительно
       return range(0, currentMonth);
     }
     return range(0, 11);
-  }, [dYearIdx, years, withYear, currentYear, currentMonth]);
+  }, [dYearIdx, years, withYear, currentYear, currentMonth, allowFutureDates]);
 
   const days = React.useMemo(() => {
     const selectedYear = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
     const maxDay = daysInMonth(dMonthIdx, selectedYear);
 
     // Если выбран текущий год и текущий месяц, ограничиваем дни
-    if (withYear && years[dYearIdx] === currentYear && dMonthIdx === currentMonth) {
+    if (
+      !allowFutureDates &&
+      withYear &&
+      years[dYearIdx] === currentYear &&
+      dMonthIdx === currentMonth
+    ) {
       return range(1, Math.min(maxDay, currentDay));
     }
 
     return range(1, maxDay);
-  }, [dMonthIdx, dYearIdx, years, withYear, currentYear, currentMonth, currentDay]);
+  }, [
+    dMonthIdx,
+    dYearIdx,
+    years,
+    withYear,
+    currentYear,
+    currentMonth,
+    currentDay,
+    allowFutureDates,
+  ]);
 
   const minutesData = React.useMemo(() => range(0, 59).filter((m) => m % step === 0), [step]);
   const [tHourIdx, setTHourIdx] = React.useState(0);
@@ -156,7 +172,11 @@ export default function DateTimeModal({
     const initDay = baseDate.getDate();
 
     // Если это текущий год, проверяем ограничения
-    if ((allowOmitYear ? omitYearDefault : true) && selectedYear === currentYear) {
+    if (
+      !allowFutureDates &&
+      (allowOmitYear ? omitYearDefault : true) &&
+      selectedYear === currentYear
+    ) {
       // Ограничиваем месяц
       const month = Math.min(initMonth, currentMonth);
       setDMonthIdx(month);
@@ -350,7 +370,7 @@ export default function DateTimeModal({
                     setDYearIdx(i);
                     // При смене года корректируем месяц и день
                     const newYear = years[i];
-                    if (withYear && newYear === currentYear) {
+                    if (!allowFutureDates && withYear && newYear === currentYear) {
                       // Если выбран текущий год, проверяем месяц
                       if (dMonthIdx > currentMonth) {
                         setDMonthIdx(currentMonth);
