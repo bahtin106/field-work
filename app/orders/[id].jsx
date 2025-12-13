@@ -1,4 +1,4 @@
-import { AntDesign, Feather } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
@@ -6,58 +6,62 @@ import { ru } from 'date-fns/locale';
 import { BlurView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
-import { useLocalSearchParams, useRouter, useNavigation, usePathname } from 'expo-router';
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  StyleSheet,
-  Platform,
-  View,
-  Text,
-  Image,
-  Pressable,
-  ScrollView,
-  BackHandler,
   ActivityIndicator,
-  Linking,
-  KeyboardAvoidingView,
-  Keyboard,
-  TouchableWithoutFeedback,
-  ToastAndroid,
-  findNodeHandle,
-  UIManager,
+  BackHandler,
   Dimensions,
+  findNodeHandle,
+  Image,
   InteractionManager,
+  Keyboard,
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  Pressable,
+  Animated as RNAnimated,
+  ScrollView,
+  StyleSheet,
+  Text,
+  ToastAndroid,
+  TouchableWithoutFeedback,
+  UIManager,
+  View,
 } from 'react-native';
-import { Animated as RNAnimated } from 'react-native';
 
 import * as NavigationBar from 'expo-navigation-bar';
 
-import Modal from 'react-native-modal';
 import {
-  TapGestureHandler,
   PanGestureHandler,
   PinchGestureHandler,
   State,
+  TapGestureHandler,
 } from 'react-native-gesture-handler';
+import Modal from 'react-native-modal';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSpring,
   runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 
-import { supabase } from '../../lib/supabase';
 import { fetchFormSchema } from '../../lib/settings';
-import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
+import { supabase } from '../../lib/supabase';
+import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 
-import { useTheme, tokens } from '../../theme/ThemeProvider';
 import Screen from '../../components/layout/Screen';
-import { usePermissions } from '../../lib/permissions';
 import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
+import SectionHeader from '../../components/ui/SectionHeader';
+import { listItemStyles } from '../../components/ui/listItemStyles';
+import { usePermissions } from '../../lib/permissions';
+import { useTranslation } from '../../src/i18n/useTranslation';
+import { useTheme } from '../../theme/ThemeProvider';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -66,8 +70,10 @@ const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
 export default function OrderDetails() {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const { has } = usePermissions();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const base = useMemo(() => listItemStyles(theme), [theme]);
 
   const applyNavBar = useCallback(async () => {
     try {
@@ -155,8 +161,8 @@ export default function OrderDetails() {
   const initialFormSnapshotRef = useRef('');
   const detailsScrollRef = useRef(null);
   const dateFieldRef = useRef(null);
-  const viewFade = useRef(new RNAnimated.Value(0)).current;
-  const viewTranslate = useRef(new RNAnimated.Value(8)).current;
+  const viewFade = useRef(new RNAnimated.Value(1)).current;
+  const viewTranslate = useRef(new RNAnimated.Value(0)).current;
   const scale = useSharedValue(1);
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
@@ -499,12 +505,33 @@ export default function OrderDetails() {
         } catch {}
       }
 
-      ORDER_CACHE.set(id, fetchedOrder);
+      // ORDER_CACHE.set(id, fetchedOrder); // удалено: кэш обновим после выбора итогового заказа
 
+      // ПЕРЕДЕЛАНО: сохраняем статус "В работе" в БД и перезагружаем заявку
       if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
-        setOrder({ ...fetchedOrder, status: 'В работе' });
-        supabase.from('orders').update({ status: 'В работе' }).eq('id', id);
+        try {
+          const { error: updateError } = await supabase
+            .from('orders')
+            .update({ status: 'В работе' })
+            .eq('id', id);
+          if (updateError) throw updateError;
+
+          const { data: refreshed, error: refErr } = await supabase
+            .from('orders_secure')
+            .select('*')
+            .eq('id', id)
+            .single();
+
+          const nextOrder = refErr ? { ...fetchedOrder, status: 'В работе' } : refreshed;
+          ORDER_CACHE.set(id, nextOrder);
+          setOrder(nextOrder);
+        } catch (e) {
+          console.warn('Persist status error:', e);
+          ORDER_CACHE.set(id, fetchedOrder);
+          setOrder(fetchedOrder);
+        }
       } else {
+        ORDER_CACHE.set(id, fetchedOrder);
         setOrder(fetchedOrder);
       }
 
@@ -606,9 +633,9 @@ export default function OrderDetails() {
     if (!p) return;
     try {
       await Clipboard.setStringAsync(p);
-      showToast('Телефон скопирован');
+      showToast(t('order_toast_phone_copied'));
     } catch {}
-  }, [order, showToast]);
+  }, [order, showToast, t]);
 
   const openInYandex = useCallback(() => {
     const fullAddress = [order?.region, order?.city, order?.street, order?.house]
@@ -628,7 +655,7 @@ export default function OrderDetails() {
       try {
         const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
         if (!permissionResult.granted) {
-          showToast('Нет доступа к камере');
+          showToast(t('order_no_camera_permission'));
           return;
         }
 
@@ -678,14 +705,14 @@ export default function OrderDetails() {
         }
 
         setOrder({ ...order, [category]: updated });
-        showToast('Фото загружено');
+        showToast(t('order_toast_photo_uploaded'));
         await syncPhotosFromStorage();
       } catch (e) {
         console.warn('Upload error:', e);
-        showToast('Ошибка загрузки');
+        showToast(t('order_toast_upload_error'));
       }
     },
-    [order, showToast, syncPhotosFromStorage],
+    [order, showToast, syncPhotosFromStorage, t],
   );
 
   const removePhoto = useCallback(
@@ -705,13 +732,13 @@ export default function OrderDetails() {
 
       if (!error) {
         setOrder({ ...order, [category]: updated });
-        showToast('Фото удалено');
+        showToast(t('order_toast_photo_deleted'));
         await syncPhotosFromStorage();
       } else {
-        showToast('Ошибка удаления');
+        showToast(t('order_toast_delete_error'));
       }
     },
-    [order, showToast, syncPhotosFromStorage],
+    [order, showToast, syncPhotosFromStorage, t],
   );
 
   const canFinishOrder = useCallback(() => {
@@ -722,16 +749,21 @@ export default function OrderDetails() {
   const handleFinishOrder = useCallback(async () => {
     const missing = [];
     if (!Array.isArray(order.contract_file) || order.contract_file.length === 0)
-      missing.push('фото договора');
+      missing.push(t('order_missing_contract'));
     if (!Array.isArray(order.photo_before) || order.photo_before.length === 0)
-      missing.push('фото ДО');
+      missing.push(t('order_missing_photo_before'));
     if (!Array.isArray(order.photo_after) || order.photo_after.length === 0)
-      missing.push('фото ПОСЛЕ');
+      missing.push(t('order_missing_photo_after'));
     if (!Array.isArray(order.act_file) || order.act_file.length === 0)
-      missing.push('акт выполненных работ');
+      missing.push(t('order_missing_act'));
 
     if (missing.length > 0) {
-      showToast(`Добавьте: ${missing.join(', ')}`);
+      showToast(
+        t('order_toast_add_photos', `Добавьте: ${missing.join(', ')}`).replace(
+          '{items}',
+          missing.join(', '),
+        ),
+      );
       return;
     }
 
@@ -741,13 +773,13 @@ export default function OrderDetails() {
       .eq('id', order.id);
 
     if (error) {
-      showToast('Ошибка при завершении');
+      showToast(t('order_toast_finish_error'));
       return;
     }
 
-    setOrder({ ...order, status: 'Завершённая' });
-    showToast('Заявка завершена');
-  }, [order, showToast]);
+    setOrder({ ...order, status: t('order_status_completed') });
+    showToast(t('order_toast_order_finished'));
+  }, [order, showToast, t]);
 
   const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
 
@@ -770,9 +802,9 @@ export default function OrderDetails() {
         showToast('Упс, заявку уже принял кто-то другой');
       }
     } catch (e) {
-      showToast('Ошибка сети');
+      showToast(t('order_toast_network_error'));
     }
-  }, [order, users, userId, showToast]);
+  }, [order, users, userId, showToast, t]);
 
   const handleSubmitEdit = useCallback(async () => {
     const reqCheck = validateRequiredBySchemaEdit();
@@ -782,19 +814,24 @@ export default function OrderDetails() {
     }
     if (!canEdit()) return;
 
-    if (!title.trim()) return showWarning('Укажите название заявки');
-    if (!region && !city && !street && !house) return showWarning('Укажите хотя бы часть адреса');
-    if (!customerName.trim()) return showWarning('Укажите имя заказчика');
-    if (!phone.trim()) return showWarning('Укажите номер телефона');
-    if (!departureDate) return showWarning('Укажите дату выезда');
-    if (!assigneeId && !toFeed) return showWarning('Выберите исполнителя или отправьте в ленту');
+    if (!title.trim()) return showWarning(t('order_validation_title_required'));
+    if (!region && !city && !street && !house)
+      return showWarning(t('order_validation_address_required'));
+    if (!customerName.trim()) return showWarning(t('order_validation_customer_required'));
+    if (!phone.trim()) return showWarning(t('order_validation_phone_required'));
+    if (!departureDate) return showWarning(t('order_validation_date_required'));
+    if (!assigneeId && !toFeed) return showWarning(t('order_validation_executor_required'));
 
     const rawPhone = phone.replace(/\D/g, '');
     if (rawPhone.length !== 11 || rawPhone[0] !== '7' || rawPhone[1] !== '9') {
-      return showWarning('Введите корректный номер телефона формата +7 (9__) ___-__-__');
+      return showWarning(t('order_validation_phone_format'));
     }
 
-    const nextStatus = toFeed ? 'В ленте' : order.status === 'В ленте' ? 'В работе' : order.status;
+    const nextStatus = toFeed
+      ? t('order_status_in_feed')
+      : order.status === t('order_status_in_feed')
+        ? t('order_status_in_progress')
+        : order.status;
 
     const payload = {
       title,
@@ -816,7 +853,7 @@ export default function OrderDetails() {
 
     const targetId = order?.id ?? id;
     if (!targetId) {
-      showToast('Id заявки не найден');
+      showToast(t('order_validation_no_order_id'));
       return;
     }
 
@@ -828,7 +865,7 @@ export default function OrderDetails() {
       .single();
 
     if (error) {
-      showToast(error.message || 'Ошибка сохранения');
+      showToast(error.message || t('order_save_error'));
     } else {
       setOrder(data);
       const rawDigitsSaved = (data.phone || '').replace(/\D/g, '');
@@ -870,7 +907,7 @@ export default function OrderDetails() {
       }
 
       setEditMode(false);
-      showToast('Сохранено');
+      showToast(t('order_toast_saved'));
     }
   }, [
     validateRequiredBySchemaEdit,
@@ -899,22 +936,27 @@ export default function OrderDetails() {
     makeSnapshotFromOrder,
     showToast,
     showWarning,
+    t,
   ]);
 
   const updateStatus = useCallback(
     async (next) => {
       if (!canEdit()) return;
       try {
-        if (next === 'В ленте') {
+        if (next === t('order_status_in_feed')) {
           const { error } = await supabase
             .from('orders')
-            .update({ status: 'В ленте', assigned_to: null })
+            .update({ status: t('order_status_in_feed'), assigned_to: null })
             .eq('id', order.id);
           if (error) {
-            showToast('Не удалось сменить статус');
+            showToast(t('order_toast_status_updated'));
             return;
           }
-          setOrder((prev) => ({ ...(prev || {}), status: 'В ленте', assigned_to: null }));
+          setOrder((prev) => ({
+            ...(prev || {}),
+            status: t('order_status_in_feed'),
+            assigned_to: null,
+          }));
           setAssigneeId(null);
           setExecutorName(null);
           setToFeed(true);
@@ -930,12 +972,12 @@ export default function OrderDetails() {
         }
         setOrder((prev) => ({ ...(prev || {}), status: next }));
         setStatusModalVisible(false);
-        showToast('Статус обновлён');
+        showToast(t('order_toast_status_updated'));
       } catch {
-        showToast('Ошибка сети');
+        showToast(t('order_toast_network_error'));
       }
     },
-    [canEdit, order, showToast],
+    [canEdit, order, showToast, t],
   );
 
   const confirmCancel = useCallback(() => {
@@ -1012,15 +1054,15 @@ export default function OrderDetails() {
         return;
       }
 
-      showToast('Заявка удалена');
+      showToast(t('order_toast_order_deleted'));
       setDeleteModalVisible(false);
       if (navigation?.canGoBack?.()) navigation.goBack();
       else router.replace('/orders/orders');
     } catch (e) {
       console.warn('Delete error:', e);
-      showToast('Ошибка удаления');
+      showToast(t('order_toast_delete_error'));
     }
-  }, [order, navigation, router, showToast]);
+  }, [order, navigation, router, showToast, t]);
 
   const goBack = useCallback(() => {
     if (editMode) {
@@ -1231,54 +1273,97 @@ export default function OrderDetails() {
     (titleText, category) => {
       const photos = order[category] || [];
       return (
-        <View style={styles.photosBlock}>
-          <View style={styles.photosHeader}>
-            <Text style={styles.photosTitle}>{titleText}</Text>
+        <View>
+          <SectionHeader topSpacing="lg">{titleText}</SectionHeader>
+          <Card>
             <Pressable
-              style={({ pressed }) => [styles.addChip, pressed && { opacity: 0.8 }]}
+              style={({ pressed }) => [
+                {
+                  backgroundColor:
+                    theme.colors.chipBg || theme.colors.inputBg || theme.colors.surface,
+                  paddingVertical: theme.spacing?.xs || 6,
+                  paddingHorizontal: theme.spacing?.md || 12,
+                  borderRadius: theme.radii?.pill || 999,
+                  alignSelf: 'flex-start',
+                  marginBottom: theme.spacing?.sm || 8,
+                },
+                pressed && { opacity: 0.8 },
+              ]}
               onPress={() => compressAndUpload(category)}
             >
-              <Text style={styles.addChipText}>Добавить</Text>
+              <Text
+                style={{
+                  color: theme.colors.primary,
+                  fontWeight: theme.typography?.weight?.semibold || '600',
+                  fontSize: theme.typography?.sizes?.xs || 13,
+                }}
+              >
+                {t('order_details_add_photo')}
+              </Text>
             </Pressable>
-          </View>
 
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.hRow}
-          >
-            {photos.map((url, index) => (
-              <View key={index} style={styles.hItem}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.imagePressable,
-                    pressed && { transform: [{ scale: 0.98 }] },
-                  ]}
-                  onPress={() => openViewer(photos, index)}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: theme.spacing?.sm || 8 }}
+            >
+              {photos.map((url, index) => (
+                <View
+                  key={index}
+                  style={{ position: 'relative', marginRight: theme.spacing?.md || 10 }}
                 >
-                  <Image source={{ uri: url }} style={styles.hImage} />
-                </Pressable>
-                <Pressable style={styles.deletePhoto} onPress={() => removePhoto(category, index)}>
-                  <Text style={styles.deleteText}>×</Text>
-                </Pressable>
-              </View>
-            ))}
-          </ScrollView>
+                  <Pressable
+                    style={({ pressed }) => [
+                      {
+                        borderRadius: theme.radii?.lg || 12,
+                        overflow: 'hidden',
+                        ...(Platform.OS === 'ios'
+                          ? theme.shadows?.card?.ios || {}
+                          : theme.shadows?.card?.android || {}),
+                      },
+                      pressed && { transform: [{ scale: 0.98 }] },
+                    ]}
+                    onPress={() => openViewer(photos, index)}
+                  >
+                    <Image
+                      source={{ uri: url }}
+                      style={{ width: 116, height: 116, borderRadius: theme.radii?.lg || 12 }}
+                    />
+                  </Pressable>
+                  <Pressable
+                    style={{
+                      position: 'absolute',
+                      top: theme.spacing?.xs || 4,
+                      right: theme.spacing?.xs || 4,
+                      backgroundColor: theme.colors.danger,
+                      width: 24,
+                      height: 24,
+                      borderRadius: theme.radii?.lg || 12,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 5,
+                    }}
+                    onPress={() => removePhoto(category, index)}
+                  >
+                    <Text
+                      style={{
+                        color: theme.colors.onPrimary,
+                        fontWeight: theme.typography?.weight?.bold || '700',
+                        fontSize: theme.typography?.sizes?.md || 16,
+                        lineHeight: 18,
+                      }}
+                    >
+                      ×
+                    </Text>
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          </Card>
         </View>
       );
     },
-    [order, styles, compressAndUpload, openViewer, removePhoto],
-  );
-
-  const SafeRow = useCallback(
-    ({ children, ...rest }) => (
-      <View {...rest}>
-        {React.Children.map(children, (ch) =>
-          typeof ch === 'string' ? <Text style={styles.rowValue}>{ch}</Text> : ch,
-        )}
-      </View>
-    ),
-    [styles],
+    [order, compressAndUpload, openViewer, removePhoto, t, theme],
   );
 
   useEffect(() => {
@@ -1332,7 +1417,6 @@ export default function OrderDetails() {
         RNAnimated.timing(viewFade, {
           toValue: 1,
           duration: 260,
-          delay: 40,
           useNativeDriver: true,
         }),
         RNAnimated.spring(viewTranslate, {
@@ -1442,216 +1526,244 @@ export default function OrderDetails() {
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <Screen background="background" edges={['top', 'bottom']}>
+      <Screen
+        background="background"
+        edges={['top', 'bottom']}
+        headerOptions={{
+          headerTitleAlign: 'left',
+          title: t('routes.orders/[id]', 'routes.orders/[id]'),
+          rightTextLabel: canEdit() && !editMode && order?.id ? t('order_details_edit') : undefined,
+          onRightPress:
+            canEdit() && order?.id ? () => router.push(`/orders/edit/${order.id}`) : undefined,
+        }}
+      >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
             ref={detailsScrollRef}
             contentContainerStyle={styles.container}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.topBar}>
-              <Pressable
-                onPress={() => (editMode ? requestCloseEdit() : goBack())}
-                hitSlop={16}
-                accessibilityRole="button"
-                accessibilityLabel="Назад"
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <AntDesign name="left" size={18} color={theme.colors.primary} />
-                  <Text style={styles.backText}>Назад</Text>
-                </View>
-              </Pressable>
-
-              {canEdit() && !editMode && (
-                <Pressable
-                  onPress={() => {
-                    if (order?.id) router.push(`/orders/edit/${order.id}`);
-                  }}
-                  hitSlop={10}
-                  style={styles.editBtn}
-                >
-                  <Text style={styles.editBtnText}>Редактировать</Text>
-                </Pressable>
-              )}
-            </View>
-
+            <SectionHeader topSpacing="xs">{t('order_details_general_data')}</SectionHeader>
             <RNAnimated.View
-              style={[
-                styles.headerCard,
-                { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
-              ]}
+              style={[{ opacity: viewFade, transform: [{ translateY: viewTranslate }] }]}
             >
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {order.title}
-              </Text>
-
-              <View style={styles.metaRow}>
-                {order.urgent && (
-                  <View style={styles.urgentPill}>
-                    <Text style={styles.urgentPillText}>Срочная</Text>
-                  </View>
-                )}
-
-                {canChangeStatus ? (
-                  <Pressable
-                    onPress={() => setStatusModalVisible(true)}
-                    style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
-                  >
-                    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
-                      {order.status}
-                    </Text>
-                  </Pressable>
-                ) : (
+              <Card paddedXOnly>
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_status')}</Text>
                   <View
-                    style={[styles.statusChip, { backgroundColor: statusMeta.bg, opacity: 0.6 }]}
+                    style={[
+                      base.rightWrap,
+                      { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
+                    ]}
                   >
-                    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
-                      {order.status}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            </RNAnimated.View>
-
-            <RNAnimated.View
-              style={[
-                styles.cardBlock,
-                { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
-              ]}
-            >
-              <SafeRow style={styles.row}>
-                <Text style={styles.rowLabel}>👷 Исполнитель</Text>
-                {deriveExecutorNameInstant(order) || executorName ? (
-                  <Text style={styles.rowValue}>
-                    {deriveExecutorNameInstant(order) || executorName}
-                  </Text>
-                ) : (
-                  <Text style={[styles.rowValue, styles.muted]}>не назначен</Text>
-                )}
-              </SafeRow>
-              <View style={styles.separator} />
-
-              <SafeRow style={styles.row}>
-                <Text style={styles.rowLabel}>🧑‍💼 Заказчик</Text>
-                <Text style={styles.rowValue}>{order.fio || order.customer_name || '—'}</Text>
-              </SafeRow>
-              <View style={styles.separator} />
-
-              <Pressable style={styles.row} onPress={openInYandex}>
-                <Text style={styles.rowLabel}>📍 Адрес</Text>
-                <Text style={[styles.rowValue, styles.linkText]} numberOfLines={2}>
-                  {[order.address, order.region, order.city, order.street, order.house]
-                    .filter(Boolean)
-                    .join(', ') || 'Адрес не указан'}
-                </Text>
-              </Pressable>
-              <View style={styles.separator} />
-
-              {useWorkTypes && (
-                <>
-                  <SafeRow style={styles.row}>
-                    <Text style={styles.rowLabel}>🏷️ Тип работ</Text>
-                    <Text style={styles.rowValue}>
-                      {workTypes.find((w) => w.id === (order.work_type_id ?? null))?.name ||
-                        'не выбран'}
-                    </Text>
-                  </SafeRow>
-                  <View style={styles.separator} />
-                </>
-              )}
-
-              <Pressable
-                style={styles.row}
-                onPress={() => {
-                  const dateStr = order.datetime
-                    ? new Date(order.datetime).toISOString().slice(0, 10)
-                    : undefined;
-                  const assignee = order.assigned_to || undefined;
-                  router.push({
-                    pathname: '/orders/calendar',
-                    params: {
-                      selectedDate: dateStr,
-                      selectedUserId: assignee,
-                      returnTo: `/order-details/${order.id}`,
-                      returnParams: JSON.stringify({}),
-                    },
-                  });
-                }}
-              >
-                <Text style={styles.rowLabel}>🗓️ Дата выезда</Text>
-                <Text style={[styles.rowValue, styles.linkText]}>
-                  {order.datetime
-                    ? format(new Date(order.datetime), 'd MMMM yyyy, HH:mm', { locale: ru })
-                    : 'не указана'}
-                </Text>
-              </Pressable>
-              <View style={styles.separator} />
-
-              <SafeRow style={styles.row}>
-                <Text style={styles.rowLabel}>📞 Телефон</Text>
-                {(() => {
-                  const isAdmin = role === 'admin' || role === 'dispatcher';
-                  const visiblePhone =
-                    order?.customer_phone_visible || (isAdmin ? order?.phone : null);
-                  const masked = order?.customer_phone_masked;
-                  if (visiblePhone) {
-                    return (
-                      <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
-                        <Text style={[styles.rowValue, styles.linkText]}>
-                          {formatPhoneDisplay(visiblePhone)}
+                    {order.urgent && (
+                      <View style={styles.urgentPill}>
+                        <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
+                      </View>
+                    )}
+                    {canChangeStatus ? (
+                      <Pressable
+                        onPress={() => setStatusModalVisible(true)}
+                        style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
+                      >
+                        <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                          {order.status}
                         </Text>
                       </Pressable>
-                    );
-                  }
-                  return <Text style={[styles.rowValue, styles.muted]}>{masked || 'Скрыт'}</Text>;
-                })()}
-              </SafeRow>
-              <View style={styles.separator} />
+                    ) : (
+                      <View
+                        style={[
+                          styles.statusChip,
+                          { backgroundColor: statusMeta.bg, opacity: 0.6 },
+                        ]}
+                      >
+                        <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                          {order.status}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+                <View style={base.sep} />
 
-              <SafeRow style={styles.row}>
-                <Text style={styles.rowLabel}>💰 Сумма</Text>
-                <Text style={styles.rowValue}>{formatMoney(order.price)}</Text>
-              </SafeRow>
-              <View style={styles.separator} />
+                {/* ...existing code... */}
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_executor')}</Text>
+                  <View style={base.rightWrap}>
+                    {deriveExecutorNameInstant(order) || executorName ? (
+                      <Text style={base.value}>
+                        {deriveExecutorNameInstant(order) || executorName}
+                      </Text>
+                    ) : (
+                      <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                        {t('order_details_not_assigned')}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+                <View style={base.sep} />
 
-              <SafeRow style={styles.row}>
-                <Text style={styles.rowLabel}>⛽ ГСМ</Text>
-                <Text style={styles.rowValue}>{formatMoney(order.fuel_cost)}</Text>
-              </SafeRow>
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_customer')}</Text>
+                  <View style={base.rightWrap}>
+                    <Text style={base.value}>
+                      {order.fio || order.customer_name || t('common_dash')}
+                    </Text>
+                  </View>
+                </View>
+                <View style={base.sep} />
+
+                <Pressable style={base.row} onPress={openInYandex}>
+                  <Text style={base.label}>{t('order_details_address')}</Text>
+                  <View style={base.rightWrap}>
+                    <Text style={[base.value, styles.link]} numberOfLines={2}>
+                      {[order.address, order.region, order.city, order.street, order.house]
+                        .filter(Boolean)
+                        .join(', ') || t('order_details_address_not_specified')}
+                    </Text>
+                  </View>
+                </Pressable>
+                <View style={base.sep} />
+
+                {useWorkTypes && (
+                  <>
+                    <View style={base.row}>
+                      <Text style={base.label}>{t('order_details_work_type')}</Text>
+                      <View style={base.rightWrap}>
+                        <Text style={base.value}>
+                          {workTypes.find((w) => w.id === (order.work_type_id ?? null))?.name ||
+                            t('order_details_work_type_not_selected')}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={base.sep} />
+                  </>
+                )}
+
+                <Pressable
+                  style={base.row}
+                  onPress={() => {
+                    const dateStr = order.datetime
+                      ? new Date(order.datetime).toISOString().slice(0, 10)
+                      : undefined;
+                    const assignee = order.assigned_to || undefined;
+                    router.push({
+                      pathname: '/orders/calendar',
+                      params: {
+                        selectedDate: dateStr,
+                        selectedUserId: assignee,
+                        returnTo: `/order-details/${order.id}`,
+                        returnParams: JSON.stringify({}),
+                      },
+                    });
+                  }}
+                >
+                  <Text style={base.label}>{t('order_details_departure_date')}</Text>
+                  <View style={base.rightWrap}>
+                    <Text style={[base.value, styles.link]}>
+                      {order.datetime
+                        ? format(new Date(order.datetime), 'd MMMM yyyy, HH:mm', { locale: ru })
+                        : t('order_details_departure_not_specified')}
+                    </Text>
+                  </View>
+                </Pressable>
+                <View style={base.sep} />
+
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_phone')}</Text>
+                  <View style={base.rightWrap}>
+                    {(() => {
+                      const isAdmin = role === 'admin' || role === 'dispatcher';
+                      const visiblePhone =
+                        order?.customer_phone_visible || (isAdmin ? order?.phone : null);
+                      const masked = order?.customer_phone_masked;
+                      if (visiblePhone) {
+                        return (
+                          <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
+                            <Text style={[base.value, styles.link]}>
+                              {formatPhoneDisplay(visiblePhone)}
+                            </Text>
+                          </Pressable>
+                        );
+                      }
+                      return (
+                        <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                          {masked || t('order_details_phone_hidden')}
+                        </Text>
+                      );
+                    })()}
+                  </View>
+                </View>
+                <View style={base.sep} />
+
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_amount')}</Text>
+                  <View style={base.rightWrap}>
+                    <Text style={base.value}>{formatMoney(order.price)}</Text>
+                  </View>
+                </View>
+                <View style={base.sep} />
+
+                <View style={base.row}>
+                  <Text style={base.label}>{t('order_details_fuel')}</Text>
+                  <View style={base.rightWrap}>
+                    <Text style={base.value}>{formatMoney(order.fuel_cost)}</Text>
+                  </View>
+                </View>
+              </Card>
             </RNAnimated.View>
 
             {hasField('comment') && (
               <RNAnimated.View
                 style={[
-                  styles.descCard,
-                  { opacity: viewFade, transform: [{ translateY: viewTranslate }] },
+                  {
+                    opacity: viewFade,
+                    transform: [{ translateY: viewTranslate }],
+                    marginTop: theme.spacing?.md || 12,
+                  },
                 ]}
               >
-                <Text style={styles.descTitle}>📝 Описание</Text>
-                <Text style={styles.descText} numberOfLines={descExpanded ? undefined : 4}>
-                  {order.comment?.trim() ? order.comment : '—'}
-                </Text>
-                {order.comment && order.comment.length > 120 && (
-                  <Pressable onPress={() => setDescExpanded((v) => !v)} hitSlop={8}>
-                    <Text style={styles.descToggle}>
-                      {descExpanded ? 'Свернуть' : 'Показать полностью'}
-                    </Text>
-                  </Pressable>
-                )}
+                <SectionHeader>{t('order_details_description')}</SectionHeader>
+                <Card>
+                  <Text
+                    style={[base.value, { lineHeight: 22 }]}
+                    numberOfLines={descExpanded ? undefined : 4}
+                  >
+                    {order.comment?.trim() ? order.comment : t('order_details_description_empty')}
+                  </Text>
+                  {order.comment && order.comment.length > 120 && (
+                    <Pressable
+                      onPress={() => setDescExpanded((v) => !v)}
+                      hitSlop={theme.components?.interactive?.hitSlop || 8}
+                    >
+                      <Text
+                        style={[
+                          styles.link,
+                          {
+                            marginTop: theme.spacing?.sm || 8,
+                            fontWeight: theme.typography?.weight?.semibold || '600',
+                          },
+                        ]}
+                      >
+                        {descExpanded ? t('order_details_collapse') : t('order_details_show_full')}
+                      </Text>
+                    </Pressable>
+                  )}
+                </Card>
               </RNAnimated.View>
             )}
 
-            {!isFree && renderPhotoRow('Фото договора', 'contract_file')}
-            {!isFree && renderPhotoRow('Фото ДО', 'photo_before')}
-            {!isFree && renderPhotoRow('Фото ПОСЛЕ', 'photo_after')}
-            {!isFree && renderPhotoRow('Акт выполненных работ', 'act_file')}
+            {!isFree && renderPhotoRow(t('order_details_contract_photo'), 'contract_file')}
+            {!isFree && renderPhotoRow(t('order_details_photo_before'), 'photo_before')}
+            {!isFree && renderPhotoRow(t('order_details_photo_after'), 'photo_after')}
+            {!isFree && renderPhotoRow(t('order_details_act'), 'act_file')}
 
             {!order.assigned_to && (role === 'worker' || has('canAssignExecutors')) && (
               <Pressable
                 style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
                 onPress={onAcceptOrder}
               >
-                <Text style={styles.finishButtonText}>Принять заявку</Text>
+                <Text style={styles.finishButtonText}>{t('order_details_accept_order')}</Text>
               </Pressable>
             )}
 
@@ -1664,7 +1776,7 @@ export default function OrderDetails() {
                 ]}
                 onPress={onFinishPress}
               >
-                <Text style={styles.finishButtonText}>Завершить заявку</Text>
+                <Text style={styles.finishButtonText}>{t('order_details_finish_order')}</Text>
               </Pressable>
             )}
 
@@ -1678,7 +1790,9 @@ export default function OrderDetails() {
                   pressed && { opacity: 0.9 },
                 ]}
               >
-                <Text style={[styles.appButtonText, styles.btnDestructiveText]}>Удалить</Text>
+                <Text style={[styles.appButtonText, styles.btnDestructiveText]}>
+                  {t('order_details_delete')}
+                </Text>
               </Pressable>
             )}
           </ScrollView>
@@ -1698,11 +1812,9 @@ export default function OrderDetails() {
         backdropOpacity={0.3}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Выберите тип работ</Text>
+          <Text style={styles.modalTitle}>{t('order_modal_work_type_select')}</Text>
           {workTypes.length === 0 ? (
-            <Text style={styles.modalText}>
-              Список пуст. Добавьте типы работ в настройках компании.
-            </Text>
+            <Text style={styles.modalText}>{t('order_modal_work_type_empty')}</Text>
           ) : (
             workTypes.map((t) => (
               <Pressable
@@ -1841,11 +1953,19 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Отменить редактирование?</Text>
-          <Text style={styles.modalText}>Все изменения будут потеряны. Вы уверены?</Text>
+          <Text style={styles.modalTitle}>{t('order_modal_cancel_edit_title')}</Text>
+          <Text style={styles.modalText}>{t('order_modal_cancel_edit_msg')}</Text>
           <View style={styles.modalActions}>
-            <Button title="Остаться" onPress={() => setCancelVisible(false)} variant="primary" />
-            <Button title="Выйти" onPress={confirmCancel} variant="destructive" />
+            <Button
+              title={t('order_modal_cancel_stay')}
+              onPress={() => setCancelVisible(false)}
+              variant="primary"
+            />
+            <Button
+              title={t('order_modal_cancel_leave')}
+              onPress={confirmCancel}
+              variant="destructive"
+            />
           </View>
         </View>
       </Modal>
@@ -1862,7 +1982,7 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Выберите исполнителя</Text>
+          <Text style={styles.modalTitle}>{t('order_modal_select_executor')}</Text>
           <Pressable
             onPress={() => {
               setToFeed(true);
@@ -1874,7 +1994,7 @@ export default function OrderDetails() {
               pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
             ]}
           >
-            <Text style={styles.assigneeText}>В общую ленту</Text>
+            <Text style={styles.assigneeText}>{t('order_modal_to_feed')}</Text>
           </Pressable>
           <View style={{ height: 8 }} />
           {users.map((user) => (
@@ -1911,7 +2031,7 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Выберите отдел</Text>
+          <Text style={styles.modalTitle}>{t('order_modal_select_department')}</Text>
           {departments.length > 0 ? (
             departments.map((d) => (
               <Pressable
@@ -1926,11 +2046,11 @@ export default function OrderDetails() {
               </Pressable>
             ))
           ) : (
-            <Text style={styles.modalText}>Нет отделов</Text>
+            <Text style={styles.modalText}>{t('order_modal_no_departments')}</Text>
           )}
-          <View style={[styles.modalActions, { marginTop: 8 }]}>
+          <View style={[styles.modalActions, { marginTop: theme.spacing?.sm || 8 }]}>
             <Button
-              title="Отмена"
+              title={t('btn_cancel')}
               onPress={() => setDepartmentModalVisible(false)}
               variant="secondary"
             />
@@ -1947,8 +2067,13 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Изменить статус</Text>
-          {['В ленте', 'Новый', 'В работе', 'Завершённая'].map((s) => (
+          <Text style={styles.modalTitle}>{t('order_modal_change_status')}</Text>
+          {[
+            t('order_status_in_feed'),
+            t('order_status_new'),
+            t('order_status_in_progress'),
+            t('order_status_completed'),
+          ].map((s) => (
             <Pressable
               key={s}
               onPress={() => updateStatus(s)}
@@ -1962,9 +2087,9 @@ export default function OrderDetails() {
               </Text>
             </Pressable>
           ))}
-          <View style={[styles.modalActions, { marginTop: 8 }]}>
+          <View style={[styles.modalActions, { marginTop: theme.spacing?.sm || 8 }]}>
             <Button
-              title="Отмена"
+              title={t('btn_cancel')}
               onPress={() => setStatusModalVisible(false)}
               variant="secondary"
             />
@@ -1980,10 +2105,10 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Внимание</Text>
+          <Text style={styles.modalTitle}>{t('order_modal_warning_title')}</Text>
           <Text style={styles.modalText}>{warningMessage}</Text>
           <View style={styles.modalActions}>
-            <Button title="Ок" onPress={() => setWarningVisible(false)} />
+            <Button title={t('btn_ok')} onPress={() => setWarningVisible(false)} />
           </View>
         </View>
       </Modal>
@@ -1997,19 +2122,20 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>Удалить заявку?</Text>
-          <Text style={styles.modalText}>
-            Если удалить, все данные и фотографии будут стерты безвозвратно. Восстановить будет
-            невозможно.
-          </Text>
+          <Text style={styles.modalTitle}>{t('order_modal_delete_title')}</Text>
+          <Text style={styles.modalText}>{t('order_modal_delete_msg')}</Text>
           <View style={styles.modalActions}>
             <Button
-              title="Остаться"
+              title={t('order_modal_cancel_stay')}
               onPress={() => setDeleteModalVisible(false)}
               variant="primary"
             />
             <Button
-              title={deleteEnabled ? 'Удалить' : `Удалить (${deleteCountdown})`}
+              title={
+                deleteEnabled
+                  ? t('order_modal_delete_confirm')
+                  : t('order_modal_delete_countdown').replace('{n}', deleteCountdown)
+              }
               onPress={deleteOrderCompletely}
               disabled={!deleteEnabled}
               variant="destructive"
@@ -2022,27 +2148,19 @@ export default function OrderDetails() {
 }
 
 function createStyles(theme) {
+  const sp = theme.spacing || {};
+  const rad = theme.radii || {};
+  const typo = theme.typography || {};
+  const shadows = theme.shadows || {};
+
   return StyleSheet.create({
-    toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-    toggle: {
-      width: 42,
-      height: 26,
-      borderRadius: 13,
-      backgroundColor: theme.colors.inputBg,
-      padding: 2,
-      justifyContent: 'center',
+    container: {
+      paddingTop: (sp.lg || 16) / 2,
+      paddingLeft: sp.lg || 16,
+      paddingRight: sp.lg || 16,
+      paddingBottom: 60,
+      backgroundColor: theme.colors.background,
     },
-    toggleOn: { backgroundColor: theme.colors.danger },
-    knob: {
-      width: 22,
-      height: 22,
-      borderRadius: 11,
-      backgroundColor: theme.colors.surface,
-      alignSelf: 'flex-start',
-    },
-    knobOn: { alignSelf: 'flex-end' },
-    toggleLabel: { fontSize: 14, color: theme.colors.text },
-    container: { padding: 16, paddingBottom: 60, backgroundColor: theme.colors.background },
     centered: {
       flex: 1,
       justifyContent: 'center',
@@ -2053,256 +2171,134 @@ function createStyles(theme) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      marginBottom: 12,
+      marginBottom: sp.md || 12,
     },
-    backText: { color: theme.colors.primary, fontSize: 16 },
-    editBtn: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 10,
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
+    backText: { color: theme.colors.primary, fontSize: typo.sizes?.md || 16 },
+
+    // ЗАМЕНА кнопки на ссылку
+    editLink: {
+      paddingHorizontal: sp.md || 12,
+      paddingVertical: sp.xs || 6,
     },
-    editBtnText: { color: theme.colors.text, fontWeight: '600' },
-    headerCard: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      padding: 16,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
-      marginBottom: 12,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
+    editLinkText: {
+      color: theme.colors.primary,
+      fontWeight: typo.weight?.semibold || '600',
     },
-    headerTitle: {
-      fontSize: 22,
-      fontWeight: '800',
-      color: theme.colors.text,
-      marginBottom: 8,
-      letterSpacing: 0.2,
-    },
-    metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+
+    // headerCard больше не используется, можно оставить или удалить по желанию
+    // headerCard: { ...existing code... },
+
+    metaRow: { flexDirection: 'row', alignItems: 'center', gap: sp.sm || 8 },
     urgentPill: {
       backgroundColor: theme.colors.danger,
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
+      paddingHorizontal: sp.md || 10,
+      paddingVertical: sp.xs || 6,
+      borderRadius: rad.pill || 999,
     },
-    urgentPillText: { color: theme.colors.onPrimary, fontWeight: '700', fontSize: 12 },
-    statusChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-    statusChipText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
-    cardBlock: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      paddingVertical: 4,
-      overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
+    urgentPillText: {
+      color: theme.colors.onPrimary,
+      fontWeight: typo.weight?.bold || '700',
+      fontSize: typo.sizes?.xs || 12,
     },
-    row: {
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 12,
+    statusChip: {
+      paddingHorizontal: sp.md || 10,
+      paddingVertical: sp.xs || 6,
+      borderRadius: rad.pill || 999,
     },
-    rowLabel: {
-      fontSize: 15,
-      color:
-        theme.text?.muted?.color ||
-        theme.colors.textSecondary ||
-        theme.colors.muted ||
-        theme.colors.textSecondary,
-      flexShrink: 0,
+    statusChipText: {
+      fontSize: typo.sizes?.xs || 12,
+      fontWeight: typo.weight?.bold || '700',
+      letterSpacing: 0.3,
     },
-    rowValue: { fontSize: 16, color: theme.colors.text, textAlign: 'right', flex: 1 },
-    linkText: { color: theme.colors.primary, textDecorationLine: 'underline' },
-    muted: { color: theme.colors.textSecondary },
-    separator: { height: 1, backgroundColor: theme.colors.border },
-    descCard: {
-      marginTop: 12,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
-    },
-    descTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 6 },
-    descText: { fontSize: 16, color: theme.colors.text, lineHeight: 22 },
-    descToggle: { marginTop: 8, color: theme.colors.primary, fontWeight: '600' },
-    photosBlock: {
-      marginTop: 16,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      paddingVertical: 8,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
-    },
-    photosHeader: {
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    photosTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text },
-    addChip: {
-      backgroundColor: theme.colors.chipBg || theme.colors.inputBg || theme.colors.surface,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 999,
-    },
-    addChipText: { color: theme.colors.primary, fontWeight: '600', fontSize: 13 },
-    hRow: { paddingHorizontal: 10, paddingBottom: 8 },
-    hItem: { position: 'relative', marginRight: 10 },
-    imagePressable: {
-      borderRadius: 12,
-      overflow: 'hidden',
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
-    },
-    hImage: { width: 116, height: 116, borderRadius: 12 },
-    deletePhoto: {
-      position: 'absolute',
-      top: 4,
-      right: 4,
-      backgroundColor: theme.colors.danger,
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 5,
-    },
-    deleteText: { color: theme.colors.onPrimary, fontWeight: '700', fontSize: 16, lineHeight: 18 },
+    link: { color: theme.colors.primary },
     finishButton: {
-      marginTop: 18,
+      marginTop: sp.lg + 2 || 18,
       backgroundColor: theme.colors.primary,
-      paddingVertical: 14,
-      borderRadius: 14,
+      paddingVertical: sp.md || 14,
+      borderRadius: rad.md || 14,
       alignItems: 'center',
     },
-    finishButtonText: { color: theme.colors.onPrimary, fontSize: 16, fontWeight: '700' },
+    finishButtonText: {
+      color: theme.colors.onPrimary,
+      fontSize: typo.sizes?.md || 16,
+      fontWeight: typo.weight?.bold || '700',
+    },
     finishButtonDisabled: {
       backgroundColor: theme.colors.primaryDisabled || theme.colors.primary,
       opacity: 0.6,
     },
     appButton: {
-      paddingVertical: 12,
-      paddingHorizontal: 16,
-      borderRadius: 12,
+      paddingVertical: sp.md || 12,
+      paddingHorizontal: sp.lg || 16,
+      borderRadius: rad.lg || 12,
       alignItems: 'center',
     },
-    appButtonText: { fontSize: 16 },
-    btnPrimary: { backgroundColor: theme.colors.primary },
-    btnPrimaryText: { color: theme.colors.onPrimary, fontWeight: '600' },
-    btnSecondary: {
-      backgroundColor: theme.colors.inputBg || theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-    },
-    btnSecondaryText: { color: theme.colors.text, fontWeight: '500' },
+    appButtonText: { fontSize: typo.sizes?.md || 16 },
     btnDestructive: { backgroundColor: theme.colors.danger },
-    btnDestructiveText: { color: theme.colors.onPrimary, fontWeight: '700' },
-    modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
-    modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
-    modalText: {
-      fontSize: 15,
-      color:
-        theme.text?.muted?.color ||
-        theme.colors.textSecondary ||
-        theme.colors.muted ||
-        theme.colors.textSecondary,
-      marginBottom: 20,
+    btnDestructiveText: {
+      color: theme.colors.onPrimary,
+      fontWeight: typo.weight?.bold || '700',
     },
-    modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-    assigneeOption: { paddingVertical: 10 },
-    assigneeText: { fontSize: 16, color: theme.colors.text },
-    editSheet: {
+    modalContainer: {
       backgroundColor: theme.colors.surface,
-      borderTopLeftRadius: 20,
-      borderTopRightRadius: 20,
-      maxHeight: '92%',
+      borderRadius: rad.lg || 12,
+      padding: sp.xl || 20,
     },
-    sheetHeader: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
-      backgroundColor: theme.colors.surface,
-      borderTopLeftRadius: 20,
-      borderTopRightRadius: 20,
-    },
-    sheetTitle: {
-      fontSize: 20,
-      fontWeight: '700',
+    modalTitle: {
+      fontSize: typo.sizes?.lg || 18,
+      fontWeight: typo.weight?.semibold || '600',
+      marginBottom: sp.md || 12,
       color: theme.colors.text,
-      letterSpacing: 0.3,
     },
+    modalText: {
+      fontSize: typo.sizes?.sm || 15,
+      color: theme.colors.textSecondary,
+      marginBottom: sp.xl || 20,
+    },
+    modalActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: sp.md || 12,
+    },
+    assigneeOption: { paddingVertical: sp.md || 10 },
+    assigneeText: { fontSize: typo.sizes?.md || 16, color: theme.colors.text },
     banner: {
       position: 'absolute',
-      left: 16,
-      right: 16,
-      bottom: 24,
+      left: sp.lg || 16,
+      right: sp.lg || 16,
+      bottom: sp.xxl || 24,
       backgroundColor: theme.colors.bannerBg || theme.colors.text,
-      borderRadius: 12,
-      paddingVertical: 12,
-      paddingHorizontal: 16,
-      ...(tokens?.shadows?.level1?.[Platform.OS] || {}),
+      borderRadius: rad.lg || 12,
+      paddingVertical: sp.md || 12,
+      paddingHorizontal: sp.lg || 16,
+      ...(Platform.OS === 'ios' ? shadows?.card?.ios || {} : shadows?.card?.android || {}),
     },
-    bannerText: { color: theme.colors.onPrimary, textAlign: 'center', fontWeight: '600' },
-    card: {
-      backgroundColor: theme.colors.surface,
-      borderRadius: 12,
-      padding: 12,
-      borderColor: theme.colors.border,
-      borderWidth: 1,
-      marginBottom: 12,
+    bannerText: {
+      color: theme.colors.onPrimary,
+      textAlign: 'center',
+      fontWeight: typo.weight?.semibold || '600',
     },
-    section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
-    label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
-    input: {
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      borderRadius: 10,
-      padding: 10,
-      color: theme.colors.text,
-    },
-    selectInput: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      borderRadius: 10,
-      backgroundColor: theme.colors.surface,
-      padding: 12,
-      marginTop: 4,
-    },
-    selectInputText: { fontSize: 16, color: theme.colors.text },
     viewerTopBar: {
       position: 'absolute',
-      top: 16,
+      top: sp.lg || 16,
       left: 0,
       right: 0,
       zIndex: 10,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
+      paddingHorizontal: sp.lg || 16,
     },
     counterPill: {
       backgroundColor: theme.colors.overlay,
-      borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
+      borderRadius: rad.pill || 999,
+      paddingHorizontal: sp.md || 12,
+      paddingVertical: sp.xs || 6,
     },
-    counterText: { color: theme.colors.onPrimary, fontWeight: '700' },
+    counterText: {
+      color: theme.colors.onPrimary,
+      fontWeight: typo.weight?.bold || '700',
+    },
     closeBtn: {
       backgroundColor: theme.colors.overlay,
       width: 36,

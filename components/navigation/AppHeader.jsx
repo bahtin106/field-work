@@ -301,7 +301,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  right: { minWidth: 64, alignItems: 'flex-end', paddingRight: 8 },
+  right: { minWidth: 64, alignItems: 'flex-end', paddingRight: 16 },
   title: { fontSize: 17, fontWeight: '600', marginLeft: 8 },
   backText: { fontSize: 16, fontWeight: '600', marginLeft: 2 },
   // Кнопка назад с аккуратным кружком при нажатии

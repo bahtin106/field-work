@@ -64,6 +64,22 @@ export function useQueryWithCache(options) {
     return !cached?.data && enabled;
   });
 
+  // КРИТИЧНО: Гарантированный таймаут для разблокировки isLoading
+  useEffect(() => {
+    if (!enabled || !isLoading) return;
+
+    const timeout = setTimeout(() => {
+      if (mountedRef.current && isLoading) {
+        console.warn(`⏰ useQueryWithCache timeout for ${queryKey} - force stop loading`);
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setIsFetching(false);
+      }
+    }, 10000); // 10 секунд максимум на загрузку
+
+    return () => clearTimeout(timeout);
+  }, [enabled, isLoading, queryKey]);
+
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [isFetching, setIsFetching] = useState(false);
@@ -113,7 +129,12 @@ export function useQueryWithCache(options) {
       // Создаем новый запрос
       const requestPromise = (async () => {
         try {
-          const result = await queryFn();
+          // КРИТИЧНО: Добавляем таймаут для queryFn
+          const timeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Query timeout')), 15000),
+          );
+
+          const result = await Promise.race([queryFn(), timeout]);
 
           if (mountedRef.current) {
             setData(result);
@@ -202,9 +223,24 @@ export function useQueryWithCache(options) {
 
   // Начальная загрузка данных
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      // КРИТИЧНО: Если disabled, сразу сбрасываем isLoading
+      if (mountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setIsFetching(false);
+      }
+      return;
+    }
 
-    fetchData();
+    fetchData().catch(() => {
+      // Гарантируем сброс loading даже при ошибке
+      if (mountedRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+        setIsFetching(false);
+      }
+    });
   }, [enabled, queryKey]); // Перезагружаем при изменении queryKey
 
   // Realtime подписка

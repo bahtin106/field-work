@@ -17,13 +17,16 @@ import {
 
 import DynamicOrderCard from '../../components/DynamicOrderCard';
 import Screen from '../../components/layout/Screen';
+import AppHeader from '../../components/navigation/AppHeader';
 import TextField from '../../components/ui/TextField';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 export default function MyOrdersScreen() {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const mutedColor =
@@ -476,7 +479,14 @@ export default function MyOrdersScreen() {
   }, [filter]);
 
   return (
-    <Screen scroll={false}>
+    <Screen scroll={false} headerOptions={{ headerShown: false }}>
+      <AppHeader
+        back
+        options={{
+          headerTitleAlign: 'left',
+          title: t('routes.orders/my-orders'),
+        }}
+      />
       <FlatList
         data={filteredOrders}
         renderItem={renderItem}

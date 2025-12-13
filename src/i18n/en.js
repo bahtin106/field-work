@@ -10,4 +10,6 @@ export default {
   // Register screen (local overrides)
   register_label_password: 'Password *',
   register_placeholder_password: 'Enter password',
+
+  calendar_toggle: 'Toggle calendar size',
 };

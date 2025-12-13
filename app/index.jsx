@@ -1,31 +1,10 @@
-// app/index.jsx
-import { useRootNavigationState, useRouter } from 'expo-router';
-import { useEffect } from 'react';
-import { supabase } from '../lib/supabase';
+import { Redirect } from 'expo-router';
+
+import { useAuthContext } from '../providers/SimpleAuthProvider';
 
 export default function Index() {
-  const navigationState = useRootNavigationState();
-  const router = useRouter();
+  const { isInitializing, isAuthenticated } = useAuthContext();
 
-  useEffect(() => {
-    // Ждём пока навигация инициализируется
-    if (!navigationState?.key) return;
-
-    const checkAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (session) {
-        // Залогинен - на главную
-        router.replace('/orders');
-      } else {
-        // Не залогинен - на логин
-        router.replace('/(auth)/login');
-      }
-    };
-
-    checkAuth();
-  }, [navigationState?.key]);
-
-  // Показываем пустой экран пока проверяем
-  return null;
+  if (isInitializing) return null;
+  return <Redirect href={isAuthenticated ? '/orders' : '/(auth)/login'} />;
 }

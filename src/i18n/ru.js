@@ -6,6 +6,7 @@ export default {
     'settings/index': 'Настройки компании',
     orders: 'Заявки',
     'orders/index': 'Заявки',
+    'orders/[id]': 'Заявка',
     'orders/my-orders': 'Мои заявки',
     'orders/all-orders': 'Все заявки',
     'orders/calendar': 'Календарь',
@@ -198,6 +199,38 @@ export default {
   dlg_delete_msg: 'Необходимо выбрать правопреемника, чтобы переназначить все его заявки.',
   datetime_omit_year: 'Указать год',
   datetime_tab_date: 'Дата',
+
+  // Календарь: режимы просмотра
+  calendar_view_year: 'Год',
+  calendar_view_month: 'Месяц',
+  calendar_view_week: 'Неделя',
+  calendar_view_day: 'День',
+  calendar_view_schedule: 'Расписание',
+  calendar_toggle: 'Переключить размер календаря',
+
+  // Календарь: названия месяцев (полные)
+  month_january: 'Январь',
+  month_february: 'Февраль',
+  month_march: 'Март',
+  month_april: 'Апрель',
+  month_may: 'Май',
+  month_june: 'Июнь',
+  month_july: 'Июль',
+  month_august: 'Август',
+  month_september: 'Сентябрь',
+  month_october: 'Октябрь',
+  month_november: 'Ноябрь',
+  month_december: 'Декабрь',
+
+  // Календарь: названия дней недели (короткие, 2 буквы)
+  day_short_mo: 'Пн',
+  day_short_tu: 'Вт',
+  day_short_we: 'Ср',
+  day_short_th: 'Чт',
+  day_short_fr: 'Пт',
+  day_short_sa: 'Сб',
+  day_short_su: 'Вс',
+
   datetime_tab_time: 'Время',
   modal_select_title: 'Выберите',
   picker_user_title: 'Выбор сотрудника',
@@ -396,6 +429,7 @@ export default {
 
   // Users index (flat keys for t('...') in app/users/index.jsx)
   routes_users_index: 'Сотрудники',
+  routes_orders_calendar: 'Календарь',
   users_search_placeholder: 'Поиск сотрудника',
   users_allDepartments: 'Все отделы',
   users_department: 'Отдел',
@@ -487,4 +521,96 @@ export default {
   // При необходимости можно установить e.g. 11 чтобы сдвинуть метки на -1.
   month_label_offset: 0,
   common_bullet: ' • ',
+
+  // Просмотр заявки (app/orders/[id].jsx)
+  order_details_back: 'Назад',
+  order_details_edit: 'Редактировать',
+  order_details_general_data: 'Общие данные',
+  order_details_status: 'Статус',
+  order_details_executor: '👷 Исполнитель',
+  order_details_not_assigned: 'не назначен',
+  order_details_customer: '🧑‍💼 Заказчик',
+  order_details_address: '📍 Адрес',
+  order_details_address_not_specified: 'Адрес не указан',
+  order_details_work_type: '🏷️ Тип работ',
+  order_details_work_type_not_selected: 'не выбран',
+  order_details_departure_date: '🗓️ Дата выезда',
+  order_details_departure_not_specified: 'не указана',
+  order_details_phone: '📞 Телефон',
+  order_details_phone_hidden: 'Скрыт',
+  order_details_amount: '💰 Сумма',
+  order_details_fuel: '⛽ ГСМ',
+  order_details_description: '📝 Описание',
+  order_details_description_empty: '—',
+  order_details_show_full: 'Показать полностью',
+  order_details_collapse: 'Свернуть',
+  order_details_contract_photo: 'Фото договора',
+  order_details_photo_before: 'Фото ДО',
+  order_details_photo_after: 'Фото ПОСЛЕ',
+  order_details_act: 'Акт выполненных работ',
+  order_details_add_photo: 'Добавить',
+  order_details_accept_order: 'Принять заявку',
+  order_details_finish_order: 'Завершить заявку',
+  order_details_delete: 'Удалить',
+  order_details_urgent: 'Срочная',
+
+  // Модальные окна просмотра заявки
+  order_modal_cancel_edit_title: 'Отменить редактирование?',
+  order_modal_cancel_edit_msg: 'Все изменения будут потеряны. Вы уверены?',
+  order_modal_cancel_stay: 'Остаться',
+  order_modal_cancel_leave: 'Выйти',
+  order_modal_select_executor: 'Выберите исполнителя',
+  order_modal_to_feed: 'В общую ленту',
+  order_modal_select_department: 'Выберите отдел',
+  order_modal_no_departments: 'Нет отделов',
+  order_modal_change_status: 'Изменить статус',
+  order_modal_warning_title: 'Внимание',
+  order_modal_delete_title: 'Удалить заявку?',
+  order_modal_delete_msg:
+    'Если удалить, все данные и фотографии будут стерты безвозвратно. Восстановить будет невозможно.',
+  order_modal_delete_confirm: 'Удалить',
+  order_modal_delete_countdown: 'Удалить ({n})',
+  order_modal_work_type_select: 'Выберите тип работ',
+  order_modal_work_type_empty: 'Список пуст. Добавьте типы работ в настройках компании.',
+
+  // Тосты/уведомления заявки
+  order_toast_phone_copied: 'Телефон скопирован',
+  order_toast_photo_uploaded: 'Фото загружено',
+  order_toast_upload_error: 'Ошибка загрузки',
+  order_toast_photo_deleted: 'Фото удалено',
+  order_toast_delete_error: 'Ошибка удаления',
+  order_toast_order_finished: 'Заявка завершена',
+  order_toast_finish_error: 'Ошибка при завершении',
+  order_toast_network_error: 'Ошибка сети',
+  order_toast_saved: 'Сохранено',
+  order_toast_status_updated: 'Статус обновлён',
+  order_toast_order_deleted: 'Заявка удалена',
+  order_toast_add_photos: 'Добавьте: {items}',
+
+  // Валидация заявки
+  order_validation_fill_required: 'Заполните обязательные поля: {fields}',
+  order_validation_title_required: 'Укажите название заявки',
+  order_validation_address_required: 'Укажите хотя бы часть адреса',
+  order_validation_customer_required: 'Укажите имя заказчика',
+  order_validation_phone_required: 'Укажите номер телефона',
+  order_validation_date_required: 'Укажите дату выезда',
+  order_validation_executor_required: 'Выберите исполнителя или отправьте в ленту',
+  order_validation_phone_format: 'Введите корректный номер телефона формата +7 (9__) ___-__-__',
+  order_validation_no_order_id: 'Id заявки не найден',
+  order_save_error: 'Ошибка сохранения',
+
+  // Статусы заявок
+  order_status_in_feed: 'В ленте',
+  order_status_new: 'Новый',
+  order_status_in_progress: 'В работе',
+  order_status_completed: 'Завершённая',
+
+  // Права доступа
+  order_no_camera_permission: 'Нет доступа к камере',
+
+  // Фото категории
+  order_missing_contract: 'фото договора',
+  order_missing_photo_before: 'фото ДО',
+  order_missing_photo_after: 'фото ПОСЛЕ',
+  order_missing_act: 'акт выполненных работ',
 };

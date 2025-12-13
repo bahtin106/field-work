@@ -53,7 +53,7 @@ export function useDepartments(options = {}) {
     queryFn: fetchDepartments,
     ttl: 60 * 60 * 1000, // 60 минут - отделы меняются редко
     staleTime: 30 * 60 * 1000, // 30 минут - обновляем в фоне
-    enabled: enabled && !!companyId,
+    enabled: enabled && !!companyId && isAuthenticated, // КРИТИЧНО: загружаем только если есть авторизация
     placeholderData: [], // Показываем пустой массив пока грузятся данные из кеша
   });
 

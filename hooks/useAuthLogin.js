@@ -51,10 +51,18 @@ export function useAuthLogin() {
    * Выполняет логин с правильной обработкой ошибок
    */
   const performLogin = useCallback(async (emailTrim, passwordValue) => {
+    console.log('useAuthLogin: performLogin called', { email: emailTrim });
+
     // Убедимся, что компонент ещё смонтирован
     if (!isMountedRef.current) {
       logger.warn('performLogin called after unmount');
       return;
+    }
+
+    // Отменяем предыдущие таймеры
+    if (loginTimeoutRef.current) {
+      clearTimeout(loginTimeoutRef.current);
+      loginTimeoutRef.current = null;
     }
 
     // Отменяем предыдущий запрос если он ещё активен
@@ -72,7 +80,7 @@ export function useAuthLogin() {
       }); // Проверяем, смонтирован ли компонент и не был ли отменён запрос
       if (!isMountedRef.current || abortControllerRef.current?.signal.aborted) {
         logger.debug('Login request abandoned (unmounted or aborted)');
-        return;
+        return false;
       }
 
       if (authErr) {
@@ -85,7 +93,7 @@ export function useAuthLogin() {
 
         setError(errorMessage);
         setLoading(false);
-        return;
+        return false;
       }
 
       // Успешный логин — проверяем что сессия действительно создана
@@ -93,24 +101,35 @@ export function useAuthLogin() {
         logger.warn('Login succeeded but no session token received');
         setError(t(AUTH_ERRORS.UNKNOWN_ERROR, AUTH_ERROR_MESSAGES[AUTH_ERRORS.UNKNOWN_ERROR]));
         setLoading(false);
-        return;
+        return false;
       }
 
+      console.log('useAuthLogin: Login successful', {
+        email: emailTrim,
+        hasSession: !!data.session,
+        sessionData: data.session,
+      });
       logger.info('Login successful', { email: emailTrim, hasSession: !!data.session });
 
-      // КРИТИЧНО: Снимаем loading НЕМЕДЛЕННО после успешного ответа
-      // Навигация произойдёт в _layout.js, компонент размонтируется
-      // Если компонент не размонтируется за 100мс - пользователь увидит что кнопка разблокировалась
-      setTimeout(() => {
+      console.log('useAuthLogin: Login successful, waiting for navigation');
+
+      // Быстрая очистка после успешного логина
+      const clearLoadingTimer = setTimeout(() => {
         if (isMountedRef.current) {
           setLoading(false);
-          logger.debug('Loading cleared immediately after successful login');
+          setEmail('');
+          setPassword('');
+          setError('');
+          console.log('useAuthLogin: Cleared state after successful login');
         }
-      }, 100);
+      }, 500);
+
+      loginTimeoutRef.current = clearLoadingTimer;
+      return true;
     } catch (err) {
       if (!isMountedRef.current || abortControllerRef.current?.signal.aborted) {
         logger.debug('Login error abandoned (unmounted or aborted)');
-        return;
+        return false;
       }
 
       logger.error('Unexpected login error', { error: err.message });
@@ -121,21 +140,22 @@ export function useAuthLogin() {
       );
       setError(errorMessage);
       setLoading(false);
+      return false;
     }
   }, []);
 
   /**
    * Обработчик отправки формы (без дебаунса для лучшего UX)
    */
-  const handleLogin = useCallback(() => {
+  const handleLogin = useCallback(async () => {
     // Быстрая проверка валидности
     if (!canSubmit) {
-      return;
+      return false;
     }
 
     // Если уже идет загрузка, не отправляем повторно
     if (loading) {
-      return;
+      return false;
     }
 
     // Отменяем предыдущий таймер если есть
@@ -144,7 +164,7 @@ export function useAuthLogin() {
     }
 
     // Вызываем сразу (без дебаунса для мгновенной реакции)
-    performLogin(email.trim(), password);
+    return performLogin(email.trim(), password);
   }, [canSubmit, loading, email, password, performLogin]);
 
   /**
@@ -155,10 +175,24 @@ export function useAuthLogin() {
     return () => {
       isMountedRef.current = false;
       abortControllerRef.current?.abort();
+      // Очищаем все таймеры
       if (loginTimeoutRef.current) {
         clearTimeout(loginTimeoutRef.current);
+        loginTimeoutRef.current = null;
       }
     };
+  }, []);
+
+  const reset = useCallback(() => {
+    console.log('useAuthLogin: resetting form');
+    setEmail('');
+    setPassword('');
+    setError('');
+    setLoading(false);
+    if (loginTimeoutRef.current) {
+      clearTimeout(loginTimeoutRef.current);
+      loginTimeoutRef.current = null;
+    }
   }, []);
 
   return {
@@ -179,5 +213,6 @@ export function useAuthLogin() {
 
     // Методы
     handleLogin,
+    reset,
   };
 }
