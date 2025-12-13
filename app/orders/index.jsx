@@ -153,7 +153,13 @@ export default function IndexScreen() {
     return () => clearTimeout(timeout);
   }, [isPermLoading, qc]);
 
-  const isFetching = useIsFetching(); // все активные запросы react-query
+  // учитываем только критические запросы (роль, права), чтобы не блокировать загрузку из-за фоновых префетчей
+  const criticalFetching = useIsFetching({
+    predicate: (q) => {
+      const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
+      return key0 === 'userRole' || key0 === 'perm-canViewAll';
+    },
+  });
   const [forceReadyReason, setForceReadyReason] = React.useState(null);
 
   // Роль пользователя из кэша с SWR
@@ -264,8 +270,8 @@ export default function IndexScreen() {
   const [fetchStartTime] = React.useState(Date.now());
   const activeFetching = React.useMemo(() => {
     if (forceReadyReason) return true;
-    return isFetching > 0 || isRoleLoading || isPermLoading;
-  }, [isFetching, isRoleLoading, isPermLoading, forceReadyReason]);
+    return criticalFetching > 0 || isRoleLoading || isPermLoading;
+  }, [criticalFetching, isRoleLoading, isPermLoading, forceReadyReason]);
 
   // Сброс bootstrap при смене session epoch (повторный логин / логаут)
   React.useEffect(() => {
@@ -312,20 +318,20 @@ export default function IndexScreen() {
       return;
     }
     const elapsed = Date.now() - fetchStartTime;
-    if (elapsed > MAX_BOOT_MS && (isFetching > 0 || isRoleLoading || isPermLoading)) {
+    if (elapsed > MAX_BOOT_MS && (criticalFetching > 0 || isRoleLoading || isPermLoading)) {
       setForceReadyReason((prev) => prev || 'timeout');
       appReadyState.setBootState('ready');
       setBootState('ready');
     }
     const timer = setTimeout(() => {
-      if (bootState !== 'ready' && (isFetching > 0 || isRoleLoading || isPermLoading)) {
+      if (bootState !== 'ready' && (criticalFetching > 0 || isRoleLoading || isPermLoading)) {
         setForceReadyReason((prev) => prev || 'timeout');
         appReadyState.setBootState('ready');
         setBootState('ready');
       }
     }, MAX_BOOT_MS);
     return () => clearTimeout(timer);
-  }, [bootState, fetchStartTime, MAX_BOOT_MS, isFetching, isRoleLoading, isPermLoading]);
+  }, [bootState, fetchStartTime, MAX_BOOT_MS, criticalFetching, isRoleLoading, isPermLoading]);
 
   // Независимый таймаут принудительного снятия лоадера (защита от зависания)
 

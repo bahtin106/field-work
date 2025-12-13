@@ -1,29 +1,33 @@
 // apps/field-work/app/orders/edit/[id].jsx
-import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  Platform,
-  ScrollView,
-  KeyboardAvoidingView,
-  ToastAndroid,
-} from 'react-native';
-import { useRouter, usePathname } from 'expo-router';
 import { AntDesign } from '@expo/vector-icons';
-import Modal from 'react-native-modal';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import { usePathname, useRouter } from 'expo-router';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import Modal from 'react-native-modal';
 
-import { supabase } from '../../../lib/supabase';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { fetchFormSchema } from '../../../lib/settings';
-import { getMyCompanyId, fetchWorkTypes } from '../../../lib/workTypes';
+import { supabase } from '../../../lib/supabase';
+import { fetchWorkTypes, getMyCompanyId } from '../../../lib/workTypes';
 
 import Screen from '../../../components/layout/Screen';
-import TextField from '../../../components/ui/TextField';
+import Card from '../../../components/ui/Card';
+import { DateTimeModal } from '../../../components/ui/modals';
 import PhoneInput from '../../../components/ui/PhoneInput';
-import Button from '../../../components/ui/Button';
+import SectionHeader from '../../../components/ui/SectionHeader';
+import TextField from '../../../components/ui/TextField';
+import { useToast } from '../../../components/ui/ToastProvider';
+import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 export default function EditOrderScreen() {
@@ -41,6 +45,8 @@ export default function EditOrderScreen() {
   }, [pathname]);
   const router = useRouter();
   const { theme } = useTheme();
+  const { useDepartureTime } = useCompanySettings();
+  const { toastInfo, toastError, toastSuccess } = useToast();
 
   // schema-driven required fields (admin form builder)
   const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
@@ -103,6 +109,10 @@ export default function EditOrderScreen() {
   const [urgent, setUrgent] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
 
+  // Modals for date/time
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [showTimeModal, setShowTimeModal] = useState(false);
+
   // load order
   useEffect(() => {
     let mounted = true;
@@ -155,63 +165,36 @@ export default function EditOrderScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: { padding: 16, paddingBottom: 32 },
-        card: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 12,
-          padding: 12,
-          borderColor: theme.colors.border,
-          borderWidth: 1,
-          marginBottom: 12,
-        },
-        section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: theme.colors.text },
-        label: { fontWeight: '500', marginBottom: 4, marginTop: 12, color: theme.colors.text },
-        input: {
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          backgroundColor: theme.colors.surface,
-          borderRadius: 10,
-          padding: 10,
-          color: theme.colors.text,
-        },
+        container: { padding: theme.spacing?.md ?? 16, paddingBottom: theme.spacing?.xl ?? 32 },
         selectInput: {
           flexDirection: 'row',
           justifyContent: 'space-between',
           alignItems: 'center',
           borderWidth: 1,
           borderColor: theme.colors.border,
-          borderRadius: 10,
+          borderRadius: theme.radii?.md ?? 10,
           backgroundColor: theme.colors.surface,
-          padding: 12,
-          marginTop: 4,
+          padding: theme.spacing?.md ?? 12,
+          marginTop: theme.spacing?.xs ?? 4,
         },
         selectInputText: { fontSize: 16, color: theme.colors.text },
-        topBar: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: 16,
-          paddingTop: 10,
-          paddingBottom: 6,
-        },
-        backText: { color: theme.colors.primary, fontSize: 16 },
-        modalContainer: { backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 },
-        modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: theme.colors.text },
-        modalText: { fontSize: 15, color: theme.colors.textSecondary },
       }),
     [theme],
   );
 
-  const showToast = (msg) => {
-    if (Platform.OS === 'android') ToastAndroid.show(msg, ToastAndroid.SHORT);
+  const showToast = (msg, type = 'info') => {
+    const text = String(msg || '');
+    if (type === 'error') toastError(text);
+    else if (type === 'success') toastSuccess(text);
+    else toastInfo(text);
   };
 
   const handleSave = async () => {
-    if (!title.trim()) return showToast('Укажите название заявки');
-    if (!departureDate) return showToast('Укажите дату выезда');
+    if (!title.trim()) return showToast(T('order_validation_title_required'), 'error');
+    if (!departureDate) return showToast(T('order_validation_date_required'), 'error');
     const rawPhone = (phone || '').replace(/\D/g, '');
     if (rawPhone.length !== 11 || rawPhone[0] !== '7' || rawPhone[1] !== '9') {
-      return showToast('Введите корректный номер телефона формата +7 (9__) ___-__-__');
+      return showToast(T('order_validation_phone_format'), 'error');
     }
 
     const payload = {
@@ -232,10 +215,10 @@ export default function EditOrderScreen() {
 
     const { error } = await supabase.from('orders').update(payload).eq('id', id);
     if (error) {
-      showToast(error.message || 'Ошибка сохранения');
+      showToast(error.message || T('order_save_error'), 'error');
       return;
     }
-    showToast('Сохранено');
+    showToast(T('order_toast_saved'), 'success');
     router.back(); // вернуться к деталям без дубликата в стеке
   };
 
@@ -252,49 +235,41 @@ export default function EditOrderScreen() {
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <Screen background="background" edges={['top', 'bottom']}>
-        <View style={styles.topBar}>
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={16}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-          >
-            <AntDesign name="left" size={18} color={theme.colors.primary} />
-            <Text style={styles.backText}>Назад</Text>
-          </Pressable>
-          <Button title="Сохранить" onPress={handleSave} />
-        </View>
-
+      <Screen
+        headerOptions={{
+          rightTextLabel: T('header_save'),
+          onRightPress: handleSave,
+        }}
+      >
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-          <View style={styles.card}>
-            <Text style={styles.section}>Основное</Text>
+          <Card>
+            <SectionHeader title={T('order_details_general_data')} />
 
-            <Text style={styles.label}>Название заявки *</Text>
             <TextField
-              style={styles.input}
-              placeholder="Например: Обрезка деревьев"
+              label={T('order_field_title')}
+              placeholder={T('order_placeholder_title')}
               value={title}
               onChangeText={setTitle}
+              required
             />
 
-            <Text style={styles.label}>Описание</Text>
             <TextField
-              style={[styles.input, { height: 100, textAlignVertical: 'top' }]}
-              placeholder="Подробности (если есть)"
+              label={T('order_field_description')}
+              placeholder={T('order_placeholder_description')}
               value={description}
               onChangeText={setDescription}
               multiline
-              placeholderTextColor={theme.text?.muted?.color || theme.colors.textSecondary}
             />
 
             {useWorkTypes && (
               <View>
-                <Text style={styles.label}>Тип работ</Text>
+                <SectionHeader title={T('order_details_work_type')} compact />
                 <Pressable style={styles.selectInput} onPress={() => setWorkTypeModalVisible(true)}>
                   <Text style={styles.selectInputText}>
                     {workTypeId
-                      ? workTypes.find((w) => w.id === workTypeId)?.name || 'не выбран'
-                      : 'не выбран'}
+                      ? workTypes.find((w) => w.id === workTypeId)?.name ||
+                        T('order_details_work_type_not_selected')
+                      : T('order_details_work_type_not_selected')}
                   </Text>
                   <AntDesign
                     name="down"
@@ -304,29 +279,75 @@ export default function EditOrderScreen() {
                 </Pressable>
               </View>
             )}
-          </View>
+          </Card>
 
-          <View style={styles.card}>
-            <Text style={styles.section}>Адрес</Text>
-            <Text style={styles.label}>Регион</Text>
-            <TextField style={styles.input} value={region} onChangeText={setRegion} />
-            <Text style={styles.label}>Город</Text>
-            <TextField style={styles.input} value={city} onChangeText={setCity} />
-            <Text style={styles.label}>Улица</Text>
-            <TextField style={styles.input} value={street} onChangeText={setStreet} />
-            <Text style={styles.label}>Дом</Text>
-            <TextField style={styles.input} value={house} onChangeText={setHouse} />
-          </View>
+          <Card>
+            <SectionHeader title={T('order_details_address')} />
+            <TextField label={T('order_field_region')} value={region} onChangeText={setRegion} />
+            <TextField label={T('order_field_city')} value={city} onChangeText={setCity} />
+            <TextField label={T('order_field_street')} value={street} onChangeText={setStreet} />
+            <TextField label={T('order_field_house')} value={house} onChangeText={setHouse} />
+          </Card>
 
-          <View style={styles.card}>
-            <Text style={styles.section}>Контакты</Text>
-            <Text style={styles.label}>Имя заказчика</Text>
-            <TextField style={styles.input} value={customerName} onChangeText={setCustomerName} />
-            <Text style={styles.label}>Телефон</Text>
+          <Card>
+            <SectionHeader title={T('order_details_customer')} />
+            <TextField
+              label={T('order_field_customer_name')}
+              value={customerName}
+              onChangeText={setCustomerName}
+            />
+            <SectionHeader title={T('order_details_phone')} compact />
             <PhoneInput value={phone} onChangeText={setPhone} />
-          </View>
+          </Card>
 
-          <View style={{ height: 80 }} />
+          <Card>
+            <SectionHeader
+              title={T('company_settings_sections_departure_helperText_departureOn')}
+            />
+
+            <SectionHeader title={T('order_field_departure_date')} compact />
+            <Pressable style={styles.selectInput} onPress={() => setShowDateModal(true)}>
+              <Text style={styles.selectInputText}>
+                {departureDate
+                  ? format(departureDate, 'd MMMM yyyy', { locale: ru })
+                  : T('placeholder_birthdate')}
+              </Text>
+              <AntDesign
+                name="calendar"
+                size={16}
+                color={theme.colors.textSecondary || theme.colors.text}
+              />
+            </Pressable>
+
+            {useDepartureTime && (
+              <>
+                <SectionHeader title={T('order_field_departure_time')} compact />
+                <Pressable
+                  style={styles.selectInput}
+                  onPress={() => {
+                    if (!departureDate) {
+                      setShowDateModal(true);
+                      return;
+                    }
+                    setShowTimeModal(true);
+                  }}
+                >
+                  <Text style={styles.selectInputText}>
+                    {departureDate
+                      ? format(departureDate, 'HH:mm', { locale: ru })
+                      : T('placeholder_birthdate')}
+                  </Text>
+                  <AntDesign
+                    name="clockcircleo"
+                    size={16}
+                    color={theme.colors.textSecondary || theme.colors.text}
+                  />
+                </Pressable>
+              </>
+            )}
+          </Card>
+
+          <View style={{ height: theme.spacing?.xxl ?? 80 }} />
         </ScrollView>
       </Screen>
 
@@ -341,7 +362,7 @@ export default function EditOrderScreen() {
           <Text
             style={{ fontSize: 18, fontWeight: '600', color: theme.colors.text, marginBottom: 12 }}
           >
-            Выберите тип работ
+            {T('order_modal_work_type_select')}
           </Text>
           {workTypes.map((t) => (
             <Pressable
@@ -350,13 +371,46 @@ export default function EditOrderScreen() {
                 setWorkTypeId(t.id);
                 setWorkTypeModalVisible(false);
               }}
-              style={({ pressed }) => [{ paddingVertical: 10 }, pressed && { opacity: 0.8 }]}
+              style={({ pressed }) => [
+                { paddingVertical: theme.spacing?.sm ?? 10 },
+                pressed && { opacity: 0.8 },
+              ]}
             >
               <Text style={{ fontSize: 16, color: theme.colors.text }}>{t.name}</Text>
             </Pressable>
           ))}
         </View>
       </Modal>
+
+      {/* Модалка выбора даты */}
+      <DateTimeModal
+        visible={showDateModal}
+        mode="date"
+        initial={departureDate}
+        allowFutureDates={true}
+        onApply={(date) => {
+          setDepartureDate(date);
+          setShowDateModal(false);
+        }}
+        onClose={() => setShowDateModal(false)}
+      />
+
+      {/* Модалка выбора времени */}
+      <DateTimeModal
+        visible={showTimeModal}
+        mode="time"
+        initial={departureDate || new Date()}
+        allowFutureDates={true}
+        onApply={(time) => {
+          // Всегда используем существующую дату или создаём новую с сегодняшней датой
+          const baseDate = departureDate || new Date();
+          const newDate = new Date(baseDate);
+          newDate.setHours(time.getHours(), time.getMinutes(), 0, 0);
+          setDepartureDate(newDate);
+          setShowTimeModal(false);
+        }}
+        onClose={() => setShowTimeModal(false)}
+      />
     </KeyboardAvoidingView>
   );
 }

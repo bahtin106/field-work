@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, Platform } from 'react-native';
+import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
+import { useCompanySettings } from '../hooks/useCompanySettings';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../providers/SettingsProvider';
@@ -49,7 +50,7 @@ const RUS_LABELS = {
   datetime: 'Дата выезда',
 };
 
-function formatDateShort(iso) {
+function formatDateShort(iso, showTime = true) {
   if (!iso) return '';
   const d = new Date(iso);
   const months = [
@@ -66,7 +67,11 @@ function formatDateShort(iso) {
     'нояб.',
     'дек.',
   ];
-  return `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+  const dateStr = `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}`;
+  if (showTime) {
+    return `${dateStr}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return dateStr;
 }
 
 function getOptionLabel(field, value) {
@@ -169,6 +174,7 @@ export default function DynamicOrderCard({
   const settings = useSettings();
   const { presetsByContext, getFieldByKey } = settings;
   const { theme } = useTheme();
+  const { useDepartureTime } = useCompanySettings();
 
   // Presets with safe defaults: exclude datetime from middle block
   const presetRaw = presetsByContext(context);
@@ -350,6 +356,7 @@ export default function DynamicOrderCard({
 
   // Time string derived from bottomDateIso (used in calendar context)
   const bottomTimeStr = useMemo(() => {
+    if (!useDepartureTime) return ''; // Время не показываем если настройка выключена
     try {
       if (!bottomDateIso) return '';
       const d = new Date(bottomDateIso);
@@ -358,7 +365,7 @@ export default function DynamicOrderCard({
     } catch {
       return '';
     }
-  }, [bottomDateIso]);
+  }, [bottomDateIso, useDepartureTime]);
 
   // Context-driven visibility
   const roleRaw = (
@@ -542,7 +549,7 @@ export default function DynamicOrderCard({
             </Text>
           ) : showDate ? (
             <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-              {formatDateShort(bottomDateIso)}
+              {formatDateShort(bottomDateIso, useDepartureTime)}
             </Text>
           ) : null}
         </View>

@@ -324,3 +324,4 @@ class PrefetchManager {
 
 // Singleton
 export const prefetchManager = new PrefetchManager();
+

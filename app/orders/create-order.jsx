@@ -10,10 +10,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  TextInput as RNTextInput,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput as RNTextInput,
   UIManager,
   View,
 } from 'react-native';
@@ -22,16 +22,18 @@ import Modal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../../components/ui/Button';
 
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { usePermissions } from '../../lib/permissions';
 import { buildCustomPayload, fetchFormSchema } from '../../lib/settings';
 import { supabase } from '../../lib/supabase';
+import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import { useTheme } from '../../theme/ThemeProvider';
-import { getMyCompanyId, fetchWorkTypes } from '../../lib/workTypes';
 
 export default function CreateOrderScreen() {
   /* PERMISSIONS GUARD: create-order */
   const { has } = usePermissions ? usePermissions() : { has: () => true };
   const { theme } = useTheme();
+  const { useDepartureTime } = useCompanySettings();
 
   const isDark = theme.name === 'dark' || theme.mode === 'dark';
 
@@ -574,53 +576,57 @@ export default function CreateOrderScreen() {
               )}
 
               {/* Время выезда (опционально, включается настройкой компании) */}
-              <Text style={styles.label}>Время выезда</Text>
-              <View
-                ref={(ref) => {
-                  if (ref) timeFieldRef.current = findNodeHandle(ref);
-                }}
-              >
-                <Pressable
-                  style={styles.selectInput}
-                  onPress={() => {
-                    if (!departureDate) {
-                      setShowDatePicker(true);
-                      setTimeout(() => scrollToHandle(dateFieldRef), 200);
-                      return;
-                    }
-                    setShowTimePicker(true);
-                    setTimeout(() => scrollToHandle(timeFieldRef), 200);
-                  }}
-                >
-                  <Text style={styles.selectInputText}>
-                    {departureDate
-                      ? departureDate.toLocaleTimeString('ru-RU', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : 'Сначала выберите дату'}
-                  </Text>
-                  <AntDesign name="clockcircleo" size={16} color={palette.icon} />
-                </Pressable>
-              </View>
-              {showTimePicker && departureDate && (
-                <DateTimePicker
-                  value={departureDate}
-                  mode="time"
-                  is24Hour
-                  display="default"
-                  onChange={(event, selected) => {
-                    setShowTimePicker(false);
-                    if (selected) {
-                      setDepartureDate((prev) => {
-                        const base = prev || new Date();
-                        const d = new Date(base);
-                        d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-                        return d;
-                      });
-                    }
-                  }}
-                />
+              {useDepartureTime && (
+                <>
+                  <Text style={styles.label}>Время выезда</Text>
+                  <View
+                    ref={(ref) => {
+                      if (ref) timeFieldRef.current = findNodeHandle(ref);
+                    }}
+                  >
+                    <Pressable
+                      style={styles.selectInput}
+                      onPress={() => {
+                        if (!departureDate) {
+                          setShowDatePicker(true);
+                          setTimeout(() => scrollToHandle(dateFieldRef), 200);
+                          return;
+                        }
+                        setShowTimePicker(true);
+                        setTimeout(() => scrollToHandle(timeFieldRef), 200);
+                      }}
+                    >
+                      <Text style={styles.selectInputText}>
+                        {departureDate
+                          ? departureDate.toLocaleTimeString('ru-RU', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : 'Сначала выберите дату'}
+                      </Text>
+                      <AntDesign name="clockcircleo" size={16} color={palette.icon} />
+                    </Pressable>
+                  </View>
+                  {showTimePicker && departureDate && (
+                    <DateTimePicker
+                      value={departureDate}
+                      mode="time"
+                      is24Hour
+                      display="default"
+                      onChange={(event, selected) => {
+                        setShowTimePicker(false);
+                        if (selected) {
+                          setDepartureDate((prev) => {
+                            const base = prev || new Date();
+                            const d = new Date(base);
+                            d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+                            return d;
+                          });
+                        }
+                      }}
+                    />
+                  )}
+                </>
               )}
 
               <View style={[styles.toggleRow, { marginTop: 12 }]}>

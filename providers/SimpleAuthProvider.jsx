@@ -1,8 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { bumpSessionEpoch } from '../lib/sessionEpoch';
 import { supabase } from '../lib/supabase';
-
-const PROFILE_TIMEOUT_MS = 8000;
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS = 'id, first_name, last_name, full_name, role, avatar_url, company_id';
 
@@ -71,14 +69,6 @@ export function SimpleAuthProvider({ children }) {
 
     const fallbackProfile = buildProfileFromUser(user, 'fallback');
 
-    const withTimeout = (promise, timeoutMessage) => {
-      let timer;
-      const timeoutPromise = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(timeoutMessage)), PROFILE_TIMEOUT_MS);
-      });
-      return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
-    };
-
     const tryFetchProfile = async () => {
       try {
         const baseQuery = supabase
@@ -86,7 +76,7 @@ export function SimpleAuthProvider({ children }) {
           .select(PROFILE_COLUMNS)
           .or(`id.eq.${userId},user_id.eq.${userId}`)
           .maybeSingle();
-        let { data, error } = await withTimeout(baseQuery, 'Profile load timeout');
+        let { data, error } = await baseQuery;
 
         if (error && (error.code === '42703' || /user_id/i.test(error.message || ''))) {
           const fallbackQuery = supabase
@@ -94,7 +84,7 @@ export function SimpleAuthProvider({ children }) {
             .select(PROFILE_COLUMNS)
             .eq('id', userId)
             .maybeSingle();
-          const res = await withTimeout(fallbackQuery, 'Profile id-only load timeout');
+          const res = await fallbackQuery;
           data = res.data;
           error = res.error;
         }
@@ -133,13 +123,11 @@ export function SimpleAuthProvider({ children }) {
       if (metadataProfile?.company_id) basePayload.company_id = metadataProfile.company_id;
 
       const attemptCreate = async (payload) => {
-        const query = supabase
+        return supabase
           .from('profiles')
           .insert(payload, { defaultToNull: true })
           .select(PROFILE_COLUMNS)
           .single();
-        const result = await withTimeout(query, 'Profile create timeout');
-        return result;
       };
 
       let createPayload = { ...basePayload };
@@ -345,7 +333,12 @@ export function SimpleAuthProvider({ children }) {
           if (!mounted) return;
 
           if (error) {
-            console.warn('SimpleAuth: getSession error (attempt %s/%s)', attempt, MAX_ATTEMPTS, error);
+            console.warn(
+              'SimpleAuth: getSession error (attempt %s/%s)',
+              attempt,
+              MAX_ATTEMPTS,
+              error,
+            );
             if (attempt === MAX_ATTEMPTS) {
               setState({
                 isInitializing: false,
@@ -363,7 +356,12 @@ export function SimpleAuthProvider({ children }) {
           await handleAuthChange('INITIAL_SESSION', session);
           return;
         } catch (error) {
-          console.warn('SimpleAuth: initial session load error (attempt %s/%s)', attempt, MAX_ATTEMPTS, error);
+          console.warn(
+            'SimpleAuth: initial session load error (attempt %s/%s)',
+            attempt,
+            MAX_ATTEMPTS,
+            error,
+          );
           if (!mounted) return;
           if (attempt === MAX_ATTEMPTS) {
             setState({
