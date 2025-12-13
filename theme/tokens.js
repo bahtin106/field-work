@@ -98,6 +98,14 @@ const light = {
     scrollView: {
       paddingBottom: 24, // Стандартный нижний отступ для скроллов
     },
+    calendarYear: {
+      monthTitleSize: 11, // Компактный размер названия месяца
+      dayHeaderSize: 9, // Размер заголовков дней недели
+      dayNumberSize: 10, // Размер числа дня
+      monthSpacing: 8, // Отступ между месяцами
+      monthPadding: 6, // Внутренний отступ блока месяца
+      eventDotSize: 3, // Размер точки-индикатора события
+    },
 
     // Interactive elements (buttons, pressables, toggles)
     interactive: {
@@ -113,6 +121,7 @@ const light = {
     backDelayMs: 300,
     presenceOnlineWindowMs: 120000,
     presenceFutureSkewMs: 300000,
+    panelToggleMs: 220,
   },
 };
 
@@ -185,6 +194,7 @@ const dark = {
     backDelayMs: 300,
     presenceOnlineWindowMs: 120000,
     presenceFutureSkewMs: 300000,
+    panelToggleMs: 220,
   },
 };
 

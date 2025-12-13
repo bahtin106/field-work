@@ -199,6 +199,7 @@ function buildTheme(mode) {
     backDelayMs: base.timings?.backDelayMs ?? 300,
     presenceOnlineWindowMs: base.timings?.presenceOnlineWindowMs ?? 120000,
     presenceFutureSkewMs: base.timings?.presenceFutureSkewMs ?? 300000,
+    panelToggleMs: base.timings?.panelToggleMs ?? 220,
     // App-specific UX timings
     emailDebounceMs: base.timings?.emailDebounceMs ?? 800,
     invalidInputWarningMs: base.timings?.invalidInputWarningMs ?? 3000,

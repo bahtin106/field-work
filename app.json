@@ -4,9 +4,13 @@
     "slug": "work-orders-app",
     "version": "1.0.1",
     "scheme": "workorders",
-    "platforms": ["android"],
+    "platforms": [
+      "android"
+    ],
     "jsEngine": "hermes",
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "extra": {
       "supabaseUrl": "https://fopalcvzdkftsvhqszcx.supabase.co",
       "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvcGFsY3Z6ZGtmdHN2aHFzemN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyOTk5OTIsImV4cCI6MjA2OTg3NTk5Mn0.GJ7W9E_Oap78oBtDTl_ATpb1zcz3UI-dl7x9Ujv9QlY",
@@ -14,6 +18,9 @@
         "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
       }
     },
-    "owner": "bahtin106"
+    "owner": "bahtin106",
+    "plugins": [
+      "expo-router"
+    ]
   }
 }

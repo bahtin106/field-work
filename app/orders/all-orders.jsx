@@ -21,11 +21,13 @@ import {
 
 import DynamicOrderCard from '../../components/DynamicOrderCard';
 import Screen from '../../components/layout/Screen';
+import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
@@ -94,6 +96,7 @@ export default function AllOrdersScreen() {
   }, []);
 
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
   const { has } = usePermissions();
   const queryClient = useQueryClient();
@@ -1007,7 +1010,14 @@ export default function AllOrdersScreen() {
   );
 
   return (
-    <Screen scroll={false}>
+    <Screen scroll={false} headerOptions={{ headerShown: false }}>
+      <AppHeader
+        back
+        options={{
+          headerTitleAlign: 'left',
+          title: t('routes.orders/all-orders'),
+        }}
+      />
       {allowed === null ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.primary} />

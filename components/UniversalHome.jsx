@@ -76,19 +76,20 @@ async function fetchCountsAll() {
   return { feed: feedAll, new: newAll, progress: progressAll, all: allAll };
 }
 
-export default function UniversalHome({ role }) {
+export default function UniversalHome({ role, user, profile: providedProfile }) {
   const { theme } = useTheme();
   const router = useRouter();
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const qc = useQueryClient();
 
   useEffect(() => {
+    if (user) return undefined;
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       qc.setQueryData(['session'], s ?? null);
       qc.invalidateQueries({ queryKey: ['profile'] });
     });
     return () => sub?.subscription?.unsubscribe?.();
-  }, [qc]);
+  }, [qc, user]);
 
   const [scope, setScope] = useState('my');
 
@@ -98,20 +99,25 @@ export default function UniversalHome({ role }) {
     queryFn: fetchSession,
     staleTime: 0,
     refetchOnMount: 'stale',
+    enabled: !user,
   });
-  const uid = isUuid(session?.user?.id) ? session.user.id : null;
+  const uid =
+    user?.id && isUuid(user.id) ? user.id : isUuid(session?.user?.id) ? session.user.id : null;
 
-  const { data: profile, isLoading: profileLoading } = useQuery({
+  const shouldFetchProfile = !!uid && (!providedProfile || providedProfile.__source === 'fallback');
+  const { data: profileData, isLoading: profileLoading } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
-    enabled: !!uid,
+    enabled: shouldFetchProfile,
     staleTime: 5 * 60 * 1000, // 5 минут (было 1 минута)
     gcTime: 10 * 60 * 1000,
     refetchOnMount: 'stale',
     placeholderData: (prev) => prev, // Мгновенный показ старых данных
   });
 
-  const currentProfile = uid && profile ? profile : null;
+  const profileFromQuery = profileData ? { ...profileData, __source: 'supabase-query' } : null;
+
+  const currentProfile = profileFromQuery ?? providedProfile ?? null;
 
   const fullName =
     currentProfile?.full_name ||

@@ -84,7 +84,7 @@ export default function UsersIndex() {
     refresh: refreshUsers,
   } = useUsers({
     filters: filters.values,
-    enabled: !!companyId,
+    enabled: !companyIdLoading, // КРИТИЧНО: включаем когда companyId завершил загрузку
   });
 
   const {
@@ -106,7 +106,9 @@ export default function UsersIndex() {
 
   // Combined loading state - wait for initial data from both sources
   // Once cached data is available, show it immediately (stale-while-revalidate pattern)
-  const isLoading = usersLoading && departmentsLoading;
+  // КРИТИЧНО: Показываем loader только если ОБА источника грузятся И нет данных
+  const hasAnyData = users.length > 0 || departments.length > 0;
+  const isLoading = (usersLoading || departmentsLoading) && !hasAnyData;
   const isRefreshing = usersRefreshing || departmentsRefreshing;
 
   // Pull-to-refresh обновляет оба источника одновременно

@@ -24,7 +24,7 @@ export default function Screen({
   const route = useRoute();
   const pathname = usePathname() || '';
   const isAuthScreen = pathname.startsWith('/(auth)') || route?.name === 'login';
-  const showHeader = !isAuthScreen;
+  const showHeader = !isAuthScreen && headerOptions?.headerShown !== false;
   const insets = useSafeAreaInsets();
   const useScroll = scroll !== false && !isAuthScreen;
   useI18nVersion(); // subscribe to i18n changes to re-render screen

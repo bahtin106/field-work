@@ -14,6 +14,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useAuth } from '../../components/hooks/useAuth';
 import UniversalHome from '../../components/universalhome';
 import appReadyState from '../../lib/appReadyState';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
@@ -69,21 +70,12 @@ function PremiumLoader({ text = 'Подготавливаем рабочее п�
     }, []),
   );
 
-  // На главной «назад» ничего не делает (Android)
-  useFocusEffect(
-    React.useCallback(() => {
-      const onBack = () => true;
-      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
-      return () => sub.remove();
-    }, []),
-  );
-
   return (
     <View style={styles.loaderRoot} pointerEvents="none">
       <ActivityIndicator size="large" color="#6A6A6A" />
       <View style={{ height: 16 }} />
-      <View style={styles.loaderTextRow}>
-        <Text style={styles.loaderText}>{text}</Text>
+      <Text style={styles.loaderText}>{text}</Text>
+      <View style={styles.loaderDotsRow}>
         <Animated.Text style={[styles.loaderDots, { opacity: dot1 }]}>.</Animated.Text>
         <Animated.Text style={[styles.loaderDots, { opacity: dot2 }]}>.</Animated.Text>
         <Animated.Text style={[styles.loaderDots, { opacity: dot3 }]}>.</Animated.Text>
@@ -138,6 +130,7 @@ async function fetchCanViewAll() {
 export default function IndexScreen() {
   const { theme } = useTheme();
   const qc = useQueryClient();
+  const { user: authUser, profile: authProfile } = useAuth();
 
   // Параллельно тянем разрешение на просмотр всех заявок (кэш общий через React Query)
   const { data: canViewAll, isLoading: isPermLoading } = useQuery({
@@ -146,17 +139,51 @@ export default function IndexScreen() {
     staleTime: 5 * 60 * 1000,
     refetchOnMount: false,
     placeholderData: (prev) => prev,
+    enabled: !!authUser,
   });
+
+  // КРИТИЧНО: Таймаут для isPermLoading
+  React.useEffect(() => {
+    if (!isPermLoading) return;
+
+    const timeout = setTimeout(() => {
+      qc.setQueryData(['perm-canViewAll'], true); // fallback: даём разрешение по умолчанию
+    }, 3000); // сокращаем до 3 секунд
+
+    return () => clearTimeout(timeout);
+  }, [isPermLoading, qc]);
+
   const isFetching = useIsFetching(); // все активные запросы react-query
+  const [forceReadyReason, setForceReadyReason] = React.useState(null);
 
   // Роль пользователя из кэша с SWR
-  const { data: role, isLoading } = useQuery({
+  const profileRole = authProfile?.role ?? null;
+  const profileSource = authProfile?.__source ?? null;
+  const profileRoleIsFallback = profileSource === 'fallback' || profileSource === 'optimistic';
+  const hasTrustedProfileRole = !!profileRole && !profileRoleIsFallback;
+
+  const { data: roleFromQuery, isLoading: roleQueryLoading } = useQuery({
     queryKey: ['userRole'],
     queryFn: getUserRole,
+    enabled: !hasTrustedProfileRole,
     staleTime: 5 * 60 * 1000,
     refetchOnMount: 'stale',
     placeholderData: (prev) => prev,
   });
+  const role = hasTrustedProfileRole ? profileRole : roleFromQuery || profileRole || 'worker';
+  const isRoleLoading = hasTrustedProfileRole ? false : roleQueryLoading;
+
+  // КРИТИЧНО: Гарантируем что isLoading сбросится через 8 секунд максимум
+  React.useEffect(() => {
+    if (!isRoleLoading) return;
+
+    const timeout = setTimeout(() => {
+      // Принудительно устанавливаем роль worker если загрузка застряла
+      qc.setQueryData(['userRole'], 'worker');
+    }, 4000); // сокращаем до 4 секунд
+
+    return () => clearTimeout(timeout);
+  }, [isRoleLoading, qc]);
 
   // Лайв-обновление роли без спиннера
   React.useEffect(() => {
@@ -230,32 +257,31 @@ export default function IndexScreen() {
   }, []);
 
   const MIN_BOOT_MS = 200; // Уменьшено с 600 до 200ms - быстрый старт благодаря кэшу!
-  const MAX_BOOT_MS = 5000; // жёсткий верхний предел (снижен для лучшего UX)
+  const MAX_BOOT_MS = 15000; // жёсткий верхний предел (снижен для лучшего UX)
 
   // activeFetching НЕ включает !role, т.к. роль может быть в кэше мгновенно
-  const activeFetching = isFetching > 0 || isLoading || isPermLoading;
+  // КРИТИЧНО: Используем timestamp для принудительного завершения через MAX_BOOT_MS
+  const [fetchStartTime] = React.useState(Date.now());
+  const activeFetching = React.useMemo(() => {
+    if (forceReadyReason) return true;
+    return isFetching > 0 || isRoleLoading || isPermLoading;
+  }, [isFetching, isRoleLoading, isPermLoading, forceReadyReason]);
 
   // Сброс bootstrap при смене session epoch (повторный логин / логаут)
   React.useEffect(() => {
     const unsub = onSessionEpoch(() => {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn('[IndexScreen] Session epoch changed, resetting bootstrap');
-      }
+      // Очищаем весь кэш при смене сессии
+      qc.clear();
       appReadyState.reset();
       setBootState('boot');
     });
     return unsub;
-  }, []);
+  }, [qc]);
 
   // Страховка: при первом монтировании проверяем состояние
   React.useEffect(() => {
     const currentState = appReadyState.getBootState();
     if (currentState !== bootState) {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn(
-          `[IndexScreen] State mismatch on mount: local=${bootState}, global=${currentState}`,
-        );
-      }
       setBootState(currentState);
     }
   }, []);
@@ -263,6 +289,7 @@ export default function IndexScreen() {
   // Основной эффект: переход в ready когда загрузки завершены + минимальное время прошло
   React.useEffect(() => {
     if (bootState === 'ready') {
+      setForceReadyReason(null);
       appReadyState.setBootState('ready');
       return;
     }
@@ -279,16 +306,33 @@ export default function IndexScreen() {
     }
   }, [activeFetching, bootState, MIN_BOOT_MS]);
 
-  // Независимый таймаут принудительного снятия лоадера (защита от зависания)
   React.useEffect(() => {
-    if (bootState === 'ready') return;
-    const forceTimer = setTimeout(() => {
+    if (bootState === 'ready') {
+      setForceReadyReason(null);
+      return;
+    }
+    const elapsed = Date.now() - fetchStartTime;
+    if (elapsed > MAX_BOOT_MS && (isFetching > 0 || isRoleLoading || isPermLoading)) {
+      setForceReadyReason((prev) => prev || 'timeout');
       appReadyState.setBootState('ready');
+      setBootState('ready');
+    }
+    const timer = setTimeout(() => {
+      if (bootState !== 'ready' && (isFetching > 0 || isRoleLoading || isPermLoading)) {
+        setForceReadyReason((prev) => prev || 'timeout');
+        appReadyState.setBootState('ready');
+        setBootState('ready');
+      }
     }, MAX_BOOT_MS);
-    return () => clearTimeout(forceTimer);
-  }, [bootState, MAX_BOOT_MS]);
+    return () => clearTimeout(timer);
+  }, [bootState, fetchStartTime, MAX_BOOT_MS, isFetching, isRoleLoading, isPermLoading]);
+
+  // Независимый таймаут принудительного снятия лоадера (защита от зависания)
 
   const showLoader = bootState !== 'ready';
+  const loaderText = forceReadyReason
+    ? 'Не удалось загрузить профиль. Проверьте сеть и попробуйте еще раз.'
+    : 'Загружаем профиль...';
 
   return (
     <View
@@ -299,10 +343,17 @@ export default function IndexScreen() {
         } catch (e) {}
       }}
     >
+      {forceReadyReason && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>
+            Не удалось загрузить профиль. Проверьте сеть и попробуйте еще раз.
+          </Text>
+        </View>
+      )}
       {/* Рендерим контент только когда роль валидна, но под оверлеем */}
       {/* При холодном запуске показываем сплэш, пока не загрузится роль и не завершится fetch */}
       {/* Показываем рабочий интерфейс сразу, роль может быть fallback пока не уточнена */}
-      <UniversalHome role={role || 'worker'} />
+      <UniversalHome role={role || 'worker'} user={authUser} profile={authProfile} />
 
       {/* Единый «премиум» оверлей загрузки */}
       {showLoader && (
@@ -316,7 +367,7 @@ export default function IndexScreen() {
             },
           ]}
         >
-          <PremiumLoader />
+          <PremiumLoader text={loaderText} />
         </View>
       )}
     </View>
@@ -339,14 +390,18 @@ const styles = StyleSheet.create({
       ? { shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6 }
       : { elevation: 2 }),
   },
-  loaderTextRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
   loaderText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#8E8E93',
+    textAlign: 'center',
+    maxWidth: 280,
+    paddingHorizontal: 12,
+  },
+  loaderDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   loaderDots: {
     fontSize: 16,
@@ -354,5 +409,22 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
     width: 8,
     textAlign: 'center',
+  },
+  errorBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#FDECEA',
+    borderWidth: 1,
+    borderColor: '#F5C2C0',
+  },
+  errorBannerText: {
+    color: '#8A1C1C',
+    fontWeight: '600',
+    textAlign: 'center',
+    fontSize: 14,
   },
 });

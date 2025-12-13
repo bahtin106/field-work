@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -94,14 +94,23 @@ function LoginScreenContent() {
     rippleBorderless: false,
   };
 
-  const { email, setEmail, password, setPassword, error, loading, canSubmit, handleLogin } =
+  const { email, setEmail, password, setPassword, error, loading, canSubmit, handleLogin, reset } =
     useAuthLogin();
+
+  // Очищаем форму при монтировании компонента
+  useEffect(() => {
+    reset();
+  }, [reset]);
 
   const passwordFieldRef = useRef(null);
 
   const handleTogglePassword = useCallback(() => {
     passwordFieldRef.current?.togglePasswordVisibility();
   }, []);
+
+  const handleSubmit = useCallback(async () => {
+    await handleLogin();
+  }, [handleLogin]);
 
   return (
     <Screen background="background">
@@ -142,7 +151,7 @@ function LoginScreenContent() {
                   autoComplete="password"
                   textContentType="password"
                   returnKeyType="done"
-                  onSubmitEditing={handleLogin}
+                  onSubmitEditing={handleSubmit}
                   accessibilityLabel={t('fields_password')}
                   editable={!loading}
                   hideSeparator={true}
@@ -176,7 +185,7 @@ function LoginScreenContent() {
                 title={t('btn_login')}
                 variant="primary"
                 size="lg"
-                onPress={handleLogin}
+                onPress={handleSubmit}
                 disabled={!canSubmit}
                 loading={loading}
               />
