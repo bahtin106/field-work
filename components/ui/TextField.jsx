@@ -33,6 +33,8 @@ const TextField = forwardRef(function TextField(
     hideSeparator = false,
     filterInput, // Функция для фильтрации ввода (например, для паролей)
     onInvalidInput, // Callback когда пользователь вводит недопустимый символ
+    autoGrow,
+    minLines,
   },
   ref,
 ) {
@@ -41,11 +43,28 @@ const TextField = forwardRef(function TextField(
   const [touched, setTouched] = useState(false);
   // Для управления видимостью пароля через toggle кнопку
   const [showPassword, setShowPassword] = useState(false);
+  const baseInputHeight =
+    theme.components?.input?.height ?? theme.components?.listItem?.height ?? 48;
+
+  // Автогроу включен по умолчанию, если явно не отключен в теме
+  const autoGrowEnabled = autoGrow ?? theme.components?.input?.autoGrow !== false;
+
+  // Используем multiline для ВСЕх полей кроме паролей (можем переопределить через пропсы)
+  const effectiveMultiline = multiline ?? !secureTextEntry;
+
+  const maxRows = theme.components?.input?.autoGrowMaxRows ?? 5;
+  const fontSize = theme.typography?.sizes?.md ?? 15;
+  const lineHeightRatio = theme.typography?.lineHeights?.normal ?? 1.35;
+  const lineHeightValue = Math.round(fontSize * lineHeightRatio);
+  const minLinesValue =
+    Number.isFinite(minLines) && minLines >= 1 ? Math.max(1, Math.floor(minLines)) : 1;
+  const minContentHeight = Math.max(baseInputHeight, lineHeightValue * minLinesValue);
+  const maxContentHeight = Math.max(minContentHeight, lineHeightValue * maxRows);
 
   const isRequired = /\*/.test(String(label || ''));
   const requiredEmpty = isRequired && (touched || forceValidation) && !String(value || '').trim();
   const isErr = (touched || forceValidation) && (!!error || requiredEmpty);
-  const s = styles(theme, isErr, focused);
+  const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
   const inputRef = React.useRef(null);
 
   React.useImperativeHandle(ref, () => ({
@@ -97,10 +116,10 @@ const TextField = forwardRef(function TextField(
             autoComplete={secureTextEntry ? 'password' : undefined}
             textContentType={secureTextEntry ? 'password' : undefined}
             importantForAutofill={secureTextEntry ? 'yes' : 'auto'}
-            multiline={multiline}
+            multiline={effectiveMultiline}
             numberOfLines={numberOfLines}
             underlineColorAndroid="transparent"
-            scrollEnabled={false}
+            scrollEnabled={effectiveMultiline}
             onFocus={(e) => {
               setFocused(true);
               onFocus?.(e);
@@ -114,9 +133,14 @@ const TextField = forwardRef(function TextField(
             autoCapitalize={autoCapitalize}
             returnKeyType={returnKeyType}
             onSubmitEditing={onSubmitEditing}
-            style={s.input}
+            style={[
+              s.input,
+              effectiveMultiline && {
+                maxHeight: autoGrowEnabled ? maxContentHeight : undefined,
+              },
+            ]}
             includeFontPadding={false}
-            textAlignVertical="center"
+            textAlignVertical={effectiveMultiline ? 'top' : 'center'}
           />
           {pressable ? (
             <Pressable
@@ -138,7 +162,7 @@ const TextField = forwardRef(function TextField(
 
 export default TextField;
 
-const styles = (t, isError, focused) => {
+const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMultiline = false) => {
   const sep = t.components?.input?.separator || {};
   const insetKey = sep.insetX || 'lg';
   const sepHeight = sep.height ?? t.components?.listItem?.dividerWidth ?? 1;
@@ -147,6 +171,9 @@ const styles = (t, isError, focused) => {
   const ml = Number(t.spacing?.[insetKey] ?? 0) || 0;
   const mr = Number(t.spacing?.[insetKey] ?? 0) || 0;
 
+  const baseHeight =
+    baseHeightOverride ?? t.components?.input?.height ?? t.components?.listItem?.height ?? 48;
+
   // Используем labelSpacing из токенов или fallback
   const labelSpacing = t.components?.input?.labelSpacing ?? t.spacing?.xs ?? 4;
 
@@ -154,12 +181,13 @@ const styles = (t, isError, focused) => {
     wrap: {
       position: 'relative',
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: isMultiline ? 'flex-start' : 'center',
       backgroundColor: 'transparent',
       borderBottomWidth: 0,
       borderBottomColor: 'transparent',
       paddingHorizontal: ml,
-      height: t.components?.input?.height ?? t.components?.listItem?.height ?? 48,
+      height: autoGrow && isMultiline ? undefined : baseHeight,
+      minHeight: baseHeight,
     },
     topLabel: {
       fontWeight: '500',
@@ -174,14 +202,16 @@ const styles = (t, isError, focused) => {
       flex: 1,
       color: t.colors.text,
       fontSize: t.typography.sizes.md,
-      paddingVertical: Math.max(
-        4,
-        Math.round((t.components?.input?.height ?? t.components?.listItem?.height ?? 48) * 0.25),
-      ),
+      minHeight: baseHeight,
+      paddingVertical: Math.max(4, Math.round(baseHeight * 0.25)),
       paddingLeft: 0,
     },
     slot: { marginHorizontal: 4 },
-    inputBox: { flex: 1, justifyContent: 'center', position: 'relative' },
+    inputBox: {
+      flex: 1,
+      justifyContent: isMultiline ? 'flex-start' : 'center',
+      position: 'relative',
+    },
     separator: {
       height: sepHeight,
       backgroundColor: sepColor,

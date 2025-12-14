@@ -213,7 +213,7 @@ export default function CalendarScreen() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const collapsedRef = useRef(false);
   const isCollapsedShared = useSharedValue(false);
-  // Высота сетки рассчитывается по фактическому числу недель, чтобы handle/контент ниже сидели ближе к реальной сетке
+// Высота сетки рассчитывается по фактическому числу недель, чтобы handle/контент ниже сидели ближе к реальной сетке
   const weeksHeight = layoutMetrics.weekRowHeight * actualWeekRows;
   const expandedCalendarHeight = layoutMetrics.topSectionsHeight + weeksHeight;
   const collapsedCalendarHeight = layoutMetrics.dayNamesHeight + layoutMetrics.weekRowHeight;
@@ -555,28 +555,6 @@ export default function CalendarScreen() {
   const stageAtoBProgress = useDerivedValue(() => {
     return Math.min(collapseTranslate.value / stageOneDistanceSafe, 1);
   });
-  useDerivedValue(() => {
-    const next = stageAtoBProgress.value < 0.5;
-    if (next !== showCountsRef.current) {
-      showCountsRef.current = next;
-      runOnJS(setShowCounts)(next);
-    }
-  }, [stageAtoBProgress, setShowCounts]);
-  useDerivedValue(() => {
-    const progress = stageAtoBProgress.value;
-    const shouldEnterCollapsed = progress >= 0.8;
-    const shouldExitCollapsed = progress <= 0.2;
-    if (shouldEnterCollapsed && !collapsedRef.current) {
-      collapsedRef.current = true;
-      isCollapsedShared.value = true;
-      runOnJS(setIsCollapsed)(true);
-    } else if (shouldExitCollapsed && collapsedRef.current) {
-      collapsedRef.current = false;
-      isCollapsedShared.value = false;
-      runOnJS(setIsCollapsed)(false);
-      runOnJS(setWeekOffset)(0);
-    }
-  }, [stageAtoBProgress]);
   const indicatorSlotAnimatedStyle = useAnimatedStyle(() => {
     const collapsedHeight = indicatorSlotBaseHeight * 0.5;
     const height = interpolate(
@@ -622,8 +600,10 @@ export default function CalendarScreen() {
       [weeksHeight, layoutMetrics.weekRowHeight],
       Extrapolate.CLAMP,
     );
+
     return { height };
   }, [layoutMetrics.weekRowHeight, weeksHeight]);
+
   const weekOffsetAnim = useSharedValue(selectedWeekIndex);
   const weekPageX = useSharedValue(-selectedWeekIndex * layoutMetrics.cardWidth);
   const weekPanStartX = useSharedValue(0);
@@ -657,18 +637,14 @@ export default function CalendarScreen() {
   ]);
   const weekTranslateStyle = useAnimatedStyle(
     () => ({
+      // "тупой скролл": уезжаем вверх ровно на высоту выбранной недели
       transform: [
         {
-          translateY: -interpolate(
-            stageAtoBProgress.value,
-            [0, 1],
-            [0, weekOffsetAnim.value * layoutMetrics.weekRowHeight],
-            Extrapolate.CLAMP,
-          ),
+          translateY: -stageAtoBProgress.value * selectedWeekIndex * layoutMetrics.weekRowHeight,
         },
       ],
     }),
-    [layoutMetrics.weekRowHeight],
+    [layoutMetrics.weekRowHeight, selectedWeekIndex],
   );
   const weekCollapsedTranslateStyle = useAnimatedStyle(
     () => ({

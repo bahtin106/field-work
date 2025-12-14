@@ -32,6 +32,10 @@ import { useTheme } from '../../theme/ThemeProvider';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
+const DEBUG_ALL_ORDERS = false;
+const logAllOrders = (...args) => {
+  if (DEBUG_ALL_ORDERS && __DEV__) console.warn(...args);
+};
 
 // ===== HARD PERMISSION GUARD (independent from usePermissions) =====
 async function checkCanViewAll() {
@@ -362,8 +366,7 @@ export default function AllOrdersScreen() {
     const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
       hydratedRef.current = true; // Сразу помечаем как гидратированный!
-      if (__DEV__)
-        console.warn(`[AllOrders] 🚀 MOUNT: Found ${prefetchData.length} items in prefetch cache!`);
+      logAllOrders(`[AllOrders] 🚀 MOUNT: Found ${prefetchData.length} items in prefetch cache!`);
       return prefetchData;
     }
 
@@ -371,18 +374,16 @@ export default function AllOrdersScreen() {
     const queryKey = ['orders', 'all', cacheKeyInitial];
     const cachedQueryData = queryClient.getQueryData(queryKey);
     if (cachedQueryData) {
-      if (__DEV__)
-        console.warn(
-          `[AllOrders] 🚀 MOUNT: Found ${cachedQueryData.length} items in React Query cache!`,
-        );
+      logAllOrders(
+        `[AllOrders] 🚀 MOUNT: Found ${cachedQueryData.length} items in React Query cache!`,
+      );
       return cachedQueryData;
     }
 
     // 3. Fallback на globalThis
     const cached = LIST_CACHE.all[cacheKeyInitial];
     if (cached?.data) {
-      if (__DEV__)
-        console.warn(`[AllOrders] MOUNT: Found ${cached.data.length} items in globalThis cache`);
+      logAllOrders(`[AllOrders] MOUNT: Found ${cached.data.length} items in globalThis cache`);
       return cached.data;
     }
 
@@ -393,7 +394,7 @@ export default function AllOrdersScreen() {
     // Если есть prefetch данные - не показываем лоадер
     const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
-      if (__DEV__) console.warn(`[AllOrders] MOUNT: loading=false (prefetch cache hit)`);
+      logAllOrders(`[AllOrders] MOUNT: loading=false (prefetch cache hit)`);
       return false;
     }
 
@@ -401,13 +402,13 @@ export default function AllOrdersScreen() {
     const queryKey = ['orders', 'all', cacheKeyInitial];
     const cachedQueryData = queryClient.getQueryData(queryKey);
     if (cachedQueryData) {
-      if (__DEV__) console.warn(`[AllOrders] MOUNT: loading=false (React Query cache hit)`);
+      logAllOrders(`[AllOrders] MOUNT: loading=false (React Query cache hit)`);
       return false;
     }
 
     const cached = LIST_CACHE.all[cacheKeyInitial];
     if (cached?.data) {
-      if (__DEV__) console.warn(`[AllOrders] MOUNT: loading=false (globalThis cache hit)`);
+      logAllOrders(`[AllOrders] MOUNT: loading=false (globalThis cache hit)`);
       return false;
     }
 
@@ -634,10 +635,9 @@ export default function AllOrdersScreen() {
         const staleTime = 5 * 60 * 1000; // 5 минут (совпадает с prefetch!)
 
         if (age < staleTime) {
-          if (__DEV__)
-            console.warn(
-              `[AllOrders] ✓ Using React Query cache (${cachedQueryData.length} items, age: ${Math.round(age / 1000)}s)`,
-            );
+          logAllOrders(
+            `[AllOrders] ✓ Using React Query cache (${cachedQueryData.length} items, age: ${Math.round(age / 1000)}s)`,
+          );
           setOrders(cachedQueryData);
           setLoading(false);
           return; // НЕ загружаем с сервера!
@@ -649,10 +649,9 @@ export default function AllOrdersScreen() {
       const freshNeeded = !cached || Date.now() - (cached.ts || 0) > CACHE_TTL_MS;
 
       if (!freshNeeded && cached) {
-        if (__DEV__)
-          console.warn(
-            `[AllOrders] ✓ Loaded from globalThis cache (${cached.data?.length || 0} items)`,
-          );
+        logAllOrders(
+          `[AllOrders] ✓ Loaded from globalThis cache (${cached.data?.length || 0} items)`,
+        );
         setOrders(cached.data || []);
         setLoading(false);
         return;
@@ -661,12 +660,12 @@ export default function AllOrdersScreen() {
       // Если дошли сюда - нужно загрузить с сервера
       // Если есть prefetch данные и это первая загрузка - используем их
       if (hydratedRef.current && orders.length > 0 && !cached) {
-        if (__DEV__) console.warn('[AllOrders] ⏭ Skip network load (using prefetch data)');
+        logAllOrders('[AllOrders] ⏭ Skip network load (using prefetch data)');
         setLoading(false);
         return;
       }
 
-      if (__DEV__) console.warn(`[AllOrders] Loading from network...`);
+      logAllOrders(`[AllOrders] Loading from network...`);
 
       // Build base query
       let query = supabase.from('orders_secure').select('*');
@@ -700,7 +699,7 @@ export default function AllOrdersScreen() {
       if (!alive) return;
       if (!error) {
         const result = data || [];
-        if (__DEV__) console.warn(`[AllOrders] 🌐 Loaded from network (${result.length} items)`);
+        logAllOrders(`[AllOrders] 🌐 Loaded from network (${result.length} items)`);
         setOrders(result);
         setHasMore(result.length === PAGE_SIZE); // Есть ли ещё данные?
         LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
@@ -717,14 +716,12 @@ export default function AllOrdersScreen() {
       Array.isArray(prefetchData) &&
       prefetchData.length > 0
     ) {
-      if (__DEV__) {
-        console.warn(
-          '[AllOrders] ⏭ Skip immediate fetch (prefetch satisfied), schedule background refresh',
-        );
-      }
+      logAllOrders(
+        '[AllOrders] ⏭ Skip immediate fetch (prefetch satisfied), schedule background refresh',
+      );
       // Фоновое обновление через задержку (как в my-orders)
       const timer = setTimeout(() => {
-        if (__DEV__) console.warn('[AllOrders] 🔄 Background refresh start');
+        logAllOrders('[AllOrders] 🔄 Background refresh start');
         tick();
       }, 1200);
 
