@@ -670,6 +670,8 @@ export default function UsersIndex() {
           value: r,
           label: ROLE_LABELS[r] || r,
         }))}
+        searchItems={users}
+        showSearchCategory={false}
         values={filters.values}
         setValue={setFilterValue}
         defaults={{ departments: [], roles: [], suspended: null }}

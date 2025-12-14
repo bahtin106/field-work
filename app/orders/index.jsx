@@ -15,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import { useAuth } from '../../components/hooks/useAuth';
-import UniversalHome from '../../components/universalhome';
+import UniversalHome from '../../components/UniversalHome';
 import appReadyState from '../../lib/appReadyState';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
 import { prefetchManager } from '../../lib/prefetch';

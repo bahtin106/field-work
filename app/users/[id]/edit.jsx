@@ -871,6 +871,9 @@ export default function EditUser() {
       }
 
       // Если админ редактирует другого пользователя — используем edge-функцию для всего
+      const computedFullName = buildFullName(firstName, lastName);
+      const normalizedFullName = computedFullName || null;
+
       if (meIsAdmin && meId && userId && meId !== userId && APP_FUNCTIONS.UPDATE_USER) {
         const { data: sess } = await supabase.auth.getSession();
         const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
@@ -884,6 +887,7 @@ export default function EditUser() {
           profile: {
             first_name: firstName.trim() || null,
             last_name: lastName.trim() || null,
+            full_name: normalizedFullName,
             phone: String(phone || '').replace(/\D/g, '') || null,
             birthdate: birthdate ? __ymdLocal(birthdate) : null,
             department_id: departmentId || null,
@@ -911,6 +915,7 @@ export default function EditUser() {
         const payload = {
           first_name: firstName.trim(),
           last_name: lastName.trim(),
+          full_name: normalizedFullName,
           phone: String(phone || '').replace(/\D/g, '') || null,
           birthdate: birthdate ? __ymdLocal(birthdate) : null,
           department_id: meIsAdmin ? departmentId || null : undefined,
@@ -1093,6 +1098,10 @@ export default function EditUser() {
     const name =
       n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || t('placeholder_no_name');
     return name;
+  };
+  const buildFullName = (first, last) => {
+    const parts = [(first || '').trim(), (last || '').trim()].filter(Boolean);
+    return parts.join(' ').replace(/\s+/g, ' ').trim();
   };
   const fetchUser = useCallback(async () => {
     setLoading(true);

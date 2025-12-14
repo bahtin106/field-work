@@ -3,7 +3,7 @@ import { AntDesign, Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { usePathname, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -28,6 +28,9 @@ import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme/ThemeProvider';
+import FiltersPanel from '../../../components/filters/FiltersPanel';
+import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
+import { useUsers } from '../../../components/hooks/useUsers';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
@@ -54,9 +57,17 @@ export default function EditOrderScreen() {
   const toastError = toastContext.toastError || (() => {});
   const toastSuccess = toastContext.toastSuccess || (() => {});
   const toastInfo = toastContext.toastInfo || (() => {});
-
-  const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
   const [companyId, setCompanyId] = useState(null);
+  const { departments } = useDepartmentsHook({
+    companyId,
+    enabled: !!companyId,
+    onlyEnabled: true,
+  });
+  const { users: employees } = useUsers({
+    filters: {},
+    enabled: !!companyId,
+  });
+  const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
@@ -75,6 +86,7 @@ export default function EditOrderScreen() {
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
+  const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
   const scrollRef = useRef(null);
@@ -92,6 +104,16 @@ export default function EditOrderScreen() {
     const match = workTypes.find((w) => w.id === workTypeId);
     return match?.name ?? '';
   }, [workTypeId, workTypes]);
+
+  const selectedEmployee = useMemo(() => {
+    if (!assigneeId || !employees?.length) return null;
+    return employees.find((user) => String(user.id) === String(assigneeId));
+  }, [assigneeId, employees]);
+
+  const selectedEmployeeName = useMemo(() => {
+    if (!selectedEmployee) return '';
+    return selectedEmployee.display_name || selectedEmployee.email || T('common_noName');
+  }, [selectedEmployee]);
 
   useEffect(() => {
     let mounted = true;
@@ -218,6 +240,40 @@ export default function EditOrderScreen() {
     }
   };
 
+  const handleAssignmentApply = useCallback(
+    (selectedId) => {
+      const normalized = selectedId ?? null;
+      setAssigneeId(normalized);
+      setToFeed(!normalized);
+      setAssigneePickerVisible(false);
+    },
+    [setAssigneeId, setAssigneePickerVisible, setToFeed],
+  );
+
+  const handleAssignmentReset = useCallback(() => {
+    setAssigneeId(null);
+    setToFeed(true);
+  }, [setAssigneeId, setToFeed]);
+
+  const selectExecutorTitle = T('order_modal_select_executor');
+  const assignmentPanelConfig = useMemo(
+    () => ({
+      employees,
+      selectedId: assigneeId,
+      defaults: { selectedId: null },
+      onApply: handleAssignmentApply,
+      onReset: handleAssignmentReset,
+      title: selectExecutorTitle,
+    }),
+    [
+      employees,
+      assigneeId,
+      handleAssignmentApply,
+      handleAssignmentReset,
+      selectExecutorTitle,
+    ],
+  );
+
   const handleSave = async () => {
     if (!title.trim()) return showToast(T('order_validation_title_required'), 'error');
     if (!departureDate) return showToast(T('order_validation_date_required'), 'error');
@@ -330,6 +386,14 @@ export default function EditOrderScreen() {
                     headerHeight: theme?.components?.header?.height ?? 56,
                   })
                 }
+              />
+
+              <TextField
+                label={T('order_details_executor')}
+                value={selectedEmployeeName}
+                placeholder={T('order_details_not_assigned')}
+                pressable
+                onPress={() => setAssigneePickerVisible(true)}
               />
 
             {useWorkTypes && (
@@ -532,6 +596,14 @@ export default function EditOrderScreen() {
           setShowTimeModal(false);
         }}
         onClose={() => setShowTimeModal(false)}
+      />
+
+      <FiltersPanel
+        visible={assigneePickerVisible}
+        onClose={() => setAssigneePickerVisible(false)}
+        departments={departments}
+        mode="assignment"
+        assignment={assignmentPanelConfig}
       />
     </KeyboardAvoidingView>
   );

@@ -1,9 +1,8 @@
-﻿// app/orders/calendar.jsx
-
+﻿// app/orders/calendar.jsx (REFACTORED)
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useQuery } from '@tanstack/react-query';
-import { format, startOfMonth, subMonths } from 'date-fns';
+import { format, startOfMonth } from 'date-fns';
 import { ru as dfnsRu } from 'date-fns/locale';
 import { useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -31,110 +30,46 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Screen from '../../components/layout/Screen';
 
+import Screen from '../../components/layout/Screen';
 import YearView from '../../components/calendar/YearView';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
 import { useAuth } from '../../components/hooks/useAuth';
-import { formatDateKey, getMonthDays } from '../../lib/calendarUtils';
-import { supabase } from '../../lib/supabase';
+import { formatDateKey } from '../../lib/calendarUtils';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import { getMonthWeeks, fetchCalendarOrders, clamp, CalendarFoldState } from '../../hooks/useCalendarLogic';
+import { CalendarMonthHeader } from '../../components/calendar/CalendarMonthHeader';
+import { CalendarWeekRow } from '../../components/calendar/CalendarWeekRow';
 
 /** ======= RU locale for react-native-calendars ======= */
 LocaleConfig.locales['ru'] = {
-  monthNames: [
-    'Январь',
-    'Февраль',
-    'Март',
-    'Апрель',
-    'Май',
-    'Июнь',
-    'Июль',
-    'Август',
-    'Сентябрь',
-    'Октябрь',
-    'Ноябрь',
-    'Декабрь',
-  ],
-  monthNamesShort: [
-    'Янв',
-    'Фев',
-    'Мар',
-    'Апр',
-    'Май',
-    'Июн',
-    'Июл',
-    'Авг',
-    'Сен',
-    'Окт',
-    'Ноя',
-    'Дек',
-  ],
+  monthNames: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
+  monthNamesShort: ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'],
   dayNames: ['Воскресенье', 'Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'],
   dayNamesShort: ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'],
   today: 'Сегодня',
 };
 LocaleConfig.defaultLocale = 'ru';
 
-const DAY_KEYS = [
-  'day_short_mo',
-  'day_short_tu',
-  'day_short_we',
-  'day_short_th',
-  'day_short_fr',
-  'day_short_sa',
-  'day_short_su',
-];
-
-const CalendarFoldState = {
-  FULL: 0,
-  WEEK: 1,
-};
-
+const DAY_KEYS = ['day_short_mo', 'day_short_tu', 'day_short_we', 'day_short_th', 'day_short_fr', 'day_short_sa', 'day_short_su'];
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
-
-function clamp(value, min, max) {
-  'worklet';
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
-
-function getMonthWeeks(year, month) {
-  const days = getMonthDays(year, month, 1);
-  const padded = [...days];
-  while (padded.length % 7 !== 0) padded.push({ day: null, date: null });
-  const weeks = [];
-  for (let i = 0; i < padded.length; i += 7) {
-    weeks.push(padded.slice(i, i + 7));
-  }
-  return weeks;
-}
 
 function capitalizeLabel(value) {
   if (!value) return value;
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-async function fetchCalendarOrders(userId, role) {
-  if (!userId) return [];
-  const since = subMonths(new Date(), 3);
-  const sinceIso = new Date(since.setHours(0, 0, 0, 0)).toISOString();
-  let query = supabase
-    .from('orders_secure')
-    .select('*')
-    .gte('datetime', sinceIso)
-    .order('datetime', { ascending: false });
-  if (role === 'worker') {
-    query = query.eq('assigned_to', userId);
+function formatMonthLabel(date) {
+  return capitalizeLabel(format(date, 'LLLL yyyy', { locale: dfnsRu }));
+}
+
+function formatDayLabel(dateKey) {
+  try {
+    return capitalizeLabel(format(new Date(dateKey), 'd MMMM', { locale: dfnsRu }));
+  } catch {
+    return dateKey;
   }
-  const { data, error } = await query;
-  if (error) {
-    console.warn('Calendar: fetch orders failed', error);
-    return [];
-  }
-  return Array.isArray(data) ? data : [];
 }
 
 export default function CalendarScreen() {
@@ -144,25 +79,6 @@ export default function CalendarScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-
-  const mountedRef = useRef(false);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const todayKey = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
-  const [selectedDate, setSelectedDate] = useState(todayKey);
-  const [orders, setOrders] = useState([]);
-  const [activeViewIndex, setActiveViewIndex] = useState(1); // 1 = 'Месяц' по умолчанию
-  const [viewMode, setViewMode] = useState('month'); // 'month' | 'year'
-  const [showCounts, setShowCounts] = useState(true);
-  const showCountsRef = useRef(true);
 
   const screenWidth = Dimensions.get('window').width;
   const layoutMetrics = useMemo(() => {
@@ -174,7 +90,6 @@ export default function CalendarScreen() {
     const weekRowHeight = dayCellSize + theme.spacing.xs * 1.6;
     const monthHeaderHeight = theme.spacing.md * 2 + theme.typography.sizes.lg * 1.5;
     const dayNamesHeight = theme.spacing.sm * 1.2 + theme.typography.sizes.xs * 1.3;
-    const handleSpacing = theme.spacing.xs * 1.5;
     const topSectionsHeight = monthHeaderHeight + dayNamesHeight;
     return {
       cardWidth,
@@ -183,21 +98,24 @@ export default function CalendarScreen() {
       weekRowHeight,
       monthHeaderHeight,
       dayNamesHeight,
-      handleSpacing,
       topSectionsHeight,
     };
   }, [screenWidth, theme]);
 
-  const MONTH_LIST_MIDDLE_INDEX = 50;
-  const monthScrollX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
-  const visibleMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
+  const todayKey = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []);
+  const [refreshing, setRefreshing] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
+  const [selectedDate, setSelectedDate] = useState(todayKey);
+  const [orders, setOrders] = useState([]);
+  const [viewMode, setViewMode] = useState('month');
+  const [showCounts, setShowCounts] = useState(true);
 
+  const MONTH_LIST_MIDDLE_INDEX = 50;
   const monthWeeks = useMemo(
     () => getMonthWeeks(currentMonth.getFullYear(), currentMonth.getMonth()),
     [currentMonth],
   );
   const actualWeekRows = useMemo(() => monthWeeks.length, [monthWeeks]);
-  const fixedWeekRows = 6; // используется только для паддинга в renderItem
   const selectedWeekIndex = useMemo(() => {
     if (!selectedDate) return 0;
     const found = monthWeeks.findIndex((week) =>
@@ -205,39 +123,30 @@ export default function CalendarScreen() {
     );
     return found >= 0 ? found : 0;
   }, [monthWeeks, selectedDate]);
+
   const selectedYearMonth = useMemo(
     () => (selectedDate ? selectedDate.slice(0, 7) : null),
     [selectedDate],
   );
-  const [weekOffset, setWeekOffset] = useState(0);
+
   const [isCollapsed, setIsCollapsed] = useState(false);
   const collapsedRef = useRef(false);
-  const isCollapsedShared = useSharedValue(false);
-// Высота сетки рассчитывается по фактическому числу недель, чтобы handle/контент ниже сидели ближе к реальной сетке
   const weeksHeight = layoutMetrics.weekRowHeight * actualWeekRows;
   const expandedCalendarHeight = layoutMetrics.topSectionsHeight + weeksHeight;
   const collapsedCalendarHeight = layoutMetrics.dayNamesHeight + layoutMetrics.weekRowHeight;
   const stageOneDistance = Math.max(expandedCalendarHeight - collapsedCalendarHeight, 1);
   const stageOneDistanceSafe = stageOneDistance;
-  const stateSnapPoints = useMemo(
-    () => ({
-      [CalendarFoldState.FULL]: 0,
-      [CalendarFoldState.WEEK]: stageOneDistanceSafe,
-    }),
-    [stageOneDistanceSafe],
-  );
-  const snapPoints = useMemo(
-    () => [stateSnapPoints[CalendarFoldState.FULL], stateSnapPoints[CalendarFoldState.WEEK]],
-    [stateSnapPoints],
-  );
 
   const collapseTranslate = useSharedValue(0);
   const gestureStart = useSharedValue(0);
   const scrollY = useSharedValue(0);
+  const monthScrollX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
+  const visibleMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
+  const isCollapsedShared = useSharedValue(false);
   const flatListRef = useRef(null);
+  const lastHandledPageIndex = useRef(MONTH_LIST_MIDDLE_INDEX);
   const initialMonthRef = useRef(startOfMonth(new Date()));
 
-  // Генерируем статичный массив из 100 месяцев (50 назад + текущий + 49 вперёд)
   const dynamicMonths = useMemo(() => {
     const months = [];
     const baseMonth = initialMonthRef.current;
@@ -245,14 +154,13 @@ export default function CalendarScreen() {
       months.push(startOfMonth(new Date(baseMonth.getFullYear(), baseMonth.getMonth() + i, 1)));
     }
     return months;
-  }, []); // Пустой массив зависимостей - генерируем один раз
-  const dynamicMonthsLength = dynamicMonths.length;
-  const lastHandledPageIndex = useRef(MONTH_LIST_MIDDLE_INDEX);
+  }, []);
+
   const handlePageChange = useCallback(
     (pageIndex) => {
       if (
         pageIndex < 0 ||
-        pageIndex >= dynamicMonthsLength ||
+        pageIndex >= dynamicMonths.length ||
         lastHandledPageIndex.current === pageIndex
       ) {
         return;
@@ -263,100 +171,63 @@ export default function CalendarScreen() {
       setCurrentMonth(nextMonth);
       setSelectedDate(format(startOfMonth(nextMonth), 'yyyy-MM-dd'));
     },
-    [dynamicMonths, dynamicMonthsLength, setCurrentMonth, setSelectedDate],
+    [dynamicMonths],
   );
+
   const monthScrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       monthScrollX.value = event.contentOffset.x;
     },
   });
+
   useEffect(() => {
     monthScrollX.value = layoutMetrics.cardWidth * visibleMonthIndex.value;
   }, [layoutMetrics.cardWidth, monthScrollX, visibleMonthIndex]);
+
   useEffect(() => {
     if (!layoutMetrics.cardWidth) return;
-
     const targetIndex = dynamicMonths.findIndex(
       (monthDate) =>
         monthDate.getFullYear() === currentMonth.getFullYear() &&
         monthDate.getMonth() === currentMonth.getMonth(),
     );
-
     if (targetIndex < 0) return;
-
     lastHandledPageIndex.current = targetIndex;
     visibleMonthIndex.value = targetIndex;
     monthScrollX.value = layoutMetrics.cardWidth * targetIndex;
-
     if (flatListRef.current && !isCollapsed) {
       try {
         flatListRef.current.scrollToIndex({ index: targetIndex, animated: false });
       } catch {}
     }
-  }, [
-    currentMonth,
-    dynamicMonths,
-    isCollapsed,
-    layoutMetrics.cardWidth,
-    monthScrollX,
-    visibleMonthIndex,
-  ]);
-  useDerivedValue(() => {
-    const width = Math.max(1, layoutMetrics.cardWidth);
-    const rawPage = monthScrollX.value / width;
-    const nextIndex = Math.max(0, Math.min(dynamicMonthsLength - 1, Math.round(rawPage)));
-    if (visibleMonthIndex.value === nextIndex) return;
-    visibleMonthIndex.value = nextIndex;
-    runOnJS(handlePageChange)(nextIndex);
-  }, [layoutMetrics.cardWidth, dynamicMonthsLength, handlePageChange]);
-
-  const calendarContentStyle = useAnimatedStyle(
-    () => ({
-      height: interpolate(
-        collapseTranslate.value,
-        [0, stageOneDistanceSafe],
-        [expandedCalendarHeight, collapsedCalendarHeight],
-        Extrapolate.CLAMP,
-      ),
-    }),
-    [expandedCalendarHeight, collapsedCalendarHeight, stageOneDistanceSafe],
-  );
+  }, [currentMonth, dynamicMonths, isCollapsed, layoutMetrics.cardWidth, monthScrollX, visibleMonthIndex]);
 
   useFocusEffect(
     useCallback(() => {
       collapseTranslate.value = 0;
     }, [collapseTranslate]),
   );
+
   useEffect(() => {
     if (viewMode === 'month') {
       collapseTranslate.value = 0;
     }
-  }, [viewMode]);
+  }, [viewMode, collapseTranslate]);
+
   useEffect(() => {
     collapseTranslate.value = clamp(collapseTranslate.value, 0, stageOneDistanceSafe);
-  }, [stageOneDistanceSafe]);
+  }, [stageOneDistanceSafe, collapseTranslate]);
 
   const arrowHitSlop = useMemo(() => {
-    const gap = theme.spacing?.md ?? 14;
+    const gap = theme.spacing.md;
     return { top: gap, bottom: gap, left: gap, right: gap };
-  }, [theme.spacing?.md]);
+  }, [theme.spacing.md]);
 
-  const indicatorSlotBaseHeight =
-    (theme.typography.sizes?.xs ?? 0) + (theme.spacing?.xs ?? 0) * 0.2;
+  const indicatorSlotBaseHeight = theme.typography.sizes.xs + theme.spacing.xs * 0.2;
   const styles = useMemo(
     () =>
       StyleSheet.create({
         container: { flex: 1 },
-        calendarCard: {
-          backgroundColor: theme.colors.card || theme.colors.surface,
-          borderRadius: theme.radii?.lg ?? 16,
-          marginHorizontal: theme.spacing.md,
-          width: layoutMetrics.cardWidth,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          overflow: 'hidden',
-          alignSelf: 'center',
-        },
         handleContainer: {
           alignItems: 'center',
           paddingVertical: theme.spacing.xs,
@@ -401,31 +272,6 @@ export default function CalendarScreen() {
           fontSize: theme.typography.sizes.sm,
           fontWeight: theme.typography.weight.medium,
         },
-        monthHeaderRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          paddingHorizontal: theme.spacing.md,
-          paddingVertical: theme.spacing.md, // добавлено: больше отступы сверху и снизу
-        },
-        monthHeaderLabel: {
-          flex: 1,
-          marginHorizontal: theme.spacing.sm,
-          fontSize: theme.typography.sizes.lg,
-          fontWeight: theme.typography.weight.bold,
-          color: theme.colors.text,
-          textAlign: 'center',
-        },
-        calendarArrow: {
-          padding: theme.spacing.xs,
-        },
-        weekdayRow: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          width: layoutMetrics.cardWidth,
-          alignSelf: 'center',
-          paddingHorizontal: layoutMetrics.innerPadding,
-        },
         calendarContent: {
           overflow: 'hidden',
           alignItems: 'center',
@@ -437,20 +283,21 @@ export default function CalendarScreen() {
           width: layoutMetrics.cardWidth,
           alignSelf: 'center',
         },
+        weekdayRow: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          width: layoutMetrics.cardWidth,
+          alignSelf: 'center',
+          paddingHorizontal: layoutMetrics.innerPadding,
+          paddingVertical: theme.spacing.xs,
+        },
         weekdayLabel: {
           width: layoutMetrics.dayCellSize,
           textAlign: 'center',
           fontSize: theme.typography.sizes.xs,
           fontWeight: theme.typography.weight.medium,
           color: theme.colors.textSecondary,
-        },
-        weeksClip: {
-          overflow: 'hidden',
-          width: layoutMetrics.cardWidth,
-          alignSelf: 'center',
-        },
-        weeksContent: {
-          flexDirection: 'column',
+          lineHeight: layoutMetrics.dayCellSize * 0.6,
         },
         weekRow: {
           flexDirection: 'row',
@@ -464,8 +311,8 @@ export default function CalendarScreen() {
         dayCell: {
           alignItems: 'center',
           justifyContent: 'center',
-          height: layoutMetrics.dayCellSize,
           width: layoutMetrics.dayCellSize,
+          height: layoutMetrics.dayCellSize,
           borderRadius: layoutMetrics.dayCellSize / 2,
         },
         dayCellSelectedOutline: {
@@ -509,7 +356,7 @@ export default function CalendarScreen() {
           marginTop: theme.spacing.xs * 0.5,
           width: theme.spacing.xs,
           height: theme.spacing.xs,
-          borderRadius: (theme.spacing.xs ?? 0) / 2,
+          borderRadius: theme.spacing.xs / 2,
           backgroundColor: theme.colors.primary,
         },
         ordersHeader: {
@@ -532,18 +379,13 @@ export default function CalendarScreen() {
         },
         refreshButton: {
           padding: theme.spacing.xs,
-          borderRadius: theme.radii?.sm ?? 8,
+          borderRadius: theme.radii.sm,
         },
         noOrders: {
           fontSize: theme.typography.sizes.sm,
           color: theme.colors.textSecondary,
           textAlign: 'center',
           marginTop: theme.spacing.lg,
-        },
-        centered: {
-          flex: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
         },
         yearViewContainer: {
           flex: 1,
@@ -555,6 +397,30 @@ export default function CalendarScreen() {
   const stageAtoBProgress = useDerivedValue(() => {
     return Math.min(collapseTranslate.value / stageOneDistanceSafe, 1);
   });
+
+  useDerivedValue(() => {
+    const collapsed = stageAtoBProgress.value >= 0.99;
+    if (isCollapsedShared.value !== collapsed) {
+      isCollapsedShared.value = collapsed;
+    }
+    if (collapsed !== collapsedRef.current) {
+      collapsedRef.current = collapsed;
+      runOnJS(setIsCollapsed)(collapsed);
+    }
+  });
+
+  const calendarContentStyle = useAnimatedStyle(
+    () => ({
+      height: interpolate(
+        collapseTranslate.value,
+        [0, stageOneDistanceSafe],
+        [expandedCalendarHeight, collapsedCalendarHeight],
+        Extrapolate.CLAMP,
+      ),
+    }),
+    [expandedCalendarHeight, collapsedCalendarHeight, stageOneDistanceSafe],
+  );
+
   const indicatorSlotAnimatedStyle = useAnimatedStyle(() => {
     const collapsedHeight = indicatorSlotBaseHeight * 0.5;
     const height = interpolate(
@@ -565,13 +431,7 @@ export default function CalendarScreen() {
     );
     return { height };
   }, [indicatorSlotBaseHeight]);
-  const tabsAnimatedStyle = useAnimatedStyle(() => ({}), []);
 
-  const currentMonthRef = useCallback(
-    (offset = 0) =>
-      startOfMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1)),
-    [currentMonth],
-  );
   const headerAnimatedStyle = useAnimatedStyle(
     () => ({
       height: interpolate(
@@ -585,14 +445,15 @@ export default function CalendarScreen() {
     }),
     [layoutMetrics.monthHeaderHeight],
   );
-  const weekdayAnimatedStyle = useAnimatedStyle(
+
+  const weeksClipStyleExpanded = useMemo(
     () => ({
-      height: layoutMetrics.dayNamesHeight,
-      opacity: 1,
-      transform: [{ translateY: 0 }],
+      height: weeksHeight,
+      overflow: 'hidden',
     }),
-    [layoutMetrics.dayNamesHeight],
+    [weeksHeight],
   );
+
   const weeksClipStyle = useAnimatedStyle(() => {
     const height = interpolate(
       stageAtoBProgress.value,
@@ -600,141 +461,39 @@ export default function CalendarScreen() {
       [weeksHeight, layoutMetrics.weekRowHeight],
       Extrapolate.CLAMP,
     );
-
-    return { height };
+    return { height, overflow: 'hidden' };
   }, [layoutMetrics.weekRowHeight, weeksHeight]);
 
-  const weekOffsetAnim = useSharedValue(selectedWeekIndex);
-  const weekPageX = useSharedValue(-selectedWeekIndex * layoutMetrics.cardWidth);
-  const weekPanStartX = useSharedValue(0);
-  useEffect(() => {
-    const maxIdx = Math.max(0, monthWeeks.length - 1);
-    const displayed = isCollapsed
-      ? clamp(selectedWeekIndex + weekOffset, 0, maxIdx)
-      : selectedWeekIndex;
-    if (isCollapsed) {
-      // В момент схлопывания сразу устанавливаем положение недели без анимации, чтобы первый свайп не ловил промежуточные значения
-      weekOffsetAnim.value = displayed;
-      weekPageX.value = -displayed * layoutMetrics.cardWidth;
-    } else {
-      weekOffsetAnim.value = withTiming(displayed, {
-        duration: 220,
-        easing: Easing.inOut(Easing.ease),
-      });
-      weekPageX.value = withTiming(0, {
-        duration: 220,
-        easing: Easing.inOut(Easing.ease),
-      });
-    }
-  }, [
-    isCollapsed,
-    monthWeeks.length,
-    selectedWeekIndex,
-    weekOffset,
-    weekOffsetAnim,
-    weekPageX,
-    layoutMetrics.cardWidth,
-  ]);
-  const weekTranslateStyle = useAnimatedStyle(
-    () => ({
-      // "тупой скролл": уезжаем вверх ровно на высоту выбранной недели
-      transform: [
-        {
-          translateY: -stageAtoBProgress.value * selectedWeekIndex * layoutMetrics.weekRowHeight,
-        },
-      ],
-    }),
-    [layoutMetrics.weekRowHeight, selectedWeekIndex],
-  );
-  const weekCollapsedTranslateStyle = useAnimatedStyle(
-    () => ({
-      transform: [
-        {
-          translateX: weekPageX.value,
-        },
-      ],
-    }),
-    [layoutMetrics.cardWidth],
-  );
-  const collapsedOverlayStyle = useAnimatedStyle(
-    () => ({
-      opacity: stageAtoBProgress.value,
-    }),
-    [stageAtoBProgress],
-  );
-  const weekSwipeGesture = Gesture.Pan()
-    // Чуть раньше активируем горизонтальный жест и даём больше вертикального допуска
-    .activeOffsetX([-6, 6])
-    .failOffsetY([-24, 24])
-    .onStart(() => {
-      'worklet';
-      const maxIdx = Math.max(0, monthWeeks.length - 1);
-      const currentIndex = clamp(selectedWeekIndex + weekOffset, 0, maxIdx);
-      // На всякий случай выравниваем стартовую позицию перед первым свайпом
-      weekPageX.value = -currentIndex * layoutMetrics.cardWidth;
-      weekPanStartX.value = weekPageX.value;
-    })
-    .onUpdate((event) => {
-      'worklet';
-      if (!isCollapsedShared.value) return;
-      const translation = Number.isFinite(event?.translationX) ? event.translationX : 0;
-      const maxIdx = Math.max(0, monthWeeks.length - 1);
-      const minX = -maxIdx * layoutMetrics.cardWidth;
-      const maxX = 0;
-      const nextX = clamp(weekPanStartX.value + translation, minX, maxX);
-      weekPageX.value = nextX;
-    })
-    .onEnd((event) => {
-      'worklet';
-      if (!isCollapsedShared.value) {
-        weekPageX.value = withTiming(-selectedWeekIndex * layoutMetrics.cardWidth, {
-          duration: 180,
-          easing: Easing.out(Easing.ease),
-        });
-        return;
+  const switchMode = useCallback(
+    (nextMode, opts = {}) => {
+      if (nextMode === 'month' && opts.newMonth) {
+        setCurrentMonth(opts.newMonth);
+        setSelectedDate(format(opts.newMonth, 'yyyy-MM-dd'));
       }
-      const maxIdx = Math.max(0, monthWeeks.length - 1);
-      const startIndex = clamp(
-        Math.round(-weekPanStartX.value / layoutMetrics.cardWidth),
-        0,
-        maxIdx,
-      );
-      const translation = Number.isFinite(event?.translationX)
-        ? event.translationX
-        : weekPageX.value - weekPanStartX.value;
-      const velocity = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
-      const threshold = layoutMetrics.cardWidth * 0.25;
-      let delta = 0;
-      if (translation < -threshold || velocity < -450) {
-        delta = 1;
-      } else if (translation > threshold || velocity > 450) {
-        delta = -1;
-      }
-      const targetIndex = clamp(startIndex + delta, 0, maxIdx);
-      const targetX = -targetIndex * layoutMetrics.cardWidth;
-      weekPageX.value = withTiming(
-        targetX,
-        { duration: 220, easing: Easing.out(Easing.ease) },
-        (finished) => {
-          if (!finished) {
-            weekPageX.value = withTiming(-startIndex * layoutMetrics.cardWidth, {
-              duration: 180,
-              easing: Easing.out(Easing.ease),
-            });
-            return;
-          }
-          weekOffsetAnim.value = targetIndex;
-          runOnJS(setWeekOffset)(targetIndex - selectedWeekIndex);
-        },
-      );
-    });
-  const ordersInnerStyle = useAnimatedStyle(
-    () => ({
-      transform: [
-        {
-          translateX: -monthScrollX.value,
-        },
-      ],
+      setViewMode(nextMode);
+    },
+    [],
+  );
+
+  const shiftMonth = useCallback(
+    (offset) => {
+      setCurrentMonth((prev) => {
+        const next = startOfMonth(new Date(prev.getFullYear(), prev.getMonth() + offset, 1));
+        setSelectedDate(format(next, 'yyyy-MM-dd'));
+        return next;
+      });
+    },
+    [],
+  );
+
+  const goToPreviousMonth = useCallback(() => shiftMonth(-1), [shiftMonth]);
+  const goToNextMonth = useCallback(() => shiftMonth(1), [shiftMonth]);
+
+  const getItemLayout = useCallback(
+    (data, index) => ({
+      length: layoutMetrics.cardWidth,
+      offset: layoutMetrics.cardWidth * index,
+      index,
     }),
     [layoutMetrics.cardWidth],
   );
@@ -758,214 +517,26 @@ export default function CalendarScreen() {
     .onEnd((event) => {
       'worklet';
       const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-      const threshold = 450;
       const current = collapseTranslate.value;
-
-      const nearest = snapPoints.reduce(
-        (closest, point) =>
-          Math.abs(point - current) < Math.abs(closest - current) ? point : closest,
-        snapPoints[0],
-      );
-
-      let target = nearest;
-
+      const total = stageOneDistanceSafe || 1;
+      const progress = current / total;
+      const threshold = 450;
+      let target = 0;
       if (Math.abs(velocityY) > threshold) {
-        if (velocityY < 0) {
-          const nextPoint = snapPoints.find((p) => p > current + 1);
-          target = nextPoint ?? snapPoints[snapPoints.length - 1];
-        } else {
-          const prevPoint = [...snapPoints].reverse().find((p) => p < current - 1);
-          target = prevPoint ?? snapPoints[0];
-        }
+        target = velocityY < 0 ? total : 0;
+      } else {
+        target = progress > 0.5 ? total : 0;
       }
-      collapseTranslate.value = withTiming(target, {
-        duration: 260,
-        easing: Easing.inOut(Easing.ease),
-      });
+      collapseTranslate.value = withTiming(target, { duration: 260, easing: Easing.inOut(Easing.ease) });
     })
     .failOffsetX([-20, 20]);
-
-  // Жест для сворачивания/раскрытия календаря из области заявок
-  const ordersGesture = Gesture.Pan()
-    .activeOffsetY([-4, 4])
-    .failOffsetX([-24, 24])
-    .simultaneousWithExternalGesture()
-    .onStart(() => {
-      'worklet';
-      gestureStart.value = collapseTranslate.value;
-    })
-    .onUpdate((event) => {
-      'worklet';
-      const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
-      const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
-      const absTy = Math.abs(ty);
-      const absTx = Math.abs(tx);
-      if (absTy === 0 && absTx === 0) return;
-      const isMostlyVertical = absTy >= absTx * 0.6;
-      if (!isMostlyVertical) return;
-
-      // Для свайпа вверх (сворачивание): проверяем позицию скролла
-      if (ty < 0 && scrollY.value > 5) return;
-
-      const next = gestureStart.value - ty;
-      const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
-      // Позволяем движение в обе стороны
-      collapseTranslate.value = clamp(next, 0, safeMax);
-    })
-    .onEnd((event) => {
-      'worklet';
-      const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-      const threshold = 450;
-      const current = collapseTranslate.value;
-
-      const nearest = snapPoints.reduce(
-        (closest, point) =>
-          Math.abs(point - current) < Math.abs(closest - current) ? point : closest,
-        snapPoints[0],
-      );
-
-      let target = nearest;
-
-      if (Math.abs(velocityY) > threshold) {
-        if (velocityY < 0) {
-          const nextPoint = snapPoints.find((p) => p > current + 1);
-          target = nextPoint ?? snapPoints[snapPoints.length - 1];
-        } else {
-          const prevPoint = [...snapPoints].reverse().find((p) => p < current - 1);
-          target = prevPoint ?? snapPoints[0];
-        }
-      }
-      collapseTranslate.value = withTiming(target, {
-        duration: 260,
-        easing: Easing.inOut(Easing.ease),
-      });
-    });
-
-  const headerMonthLabel = useMemo(() => {
-    if (viewMode === 'year') {
-      return currentMonth.getFullYear().toString();
-    }
-    return capitalizeLabel(format(currentMonth, 'LLLL yyyy', { locale: dfnsRu }));
-  }, [currentMonth, viewMode]);
-  const currentMonthIndex = useMemo(() => currentMonth.getMonth(), [currentMonth]);
-
-  const switchMode = useCallback(
-    (nextMode, opts = {}) => {
-      setActiveViewIndex(nextMode === 'year' ? 0 : 1);
-      if (nextMode === 'month' && opts.newMonth) {
-        setCurrentMonth(opts.newMonth);
-        setSelectedDate(format(opts.newMonth, 'yyyy-MM-dd'));
-      }
-      setViewMode(nextMode);
-    },
-    [setCurrentMonth, setSelectedDate],
-  );
-
-  const shiftMonth = useCallback(
-    (offset) => {
-      setCurrentMonth((prev) => {
-        const next = startOfMonth(new Date(prev.getFullYear(), prev.getMonth() + offset, 1));
-        setSelectedDate(format(next, 'yyyy-MM-dd'));
-        return next;
-      });
-    },
-    [setSelectedDate],
-  );
-
-  // FlatList: отслеживание видимого месяца
-  const onViewableItemsChanged = useRef(({ viewableItems }) => {
-    if (viewableItems.length > 0 && typeof viewableItems[0]?.index === 'number') {
-      visibleMonthIndex.value = viewableItems[0].index;
-      handlePageChange(viewableItems[0].index);
-    }
-  }).current;
-
-  const viewabilityConfig = useRef({
-    itemVisiblePercentThreshold: 80,
-    minimumViewTime: 100,
-  }).current;
-
-  const getItemLayout = useCallback(
-    (data, index) => ({
-      length: layoutMetrics.cardWidth,
-      offset: layoutMetrics.cardWidth * index,
-      index,
-    }),
-    [layoutMetrics.cardWidth],
-  );
-
-  const goToPreviousMonth = useCallback(() => {
-    shiftMonth(-1);
-  }, [shiftMonth]);
-
-  const goToNextMonth = useCallback(() => {
-    shiftMonth(1);
-  }, [shiftMonth]);
-
-  const handleTabPress = useCallback(
-    (index) => {
-      setActiveViewIndex(index);
-      if (index === 0) {
-        switchMode('year');
-      } else if (index === 1) {
-        switchMode('month');
-      }
-    },
-    [switchMode],
-  );
-
-  const viewPanelLabels = useMemo(
-    () => [
-      t('calendar_view_year'),
-      t('calendar_view_month'),
-      t('calendar_view_week'),
-      t('calendar_view_day'),
-      t('calendar_view_schedule'),
-    ],
-    [t],
-  );
-  const headerOptions = useMemo(
-    () => ({
-      headerTitleAlign: 'left',
-      title: t('routes.orders/calendar'),
-    }),
-    [t],
-  );
-
-  const getDateKey = useCallback((v) => {
-    if (!v) return null;
-    try {
-      // Приводим к локальной дате, чтобы избежать сдвига по часовому поясу
-      const parsed = new Date(v);
-      if (!Number.isNaN(parsed.getTime())) {
-        return formatDateKey(parsed);
-      }
-    } catch (e) {
-      // fallback ниже
-    }
-    return typeof v === 'string' ? v.slice(0, 10) : null;
-  }, []);
-
-  const orderDateKey = useCallback(
-    (o) =>
-      getDateKey(
-        o?.datetime ??
-          o?.date ??
-          o?.scheduled_at ??
-          o?.planned_at ??
-          o?.date_time ??
-          o?.start_at ??
-          o?.when,
-      ),
-    [getDateKey],
-  );
 
   const {
     data: ordersData,
     isFetching: ordersFetching,
     refetch: refetchOrders,
   } = useQuery({
-    queryKey: ['calendar-orders'],
+    queryKey: ['calendar-orders', profile?.id, profile?.role],
     queryFn: () => fetchCalendarOrders(profile?.id, profile?.role),
     enabled: isAuthenticated && !!profile?.id,
     staleTime: 5 * 60 * 1000,
@@ -1007,76 +578,48 @@ export default function CalendarScreen() {
         e.preventDefault();
         router.replace('/orders');
       });
-
       return removeSub;
     }, [navigation, router]),
   );
 
-  const { ordersByDate, ordersByMonth, noDateOrders } = useMemo(() => {
+  const { ordersByDate } = useMemo(() => {
     const byDate = {};
-    const byMonth = {};
-    const noDate = [];
     orders.forEach((order) => {
-      const key = orderDateKey(order);
-      if (key) {
+      const dateField = order.datetime || order.date || order.created_at;
+      if (dateField) {
+        const key = formatDateKey(new Date(dateField));
         if (!byDate[key]) byDate[key] = [];
         byDate[key].push(order);
-
-        const monthKey = key.slice(0, 7);
-        if (!byMonth[monthKey]) byMonth[monthKey] = [];
-        byMonth[monthKey].push(order);
-      } else {
-        noDate.push(order);
       }
     });
-    return { ordersByDate: byDate, ordersByMonth: byMonth, noDateOrders: noDate };
-  }, [orders, orderDateKey]);
+    return { ordersByDate: byDate };
+  }, [orders]);
 
   const selectedDateOrders = useMemo(
-    () => ordersByDate[selectedDate] ?? [],
-    [ordersByDate, selectedDate],
-  );
-
-  const selectedMonthOrders = useMemo(
-    () => (selectedYearMonth ? (ordersByMonth[selectedYearMonth] ?? []) : []),
-    [ordersByMonth, selectedYearMonth],
-  );
-
-  const filteredOrders = useMemo(() => {
-    if (selectedDateOrders.length > 0) return selectedDateOrders;
-    if (selectedMonthOrders.length > 0) return selectedMonthOrders;
-    if (noDateOrders.length > 0) return noDateOrders;
-    return [];
-  }, [noDateOrders, selectedDateOrders, selectedMonthOrders]);
-
-  const isNoDateMode = useMemo(
-    () => filteredOrders.length > 0 && filteredOrders.every((o) => !orderDateKey(o)),
-    [filteredOrders, orderDateKey],
+    () => (selectedDate ? ordersByDate[selectedDate] ?? [] : []),
+    [selectedDate, ordersByDate],
   );
 
   const markedDates = useMemo(() => {
     const marks = {};
     const counts = {};
-
     orders.forEach((o) => {
-      const key = orderDateKey(o);
-      if (key) {
+      const dateField = o.datetime || o.date || o.created_at;
+      if (dateField) {
+        const key = formatDateKey(new Date(dateField));
         counts[key] = (counts[key] || 0) + 1;
       }
     });
-
     Object.keys(counts).forEach((date) => {
       marks[date] = { marked: true, dotColor: theme.colors.primary, count: counts[date] };
     });
-
     marks[selectedDate] = {
       ...(marks[selectedDate] || {}),
       selected: true,
       selectedColor: theme.colors.primary,
     };
-
     return marks;
-  }, [orders, selectedDate, orderDateKey, theme.colors.primary]);
+  }, [orders, selectedDate, theme.colors.primary]);
 
   const onRefresh = useCallback(async () => {
     if (!isAuthenticated || isInitializing || !profile) return;
@@ -1089,7 +632,16 @@ export default function CalendarScreen() {
     refetchOrders();
   }, [isAuthenticated, isInitializing, profile?.id, profile?.role, refetchOrders]);
 
-  // Не блокируем экран: рендерим сразу, данные подтягиваются из кеша или догружаются в фоне
+  const ordersInnerStyle = useAnimatedStyle(
+    () => ({
+      transform: [
+        {
+          translateX: -monthScrollX.value,
+        },
+      ],
+    }),
+    [layoutMetrics.cardWidth],
+  );
 
   return (
     <Screen
@@ -1098,19 +650,21 @@ export default function CalendarScreen() {
         headerTitleAlign: 'left',
         title: t('routes.orders/calendar'),
         onBackPress: () => router.replace('/orders'),
+        showBack: true,
+        backIcon: { pack: 'Feather', name: 'chevron-left' },
       }}
     >
       <View style={styles.container}>
         {viewMode === 'month' ? (
           <>
-            <Animated.View style={[styles.tabsWrapper, tabsAnimatedStyle]}>
+            <Animated.View style={styles.tabsWrapper}>
               <View style={styles.tabsContent}>
-                {viewPanelLabels.map((label, index) => {
-                  const isActive = index === activeViewIndex;
+                {['Год', 'Месяц'].map((label, index) => {
+                  const isActive = index === (viewMode === 'month' ? 1 : 0);
                   return (
                     <Pressable
                       key={label}
-                      onPress={() => handleTabPress(index)}
+                      onPress={() => switchMode(index === 0 ? 'year' : 'month')}
                       style={styles.tabItem}
                       android_ripple={{ color: theme.colors.overlayNavBar }}
                       accessibilityRole="button"
@@ -1138,332 +692,77 @@ export default function CalendarScreen() {
             </Animated.View>
             <Animated.View style={[calendarContentStyle]}>
               <View style={[styles.calendarContent]}>
-                {isCollapsed ? (
-                  <GestureDetector gesture={weekSwipeGesture}>
-                    <View style={[styles.monthPage, { width: layoutMetrics.cardWidth }]}>
-                      <Animated.View style={[headerAnimatedStyle]}>
-                        <View style={[styles.monthHeaderRow]}>
-                          <Pressable
-                            onPress={goToPreviousMonth}
-                            hitSlop={arrowHitSlop}
-                            android_ripple={{ color: theme.colors.overlay }}
-                            style={styles.calendarArrow}
-                          >
-                            <Feather
-                              name="chevron-left"
-                              size={theme.icons?.md ?? 22}
-                              color={theme.colors.text}
-                            />
-                          </Pressable>
-                          <Text
-                            style={styles.monthHeaderLabel}
-                            numberOfLines={1}
-                            ellipsizeMode="tail"
-                          >
-                            {capitalizeLabel(format(currentMonth, 'LLLL yyyy', { locale: dfnsRu }))}
-                          </Text>
-                          <Pressable
-                            onPress={goToNextMonth}
-                            hitSlop={arrowHitSlop}
-                            android_ripple={{ color: theme.colors.overlay }}
-                            style={styles.calendarArrow}
-                          >
-                            <Feather
-                              name="chevron-right"
-                              size={theme.icons?.md ?? 22}
-                              color={theme.colors.text}
-                            />
-                          </Pressable>
-                        </View>
-                      </Animated.View>
-                      <View style={[styles.weekdayRow]}>
-                        {DAY_KEYS.map((key) => (
-                          <Text key={key} style={styles.weekdayLabel}>
-                            {t(key)}
-                          </Text>
-                        ))}
-                      </View>
-                      <Animated.View
-                        style={[
-                          {
-                            overflow: 'hidden',
-                            width: layoutMetrics.cardWidth,
-                            alignSelf: 'center',
-                          },
-                          weeksClipStyle,
-                        ]}
-                      >
-                        <Animated.View
-                          style={[
-                            {
-                              flexDirection: 'row',
-                              width: layoutMetrics.cardWidth * monthWeeks.length,
-                            },
-                            weekCollapsedTranslateStyle,
-                          ]}
-                        >
-                          {monthWeeks.map((week, weekIdx) => (
-                            <View
-                              key={`w-${currentMonth.getTime()}-${weekIdx}`}
-                              style={[styles.weekRow, { width: layoutMetrics.cardWidth }]}
-                            >
-                              {week.map((cell, cellIdx) => {
-                                const cellSizeStyle = {
-                                  width: layoutMetrics.dayCellSize,
-                                  height: layoutMetrics.dayCellSize,
-                                };
-                                if (!cell.day) {
-                                  return (
-                                    <View
-                                      key={`empty-${currentMonth.getTime()}-${weekIdx}-${cellIdx}`}
-                                      style={[styles.dayCell, cellSizeStyle]}
-                                    />
-                                  );
-                                }
-                                const dayKey = formatDateKey(cell.date);
-                                const eventCount = markedDates?.[dayKey]?.count || 0;
-                                const hasEvent = eventCount > 0;
-                                const isSelectedDay = dayKey === selectedDate;
-                                const isToday = dayKey === todayKey;
-                                const isTodaySelected = isSelectedDay && isToday;
-                                const showOutline = isSelectedDay && !isToday;
-                                const highlightTodayWhenNotSelected =
-                                  isToday && selectedDate !== todayKey;
-                                return (
-                                  <Pressable
-                                    key={`${currentMonth.getTime()}-${dayKey}`}
-                                    onPress={() => setSelectedDate(dayKey)}
-                                    delayPressIn={0}
-                                    delayLongPress={200}
-                                    android_ripple={{ color: theme.colors.overlay }}
-                                    style={[
-                                      styles.dayCell,
-                                      cellSizeStyle,
-                                      isTodaySelected && styles.dayCellSelectedFilled,
-                                      showOutline && styles.dayCellSelectedOutline,
-                                    ]}
-                                  >
-                                    <View style={styles.dayContent}>
-                                      <Text
-                                        style={[
-                                          styles.dayNumber,
-                                          isTodaySelected && styles.dayNumberToday,
-                                          highlightTodayWhenNotSelected && styles.dayNumberSelected,
-                                        ]}
-                                      >
-                                        {cell.day}
-                                      </Text>
-                                      <Animated.View
-                                        style={[
-                                          styles.dayIndicatorSlot,
-                                          indicatorSlotAnimatedStyle,
-                                        ]}
-                                      >
-                                        {hasEvent ? (
-                                          showCounts ? (
-                                            <Text style={styles.eventCount} numberOfLines={1}>
-                                              {eventCount}
-                                            </Text>
-                                          ) : (
-                                            <View style={styles.eventDot} />
-                                          )
-                                        ) : null}
-                                      </Animated.View>
-                                    </View>
-                                  </Pressable>
-                                );
-                              })}
-                            </View>
+                <AnimatedFlatList
+                  ref={flatListRef}
+                  data={dynamicMonths}
+                  horizontal
+                  pagingEnabled
+                  scrollEnabled={!isCollapsed}
+                  showsHorizontalScrollIndicator={false}
+                  keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
+                  getItemLayout={getItemLayout}
+                  initialScrollIndex={MONTH_LIST_MIDDLE_INDEX}
+                  onViewableItemsChanged={({ viewableItems }) => {
+                    if (viewableItems.length > 0 && typeof viewableItems[0]?.index === 'number') {
+                      visibleMonthIndex.value = viewableItems[0].index;
+                      handlePageChange(viewableItems[0].index);
+                    }
+                  }}
+                  viewabilityConfig={{ itemVisiblePercentThreshold: 80, minimumViewTime: 100 }}
+                  windowSize={3}
+                  maxToRenderPerBatch={3}
+                  removeClippedSubviews={true}
+                  scrollEventThrottle={16}
+                  onScroll={monthScrollHandler}
+                  renderItem={({ item: monthDate }) => {
+                    const itemMonthWeeks = getMonthWeeks(monthDate.getFullYear(), monthDate.getMonth());
+                    const fixedWeekRows = 6;
+                    const paddedWeeks = [...itemMonthWeeks];
+                    while (paddedWeeks.length < fixedWeekRows) {
+                      paddedWeeks.push(Array.from({ length: 7 }, () => ({ day: null, date: null })));
+                    }
+                    return (
+                      <View style={[styles.monthPage]}>
+                        <CalendarMonthHeader
+                          monthDate={monthDate}
+                          onPreviousMonth={goToPreviousMonth}
+                          onNextMonth={goToNextMonth}
+                          arrowHitSlop={arrowHitSlop}
+                          headerAnimatedStyle={headerAnimatedStyle}
+                          styles={styles}
+                          theme={theme}
+                        />
+                        <View style={[styles.weekdayRow]}>
+                          {DAY_KEYS.map((key) => (
+                            <Text key={key} style={styles.weekdayLabel}>
+                              {t(key)}
+                            </Text>
                           ))}
-                        </Animated.View>
-                      </Animated.View>
-                    </View>
-                  </GestureDetector>
-                ) : (
-                  <AnimatedFlatList
-                    ref={flatListRef}
-                    data={dynamicMonths}
-                    horizontal
-                    pagingEnabled
-                    scrollEnabled={!isCollapsed}
-                    showsHorizontalScrollIndicator={false}
-                    keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
-                    getItemLayout={getItemLayout}
-                    initialScrollIndex={50}
-                    onViewableItemsChanged={onViewableItemsChanged}
-                    viewabilityConfig={viewabilityConfig}
-                    windowSize={3}
-                    maxToRenderPerBatch={3}
-                    removeClippedSubviews={true}
-                    scrollEventThrottle={16}
-                    onScroll={monthScrollHandler}
-                    renderItem={({ item: monthDate }) => {
-                      // Рассчитываем недели и selectedWeekIndex для конкретного месяца
-                      const itemMonthWeeks = getMonthWeeks(
-                        monthDate.getFullYear(),
-                        monthDate.getMonth(),
-                      );
-                      const isCurrentMonth = monthDate.getTime() === currentMonth.getTime();
-
-                      let itemSelectedWeekIndex = 0;
-                      if (isCurrentMonth && selectedDate) {
-                        const found = itemMonthWeeks.findIndex((week) =>
-                          week.some(
-                            (cell) => cell.date && formatDateKey(cell.date) === selectedDate,
-                          ),
-                        );
-                        itemSelectedWeekIndex = found >= 0 ? found : 0;
-                      }
-
-                      const gridRowCount = fixedWeekRows;
-                      const paddedWeeks = [...itemMonthWeeks];
-                      while (paddedWeeks.length < gridRowCount) {
-                        paddedWeeks.push(
-                          Array.from({ length: 7 }, () => ({ day: null, date: null })),
-                        );
-                      }
-                      const itemWeeksHeight = layoutMetrics.weekRowHeight * itemMonthWeeks.length;
-
-                      return (
-                        <View style={[styles.monthPage, { width: layoutMetrics.cardWidth }]}>
-                          <Animated.View style={[headerAnimatedStyle]}>
-                            <View style={[styles.monthHeaderRow]}>
-                              <Pressable
-                                onPress={goToPreviousMonth}
-                                hitSlop={arrowHitSlop}
-                                android_ripple={{ color: theme.colors.overlay }}
-                                style={styles.calendarArrow}
-                              >
-                                <Feather
-                                  name="chevron-left"
-                                  size={theme.icons?.md ?? 22}
-                                  color={theme.colors.text}
-                                />
-                              </Pressable>
-                              <Text
-                                style={styles.monthHeaderLabel}
-                                numberOfLines={1}
-                                ellipsizeMode="tail"
-                              >
-                                {capitalizeLabel(
-                                  format(monthDate, 'LLLL yyyy', { locale: dfnsRu }),
-                                )}
-                              </Text>
-                              <Pressable
-                                onPress={goToNextMonth}
-                                hitSlop={arrowHitSlop}
-                                android_ripple={{ color: theme.colors.overlay }}
-                                style={styles.calendarArrow}
-                              >
-                                <Feather
-                                  name="chevron-right"
-                                  size={theme.icons?.md ?? 22}
-                                  color={theme.colors.text}
-                                />
-                              </Pressable>
-                            </View>
-                          </Animated.View>
-                          <View style={[styles.weekdayRow]}>
-                            {DAY_KEYS.map((key) => (
-                              <Text key={key} style={styles.weekdayLabel}>
-                                {t(key)}
-                              </Text>
-                            ))}
-                          </View>
-                          <Animated.View
-                            style={[
-                              {
-                                overflow: 'hidden',
-                                width: layoutMetrics.cardWidth,
-                                alignSelf: 'center',
-                              },
-                              weeksClipStyle,
-                            ]}
-                          >
-                            <Animated.View
-                              style={[{ flexDirection: 'column' }, weekTranslateStyle]}
-                            >
-                              {paddedWeeks.map((week, weekIdx) => (
-                                <View
-                                  key={`w-${monthDate.getTime()}-${weekIdx}`}
-                                  style={styles.weekRow}
-                                >
-                                  {week.map((cell, cellIdx) => {
-                                    const cellSizeStyle = {
-                                      width: layoutMetrics.dayCellSize,
-                                      height: layoutMetrics.dayCellSize,
-                                    };
-                                    if (!cell.day) {
-                                      return (
-                                        <View
-                                          key={`empty-${monthDate.getTime()}-${weekIdx}-${cellIdx}`}
-                                          style={[styles.dayCell, cellSizeStyle]}
-                                        />
-                                      );
-                                    }
-                                    const dayKey = formatDateKey(cell.date);
-                                    const eventCount = markedDates?.[dayKey]?.count || 0;
-                                    const hasEvent = eventCount > 0;
-                                    const isSelectedDay = dayKey === selectedDate;
-                                    const isToday = dayKey === todayKey;
-                                    const isTodaySelected = isSelectedDay && isToday;
-                                    const showOutline = isSelectedDay && !isToday;
-                                    const highlightTodayWhenNotSelected =
-                                      isToday && selectedDate !== todayKey;
-                                    return (
-                                      <Pressable
-                                        key={`${monthDate.getTime()}-${dayKey}`}
-                                        onPress={() => setSelectedDate(dayKey)}
-                                        delayPressIn={0}
-                                        delayLongPress={200}
-                                        android_ripple={{ color: theme.colors.overlay }}
-                                        style={[
-                                          styles.dayCell,
-                                          cellSizeStyle,
-                                          isTodaySelected && styles.dayCellSelectedFilled,
-                                          showOutline && styles.dayCellSelectedOutline,
-                                        ]}
-                                      >
-                                        <View style={styles.dayContent}>
-                                          <Text
-                                            style={[
-                                              styles.dayNumber,
-                                              isTodaySelected && styles.dayNumberToday,
-                                              highlightTodayWhenNotSelected &&
-                                                styles.dayNumberSelected,
-                                            ]}
-                                          >
-                                            {cell.day}
-                                          </Text>
-                                          <Animated.View
-                                            style={[
-                                              styles.dayIndicatorSlot,
-                                              indicatorSlotAnimatedStyle,
-                                            ]}
-                                          >
-                                            {hasEvent ? (
-                                              showCounts ? (
-                                                <Text style={styles.eventCount} numberOfLines={1}>
-                                                  {eventCount}
-                                                </Text>
-                                              ) : (
-                                                <View style={styles.eventDot} />
-                                              )
-                                            ) : null}
-                                          </Animated.View>
-                                        </View>
-                                      </Pressable>
-                                    );
-                                  })}
-                                </View>
-                              ))}
-                            </Animated.View>
-                          </Animated.View>
                         </View>
-                      );
-                    }}
-                  />
-                )}
+                        <Animated.View style={[{ overflow: 'hidden', width: layoutMetrics.cardWidth, alignSelf: 'center' }, weeksClipStyleExpanded]}>
+                          <Animated.View style={[{ flexDirection: 'column' }]}>
+                            {paddedWeeks.map((week, weekIdx) => (
+                              <CalendarWeekRow
+                                key={`w-${monthDate.getTime()}-${weekIdx}`}
+                                week={week}
+                                monthDate={monthDate}
+                                selectedDate={selectedDate}
+                                todayKey={todayKey}
+                                markedDates={markedDates}
+                                showCounts={showCounts}
+                                dayCellSize={layoutMetrics.dayCellSize}
+                                onDatePress={setSelectedDate}
+                                styles={styles}
+                                theme={theme}
+                                indicatorSlotAnimatedStyle={indicatorSlotAnimatedStyle}
+                              />
+                            ))}
+                          </Animated.View>
+                        </Animated.View>
+                      </View>
+                    );
+                  }}
+                />
               </View>
             </Animated.View>
             <GestureDetector gesture={panGesture}>
@@ -1471,118 +770,46 @@ export default function CalendarScreen() {
                 <View style={styles.handleBar} />
               </View>
             </GestureDetector>
-            <GestureDetector gesture={ordersGesture}>
-              <View style={{ flex: 1 }}>
-                <View
-                  style={{
-                    width: layoutMetrics.cardWidth,
-                    alignSelf: 'center',
-                    overflow: 'hidden',
-                    flex: 1,
-                  }}
-                >
-                  <Animated.View
-                    style={[
-                      {
-                        flexDirection: 'row',
-                        width: layoutMetrics.cardWidth * dynamicMonthsLength,
-                      },
-                      ordersInnerStyle,
-                    ]}
-                  >
-                    {dynamicMonths.map((monthDate, index) => {
-                      const monthStart = startOfMonth(monthDate);
-                      const pageKey = format(monthStart, 'yyyy-MM-dd');
-                      const monthKey = format(monthStart, 'yyyy-MM');
-                      const isSelectedMonth = selectedYearMonth === monthKey;
-                      const targetDateKey = isSelectedMonth ? selectedDate : pageKey;
-                      const dayOrders = ordersByDate[targetDateKey];
-                      const monthOrders = ordersByMonth[monthKey];
-                      const hasDayOrders = Array.isArray(dayOrders) && dayOrders.length > 0;
-                      const hasMonthOrders = Array.isArray(monthOrders) && monthOrders.length > 0;
-                      const fallbackOrders = noDateOrders;
-                      const ordersForPage = isSelectedMonth
-                        ? filteredOrders
-                        : hasDayOrders
-                          ? (dayOrders ?? [])
-                          : hasMonthOrders || fallbackOrders.length === 0
-                            ? (monthOrders ?? [])
-                            : fallbackOrders;
-                      const useMonthLabel = isSelectedMonth
-                        ? selectedDateOrders.length === 0 && selectedMonthOrders.length > 0
-                        : !hasDayOrders && hasMonthOrders;
-                      const isNoDateModeForPage = isSelectedMonth
-                        ? isNoDateMode
-                        : !hasDayOrders && !hasMonthOrders && fallbackOrders.length > 0;
-                      const headerDateText = isNoDateModeForPage
-                        ? 'Без даты'
-                        : useMonthLabel
-                          ? capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dfnsRu }))
-                          : format(new Date(targetDateKey), 'd MMMM', { locale: dfnsRu });
-                      return (
-                        <View
-                          key={`orders-page-${monthDate.getTime()}-${index}`}
-                          style={{ width: layoutMetrics.cardWidth }}
-                        >
-                          <View style={styles.ordersHeader}>
-                            <Text style={styles.ordersTitle}>Заявки на {headerDateText}</Text>
-                            <View style={styles.ordersHeaderActions}>
-                              <Pressable
-                                onPress={onRefresh}
-                                android_ripple={{ color: theme.colors.overlayNavBar }}
-                                style={styles.refreshButton}
-                                disabled={refreshing}
-                              >
-                                {refreshing ? (
-                                  <ActivityIndicator size="small" color={theme.colors.primary} />
-                                ) : (
-                                  <Feather
-                                    name="refresh-cw"
-                                    size={theme.icons?.sm ?? 18}
-                                    color={theme.colors.textSecondary}
-                                  />
-                                )}
-                              </Pressable>
-                            </View>
-                          </View>
-                          <FlatList
-                            data={ordersForPage}
-                            extraData={selectedDate}
-                            keyExtractor={(item) => item.id.toString()}
-                            contentContainerStyle={{
-                              paddingHorizontal: 12,
-                              paddingBottom: Math.max(20, insets.bottom),
-                            }}
-                            style={{ flex: 1 }}
-                            scrollEventThrottle={16}
-                            onScroll={(event) => {
-                              scrollY.value = event.nativeEvent.contentOffset.y;
-                            }}
-                            ListEmptyComponent={<Text style={styles.noOrders}>Нет заявок</Text>}
-                            renderItem={({ item }) => (
-                              <DynamicOrderCard
-                                order={item}
-                                context="calendar"
-                                onPress={() => router.push(`/orders/${item.id}`)}
-                              />
-                            )}
-                          />
-                        </View>
-                      );
-                    })}
-                  </Animated.View>
+            <View style={{ flex: 1 }}>
+              <View style={{ width: layoutMetrics.cardWidth, alignSelf: 'center', overflow: 'hidden', flex: 1 }}>
+                <View>
+                  <View style={styles.ordersHeader}>
+                    <Text style={styles.ordersTitle}>Заявки на {formatDayLabel(selectedDate)}</Text>
+                    <View style={styles.ordersHeaderActions}>
+                      <Pressable onPress={onRefresh} android_ripple={{ color: theme.colors.overlayNavBar }} style={styles.refreshButton} disabled={refreshing}>
+                        {refreshing ? <ActivityIndicator size="small" color={theme.colors.primary} /> : <Feather name="refresh-cw" size={16} color={theme.colors.textSecondary} />}
+                      </Pressable>
+                    </View>
+                  </View>
+                  <FlatList
+                    data={selectedDateOrders}
+                    extraData={{ selectedDate, count: selectedDateOrders.length }}
+                    keyExtractor={(item) => String(item?.id ?? item?.order_id ?? item?.uuid)}
+                    contentContainerStyle={{ paddingHorizontal: theme.spacing.md, paddingBottom: Math.max(20, insets.bottom) }}
+                    style={{ flex: 1 }}
+                    scrollEventThrottle={16}
+                    onScroll={(event) => {
+                      scrollY.value = event.nativeEvent.contentOffset.y;
+                    }}
+                    ListEmptyComponent={<Text style={styles.noOrders}>Нет заявок</Text>}
+                    renderItem={({ item }) => (
+                      <DynamicOrderCard
+                        order={item}
+                        context="calendar"
+                        onPress={() => router.push(`/orders/${item.id}`)}
+                      />
+                    )}
+                  />
                 </View>
               </View>
-            </GestureDetector>
+            </View>
           </>
         ) : (
           <YearView
             style={styles.yearViewContainer}
             year={currentMonth.getFullYear()}
-            currentMonthIndex={currentMonthIndex}
-            onMonthPress={(newMonth) => {
-              switchMode('month', { newMonth });
-            }}
+            currentMonthIndex={currentMonth.getMonth()}
+            onMonthPress={(newMonth) => switchMode('month', { newMonth })}
             markedDates={markedDates}
           />
         )}
