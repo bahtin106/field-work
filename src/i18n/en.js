@@ -12,4 +12,8 @@ export default {
   register_placeholder_password: 'Enter password',
 
   calendar_toggle: 'Toggle calendar size',
+  order_section_address: 'Address',
+  order_section_customer: 'Customer',
+  order_section_work_type: 'Work type',
+  order_field_work_type: 'Work type',
 };

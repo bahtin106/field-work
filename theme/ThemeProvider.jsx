@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Appearance, FlatList, Platform, ScrollView, SectionList } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
@@ -173,6 +174,8 @@ function buildTheme(mode) {
       height: base.components?.input?.height ?? base.components?.listItem?.height ?? 48,
       trailingSlotWidth: base.components?.input?.trailingSlotWidth ?? undefined,
       trailingGap: base.components?.input?.trailingGap ?? 8,
+      autoGrow: base.components?.input?.autoGrow ?? false,
+      autoGrowMaxRows: base.components?.input?.autoGrowMaxRows ?? 5,
       separator: {
         insetX: base.components?.input?.separator?.insetX ?? 'lg',
         height:
@@ -281,6 +284,12 @@ export const ThemeProvider = ({ children }) => {
       setDefaults(ScrollView, common);
       setDefaults(FlatList, common);
       setDefaults(SectionList, common);
+      setDefaults(KeyboardAwareScrollView, {
+        keyboardShouldPersistTaps: 'always',
+        keyboardDismissMode: Platform.OS === 'ios' ? 'interactive' : 'on-drag',
+        contentInsetAdjustmentBehavior: Platform.OS === 'ios' ? 'always' : 'automatic',
+        bottomOffset: 40, // единая высота подъёма, как на экране редактирования пользователя
+      });
     } catch {}
   }, []);
 

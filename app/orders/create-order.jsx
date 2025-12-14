@@ -1,6 +1,6 @@
 // apps/field-work/app/orders/create-order.jsx
 
-import { AntDesign } from '@expo/vector-icons';
+import { AntDesign, Feather } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -604,7 +604,7 @@ export default function CreateOrderScreen() {
                             })
                           : 'Сначала выберите дату'}
                       </Text>
-                      <AntDesign name="clockcircleo" size={16} color={palette.icon} />
+                      <Feather name="clock" size={16} color={palette.icon} />
                     </Pressable>
                   </View>
                   {showTimePicker && departureDate && (

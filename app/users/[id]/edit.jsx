@@ -8,7 +8,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
-  Dimensions,
   Image,
   Keyboard,
   Platform,
@@ -41,6 +40,7 @@ import { supabase } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 
 const TABLES = {
   profiles: TBL.PROFILES || 'profiles',
@@ -748,57 +748,7 @@ export default function EditUser() {
   const statusFieldRef = useRef(null);
   const insets = useSafeAreaInsets();
   const scrollYRef = useRef(0);
-  const ensureVisible = (ref) => {
-    if (!ref?.current || !scrollRef?.current) return;
-
-    // Увеличиваем задержку для стабильности на Android
-    const delay = Platform.OS === 'android' ? 300 : 150;
-
-    setTimeout(() => {
-      try {
-        ref.current.measureLayout(
-          scrollRef.current,
-          (x, y, width, height) => {
-            const screenHeight = Dimensions.get('window').height;
-            const keyboardHeight = 300;
-            const headerHeight = theme?.components?.header?.height ?? 56;
-            const safeAreaBottom = insets?.bottom ?? 0;
-
-            // Вычисляем видимую область
-            const visibleAreaHeight = screenHeight - keyboardHeight - headerHeight - safeAreaBottom;
-
-            // Позиция поля относительно ScrollView
-            const fieldTop = y;
-            const fieldBottom = y + height;
-
-            // Текущая позиция скролла
-            const currentScrollY = scrollYRef.current || 0;
-
-            // Определяем нужно ли скроллить
-            const fieldTopInViewport = fieldTop - currentScrollY;
-            const fieldBottomInViewport = fieldBottom - currentScrollY;
-
-            // Если поле ниже видимой области - скроллим вниз
-            if (fieldBottomInViewport > visibleAreaHeight - 50) {
-              const scrollTo = fieldBottom - visibleAreaHeight + 100;
-              scrollRef.current.scrollTo({ y: Math.max(0, scrollTo), animated: true });
-            }
-            // Если поле выше видимой области - скроллим вверх
-            else if (fieldTopInViewport < 50) {
-              const scrollTo = fieldTop - 100;
-              scrollRef.current.scrollTo({ y: Math.max(0, scrollTo), animated: true });
-            }
-          },
-          () => {
-            // Fallback если measureLayout не сработал
-            scrollRef.current.scrollToEnd({ animated: true });
-          },
-        );
-      } catch (e) {
-        console.warn('ensureVisible error:', e);
-      }
-    }, delay);
-  };
+  const headerHeight = theme?.components?.header?.height ?? 56;
 
   const isDirty = useMemo(() => {
     if (!initialSnap) return false;
@@ -1641,7 +1591,13 @@ export default function EditUser() {
             onChangeText={setFirstName}
             onFocus={() => {
               setFocusFirst(true);
-              setTimeout(() => ensureVisible(firstNameRef), 150); // Увеличиваем задержку
+              ensureVisibleField({
+                fieldRef: firstNameRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
             }}
             onBlur={() => setFocusFirst(false)}
             forceValidation={submittedAttempt}
@@ -1657,7 +1613,13 @@ export default function EditUser() {
             onChangeText={setLastName}
             onFocus={() => {
               setFocusLast(true);
-              setTimeout(() => ensureVisible(lastNameRef), 150); // Увеличиваем задержку
+              ensureVisibleField({
+                fieldRef: lastNameRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
             }}
             onBlur={() => setFocusLast(false)}
             forceValidation={submittedAttempt}
@@ -1676,7 +1638,13 @@ export default function EditUser() {
             onChangeText={setEmail}
             onFocus={() => {
               setFocusEmail(true);
-              setTimeout(() => ensureVisible(emailRef), 150); // Увеличиваем задержку
+              ensureVisibleField({
+                fieldRef: emailRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
             }}
             onBlur={() => setFocusEmail(false)}
             forceValidation={submittedAttempt}
@@ -1692,7 +1660,13 @@ export default function EditUser() {
             style={styles.field}
             onFocus={() => {
               setFocusPhone(true);
-              setTimeout(() => ensureVisible(phoneRef), 150); // Увеличиваем задержку
+              ensureVisibleField({
+                fieldRef: phoneRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
             }}
             onBlur={() => setFocusPhone(false)}
           />
@@ -1752,10 +1726,16 @@ export default function EditUser() {
           <View style={{ position: 'relative' }}>
             <TextField
               ref={pwdRef}
-              onFocus={() => {
-                setFocusPwd(true);
-                setTimeout(() => ensureVisible(pwdRef), 150); // Увеличиваем задержку
-              }}
+            onFocus={() => {
+              setFocusPwd(true);
+              ensureVisibleField({
+                fieldRef: pwdRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
+            }}
               onBlur={() => setFocusPwd(false)}
               value={newPassword}
               onChangeText={setNewPassword}

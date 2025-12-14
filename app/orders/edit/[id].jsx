@@ -1,14 +1,13 @@
 // apps/field-work/app/orders/edit/[id].jsx
-import { AntDesign } from '@expo/vector-icons';
+import { AntDesign, Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { usePathname, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -29,28 +28,71 @@ import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 
 export default function EditOrderScreen() {
   const pathname = usePathname();
-  // derive id from pathname to avoid Proxy traps from useLocalSearchParams()
   const id = React.useMemo(() => {
     try {
       const path = String(pathname || '');
       const clean = path.split('?')[0];
       const parts = clean.split('/').filter(Boolean);
-      return parts.length ? parts[parts.length - 1] : null;
+      const extractedId = parts.length ? parts[parts.length - 1] : null;
+      console.log('Extracted ID from pathname:', { pathname, extractedId });
+      return extractedId;
     } catch {
       return null;
     }
   }, [pathname]);
+
   const router = useRouter();
   const { theme } = useTheme();
   const { useDepartureTime } = useCompanySettings();
-  const { toastInfo, toastError, toastSuccess } = useToast();
+  const toastContext = useToast() || {};
+  const toastError = toastContext.toastError || (() => {});
+  const toastSuccess = toastContext.toastSuccess || (() => {});
+  const toastInfo = toastContext.toastInfo || (() => {});
 
-  // schema-driven required fields (admin form builder)
   const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
-  const [workTypeIdView, setWorkTypeIdView] = useState(null);
+  const [companyId, setCompanyId] = useState(null);
+  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+  const [workTypes, setWorkTypes] = useState([]);
+  const [workTypeId, setWorkTypeId] = useState(null);
+  const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [region, setRegion] = useState('');
+  const [city, setCity] = useState('');
+  const [street, setStreet] = useState('');
+  const [house, setHouse] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [departureDate, setDepartureDate] = useState(null);
+  const [assigneeId, setAssigneeId] = useState(null);
+  const [toFeed, setToFeed] = useState(false);
+  const [urgent, setUrgent] = useState(false);
+  const [departmentId, setDepartmentId] = useState(null);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [showTimeModal, setShowTimeModal] = useState(false);
+  const scrollRef = useRef(null);
+  const scrollYRef = useRef(0);
+  const insets = useSafeAreaInsets();
+  const titleRef = useRef(null);
+  const descriptionRef = useRef(null);
+  const regionRef = useRef(null);
+  const cityRef = useRef(null);
+  const streetRef = useRef(null);
+  const houseRef = useRef(null);
+  const customerNameRef = useRef(null);
+  const selectedWorkTypeName = useMemo(() => {
+    if (!workTypeId) return '';
+    const match = workTypes.find((w) => w.id === workTypeId);
+    return match?.name ?? '';
+  }, [workTypeId, workTypes]);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -63,13 +105,6 @@ export default function EditOrderScreen() {
       mounted = false;
     };
   }, []);
-
-  // work types
-  const [companyId, setCompanyId] = useState(null);
-  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
-  const [workTypes, setWorkTypes] = useState([]);
-  const [workTypeId, setWorkTypeId] = useState(null);
-  const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -93,28 +128,12 @@ export default function EditOrderScreen() {
     };
   }, []);
 
-  // form state
-  const [loading, setLoading] = useState(true);
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [region, setRegion] = useState('');
-  const [city, setCity] = useState('');
-  const [street, setStreet] = useState('');
-  const [house, setHouse] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [departureDate, setDepartureDate] = useState(null);
-  const [assigneeId, setAssigneeId] = useState(null);
-  const [toFeed, setToFeed] = useState(false);
-  const [urgent, setUrgent] = useState(false);
-  const [departmentId, setDepartmentId] = useState(null);
-
-  // Modals for date/time
-  const [showDateModal, setShowDateModal] = useState(false);
-  const [showTimeModal, setShowTimeModal] = useState(false);
-
-  // load order
   useEffect(() => {
+    if (!id) {
+      setLoading(false);
+      return;
+    }
+
     let mounted = true;
     (async () => {
       try {
@@ -124,7 +143,7 @@ export default function EditOrderScreen() {
           .eq('id', id)
           .single();
         if (error) throw error;
-        // Fallback: fetch work_type_id directly from orders if view doesn't expose it
+
         let wtId = row.work_type_id ?? null;
         if (wtId == null) {
           const { data: row2 } = await supabase
@@ -134,7 +153,9 @@ export default function EditOrderScreen() {
             .single();
           wtId = row2?.work_type_id ?? null;
         }
+
         if (!mounted) return;
+
         setTitle(row.title || '');
         setDescription(row.comment || '');
         setRegion(row.region || '');
@@ -150,13 +171,13 @@ export default function EditOrderScreen() {
         setUrgent(!!row.urgent);
         setDepartmentId(row.department_id || null);
         setWorkTypeId(row.work_type_id || wtId || null);
-        setWorkTypeIdView(row.work_type_id || wtId || null);
       } catch (e) {
-        console.warn(e);
+        console.warn('Load order error:', e);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     })();
+
     return () => {
       mounted = false;
     };
@@ -184,9 +205,17 @@ export default function EditOrderScreen() {
 
   const showToast = (msg, type = 'info') => {
     const text = String(msg || '');
-    if (type === 'error') toastError(text);
-    else if (type === 'success') toastSuccess(text);
-    else toastInfo(text);
+    try {
+      if (type === 'error' && typeof toastError === 'function') {
+        toastError(text);
+      } else if (type === 'success' && typeof toastSuccess === 'function') {
+        toastSuccess(text);
+      } else if (typeof toastInfo === 'function') {
+        toastInfo(text);
+      }
+    } catch (e) {
+      console.warn('Toast error:', e);
+    }
   };
 
   const handleSave = async () => {
@@ -219,7 +248,7 @@ export default function EditOrderScreen() {
       return;
     }
     showToast(T('order_toast_saved'), 'success');
-    router.back(); // вернуться к деталям без дубликата в стеке
+    router.back();
   };
 
   if (loading) {
@@ -236,76 +265,173 @@ export default function EditOrderScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <Screen
+        scroll={false}
         headerOptions={{
           rightTextLabel: T('header_save'),
           onRightPress: handleSave,
         }}
       >
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <KeyboardAwareScrollView
+          ref={scrollRef}
+          contentContainerStyle={[
+            styles.container,
+            {
+              paddingBottom: Math.max(
+                styles.container?.paddingBottom ?? 0,
+                Math.max(theme.components?.scrollView?.paddingBottom ?? 24, insets.bottom ?? 0),
+              ),
+            },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
+          showsVerticalScrollIndicator={false}
+          onScroll={(e) => {
+            try {
+              scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+            } catch {}
+          }}
+          scrollEventThrottle={16}
+        >
+          <SectionHeader bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
           <Card>
-            <SectionHeader title={T('order_details_general_data')} />
+              <TextField
+                ref={titleRef}
+                label={T('order_field_title')}
+                placeholder={T('order_placeholder_title')}
+                value={title}
+                onChangeText={setTitle}
+                onFocus={() =>
+                  ensureVisibleField({
+                    fieldRef: titleRef,
+                    scrollRef,
+                    scrollYRef,
+                    insetsBottom: insets.bottom ?? 0,
+                    headerHeight: theme?.components?.header?.height ?? 56,
+                  })
+                }
+                required
+              />
 
-            <TextField
-              label={T('order_field_title')}
-              placeholder={T('order_placeholder_title')}
-              value={title}
-              onChangeText={setTitle}
-              required
-            />
-
-            <TextField
-              label={T('order_field_description')}
-              placeholder={T('order_placeholder_description')}
-              value={description}
-              onChangeText={setDescription}
-              multiline
-            />
+              <TextField
+                ref={descriptionRef}
+                label={T('order_field_description')}
+                placeholder={T('order_placeholder_description')}
+                value={description}
+                onChangeText={setDescription}
+                multiline
+                minLines={3}
+                onFocus={() =>
+                  ensureVisibleField({
+                    fieldRef: descriptionRef,
+                    scrollRef,
+                    scrollYRef,
+                    insetsBottom: insets.bottom ?? 0,
+                    headerHeight: theme?.components?.header?.height ?? 56,
+                  })
+                }
+              />
 
             {useWorkTypes && (
-              <View>
-                <SectionHeader title={T('order_details_work_type')} compact />
-                <Pressable style={styles.selectInput} onPress={() => setWorkTypeModalVisible(true)}>
-                  <Text style={styles.selectInputText}>
-                    {workTypeId
-                      ? workTypes.find((w) => w.id === workTypeId)?.name ||
-                        T('order_details_work_type_not_selected')
-                      : T('order_details_work_type_not_selected')}
-                  </Text>
-                  <AntDesign
-                    name="down"
-                    size={16}
-                    color={theme.colors.textSecondary || theme.colors.text}
-                  />
-                </Pressable>
-              </View>
+              <TextField
+                label={T('order_field_work_type')}
+                value={selectedWorkTypeName}
+                placeholder={T('order_details_work_type_not_selected')}
+                pressable
+                onPress={() => setWorkTypeModalVisible(true)}
+              />
             )}
           </Card>
 
+          <SectionHeader bottomSpacing="xs">{T('order_section_address')}</SectionHeader>
           <Card>
-            <SectionHeader title={T('order_details_address')} />
-            <TextField label={T('order_field_region')} value={region} onChangeText={setRegion} />
-            <TextField label={T('order_field_city')} value={city} onChangeText={setCity} />
-            <TextField label={T('order_field_street')} value={street} onChangeText={setStreet} />
-            <TextField label={T('order_field_house')} value={house} onChangeText={setHouse} />
+            <TextField
+              ref={regionRef}
+              label={T('order_field_region')}
+              value={region}
+              onChangeText={setRegion}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: regionRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
+            />
+            <TextField
+              ref={cityRef}
+              label={T('order_field_city')}
+              value={city}
+              onChangeText={setCity}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: cityRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
+            />
+            <TextField
+              ref={streetRef}
+              label={T('order_field_street')}
+              value={street}
+              onChangeText={setStreet}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: streetRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
+            />
+            <TextField
+              ref={houseRef}
+              label={T('order_field_house')}
+              value={house}
+              onChangeText={setHouse}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: houseRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
+            />
           </Card>
 
+          <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
           <Card>
-            <SectionHeader title={T('order_details_customer')} />
             <TextField
+              ref={customerNameRef}
               label={T('order_field_customer_name')}
               value={customerName}
               onChangeText={setCustomerName}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: customerNameRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
             />
-            <SectionHeader title={T('order_details_phone')} compact />
             <PhoneInput value={phone} onChangeText={setPhone} />
           </Card>
 
+          <SectionHeader bottomSpacing="xs">
+            {T('company_settings_sections_departure_helperText_departureOn')}
+          </SectionHeader>
           <Card>
-            <SectionHeader
-              title={T('company_settings_sections_departure_helperText_departureOn')}
-            />
-
-            <SectionHeader title={T('order_field_departure_date')} compact />
+            <SectionHeader bottomSpacing="xs">{T('order_field_departure_date')}</SectionHeader>
             <Pressable style={styles.selectInput} onPress={() => setShowDateModal(true)}>
               <Text style={styles.selectInputText}>
                 {departureDate
@@ -321,7 +447,7 @@ export default function EditOrderScreen() {
 
             {useDepartureTime && (
               <>
-                <SectionHeader title={T('order_field_departure_time')} compact />
+                <SectionHeader bottomSpacing="xs">{T('order_field_departure_time')}</SectionHeader>
                 <Pressable
                   style={styles.selectInput}
                   onPress={() => {
@@ -337,8 +463,8 @@ export default function EditOrderScreen() {
                       ? format(departureDate, 'HH:mm', { locale: ru })
                       : T('placeholder_birthdate')}
                   </Text>
-                  <AntDesign
-                    name="clockcircleo"
+                  <Feather
+                    name="clock"
                     size={16}
                     color={theme.colors.textSecondary || theme.colors.text}
                   />
@@ -348,10 +474,9 @@ export default function EditOrderScreen() {
           </Card>
 
           <View style={{ height: theme.spacing?.xxl ?? 80 }} />
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </Screen>
 
-      {/* Модалка выбора типа работ */}
       <Modal
         isVisible={workTypeModalVisible}
         onBackdropPress={() => setWorkTypeModalVisible(false)}
@@ -382,7 +507,6 @@ export default function EditOrderScreen() {
         </View>
       </Modal>
 
-      {/* Модалка выбора даты */}
       <DateTimeModal
         visible={showDateModal}
         mode="date"
@@ -395,14 +519,12 @@ export default function EditOrderScreen() {
         onClose={() => setShowDateModal(false)}
       />
 
-      {/* Модалка выбора времени */}
       <DateTimeModal
         visible={showTimeModal}
         mode="time"
         initial={departureDate || new Date()}
         allowFutureDates={true}
         onApply={(time) => {
-          // Всегда используем существующую дату или создаём новую с сегодняшней датой
           const baseDate = departureDate || new Date();
           const newDate = new Date(baseDate);
           newDate.setHours(time.getHours(), time.getMinutes(), 0, 0);

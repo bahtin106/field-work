@@ -114,7 +114,8 @@ export default function OrderDetails() {
   const isNavigatingRef = useRef(false);
 
   const [order, setOrder] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [orderReady, setOrderReady] = useState(false);
+  const [workTypesReady, setWorkTypesReady] = useState(false);
   const hydratedRef = useRef(false);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
@@ -141,10 +142,15 @@ export default function OrderDetails() {
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
-  const [departments, setDepartments] = useState([]);
-  const [amount, setAmount] = useState('');
-  const [gsm, setGsm] = useState('');
-  const canEditFinances = role === 'admin' || role === 'dispatcher';
+const [departments, setDepartments] = useState([]);
+const [amount, setAmount] = useState('');
+const [gsm, setGsm] = useState('');
+const canEditFinances = role === 'admin' || role === 'dispatcher';
+const workTypeName = useMemo(() => {
+  if (!workTypeId) return null;
+  const found = workTypes.find((w) => w.id === workTypeId);
+  return found?.name || null;
+}, [workTypeId, workTypes]);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -448,7 +454,7 @@ export default function OrderDetails() {
 
   const fetchData = useCallback(async () => {
     if (!id) {
-      setLoading(false);
+      setOrderReady(true);
       return;
     }
 
@@ -456,7 +462,8 @@ export default function OrderDetails() {
     if (cached) {
       setOrder(cached);
       hydratedRef.current = true;
-      setLoading(false);
+      setWorkTypeId(cached.work_type_id ?? null);
+      setOrderReady(true);
     }
 
     try {
@@ -527,17 +534,20 @@ export default function OrderDetails() {
           const nextOrder = refErr ? { ...fetchedOrder, status: 'В работе' } : refreshed;
           ORDER_CACHE.set(id, nextOrder);
           setOrder(nextOrder);
+          setWorkTypeId(nextOrder.work_type_id ?? null);
         } catch (e) {
           console.warn('Persist status error:', e);
           ORDER_CACHE.set(id, fetchedOrder);
           setOrder(fetchedOrder);
+          setWorkTypeId(fetchedOrder.work_type_id ?? null);
         }
       } else {
         ORDER_CACHE.set(id, fetchedOrder);
         setOrder(fetchedOrder);
+        setWorkTypeId(fetchedOrder.work_type_id ?? null);
       }
 
-      setLoading(false);
+      setOrderReady(true);
 
       InteractionManager.runAfterInteractions(async () => {
         try {
@@ -573,7 +583,6 @@ export default function OrderDetails() {
           setToFeed(!fetchedOrder.assigned_to);
           setUrgent(!!fetchedOrder.urgent);
           setDepartmentId(fetchedOrder.department_id || null);
-          setWorkTypeId(fetchedOrder.work_type_id || null);
           setAmount(
             fetchedOrder.price !== null && fetchedOrder.price !== undefined
               ? String(fetchedOrder.price)
@@ -619,7 +628,7 @@ export default function OrderDetails() {
       setDepartments(deptList || []);
     } catch (e) {
       console.warn('Fetch data error:', e);
-      setLoading(false);
+      setOrderReady(true);
     }
   }, [id, fetchServerPhotos, makeSnapshotFromOrder]);
 
@@ -1393,6 +1402,7 @@ export default function OrderDetails() {
 
   useEffect(() => {
     let alive = true;
+    setWorkTypesReady(false);
     (async () => {
       try {
         const cid = await getMyCompanyId();
@@ -1406,12 +1416,16 @@ export default function OrderDetails() {
         }
       } catch (e) {
         console.warn('workTypes bootstrap', e?.message || e);
+      } finally {
+        if (alive) setWorkTypesReady(true);
       }
     })();
     return () => {
       alive = false;
     };
   }, []);
+
+  const loading = !orderReady || !workTypesReady;
 
   useEffect(() => {
     if (!loading) {
@@ -1536,7 +1550,9 @@ export default function OrderDetails() {
           title: t('routes.orders/[id]', 'routes.orders/[id]'),
           rightTextLabel: canEdit() && !editMode && order?.id ? t('order_details_edit') : undefined,
           onRightPress:
-            canEdit() && order?.id ? () => router.push(`/orders/edit/${order.id}`) : undefined,
+            canEdit() && !editMode && order?.id
+              ? () => router.push(`/orders/edit/${order.id}`)
+              : undefined,
         }}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
@@ -1633,8 +1649,7 @@ export default function OrderDetails() {
                       <Text style={base.label}>{t('order_details_work_type')}</Text>
                       <View style={base.rightWrap}>
                         <Text style={base.value}>
-                          {workTypes.find((w) => w.id === (order.work_type_id ?? null))?.name ||
-                            t('order_details_work_type_not_selected')}
+                          {workTypeName || t('order_details_work_type_not_selected')}
                         </Text>
                       </View>
                     </View>

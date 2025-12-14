@@ -84,6 +84,8 @@ const light = {
     // Default row heights
     input: {
       height: 44, // Минимальная высота для touch по Apple HIG
+      autoGrow: true,
+      autoGrowMaxRows: 5,
       labelSpacing: 4, // Отступ между лейблом и полем
       fieldSpacing: 2, // Вертикальный отступ между полями внутри карточек
       separator: {
