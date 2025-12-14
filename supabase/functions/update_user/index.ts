@@ -66,6 +66,11 @@ serve(async (req: Request) => {
       if ('phone' in profile) profilePatch.phone = profile.phone;
       if ('birthdate' in profile) profilePatch.birthdate = profile.birthdate;
       if ('department_id' in profile) profilePatch.department_id = profile.department_id;
+      if ('full_name' in profile) {
+        const fullNameCandidate = profile.full_name;
+        profilePatch.full_name =
+          typeof fullNameCandidate === 'string' ? fullNameCandidate.trim() : fullNameCandidate;
+      }
     }
     if (typeof role === 'string' && role.length > 0) {
       profilePatch.role = role;
@@ -75,6 +80,17 @@ serve(async (req: Request) => {
     }
     if (suspended_at !== undefined) {
       profilePatch.suspended_at = suspended_at;
+    }
+
+    const shouldSyncFullName =
+      'first_name' in profilePatch || 'last_name' in profilePatch;
+    if (shouldSyncFullName) {
+      const firstValue =
+        typeof profilePatch.first_name === 'string' ? profilePatch.first_name.trim() : '';
+      const lastValue =
+        typeof profilePatch.last_name === 'string' ? profilePatch.last_name.trim() : '';
+      const combined = [firstValue, lastValue].filter(Boolean).join(' ').trim();
+      profilePatch.full_name = combined || null;
     }
 
     if (Object.keys(profilePatch).length > 0) {

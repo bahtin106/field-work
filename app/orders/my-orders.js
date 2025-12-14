@@ -5,11 +5,14 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   BackHandler,
   FlatList,
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -23,6 +26,7 @@ import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function MyOrdersScreen() {
   const { theme } = useTheme();
@@ -40,11 +44,13 @@ export default function MyOrdersScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        filterContainer: {
+        filterBar: {
+          marginBottom: 16,
+        },
+        filterScrollContent: {
           flexDirection: 'row',
           gap: 8,
-          marginBottom: 16,
-          flexWrap: 'wrap',
+          paddingRight: 4,
         },
         chip: {
           paddingVertical: 8,
@@ -57,6 +63,24 @@ export default function MyOrdersScreen() {
         chipTextActive: {
           color: theme.colors.onPrimary || theme.colors.primaryTextOn,
           fontWeight: '600',
+        },
+        chipContent: {
+          flexDirection: 'row',
+          alignItems: 'center',
+        },
+        feedDotBase: {
+          width: 6,
+          height: 6,
+          borderRadius: 3,
+          marginRight: 6,
+        },
+        feedDotNew: {
+          backgroundColor: '#FF3B30',
+        },
+        feedDotSeen: {
+          backgroundColor: 'rgba(255,59,48,0.22)',
+          borderWidth: 1,
+          borderColor: 'rgba(255,59,48,0.55)',
         },
         container: {
           padding: 16,
@@ -144,6 +168,124 @@ export default function MyOrdersScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const PAGE_SIZE = 10;
+
+  // Feed indicator state (cached preview of "Лента")
+  const FEED_SEEN_STORAGE_KEY = 'myorders_feed_seen_fp';
+  const FEED_LAST_FP_STORAGE_KEY = 'myorders_feed_last_fp';
+  const [feedFingerprint, setFeedFingerprint] = useState(() => globalThis.__MYORDERS_FEED_FP || '');
+  const [feedSeenFingerprint, setFeedSeenFingerprint] = useState(
+    () => globalThis.__MYORDERS_FEED_SEEN_FP || '',
+  );
+  const [feedHasAny, setFeedHasAny] = useState(() => Boolean(globalThis.__MYORDERS_FEED_HAS_ANY));
+  const feedPulse = useRef(new Animated.Value(0)).current;
+
+  // Load persisted feed seen state (keeps "seen/new" across app restarts)
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const [seenFp, lastFp] = await Promise.all([
+          AsyncStorage.getItem(FEED_SEEN_STORAGE_KEY),
+          AsyncStorage.getItem(FEED_LAST_FP_STORAGE_KEY),
+        ]);
+
+        if (typeof seenFp === 'string' && seenFp.length) {
+          setFeedSeenFingerprint(seenFp);
+          globalThis.__MYORDERS_FEED_SEEN_FP = seenFp;
+        }
+        if (typeof lastFp === 'string' && lastFp.length) {
+          globalThis.__MYORDERS_FEED_FP = lastFp;
+          setFeedFingerprint(lastFp);
+        }
+      } catch {}
+    };
+    run();
+  }, []);
+
+
+  useEffect(() => {
+    // Pulse for "new in feed" state
+    const anim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(feedPulse, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(feedPulse, {
+          toValue: 0,
+          duration: 700,
+          easing: Easing.in(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => {
+      anim.stop();
+    };
+  }, [feedPulse]);
+
+
+  const updateFeedMeta = useCallback((arr) => {
+    const fp = Array.isArray(arr) ? arr.map((o) => o?.id).filter(Boolean).join(',') : '';
+    const hasAny = Boolean(arr && arr.length);
+
+    globalThis.__MYORDERS_FEED_FP = fp;
+    globalThis.__MYORDERS_FEED_HAS_ANY = hasAny;
+
+    setFeedFingerprint(fp);
+    setFeedHasAny(hasAny);
+
+    // Persist last known feed fingerprint (no UI spinners, best-effort)
+    try {
+      if (fp) AsyncStorage.setItem(FEED_LAST_FP_STORAGE_KEY, fp);
+      else AsyncStorage.removeItem(FEED_LAST_FP_STORAGE_KEY);
+    } catch {}
+  }, []);
+
+  // Prefetch «Лента» на входе, чтобы индикатор был виден сразу на вкладке «Все»
+  useEffect(() => {
+    const prefetchFeed = async () => {
+      const cached = LIST_CACHE.my.feed;
+      if (Array.isArray(cached) && cached.length) {
+        updateFeedMeta(cached);
+        return;
+      }
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id;
+      if (!uid) return;
+
+      const { data, error } = await supabase
+        .from('orders_secure')
+        .select('*')
+        .is('assigned_to', null)
+        .order('datetime', { ascending: false })
+        .range(0, PAGE_SIZE - 1);
+
+      if (!error && Array.isArray(data)) {
+        LIST_CACHE.my.feed = data;
+        updateFeedMeta(data);
+      }
+    };
+
+    prefetchFeed();
+  }, [updateFeedMeta]);
+
+  // Если пользователь зашёл в «Ленту» — считаем, что он увидел текущие заявки
+  useEffect(() => {
+    if (filter !== 'feed') return;
+    if (!feedHasAny || !feedFingerprint) return;
+    if (feedSeenFingerprint === feedFingerprint) return;
+
+    setFeedSeenFingerprint(feedFingerprint);
+    globalThis.__MYORDERS_FEED_SEEN_FP = feedFingerprint;
+
+    try {
+      AsyncStorage.setItem(FEED_SEEN_STORAGE_KEY, feedFingerprint);
+    } catch {}
+  }, [filter, feedHasAny, feedFingerprint, feedSeenFingerprint]);
   // Если мы стартуем на фильтре 'all' и уже есть prefetch данные – считаем экран гидратированным
   useEffect(() => {
     if (filter === 'all' && !hydratedRef.current) {
@@ -192,10 +334,8 @@ export default function MyOrdersScreen() {
           setOrders(cached);
           hydratedRef.current = true;
           if (isBackground) {
-            setBgRefreshing(true);
           } else {
             setLoading(false);
-            setBgRefreshing(true);
           }
         } else {
           setLoading(true);
@@ -237,6 +377,7 @@ export default function MyOrdersScreen() {
         if (pageNum === 1) {
           setOrders(data);
           LIST_CACHE.my[key] = data;
+          if (key === 'feed') updateFeedMeta(data);
         } else {
           // Добавляем к существующим (пагинация)
           setOrders((prev) => [...prev, ...data]);
@@ -246,8 +387,6 @@ export default function MyOrdersScreen() {
         // Проверяем, есть ли ещё данные
         setHasMore(data.length === PAGE_SIZE);
       }
-
-      setBgRefreshing(false);
       setLoading(false);
       setLoadingMore(false);
     };
@@ -377,10 +516,20 @@ export default function MyOrdersScreen() {
   }, [loadingMore, theme.colors.primary]);
 
   // Заголовок с фильтрами и поиском
+  const feedState = !feedHasAny
+    ? 'none'
+    : feedFingerprint && feedFingerprint === feedSeenFingerprint
+      ? 'seen'
+      : 'new';
   const ListHeaderComponent = useCallback(
     () => (
       <View>
-        <View style={styles.filterContainer}>
+        <View style={styles.filterBar}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScrollContent}
+        >
           {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
             <Pressable
               key={key}
@@ -392,6 +541,34 @@ export default function MyOrdersScreen() {
               ]}
               accessibilityRole="button"
             >
+              <View style={styles.chipContent}>
+              {key === 'feed' && feedState !== 'none' && (
+                feedState === 'new' ? (
+                  <Animated.View
+                    style={[
+                      styles.feedDotBase,
+                      styles.feedDotNew,
+                      {
+                        transform: [
+                          {
+                            scale: feedPulse.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [1, 1.7],
+                            }),
+                          },
+                        ],
+                        opacity: feedPulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.55, 1],
+                        }),
+                      },
+                    ]}
+                  />
+                ) : (
+                  <View style={[styles.feedDotBase, styles.feedDotSeen]} />
+                )
+              )}
+
               <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
                 {key === 'feed'
                   ? 'Лента'
@@ -403,8 +580,10 @@ export default function MyOrdersScreen() {
                         ? 'В работе'
                         : 'Завершённые'}
               </Text>
+            </View>
             </Pressable>
           ))}
+                </ScrollView>
         </View>
 
         <TextField
@@ -416,7 +595,7 @@ export default function MyOrdersScreen() {
         />
       </View>
     ),
-    [filter, searchQuery, styles],
+    [filter, searchQuery, styles, feedState, feedPulse],
   );
 
   // Пустой список
@@ -445,7 +624,6 @@ export default function MyOrdersScreen() {
     const { data: sessionData } = await supabase.auth.getSession();
     const uid = sessionData?.session?.user?.id;
     if (!uid) {
-      setBgRefreshing(false);
       return;
     }
 
@@ -472,9 +650,9 @@ export default function MyOrdersScreen() {
     if (!error && Array.isArray(data)) {
       setOrders(data);
       LIST_CACHE.my[key] = data;
+          if (key === 'feed') updateFeedMeta(data);
       setHasMore(data.length === PAGE_SIZE);
     }
-
     setBgRefreshing(false);
   }, [filter]);
 

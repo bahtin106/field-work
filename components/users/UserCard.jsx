@@ -103,11 +103,11 @@ function UserCardContent({
     [theme, cardShadows],
   );
 
-  const fullName = (
+  const fullName =
+    (item.display_name || '').trim() ||
     `${item.first_name || ''} ${item.last_name || ''}`.trim() ||
     item.full_name ||
-    ''
-  ).trim();
+    '';
 
   const departmentText = departmentName
     ? `${translate('users_department')}: ${departmentName}`

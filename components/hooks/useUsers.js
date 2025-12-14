@@ -47,7 +47,19 @@ export function useUsers(options = {}) {
     const { data, error } = await query;
 
     if (error) throw error;
-    return Array.isArray(data) ? data : [];
+    if (!Array.isArray(data)) return [];
+    return data.map((row) => {
+      const nameParts = `${row.first_name || ''} ${row.last_name || ''}`.trim();
+      const candidate =
+        nameParts ||
+        (row.full_name || '').trim();
+      const normalizedFullName = candidate || null;
+      return {
+        ...row,
+        full_name: normalizedFullName,
+        display_name: normalizedFullName || row.email || '',
+      };
+    });
   }, [filters]);
 
   // Используем систему кэширования

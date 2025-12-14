@@ -528,7 +528,7 @@ export default {
   order_details_edit: 'Редактировать',
   order_details_general_data: 'Общие данные',
   order_details_status: 'Статус',
-  order_details_executor: '👷 Исполнитель',
+  order_details_executor: 'Исполнитель',
   order_details_not_assigned: 'не назначен',
   order_details_customer: '🧑‍💼 Заказчик',
   order_details_address: '📍 Адрес',

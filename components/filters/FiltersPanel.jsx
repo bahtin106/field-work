@@ -19,7 +19,9 @@ import {
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import { ROLE_LABELS } from '../../constants/roles';
 import Button from '../ui/Button';
+import TextField from '../ui/TextField';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -55,9 +57,24 @@ export default function FiltersPanel({
   defaults = {},
   onReset,
   onApply,
+  mode = 'filters',
+  assignment = null,
+  searchItems = [],
+  showSearchCategory = true,
 }) {
   const { theme } = useTheme();
   useTranslation();
+
+  const isAssignmentMode = mode === 'assignment' && assignment;
+  const normalizeSelectionId = (id) =>
+    id !== null && id !== undefined ? String(id) : null;
+  const assignmentEmployees = isAssignmentMode
+    ? Array.isArray(assignment?.employees)
+      ? assignment.employees
+      : []
+    : [];
+  const assignmentDefaultId = normalizeSelectionId(assignment?.defaults?.selectedId ?? null);
+  const searchList = !isAssignmentMode && Array.isArray(searchItems) ? searchItems : assignmentEmployees;
 
   const c = theme.colors;
   const sz = theme.spacing;
@@ -92,6 +109,12 @@ export default function FiltersPanel({
     roles: Array.isArray(values.roles) ? values.roles : [],
     suspended: values.suspended ?? null,
   });
+  const [assignmentDraftId, setAssignmentDraftId] = useState(
+    normalizeSelectionId(assignment?.selectedId ?? null),
+  );
+  const [assignmentBaselineId, setAssignmentBaselineId] = useState(
+    normalizeSelectionId(assignment?.selectedId ?? null),
+  );
 
   // Re-init draft and baseline every time panel opens
   useEffect(() => {
@@ -144,48 +167,141 @@ export default function FiltersPanel({
   }, [visible, onClose]);
 
   // Categories composition
+  const assignmentCategories = useMemo(() => {
+    if (!isAssignmentMode) return [];
+    const includeUnassigned = assignment?.includeUnassigned !== false;
+    const cats = [];
+    if (includeUnassigned) {
+      cats.push({
+        key: 'dept:null',
+        departmentId: null,
+        label: t('placeholder_department'),
+      });
+    }
+    if (Array.isArray(departments) && departments.length > 0) {
+      departments.forEach((dept) => {
+        cats.push({
+          key: `dept:${dept.id}`,
+          departmentId: dept.id,
+          label: dept.name || t('users_department'),
+        });
+      });
+    }
+    if (cats.length === 0) {
+      cats.push({
+        key: 'dept:empty',
+        departmentId: null,
+        label: t('common_noData'),
+        empty: true,
+      });
+    }
+    return cats;
+  }, [assignment?.includeUnassigned, departments, isAssignmentMode, t]);
+
+  const SEARCH_CATEGORY_KEY = 'search';
   const categories = useMemo(() => {
+    const searchCategory = showSearchCategory
+      ? { key: SEARCH_CATEGORY_KEY, label: t('common_search') }
+      : null;
+    if (isAssignmentMode) {
+      return showSearchCategory ? [searchCategory, ...assignmentCategories] : assignmentCategories;
+    }
     const cats = [];
     if (departments && departments.length > 0) {
       cats.push({ key: 'departments', label: t('users_department') });
     }
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
-    return cats;
-  }, [departments, t]);
+    return showSearchCategory ? [searchCategory, ...cats] : cats;
+  }, [assignmentCategories, departments, isAssignmentMode, showSearchCategory, t]);
+
+  const restoredCategoryRef = useRef(false);
+  const lastCategoriesRef = useRef(null);
 
   // Active category: restore from storage if recent (TTL 5s), otherwise select first
   const [activeCat, setActiveCat] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
-  // Restore last active category when panel opens (if within TTL)
   useEffect(() => {
-    if (visible && categories.length > 0) {
-      const restoreCategory = async () => {
-        try {
-          const stored = await AsyncStorage.getItem('@filtersPanelLastCategory');
-          if (stored) {
-            const { categoryKey, timestamp } = JSON.parse(stored);
-            const age = Date.now() - timestamp;
-            if (age <= CATEGORY_TTL && categories.some((c) => c.key === categoryKey)) {
-              setActiveCat(categoryKey);
-              return;
+    if (!visible) {
+      restoredCategoryRef.current = false;
+      lastCategoriesRef.current = null;
+      setActiveCat(null);
+      return;
+    }
+
+    if (isAssignmentMode) {
+      const getPreferredCategory = () => {
+        const selectedId = normalizeSelectionId(assignment?.selectedId);
+        if (selectedId) {
+          const selectedUser = assignmentEmployees.find((emp) => String(emp.id) === selectedId);
+          if (selectedUser) {
+            const deptId = selectedUser.department_id ?? null;
+            const key = `dept:${deptId === null ? 'null' : deptId}`;
+            if (categories.some((cat) => cat.key === key)) {
+              return key;
             }
           }
-        } catch (e) {
-          // Ignore storage errors
         }
-        // Default to first category if no valid stored value
-        setActiveCat(categories[0].key);
+        return categories.length ? categories[0].key : null;
       };
-      restoreCategory();
-    } else if (!visible) {
-      // Reset active category when panel closes to ensure clean state on next open
-      setActiveCat(null);
-    }
-  }, [visible, categories, CATEGORY_TTL]);
 
-  // Save active category to storage when it changes
+      setActiveCat((prev) => {
+        if (prev && categories.some((cat) => cat.key === prev)) return prev;
+        return getPreferredCategory();
+      });
+      return;
+    }
+
+    if (
+      restoredCategoryRef.current &&
+      lastCategoriesRef.current &&
+      lastCategoriesRef.current === categories
+    ) {
+      return;
+    }
+
+    const restoreCategory = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('@filtersPanelLastCategory');
+        if (stored) {
+          const { categoryKey, timestamp } = JSON.parse(stored);
+          const age = Date.now() - timestamp;
+          if (age <= CATEGORY_TTL && categories.some((c) => c.key === categoryKey)) {
+            setActiveCat(categoryKey);
+            return;
+          }
+        }
+      } catch (e) {
+        // Ignore storage errors
+      }
+      if (categories.length > 0) {
+        const fallbackCategory =
+          categories.find((cat) => cat.key !== SEARCH_CATEGORY_KEY)?.key ?? categories[0].key;
+        setActiveCat(fallbackCategory);
+      } else {
+        setActiveCat(null);
+      }
+    };
+
+    restoredCategoryRef.current = true;
+    lastCategoriesRef.current = categories;
+    restoreCategory();
+  }, [
+    visible,
+    categories,
+    CATEGORY_TTL,
+    isAssignmentMode,
+    assignment?.selectedId,
+    assignmentEmployees,
+  ]);
+
   useEffect(() => {
+    setSearchQuery('');
+  }, [activeCat, visible, isAssignmentMode]);
+
+  useEffect(() => {
+    if (isAssignmentMode) return;
     if (activeCat) {
       const saveCategory = async () => {
         try {
@@ -199,7 +315,14 @@ export default function FiltersPanel({
       };
       saveCategory();
     }
-  }, [activeCat]);
+  }, [activeCat, isAssignmentMode]);
+
+  useEffect(() => {
+    if (!isAssignmentMode || !visible) return;
+    const initialSelection = normalizeSelectionId(assignment?.selectedId ?? null);
+    setAssignmentDraftId(initialSelection);
+    setAssignmentBaselineId(initialSelection);
+  }, [assignment?.selectedId, isAssignmentMode, visible]);
 
   // Shallow set compares
   const eqArrays = (a = [], b = []) => {
@@ -212,15 +335,29 @@ export default function FiltersPanel({
   };
 
   const hasChanges = useMemo(() => {
+    if (isAssignmentMode) {
+      return assignmentDraftId !== assignmentBaselineId;
+    }
     if (!eqArrays(draft.departments || [], baseline.departments || [])) return true;
     if (!eqArrays(draft.roles || [], baseline.roles || [])) return true;
     if ((draft.suspended ?? null) !== (baseline.suspended ?? null)) return true;
     return false;
-  }, [draft, baseline]);
+  }, [
+    draft,
+    baseline,
+    assignmentBaselineId,
+    assignmentDraftId,
+    isAssignmentMode,
+  ]);
 
   // Check if any filters are active (different from defaults)
   const hasActiveFilters = useMemo(() => {
-    const defaultDeps = Array.isArray(defaults.departments) ? defaults.departments.map(String) : [];
+    if (isAssignmentMode) {
+      return assignmentDraftId !== assignmentDefaultId;
+    }
+    const defaultDeps = Array.isArray(defaults.departments)
+      ? defaults.departments.map(String)
+      : [];
     const defaultRoles = Array.isArray(defaults.roles) ? defaults.roles : [];
     const defaultSuspended = defaults.suspended ?? null;
 
@@ -228,7 +365,16 @@ export default function FiltersPanel({
     if (!eqArrays(draft.roles || [], defaultRoles)) return true;
     if ((draft.suspended ?? null) !== defaultSuspended) return true;
     return false;
-  }, [draft, defaults]);
+  }, [assignmentDefaultId, assignmentDraftId, defaults, draft, isAssignmentMode]);
+
+  const handleAssignmentReset = () => {
+    const defaultId = assignmentDefaultId;
+    setAssignmentDraftId(defaultId);
+    setAssignmentBaselineId(defaultId);
+    if (typeof assignment?.onReset === 'function') {
+      assignment.onReset(defaultId);
+    }
+  };
 
   const toggleDepartment = (id) => {
     const current = Array.isArray(draft.departments) ? draft.departments : [];
@@ -307,11 +453,15 @@ export default function FiltersPanel({
         marginLeft: sz.sm,
       },
       content: { flexDirection: 'row', flex: 1 },
-      categories: {
-        width: leftWidth,
-        borderRightWidth: 0,
-        backgroundColor: c.background,
-      },
+        categoriesColumn: {
+          width: leftWidth,
+          borderRightWidth: 0,
+          backgroundColor: c.background,
+          paddingBottom: sz.sm,
+        },
+        categoriesList: {
+          flex: 1,
+        },
       categoryItem: {
         paddingVertical: sz.sm,
         paddingHorizontal: sz.md,
@@ -328,6 +478,11 @@ export default function FiltersPanel({
       categoryItemActive: { backgroundColor: c.inputBg },
       categoryLabelActive: { color: c.text, fontWeight: ty.weight.semibold },
       options: { width: rightWidth, backgroundColor: c.inputBg },
+      optionsScroll: { flex: 1 },
+      searchFieldWrap: {
+        paddingHorizontal: sz.md,
+        marginTop: sz.sm,
+      },
       applyBar: {
         position: 'absolute',
         bottom: 0,
@@ -385,7 +540,145 @@ export default function FiltersPanel({
     [c.primary, ALPHA_CHECKBOX_SELECTED],
   );
 
+  const normalizedSearch = useMemo(() => (searchQuery || '').trim().toLowerCase(), [searchQuery]);
+  const searchHasValue = normalizedSearch.length > 0;
+  const matchesSearchText = useMemo(
+    () => (value) => {
+      if (!searchHasValue) return false;
+      if (!value) return false;
+      return String(value).toLowerCase().includes(normalizedSearch);
+    },
+    [normalizedSearch, searchHasValue],
+  );
+
+  const headerTitle = isAssignmentMode ? assignment?.title || t('common_filter') : t('common_filter');
+
+  const renderAssignmentOptions = () => {
+    if (!isAssignmentMode) return null;
+    if (!categories || categories.length === 0) return null;
+    const activeCategory =
+      categories.find((cat) => cat.key === activeCat) ?? categories[0];
+    if (!activeCategory) return null;
+    const activeDeptId =
+      activeCategory.departmentId === undefined ? null : activeCategory.departmentId;
+    const filtered = assignmentEmployees.filter((emp) => {
+      const dept = emp?.department_id ?? null;
+      if (activeDeptId === null) return dept === null;
+      return String(dept) === String(activeDeptId);
+    });
+
+    if (!filtered.length) {
+      return (
+        <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+          <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>
+            {normalizedSearch ? t('empty_noResults') : t('common_noData')}
+          </Text>
+        </View>
+      );
+    }
+
+    const sorted = [...filtered].sort((a, b) =>
+      (a.display_name || '').localeCompare(b.display_name || ''),
+    );
+
+    return sorted.map((emp, idx) => renderAssignmentRow(emp, idx));
+  };
+
+  const renderAssignmentRow = (emp, idx) => {
+    const empId = normalizeSelectionId(emp.id);
+    const selected = empId ? assignmentDraftId === empId : false;
+    const name = emp.display_name || emp.email || t('common_noName');
+    return (
+      <Pressable
+        key={empId || `emp-${idx}`}
+        onPress={() => {
+          if (empId) setAssignmentDraftId(empId);
+        }}
+        style={({ pressed }) => [
+          optionRow,
+          pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+        ]}
+      >
+        <View style={[checkboxBase, selected && checkboxSelected]}>
+          {selected && <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} />}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text
+            style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}
+            numberOfLines={1}
+          >
+            {name}
+          </Text>
+          {emp.role ? (
+            <Text
+              style={{
+                fontSize: ty.sizes.sm,
+                color: c.textSecondary,
+                marginTop: 2,
+              }}
+              numberOfLines={1}
+            >
+              {ROLE_LABELS[emp.role] || emp.role}
+            </Text>
+          ) : null}
+        </View>
+      </Pressable>
+    );
+  };
+
+  const renderSearchMode = () => {
+    const results = searchHasValue
+      ? searchList
+          .filter((emp) => matchesSearchText(emp.display_name) || matchesSearchText(emp.email))
+          .sort((a, b) => (a.display_name || '').localeCompare(b.display_name || ''))
+      : [];
+
+    return (
+      <>
+        <View style={styles.searchFieldWrap}>
+          <TextField
+            placeholder={t('common_search')}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            hideSeparator={true}
+            rightSlot={
+              searchQuery ? (
+                <Pressable
+                  android_ripple={{ borderless: true, color: withAlpha(c.border, 0.1) }}
+                  onPress={() => setSearchQuery('')}
+                  style={{ padding: 4 }}
+                >
+                  <Feather name="x" size={16} color={c.textSecondary} />
+                </Pressable>
+              ) : null
+            }
+          />
+        </View>
+        {results.length === 0 ? (
+          <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+            <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>
+              {t('empty_noResults')}
+            </Text>
+          </View>
+        ) : (
+          results.map((emp, idx) => renderAssignmentRow(emp, idx))
+        )}
+      </>
+    );
+  };
+
   const renderOptions = () => {
+    if (showSearchCategory && activeCat === SEARCH_CATEGORY_KEY) {
+      return renderSearchMode();
+    }
+    if (!showSearchCategory && activeCat == null && !isAssignmentMode) {
+      return null;
+    }
+    if (isAssignmentMode) {
+      return renderAssignmentOptions();
+    }
     switch (activeCat) {
       case 'departments':
         if (!departments || departments.length === 0) {
@@ -397,7 +690,6 @@ export default function FiltersPanel({
             </View>
           );
         }
-        // 'All' option
         const allSelected = !Array.isArray(draft.departments) || draft.departments.length === 0;
         return (
           <>
@@ -446,7 +738,6 @@ export default function FiltersPanel({
           </>
         );
       case 'roles':
-        // 'All' option for roles: empty selection means all
         const rolesAllSelected = !Array.isArray(draft.roles) || draft.roles.length === 0;
         return (
           <>
@@ -540,7 +831,11 @@ export default function FiltersPanel({
             hitSlop={12}
             onPress={() => {
               // Discard any changes by restoring baseline values
-              setDraft(baseline);
+              if (isAssignmentMode) {
+                setAssignmentDraftId(assignmentBaselineId);
+              } else {
+                setDraft(baseline);
+              }
               // Close the panel without applying changes
               if (onClose) onClose();
             }}
@@ -553,12 +848,16 @@ export default function FiltersPanel({
             </View>
           </Pressable>
 
-          <Text style={styles.headerTitle}>{t('common_filter')}</Text>
+          <Text style={styles.headerTitle}>{headerTitle}</Text>
 
           {/* Reset button on right: visible when any filter is active (not default) */}
           {hasActiveFilters ? (
             <Pressable
               onPress={() => {
+                if (isAssignmentMode) {
+                  handleAssignmentReset();
+                  return;
+                }
                 const emptyDeps = Array.isArray(defaults.departments)
                   ? defaults.departments.map(String)
                   : [];
@@ -600,13 +899,22 @@ export default function FiltersPanel({
         </View>
 
         <View style={styles.content}>
-          <ScrollView style={styles.categories} contentContainerStyle={{ paddingBottom: sz.sm }}>
+          <View style={styles.categoriesColumn}>
+            <ScrollView
+              style={styles.categoriesList}
+              contentContainerStyle={{ paddingBottom: sz.sm }}
+            >
             {categories.map((cat) => {
               const active = cat.key === activeCat;
               return (
                 <Pressable
                   key={cat.key}
-                  onPress={() => setActiveCat(cat.key)}
+                  onPress={() => {
+                    setActiveCat(cat.key);
+                    if (cat.key === SEARCH_CATEGORY_KEY) {
+                      setSearchQuery('');
+                    }
+                  }}
                   android_ripple={{ borderless: false, color: withAlpha(c.border, ALPHA_RIPPLE) }}
                   style={[styles.categoryItem, active && styles.categoryItemActive]}
                 >
@@ -616,11 +924,14 @@ export default function FiltersPanel({
                 </Pressable>
               );
             })}
-          </ScrollView>
+            </ScrollView>
+          </View>
 
-          <ScrollView style={styles.options} contentContainerStyle={{ paddingBottom: sz.sm }}>
-            {renderOptions()}
-          </ScrollView>
+          <View style={styles.options}>
+            <ScrollView style={styles.optionsScroll} contentContainerStyle={{ paddingBottom: sz.sm }}>
+              {renderOptions()}
+            </ScrollView>
+          </View>
         </View>
 
         {hasChanges && (
@@ -628,6 +939,16 @@ export default function FiltersPanel({
             <Button
               title={t('btn_apply')}
               onPress={() => {
+                if (isAssignmentMode) {
+                  const selection = assignmentDraftId;
+                  if (typeof assignment?.onApply === 'function') {
+                    assignment.onApply(selection);
+                  }
+                  setAssignmentBaselineId(selection);
+                  setAssignmentDraftId(selection);
+                  if (onClose) onClose();
+                  return;
+                }
                 if (setValue) {
                   setValue(
                     'departments',
