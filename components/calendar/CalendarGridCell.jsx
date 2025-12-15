@@ -1,5 +1,5 @@
 // components/calendar/CalendarGridCell.jsx
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 

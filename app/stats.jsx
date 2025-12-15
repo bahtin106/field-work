@@ -3,26 +3,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View,
-  Text,
   ActivityIndicator,
-  Pressable,
-  Modal,
-  TextInput as RNTextInput,
+  Dimensions,
   FlatList,
+  Modal,
   RefreshControl,
+  TextInput as RNTextInput,
   ScrollView,
   StyleSheet,
+  Text,
   TouchableOpacity,
-  Dimensions,
+  View,
 } from 'react-native';
 
 import { Calendar } from 'react-native-calendars';
-import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import AppHeader from '../components/navigation/AppHeader';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeProvider';
-import AppHeader from '../components/navigation/AppHeader';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -533,18 +532,18 @@ export default function StatsScreen() {
       // Load orders data
       let query = supabase
         .from('orders')
-        .select('id, status, datetime, fuel_cost, assigned_to')
-        .order('datetime', { ascending: false });
+        .select('id, status, time_window_start, fuel_cost, assigned_to')
+        .order('time_window_start', { ascending: false });
 
       if (selectedUserId !== 'ALL') {
         query = query.eq('assigned_to', selectedUserId);
       }
 
       if (periodRange.from) {
-        query = query.gte('datetime', iso(periodRange.from));
+        query = query.gte('time_window_start', iso(periodRange.from));
       }
       if (periodRange.to) {
-        query = query.lte('datetime', iso(periodRange.to));
+        query = query.lte('time_window_start', iso(periodRange.to));
       }
 
       const { data: orders, error } = await query;

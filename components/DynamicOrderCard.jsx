@@ -47,7 +47,7 @@ const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 const RUS_LABELS = {
   customer_name: 'Заказчик',
   address: 'Адрес',
-  datetime: 'Дата выезда',
+  time_window_start: 'Дата выезда',
 };
 
 function formatDateShort(iso, showTime = true) {
@@ -176,12 +176,12 @@ export default function DynamicOrderCard({
   const { theme } = useTheme();
   const { useDepartureTime } = useCompanySettings();
 
-  // Presets with safe defaults: exclude datetime from middle block
+  // Presets with safe defaults: exclude time_window_start from middle block
   const presetRaw = presetsByContext(context);
   const preset = {
     fields:
       Array.isArray(presetRaw?.fields) && presetRaw.fields.length > 0
-        ? presetRaw.fields.filter((k) => k !== 'datetime')
+        ? presetRaw.fields.filter((k) => k !== 'time_window_start')
         : ['title', 'customer_name', 'address'],
     pills:
       Array.isArray(presetRaw?.pills) && presetRaw.pills.length > 0 ? presetRaw.pills : ['status'],
@@ -345,7 +345,7 @@ export default function DynamicOrderCard({
 
   // Bottom date (footer only)
   const bottomDateIso = useMemo(() => {
-    const keys = ['datetime', 'date', 'start_at'];
+    const keys = ['time_window_start', 'date', 'start_at'];
     for (const k of keys) {
       const f = getFieldByKey(k);
       const v = readWithFallback(order, f, k);

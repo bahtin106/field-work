@@ -29,13 +29,23 @@ export default function Screen({
   const useScroll = scroll !== false && !isAuthScreen;
   useI18nVersion(); // subscribe to i18n changes to re-render screen
 
-  // Объединяем route params с переданными headerOptions (приоритет у headerOptions)
-  // Безопасно обрабатываем случай когда route или route.params могут быть undefined
+  // Объединяем route params с переданными headerOptions, но не копируем
+  // функциональные значения из headerOptions в route.params — это важно,
+  // потому что части UI (например, заголовок) могут приводить функции к строкам.
+  // Вместо этого передаём headerOptions как отдельный `options` проп в AppHeader,
+  // а в route.params копируем только примитивные / сериализуемые значения.
   const mergedRoute = React.useMemo(() => {
     if (!headerOptions) return route;
+    const baseParams = { ...(route?.params || {}) };
+    for (const [k, v] of Object.entries(headerOptions)) {
+      const t = typeof v;
+      if (t === 'string' || t === 'number' || t === 'boolean' || v == null) {
+        baseParams[k] = v;
+      }
+    }
     return {
       ...route,
-      params: { ...(route?.params || {}), ...headerOptions },
+      params: baseParams,
     };
   }, [route, headerOptions]);
 
@@ -63,12 +73,16 @@ export default function Screen({
           onScroll={onScroll}
           scrollEventThrottle={scrollEventThrottle}
         >
-          {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} />}
+          {showHeader && (
+            <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
+          )}
           <View style={{ flex: 1 }}>{children}</View>
         </KeyboardAwareScrollView>
       ) : (
         <>
-          {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} />}
+          {showHeader && (
+            <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
+          )}
           <View style={{ flex: 1 }}>{children}</View>
         </>
       )}

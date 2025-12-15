@@ -1,8 +1,8 @@
 // components/navigation/AppHeader.jsx
 import { Feather } from '@expo/vector-icons';
 import { router, useNavigation, usePathname } from 'expo-router';
-import React, { useCallback, useMemo, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
@@ -29,9 +29,28 @@ export default function AppHeader({ options = {}, back, route }) {
   const pathname = usePathname?.() || '';
   const title = useRouteTitle(options, route, pathname);
 
+  // Если в options или в route.params передана функция headerTitle (рендер-функция),
+  // используем её напрямую — это позволяет передавать JSX из Screen headerOptions.
+  let headerTitleElement = null;
+  try {
+    const candidate = options?.headerTitle ?? route?.params?.headerTitle;
+    if (typeof candidate === 'function') {
+      headerTitleElement = candidate();
+    }
+  } catch (e) {
+    headerTitleElement = null;
+  }
+
   const backLabel = options?.headerBackTitle ?? route?.params?.headerBackTitle;
   const wantCenterTitle =
     options?.headerTitleAlign === 'center' || route?.params?.centerTitle === true;
+
+  // Универсальный текст заголовка: берём fullTitle (если есть) или обычный title
+  const titleText = useMemo(() => {
+    const ft = options?.fullTitle ?? route?.params?.fullTitle;
+    if (ft) return String(ft);
+    return typeof title === 'string' ? title : String(title ?? '');
+  }, [options?.fullTitle, route?.params?.fullTitle, title]);
 
   const onBack = useCallback(() => {
     try {
@@ -109,12 +128,109 @@ export default function AppHeader({ options = {}, back, route }) {
     return theme?.components?.header?.height ?? theme?.sizes?.header ?? 56;
   }, [theme?.components?.header?.height, theme?.sizes?.header]);
 
+  // Измерения лев/прав зон, чтобы marquee не заходил на кнопки
+  const leftControlsRef = useRef(null);
+  const rightRef = useRef(null);
+  const [leftWidth, setLeftWidth] = useState(0);
+  const [rightWidth, setRightWidth] = useState(0);
+
+  // Маркировка анимации marquee
+  const marqueeAnim = useRef(new Animated.Value(0)).current;
+  const marqueeRunning = useRef(false);
+  const [textWidth, setTextWidth] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  // Включаем marquee для любого заголовка (автоматически)
+
+  // Глобальные настройки marquee и отступов из темы
+  const headerTheme = theme?.components?.header ?? {};
+  const marqueeTheme = headerTheme?.marquee ?? {};
+  // gap между дубликатами текста для плавного прохода
+  const MARQUEE_GAP = useMemo(
+    () => marqueeTheme.gap ?? theme?.spacing?.lg ?? 24,
+    [marqueeTheme.gap, theme?.spacing?.lg],
+  );
+  // дополнительный безопасный отступ слева/справа между бегущей строкой и зонами кнопок
+  const EDGE_PADDING = useMemo(
+    () => headerTheme.edgePadding ?? theme?.spacing?.md ?? 12,
+    [headerTheme.edgePadding, theme?.spacing?.md],
+  );
+  const TITLE_FONT_SIZE = useMemo(
+    () => marqueeTheme.titleFontSize ?? 17,
+    [marqueeTheme.titleFontSize],
+  );
+  const TITLE_FONT_WEIGHT = useMemo(
+    () => marqueeTheme.titleFontWeight ?? '600',
+    [marqueeTheme.titleFontWeight],
+  );
+  const MS_PER_PIXEL = useMemo(() => marqueeTheme.msPerPixel ?? 12, [marqueeTheme.msPerPixel]);
+  const START_DELAY = useMemo(() => marqueeTheme.startDelay ?? 700, [marqueeTheme.startDelay]);
+  const END_PAUSE = useMemo(() => marqueeTheme.endPause ?? 900, [marqueeTheme.endPause]);
+
+  useEffect(() => {
+    // start/stop marquee based on measured widths
+    if (!textWidth || !containerWidth) {
+      marqueeAnim.stopAnimation?.();
+      marqueeAnim.setValue(0);
+      marqueeRunning.current = false;
+      return;
+    }
+
+    const overflow = textWidth - containerWidth;
+    if (overflow <= 2) {
+      // no need to animate
+      Animated.timing(marqueeAnim, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+      marqueeRunning.current = false;
+      return;
+    }
+
+    // continuous loop using duplicated texts: animate from 0 to -textWidth with linear easing
+    marqueeRunning.current = true;
+    marqueeAnim.setValue(0);
+    const fullShift = textWidth + MARQUEE_GAP;
+    const baseDuration = Math.max(3000, Math.round(fullShift * MS_PER_PIXEL));
+
+    const loopAnim = Animated.loop(
+      Animated.sequence([
+        Animated.delay(START_DELAY),
+        Animated.timing(marqueeAnim, {
+          toValue: -fullShift,
+          duration: baseDuration,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+        Animated.delay(END_PAUSE),
+        Animated.timing(marqueeAnim, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ]),
+    );
+
+    loopAnim.start();
+
+    return () => {
+      marqueeRunning.current = false;
+      loopAnim.stop();
+      marqueeAnim.stopAnimation?.();
+      marqueeAnim.setValue(0);
+    };
+  }, [
+    textWidth,
+    containerWidth,
+    marqueeAnim,
+    titleText,
+    MARQUEE_GAP,
+    MS_PER_PIXEL,
+    START_DELAY,
+    END_PAUSE,
+  ]);
+
   return (
     <View style={[s.container, { height: headerHeight }]}>
       {/* Левая группа: стрелка назад + заголовок слева */}
       <View style={s.leftRow}>
         {route?.params?.headerLeftMode === 'close' ? (
           <Pressable
+            ref={leftControlsRef}
+            onLayout={(e) => setLeftWidth(e.nativeEvent.layout.width || 0)}
             hitSlop={12}
             onPress={onClose}
             style={{
@@ -140,6 +256,8 @@ export default function AppHeader({ options = {}, back, route }) {
           <>
             {route?.params?.leftTextOnly ? (
               <Pressable
+                ref={leftControlsRef}
+                onLayout={(e) => setLeftWidth(e.nativeEvent.layout.width || 0)}
                 hitSlop={12}
                 onPressIn={onLeftIn}
                 onPressOut={onLeftOut}
@@ -166,6 +284,8 @@ export default function AppHeader({ options = {}, back, route }) {
             ) : back ? (
               <Animated.View style={{ transform: [{ scale }] }}>
                 <Pressable
+                  ref={leftControlsRef}
+                  onLayout={(e) => setLeftWidth(e.nativeEvent.layout.width || 0)}
                   hitSlop={12}
                   onPressIn={onBackPressIn}
                   onPressOut={onBackPressOut}
@@ -185,29 +305,122 @@ export default function AppHeader({ options = {}, back, route }) {
                 </Pressable>
               </Animated.View>
             ) : null}
-            {!wantCenterTitle ? (
-              <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
-                {typeof title === 'string' ? title : String(title ?? '')}
-              </Text>
+            {/* Статичный заголовок скрываем, когда marquee активен */}
+            {!wantCenterTitle && textWidth <= containerWidth ? (
+              headerTitleElement ? (
+                headerTitleElement
+              ) : titleText ? (
+                <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+                  {titleText}
+                </Text>
+              ) : null
             ) : null}
           </>
         )}
       </View>
 
+      {/* Marquee overlay — работает для любого заголовка автоматически */}
+      {titleText ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            left: leftWidth + EDGE_PADDING,
+            right: rightWidth + EDGE_PADDING,
+            justifyContent: 'center',
+            overflow: 'hidden',
+          }}
+          onLayout={(e) => setContainerWidth(e.nativeEvent.layout.width || 0)}
+        >
+          {textWidth > 0 && containerWidth > 0 && textWidth > containerWidth ? (
+            <Animated.View
+              // key ensures React recreates the view when measurements change
+              key={`${textWidth}-${containerWidth}`}
+              style={{
+                flexDirection: 'row',
+                width: textWidth * 2 + MARQUEE_GAP,
+                transform: [{ translateX: marqueeAnim }],
+              }}
+            >
+              <Text
+                numberOfLines={1}
+                ellipsizeMode="clip"
+                allowFontScaling={false}
+                style={{
+                  width: textWidth,
+                  color: theme.colors.text,
+                  fontSize: TITLE_FONT_SIZE,
+                  fontWeight: TITLE_FONT_WEIGHT,
+                }}
+              >
+                {titleText}
+              </Text>
+              <View style={{ width: MARQUEE_GAP }} />
+              <Text
+                numberOfLines={1}
+                ellipsizeMode="clip"
+                allowFontScaling={false}
+                style={{
+                  width: textWidth,
+                  color: theme.colors.text,
+                  fontSize: TITLE_FONT_SIZE,
+                  fontWeight: TITLE_FONT_WEIGHT,
+                }}
+              >
+                {titleText}
+              </Text>
+            </Animated.View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Invisible measuring text placed outside the clipped marquee container so it measures full natural width */}
+      {titleText ? (
+        <Text
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          style={{
+            position: 'absolute',
+            left: -10000,
+            top: -10000,
+            opacity: 0,
+            fontSize: TITLE_FONT_SIZE,
+            fontWeight: TITLE_FONT_WEIGHT,
+          }}
+          onLayout={(e) => {
+            const w = e.nativeEvent.layout.width || 0;
+            setTextWidth(Math.ceil(w + 2));
+          }}
+          numberOfLines={1}
+        >
+          {titleText}
+        </Text>
+      ) : null}
+
       {/* Centered title overlay when requested */}
-      {wantCenterTitle ? (
+      {wantCenterTitle && textWidth <= containerWidth ? (
         <View
           pointerEvents="none"
           style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}
         >
-          <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
-            {typeof title === 'string' ? title : String(title ?? '')}
-          </Text>
+          {headerTitleElement ? (
+            headerTitleElement
+          ) : titleText ? (
+            <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+              {titleText}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 
       {/* Правая зона для кастомных кнопок */}
-      <View style={s.right}>
+      <View
+        style={[s.right, { paddingLeft: EDGE_PADDING }]}
+        ref={rightRef}
+        onLayout={(e) => setRightWidth(e.nativeEvent.layout.width || 0)}
+      >
         {rightLabel ? (
           <Pressable
             hitSlop={10}

@@ -1,10 +1,10 @@
 // components/calendar/CalendarMonthHeader.jsx
-import React from 'react';
 import { Feather } from '@expo/vector-icons';
-import { Pressable, Text, View } from 'react-native';
-import Animated from 'react-native-reanimated';
 import { format } from 'date-fns';
 import { ru as dfnsRu } from 'date-fns/locale';
+import React from 'react';
+import { Pressable, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 function capitalizeLabel(value) {
   if (!value) return value;
@@ -19,32 +19,41 @@ export function CalendarMonthHeader({
   headerAnimatedStyle,
   styles,
   theme,
+  isCollapsed,
 }) {
+  const monthLabel = capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dfnsRu }));
+
   return (
     <Animated.View style={[headerAnimatedStyle]}>
       <View style={[styles.monthHeaderRow]}>
-        <Pressable
-          onPress={onPreviousMonth}
-          hitSlop={arrowHitSlop}
-          android_ripple={{ color: theme.colors.overlay }}
-          style={styles.calendarArrow}
-        >
-          <Feather name="chevron-left" size={20} color={theme.colors.text} />
-        </Pressable>
+        {!isCollapsed ? (
+          <Pressable
+            onPress={onPreviousMonth}
+            hitSlop={arrowHitSlop}
+            android_ripple={{ color: theme.colors.overlay }}
+            style={styles.calendarArrow}
+          >
+            <Feather name="chevron-left" size={20} color={theme.colors.text} />
+          </Pressable>
+        ) : (
+          <View style={styles.calendarArrow} />
+        )}
         <Text style={styles.monthHeaderLabel} numberOfLines={1} ellipsizeMode="tail">
-          {capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dfnsRu }))}
+          {monthLabel}
         </Text>
-        <Pressable
-          onPress={onNextMonth}
-          hitSlop={arrowHitSlop}
-          android_ripple={{ color: theme.colors.overlay }}
-          style={styles.calendarArrow}
-        >
-          <Feather name="chevron-right" size={20} color={theme.colors.text} />
-        </Pressable>
+        {!isCollapsed ? (
+          <Pressable
+            onPress={onNextMonth}
+            hitSlop={arrowHitSlop}
+            android_ripple={{ color: theme.colors.overlay }}
+            style={styles.calendarArrow}
+          >
+            <Feather name="chevron-right" size={20} color={theme.colors.text} />
+          </Pressable>
+        ) : (
+          <View style={styles.calendarArrow} />
+        )}
       </View>
     </Animated.View>
   );
 }
-
-export { CalendarMonthHeader };

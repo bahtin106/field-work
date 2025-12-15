@@ -46,7 +46,7 @@ async function fetchProfile(uid) {
 async function fetchCountsMy(uid) {
   if (!uid) return { feed: 0, new: 0, progress: 0, all: 0 };
   const fetchCount = async (filterCb) => {
-    let q = supabase.from('orders_secure').select('id', { count: 'exact' });
+    let q = supabase.from('orders_secure_v2').select('id', { count: 'exact' });
     q = filterCb(q);
     const { count } = await q.range(0, 0);
     return count || 0;
@@ -62,7 +62,7 @@ async function fetchCountsMy(uid) {
 
 async function fetchCountsAll() {
   const fetchCount = async (filterCb) => {
-    let q = supabase.from('orders_secure').select('id', { count: 'exact' });
+    let q = supabase.from('orders_secure_v2').select('id', { count: 'exact' });
     q = filterCb(q);
     const { count } = await q.range(0, 0);
     return count || 0;

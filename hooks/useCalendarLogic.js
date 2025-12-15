@@ -1,9 +1,9 @@
 // hooks/useCalendarLogic.js
+import { format, startOfMonth } from 'date-fns';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSharedValue, useDerivedValue, withTiming, Easing } from 'react-native-reanimated';
-import { format, startOfMonth, subMonths } from 'date-fns';
-import { supabase } from '../lib/supabase';
+import { Easing, useDerivedValue, useSharedValue, withTiming } from 'react-native-reanimated';
 import { formatDateKey, getMonthDays } from '../lib/calendarUtils';
+import { supabase } from '../lib/supabase';
 
 const CalendarFoldState = {
   FULL: 0,
@@ -30,14 +30,12 @@ function getMonthWeeks(year, month) {
 
 async function fetchCalendarOrders(userId, role) {
   if (!userId) return [];
-  const since = subMonths(new Date(), 3);
-  const sinceIso = new Date(since.setHours(0, 0, 0, 0)).toISOString();
+  // Загружаем все заявки без ограничения по дате для календаря
   let query = supabase
-    .from('orders_secure')
+    .from('orders_secure_v2')
     .select('*')
-    .or(`datetime.gte.${sinceIso},created_at.gte.${sinceIso}`)
-    .order('datetime', { ascending: false })
-    .order('created_at', { ascending: false });
+    .order('time_window_start', { ascending: false, nullsFirst: false });
+
   if (role === 'worker') {
     query = query.eq('assigned_to', userId);
   }
@@ -46,7 +44,8 @@ async function fetchCalendarOrders(userId, role) {
     return [];
   }
 
-  const rows = Array.isArray(data) ? data : [];
+  const rowsRaw = Array.isArray(data) ? data : [];
+  const rows = rowsRaw.map((r) => ({ ...r, time_window_start: r.time_window_start ?? null }));
   if (role === 'worker' && userId) {
     return rows.filter((r) => r.assigned_to === userId || r.assigned_to == null);
   }
@@ -211,14 +210,13 @@ export function useCalendarLogic(layoutMetrics) {
 function orderDateKey(o) {
   if (!o) return null;
   const ORDER_DATE_FIELDS = [
-    'datetime',
+    'time_window_start',
+    'time_window_end',
     'date',
     'scheduled_at',
     'planned_at',
     'departure_at',
     'arrival_at',
-    'time_window_start',
-    'time_window_end',
     'date_time',
     'start_at',
     'when',
@@ -242,4 +240,4 @@ function orderDateKey(o) {
   return null;
 }
 
-export { getMonthWeeks, fetchCalendarOrders, clamp, CalendarFoldState };
+export { CalendarFoldState, clamp, fetchCalendarOrders, getMonthWeeks };

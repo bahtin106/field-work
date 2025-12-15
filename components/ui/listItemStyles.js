@@ -16,15 +16,23 @@ export const listItemStyles = (t) =>
     },
 
     label: {
-      flex: 1,
+      // Не даём метке сдвигаться/переноситься — фиксируем ширину
+      flexShrink: 0,
+      width: '36%',
+      minWidth: 96,
       color: t.colors.textStrong ?? t.colors.text,
       fontSize: t.typography.sizes.sm,
       paddingRight: t.spacing.sm,
     },
 
     value: {
+      // Значение располагается справа и может занимать оставшееся место.
+      // По умолчанию даём возможность схлопываться и быть обрезанным.
       color: t.colors.text,
       fontWeight: t.typography.weight.medium,
+      flex: 1,
+      flexShrink: 1,
+      textAlign: 'right',
     },
 
     // правая часть (и для шеврона, и для свитча)
@@ -33,6 +41,8 @@ export const listItemStyles = (t) =>
       alignItems: 'center',
       justifyContent: 'flex-end',
       paddingRight: 0, // ← вровень с chevron (используем только padding строки)
+      maxWidth: '62%',
+      overflow: 'hidden',
     },
 
     // контейнер Switch — микро-зазор слева от текста/значения

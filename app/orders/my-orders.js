@@ -6,8 +6,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Animated,
-  Easing,
   BackHandler,
+  Easing,
   FlatList,
   Platform,
   Pressable,
@@ -18,15 +18,20 @@ import {
   View,
 } from 'react-native';
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
+import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
+import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
-import TextField from '../../components/ui/TextField';
+import { useMyCompanyId } from '../../hooks/useMyCompanyId';
+import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
+import { fetchWorkTypes } from '../../lib/workTypes';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function MyOrdersScreen() {
   const { theme } = useTheme();
@@ -86,17 +91,6 @@ export default function MyOrdersScreen() {
           padding: 16,
           paddingBottom: 40,
         },
-        searchInput: {
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: 12,
-          paddingHorizontal: 14,
-          paddingVertical: Platform.OS === 'ios' ? 12 : 10,
-          fontSize: 15,
-          backgroundColor: theme.colors.inputBg || theme.colors.surface,
-          marginBottom: 12,
-          color: theme.colors.text,
-        },
         emptyText: {
           textAlign: 'center',
           marginTop: 32,
@@ -105,6 +99,58 @@ export default function MyOrdersScreen() {
         },
       }),
     [theme],
+  );
+
+  const ORDER_FILTER_DEFAULTS = {
+    workTypes: [],
+    statuses: [],
+    departureDateFrom: null,
+    departureDateTo: null,
+    departureTimeFrom: null,
+    departureTimeTo: null,
+    sumMin: '',
+    sumMax: '',
+    fuelMin: '',
+    fuelMax: '',
+  };
+
+  function normalizeForFingerprint(values = {}) {
+    const keys = Object.keys(values).sort();
+    const normalized = {};
+    keys.forEach((key) => {
+      const value = values[key];
+      normalized[key] = Array.isArray(value) ? [...value].sort() : value;
+    });
+    return normalized;
+  }
+
+  const parseTimeToMinutes = (value) => {
+    if (!value) return null;
+    const [hours, minutes] = value.split(':');
+    const h = Number(hours);
+    const m = Number(minutes);
+    if (Number.isNaN(h) || Number.isNaN(m)) return null;
+    return h * 60 + m;
+  };
+
+  const filters = useFilters({
+    screenKey: 'orders-my',
+    defaults: ORDER_FILTER_DEFAULTS,
+    ttl: 1000 * 60 * 30,
+  });
+
+  const filtersFingerprint = useMemo(
+    () => JSON.stringify(normalizeForFingerprint(filters.values)),
+    [filters.values],
+  );
+
+  const orderStatusOptions = useMemo(
+    () => [
+      { id: 'new', label: t('order_status_new') },
+      { id: 'in_progress', label: t('order_status_in_progress') },
+      { id: 'done', label: t('order_status_completed') },
+    ],
+    [t],
   );
 
   const router = useRouter();
@@ -120,6 +166,120 @@ export default function MyOrdersScreen() {
     }, []),
   );
 
+  const { companyId } = useMyCompanyId();
+  const [useWorkTypesFlag, setUseWorkTypesFlag] = useState(false);
+  const [workTypeOptions, setWorkTypeOptions] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    if (!companyId) {
+      setUseWorkTypesFlag(false);
+      setWorkTypeOptions([]);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const { useWorkTypes, types } = await fetchWorkTypes(companyId);
+        if (!alive) return;
+        setUseWorkTypesFlag(!!useWorkTypes);
+        setWorkTypeOptions(types || []);
+      } catch {
+        if (!alive) return;
+        setUseWorkTypesFlag(false);
+        setWorkTypeOptions([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [companyId]);
+
+  const filterSummary = useMemo(() => {
+    const parts = [];
+    const {
+      workTypes: selectedWorkTypes,
+      statuses,
+      departureDateFrom,
+      departureDateTo,
+      departureTimeFrom,
+      departureTimeTo,
+      sumMin,
+      sumMax,
+      fuelMin,
+      fuelMax,
+    } = filters.values;
+
+    if (selectedWorkTypes?.length) {
+      const names = selectedWorkTypes
+        .map((id) => workTypeOptions.find((wt) => String(wt.id) === String(id))?.name)
+        .filter(Boolean);
+      if (names.length) {
+        parts.push(`${t('order_field_work_type')}: ${names.join(', ')}`);
+      }
+    }
+
+    if (statuses?.length) {
+      const labels = statuses
+        .map((code) => orderStatusOptions.find((opt) => opt.id === code)?.label || code)
+        .filter(Boolean);
+      if (labels.length) {
+        parts.push(`${t('orders_filter_status')}: ${labels.join(', ')}`);
+      }
+    }
+
+    const formatDate = (value) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed.toLocaleDateString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+      });
+    };
+
+    if (departureDateFrom || departureDateTo) {
+      const fromLabel = formatDate(departureDateFrom) || '—';
+      const toLabel = formatDate(departureDateTo) || '—';
+      parts.push(`${t('order_field_departure_date')}: ${fromLabel} — ${toLabel}`);
+    }
+
+    const formatTime = (value) => {
+      if (!value) return null;
+      const [hours, minutes] = value.split(':');
+      const h = Number(hours);
+      const m = Number(minutes);
+      if (Number.isNaN(h) || Number.isNaN(m)) return null;
+      const base = new Date();
+      base.setHours(h, m, 0, 0);
+      return base.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    };
+
+    if (departureTimeFrom || departureTimeTo) {
+      const fromLabel = formatTime(departureTimeFrom) || '—';
+      const toLabel = formatTime(departureTimeTo) || '—';
+      parts.push(`${t('order_field_departure_time')}: ${fromLabel} — ${toLabel}`);
+    }
+
+    const formatRange = (min, max) => {
+      if (min && max) return `${min} — ${max}`;
+      if (min) return `≥ ${min}`;
+      if (max) return `≤ ${max}`;
+      return null;
+    };
+
+    const amountRange = formatRange(sumMin, sumMax);
+    if (amountRange) {
+      parts.push(`${t('order_details_amount')}: ${amountRange}`);
+    }
+
+    const fuelRange = formatRange(fuelMin, fuelMax);
+    if (fuelRange) {
+      parts.push(`${t('order_details_fuel')}: ${fuelRange}`);
+    }
+
+    return parts.join(t('common_bullet'));
+  }, [filters.values, orderStatusOptions, workTypeOptions, t]);
+
   function __canSeePhone(o) {
     try {
       return Boolean(o && o.customer_phone_visible);
@@ -132,15 +292,17 @@ export default function MyOrdersScreen() {
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
   LIST_CACHE.my ||= {};
   const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+  const seenFilterRef = useRef(new Set());
+  const makeCacheKey = useCallback(
+    (key, fp) => `${(typeof key === 'string' ? key : 'all') || 'all'}:${fp || ''}`,
+    [],
+  );
 
   // Инициализируем orders из prefetch кэша если есть
   const [orders, setOrders] = useState(() => {
     // Проверяем prefetch кэш для "Моих заказов"
     const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn(`[MyOrders] 🚀 Found ${prefetchData.length} orders in prefetch cache!`);
-      }
       return prefetchData;
     }
     return [];
@@ -151,13 +313,11 @@ export default function MyOrdersScreen() {
     // Если есть данные в prefetch - не показываем loader
     const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn(`[MyOrders] MOUNT: loading=false (prefetch cache hit)`);
-      }
       return false;
     }
     const key = 'feed';
-    return LIST_CACHE.my[key] ? false : true;
+    const cacheKey = makeCacheKey(key, filtersFingerprint);
+    return LIST_CACHE.my[cacheKey] ? false : true;
   });
   const [userId, setUserId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -201,7 +361,6 @@ export default function MyOrdersScreen() {
     run();
   }, []);
 
-
   useEffect(() => {
     // Pulse for "new in feed" state
     const anim = Animated.loop(
@@ -226,9 +385,13 @@ export default function MyOrdersScreen() {
     };
   }, [feedPulse]);
 
-
   const updateFeedMeta = useCallback((arr) => {
-    const fp = Array.isArray(arr) ? arr.map((o) => o?.id).filter(Boolean).join(',') : '';
+    const fp = Array.isArray(arr)
+      ? arr
+          .map((o) => o?.id)
+          .filter(Boolean)
+          .join(',')
+      : '';
     const hasAny = Boolean(arr && arr.length);
 
     globalThis.__MYORDERS_FEED_FP = fp;
@@ -258,10 +421,10 @@ export default function MyOrdersScreen() {
       if (!uid) return;
 
       const { data, error } = await supabase
-        .from('orders_secure')
+        .from('orders_secure_v2')
         .select('*')
         .is('assigned_to', null)
-        .order('datetime', { ascending: false })
+        .order('time_window_start', { ascending: false })
         .range(0, PAGE_SIZE - 1);
 
       if (!error && Array.isArray(data)) {
@@ -294,9 +457,6 @@ export default function MyOrdersScreen() {
         hydratedRef.current = true;
         if (orders.length === 0) setOrders(prefetchData);
         setLoading(false);
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-          console.warn('[MyOrders] ✅ Instant hydrate from prefetch');
-        }
       }
     }
   }, [filter, orders.length, queryClient]);
@@ -309,8 +469,9 @@ export default function MyOrdersScreen() {
     seedOnceRef.current = true;
     /* seed from cache */
     const k = typeof seedFilter === 'string' && seedFilter.length ? seedFilter : filter || 'all';
-    if (LIST_CACHE.my[k]) {
-      setOrders(LIST_CACHE.my[k]);
+    const listKey = `${k}:${filtersFingerprint}`;
+    if (LIST_CACHE.my[listKey]) {
+      setOrders(LIST_CACHE.my[listKey]);
       hydratedRef.current = true;
     }
     if (typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
@@ -318,26 +479,22 @@ export default function MyOrdersScreen() {
   }, [seedFilter, seedSearch]);
 
   useEffect(() => {
-    try {
-      router.setParams({ seedFilter: filter, seedSearch: searchQuery });
-    } catch (e) {}
-  }, [filter, searchQuery]);
-
-  useEffect(() => {
     const fetchUserAndOrders = async (isBackground = false, pageNum = 1) => {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+      const cacheKey = `${key}:${filtersFingerprint}`;
 
       // Первая страница - проверяем кэш
       if (pageNum === 1) {
-        const cached = LIST_CACHE.my[key];
+        const cached = LIST_CACHE.my[cacheKey];
         if (cached && cached.length) {
           setOrders(cached);
           hydratedRef.current = true;
+          seenFilterRef.current.add(cacheKey);
           if (isBackground) {
           } else {
             setLoading(false);
           }
-        } else {
+        } else if (!seenFilterRef.current.has(cacheKey)) {
           setLoading(true);
         }
       }
@@ -351,36 +508,97 @@ export default function MyOrdersScreen() {
       }
       setUserId(uid);
 
-      let query = supabase.from('orders_secure').select('*');
+      let query = supabase.from('orders_secure_v2').select('*');
       if (key === 'feed') {
         query = query.is('assigned_to', null);
-      } else if (key === 'all') {
-        query = query.eq('assigned_to', uid);
       } else {
         query = query.eq('assigned_to', uid);
-        if (key === 'new') {
-          query = query.or('status.is.null,status.eq.Новый');
-        } else if (key === 'progress') {
-          query = query.eq('status', 'В работе');
-        } else if (key === 'done') {
-          query = query.eq('status', 'Завершённая');
+        if (key !== 'all') {
+          const statusValue = mapStatusToDb(key);
+          if (statusValue) {
+            query = query.eq('status', statusValue);
+          }
         }
       }
 
+      const filterValues = filters.values;
+      const statusFilters = Array.isArray(filterValues.statuses)
+        ? filterValues.statuses.map(mapStatusToDb).filter(Boolean)
+        : [];
+      if (statusFilters.length) {
+        query = query.in('status', statusFilters);
+      }
+
+      const sumMin = parseFloat(filterValues.sumMin);
+      if (!Number.isNaN(sumMin)) {
+        query = query.gte('price', sumMin);
+      }
+      const sumMax = parseFloat(filterValues.sumMax);
+      if (!Number.isNaN(sumMax)) {
+        query = query.lte('price', sumMax);
+      }
+      const fuelMin = parseFloat(filterValues.fuelMin);
+      if (!Number.isNaN(fuelMin)) {
+        query = query.gte('fuel_cost', fuelMin);
+      }
+      const fuelMax = parseFloat(filterValues.fuelMax);
+      if (!Number.isNaN(fuelMax)) {
+        query = query.lte('fuel_cost', fuelMax);
+      }
+
+      const toIsoDate = (value, startVal) => {
+        if (!value) return null;
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return null;
+        if (startVal) {
+          d.setHours(0, 0, 0, 0);
+        } else {
+          d.setHours(23, 59, 59, 999);
+        }
+        return d.toISOString();
+      };
+
+      const dateFrom = toIsoDate(filterValues.departureDateFrom, true);
+      const dateTo = toIsoDate(filterValues.departureDateTo, false);
+      if (dateFrom) query = query.gte('time_window_start', dateFrom);
+      if (dateTo) query = query.lte('time_window_start', dateTo);
+
+      const selectedWorkTypes = Array.isArray(filterValues.workTypes) ? filterValues.workTypes : [];
+      if (useWorkTypesFlag && selectedWorkTypes.length) {
+        const ids = await getOrderIdsByWorkTypes(selectedWorkTypes);
+        if (!ids.length) {
+          if (!alive) return;
+          const emptyResult = [];
+          setOrders(emptyResult);
+          LIST_CACHE.my[cacheKey] = emptyResult;
+          queryClient.setQueryData(['orders', 'my', 'recent'], emptyResult);
+          setHasMore(false);
+          setLoading(false);
+          return;
+        }
+        query = query.in('id', ids);
+      }
       // ПАГИНАЦИЯ: грузим только нужную порцию
       const from = (pageNum - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      const { data, error } = await query.order('datetime', { ascending: false }).range(from, to);
+      const { data, error } = await query
+        .order('time_window_start', { ascending: false })
+        .range(from, to);
 
-      if (!error && Array.isArray(data)) {
+      const normalized = Array.isArray(data)
+        ? data.map((o) => ({ ...o, time_window_start: o.time_window_start ?? null }))
+        : data;
+
+      if (!error && Array.isArray(normalized)) {
         if (pageNum === 1) {
-          setOrders(data);
-          LIST_CACHE.my[key] = data;
-          if (key === 'feed') updateFeedMeta(data);
+          setOrders(normalized);
+          LIST_CACHE.my[cacheKey] = normalized;
+          seenFilterRef.current.add(cacheKey);
+          if (key === 'feed') updateFeedMeta(normalized);
         } else {
           // Добавляем к существующим (пагинация)
-          setOrders((prev) => [...prev, ...data]);
+          setOrders((prev) => [...prev, ...normalized]);
         }
         hydratedRef.current = true;
 
@@ -398,11 +616,6 @@ export default function MyOrdersScreen() {
       orders.length > 0 &&
       Array.isArray(queryClient.getQueryData(['orders', 'my', 'recent']))
     ) {
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.warn(
-          '[MyOrders] ⏭ Skip immediate fetch (prefetch satisfied), schedule background refresh',
-        );
-      }
       // Фоновое обновление полного списка через небольшую задержку
       const timer = setTimeout(() => {
         // Background refresh
@@ -415,7 +628,7 @@ export default function MyOrdersScreen() {
     setPage(1);
     setHasMore(true);
     fetchUserAndOrders();
-  }, [filter]);
+  }, [filter, filtersFingerprint]);
 
   // Загрузка следующей страницы при достижении конца списка
   const loadMore = useCallback(async () => {
@@ -432,7 +645,7 @@ export default function MyOrdersScreen() {
     const uid = sessionData?.session?.user?.id;
     if (!uid) return;
 
-    let query = supabase.from('orders_secure').select('*');
+    let query = supabase.from('orders_secure_v2').select('*');
     if (key === 'feed') {
       query = query.is('assigned_to', null);
     } else if (key === 'all') {
@@ -451,11 +664,17 @@ export default function MyOrdersScreen() {
     const from = (nextPage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data, error } = await query.order('datetime', { ascending: false }).range(from, to);
+    const { data, error } = await query
+      .order('time_window_start', { ascending: false })
+      .range(from, to);
 
     if (!error && Array.isArray(data)) {
-      setOrders((prev) => [...prev, ...data]);
-      setHasMore(data.length === PAGE_SIZE);
+      const normalized = data.map((o) => ({
+        ...o,
+        time_window_start: o.time_window_start ?? null,
+      }));
+      setOrders((prev) => [...prev, ...normalized]);
+      setHasMore(normalized.length === PAGE_SIZE);
 
       // Loaded successfully
     }
@@ -463,25 +682,36 @@ export default function MyOrdersScreen() {
     setLoadingMore(false);
   }, [loadingMore, hasMore, loading, page, filter]);
 
-  const filteredOrders = (orders || []).filter((o) => {
+  const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    const haystack = [
-      o.title,
-      o.fio,
-      o.customer_phone_visible, // ⬅️ телефон из view/secure
-      o.region,
-      o.city,
-      o.street,
-      o.house,
-    ]
-      .filter(Boolean)
-      .map(String)
-      .join(' ')
-      .toLowerCase();
-    return haystack.includes(q);
-  });
-
+    const timeFrom = parseTimeToMinutes(filters.values.departureTimeFrom);
+    const timeTo = parseTimeToMinutes(filters.values.departureTimeTo);
+    return (orders || []).filter((o) => {
+      if (timeFrom != null || timeTo != null) {
+        const dt = o?.time_window_start ? new Date(o.time_window_start) : null;
+        if (dt && !Number.isNaN(dt.getTime())) {
+          const minutes = dt.getHours() * 60 + dt.getMinutes();
+          if (timeFrom != null && minutes < timeFrom) return false;
+          if (timeTo != null && minutes > timeTo) return false;
+        }
+      }
+      if (!q) return true;
+      const haystack = [
+        o.title,
+        o.fio,
+        o.customer_phone_visible, // ??:?n? �'?c?>?c�"???? ?n?u view/secure
+        o.region,
+        o.city,
+        o.street,
+        o.house,
+      ]
+        .filter(Boolean)
+        .map(String)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [orders, searchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
   // Рендер элемента списка
   const renderItem = useCallback(
     ({ item: order }) => (
@@ -521,81 +751,102 @@ export default function MyOrdersScreen() {
     : feedFingerprint && feedFingerprint === feedSeenFingerprint
       ? 'seen'
       : 'new';
-  const ListHeaderComponent = useCallback(
+
+  const listHeader = useMemo(
     () => (
       <View>
         <View style={styles.filterBar}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterScrollContent}
-        >
-          {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
-            <Pressable
-              key={key}
-              onPress={() => setFilter(key)}
-              style={({ pressed }) => [
-                styles.chip,
-                filter === key && styles.chipActive,
-                pressed && { opacity: 0.9 },
-              ]}
-              accessibilityRole="button"
-            >
-              <View style={styles.chipContent}>
-              {key === 'feed' && feedState !== 'none' && (
-                feedState === 'new' ? (
-                  <Animated.View
-                    style={[
-                      styles.feedDotBase,
-                      styles.feedDotNew,
-                      {
-                        transform: [
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
+              <Pressable
+                key={key}
+                onPress={() => setFilter(key)}
+                style={({ pressed }) => [
+                  styles.chip,
+                  filter === key && styles.chipActive,
+                  pressed && { opacity: 0.9 },
+                ]}
+                accessibilityRole="button"
+              >
+                <View style={styles.chipContent}>
+                  {key === 'feed' &&
+                    feedState !== 'none' &&
+                    (feedState === 'new' ? (
+                      <Animated.View
+                        style={[
+                          styles.feedDotBase,
+                          styles.feedDotNew,
                           {
-                            scale: feedPulse.interpolate({
+                            transform: [
+                              {
+                                scale: feedPulse.interpolate({
+                                  inputRange: [0, 1],
+                                  outputRange: [1, 1.7],
+                                }),
+                              },
+                            ],
+                            opacity: feedPulse.interpolate({
                               inputRange: [0, 1],
-                              outputRange: [1, 1.7],
+                              outputRange: [0.55, 1],
                             }),
                           },
-                        ],
-                        opacity: feedPulse.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.55, 1],
-                        }),
-                      },
-                    ]}
-                  />
-                ) : (
-                  <View style={[styles.feedDotBase, styles.feedDotSeen]} />
-                )
-              )}
-
-              <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
-                {key === 'feed'
-                  ? 'Лента'
-                  : key === 'all'
-                    ? 'Все'
-                    : key === 'new'
-                      ? 'Новые'
-                      : key === 'progress'
-                        ? 'В работе'
-                        : 'Завершённые'}
-              </Text>
-            </View>
-            </Pressable>
-          ))}
-                </ScrollView>
+                        ]}
+                      />
+                    ) : (
+                      <View style={[styles.feedDotBase, styles.feedDotSeen]} />
+                    ))}
+                  <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
+                    {
+                      {
+                        feed: 'Лента',
+                        all: 'Все',
+                        new: 'Новые',
+                        progress: 'В работе',
+                        done: 'Готово',
+                      }[key]
+                    }
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </ScrollView>
         </View>
 
-        <TextField
-          placeholder="Поиск по названию, городу, телефону..."
+        <SearchFiltersBar
           value={searchQuery}
           onChangeText={setSearchQuery}
-          returnKeyType="search"
-          style={styles.searchInput}
+          onClear={() => setSearchQuery('')}
+          placeholder={t('common_search')}
+          onOpenFilters={filters.open}
+          filterSummary={filterSummary}
+          onResetFilters={async () => {
+            const resetValues = filters.reset();
+            await filters.apply(resetValues);
+          }}
+          metaText={
+            searchQuery
+              ? t('orders_found') + ': ' + filteredOrders.length
+              : t('orders_total') + ': ' + orders.length
+          }
         />
       </View>
     ),
-    [filter, searchQuery, styles, feedState, feedPulse],
+    [
+      filter,
+      searchQuery,
+      styles,
+      feedState,
+      feedPulse,
+      filters.open,
+      filterSummary,
+      filteredOrders.length,
+      orders.length,
+      t,
+    ],
   );
 
   // Пустой список
@@ -621,13 +872,14 @@ export default function MyOrdersScreen() {
     setHasMore(true);
 
     const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+    const cacheKey = makeCacheKey(key, filtersFingerprint);
     const { data: sessionData } = await supabase.auth.getSession();
     const uid = sessionData?.session?.user?.id;
     if (!uid) {
       return;
     }
 
-    let query = supabase.from('orders_secure').select('*');
+    let query = supabase.from('orders_secure_v2').select('*');
     if (key === 'feed') {
       query = query.is('assigned_to', null);
     } else if (key === 'all') {
@@ -644,17 +896,21 @@ export default function MyOrdersScreen() {
     }
 
     const { data, error } = await query
-      .order('datetime', { ascending: false })
+      .order('time_window_start', { ascending: false })
       .range(0, PAGE_SIZE - 1);
 
     if (!error && Array.isArray(data)) {
-      setOrders(data);
-      LIST_CACHE.my[key] = data;
-          if (key === 'feed') updateFeedMeta(data);
-      setHasMore(data.length === PAGE_SIZE);
+      const normalized = data.map((o) => ({
+        ...o,
+        time_window_start: o.time_window_start ?? null,
+      }));
+      setOrders(normalized);
+      LIST_CACHE.my[cacheKey] = normalized;
+      if (key === 'feed') updateFeedMeta(normalized);
+      setHasMore(normalized.length === PAGE_SIZE);
     }
     setBgRefreshing(false);
-  }, [filter]);
+  }, [filter, makeCacheKey, filtersFingerprint]);
 
   return (
     <Screen scroll={false} headerOptions={{ headerShown: false }}>
@@ -669,7 +925,7 @@ export default function MyOrdersScreen() {
         data={filteredOrders}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
-        ListHeaderComponent={ListHeaderComponent}
+        ListHeaderComponent={listHeader}
         ListFooterComponent={renderFooter}
         ListEmptyComponent={ListEmptyComponent}
         contentContainerStyle={styles.container}
@@ -685,6 +941,18 @@ export default function MyOrdersScreen() {
             colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
           />
         }
+      />
+      <OrdersFiltersPanel
+        visible={filters.visible}
+        onClose={filters.close}
+        values={filters.values}
+        setValue={filters.setValue}
+        defaults={ORDER_FILTER_DEFAULTS}
+        workTypes={workTypeOptions}
+        useWorkTypes={useWorkTypesFlag}
+        statusOptions={orderStatusOptions}
+        onReset={() => filters.reset()}
+        onApply={() => filters.apply()}
       />
     </Screen>
   );
