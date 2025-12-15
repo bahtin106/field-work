@@ -16,6 +16,7 @@ LogBox.ignoreLogs([/No route named/]);
 
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider from '../components/ui/ToastProvider';
+import patchRouter from '../lib/navigation/patchRouter';
 import { PermissionsProvider } from '../lib/permissions';
 import { loadUserLocale } from '../lib/userLocale';
 import SettingsProvider from '../providers/SettingsProvider';
@@ -79,6 +80,12 @@ function RootLayoutInner() {
   const { isInitializing, isAuthenticated } = useAuthContext();
   const { theme } = useTheme();
   const router = useRouter();
+  // Patch router once to prevent duplicate rapid navigations to the same route
+  useEffect(() => {
+    try {
+      patchRouter(router, { debounceMs: 600 });
+    } catch (_) {}
+  }, [router]);
   const segments = useSegments();
   const splashHiddenRef = useRef(false);
   const wasAuthenticatedRef = useRef(false);

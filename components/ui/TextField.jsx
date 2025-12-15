@@ -239,13 +239,30 @@ export function SelectField({
   const { theme } = useTheme();
   const base = listItemStyles(theme);
   const s = selectStyles(theme);
+  const [rowWidth, setRowWidth] = React.useState(null);
+  const chevronSize = theme.components.listItem.chevronSize || 20;
+  const computedValueMaxWidth = React.useMemo(() => {
+    if (!rowWidth) return undefined;
+    // Reserve space for chevron + paddings; use ~45% for value max width as adaptive fallback
+    const reserve = chevronSize + 24; // chevron + margins
+    const avail = Math.max(0, rowWidth - reserve);
+    return Math.max(80, Math.floor(avail * 0.45));
+  }, [rowWidth, chevronSize]);
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       android_ripple={disabled ? undefined : { color: theme.colors.ripple, borderless: false }}
+      accessibilityRole="button"
+      accessibilityLabel={String((label || '') + ' — ' + (value || ''))}
     >
       <View
+        onLayout={(e) => {
+          try {
+            const w = e?.nativeEvent?.layout?.width;
+            if (w && w !== rowWidth) setRowWidth(w);
+          } catch (_) {}
+        }}
         style={[
           base.row,
           disabled && s.disabled,
@@ -257,14 +274,26 @@ export function SelectField({
           <>
             <View style={{ flexDirection: 'column', alignItems: 'flex-start', flex: 1 }}>
               {label ? (
-                <Text style={[base.label, s.label, { paddingRight: 0 }]} numberOfLines={1}>
+                <Text
+                  style={[base.label, s.label, { paddingRight: 0 }]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  allowFontScaling
+                >
                   {label}
                 </Text>
               ) : null}
               {showValue ? (
                 <Text
-                  style={[base.value, s.value, { textAlign: 'left', marginTop: 2, flexShrink: 1 }]}
+                  style={[
+                    base.value,
+                    s.value,
+                    { textAlign: 'left', marginTop: 2, marginRight: 8 },
+                    computedValueMaxWidth ? { maxWidth: computedValueMaxWidth } : null,
+                  ]}
                   numberOfLines={1}
+                  ellipsizeMode="tail"
+                  allowFontScaling
                 >
                   {value ?? ''}
                 </Text>
@@ -279,14 +308,28 @@ export function SelectField({
           </>
         ) : (
           <>
-            <Text style={[base.label, s.label]} numberOfLines={1}>
+            <Text
+              style={[base.label, s.label]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              allowFontScaling
+            >
               {label}
             </Text>
             <View style={s.rightWrap}>
               {right ? (
                 right
               ) : showValue ? (
-                <Text style={[base.value, s.value]} numberOfLines={1}>
+                <Text
+                  style={[
+                    base.value,
+                    s.value,
+                    computedValueMaxWidth ? { maxWidth: computedValueMaxWidth } : null,
+                  ]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  allowFontScaling
+                >
                   {value ?? ''}
                 </Text>
               ) : null}
@@ -352,8 +395,13 @@ const selectStyles = (t) =>
   StyleSheet.create({
     disabled: { opacity: t.components.listItem.disabledOpacity || 0.5 },
     label: { flexShrink: 1, paddingRight: 8 },
-    value: { maxWidth: 220 },
-    rightWrap: { flexDirection: 'row', alignItems: 'center' },
+    value: { flexShrink: 1, marginLeft: 8, marginRight: 8, maxWidth: '48%', textAlign: 'right' },
+    rightWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      minWidth: 0,
+    },
     chevron: { marginLeft: CHEVRON_GAP },
   });
 

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { useCompanySettings } from '../hooks/useCompanySettings';
+import { formatCurrency } from '../lib/currency';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../providers/SettingsProvider';
@@ -74,6 +75,10 @@ function formatDateShort(iso, showTime = true) {
   return dateStr;
 }
 
+function formatPrice(val, currency = 'RUB') {
+  return formatCurrency(val, currency, 'ru-RU');
+}
+
 function getOptionLabel(field, value) {
   if (!field || !field.options || !Array.isArray(field.options)) return value ?? '';
   const found = field.options.find((o) => o?.value === value);
@@ -115,14 +120,14 @@ function readWithFallback(order, field, key) {
   }
 
   if ((val == null || val === '') && key === 'address') {
-    const composed = [
-      order?.region || order?.area,
-      order?.city || order?.town || order?.settlement,
-      order?.street || order?.snt,
-      order?.house || order?.plot || order?.building,
-    ]
-      .filter(Boolean)
-      .join(', ');
+    // Формируем адрес компактно: пропускаем область/район, показываем город,
+    // улицу без приставки "ул."/"улица" и номер дома.
+    const city = order?.city || order?.town || order?.settlement || null;
+    const rawStreet = order?.street || order?.snt || null;
+    const street =
+      typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(ул\.?|улица)\s+/i, '') : rawStreet;
+    const house = order?.house || order?.plot || order?.building || null;
+    const composed = [city, street, house].filter(Boolean).join(', ');
     const cand = [order?.address, order?.addr, composed].find(Boolean);
     val = cand || '';
   }
@@ -174,7 +179,7 @@ export default function DynamicOrderCard({
   const settings = useSettings();
   const { presetsByContext, getFieldByKey } = settings;
   const { theme } = useTheme();
-  const { useDepartureTime } = useCompanySettings();
+  const { settings: companySettings, useDepartureTime } = useCompanySettings();
 
   // Presets with safe defaults: exclude time_window_start from middle block
   const presetRaw = presetsByContext(context);
@@ -341,6 +346,16 @@ export default function DynamicOrderCard({
     } catch {}
 
     return '';
+  }, [order, getFieldByKey]);
+
+  // Price extraction: show price from field meta or common raw keys
+  const priceValue = useMemo(() => {
+    const f = getFieldByKey?.('price');
+    let v = readWithFallback(order, f, 'price');
+    if (v == null || v === '') {
+      v = order?.price ?? order?.total_price ?? order?.amount ?? null;
+    }
+    return v;
   }, [order, getFieldByKey]);
 
   // Bottom date (footer only)
@@ -557,6 +572,10 @@ export default function DynamicOrderCard({
         {showExecutor ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
             {resolvedExecutorName || executorName || '—'}
+          </Text>
+        ) : priceValue ? (
+          <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
+            {formatPrice(priceValue, order?.currency || companySettings?.currency || 'RUB')}
           </Text>
         ) : (
           <View style={{ width: 1, height: 1 }} />

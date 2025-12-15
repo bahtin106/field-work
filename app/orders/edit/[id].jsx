@@ -140,7 +140,7 @@ export default function EditOrderScreen() {
 
   const router = useRouter();
   const { theme } = useTheme();
-  const { useDepartureTime } = useCompanySettings();
+  const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [saving, setSaving] = useState(false);
   const [companyId, setCompanyId] = useState(null);
@@ -431,6 +431,10 @@ export default function EditOrderScreen() {
   );
 
   const handleSave = async () => {
+    if (companySettings?.recalc_in_progress) {
+      showToast(T('settings_recalc_in_progress'), 'warning');
+      return;
+    }
     // Скрываем клавиатуру и снимаем фокус с полей перед валидацией/сохранением
     try {
       Keyboard.dismiss();
