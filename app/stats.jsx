@@ -20,6 +20,8 @@ import { Calendar } from 'react-native-calendars';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AppHeader from '../components/navigation/AppHeader';
+import { useCompanySettings } from '../hooks/useCompanySettings';
+import { formatCurrencyWithOptions } from '../lib/currency';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -65,18 +67,24 @@ const fromISODate = (s) => {
   return new Date(y, m - 1, d);
 };
 
-const fRUB = (n) =>
-  new Intl.NumberFormat('ru-RU', {
-    style: 'currency',
-    currency: 'RUB',
-    maximumFractionDigits: 0,
-  }).format(Math.round(Number(n || 0)));
+// currency-aware formatter will be created inside component (needs hooks)
 
 const formatNumber = (n) => new Intl.NumberFormat('ru-RU').format(n);
 
 export default function StatsScreen() {
   const { theme, mode } = useTheme();
   const insets = useSafeAreaInsets();
+
+  // company settings hook must be used inside component body
+  const { settings: companySettings } = useCompanySettings();
+
+  // currency-aware formatter (uses company currency when available)
+  const fRUB = (n) => {
+    const cur = companySettings?.currency || 'RUB';
+    return formatCurrencyWithOptions(Math.round(Number(n || 0)), cur, 'ru-RU', {
+      maximumFractionDigits: 0,
+    });
+  };
 
   const TOK = React.useMemo(
     () => ({

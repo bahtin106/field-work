@@ -1,6 +1,6 @@
 // components/ui/ToastProvider.jsx
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Text, View, StyleSheet, Dimensions, Modal } from 'react-native';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { Dimensions, Modal, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 // --- i18n labels (safe runtime require) ---
@@ -20,12 +20,12 @@ const i18nT = (key, fallback) => {
 };
 
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSpring,
   Easing,
   runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 
 const Ctx = createContext(null);
@@ -145,20 +145,22 @@ export default function ToastProvider({ children }) {
       {children}
 
       {msg ? (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <Animated.View
-            pointerEvents="box-none"
-            style={[
-              styles.portalContainer,
-              aStyle,
-              { bottom: (insets?.bottom || 0) + anchorOffset },
-            ]}
-          >
-            <View style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
-              <Text style={[styles.text, { color: p.fg }]}>{msg?.text}</Text>
-            </View>
-          </Animated.View>
-        </View>
+        <Modal transparent visible={true} animationType="none" statusBarTranslucent>
+          <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+            <Animated.View
+              pointerEvents="box-none"
+              style={[
+                styles.portalContainer,
+                aStyle,
+                { bottom: (insets?.bottom || 0) + anchorOffset },
+              ]}
+            >
+              <View style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
+                <Text style={[styles.text, { color: p.fg }]}>{msg?.text}</Text>
+              </View>
+            </Animated.View>
+          </View>
+        </Modal>
       ) : null}
     </Ctx.Provider>
   );

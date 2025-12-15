@@ -16,22 +16,25 @@ export const listItemStyles = (t) =>
     },
 
     label: {
-      // Не даём метке сдвигаться/переноситься — фиксируем ширину
-      flexShrink: 0,
-      width: '36%',
-      minWidth: 96,
+      // Prefer to keep the label visible. Give it priority space (flex: 1)
+      // but allow truncation when absolutely necessary (minWidth: 0).
+      flex: 1,
+      flexShrink: 1,
+      minWidth: 0,
       color: t.colors.textStrong ?? t.colors.text,
       fontSize: t.typography.sizes.sm,
       paddingRight: t.spacing.sm,
     },
 
     value: {
-      // Значение располагается справа и может занимать оставшееся место.
-      // По умолчанию даём возможность схлопываться и быть обрезанным.
+      // Значение располагается справа. Значение ограничено по ширине,
+      // чтобы не «съедало» пространство метки — при нехватке места
+      // значение будет обрезаться первым.
       color: t.colors.text,
       fontWeight: t.typography.weight.medium,
-      flex: 1,
       flexShrink: 1,
+      flexBasis: '40%',
+      maxWidth: '48%',
       textAlign: 'right',
     },
 
@@ -41,8 +44,8 @@ export const listItemStyles = (t) =>
       alignItems: 'center',
       justifyContent: 'flex-end',
       paddingRight: 0, // ← вровень с chevron (используем только padding строки)
-      maxWidth: '62%',
-      overflow: 'hidden',
+      flexShrink: 0,
+      minWidth: 0,
     },
 
     // контейнер Switch — микро-зазор слева от текста/значения

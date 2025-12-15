@@ -82,6 +82,10 @@ export function AuthProvider({ children, queryClient, persister }) {
         isInitializing: true,
       }));
 
+      // Helper to add a timeout to async calls so UI won't hang indefinitely
+      const withTimeout = (p, ms = 5000) =>
+        Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
       const hasSession = !!session?.access_token;
       if (!hasSession) {
         console.log('AuthProvider: no session, clearing state');
@@ -100,13 +104,30 @@ export function AuthProvider({ children, queryClient, persister }) {
       await clearClientCaches();
 
       try {
-        const { data: userRes } = await supabase.auth.getUser();
-        const nextUser = userRes?.user || session.user || null;
+        let userRes;
+        try {
+          // Попытка получить пользователя с таймаутом
+          const res = await withTimeout(supabase.auth.getUser(), 4000);
+          userRes = res?.data ? res : null;
+        } catch (e) {
+          // В случае таймаута/ошибки — логируем и используем session.user как фолбэк
+          logger?.warn?.('AuthProvider: auth.getUser failed or timed out', e?.message || e);
+          userRes = null;
+        }
+
+        const nextUser = userRes?.data?.user || session.user || null;
         logger.debug('AuthProvider: resolved auth user', {
           nextUserId: nextUser?.id,
           nextUserEmail: nextUser?.email,
         });
-        const { profile, lookupColumn } = await fetchProfileRecord(nextUser?.id);
+        let profileLookup = null;
+        try {
+          profileLookup = await withTimeout(fetchProfileRecord(nextUser?.id), 5000);
+        } catch (e) {
+          logger?.warn?.('AuthProvider: fetchProfileRecord failed or timed out', e?.message || e);
+          profileLookup = { profile: null, lookupColumn: null };
+        }
+        const { profile, lookupColumn } = profileLookup || { profile: null, lookupColumn: null };
         logger.debug('AuthProvider: profile lookup result', {
           userId: nextUser?.id,
           profileId: profile?.id,
@@ -159,10 +180,25 @@ export function AuthProvider({ children, queryClient, persister }) {
     const loadSession = async () => {
       console.log('AuthProvider: loadSession started');
       try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
+        // короткий таймаут на получение сессии, чтобы не висеть долго при проблемах сети
+        const withTimeoutLocal = (p, ms = 4000) =>
+          Promise.race([
+            p,
+            new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+          ]);
+
+        let sessionRes = null;
+        try {
+          sessionRes = await withTimeoutLocal(supabase.auth.getSession(), 3000);
+        } catch (e) {
+          logger?.warn?.('AuthProvider: getSession failed or timed out', e?.message || e);
+          sessionRes = null;
+        }
+
+        const { data: { session } = {}, error } = sessionRes || {
+          data: { session: null },
+          error: null,
+        };
         console.log('AuthProvider: getSession result', { hasSession: !!session, error });
         if (!active) return;
 

@@ -1,28 +1,29 @@
 // components/ui/modals/BaseModal.jsx
-import React, { useMemo, useRef, useState, useImperativeHandle, useEffect } from 'react';
+import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
-  View,
-  Text,
-  Modal,
-  Pressable,
-  StyleSheet,
   Dimensions,
+  Keyboard,
+  Modal,
   PanResponder,
   Platform,
-  Keyboard,
+  Pressable,
+  StyleSheet,
+  Text,
+  TouchableWithoutFeedback,
+  View,
 } from 'react-native';
 import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSpring,
   Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // NavigationBar: dynamically imported on Android to avoid Expo Go iOS native-module error
 import { Feather } from '@expo/vector-icons';
-import { useTheme } from '../../../theme';
 import { t as T } from '../../../src/i18n';
+import { useTheme } from '../../../theme';
 
 export function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -251,10 +252,16 @@ const BaseModalImpl = (
         } catch (_) {}
       }}
     >
-      {/* Backdrop */}
+      {/* Backdrop: if keyboard visible, dismiss it first; otherwise close modal */}
       <Pressable
         style={s.backdrop}
         onPress={() => {
+          if (kbInset > 0) {
+            try {
+              Keyboard.dismiss();
+            } catch (_) {}
+            return;
+          }
           if (!disableBackdropClose) close();
         }}
         pointerEvents={rnVisible ? 'auto' : 'none'}
@@ -291,8 +298,16 @@ const BaseModalImpl = (
             </View>
           ) : null}
 
-          {/* Header */}
-          <View style={s.header}>
+          {/* Header: tap on header will dismiss keyboard (if open) */}
+          <Pressable
+            accessible={false}
+            style={s.header}
+            onPress={() => {
+              try {
+                if (kbInset > 0) Keyboard.dismiss();
+              } catch (_) {}
+            }}
+          >
             <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
               {title}
             </Text>
@@ -304,10 +319,19 @@ const BaseModalImpl = (
             >
               <Feather name="x" size={20} color={theme.colors.textSecondary} />
             </Pressable>
-          </View>
+          </Pressable>
 
-          {/* Content */}
-          <View style={{ paddingHorizontal: theme.spacing.lg }}>{children}</View>
+          {/* Content: tap inside modal dismisses keyboard */}
+          <TouchableWithoutFeedback
+            accessible={false}
+            onPress={() => {
+              try {
+                Keyboard.dismiss();
+              } catch (_) {}
+            }}
+          >
+            <View style={{ paddingHorizontal: theme.spacing.lg }}>{children}</View>
+          </TouchableWithoutFeedback>
 
           {/* Footer */}
           {footer ? (

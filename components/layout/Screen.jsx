@@ -2,11 +2,12 @@
 import { useRoute } from '@react-navigation/native';
 import { useNavigation, usePathname } from 'expo-router';
 import React from 'react';
-import { Platform, View } from 'react-native';
+import { Keyboard, Platform, TouchableWithoutFeedback, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useI18nVersion } from '../../src/i18n';
 import { useTheme } from '../../theme/ThemeProvider';
+import GlobalCurrencyRecalcBanner from '../GlobalCurrencyRecalcBanner';
 import AppHeader from '../navigation/AppHeader';
 
 export default function Screen({
@@ -76,14 +77,33 @@ export default function Screen({
           {showHeader && (
             <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
           )}
-          <View style={{ flex: 1 }}>{children}</View>
+          {showHeader && <GlobalCurrencyRecalcBanner />}
+          <TouchableWithoutFeedback
+            accessible={false}
+            onPress={() => {
+              try {
+                Keyboard.dismiss();
+              } catch (_) {}
+            }}
+          >
+            <View style={{ flex: 1 }}>{children}</View>
+          </TouchableWithoutFeedback>
         </KeyboardAwareScrollView>
       ) : (
         <>
           {showHeader && (
             <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
           )}
-          <View style={{ flex: 1 }}>{children}</View>
+          <TouchableWithoutFeedback
+            accessible={false}
+            onPress={() => {
+              try {
+                Keyboard.dismiss();
+              } catch (_) {}
+            }}
+          >
+            <View style={{ flex: 1 }}>{children}</View>
+          </TouchableWithoutFeedback>
         </>
       )}
     </SafeAreaView>

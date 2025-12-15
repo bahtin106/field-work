@@ -14,6 +14,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
@@ -36,11 +37,11 @@ import {
 } from '../../../components/ui/modals';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../../lib/constants';
+import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 
 const TABLES = {
   profiles: TBL.PROFILES || 'profiles',
@@ -1464,7 +1465,6 @@ export default function EditUser() {
         }}
       />
       <KeyboardAwareScrollView
-        ref={scrollRef}
         contentContainerStyle={[
           styles.scroll,
           {
@@ -1474,7 +1474,7 @@ export default function EditUser() {
             ),
           },
         ]}
-        keyboardShouldPersistTaps="always"
+        keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
@@ -1487,521 +1487,536 @@ export default function EditUser() {
         }}
         scrollEventThrottle={16}
       >
-        <View
-          style={[styles.card, styles.headerCard, isSuspended ? styles.headerCardSuspended : null]}
+        <TouchableWithoutFeedback
+          accessible={false}
+          onPress={() => {
+            try {
+              Keyboard.dismiss();
+            } catch (_) {}
+          }}
         >
-          <View style={styles.headerRow}>
-            <Pressable
-              style={styles.avatar}
-              onPress={() => {
-                setAvatarKey((k) => k + 1);
-                setAvatarSheet(true);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={t('a11y_change_avatar')}
-              accessibilityHint={t('a11y_change_avatar_hint')}
+          <View>
+            <View
+              style={[
+                styles.card,
+                styles.headerCard,
+                isSuspended ? styles.headerCardSuspended : null,
+              ]}
             >
-              {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
-              ) : (
-                <Text style={styles.avatarText}>{initials || '•'}</Text>
-              )}
-              <View style={styles.avatarCamBadge}>
-                <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
-              </View>
-            </Pressable>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.nameTitle}>{headerName}</Text>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  gap: theme.spacing.sm,
-                  marginTop: theme.spacing.xs,
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                }}
-              >
-                <View
-                  style={[
-                    styles.rolePillHeader,
-                    {
-                      borderColor: withAlpha(
-                        isSuspended ? theme.colors.danger : theme.colors.success,
-                        0.2,
-                      ),
-                      backgroundColor: withAlpha(
-                        isSuspended ? theme.colors.danger : theme.colors.success,
-                        0.13,
-                      ),
-                    },
-                  ]}
+              <View style={styles.headerRow}>
+                <Pressable
+                  style={styles.avatar}
+                  onPress={() => {
+                    setAvatarKey((k) => k + 1);
+                    setAvatarSheet(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('a11y_change_avatar')}
+                  accessibilityHint={t('a11y_change_avatar_hint')}
                 >
-                  <Text
-                    style={[
-                      styles.rolePillHeaderText,
-                      { color: isSuspended ? theme.colors.danger : theme.colors.success },
-                    ]}
-                  >
-                    {isSuspended ? t('status_suspended') : t('status_active')}
-                  </Text>
-                </View>
-                {role === ROLE.ADMIN ? (
-                  <View
-                    style={[
-                      styles.rolePillHeader,
-                      {
-                        borderColor: withAlpha(roleColor('admin'), 0.2),
-                        backgroundColor: withAlpha(roleColor('admin'), 0.13),
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.rolePillHeaderText, { color: roleColor('admin') }]}>
-                      {t('role_admin')}
-                    </Text>
+                  {avatarUrl ? (
+                    <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+                  ) : (
+                    <Text style={styles.avatarText}>{initials || '•'}</Text>
+                  )}
+                  <View style={styles.avatarCamBadge}>
+                    <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
                   </View>
-                ) : (
-                  !isSelfAdmin && (
+                </Pressable>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.nameTitle}>{headerName}</Text>
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      gap: theme.spacing.sm,
+                      marginTop: theme.spacing.xs,
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                    }}
+                  >
                     <View
                       style={[
                         styles.rolePillHeader,
                         {
-                          borderColor: withAlpha(roleColor(role), 0.2),
-                          backgroundColor: withAlpha(roleColor(role), 0.13),
+                          borderColor: withAlpha(
+                            isSuspended ? theme.colors.danger : theme.colors.success,
+                            0.2,
+                          ),
+                          backgroundColor: withAlpha(
+                            isSuspended ? theme.colors.danger : theme.colors.success,
+                            0.13,
+                          ),
                         },
                       ]}
                     >
-                      <Text style={[styles.rolePillHeaderText, { color: roleColor(role) }]}>
-                        {t(`role_${role}`)}
+                      <Text
+                        style={[
+                          styles.rolePillHeaderText,
+                          { color: isSuspended ? theme.colors.danger : theme.colors.success },
+                        ]}
+                      >
+                        {isSuspended ? t('status_suspended') : t('status_active')}
                       </Text>
                     </View>
-                  )
-                )}
+                    {role === ROLE.ADMIN ? (
+                      <View
+                        style={[
+                          styles.rolePillHeader,
+                          {
+                            borderColor: withAlpha(roleColor('admin'), 0.2),
+                            backgroundColor: withAlpha(roleColor('admin'), 0.13),
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.rolePillHeaderText, { color: roleColor('admin') }]}>
+                          {t('role_admin')}
+                        </Text>
+                      </View>
+                    ) : (
+                      !isSelfAdmin && (
+                        <View
+                          style={[
+                            styles.rolePillHeader,
+                            {
+                              borderColor: withAlpha(roleColor(role), 0.2),
+                              backgroundColor: withAlpha(roleColor(role), 0.13),
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.rolePillHeaderText, { color: roleColor(role) }]}>
+                            {t(`role_${role}`)}
+                          </Text>
+                        </View>
+                      )
+                    )}
+                  </View>
+                </View>
               </View>
             </View>
-          </View>
-        </View>
-        {err ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
-            <Text style={styles.errorText}>{err}</Text>
-          </View>
-        ) : null}
-        <SectionHeader topSpacing="xs" bottomSpacing="xs">
-          {t('section_personal')}
-        </SectionHeader>
-        <Card>
-          <TextField
-            ref={firstNameRef}
-            label={t('label_first_name')}
-            placeholder={t('placeholder_first_name')}
-            placeholderTextColor={theme.colors.inputPlaceholder}
-            style={styles.field}
-            value={firstName}
-            onChangeText={setFirstName}
-            onFocus={() => {
-              setFocusFirst(true);
-              ensureVisibleField({
-                fieldRef: firstNameRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
-            }}
-            onBlur={() => setFocusFirst(false)}
-            forceValidation={submittedAttempt}
-            error={!firstName.trim() ? 'required' : undefined}
-          />
-          <TextField
-            ref={lastNameRef}
-            label={t('label_last_name')}
-            placeholder={t('placeholder_last_name')}
-            placeholderTextColor={theme.colors.inputPlaceholder}
-            style={styles.field}
-            value={lastName}
-            onChangeText={setLastName}
-            onFocus={() => {
-              setFocusLast(true);
-              ensureVisibleField({
-                fieldRef: lastNameRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
-            }}
-            onBlur={() => setFocusLast(false)}
-            forceValidation={submittedAttempt}
-            error={!lastName.trim() ? 'required' : undefined}
-          />
-          <TextField
-            ref={emailRef}
-            label={t('label_email')}
-            placeholder={t('placeholder_email')}
-            placeholderTextColor={theme.colors.inputPlaceholder}
-            style={styles.field}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={email}
-            onChangeText={setEmail}
-            onFocus={() => {
-              setFocusEmail(true);
-              ensureVisibleField({
-                fieldRef: emailRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
-            }}
-            onBlur={() => setFocusEmail(false)}
-            forceValidation={submittedAttempt}
-            error={!emailValid ? 'invalid' : undefined}
-          />
-          <PhoneInput
-            ref={phoneRef}
-            value={phone}
-            onChangeText={(val, meta) => {
-              setPhone(val);
-            }}
-            error={!isValidPhone(String(phone || '')) ? t('err_phone') : undefined}
-            style={styles.field}
-            onFocus={() => {
-              setFocusPhone(true);
-              ensureVisibleField({
-                fieldRef: phoneRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
-            }}
-            onBlur={() => setFocusPhone(false)}
-          />
-          <TextField
-            label={t('label_birthdate')}
-            value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
-            style={styles.field}
-            pressable
-            onPress={() => setDobModalVisible(true)}
-            rightSlot={
-              birthdate ? (
-                <ClearButton
-                  onPress={() => setBirthdate(null)}
-                  accessibilityLabel={t('common_clear')}
-                />
-              ) : null
-            }
-          />
-        </Card>
-
-        {meIsAdmin && (
-          <>
-            <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
+            {err ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
+                <Text style={styles.errorText}>{err}</Text>
+              </View>
+            ) : null}
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('section_personal')}
+            </SectionHeader>
             <Card>
               <TextField
-                label={t('label_department')}
-                value={activeDeptName || t('placeholder_department')}
+                ref={firstNameRef}
+                label={t('label_first_name')}
+                placeholder={t('placeholder_first_name')}
+                placeholderTextColor={theme.colors.inputPlaceholder}
+                style={styles.field}
+                value={firstName}
+                onChangeText={setFirstName}
+                onFocus={() => {
+                  setFocusFirst(true);
+                  ensureVisibleField({
+                    fieldRef: firstNameRef,
+                    scrollRef,
+                    scrollYRef,
+                    insetsBottom: insets.bottom ?? 0,
+                    headerHeight,
+                  });
+                }}
+                onBlur={() => setFocusFirst(false)}
+                forceValidation={submittedAttempt}
+                error={!firstName.trim() ? 'required' : undefined}
+              />
+              <TextField
+                ref={lastNameRef}
+                label={t('label_last_name')}
+                placeholder={t('placeholder_last_name')}
+                placeholderTextColor={theme.colors.inputPlaceholder}
+                style={styles.field}
+                value={lastName}
+                onChangeText={setLastName}
+                onFocus={() => {
+                  setFocusLast(true);
+                  ensureVisibleField({
+                    fieldRef: lastNameRef,
+                    scrollRef,
+                    scrollYRef,
+                    insetsBottom: insets.bottom ?? 0,
+                    headerHeight,
+                  });
+                }}
+                onBlur={() => setFocusLast(false)}
+                forceValidation={submittedAttempt}
+                error={!lastName.trim() ? 'required' : undefined}
+              />
+              <TextField
+                ref={emailRef}
+                label={t('label_email')}
+                placeholder={t('placeholder_email')}
+                placeholderTextColor={theme.colors.inputPlaceholder}
+                style={styles.field}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={email}
+                onChangeText={setEmail}
+                onFocus={() => {
+                  setFocusEmail(true);
+                  ensureVisibleField({
+                    fieldRef: emailRef,
+                    scrollRef,
+                    scrollYRef,
+                    insetsBottom: insets.bottom ?? 0,
+                    headerHeight,
+                  });
+                }}
+                onBlur={() => setFocusEmail(false)}
+                forceValidation={submittedAttempt}
+                error={!emailValid ? 'invalid' : undefined}
+              />
+              <PhoneInput
+                ref={phoneRef}
+                value={phone}
+                onChangeText={(val, meta) => {
+                  setPhone(val);
+                }}
+                error={!isValidPhone(String(phone || '')) ? t('err_phone') : undefined}
+                style={styles.field}
+                onFocus={() => {
+                  setFocusPhone(true);
+                  ensureVisibleField({
+                    fieldRef: phoneRef,
+                    scrollRef,
+                    scrollYRef,
+                    insetsBottom: insets.bottom ?? 0,
+                    headerHeight,
+                  });
+                }}
+                onBlur={() => setFocusPhone(false)}
+              />
+              <TextField
+                label={t('label_birthdate')}
+                value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
                 style={styles.field}
                 pressable
-                onPress={() => setDeptModalVisible(true)}
-              />
-
-              {!isSelfAdmin && (
-                <>
-                  <TextField
-                    label={t('label_role')}
-                    value={ROLE_LABELS_LOCAL[role] || role}
-                    style={styles.field}
-                    pressable
-                    onPress={() => setShowRoles(true)}
-                  />
-                  <TextField
-                    label={t('label_status')}
-                    value={isSuspended ? t('status_suspended') : t('status_active')}
-                    style={styles.field}
-                    pressable
-                    onPress={() => (isSuspended ? onAskUnsuspend : onAskSuspend)()}
-                  />
-                </>
-              )}
-            </Card>
-          </>
-        )}
-
-        <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
-        <Card>
-          <View style={{ position: 'relative' }}>
-            <TextField
-              ref={pwdRef}
-            onFocus={() => {
-              setFocusPwd(true);
-              ensureVisibleField({
-                fieldRef: pwdRef,
-                scrollRef,
-                scrollYRef,
-                insetsBottom: insets.bottom ?? 0,
-                headerHeight,
-              });
-            }}
-              onBlur={() => setFocusPwd(false)}
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder={t('placeholder_new_password')}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-              error={undefined}
-              style={styles.field}
-              rightSlot={
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Pressable
-                    onPress={() => {
-                      pwdRef.current?.blur();
-                      setShowPassword((v) => !v);
-                    }}
-                    android_ripple={{
-                      color: theme?.colors?.border ?? '#00000020',
-                      borderless: false,
-                      radius: 24,
-                    }}
-                    accessibilityLabel={
-                      showPassword ? t('a11y_hide_password') : t('a11y_show_password')
-                    }
-                    accessibilityRole="button"
-                    hitSlop={{
-                      top: theme.spacing.sm,
-                      bottom: theme.spacing.sm,
-                      left: theme.spacing.sm,
-                      right: theme.spacing.sm,
-                    }}
-                    style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
-                  >
-                    <Feather
-                      name={showPassword ? 'eye-off' : 'eye'}
-                      size={ICON_MD}
-                      color={theme.colors.primary ?? theme.colors.text}
+                onPress={() => setDobModalVisible(true)}
+                rightSlot={
+                  birthdate ? (
+                    <ClearButton
+                      onPress={() => setBirthdate(null)}
+                      accessibilityLabel={t('common_clear')}
                     />
-                  </Pressable>
-                  {!!newPassword && (
-                    <IconButton
-                      onPress={async () => {
-                        await Clipboard.setStringAsync(newPassword || '');
-                        toastSuccess(t('toast_password_copied'));
-                      }}
-                      accessibilityLabel={t('a11y_copy_password')}
-                      size={ICONBUTTON_TOUCH}
-                    >
-                      <Feather name="copy" size={ICON_SM} />
-                    </IconButton>
+                  ) : null
+                }
+              />
+            </Card>
+
+            {meIsAdmin && (
+              <>
+                <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
+                <Card>
+                  <TextField
+                    label={t('label_department')}
+                    value={activeDeptName || t('placeholder_department')}
+                    style={styles.field}
+                    pressable
+                    onPress={() => setDeptModalVisible(true)}
+                  />
+
+                  {!isSelfAdmin && (
+                    <>
+                      <TextField
+                        label={t('label_role')}
+                        value={ROLE_LABELS_LOCAL[role] || role}
+                        style={styles.field}
+                        pressable
+                        onPress={() => setShowRoles(true)}
+                      />
+                      <TextField
+                        label={t('label_status')}
+                        value={isSuspended ? t('status_suspended') : t('status_active')}
+                        style={styles.field}
+                        pressable
+                        onPress={() => (isSuspended ? onAskUnsuspend : onAskSuspend)()}
+                      />
+                    </>
                   )}
-                </View>
-              }
+                </Card>
+              </>
+            )}
+
+            <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
+            <Card>
+              <View style={{ position: 'relative' }}>
+                <TextField
+                  ref={pwdRef}
+                  onFocus={() => {
+                    setFocusPwd(true);
+                    ensureVisibleField({
+                      fieldRef: pwdRef,
+                      scrollRef,
+                      scrollYRef,
+                      insetsBottom: insets.bottom ?? 0,
+                      headerHeight,
+                    });
+                  }}
+                  onBlur={() => setFocusPwd(false)}
+                  value={newPassword}
+                  onChangeText={setNewPassword}
+                  placeholder={t('placeholder_new_password')}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  error={undefined}
+                  style={styles.field}
+                  rightSlot={
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Pressable
+                        onPress={() => {
+                          pwdRef.current?.blur();
+                          setShowPassword((v) => !v);
+                        }}
+                        android_ripple={{
+                          color: theme?.colors?.border ?? '#00000020',
+                          borderless: false,
+                          radius: 24,
+                        }}
+                        accessibilityLabel={
+                          showPassword ? t('a11y_hide_password') : t('a11y_show_password')
+                        }
+                        accessibilityRole="button"
+                        hitSlop={{
+                          top: theme.spacing.sm,
+                          bottom: theme.spacing.sm,
+                          left: theme.spacing.sm,
+                          right: theme.spacing.sm,
+                        }}
+                        style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
+                      >
+                        <Feather
+                          name={showPassword ? 'eye-off' : 'eye'}
+                          size={ICON_MD}
+                          color={theme.colors.primary ?? theme.colors.text}
+                        />
+                      </Pressable>
+                      {!!newPassword && (
+                        <IconButton
+                          onPress={async () => {
+                            await Clipboard.setStringAsync(newPassword || '');
+                            toastSuccess(t('toast_password_copied'));
+                          }}
+                          accessibilityLabel={t('a11y_copy_password')}
+                          size={ICONBUTTON_TOUCH}
+                        >
+                          <Feather name="copy" size={ICON_SM} />
+                        </IconButton>
+                      )}
+                    </View>
+                  }
+                />
+              </View>
+            </Card>
+
+            {meIsAdmin && meId !== userId && (
+              <UIButton
+                title={t('btn_delete')}
+                variant="destructive"
+                onPress={onAskDelete}
+                style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
+              />
+            )}
+
+            {newPassword.length > 0 && !passwordValid ? (
+              <Text
+                style={{
+                  marginTop: theme.spacing.xs,
+                  color: theme.colors.danger,
+                  fontSize: theme.typography.sizes.xs,
+                }}
+              >
+                {t('err_password_short')}
+              </Text>
+            ) : null}
+
+            {/* Exit without saving confirmation */}
+            <ConfirmModal
+              key={`cancel-${cancelKey}`}
+              visible={cancelVisible}
+              onClose={() => setCancelVisible(false)}
+              title={t('dlg_leave_title')}
+              message={t('dlg_leave_msg')}
+              confirmLabel={t('dlg_leave_confirm')}
+              cancelLabel={t('dlg_leave_cancel')}
+              confirmVariant="destructive"
+              onConfirm={confirmCancel}
+            />
+            {/* Alert message */}
+            <AlertModal
+              visible={warningVisible}
+              onClose={() => setWarningVisible(false)}
+              title={t('dlg_alert_title')}
+              message={warningMessage}
+              buttonLabel={t('dlg_ok')}
+            />
+            {/* Confirm password update */}
+            <ConfirmModal
+              visible={confirmPwdVisible}
+              onClose={() => {
+                setConfirmPwdVisible(false);
+                setPendingSave(false);
+              }}
+              title={t('dlg_confirm_pwd_title')}
+              message={t('dlg_confirm_pwd_msg')}
+              confirmLabel={saving ? t('toast_saving') : t('header_save')}
+              cancelLabel={t('header_cancel')}
+              confirmVariant="primary"
+              onConfirm={() => proceedSave()}
+            />
+            <SuspendModal
+              visible={suspendVisible}
+              ordersAction={ordersAction}
+              setOrdersAction={setOrdersAction}
+              successor={successor}
+              successorError={successorError}
+              setSuccessorError={setSuccessorError}
+              openSuccessorPicker={openSuccessorPickerFromSuspend}
+              onConfirm={onConfirmSuspend}
+              saving={saving}
+              onClose={() => setSuspendVisible(false)}
+            />
+            <ConfirmModal
+              visible={unsuspendVisible}
+              onClose={() => setUnsuspendVisible(false)}
+              title={t('dlg_unsuspend_title')}
+              message={t('dlg_unsuspend_msg')}
+              confirmLabel={saving ? t('dlg_unsuspend_apply') : t('dlg_unsuspend_confirm')}
+              cancelLabel={t('header_cancel')}
+              confirmVariant="primary"
+              onConfirm={onConfirmUnsuspend}
+            />
+            <DeleteEmployeeModal
+              visible={deleteVisible}
+              successor={successor}
+              successorError={successorError}
+              setSuccessorError={setSuccessorError}
+              openSuccessorPicker={openSuccessorPickerFromDelete}
+              onConfirm={onConfirmDelete}
+              saving={saving}
+              onClose={() => setDeleteVisible(false)}
+            />
+
+            <SelectModal
+              visible={pickerVisible}
+              title={t('picker_user_title')}
+              items={(pickerItems || []).map((it) => ({
+                id: it.id,
+                label: it.name,
+                subtitle: t(`role_${it.role}`),
+                right: null,
+              }))}
+              onSelect={(item) => {
+                setSuccessor({ id: item.id, name: item.label, role: item.role });
+                setSuccessorError('');
+                setPickerVisible(false);
+                if (pickerReturn === 'delete') setDeleteVisible(true);
+                if (pickerReturn === 'suspend') setSuspendVisible(true);
+                setPickerReturn(null);
+              }}
+              onClose={() => {
+                setPickerVisible(false);
+                if (pickerReturn === 'delete') setDeleteVisible(true);
+                if (pickerReturn === 'suspend') setSuspendVisible(true);
+                setPickerReturn(null);
+              }}
+              searchable={true}
+              maxHeightRatio={0.8}
+            />
+
+            <AvatarSheetModal
+              key={`avatar-${avatarKey}`}
+              visible={avatarSheet}
+              hasAvatar={!!avatarUrl}
+              onTakePhoto={pickFromCamera}
+              onPickFromLibrary={pickFromLibrary}
+              onDeletePhoto={deleteAvatar}
+              onClose={() => setAvatarSheet(false)}
+            />
+            <DepartmentSelectModal
+              visible={deptModalVisible}
+              departmentId={departmentId}
+              departments={departments}
+              onSelect={(id) => {
+                setDepartmentId(id);
+                setDeptModalVisible(false);
+              }}
+              onClose={() => setDeptModalVisible(false)}
+            />
+            {/* removed old department select dialog */}
+            <RoleSelectModal
+              visible={showRoles}
+              role={role}
+              roles={ROLES}
+              roleLabels={ROLE_LABELS_LOCAL}
+              roleDescriptions={ROLE_DESCRIPTIONS_LOCAL}
+              onSelect={(r) => {
+                setRole(r);
+                setShowRoles(false);
+              }}
+              onClose={() => setShowRoles(false)}
+            />
+            {/* removed old role select dialog */}
+
+            <DateTimeModal
+              visible={dobModalVisible}
+              onClose={() => setDobModalVisible(false)}
+              mode="date"
+              allowOmitYear={true}
+              omitYearDefault={withYear}
+              initial={birthdate || new Date()}
+              onApply={(dateObj, extra) => {
+                try {
+                  // Preserve local date at 12:00 to avoid TZ rollbacks/forwards
+                  let d = null;
+                  const makeLocalNoon = (y, m, da) =>
+                    new Date(Number(y), Number(m), Number(da), 12, 0, 0, 0);
+
+                  if (dateObj instanceof Date && !isNaN(dateObj)) {
+                    d = makeLocalNoon(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+                  } else if (
+                    dateObj &&
+                    typeof dateObj === 'object' &&
+                    'year' in dateObj &&
+                    'month' in dateObj &&
+                    'day' in dateObj
+                  ) {
+                    // Prefer explicit extra.monthIndex (0..11) or extra.monthOneBased (1..12) when provided by picker.
+                    const y = Number(dateObj.year);
+                    let m = Number(dateObj.month);
+                    const da = Number(dateObj.day);
+                    if (extra && extra.monthIndex != null) {
+                      m = Number(extra.monthIndex);
+                    } else if (extra && extra.monthOneBased != null) {
+                      m = Number(extra.monthOneBased) - 1;
+                    } else {
+                      // Defensive fallback: if month looks 1..12, convert to 0..11
+                      if (m >= 1 && m <= 12) m = m - 1;
+                    }
+                    d = makeLocalNoon(y, m, da);
+                  } else if (typeof dateObj === 'string') {
+                    const m = dateObj.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+                    if (m) d = makeLocalNoon(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+                  } else {
+                    const tmp = new Date(dateObj);
+                    if (!isNaN(tmp))
+                      d = makeLocalNoon(tmp.getFullYear(), tmp.getMonth(), tmp.getDate());
+                  }
+                  if (d && !isNaN(d)) setBirthdate(d);
+                  if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
+                } finally {
+                  setDobModalVisible(false);
+                }
+              }}
             />
           </View>
-        </Card>
-
-        {meIsAdmin && meId !== userId && (
-          <UIButton
-            title={t('btn_delete')}
-            variant="destructive"
-            onPress={onAskDelete}
-            style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
-          />
-        )}
-
-        {newPassword.length > 0 && !passwordValid ? (
-          <Text
-            style={{
-              marginTop: theme.spacing.xs,
-              color: theme.colors.danger,
-              fontSize: theme.typography.sizes.xs,
-            }}
-          >
-            {t('err_password_short')}
-          </Text>
-        ) : null}
-
-        {/* Exit without saving confirmation */}
-        <ConfirmModal
-          key={`cancel-${cancelKey}`}
-          visible={cancelVisible}
-          onClose={() => setCancelVisible(false)}
-          title={t('dlg_leave_title')}
-          message={t('dlg_leave_msg')}
-          confirmLabel={t('dlg_leave_confirm')}
-          cancelLabel={t('dlg_leave_cancel')}
-          confirmVariant="destructive"
-          onConfirm={confirmCancel}
-        />
-        {/* Alert message */}
-        <AlertModal
-          visible={warningVisible}
-          onClose={() => setWarningVisible(false)}
-          title={t('dlg_alert_title')}
-          message={warningMessage}
-          buttonLabel={t('dlg_ok')}
-        />
-        {/* Confirm password update */}
-        <ConfirmModal
-          visible={confirmPwdVisible}
-          onClose={() => {
-            setConfirmPwdVisible(false);
-            setPendingSave(false);
-          }}
-          title={t('dlg_confirm_pwd_title')}
-          message={t('dlg_confirm_pwd_msg')}
-          confirmLabel={saving ? t('toast_saving') : t('header_save')}
-          cancelLabel={t('header_cancel')}
-          confirmVariant="primary"
-          onConfirm={() => proceedSave()}
-        />
-        <SuspendModal
-          visible={suspendVisible}
-          ordersAction={ordersAction}
-          setOrdersAction={setOrdersAction}
-          successor={successor}
-          successorError={successorError}
-          setSuccessorError={setSuccessorError}
-          openSuccessorPicker={openSuccessorPickerFromSuspend}
-          onConfirm={onConfirmSuspend}
-          saving={saving}
-          onClose={() => setSuspendVisible(false)}
-        />
-        <ConfirmModal
-          visible={unsuspendVisible}
-          onClose={() => setUnsuspendVisible(false)}
-          title={t('dlg_unsuspend_title')}
-          message={t('dlg_unsuspend_msg')}
-          confirmLabel={saving ? t('dlg_unsuspend_apply') : t('dlg_unsuspend_confirm')}
-          cancelLabel={t('header_cancel')}
-          confirmVariant="primary"
-          onConfirm={onConfirmUnsuspend}
-        />
-        <DeleteEmployeeModal
-          visible={deleteVisible}
-          successor={successor}
-          successorError={successorError}
-          setSuccessorError={setSuccessorError}
-          openSuccessorPicker={openSuccessorPickerFromDelete}
-          onConfirm={onConfirmDelete}
-          saving={saving}
-          onClose={() => setDeleteVisible(false)}
-        />
-
-        <SelectModal
-          visible={pickerVisible}
-          title={t('picker_user_title')}
-          items={(pickerItems || []).map((it) => ({
-            id: it.id,
-            label: it.name,
-            subtitle: t(`role_${it.role}`),
-            right: null,
-          }))}
-          onSelect={(item) => {
-            setSuccessor({ id: item.id, name: item.label, role: item.role });
-            setSuccessorError('');
-            setPickerVisible(false);
-            if (pickerReturn === 'delete') setDeleteVisible(true);
-            if (pickerReturn === 'suspend') setSuspendVisible(true);
-            setPickerReturn(null);
-          }}
-          onClose={() => {
-            setPickerVisible(false);
-            if (pickerReturn === 'delete') setDeleteVisible(true);
-            if (pickerReturn === 'suspend') setSuspendVisible(true);
-            setPickerReturn(null);
-          }}
-          searchable={true}
-          maxHeightRatio={0.8}
-        />
-
-        <AvatarSheetModal
-          key={`avatar-${avatarKey}`}
-          visible={avatarSheet}
-          hasAvatar={!!avatarUrl}
-          onTakePhoto={pickFromCamera}
-          onPickFromLibrary={pickFromLibrary}
-          onDeletePhoto={deleteAvatar}
-          onClose={() => setAvatarSheet(false)}
-        />
-        <DepartmentSelectModal
-          visible={deptModalVisible}
-          departmentId={departmentId}
-          departments={departments}
-          onSelect={(id) => {
-            setDepartmentId(id);
-            setDeptModalVisible(false);
-          }}
-          onClose={() => setDeptModalVisible(false)}
-        />
-        {/* removed old department select dialog */}
-        <RoleSelectModal
-          visible={showRoles}
-          role={role}
-          roles={ROLES}
-          roleLabels={ROLE_LABELS_LOCAL}
-          roleDescriptions={ROLE_DESCRIPTIONS_LOCAL}
-          onSelect={(r) => {
-            setRole(r);
-            setShowRoles(false);
-          }}
-          onClose={() => setShowRoles(false)}
-        />
-        {/* removed old role select dialog */}
-
-        <DateTimeModal
-          visible={dobModalVisible}
-          onClose={() => setDobModalVisible(false)}
-          mode="date"
-          allowOmitYear={true}
-          omitYearDefault={withYear}
-          initial={birthdate || new Date()}
-          onApply={(dateObj, extra) => {
-            try {
-              // Preserve local date at 12:00 to avoid TZ rollbacks/forwards
-              let d = null;
-              const makeLocalNoon = (y, m, da) =>
-                new Date(Number(y), Number(m), Number(da), 12, 0, 0, 0);
-
-              if (dateObj instanceof Date && !isNaN(dateObj)) {
-                d = makeLocalNoon(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
-              } else if (
-                dateObj &&
-                typeof dateObj === 'object' &&
-                'year' in dateObj &&
-                'month' in dateObj &&
-                'day' in dateObj
-              ) {
-                // Prefer explicit extra.monthIndex (0..11) or extra.monthOneBased (1..12) when provided by picker.
-                const y = Number(dateObj.year);
-                let m = Number(dateObj.month);
-                const da = Number(dateObj.day);
-                if (extra && extra.monthIndex != null) {
-                  m = Number(extra.monthIndex);
-                } else if (extra && extra.monthOneBased != null) {
-                  m = Number(extra.monthOneBased) - 1;
-                } else {
-                  // Defensive fallback: if month looks 1..12, convert to 0..11
-                  if (m >= 1 && m <= 12) m = m - 1;
-                }
-                d = makeLocalNoon(y, m, da);
-              } else if (typeof dateObj === 'string') {
-                const m = dateObj.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-                if (m) d = makeLocalNoon(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-              } else {
-                const tmp = new Date(dateObj);
-                if (!isNaN(tmp))
-                  d = makeLocalNoon(tmp.getFullYear(), tmp.getMonth(), tmp.getDate());
-              }
-              if (d && !isNaN(d)) setBirthdate(d);
-              if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
-            } finally {
-              setDobModalVisible(false);
-            }
-          }}
-        />
+        </TouchableWithoutFeedback>
       </KeyboardAwareScrollView>
     </SafeAreaView>
   );

@@ -73,7 +73,7 @@ export default function OrderDetails() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { has } = usePermissions();
-  const { useDepartureTime } = useCompanySettings();
+  const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
 
@@ -328,14 +328,22 @@ export default function OrderDetails() {
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
   }, []);
 
-  const formatMoney = useCallback((v) => {
-    if (v === null || v === undefined || v === '') return '—';
-    const n = typeof v === 'string' ? parseFloat(v) : Number(v);
-    if (!Number.isFinite(n)) return '—';
-    const parts = n.toFixed(2).split('.');
-    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-    return `${parts[0]}.${parts[1]} ₽`;
-  }, []);
+  const formatMoney = useCallback(
+    (v, currency = null) => {
+      if (v === null || v === undefined || v === '') return '—';
+      const n = typeof v === 'string' ? parseFloat(v) : Number(v);
+      if (!Number.isFinite(n)) return '—';
+      const cur = currency || companySettings?.currency || 'RUB';
+      try {
+        // use centralized util for consistent behavior across app
+        const { formatCurrency } = require('../../lib/currency');
+        return formatCurrency(n, cur, 'ru-RU') || '—';
+      } catch {
+        return '—';
+      }
+    },
+    [companySettings],
+  );
 
   const makeSnapshotFromOrder = useCallback((o) => {
     if (!o) return '';
@@ -641,7 +649,10 @@ export default function OrderDetails() {
     }
   }, [id, fetchServerPhotos, makeSnapshotFromOrder]);
 
-  const canEdit = useCallback(() => has('canEditOrders'), [has]);
+  const canEdit = useCallback(
+    () => has('canEditOrders') && !companySettings?.recalc_in_progress,
+    [has, companySettings],
+  );
 
   const handlePhonePress = useCallback(() => {
     const p = order?.customer_phone_visible;
@@ -1845,7 +1856,9 @@ export default function OrderDetails() {
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_amount')}</Text>
                   <View style={base.rightWrap}>
-                    <Text style={base.value}>{formatMoney(order.price)}</Text>
+                    <Text style={base.value}>
+                      {formatMoney(order.price, order?.currency || companySettings?.currency)}
+                    </Text>
                   </View>
                 </View>
                 <View style={base.sep} />
@@ -1853,7 +1866,9 @@ export default function OrderDetails() {
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_fuel')}</Text>
                   <View style={base.rightWrap}>
-                    <Text style={base.value}>{formatMoney(order.fuel_cost)}</Text>
+                    <Text style={base.value}>
+                      {formatMoney(order.fuel_cost, order?.currency || companySettings?.currency)}
+                    </Text>
                   </View>
                 </View>
               </Card>

@@ -3,6 +3,7 @@ import { useRoute } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
 import {
+  ActivityIndicator,
   Keyboard,
   Platform,
   Pressable,
@@ -25,6 +26,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { Feather } from '@expo/vector-icons';
 import { useQueryClient } from '@tanstack/react-query';
 import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
+import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
 
 /* Helpers */
@@ -282,7 +284,7 @@ export default function CompanySettings() {
       const { data: companyRow } = await supabase
         .from('companies')
         .select(
-          'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins',
+          'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins, currency, currency_rate, currency_rate_updated_at, recalc_in_progress',
         )
         .eq('id', companyId)
         .single();
@@ -355,6 +357,14 @@ export default function CompanySettings() {
   const [timeZone, setTimeZone] = React.useState(
     () => companyData?.timezone || getDeviceTimeZone(),
   );
+  const [financeOpen, setFinanceOpen] = React.useState(false);
+  const [currency, setCurrency] = React.useState(null);
+  const [currencyRate, setCurrencyRate] = React.useState('');
+  const [fetchRateError, setFetchRateError] = React.useState(null);
+  const [currencyModalKey, setCurrencyModalKey] = React.useState(0);
+  const [fetchingRate, setFetchingRate] = React.useState(false);
+  const [rateDisplayDirection, setRateDisplayDirection] = React.useState('old_to_new');
+  const [isAdmin, setIsAdmin] = React.useState(false);
   const [companyName, setCompanyName] = React.useState('');
   const [companyNameInitial, setCompanyNameInitial] = React.useState('');
   const [companyNameOpen, setCompanyNameOpen] = React.useState(false);
@@ -417,7 +427,30 @@ export default function CompanySettings() {
     const _a = companyData.worker_phone_window_after_mins ?? null;
     if (_b != null) setWindowBefore(String(_b));
     if (_a != null) setWindowAfter(String(_a));
+    if (companyData.currency) setCurrency(companyData.currency);
+    if (companyData.currency_rate != null) setCurrencyRate(String(companyData.currency_rate));
   }, [companyData]);
+
+  // Get current user's role to determine admin rights
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data: { user } = {} } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (!alive) return;
+        setIsAdmin(String(profile?.role || '').toLowerCase() === 'admin');
+      } catch {}
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const updateSetting = React.useCallback(
     async (key, value) => {
@@ -486,6 +519,26 @@ export default function CompanySettings() {
 
   const timeZoneLabel = tzMap.get(timeZone)?.label || timeZone;
 
+  // Нормализованный курс для передачи на сервер и отображения
+  const parsedDisplayed = React.useMemo(() => {
+    const n = Number(currencyRate);
+    return Number.isFinite(n) ? n : null;
+  }, [currencyRate]);
+
+  const normalizedRate = React.useMemo(() => {
+    if (!parsedDisplayed) return null;
+    return rateDisplayDirection === 'old_to_new'
+      ? parsedDisplayed
+      : parsedDisplayed
+        ? 1 / parsedDisplayed
+        : null;
+  }, [parsedDisplayed, rateDisplayDirection]);
+
+  const invertedRate = React.useMemo(
+    () => (normalizedRate ? 1 / normalizedRate : null),
+    [normalizedRate],
+  );
+
   const onPickTimeZone = React.useCallback(
     (it) => {
       setTimeZone(it.id);
@@ -509,6 +562,282 @@ export default function CompanySettings() {
       });
     },
     [updateSetting, t],
+  );
+
+  // Currency options (use i18n keys for labels)
+  const CURRENCY_OPTIONS = React.useMemo(
+    () => [
+      { id: 'RUB', label: t('finance_currency_RUB') },
+      { id: 'USD', label: t('finance_currency_USD') },
+      { id: 'EUR', label: t('finance_currency_EUR') },
+    ],
+    [t],
+  );
+
+  // Methods for changing currency: user must pick one in modal
+  const MODAL_RECALC_METHODS = React.useMemo(
+    () => [
+      { id: 'no_recalc', label: t('modal_currency_no_recalc') },
+      { id: 'recalc', label: t('modal_currency_yes_recalc') },
+    ],
+    [t],
+  );
+
+  const currencyLabel = React.useMemo(() => {
+    const found = CURRENCY_OPTIONS.find((c) => c.id === currency);
+    return found ? `${getCurrencySymbol(found.id)} ${found.label}` : t('finance_no_currency');
+  }, [currency, CURRENCY_OPTIONS, t]);
+
+  // Try multiple public exchange rate providers in sequence and return first successful rate
+  const fetchRateFromApi = React.useCallback(async (base, target) => {
+    setFetchingRate(true);
+    setFetchRateError(null);
+    const providers = [
+      // exchangerate.host
+      async () => {
+        const url = `https://api.exchangerate.host/latest?base=${encodeURIComponent(base)}&symbols=${encodeURIComponent(
+          target,
+        )}`;
+        const r = await fetch(url);
+        const j = await r.json();
+        return j?.rates?.[target] ?? null;
+      },
+      // ER-API (open.er-api.com)
+      async () => {
+        const url = `https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`;
+        const r = await fetch(url);
+        const j = await r.json();
+        return j?.rates?.[target] ?? null;
+      },
+      // exchangerate-api.com (another free endpoint)
+      async () => {
+        const url = `https://api.exchangerate-api.com/v4/latest/${encodeURIComponent(base)}`;
+        const r = await fetch(url);
+        const j = await r.json();
+        return j?.rates?.[target] ?? null;
+      },
+    ];
+
+    try {
+      for (const prov of providers) {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          const rate = await prov();
+          if (rate && !Number.isNaN(Number(rate)) && Number(rate) > 0) return Number(rate);
+        } catch (_e) {
+          // try next provider
+        }
+      }
+
+      // As a last resort, if both currencies are same, return 1
+      if (String(base).toUpperCase() === String(target).toUpperCase()) return 1;
+
+      setFetchRateError('Не удалось загрузить курс с внешних сервисов');
+      return null;
+    } finally {
+      setFetchingRate(false);
+    }
+  }, []);
+
+  const [currencyConfirmOpen, setCurrencyConfirmOpen] = React.useState(false);
+  const [pendingCurrency, setPendingCurrency] = React.useState(null);
+  const [confirmLoading, setConfirmLoading] = React.useState(false);
+  const [recalcMethod, setRecalcMethod] = React.useState(
+    MODAL_RECALC_METHODS[0]?.id || 'no_recalc',
+  );
+  const autoFetchedRef = React.useRef(false);
+  const prevCurrencyRateRef = React.useRef(null);
+
+  const onPickCurrency = React.useCallback(
+    async (it) => {
+      setFinanceOpen(false);
+      const prev = currency;
+      setPendingCurrency(it.id);
+      // reset recalc method to default when opening modal
+      try {
+        setRecalcMethod(MODAL_RECALC_METHODS[0]?.id || 'no_recalc');
+        autoFetchedRef.current = false;
+      } catch {}
+      // try fetching approximate rate (prev -> it)
+      if (prev && prev !== it.id) {
+        const rate = await fetchRateFromApi(prev, it.id);
+        if (rate) {
+          // display as old -> new by default (1 old = X new)
+          setCurrencyRate(String(rate));
+          setRateDisplayDirection('old_to_new');
+        }
+      }
+      // open confirm modal where admin can edit rate and choose recalc mode
+      setCurrencyConfirmOpen(true);
+    },
+    [currency, fetchRateFromApi],
+  );
+
+  // Auto-fetch rate helper used both by button and when modal opens
+  const autoFetchRate = React.useCallback(async () => {
+    if (!pendingCurrency) return null;
+    setFetchRateError(null);
+    setFetchingRate(true);
+    try {
+      // prefer companyData if available to avoid extra DB call
+      let base = companyData?.currency;
+      if (!base) {
+        const { data: { user } = {} } = await supabase.auth.getUser();
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('id', user.id)
+          .single();
+        base = (
+          await supabase
+            .from('companies')
+            .select('currency')
+            .eq('id', profile.company_id)
+            .maybeSingle()
+        ).data?.currency;
+      }
+      const target = pendingCurrency;
+      const rate = await fetchRateFromApi(base, target);
+      if (rate) {
+        setCurrencyRate(String(rate));
+        setRateDisplayDirection('old_to_new');
+        autoFetchedRef.current = true;
+        return rate;
+      }
+      setFetchRateError(t('modal_currency_rate_fetch_failed') || 'Не удалось загрузить курс');
+      autoFetchedRef.current = true;
+      return null;
+    } catch (err) {
+      setFetchRateError(t('modal_currency_rate_fetch_failed') || 'Не удалось загрузить курс');
+      autoFetchedRef.current = true;
+      return null;
+    } finally {
+      setFetchingRate(false);
+    }
+  }, [pendingCurrency, companyData, fetchRateFromApi, t]);
+
+  // When confirm modal opens, auto-load rate (if not already set)
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!currencyConfirmOpen || !pendingCurrency) return;
+      // only auto-fetch once per modal open; do not auto-fetch on user clearing the field
+      if (autoFetchedRef.current) return;
+      if (currencyRate && String(currencyRate).trim() !== '') {
+        autoFetchedRef.current = true;
+        return;
+      }
+      try {
+        await autoFetchRate();
+      } catch (_) {
+        autoFetchedRef.current = true;
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [currencyConfirmOpen, pendingCurrency, currencyRate, autoFetchRate]);
+
+  // Improved perform: invalidate orders cache and optionally wait for background job
+  const performCurrencyChange = React.useCallback(
+    async (recalc) => {
+      if (!pendingCurrency) return;
+      setConfirmLoading(true);
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) throw new Error(t('errors_noAuth'));
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('id', user.id)
+          .single();
+        const companyId = profile?.company_id;
+        if (!companyId) throw new Error(t('errors_companyNotFound'));
+
+        // normalize displayed rate to 'new per old' (p_currency_rate expects new_per_old)
+        const displayedVal = currencyRate ? Number(currencyRate) : null;
+        const normalizedRate = displayedVal
+          ? rateDisplayDirection === 'old_to_new'
+            ? displayedVal
+            : 1 / displayedVal
+          : null;
+
+        // Call RPC
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('company_set_currency', {
+          p_company_id: companyId,
+          p_new_currency: pendingCurrency,
+          p_rate: normalizedRate,
+          p_recalc_existing: recalc,
+        });
+        if (rpcErr) throw rpcErr;
+
+        // Refresh company row immediately
+        await refreshCompany();
+
+        // Invalidate companySettings and any orders queries for this company
+        try {
+          await queryClient.invalidateQueries({ queryKey: ['companySettings'] });
+          await queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'orders',
+          });
+        } catch (_) {}
+
+        // If recalc requested, try to detect enqueued job and wait for it (best-effort)
+        if (recalc) {
+          // read company to get recalc_job_id
+          const { data: companyRow } = await supabase
+            .from('companies')
+            .select('recalc_in_progress,recalc_job_id')
+            .eq('id', companyId)
+            .maybeSingle();
+          const jobId = companyRow?.recalc_job_id;
+          if (companyRow?.recalc_in_progress && jobId) {
+            // poll job status until done or timeout
+            const start = Date.now();
+            const timeout = 2 * 60 * 1000; // 2 minutes
+            let jobDone = false;
+            while (Date.now() - start < timeout) {
+              // check job
+              const { data: j } = await supabase
+                .from('finance_currency_recalc_jobs')
+                .select('status')
+                .eq('id', jobId)
+                .maybeSingle();
+              if (!j) break;
+              if (j.status === 'done') {
+                jobDone = true;
+                break;
+              }
+              if (j.status === 'failed') break;
+              // wait before next poll
+              // eslint-disable-next-line no-await-in-loop
+              await new Promise((r) => setTimeout(r, 2500));
+            }
+            // final cache invalidation after job
+            await queryClient.invalidateQueries({
+              predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'orders',
+            });
+            await refreshCompany();
+            if (!jobDone) {
+              // non-fatal: job may run later; let user know
+              toast.show(t('toast_recalc_started'), 'info');
+            }
+          }
+        }
+
+        setCurrencyConfirmOpen(false);
+        setPendingCurrency(null);
+        setCurrencyRate('');
+        toast.show(t('toast_settingsSaved'), 'success');
+      } catch (e) {
+        toast.show(e?.message || t('toast_error'), 'error');
+      } finally {
+        setConfirmLoading(false);
+      }
+    },
+    [pendingCurrency, currencyRate, rateDisplayDirection, t, toast, refreshCompany, queryClient],
   );
 
   const phoneModeOptions = React.useMemo(() => {
@@ -688,6 +1017,32 @@ export default function CompanySettings() {
             />
           </View>
         </View>
+
+        {/* FINANCES */}
+        <View style={s.sectionWrap}>
+          <Text style={s.sectionTitle}>{t('company_settings_sections_finances_title')}</Text>
+          <View style={s.card}>
+            <SelectField
+              label={
+                <Text style={s.itemLabel}>
+                  {t('settings_company_currency_label') || 'Валюта компании'}
+                </Text>
+              }
+              value={
+                companyData?.recalc_in_progress ? t('settings_recalc_in_progress') : currencyLabel
+              }
+              disabled={Boolean(companyData?.recalc_in_progress)}
+              onPress={() => {
+                // Only admins can change currency in UI
+                if (!isAdmin) {
+                  toast.show(t('errors_only_admin_currency'), 'info');
+                  return;
+                }
+                setFinanceOpen(true);
+              }}
+            />
+          </View>
+        </View>
       </ScrollView>
 
       {/* Company name editor */}
@@ -845,6 +1200,292 @@ export default function CompanySettings() {
         onClose={() => setTzOpen(false)}
         searchable={true}
       />
+
+      {/* Currency picker */}
+      <SelectModal
+        visible={financeOpen}
+        title={t('modal_currency_title')}
+        items={CURRENCY_OPTIONS.map((c) => ({
+          id: c.id,
+          label: `${getCurrencySymbol(c.id)} ${c.label}`,
+          right:
+            c.id === currency ? (
+              <Feather name="check" size={18} color={theme.colors.primary} />
+            ) : null,
+        }))}
+        onSelect={onPickCurrency}
+        onClose={() => setFinanceOpen(false)}
+        searchable={false}
+      />
+
+      {/* Confirm currency change modal with editable rate and recalc option */}
+      <BaseModal
+        visible={currencyConfirmOpen}
+        onClose={() => {
+          setCurrencyConfirmOpen(false);
+          setPendingCurrency(null);
+          setCurrencyRate('');
+          setFetchRateError(null);
+          setRecalcMethod(MODAL_RECALC_METHODS[0]?.id || 'no_recalc');
+        }}
+        title={t('modal_currency_title')}
+        footer={
+          <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
+            <Pressable
+              onPress={() => {
+                setCurrencyConfirmOpen(false);
+                setPendingCurrency(null);
+                setFetchRateError(null);
+                setRecalcMethod(MODAL_RECALC_METHODS[0]?.id || 'no_recalc');
+              }}
+              style={({ pressed }) => [
+                {
+                  paddingVertical: theme.spacing.sm,
+                  paddingHorizontal: theme.spacing.md,
+                  borderRadius: theme.radii.md,
+                  alignItems: 'center',
+                  borderWidth: theme.components.card.borderWidth,
+                  borderColor: theme.colors.border,
+                  backgroundColor: 'transparent',
+                  flex: 1,
+                },
+                pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
+              ]}
+            >
+              <Text
+                style={{
+                  color: theme.colors.text,
+                  fontSize: theme.typography.sizes.md,
+                  fontWeight: theme.typography.weight.medium,
+                }}
+              >
+                {t('btn_cancel')}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                const needsRecalc =
+                  recalcMethod === MODAL_RECALC_METHODS.find((m) => m.id === 'recalc')?.id ||
+                  recalcMethod === 'recalc';
+                if (needsRecalc) {
+                  if (!currencyRate || Number.isNaN(Number(currencyRate))) {
+                    toast.show(
+                      t('modal_currency_rate_required') || 'Введите курс для пересчёта',
+                      'info',
+                    );
+                    return;
+                  }
+                }
+                try {
+                  setConfirmLoading(true);
+                  await performCurrencyChange(needsRecalc);
+                } catch (err) {
+                  toast.show(err?.message || t('toast_error'), 'error');
+                } finally {
+                  setConfirmLoading(false);
+                }
+              }}
+              disabled={confirmLoading}
+              style={({ pressed }) => [
+                {
+                  paddingVertical: theme.spacing.sm,
+                  paddingHorizontal: theme.spacing.md,
+                  borderRadius: theme.radii.md,
+                  alignItems: 'center',
+                  backgroundColor: theme.colors.primary,
+                  flex: 1,
+                },
+                pressed && Platform.OS === 'ios' ? { opacity: 0.9 } : null,
+              ]}
+            >
+              <Text style={{ color: theme.colors.onPrimary }}>{t('btn_ok')}</Text>
+            </Pressable>
+          </View>
+        }
+      >
+        <View style={{ gap: theme.spacing.md }}>
+          <Text style={{ color: theme.colors.textSecondary }}>
+            {t('modal_currency_confirm_recalc')}
+          </Text>
+
+          {/* Two selectable rows: no recalc / recalc */}
+          <View style={{ gap: 8, marginTop: 8 }}>
+            {MODAL_RECALC_METHODS.map((m) => {
+              const selected = recalcMethod === m.id;
+              return (
+                <Pressable
+                  key={m.id}
+                  onPress={() => setRecalcMethod(m.id)}
+                  style={({ pressed }) => [
+                    {
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: theme.spacing.md,
+                      borderRadius: theme.radii.md,
+                      backgroundColor: theme.colors.surface,
+                      borderWidth: 1,
+                      borderColor: selected ? theme.colors.primary : theme.colors.border,
+                    },
+                    pressed && Platform.OS === 'ios'
+                      ? { backgroundColor: theme.colors.ripple }
+                      : null,
+                  ]}
+                >
+                  <Text style={{ color: theme.colors.text }}>{m.label}</Text>
+                  {selected ? (
+                    <Feather name="check" size={18} color={theme.colors.primary} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {/* If user chose recalc, show rate picker/edit controls */}
+          {recalcMethod === MODAL_RECALC_METHODS.find((mm) => mm.id === 'recalc')?.id ? (
+            <View style={{ gap: theme.spacing.md }}>
+              {/* Two inline editable rows: 1 old = X new  and 1 new = Y old */}
+              {(() => {
+                const baseLabel =
+                  t(`finance_currency_${companyData?.currency || ''}`) ||
+                  companyData?.currency ||
+                  '';
+                const newLabel =
+                  t(`finance_currency_${pendingCurrency || ''}`) || pendingCurrency || '';
+                const fmt = (n) =>
+                  typeof n === 'number' && Number.isFinite(n)
+                    ? new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(n)
+                    : '';
+
+                const displayOldToNew =
+                  rateDisplayDirection === 'old_to_new'
+                    ? currencyRate || (normalizedRate ? String(normalizedRate) : '')
+                    : normalizedRate
+                      ? fmt(normalizedRate)
+                      : currencyRate || '';
+
+                const displayNewToOld =
+                  rateDisplayDirection === 'new_to_old'
+                    ? currencyRate || (invertedRate ? String(invertedRate) : '')
+                    : invertedRate
+                      ? fmt(invertedRate)
+                      : currencyRate || '';
+
+                return (
+                  <>
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <Text
+                        style={{ color: theme.colors.text, marginRight: 6, flexShrink: 1 }}
+                      >{`1 ${baseLabel} =`}</Text>
+                      <View style={{ maxWidth: 160, flex: 1, minWidth: 96 }}>
+                        <TextField
+                          value={displayOldToNew}
+                          onFocus={() => {
+                            // remember previous non-empty value so we can restore if user leaves empty
+                            prevCurrencyRateRef.current = currencyRate;
+                          }}
+                          onBlur={() => {
+                            if (!String(currencyRate || '').trim()) {
+                              // restore previous value when keyboard closed with empty field
+                              setCurrencyRate(prevCurrencyRateRef.current ?? '');
+                            }
+                          }}
+                          onChangeText={(txt) => {
+                            const v = txt.replace(/[^0-9.,]/g, '').replace(',', '.');
+                            setCurrencyRate(v);
+                            setRateDisplayDirection('old_to_new');
+                            if (fetchRateError) setFetchRateError(null);
+                          }}
+                          placeholder={t('modal_currency_rate_placeholder')}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <Text style={{ color: theme.colors.text, marginLeft: 6, flexShrink: 1 }}>
+                        {newLabel}
+                      </Text>
+                      <View style={{ flex: 1, minWidth: 8 }} />
+                      <Pressable
+                        onPress={async () => {
+                          await autoFetchRate();
+                        }}
+                        style={({ pressed }) => [
+                          {
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                            borderRadius: 8,
+                            backgroundColor: theme.colors.surface,
+                            borderWidth: 1,
+                            borderColor: theme.colors.border,
+                          },
+                          pressed && Platform.OS === 'ios'
+                            ? { backgroundColor: theme.colors.ripple }
+                            : null,
+                        ]}
+                      >
+                        {fetchingRate ? (
+                          <ActivityIndicator size="small" color={theme.colors.text} />
+                        ) : (
+                          <Text style={{ color: theme.colors.text }}>
+                            {t('modal_currency_rate_autofill')}
+                          </Text>
+                        )}
+                      </Pressable>
+                    </View>
+
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                        flexWrap: 'wrap',
+                      }}
+                    >
+                      <Text
+                        style={{ color: theme.colors.text, marginRight: 6, flexShrink: 1 }}
+                      >{`1 ${newLabel} =`}</Text>
+                      <View style={{ maxWidth: 160, flex: 1, minWidth: 96 }}>
+                        <TextField
+                          value={displayNewToOld}
+                          onFocus={() => {
+                            prevCurrencyRateRef.current = currencyRate;
+                          }}
+                          onBlur={() => {
+                            if (!String(currencyRate || '').trim()) {
+                              setCurrencyRate(prevCurrencyRateRef.current ?? '');
+                            }
+                          }}
+                          onChangeText={(txt) => {
+                            const v = txt.replace(/[^0-9.,]/g, '').replace(',', '.');
+                            setCurrencyRate(v);
+                            setRateDisplayDirection('new_to_old');
+                            if (fetchRateError) setFetchRateError(null);
+                          }}
+                          placeholder={t('modal_currency_rate_placeholder')}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <Text style={{ color: theme.colors.text, marginLeft: 6, flexShrink: 1 }}>
+                        {baseLabel}
+                      </Text>
+                    </View>
+                  </>
+                );
+              })()}
+
+              {fetchRateError ? (
+                <Text style={{ color: theme.colors.danger }}>{fetchRateError}</Text>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </BaseModal>
 
       {/* Настройка интервала показа телефона */}
       <BaseModal

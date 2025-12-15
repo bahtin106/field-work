@@ -24,15 +24,33 @@ export function useCompanySettings() {
 
       if (!profile?.company_id) return null;
 
-      const { data } = await supabase
-        .from('companies')
-        .select(
-          'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins',
-        )
-        .eq('id', profile.company_id)
-        .single();
-
-      return data;
+      // Try selecting extended set of fields (including currency fields).
+      // If DB schema older (missing cols) Supabase will return error; in that case
+      // fallback to the safe minimal set.
+      const extended =
+        'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins, currency, currency_rate, currency_rate_updated_at, recalc_in_progress';
+      try {
+        const { data } = await supabase
+          .from('companies')
+          .select(extended)
+          .eq('id', profile.company_id)
+          .single();
+        return data;
+      } catch (e) {
+        // If the extended select failed due to unknown column, fallback to legacy select
+        try {
+          const { data } = await supabase
+            .from('companies')
+            .select(
+              'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins',
+            )
+            .eq('id', profile.company_id)
+            .single();
+          return data;
+        } catch (err) {
+          throw err;
+        }
+      }
     },
     staleTime: 1000, // Уменьшаем до 1 секунды для быстрого отклика на изменения
     placeholderData: (prev) => prev,

@@ -33,7 +33,7 @@ export default function CreateOrderScreen() {
   /* PERMISSIONS GUARD: create-order */
   const { has } = usePermissions ? usePermissions() : { has: () => true };
   const { theme } = useTheme();
-  const { useDepartureTime } = useCompanySettings();
+  const { settings: companySettings, useDepartureTime } = useCompanySettings();
 
   const isDark = theme.name === 'dark' || theme.mode === 'dark';
 
@@ -435,6 +435,8 @@ export default function CreateOrderScreen() {
       time_window_start: departureDate ? departureDate.toISOString() : null,
       status: toFeed ? 'В ленте' : 'Новый',
       urgent: urgent,
+      // store the currency for this order (company default if available)
+      currency: companySettings?.currency ?? null,
       custom,
     };
 
