@@ -380,7 +380,7 @@ export default function CreateOrderScreen() {
         if (k === 'phone') {
           const normalized = normalizePhone(form.phone);
           if (!normalized) missing.push(f.label || k);
-        } else if (k === 'datetime') {
+        } else if (k === 'time_window_start') {
           if (!departureDate) missing.push(f.label || k);
         } else if (k === 'assigned_to') {
           // required only if NOT sending to feed
@@ -432,7 +432,7 @@ export default function CreateOrderScreen() {
       fio: form.customer_name || form.fio || '',
       phone: phoneFormatted,
       assigned_to: toFeed ? null : assigneeId,
-      datetime: departureDate ? departureDate.toISOString() : null,
+      time_window_start: departureDate ? departureDate.toISOString() : null,
       status: toFeed ? 'В ленте' : 'Новый',
       urgent: urgent,
       custom,
@@ -527,7 +527,9 @@ export default function CreateOrderScreen() {
                 <Text style={styles.toggleLabel}>Срочная</Text>
               </View>
 
-              <Text style={styles.label}>{getField('datetime')?.label || 'Дата выезда'} *</Text>
+              <Text style={styles.label}>
+                {getField('time_window_start')?.label || 'Дата выезда'} *
+              </Text>
               <View
                 ref={(ref) => {
                   if (ref) dateFieldRef.current = findNodeHandle(ref);

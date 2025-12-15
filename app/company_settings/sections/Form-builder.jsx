@@ -1,23 +1,22 @@
 // app/company_settings/sections/form-builder.jsx
 
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 // Unified theme & UI components
-import { useTheme } from '../../../theme/ThemeProvider';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  Switch,
+  Text,
+  View,
+} from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import TextField from '../../../components/ui/TextField';
-import {
-  View,
-  Text,
-  ScrollView,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Modal,
-  Switch,
-} from 'react-native';
-import { useColorScheme } from 'react-native';
+import { useTheme } from '../../../theme/ThemeProvider';
 
 // If you have ThemeProvider — we use it. Otherwise, we fall back to system scheme.
 let useAppTheme;
@@ -49,7 +48,7 @@ const TYPE_PRESETS = [
   'number',
   'phone',
   'date',
-  'datetime',
+  'time_window_start',
   'select',
   'multiselect',
   'address_region',
@@ -63,7 +62,7 @@ const CORE_KEYS = new Set([
   'title',
   'customer_name',
   'phone',
-  'datetime',
+  'time_window_start',
   'address_region',
   'address_city',
   'address_street',

@@ -1,10 +1,9 @@
 // apps/field-work/app/orders/edit/[id].jsx
-import { AntDesign, Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -14,26 +13,76 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 
+import { usePathname, useRouter } from 'expo-router';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { fetchFormSchema } from '../../../lib/settings';
 import { supabase } from '../../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../../lib/workTypes';
 
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import FiltersPanel from '../../../components/filters/FiltersPanel';
+import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
+import { useUsers } from '../../../components/hooks/useUsers';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import { DateTimeModal } from '../../../components/ui/modals';
+import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme/ThemeProvider';
-import FiltersPanel from '../../../components/filters/FiltersPanel';
-import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
-import { useUsers } from '../../../components/hooks/useUsers';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+
+const fetchOrderData = async (orderId) => {
+  const { data: row, error } = await supabase
+    .from('orders_secure_v2')
+    .select('*')
+    .eq('id', orderId)
+    .single();
+  if (error) throw error;
+
+  const normalizedRow = row
+    ? {
+        ...row,
+        time_window_start: row.time_window_start ?? null,
+      }
+    : row;
+
+  let wtId = normalizedRow.work_type_id ?? null;
+  if (wtId == null) {
+    const { data: row2, error: error2 } = await supabase
+      .from('orders')
+      .select('work_type_id')
+      .eq('id', orderId)
+      .single();
+    if (error2) throw error2;
+    wtId = row2?.work_type_id ?? null;
+  }
+
+  // Дополнительно подгружаем профиль назначенного пользователя, чтобы сразу показать имя
+  if (normalizedRow?.assigned_to) {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('first_name, last_name, full_name, email')
+        .eq('id', row.assigned_to)
+        .maybeSingle();
+      // добавляем профиль в возвращаемую строку
+      normalizedRow.assignee_profile = profile || null;
+    } catch (e) {
+      // если ошибка — не мешаем основному ответу
+      normalizedRow.assignee_profile = null;
+    }
+  } else {
+    normalizedRow.assignee_profile = null;
+  }
+
+  return { row: normalizedRow, fallbackWorkTypeId: wtId };
+};
 
 export default function EditOrderScreen() {
   const pathname = usePathname();
@@ -43,29 +92,71 @@ export default function EditOrderScreen() {
       const clean = path.split('?')[0];
       const parts = clean.split('/').filter(Boolean);
       const extractedId = parts.length ? parts[parts.length - 1] : null;
-      console.log('Extracted ID from pathname:', { pathname, extractedId });
       return extractedId;
     } catch {
       return null;
     }
   }, [pathname]);
 
+  const queryClient = useQueryClient();
+  const realtimeSubscriptionRef = useRef(null);
+
+  // Реалтайм подписка на изменения заявки
+  useEffect(() => {
+    if (!id) return;
+
+    const setupRealtimeSubscription = () => {
+      try {
+        realtimeSubscriptionRef.current = supabase
+          .channel(`order:${id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'orders',
+              filter: `id=eq.${id}`,
+            },
+            (payload) => {
+              // Инвалидируем кэш при изменении другим пользователем
+              queryClient.invalidateQueries({ queryKey: ['order', id] });
+            },
+          )
+          .subscribe();
+      } catch (e) {
+        console.warn('Failed to setup realtime subscription:', e?.message);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    return () => {
+      if (realtimeSubscriptionRef.current) {
+        realtimeSubscriptionRef.current.unsubscribe();
+        realtimeSubscriptionRef.current = null;
+      }
+    };
+  }, [id, queryClient]);
+
   const router = useRouter();
   const { theme } = useTheme();
   const { useDepartureTime } = useCompanySettings();
-  const toastContext = useToast() || {};
-  const toastError = toastContext.toastError || (() => {});
-  const toastSuccess = toastContext.toastSuccess || (() => {});
-  const toastInfo = toastContext.toastInfo || (() => {});
+  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const [saving, setSaving] = useState(false);
   const [companyId, setCompanyId] = useState(null);
   const { departments } = useDepartmentsHook({
     companyId,
     enabled: !!companyId,
     onlyEnabled: true,
   });
+
+  // moved up: состояние видимости picker должно быть доступно до вызова useUsers
+  const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
+
+  // useUsers теперь читает корректное значение enabled
   const { users: employees } = useUsers({
     filters: {},
-    enabled: !!companyId,
+    enabled: assigneePickerVisible,
   });
   const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
@@ -86,11 +177,12 @@ export default function EditOrderScreen() {
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
-  const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
-  const [showDateModal, setShowDateModal] = useState(false);
-  const [showTimeModal, setShowTimeModal] = useState(false);
+  const [assignedEmployeeLabel, setAssignedEmployeeLabel] = useState('');
+
+  // Восстановленные refs и состояния, которые использует компонент дальше
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
+  const headerResetRef = useRef(null);
   const insets = useSafeAreaInsets();
   const titleRef = useRef(null);
   const descriptionRef = useRef(null);
@@ -99,6 +191,20 @@ export default function EditOrderScreen() {
   const streetRef = useRef(null);
   const houseRef = useRef(null);
   const customerNameRef = useRef(null);
+  const [price, setPrice] = useState('');
+  const [fuelCost, setFuelCost] = useState('');
+  const [headerLabel, setHeaderLabel] = useState(T('header_save'));
+
+  // модальные состояния (были удалены ранее — вернуть)
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [showTimeModal, setShowTimeModal] = useState(false);
+
+  // имя выбранного исполнителя (восстановлено)
+  const selectedEmployeeName = useMemo(() => {
+    if (selectedEmployee) return selectedEmployee.display_name || selectedEmployee.email || '';
+    return assignedEmployeeLabel || T('common_noName');
+  }, [selectedEmployee, assignedEmployeeLabel]);
+
   const selectedWorkTypeName = useMemo(() => {
     if (!workTypeId) return '';
     const match = workTypes.find((w) => w.id === workTypeId);
@@ -110,10 +216,30 @@ export default function EditOrderScreen() {
     return employees.find((user) => String(user.id) === String(assigneeId));
   }, [assigneeId, employees]);
 
-  const selectedEmployeeName = useMemo(() => {
-    if (!selectedEmployee) return '';
-    return selectedEmployee.display_name || selectedEmployee.email || T('common_noName');
-  }, [selectedEmployee]);
+  const refreshAssignedLabel = useCallback(async (userId) => {
+    if (!userId) {
+      setAssignedEmployeeLabel('');
+      return;
+    }
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('first_name, last_name, full_name, email')
+        .eq('id', userId)
+        .maybeSingle();
+      if (!data) {
+        setAssignedEmployeeLabel('');
+        return;
+      }
+      const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+      const normalizedFullName = (data.full_name || '').trim();
+      const candidate = nameParts || normalizedFullName || data.email || '';
+      setAssignedEmployeeLabel(candidate);
+    } catch (e) {
+      console.warn('assigned name fetch', e?.message || e);
+      setAssignedEmployeeLabel('');
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -150,60 +276,88 @@ export default function EditOrderScreen() {
     };
   }, []);
 
+  const {
+    data: orderData,
+    isLoading: orderLoading,
+    refetch: refetchOrder,
+  } = useQuery({
+    queryKey: ['order', id],
+    queryFn: () => fetchOrderData(id),
+    enabled: !!id,
+    // Сделать данные немедленно устаревшими и всегда перефетчивать при монтировании,
+    // чтобы на экран редактирования попадали актуальные значения из Supabase.
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+
+  useEffect(() => {
+    if (!id) return;
+    // Явный рефетч при смене id (на случай, если кэш всё ещё возвращается раньше)
+    refetchOrder().catch(() => {
+      /* ignore errors here — handled в useQuery/эффектах выше */
+    });
+  }, [id, refetchOrder]);
+
   useEffect(() => {
     if (!id) {
       setLoading(false);
       return;
     }
+    setLoading(orderLoading);
+    if (!orderData || orderLoading) return;
 
-    let mounted = true;
-    (async () => {
-      try {
-        const { data: row, error } = await supabase
-          .from('orders_secure')
-          .select('*')
-          .eq('id', id)
-          .single();
-        if (error) throw error;
+    const { row, fallbackWorkTypeId } = orderData;
+    setTitle(row.title || '');
+    setDescription(row.comment || '');
+    setRegion(row.region || '');
+    setCity(row.city || '');
+    setStreet(row.street || '');
+    setHouse(row.house || '');
+    setCustomerName(row.fio || row.customer_name || '');
+    const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
+    setPhone(raw);
+    setDepartureDate(row.time_window_start ? new Date(row.time_window_start) : null);
+    setAssigneeId(row.assigned_to || null);
 
-        let wtId = row.work_type_id ?? null;
-        if (wtId == null) {
-          const { data: row2 } = await supabase
-            .from('orders')
-            .select('work_type_id')
-            .eq('id', id)
-            .single();
-          wtId = row2?.work_type_id ?? null;
-        }
+    // Если профиль уже пришёл вместе с заказом — используем его сразу, иначе делаем отдельный fetch
+    if (row.assigned_to && row.assignee_profile) {
+      const data = row.assignee_profile;
+      const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+      const normalizedFullName = (data.full_name || '').trim();
+      const candidate = nameParts || normalizedFullName || data.email || '';
+      setAssignedEmployeeLabel(candidate);
+    } else if (row.assigned_to) {
+      // fallback: если нет профиля в ответе — оставить прежнюю логику (async fetch)
+      refreshAssignedLabel(row.assigned_to);
+    } else {
+      setAssignedEmployeeLabel('');
+    }
 
-        if (!mounted) return;
+    setToFeed(!row.assigned_to);
+    setUrgent(!!row.urgent);
+    setDepartmentId(row.department_id || null);
+    setWorkTypeId(row.work_type_id || fallbackWorkTypeId || null);
+    setPrice(row.price !== null && row.price !== undefined ? String(row.price) : '');
+    setFuelCost(row.fuel_cost !== null && row.fuel_cost !== undefined ? String(row.fuel_cost) : '');
+  }, [id, orderData, orderLoading, refreshAssignedLabel]);
 
-        setTitle(row.title || '');
-        setDescription(row.comment || '');
-        setRegion(row.region || '');
-        setCity(row.city || '');
-        setStreet(row.street || '');
-        setHouse(row.house || '');
-        setCustomerName(row.fio || row.customer_name || '');
-        const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
-        setPhone(raw);
-        setDepartureDate(row.datetime ? new Date(row.datetime) : null);
-        setAssigneeId(row.assigned_to || null);
-        setToFeed(!row.assigned_to);
-        setUrgent(!!row.urgent);
-        setDepartmentId(row.department_id || null);
-        setWorkTypeId(row.work_type_id || wtId || null);
-      } catch (e) {
-        console.warn('Load order error:', e);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
+  // Оптимизируем вызов refreshAssignedLabel — не запрашиваем, если label уже установлен
+  useEffect(() => {
+    if (!assigneeId) {
+      setAssignedEmployeeLabel('');
+      return;
+    }
+    if (assignedEmployeeLabel) return; // уже есть имя — пропускаем лишний запрос
+    refreshAssignedLabel(assigneeId);
+  }, [assigneeId, refreshAssignedLabel, assignedEmployeeLabel]);
 
-    return () => {
-      mounted = false;
-    };
-  }, [id]);
+  useEffect(() => {
+    if (headerResetRef.current && saving) {
+      clearTimeout(headerResetRef.current);
+      headerResetRef.current = null;
+    }
+    setHeaderLabel(saving ? T('toast_saving') : T('header_save'));
+  }, [saving, T]);
 
   const styles = useMemo(
     () =>
@@ -225,15 +379,23 @@ export default function EditOrderScreen() {
     [theme],
   );
 
-  const showToast = (msg, type = 'info') => {
+  const showToast = (msg, type = 'info', options) => {
     const text = String(msg || '');
+    setHeaderLabel(text);
+    if (headerResetRef.current) clearTimeout(headerResetRef.current);
+    if (!options?.sticky) {
+      headerResetRef.current = setTimeout(() => {
+        if (!saving) setHeaderLabel(T('header_save'));
+        headerResetRef.current = null;
+      }, options?.duration ?? 2500);
+    }
     try {
-      if (type === 'error' && typeof toastError === 'function') {
-        toastError(text);
-      } else if (type === 'success' && typeof toastSuccess === 'function') {
-        toastSuccess(text);
-      } else if (typeof toastInfo === 'function') {
-        toastInfo(text);
+      if (type === 'error') {
+        toastError?.(text, options);
+      } else if (type === 'success') {
+        toastSuccess?.(text, options);
+      } else {
+        toastInfo?.(text, options);
       }
     } catch (e) {
       console.warn('Toast error:', e);
@@ -265,47 +427,85 @@ export default function EditOrderScreen() {
       onReset: handleAssignmentReset,
       title: selectExecutorTitle,
     }),
-    [
-      employees,
-      assigneeId,
-      handleAssignmentApply,
-      handleAssignmentReset,
-      selectExecutorTitle,
-    ],
+    [employees, assigneeId, handleAssignmentApply, handleAssignmentReset, selectExecutorTitle],
   );
 
   const handleSave = async () => {
+    // Скрываем клавиатуру и снимаем фокус с полей перед валидацией/сохранением
+    try {
+      Keyboard.dismiss();
+      // Попробуем размыть все поля, если у них есть метод blur
+      [titleRef, descriptionRef, regionRef, cityRef, streetRef, houseRef, customerNameRef].forEach(
+        (r) => {
+          try {
+            if (r && r.current && typeof r.current.blur === 'function') {
+              r.current.blur();
+            }
+          } catch (e) {
+            // ignore
+          }
+        },
+      );
+    } catch (e) {
+      // ignore
+    }
+
     if (!title.trim()) return showToast(T('order_validation_title_required'), 'error');
     if (!departureDate) return showToast(T('order_validation_date_required'), 'error');
     const rawPhone = (phone || '').replace(/\D/g, '');
-    if (rawPhone.length !== 11 || rawPhone[0] !== '7' || rawPhone[1] !== '9') {
+    if (rawPhone && !isValidPhone(String(phone || ''))) {
       return showToast(T('order_validation_phone_format'), 'error');
     }
 
-    const payload = {
-      title,
-      comment: description,
-      region,
-      city,
-      street,
-      house,
-      fio: customerName,
-      phone: `+7${rawPhone.slice(1)}`,
-      assigned_to: toFeed ? null : assigneeId,
-      datetime: departureDate.toISOString(),
-      urgent,
-      department_id: departmentId || null,
-      ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
-    };
-
-    const { error } = await supabase.from('orders').update(payload).eq('id', id);
-    if (error) {
-      showToast(error.message || T('order_save_error'), 'error');
-      return;
-    }
-    showToast(T('order_toast_saved'), 'success');
-    router.back();
+    await proceedSave();
   };
+
+  const proceedSave = async () => {
+    try {
+      setSaving(true);
+      showToast(T('toast_saving'), 'info', { sticky: true });
+
+      const rawPhone = (phone || '').replace(/\D/g, '');
+      const payload = {
+        title,
+        comment: description,
+        region,
+        city,
+        street,
+        house,
+        fio: customerName,
+        phone: rawPhone ? `+7${rawPhone.slice(1)}` : null,
+        assigned_to: toFeed ? null : assigneeId,
+        time_window_start: departureDate.toISOString(),
+        urgent,
+        department_id: departmentId || null,
+        price: price ? parseFloat(price) : null,
+        fuel_cost: fuelCost ? parseFloat(fuelCost) : null,
+        ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
+      };
+
+      const { error } = await supabase.from('orders').update(payload).eq('id', id);
+      if (error) {
+        showToast(error.message || T('error_save_failed'), 'error');
+        return;
+      }
+      // Инвалидируем кэш и получаем свежие данные
+      await queryClient.invalidateQueries({ queryKey: ['order', id] });
+      showToast(T('toast_success'), 'success');
+    } catch (err) {
+      showToast(err?.message || T('error_save_failed'), 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const headerOptions = useMemo(
+    () => ({
+      rightTextLabel: headerLabel,
+      onRightPress: handleSave,
+    }),
+    [handleSave, headerLabel],
+  );
 
   if (loading) {
     return (
@@ -320,13 +520,7 @@ export default function EditOrderScreen() {
       style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <Screen
-        scroll={false}
-        headerOptions={{
-          rightTextLabel: T('header_save'),
-          onRightPress: handleSave,
-        }}
-      >
+      <Screen scroll={false} headerOptions={headerOptions}>
         <KeyboardAwareScrollView
           ref={scrollRef}
           contentContainerStyle={[
@@ -351,50 +545,50 @@ export default function EditOrderScreen() {
         >
           <SectionHeader bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
           <Card>
-              <TextField
-                ref={titleRef}
-                label={T('order_field_title')}
-                placeholder={T('order_placeholder_title')}
-                value={title}
-                onChangeText={setTitle}
-                onFocus={() =>
-                  ensureVisibleField({
-                    fieldRef: titleRef,
-                    scrollRef,
-                    scrollYRef,
-                    insetsBottom: insets.bottom ?? 0,
-                    headerHeight: theme?.components?.header?.height ?? 56,
-                  })
-                }
-                required
-              />
+            <TextField
+              ref={titleRef}
+              label={T('order_field_title')}
+              placeholder={T('order_placeholder_title')}
+              value={title}
+              onChangeText={setTitle}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: titleRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
+              required
+            />
 
-              <TextField
-                ref={descriptionRef}
-                label={T('order_field_description')}
-                placeholder={T('order_placeholder_description')}
-                value={description}
-                onChangeText={setDescription}
-                multiline
-                minLines={3}
-                onFocus={() =>
-                  ensureVisibleField({
-                    fieldRef: descriptionRef,
-                    scrollRef,
-                    scrollYRef,
-                    insetsBottom: insets.bottom ?? 0,
-                    headerHeight: theme?.components?.header?.height ?? 56,
-                  })
-                }
-              />
+            <TextField
+              ref={descriptionRef}
+              label={T('order_field_description')}
+              placeholder={T('order_placeholder_description')}
+              value={description}
+              onChangeText={setDescription}
+              multiline
+              minLines={3}
+              onFocus={() =>
+                ensureVisibleField({
+                  fieldRef: descriptionRef,
+                  scrollRef,
+                  scrollYRef,
+                  insetsBottom: insets.bottom ?? 0,
+                  headerHeight: theme?.components?.header?.height ?? 56,
+                })
+              }
+            />
 
-              <TextField
-                label={T('order_details_executor')}
-                value={selectedEmployeeName}
-                placeholder={T('order_details_not_assigned')}
-                pressable
-                onPress={() => setAssigneePickerVisible(true)}
-              />
+            <TextField
+              label={T('order_details_executor')}
+              value={selectedEmployeeName}
+              placeholder={T('order_details_not_assigned')}
+              pressable
+              onPress={() => setAssigneePickerVisible(true)}
+            />
 
             {useWorkTypes && (
               <TextField
@@ -405,6 +599,24 @@ export default function EditOrderScreen() {
                 onPress={() => setWorkTypeModalVisible(true)}
               />
             )}
+          </Card>
+
+          <SectionHeader bottomSpacing="xs">Финансы</SectionHeader>
+          <Card>
+            <TextField
+              label={T('order_details_amount')}
+              placeholder="0.00"
+              value={price}
+              onChangeText={setPrice}
+              keyboardType="decimal-pad"
+            />
+            <TextField
+              label={T('order_details_fuel')}
+              placeholder="0.00"
+              value={fuelCost}
+              onChangeText={setFuelCost}
+              keyboardType="decimal-pad"
+            />
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_address')}</SectionHeader>
@@ -502,11 +714,6 @@ export default function EditOrderScreen() {
                   ? format(departureDate, 'd MMMM yyyy', { locale: ru })
                   : T('placeholder_birthdate')}
               </Text>
-              <AntDesign
-                name="calendar"
-                size={16}
-                color={theme.colors.textSecondary || theme.colors.text}
-              />
             </Pressable>
 
             {useDepartureTime && (
@@ -527,11 +734,6 @@ export default function EditOrderScreen() {
                       ? format(departureDate, 'HH:mm', { locale: ru })
                       : T('placeholder_birthdate')}
                   </Text>
-                  <Feather
-                    name="clock"
-                    size={16}
-                    color={theme.colors.textSecondary || theme.colors.text}
-                  />
                 </Pressable>
               </>
             )}

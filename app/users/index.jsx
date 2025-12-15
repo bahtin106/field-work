@@ -7,7 +7,6 @@ import {
   FlatList,
   Keyboard,
   Platform,
-  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -16,14 +15,11 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { Feather } from '@expo/vector-icons';
-
 import AppHeader from '../../components/navigation/AppHeader';
-
-import UITextField from '../../components/ui/TextField';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
+import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import { useFilters } from '../../components/hooks/useFilters';
 // Cache-enabled hooks
 import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
@@ -125,15 +121,8 @@ export default function UsersIndex() {
   const sz = theme.spacing;
   const ty = theme.typography;
   const rad = theme.radii;
-  const controlH = theme?.components?.input?.height ?? 44;
-  const listItemHeight = theme?.components?.listItem?.height ?? 44;
-  const chevronSize = theme?.components?.listItem?.chevronSize ?? 20;
   const scrollPaddingBottom = theme?.components?.scrollView?.paddingBottom ?? 80;
   const activityIndicatorSize = theme?.components?.activityIndicator?.size ?? 'large';
-  const iconSizeSm = theme?.components?.icon?.sizeSm ?? 18;
-
-  // UI constants from theme with fallbacks
-  const ALPHA_RIPPLE = theme?.components?.ripple?.alpha ?? 0.13;
   const ALPHA_PILL_BG = theme?.components?.pill?.backgroundAlpha ?? 0.13;
   const ALPHA_PILL_BORDER = theme?.components?.pill?.borderAlpha ?? 0.2;
   const styles = React.useMemo(
@@ -153,46 +142,6 @@ export default function UsersIndex() {
           fontWeight: ty.weight.bold,
           color: c.text,
           marginBottom: sz.sm,
-        },
-        searchRow: { flexDirection: 'row', alignItems: 'center', columnGap: sz.sm },
-        searchBox: {
-          flex: 1,
-          position: 'relative',
-          backgroundColor: c.inputBg,
-          borderRadius: rad.lg,
-          borderWidth: 1,
-          borderColor: c.inputBorder,
-          height: listItemHeight,
-          justifyContent: 'center',
-          paddingLeft: sz.sm,
-          paddingRight: sz.md,
-        },
-        clearBtn: {
-          width: chevronSize,
-          height: chevronSize,
-          borderRadius: chevronSize / 2,
-          backgroundColor: c.surface,
-          borderWidth: 1,
-          borderColor: c.border,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginRight: -Math.round(sz.sm / 2),
-        },
-        clearBtnText: {
-          fontSize: ty.sizes.lg,
-          lineHeight: ty.sizes.lg,
-          color: c.textSecondary,
-          fontWeight: ty.weight.semibold,
-        },
-        searchMask: {
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: StyleSheet.hairlineWidth,
-          backgroundColor: c.inputBg,
-          borderBottomLeftRadius: rad.lg,
-          borderBottomRightRadius: rad.lg,
         },
         metaRow: { marginTop: sz.xs },
         metaText: { fontSize: ty.sizes.sm, color: c.textSecondary },
@@ -219,24 +168,6 @@ export default function UsersIndex() {
         rolePillText: { fontSize: ty.sizes.xs, fontWeight: ty.weight.semibold },
         emptyWrap: { padding: sz.lg, alignItems: 'center' },
         emptyText: { color: c.textSecondary },
-        // --- Departments UI
-        toolbarRow: {
-          marginTop: sz.xs,
-          flexDirection: 'row',
-          alignItems: 'center',
-          columnGap: sz.sm,
-        },
-        filterBtn: {
-          height: controlH,
-          width: controlH,
-          borderRadius: controlH / 2,
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderWidth: 1,
-          borderColor: c.border,
-          backgroundColor: c.surface,
-          marginLeft: sz.sm,
-        }, // keep default TTL (1h) for filter persistence
       }),
     [theme],
   );
@@ -564,79 +495,23 @@ export default function UsersIndex() {
           />
 
           <View style={styles.header}>
-            {/* Search + Filters */}
-            <View style={styles.searchRow}>
-              <View style={styles.searchBox}>
-                <UITextField
-                  value={q}
-                  onChangeText={setQ}
-                  placeholder={t('users_search_placeholder')}
-                  returnKeyType="search"
-                  onSubmitEditing={Keyboard.dismiss}
-                  hideSeparator={true}
-                  rightSlot={
-                    !!q ? (
-                      <Pressable
-                        android_ripple={{
-                          borderless: false,
-                          color: withAlpha(theme.colors.border, ALPHA_RIPPLE),
-                        }}
-                        onPress={() => setQ('')}
-                        style={styles.clearBtn}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common_clear')}
-                      >
-                        <Text style={styles.clearBtnText}>×</Text>
-                      </Pressable>
-                    ) : null
-                  }
-                />
-              </View>
-              <Pressable
-                onPress={openFiltersPanel}
-                android_ripple={{
-                  borderless: false,
-                  color: withAlpha(theme.colors.border, ALPHA_RIPPLE),
-                }}
-                style={styles.filterBtn}
-                accessibilityRole="button"
-                accessibilityLabel={t('users_filterButton')}
-              >
-                <Feather name="sliders" size={iconSizeSm} color={theme.colors.text} />
-              </Pressable>
-            </View>
-
-            {/* Filter summary + reset when active */}
-            {filterSummary ? (
-              <View style={styles.toolbarRow}>
-                <Text style={[styles.metaText, { flexShrink: 1 }]} numberOfLines={2}>
-                  {filterSummary}
-                </Text>
-                <Pressable
-                  onPress={async () => {
-                    const resetValues = filters.reset();
-                    await filters.apply(resetValues);
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.metaText,
-                      { color: theme.colors.primary, marginLeft: theme.spacing.sm },
-                    ]}
-                  >
-                    {t('settings_sections_quiet_items_quiet_reset')}
-                  </Text>
-                </Pressable>
-              </View>
-            ) : null}
-
-            <View style={styles.metaRow}>
-              <Text style={styles.metaText}>
-                {debouncedQ
+            <SearchFiltersBar
+              value={q}
+              onChangeText={setQ}
+              onClear={() => setQ('')}
+              placeholder={t('users_search_placeholder')}
+              onOpenFilters={openFiltersPanel}
+              filterSummary={filterSummary}
+              onResetFilters={async () => {
+                const resetValues = filters.reset();
+                await filters.apply(resetValues);
+              }}
+              metaText={
+                debouncedQ
                   ? `${t('users_found')}: ${filtered.length}`
-                  : `${t('users_total')}: ${users.length}`}
-              </Text>
-            </View>
+                  : `${t('users_total')}: ${users.length}`
+              }
+            />
 
             {/* Removed error display - errors now handled by hooks */}
           </View>

@@ -1,7 +1,7 @@
 // theme/ThemeProvider.jsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Appearance, FlatList, Platform, ScrollView, SectionList } from 'react-native';
+import { Appearance, FlatList, Platform, ScrollView, SectionList, Text } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { tokens } from './tokens';
 
@@ -189,6 +189,21 @@ function buildTheme(mode) {
       paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
     },
     activityIndicator: { size: base.components?.activityIndicator?.size ?? 'large' },
+    // Глобальные настройки хедера и бегущей строки
+    header: {
+      height: base.components?.header?.height ?? 56,
+      edgePadding: base.components?.header?.edgePadding ?? spacing.md,
+      marquee: {
+        gap: base.components?.header?.marquee?.gap ?? spacing.lg,
+        msPerPixel: base.components?.header?.marquee?.msPerPixel ?? 12,
+        startDelay: base.components?.header?.marquee?.startDelay ?? 700,
+        endPause: base.components?.header?.marquee?.endPause ?? 900,
+        titleFontSize:
+          base.components?.header?.marquee?.titleFontSize ?? typography.sizes?.lg ?? 17,
+        titleFontWeight:
+          base.components?.header?.marquee?.titleFontWeight ?? typography.weight?.semibold ?? '600',
+      },
+    },
   };
 
   // Pass-through shared media config (used by ImagePicker, etc.)
@@ -290,6 +305,10 @@ export const ThemeProvider = ({ children }) => {
         contentInsetAdjustmentBehavior: Platform.OS === 'ios' ? 'always' : 'automatic',
         bottomOffset: 40, // единая высота подъёма, как на экране редактирования пользователя
       });
+      // Глобальное поведение для текста в полях: обрезать длинные значения троеточием.
+      // Это устанавливает ellipsizeMode и дефолтное число линий = 1. Компоненты,
+      // где нужно несколько строк, должны явно переопределить numberOfLines.
+      setDefaults(Text, { ellipsizeMode: 'tail', numberOfLines: 1 });
     } catch {}
   }, []);
 

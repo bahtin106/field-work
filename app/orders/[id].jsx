@@ -1,4 +1,4 @@
-import { Feather } from '@expo/vector-icons';
+// removed Feather icons usage from this file per request
 import { useFocusEffect } from '@react-navigation/native';
 import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
@@ -142,15 +142,15 @@ export default function OrderDetails() {
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
-const [departments, setDepartments] = useState([]);
-const [amount, setAmount] = useState('');
-const [gsm, setGsm] = useState('');
-const canEditFinances = role === 'admin' || role === 'dispatcher';
-const workTypeName = useMemo(() => {
-  if (!workTypeId) return null;
-  const found = workTypes.find((w) => w.id === workTypeId);
-  return found?.name || null;
-}, [workTypeId, workTypes]);
+  const [departments, setDepartments] = useState([]);
+  const [amount, setAmount] = useState('');
+  const [gsm, setGsm] = useState('');
+  const canEditFinances = role === 'admin' || role === 'dispatcher';
+  const workTypeName = useMemo(() => {
+    if (!workTypeId) return null;
+    const found = workTypes.find((w) => w.id === workTypeId);
+    return found?.name || null;
+  }, [workTypeId, workTypes]);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -235,7 +235,7 @@ const workTypeName = useMemo(() => {
           return (street || '').trim();
         case 'house':
           return (house || '').trim();
-        case 'datetime':
+        case 'time_window_start':
           return departureDate;
         case 'assigned_to':
           return toFeed ? null : assigneeId;
@@ -274,7 +274,7 @@ const workTypeName = useMemo(() => {
       const found = arr.find((f) => f.field_key === key);
       if (found) return found;
       if (
-        key === 'datetime' ||
+        key === 'time_window_start' ||
         key === 'assigned_to' ||
         key === 'status' ||
         key === 'department_id'
@@ -303,7 +303,7 @@ const workTypeName = useMemo(() => {
             .replace(/\D/g, '')
             .replace(/^8(\d{10})$/, '7$1');
           if (!(raw.length === 11 && raw.startsWith('7'))) missing.push(f.label || k);
-        } else if (k === 'datetime') {
+        } else if (k === 'time_window_start') {
           if (!val) missing.push(f.label || k);
         } else if (k === 'assigned_to') {
           if (!toFeed && !val) missing.push(f.label || k);
@@ -352,7 +352,7 @@ const workTypeName = useMemo(() => {
       house: o.house || '',
       fio: o.fio || '',
       phone: phoneDigits,
-      datetime: o.datetime ? new Date(o.datetime).toISOString() : null,
+      time_window_start: o.time_window_start ? new Date(o.time_window_start).toISOString() : null,
       assigned_to: o.assigned_to || null,
       department_id: o.department_id || null,
       price: o.price ?? null,
@@ -371,7 +371,7 @@ const workTypeName = useMemo(() => {
       house: house || '',
       fio: customerName || '',
       phone: phoneDigits,
-      datetime: departureDate ? departureDate.toISOString() : null,
+      time_window_start: departureDate ? departureDate.toISOString() : null,
       assigned_to: assigneeId || null,
       department_id: departmentId || null,
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
@@ -480,13 +480,20 @@ const workTypeName = useMemo(() => {
         setRole(profile?.role || null);
       }
 
-      const { data: fetchedOrder, error } = await supabase
-        .from('orders_secure')
+      const { data: fetchedOrderRaw, error } = await supabase
+        .from('orders_secure_v2')
         .select('*')
         .eq('id', id)
         .single();
 
       if (error) throw error;
+
+      const fetchedOrder = fetchedOrderRaw
+        ? {
+            ...fetchedOrderRaw,
+            time_window_start: fetchedOrderRaw.time_window_start ?? null,
+          }
+        : null;
 
       if (typeof fetchedOrder.department_id === 'undefined') {
         try {
@@ -526,7 +533,7 @@ const workTypeName = useMemo(() => {
           if (updateError) throw updateError;
 
           const { data: refreshed, error: refErr } = await supabase
-            .from('orders_secure')
+            .from('orders_secure_v2')
             .select('*')
             .eq('id', id)
             .single();
@@ -578,7 +585,9 @@ const workTypeName = useMemo(() => {
           setHouse(fetchedOrder.house || '');
           setCustomerName(fetchedOrder.fio || fetchedOrder.customer_name || '');
           setPhone(rawDigits || '');
-          setDepartureDate(fetchedOrder.datetime ? new Date(fetchedOrder.datetime) : null);
+          setDepartureDate(
+            fetchedOrder.time_window_start ? new Date(fetchedOrder.time_window_start) : null,
+          );
           setAssigneeId(fetchedOrder.assigned_to || null);
           setToFeed(!fetchedOrder.assigned_to);
           setUrgent(!!fetchedOrder.urgent);
@@ -854,9 +863,9 @@ const workTypeName = useMemo(() => {
       fio: customerName,
       phone: `+7${rawPhone.slice(1)}`,
       assigned_to: toFeed ? null : assigneeId,
-      datetime: departureDate.toISOString(),
+      time_window_start: departureDate.toISOString(),
       status: nextStatus,
-      urgent: urgent,
+      urgent,
       department_id: departmentId || null,
       ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
@@ -888,7 +897,7 @@ const workTypeName = useMemo(() => {
       setHouse(data.house || '');
       setCustomerName(data.fio || '');
       setPhone(rawDigitsSaved || '');
-      setDepartureDate(data.datetime ? new Date(data.datetime) : null);
+      setDepartureDate(data.time_window_start ? new Date(data.time_window_start) : null);
       setAssigneeId(data.assigned_to || null);
       setToFeed(!data.assigned_to);
       setUrgent(!!data.urgent);
@@ -1011,7 +1020,7 @@ const workTypeName = useMemo(() => {
       setHouse(order.house || '');
       setCustomerName(order.fio || '');
       setPhone(rawDigits || '');
-      setDepartureDate(order.datetime ? new Date(order.datetime) : null);
+      setDepartureDate(order.time_window_start ? new Date(order.time_window_start) : null);
       setAssigneeId(order.assigned_to || null);
       setToFeed(!order.assigned_to);
       setUrgent(!!order.urgent);
@@ -1524,6 +1533,107 @@ const workTypeName = useMemo(() => {
     resetZoom();
   }, [viewerIndex, resetZoom]);
 
+  // Компонент заголовка: измеряет ширины и анимирует пролистывание длинного текста
+  const HeaderTitle = useCallback(
+    ({ text }) => {
+      return null; // removed: headerTitle не используется напрямую — реализовано через MarqueeHeader ниже
+    },
+    [theme],
+  );
+  // Короткая версия для заголовка native (обязательно строка — чтобы не ломать Screen/header)
+  const fullTitle = order?.title || t('routes.orders/[id]', 'routes.orders/[id]');
+  const shortTitle = useMemo(() => {
+    if (!fullTitle) return '';
+    const max = 36;
+    return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
+  }, [fullTitle]);
+
+  // Абсолютный оверлей с marquee-прокруткой (не блокирует клики)
+  const MarqueeHeader = useCallback(() => {
+    const containerW = useRef(0);
+    const textW = useRef(0);
+    const anim = useRef(new RNAnimated.Value(0)).current;
+    const running = useRef(false);
+
+    useEffect(() => {
+      running.current = true;
+      let mounted = true;
+
+      const start = () => {
+        if (!mounted) return;
+        const overflow = Math.max(0, (textW.current || 0) - (containerW.current || 0));
+        if (overflow <= 2) {
+          RNAnimated.timing(anim, { toValue: 0, duration: 120, useNativeDriver: true }).start();
+          return;
+        }
+        const duration = Math.max(900, Math.round(overflow * 12));
+        const seq = RNAnimated.sequence([
+          RNAnimated.delay(700),
+          RNAnimated.timing(anim, { toValue: -overflow, duration, useNativeDriver: true }),
+          RNAnimated.delay(900),
+          RNAnimated.timing(anim, { toValue: 0, duration, useNativeDriver: true }),
+        ]);
+        const loop = () => {
+          if (!running.current || !mounted) return;
+          seq.start(({ finished }) => {
+            if (finished && running.current && mounted) loop();
+          });
+        };
+        loop();
+      };
+
+      start();
+      return () => {
+        mounted = false;
+        running.current = false;
+        anim.stopAnimation?.();
+      };
+    }, [fullTitle, anim]);
+
+    // позиционирование: берем высоту header из theme или дефолт 56
+    const headerH = theme?.components?.header?.height ?? 56;
+    const leftOffset = 56; // оставить место для back button
+    const rightOffset = 96; // место для правой кнопки
+
+    return (
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: leftOffset,
+          right: rightOffset,
+          height: headerH,
+          justifyContent: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        <View
+          style={{ overflow: 'hidden', width: '100%' }}
+          onLayout={(e) => {
+            containerW.current = e.nativeEvent.layout.width || 0;
+          }}
+        >
+          <RNAnimated.Text
+            numberOfLines={1}
+            ellipsizeMode="clip"
+            onLayout={(e) => {
+              textW.current = e.nativeEvent.layout.width || 0;
+            }}
+            style={{
+              transform: [{ translateX: anim }],
+              color: theme.colors.text,
+              fontSize: theme.typography?.sizes?.md || 16,
+              fontWeight: theme.typography?.weight?.semibold || '600',
+            }}
+          >
+            {fullTitle}
+          </RNAnimated.Text>
+        </View>
+      </View>
+    );
+  }, [fullTitle, theme]);
+
   if ((loading && !hydratedRef.current) || !order) {
     return (
       <View style={styles.centered}>
@@ -1547,7 +1657,22 @@ const workTypeName = useMemo(() => {
         edges={['top', 'bottom']}
         headerOptions={{
           headerTitleAlign: 'left',
-          title: t('routes.orders/[id]', 'routes.orders/[id]'),
+          // Используем headerTitle как функцию — возвращаем <Text> (без "сырых" строк)
+          headerTitle: () => (
+            <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              style={{
+                color: theme.colors.text,
+                fontSize: theme.typography?.sizes?.md || 16,
+                fontWeight: theme.typography?.weight?.semibold || '600',
+              }}
+            >
+              {shortTitle}
+            </Text>
+          ),
+          // Передаём полное название как сериализуемое поле, чтобы хедер мог показать marquee
+          fullTitle: fullTitle,
           rightTextLabel: canEdit() && !editMode && order?.id ? t('order_details_edit') : undefined,
           onRightPress:
             canEdit() && !editMode && order?.id
@@ -1555,6 +1680,7 @@ const workTypeName = useMemo(() => {
               : undefined,
         }}
       >
+        {/* Marquee overlay moved to AppHeader (uses layout measurements). */}
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
             ref={detailsScrollRef}
@@ -1604,7 +1730,6 @@ const workTypeName = useMemo(() => {
                 </View>
                 <View style={base.sep} />
 
-                {/* ...existing code... */}
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_executor')}</Text>
                   <View style={base.rightWrap}>
@@ -1660,8 +1785,8 @@ const workTypeName = useMemo(() => {
                 <Pressable
                   style={base.row}
                   onPress={() => {
-                    const dateStr = order.datetime
-                      ? new Date(order.datetime).toISOString().slice(0, 10)
+                    const dateStr = order.time_window_start
+                      ? new Date(order.time_window_start).toISOString().slice(0, 10)
                       : undefined;
                     const assignee = order.assigned_to || undefined;
                     router.push({
@@ -1678,9 +1803,9 @@ const workTypeName = useMemo(() => {
                   <Text style={base.label}>{t('order_details_departure_date')}</Text>
                   <View style={base.rightWrap}>
                     <Text style={[base.value, styles.link]}>
-                      {order.datetime
+                      {order.time_window_start
                         ? format(
-                            new Date(order.datetime),
+                            new Date(order.time_window_start),
                             useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
                             { locale: ru },
                           )
@@ -1818,7 +1943,6 @@ const workTypeName = useMemo(() => {
             )}
           </ScrollView>
         </TouchableWithoutFeedback>
-
         {Platform.OS === 'ios' && !!bannerMessage && (
           <View pointerEvents="none" style={styles.banner}>
             <Text style={styles.bannerText}>{bannerMessage}</Text>
@@ -1878,7 +2002,9 @@ const workTypeName = useMemo(() => {
               </Text>
             </View>
             <Pressable onPress={closeViewer} hitSlop={12} style={styles.closeBtn}>
-              <Feather name="x" size={24} color={theme.colors.onPrimary} />
+              <Text style={{ color: theme.colors.onPrimary, fontSize: 22, fontWeight: '700' }}>
+                ×
+              </Text>
             </Pressable>
           </View>
 

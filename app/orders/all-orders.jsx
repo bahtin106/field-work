@@ -24,6 +24,7 @@ import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
+import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
@@ -62,19 +63,6 @@ async function checkCanViewAll() {
     return !!perm?.value === true;
   } catch {
     return false;
-  }
-}
-
-function mapStatusToDB(key) {
-  switch (key) {
-    case 'new':
-      return 'Новый';
-    case 'in_progress':
-      return 'В работе';
-    case 'done':
-      return 'Завершённая';
-    default:
-      return null;
   }
 }
 
@@ -604,22 +592,6 @@ export default function AllOrdersScreen() {
     loadFilterOptions();
   }, []);
 
-  // Helper: resolve order IDs by work types from base table if secure view lacks work_type_id
-  const getOrderIdsByWorkTypes = async (types) => {
-    try {
-      if (!Array.isArray(types) || types.length === 0) return [];
-      const { data, error } = await supabase
-        .from('orders')
-        .select('id')
-        .in('work_type_id', types)
-        .limit(2000);
-      if (error) return [];
-      return (data || []).map((r) => r.id).filter(Boolean);
-    } catch {
-      return [];
-    }
-  };
-
   // Auto refresh by TTL (background, no spinner if cache exists)
   useEffect(() => {
     let alive = true;
@@ -668,11 +640,11 @@ export default function AllOrdersScreen() {
       logAllOrders(`[AllOrders] Loading from network...`);
 
       // Build base query
-      let query = supabase.from('orders_secure').select('*');
+      let query = supabase.from('orders_secure_v2').select('*');
       if (statusFilter === 'feed') {
         query = query.is('assigned_to', null);
       } else {
-        const statusValue = mapStatusToDB(statusFilter);
+        const statusValue = mapStatusToDb(statusFilter);
         if (statusValue) query = query.eq('status', statusValue);
         if (executorFilter) query = query.eq('assigned_to', executorFilter);
       }
@@ -694,11 +666,15 @@ export default function AllOrdersScreen() {
       }
 
       const { data, error } = await query
-        .order('datetime', { ascending: false })
+        .order('time_window_start', { ascending: false })
         .range(0, PAGE_SIZE - 1); // ПАГИНАЦИЯ: только первые 10!
       if (!alive) return;
       if (!error) {
-        const result = data || [];
+        const resultRaw = data || [];
+        const result = resultRaw.map((o) => ({
+          ...o,
+          time_window_start: o.time_window_start ?? null,
+        }));
         logAllOrders(`[AllOrders] 🌐 Loaded from network (${result.length} items)`);
         setOrders(result);
         setHasMore(result.length === PAGE_SIZE); // Есть ли ещё данные?
@@ -764,11 +740,11 @@ export default function AllOrdersScreen() {
       setPage(1); // Сброс пагинации
       setHasMore(true);
 
-      let query = supabase.from('orders_secure').select('*');
+      let query = supabase.from('orders_secure_v2').select('*');
       if (statusFilter === 'feed') {
         query = query.is('assigned_to', null);
       } else {
-        const statusValue = mapStatusToDB(statusFilter);
+        const statusValue = mapStatusToDb(statusFilter);
         if (statusValue) query = query.eq('status', statusValue);
         if (executorFilter) query = query.eq('assigned_to', executorFilter);
       }
@@ -785,10 +761,14 @@ export default function AllOrdersScreen() {
         query = query.in('id', ids);
       }
       const { data, error } = await query
-        .order('datetime', { ascending: false })
+        .order('time_window_start', { ascending: false })
         .range(0, PAGE_SIZE - 1); // ПАГИНАЦИЯ
       if (!error) {
-        const result = data || [];
+        const resultRaw = data || [];
+        const result = resultRaw.map((o) => ({
+          ...o,
+          time_window_start: o.time_window_start ?? null,
+        }));
         setOrders(result);
         setHasMore(result.length === PAGE_SIZE);
         LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
@@ -869,11 +849,11 @@ export default function AllOrdersScreen() {
     setPage(nextPage);
 
     try {
-      let query = supabase.from('orders_secure').select('*');
+      let query = supabase.from('orders_secure_v2').select('*');
       if (statusFilter === 'feed') {
         query = query.is('assigned_to', null);
       } else {
-        const statusValue = mapStatusToDB(statusFilter);
+        const statusValue = mapStatusToDb(statusFilter);
         if (statusValue) query = query.eq('status', statusValue);
         if (executorFilter) query = query.eq('assigned_to', executorFilter);
       }
@@ -892,11 +872,17 @@ export default function AllOrdersScreen() {
       const from = (nextPage - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      const { data, error } = await query.order('datetime', { ascending: false }).range(from, to);
+      const { data, error } = await query
+        .order('time_window_start', { ascending: false })
+        .range(from, to);
 
       if (!error && Array.isArray(data)) {
-        setOrders((prev) => [...prev, ...data]);
-        setHasMore(data.length === PAGE_SIZE);
+        const normalized = data.map((o) => ({
+          ...o,
+          time_window_start: o.time_window_start ?? null,
+        }));
+        setOrders((prev) => [...prev, ...normalized]);
+        setHasMore(normalized.length === PAGE_SIZE);
 
         // Loaded successfully
       }

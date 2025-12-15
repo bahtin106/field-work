@@ -35,7 +35,7 @@ const PREFETCH_TASKS = [
 
       // Загружаем только первые 10 заказов пользователя
       const { data } = await supabase
-        .from('orders_secure')
+        .from('orders_secure_v2')
         .select('*')
         .eq('assigned_to', user.id)
         .order('datetime', { ascending: false })
@@ -53,7 +53,7 @@ const PREFETCH_TASKS = [
     queryFn: async () => {
       // Загружаем только первые 10 заказов из ленты
       const { data } = await supabase
-        .from('orders_secure')
+        .from('orders_secure_v2')
         .select('*')
         .is('assigned_to', null)
         .order('datetime', { ascending: false })
@@ -71,7 +71,7 @@ const PREFETCH_TASKS = [
     queryFn: async () => {
       // Загружаем первые 10 заказов без фильтров (все заявки)
       const { data } = await supabase
-        .from('orders_secure')
+        .from('orders_secure_v2')
         .select('*')
         .order('datetime', { ascending: false })
         .limit(10); // Только первые 10!
@@ -190,7 +190,7 @@ const PREFETCH_TASKS = [
 
       const sinceIso = new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString();
       let query = supabase
-        .from('orders_secure')
+        .from('orders_secure_v2')
         .select('*')
         .gte('datetime', sinceIso)
         .order('datetime', { ascending: false });
