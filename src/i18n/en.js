@@ -56,4 +56,19 @@ export default {
   modal_currency_rate_placeholder: 'e.g. 0.013 (1 RUB → USD)',
   settings_recalc_in_progress: 'Recalculation in progress…',
   errors_only_admin_currency: 'Only company admin can change currency',
+  toast_loading_info: 'Loading information…',
+  toast_deleting_employee: 'Deleting employee…',
+  user_delete_no_orders_title: 'Employee will be removed',
+  user_delete_no_orders_desc:
+    'This employee has no orders. After deletion, all data and documents will be permanently removed.',
+  user_delete_reassign_title: 'Reassign orders',
+  user_delete_reassign_desc:
+    'This employee has {n} active order(s). Select an employee to reassign all orders before deletion.',
+  user_delete_reassigned_title: 'Reassigned orders',
+  user_delete_reassigned_desc: '{n} order(s) will be reassigned to the following employee:',
+  err_check_orders_failed: 'Failed to check employee orders',
+  err_successor_required_delete: 'Select an employee to reassign orders',
+  err_delete_failed_status: 'Delete failed ({status})',
+  err_delete_failed: 'Delete failed',
+  err_deactivate_failed: 'Failed to deactivate employee',
 };

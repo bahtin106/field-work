@@ -1,6 +1,6 @@
 // app/users/index.jsx
 
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -111,6 +111,15 @@ export default function UsersIndex() {
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshUsers(), refreshDepartments()]);
   }, [refreshUsers, refreshDepartments]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!usersRefreshing) {
+        refreshAll();
+      }
+      return () => {};
+    }, [refreshAll, usersRefreshing]),
+  );
 
   // Проксирующая функция для совместимости с фильтрами
   const setFilterValue = filters.setValue;

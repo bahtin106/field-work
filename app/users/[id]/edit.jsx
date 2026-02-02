@@ -1368,7 +1368,7 @@ export default function EditUser() {
 
     try {
       setErr('');
-      toastInfo('Загружаю информацию...', { sticky: true });
+      toastInfo(t('toast_loading_info'), { sticky: true });
 
       // Вызываем edge function для проверки заявок
       const { data: sess } = await supabase.auth.getSession();
@@ -1408,8 +1408,8 @@ export default function EditUser() {
       setDeleteVisible(true);
     } catch (e) {
       console.error('Ошибка при проверке заявок:', e);
-      setErr(e?.message || 'Не удалось проверить заявки сотрудника');
-      toastError(e?.message || 'Не удалось проверить заявки сотрудника');
+      setErr(e?.message || t('err_check_orders_failed'));
+      toastError(e?.message || t('err_check_orders_failed'));
     }
   };
 
@@ -1419,14 +1419,14 @@ export default function EditUser() {
 
     // Если есть заявки, но преемник не выбран — показываем ошибку
     if (totalOrdersCount > 0 && !successor?.id) {
-      setSuccessorError('Выберите сотрудника для переназначения заявок');
+      setSuccessorError(t('err_successor_required_delete'));
       return;
     }
 
     try {
       setSaving(true);
       setErr('');
-      toastInfo('Удаление сотрудника...', { sticky: true });
+      toastInfo(t('toast_deleting_employee'), { sticky: true });
 
       // Вызываем edge function для деактивации
       const { data: sess } = await supabase.auth.getSession();
@@ -1453,12 +1453,16 @@ export default function EditUser() {
 
       if (!deleteRes.ok) {
         const errData = await deleteRes.json().catch(() => ({}));
-        throw new Error(errData.error || errData.message || `Ошибка удаления (${deleteRes.status})`);
+        throw new Error(
+          errData.error ||
+            errData.message ||
+            t('err_delete_failed_status').replace('{status}', String(deleteRes.status)),
+        );
       }
 
       const payload = await deleteRes.json().catch(() => null);
       if (payload && payload.ok === false) {
-        throw new Error(payload.message || 'Ошибка удаления');
+        throw new Error(payload.message || t('err_delete_failed'));
       }
 
       toastSuccess(t('toast_deleted'));
@@ -1467,7 +1471,7 @@ export default function EditUser() {
     } catch (e) {
       console.error('Ошибка деактивации:', e);
       setErr(e?.message || t('dlg_generic_warning'));
-      toastError(e?.message || 'Не удалось деактивировать сотрудника');
+      toastError(e?.message || t('err_deactivate_failed'));
     } finally {
       setSaving(false);
     }
@@ -1948,7 +1952,10 @@ export default function EditUser() {
               visible={pickerVisible}
               title={t('picker_user_title')}
               items={(pickerItems || []).map((it) => {
-                const displayName = it.full_name || `${it.first_name || ''} ${it.last_name || ''}`.trim() || 'Без имени';
+                const displayName =
+                  it.full_name ||
+                  `${it.first_name || ''} ${it.last_name || ''}`.trim() ||
+                  t('placeholder_no_name');
                 const initials = `${(it.first_name || '').slice(0, 1)}${(it.last_name || '').slice(0, 1)}`.toUpperCase();
                 const roleLabel = it.role ? t(`role_${it.role}`) : '';
                 
@@ -2107,6 +2114,9 @@ function SuspendModal({
   const { theme } = useTheme();
 
   const hasActiveOrders = activeOrdersCount > 0;
+  const bodyLineHeight = Math.round(
+    theme.typography.sizes.sm * (theme.typography.lineHeights?.normal ?? 1.35),
+  );
   
   const options = [
     {
@@ -2150,212 +2160,226 @@ function SuspendModal({
       maxHeightRatio={0.7}
       footer={footer}
     >
-      <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={true}>
-        {options.map((option) => {
-          const isSelected = option.id === ordersAction;
-          return (
-            <Pressable
-              key={option.id}
-              onPress={() => {
-                setOrdersAction(option.id);
-                setSuccessorError('');
-              }}
-              android_ripple={{
-                color: theme?.colors?.border ?? '#00000020',
-                borderless: false,
-              }}
-              style={({ pressed }) => [
-                {
-                  paddingVertical: theme.spacing.md,
-                  paddingHorizontal: theme.spacing.md,
-                  marginBottom: theme.spacing.md,
-                  borderWidth: theme.components?.card?.borderWidth ?? 1,
-                  borderColor: isSelected ? theme.colors.primary : theme.colors.border,
-                  borderRadius: theme.radii.lg,
-                  backgroundColor: isSelected
-                    ? withAlpha(theme.colors.primary, 0.08)
-                    : theme.colors.surface,
-                },
-                pressed && Platform.OS === 'ios' ? { opacity: 0.7 } : null,
-              ]}
-            >
-              {/* Заголовок опции */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  marginBottom: theme.spacing.xs,
+      {hasActiveOrders ? (
+        <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={true}>
+          {options.map((option) => {
+            const isSelected = option.id === ordersAction;
+            return (
+              <Pressable
+                key={option.id}
+                onPress={() => {
+                  setOrdersAction(option.id);
+                  setSuccessorError('');
                 }}
+                android_ripple={{
+                  color: theme?.colors?.border ?? '#00000020',
+                  borderless: false,
+                }}
+                style={({ pressed }) => [
+                  {
+                    paddingVertical: theme.spacing.md,
+                    paddingHorizontal: theme.spacing.md,
+                    marginBottom: theme.spacing.md,
+                    borderWidth: theme.components?.card?.borderWidth ?? 1,
+                    borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                    borderRadius: theme.radii.lg,
+                    backgroundColor: isSelected
+                      ? withAlpha(theme.colors.primary, 0.08)
+                      : theme.colors.surface,
+                  },
+                  pressed && Platform.OS === 'ios' ? { opacity: 0.7 } : null,
+                ]}
               >
+                {/* Заголовок опции */}
                 <View
                   style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 10,
-                    borderWidth: 2,
-                    borderColor: isSelected
-                      ? theme.colors.primary
-                      : theme.colors.border,
-                    justifyContent: 'center',
+                    flexDirection: 'row',
                     alignItems: 'center',
-                    marginRight: theme.spacing.sm,
+                    marginBottom: theme.spacing.xs,
                   }}
                 >
-                  {isSelected && (
-                    <View
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: 5,
-                        backgroundColor: theme.colors.primary,
-                      }}
-                    />
-                  )}
-                </View>
-                <Text
-                  style={{
-                    fontSize: theme.typography.sizes.md,
-                    fontWeight: '600',
-                    color: theme.colors.text,
-                    flex: 1,
-                  }}
-                >
-                  {option.title}
-                </Text>
-              </View>
-
-              {/* Описание опции (видно только если выбрана) */}
-              {isSelected && (
-                <Text
-                  style={{
-                    fontSize: theme.typography.sizes.sm,
-                    color: theme.colors.textSecondary,
-                    marginLeft: 32,
-                    lineHeight: 20,
-                    marginTop: theme.spacing.xs,
-                  }}
-                >
-                  {option.description}
-                </Text>
-              )}
-
-              {/* Выбор преемника для "reassign" */}
-              {option.id === 'reassign' && isSelected && (
-                <View style={{ marginTop: theme.spacing.md, marginLeft: 32 }}>
-                  <Pressable
-                    onPress={openSuccessorPicker}
-                    style={({ pressed }) => [
-                      {
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        paddingHorizontal: theme.spacing.md,
-                        paddingVertical: theme.spacing.sm,
-                        borderWidth: theme.components.card.borderWidth,
-                        borderColor: successorError
-                          ? theme.colors.danger
-                          : withAlpha(theme.colors.text, 0.1),
-                        borderRadius: theme.radii.lg,
-                        backgroundColor: pressed
-                          ? withAlpha(theme.colors.primary, 0.04)
-                          : theme.colors.surface,
-                      },
-                    ]}
+                  <View
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 10,
+                      borderWidth: 2,
+                      borderColor: isSelected
+                        ? theme.colors.primary
+                        : theme.colors.border,
+                      justifyContent: 'center',
+                      alignItems: 'center',
+                      marginRight: theme.spacing.sm,
+                    }}
                   >
-                    {/* Avatar */}
-                    <View
-                      style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: 24,
-                        backgroundColor: withAlpha(theme.colors.primary, 0.12),
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        marginRight: theme.spacing.md,
-                        borderWidth: theme.components.card.borderWidth,
-                        borderColor: withAlpha(theme.colors.primary, 0.2),
-                      }}
-                    >
-                      <Text
+                    {isSelected && (
+                      <View
                         style={{
-                          fontSize: theme.typography.sizes.sm,
-                          fontWeight: '600',
-                          color: theme.colors.primary,
+                          width: 10,
+                          height: 10,
+                          borderRadius: 5,
+                          backgroundColor: theme.colors.primary,
+                        }}
+                      />
+                    )}
+                  </View>
+                  <Text
+                    style={{
+                      fontSize: theme.typography.sizes.md,
+                      fontWeight: '600',
+                      color: theme.colors.text,
+                      flex: 1,
+                    }}
+                  >
+                    {option.title}
+                  </Text>
+                </View>
+
+                {/* Описание опции (видно только если выбрана) */}
+                {isSelected && (
+                  <Text
+                    style={{
+                      fontSize: theme.typography.sizes.sm,
+                      color: theme.colors.textSecondary,
+                      marginLeft: 32,
+                      lineHeight: bodyLineHeight,
+                      marginTop: theme.spacing.xs,
+                    }}
+                  >
+                    {option.description}
+                  </Text>
+                )}
+
+                {/* Выбор преемника для "reassign" */}
+                {option.id === 'reassign' && isSelected && (
+                  <View style={{ marginTop: theme.spacing.md, marginLeft: 32 }}>
+                    <Pressable
+                      onPress={openSuccessorPicker}
+                      style={({ pressed }) => [
+                        {
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          paddingHorizontal: theme.spacing.md,
+                          paddingVertical: theme.spacing.sm,
+                          borderWidth: theme.components.card.borderWidth,
+                          borderColor: successorError
+                            ? theme.colors.danger
+                            : withAlpha(theme.colors.text, 0.1),
+                          borderRadius: theme.radii.lg,
+                          backgroundColor: pressed
+                            ? withAlpha(theme.colors.primary, 0.04)
+                            : theme.colors.surface,
+                        },
+                      ]}
+                    >
+                      {/* Avatar */}
+                      <View
+                        style={{
+                          width: 48,
+                          height: 48,
+                          borderRadius: 24,
+                          backgroundColor: withAlpha(theme.colors.primary, 0.12),
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: theme.spacing.md,
+                          borderWidth: theme.components.card.borderWidth,
+                          borderColor: withAlpha(theme.colors.primary, 0.2),
                         }}
                       >
-                        {successor?.name
-                          ? successor.name
-                              .split(' ')
-                              .map((n) => n[0])
-                              .join('')
-                              .toUpperCase()
-                              .slice(0, 2)
-                          : '?'}
-                      </Text>
-                    </View>
-
-                    {/* Content */}
-                    <View style={{ flex: 1 }}>
-                      {successor?.name ? (
-                        <>
-                          <Text
-                            numberOfLines={1}
-                            style={{
-                              fontSize: theme.typography.sizes.md,
-                              fontWeight: '500',
-                              color: theme.colors.text,
-                            }}
-                          >
-                            {successor.name}
-                          </Text>
-                          <Text
-                            numberOfLines={1}
-                            style={{
-                              fontSize: theme.typography.sizes.sm,
-                              color: theme.colors.textSecondary,
-                              marginTop: 2,
-                            }}
-                          >
-                            {t(`role_${successor.role || 'worker'}`)}
-                          </Text>
-                        </>
-                      ) : (
                         <Text
                           style={{
-                            fontSize: theme.typography.sizes.md,
-                            color: theme.colors.textSecondary,
+                            fontSize: theme.typography.sizes.sm,
+                            fontWeight: '600',
+                            color: theme.colors.primary,
                           }}
                         >
-                          {t('placeholder_pick_employee')}
+                          {successor?.name
+                            ? successor.name
+                                .split(' ')
+                                .map((n) => n[0])
+                                .join('')
+                                .toUpperCase()
+                                .slice(0, 2)
+                            : '?'}
                         </Text>
-                      )}
-                    </View>
+                      </View>
 
-                    {/* Chevron Icon */}
-                    <Feather
-                      name="chevron-right"
-                      size={24}
-                      color={theme.colors.textSecondary}
-                      style={{ marginLeft: theme.spacing.sm }}
-                    />
-                  </Pressable>
+                      {/* Content */}
+                      <View style={{ flex: 1 }}>
+                        {successor?.name ? (
+                          <>
+                            <Text
+                              numberOfLines={1}
+                              style={{
+                                fontSize: theme.typography.sizes.md,
+                                fontWeight: '500',
+                                color: theme.colors.text,
+                              }}
+                            >
+                              {successor.name}
+                            </Text>
+                            <Text
+                              numberOfLines={1}
+                              style={{
+                                fontSize: theme.typography.sizes.sm,
+                                color: theme.colors.textSecondary,
+                                marginTop: 2,
+                              }}
+                            >
+                              {t(`role_${successor.role || 'worker'}`)}
+                            </Text>
+                          </>
+                        ) : (
+                          <Text
+                            style={{
+                              fontSize: theme.typography.sizes.md,
+                              color: theme.colors.textSecondary,
+                            }}
+                          >
+                            {t('placeholder_pick_employee')}
+                          </Text>
+                        )}
+                      </View>
 
-                  {successorError && (
-                    <Text
-                      style={{
-                        color: theme.colors.danger,
-                        fontSize: theme.typography.sizes.xs,
-                        marginTop: theme.spacing.xs,
-                      }}
-                    >
-                      {successorError}
-                    </Text>
-                  )}
-                </View>
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+                      {/* Chevron Icon */}
+                      <Feather
+                        name="chevron-right"
+                        size={24}
+                        color={theme.colors.textSecondary}
+                        style={{ marginLeft: theme.spacing.sm }}
+                      />
+                    </Pressable>
+
+                    {successorError && (
+                      <Text
+                        style={{
+                          color: theme.colors.danger,
+                          fontSize: theme.typography.sizes.xs,
+                          marginTop: theme.spacing.xs,
+                        }}
+                      >
+                        {successorError}
+                      </Text>
+                    )}
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : (
+        <View style={{ padding: theme.spacing.md }}>
+          <Text
+            style={{
+              fontSize: theme.typography.sizes.sm,
+              color: theme.colors.textSecondary,
+              lineHeight: bodyLineHeight,
+            }}
+          >
+            {t('user_block_keepOrders_desc')}
+          </Text>
+        </View>
+      )}
     </BaseModal>
   );
 }
@@ -2372,6 +2396,9 @@ function DeleteEmployeeModal({
 }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
+  const bodyLineHeight = Math.round(
+    theme.typography.sizes.sm * (theme.typography.lineHeights?.normal ?? 1.35),
+  );
 
   const footer = (
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md }}>
@@ -2414,10 +2441,10 @@ function DeleteEmployeeModal({
             style={{
               fontSize: theme.typography.sizes.sm,
               color: theme.colors.textSecondary,
-              lineHeight: theme.typography.lineHeights?.md ?? 20,
+              lineHeight: bodyLineHeight,
             }}
           >
-            {t('user_delete_no_orders_msg')}
+            {t('user_delete_no_orders_desc')}
           </Text>
         </View>
       ) : !successor?.id ? (
@@ -2437,10 +2464,10 @@ function DeleteEmployeeModal({
               style={{
                 fontSize: theme.typography.sizes.sm,
                 color: theme.colors.textSecondary,
-                lineHeight: theme.typography.lineHeights?.md ?? 20,
+                lineHeight: bodyLineHeight,
               }}
             >
-              {t('user_delete_reassign_msg').replace('{count}', totalOrdersCount)}
+              {t('user_delete_reassign_desc').replace('{n}', String(totalOrdersCount))}
             </Text>
           </View>
           <UIButton
@@ -2468,10 +2495,10 @@ function DeleteEmployeeModal({
                 fontSize: theme.typography.sizes.sm,
                 color: theme.colors.textSecondary,
                 marginBottom: theme.spacing.md,
-                lineHeight: theme.typography.lineHeights?.md ?? 20,
+                lineHeight: bodyLineHeight,
               }}
             >
-              {t('user_delete_reassigned_msg').replace('{count}', totalOrdersCount)}
+              {t('user_delete_reassigned_desc').replace('{n}', String(totalOrdersCount))}
             </Text>
           </View>
           <View
@@ -2485,19 +2512,18 @@ function DeleteEmployeeModal({
             }}
           >
             <Text
-              numberOfLines={1}
-              style={{
-                fontSize: theme.typography.sizes.md,
-                fontWeight: '600',
-                color: theme.colors.text,
-              }}
-            >
-              {successor.name}
-            </Text>
-            <Text
-              numberOfLines={1}
               style={{
                 fontSize: theme.typography.sizes.sm,
+                color: theme.colors.text,
+                fontWeight: '500',
+                marginBottom: theme.spacing.xs,
+              }}
+            >
+              {successor.name || t('placeholder_no_name')}
+            </Text>
+            <Text
+              style={{
+                fontSize: theme.typography.sizes.xs,
                 color: theme.colors.textSecondary,
                 marginTop: theme.spacing.xs,
               }}
