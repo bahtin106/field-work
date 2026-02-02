@@ -1282,13 +1282,49 @@ export default function EditUser() {
       return error ?? e;
     }
   };
-  const onAskSuspend = () => {
+  const onAskSuspend = async () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
     if (meId && userId === meId) return; // не для себя
-    setOrdersAction('keep');
-    setSuccessor(null);
-    setSuccessorError('');
-    setSuspendVisible(true);
+
+    try {
+      setErr('');
+      toastInfo(t('toast_loading_info'), { sticky: true });
+
+      // Вызываем edge function для проверки заявок
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const checkUrl = `${supabaseUrl}/functions/v1/check_employee_orders`;
+
+      const checkRes = await fetch(checkUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
+
+      if (!checkRes.ok) {
+        const errData = await checkRes.json().catch(() => ({}));
+        throw new Error(errData.error || `Ошибка проверки заявок (${checkRes.status})`);
+      }
+
+      const { activeOrdersCount, availableEmployees } = await checkRes.json();
+
+      // Сохраняем количество заявок и список доступных сотрудников
+      setActiveOrdersCount(activeOrdersCount || 0);
+      setPickerItems(availableEmployees || []);
+      setOrdersAction('keep');
+      setSuccessor(null);
+      setSuccessorError('');
+      setSuspendVisible(true);
+    } catch (e) {
+      console.error('Ошибка при проверке заявок:', e);
+      setErr(e?.message || t('err_check_orders_failed'));
+      toastError(e?.message || t('err_check_orders_failed'));
+    }
   };
   
   const loadAvailableEmployees = async () => {
