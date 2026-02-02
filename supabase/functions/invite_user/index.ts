@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
     };
 
     console.log('[invite_user] Calling inviteUserByEmail for:', emailLower);
-    
+
     const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
       emailLower,
       inviteOptions
@@ -112,15 +112,42 @@ Deno.serve(async (req) => {
 
     console.log('[invite_user] Invite result:', inviteData?.user?.id, 'Error:', inviteError?.message);
 
+    let newUserId = inviteData?.user?.id;
+    let emailSent = true;
+    let actionLink: string | null = null;
+
     if (inviteError) {
-      console.error('Invite failed:', inviteError);
-      return new Response(`Invite error: ${inviteError?.message ?? 'unknown'}`, {
-        status: 400,
-        headers: cors,
+      const msg = String(inviteError?.message || '');
+      const isRateLimit = /rate limit|too many|limit exceeded/i.test(msg);
+
+      if (!isRateLimit) {
+        console.error('Invite failed:', inviteError);
+        return new Response(`Invite error: ${inviteError?.message ?? 'unknown'}`, {
+          status: 400,
+          headers: cors,
+        });
+      }
+
+      // Если уперлись в лимит писем, создаём invite-link без отправки письма
+      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+        type: 'invite',
+        email: emailLower,
+        options: inviteOptions,
       });
+
+      if (linkError) {
+        console.error('Invite link generation failed:', linkError);
+        return new Response(`Invite error: ${linkError?.message ?? 'unknown'}`, {
+          status: 400,
+          headers: cors,
+        });
+      }
+
+      newUserId = linkData?.user?.id;
+      actionLink = linkData?.action_link || null;
+      emailSent = false;
     }
 
-    const newUserId = inviteData?.user?.id;
     if (!newUserId) {
       return new Response('Failed to create invite', { status: 400, headers: cors });
     }
@@ -165,7 +192,9 @@ Deno.serve(async (req) => {
         success: true,
         user_id: newUserId,
         email: emailLower,
-        message: 'Invitation sent',
+        email_sent: emailSent,
+        action_link: actionLink,
+        message: emailSent ? 'Invitation sent' : 'Invitation link generated',
       }),
       {
         status: 200,
