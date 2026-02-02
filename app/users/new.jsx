@@ -596,7 +596,7 @@ export default function NewUserScreen() {
 
       if (!__IS_PROD) console.log('[handleInviteConfirm] Success!');
 
-      const emailSent = body?.email_sent !== false;
+      const emailSent = body?.email_sent === true;
       const actionLink = body?.action_link || null;
       const newUserId = body?.user_id || null;
 
