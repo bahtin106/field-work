@@ -2173,7 +2173,10 @@ function SuspendModal({
     {
       id: 'keep',
       title: t('user_block_keepOrders'),
-      description: t('user_block_keepOrders_desc'),
+      // Разное описание в зависимости от наличия заявок
+      description: hasActiveOrders 
+        ? t('user_block_keepOrders_desc')
+        : t('user_block_noOrders_desc'),
     },
   ];
   
