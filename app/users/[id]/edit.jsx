@@ -1370,15 +1370,17 @@ export default function EditUser() {
       }
       const errS = await setSuspended(userId, true);
       if (errS) throw new Error(errS.message || t('toast_generic_error'));
-      setIsSuspended(true);
       
+      // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
+      allowLeaveRef.current = true;
+      
+      setIsSuspended(true);
       // Инвалидируем кеш users для мгновенного обновления списка
       globalCache.invalidate('users:');
-      
       toastSuccess(t('toast_suspended'));
       setSuspendVisible(false);
-      // Разрешаем выход без подтверждения (Apple-style: успешная операция)
-      allowLeaveRef.current = true;
+      
+      // Навигируем назад
       setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
@@ -1396,15 +1398,17 @@ export default function EditUser() {
       toastInfo(t('toast_saving'), { sticky: true });
       const errS = await setSuspended(userId, false);
       if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
-      setIsSuspended(false);
       
+      // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
+      allowLeaveRef.current = true;
+      
+      setIsSuspended(false);
       // Инвалидируем кеш users для мгновенного обновления списка
       globalCache.invalidate('users:');
-      
       toastSuccess(t('toast_unsuspended'));
       setUnsuspendVisible(false);
-      // Разрешаем выход без подтверждения (Apple-style: успешная операция)
-      allowLeaveRef.current = true;
+      
+      // Навигируем назад
       setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
@@ -1515,6 +1519,9 @@ export default function EditUser() {
       if (payload && payload.ok === false) {
         throw new Error(payload.message || t('err_delete_failed'));
       }
+
+      // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
+      allowLeaveRef.current = true;
 
       // Инвалидируем кеш users для мгновенного обновления списка
       globalCache.invalidate('users:');
