@@ -38,6 +38,7 @@ export default {
   btn_choose: 'Выбрать',
   header_cancel: 'Закрыть',
   header_save: 'Сохранить',
+  header_edit_user: 'Редактирование',
 
   // Просмотр профиля (app/users/[id])
   // Роли

@@ -39,6 +39,8 @@ export default {
   orders_found: 'Found',
   settings_sections_quiet_items_quiet_reset: 'Reset',
   btn_apply: 'Apply',
+  header_save: 'Save',
+  header_edit_user: 'Edit',
   // Finances
   company_settings_sections_finances_title: 'Finances',
   company_settings_sections_finances_items_currency: 'Currency',
