@@ -34,6 +34,7 @@ import {
 } from '../../lib/authValidation';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
+import { globalCache } from '../../lib/cache';
 import { getDict, t as T } from '../../src/i18n';
 
 // --- locals / env-driven ---
@@ -586,7 +587,11 @@ export default function NewUserScreen() {
       // Успешно отправили приглашение
       setInviteModalVisible(false);
       toastSuccess(`Приглашение отправлено на ${inviteEmail}`);
-      setTimeout(() => router.replace('/users'), theme.timings?.backDelayMs ?? 300);
+      
+      // Очищаем кеш и переходим обратно
+      globalCache.invalidate('users:');
+      allowLeaveRef.current = true;
+      router.replace('/users');
     } catch (e) {
       const msg = String(e?.message || t('toast_generic_error'));
       setErr(msg);
