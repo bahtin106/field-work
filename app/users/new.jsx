@@ -109,9 +109,10 @@ export default function NewUserScreen() {
   const [role, setRole] = useState(ROLE.WORKER);
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteErrorVisible, setInviteErrorVisible] = useState(false);
+  const [inviteSuccessScreen, setInviteSuccessScreen] = useState(false);
   const [inviteLink, setInviteLink] = useState(null);
   const [inviteUserId, setInviteUserId] = useState(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
 
   const [phone, setPhone] = useState('');
   const [birthdate, setBirthdate] = useState(null);
@@ -603,16 +604,16 @@ export default function NewUserScreen() {
       setInviteModalVisible(false);
       
       if (emailSent) {
+        // Письмо отправилось успешно
         toastSuccess(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
-        // Очищаем кеш и переходим обратно
         globalCache.invalidate('users:');
         allowLeaveRef.current = true;
         router.replace('/users');
       } else if (actionLink) {
-        // Email не отправился - показываем модаль с ссылкой
+        // Email не отправился - показываем экран с ссылкой для копирования
         setInviteLink(actionLink);
         setInviteUserId(newUserId);
-        setInviteErrorVisible(true);
+        setInviteSuccessScreen(true);
       }
     } catch (e) {
       const msg = String(e?.message || t('toast_generic_error'));
@@ -965,32 +966,166 @@ export default function NewUserScreen() {
           onConfirm={handleInviteConfirm}
           onClose={() => setInviteModalVisible(false)}
         />
-
-        <ConfirmModal
-          visible={inviteErrorVisible}
-          title={t('invite_error_modal_title')}
-          message={t('invite_error_modal_message')}
-          confirmLabel={t('invite_error_copy_link')}
-          cancelLabel={t('invite_error_goto_users')}
-          confirmVariant="primary"
-          onConfirm={async () => {
-            if (inviteLink) {
-              await Clipboard.setStringAsync(inviteLink);
-              toastInfo(t('toast_link_copied'));
-            }
-            setInviteErrorVisible(false);
-            globalCache.invalidate('users:');
-            allowLeaveRef.current = true;
-            router.replace('/users');
-          }}
-          onClose={() => {
-            setInviteErrorVisible(false);
-            globalCache.invalidate('users:');
-            allowLeaveRef.current = true;
-            router.replace('/users');
-          }}
-        />
       </KeyboardAwareScrollView>
+
+      {inviteSuccessScreen && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: theme.colors.background,
+            zIndex: 1000,
+            justifyContent: 'center',
+            alignItems: 'center',
+            paddingHorizontal: theme.spacing.lg,
+          }}
+        >
+          <View style={{ alignItems: 'center', gap: theme.spacing.xl, flex: 1, justifyContent: 'center' }}>
+            <View style={{ alignItems: 'center', gap: theme.spacing.md }}>
+              <View
+                style={{
+                  width: 80,
+                  height: 80,
+                  borderRadius: 40,
+                  backgroundColor: withAlpha(theme.colors.success || theme.colors.primary, 0.12),
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Feather
+                  name="check-circle"
+                  size={48}
+                  color={theme.colors.success || theme.colors.primary}
+                />
+              </View>
+
+              <Text
+                style={{
+                  fontSize: theme.typography.sizes.lg,
+                  fontWeight: '700',
+                  color: theme.colors.text,
+                  textAlign: 'center',
+                }}
+              >
+                {t('invite_success_title')}
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: theme.typography.sizes.sm,
+                  color: theme.colors.textSecondary,
+                  textAlign: 'center',
+                  lineHeight: Math.round(
+                    theme.typography.sizes.sm * (theme.typography.lineHeights?.normal ?? 1.5),
+                  ),
+                }}
+              >
+                {t('invite_success_message')}
+              </Text>
+            </View>
+
+            <View
+              style={{
+                width: '100%',
+                backgroundColor: theme.colors.surface,
+                borderRadius: theme.radii.lg,
+                padding: theme.spacing.md,
+                borderWidth: theme.components.card.borderWidth,
+                borderColor: theme.colors.border,
+              }}
+            >
+              <Text
+                style={{
+                  fontSize: theme.typography.sizes.xs,
+                  color: theme.colors.textSecondary,
+                  marginBottom: theme.spacing.sm,
+                }}
+              >
+                {t('invite_link_label')}
+              </Text>
+              <Text
+                style={{
+                  fontSize: theme.typography.sizes.sm,
+                  color: theme.colors.text,
+                  fontFamily: 'monospace',
+                  lineHeight: Math.round(theme.typography.sizes.sm * 1.5),
+                }}
+                numberOfLines={4}
+              >
+                {inviteLink}
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={async () => {
+                if (inviteLink) {
+                  await Clipboard.setStringAsync(inviteLink);
+                  setInviteLinkCopied(true);
+                  setTimeout(() => setInviteLinkCopied(false), 2000);
+                }
+              }}
+              style={({ pressed }) => [
+                {
+                  width: '100%',
+                  paddingVertical: theme.spacing.md,
+                  paddingHorizontal: theme.spacing.lg,
+                  borderRadius: theme.radii.lg,
+                  backgroundColor: theme.colors.primary,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontSize: theme.typography.sizes.md,
+                  fontWeight: '600',
+                  color: '#fff',
+                }}
+              >
+                {inviteLinkCopied ? t('invite_link_copied') : t('invite_copy_link')}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              onPress={() => {
+                setInviteSuccessScreen(false);
+                globalCache.invalidate('users:');
+                allowLeaveRef.current = true;
+                router.replace('/users');
+              }}
+              style={({ pressed }) => [
+                {
+                  width: '100%',
+                  paddingVertical: theme.spacing.md,
+                  paddingHorizontal: theme.spacing.lg,
+                  borderRadius: theme.radii.lg,
+                  backgroundColor: theme.colors.surface,
+                  borderWidth: theme.components.card.borderWidth,
+                  borderColor: theme.colors.border,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontSize: theme.typography.sizes.md,
+                  fontWeight: '600',
+                  color: theme.colors.text,
+                }}
+              >
+                {t('btn_back')}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
     </SafeAreaView>
   );
 }
