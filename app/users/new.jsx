@@ -34,7 +34,7 @@ import {
 } from '../../lib/authValidation';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
-import { globalCache } from '../../lib/cache';
+import { globalCache } from '../../lib/cache/DataCache';
 import { getDict, t as T } from '../../src/i18n';
 
 // --- locals / env-driven ---
