@@ -82,6 +82,18 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const qc = useQueryClient();
 
+  // ДИАГНОСТИКА: что приходит в props
+  useEffect(() => {
+    console.log('[UniversalHome] Props:', {
+      hasUser: !!user,
+      userId: user?.id,
+      hasProvidedProfile: !!providedProfile,
+      profileSource: providedProfile?.__source,
+      profileRole: providedProfile?.role,
+      propRole: role,
+    });
+  }, [user, providedProfile, role]);
+
   useEffect(() => {
     if (user) return undefined;
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
@@ -105,6 +117,17 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     user?.id && isUuid(user.id) ? user.id : isUuid(session?.user?.id) ? session.user.id : null;
 
   const shouldFetchProfile = !!uid && (!providedProfile || providedProfile.__source === 'fallback');
+  
+  // ДИАГНОСТИКА: проверка fetchProfile
+  useEffect(() => {
+    console.log('[UniversalHome] Profile fetch decision:', {
+      uid,
+      hasProvidedProfile: !!providedProfile,
+      providedProfileSource: providedProfile?.__source,
+      shouldFetchProfile,
+    });
+  }, [uid, providedProfile, shouldFetchProfile]);
+
   const { data: profileData, isLoading: profileLoading } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
@@ -148,6 +171,16 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   // profileLoading НЕ блокирует счетчики - они могут загружаться параллельно
   const readyForCounts = !!uid && !!resolvedRole;
 
+  // ДИАГНОСТИКА: готовность к загрузке счетчиков
+  useEffect(() => {
+    console.log('[UniversalHome] Counts readiness:', {
+      uid,
+      resolvedRole,
+      readyForCounts,
+      canViewAll,
+    });
+  }, [uid, resolvedRole, readyForCounts, canViewAll]);
+
   const { data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts', 'my', uid],
     queryFn: () => fetchCountsMy(uid),
@@ -172,7 +205,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const openSelfProfileEdit = () => {
     if (uid) router.push(`/users/${uid}`);
   };
-  const openAppSettings = () => router.push('/app_settings/appsettings');
+  const openAppSettings = () => router.push('/app_settings/AppSettings');
   const openCompanySettings = () => router.push('/company_settings');
   const openStats = () => router.push('/stats');
   const openCreateOrder = () => router.push('/orders/create-order');

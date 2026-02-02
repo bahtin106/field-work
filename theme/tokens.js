@@ -89,6 +89,7 @@ const light = {
       labelSpacing: 4, // Отступ между лейблом и полем
       fieldSpacing: 2, // Вертикальный отступ между полями внутри карточек
       separator: {
+        enabled: true,
         insetX: 'md', // 12px - компактный инсет
         height: 1,
         alpha: 0.18,
@@ -179,6 +180,7 @@ const dark = {
         shadowOffset: { width: 0, height: 10 },
       },
       android: { elevation: 4 },
+          enabled: false,
     },
     raised: {
       ios: {

@@ -23,7 +23,7 @@ function withAlpha(color, a) {
   return `rgba(0,0,0,${a})`;
 }
 
-export default function AppHeader({ options = {}, back, route }) {
+export default function AppHeader({ options = {}, back, route, onBackPress: onBackPressProp }) {
   const { theme } = useTheme();
   const nav = useNavigation();
   const pathname = usePathname?.() || '';
@@ -54,13 +54,19 @@ export default function AppHeader({ options = {}, back, route }) {
 
   const onBack = useCallback(() => {
     try {
+      // Сначала проверяем prop из EditScreenTemplate
+      if (onBackPressProp && typeof onBackPressProp === 'function') {
+        onBackPressProp();
+        return;
+      }
+      // Затем route.params
       if (route?.params?.onBackPress && typeof route.params.onBackPress === 'function') {
         route.params.onBackPress();
         return;
       }
     } catch (e) {}
     nav.goBack();
-  }, [route?.params?.onBackPress, nav]);
+  }, [onBackPressProp, route?.params?.onBackPress, nav]);
 
   const onClose = useCallback(() => {
     nav.goBack();

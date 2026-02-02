@@ -263,7 +263,7 @@ export default function IndexScreen() {
   }, []);
 
   const MIN_BOOT_MS = 200; // Уменьшено с 600 до 200ms - быстрый старт благодаря кэшу!
-  const MAX_BOOT_MS = 15000; // жёсткий верхний предел (снижен для лучшего UX)
+  const MAX_BOOT_MS = 6000; // Снижено с 15000 до 6000ms - дополнительный таймаут в SimpleAuthProvider гарантирует fallback за 5 сек
 
   // activeFetching НЕ включает !role, т.к. роль может быть в кэше мгновенно
   // КРИТИЧНО: Используем timestamp для принудительного завершения через MAX_BOOT_MS
@@ -339,6 +339,25 @@ export default function IndexScreen() {
   const loaderText = forceReadyReason
     ? 'Не удалось загрузить профиль. Проверьте сеть и попробуйте еще раз.'
     : 'Загружаем профиль...';
+
+  // ДИАГНОСТИКА: Логируем состояние загрузки для отладки
+  React.useEffect(() => {
+    if (showLoader) {
+      console.log('[Orders] Spinner visible:', {
+        bootState,
+        hasTrustedRole: hasTrustedProfileRole,
+        profileRole,
+        profileSource,
+        isRoleLoading,
+        isPermLoading,
+        criticalFetching,
+        forceReadyReason,
+        elapsed: Date.now() - fetchStartTime,
+      });
+    } else if (bootState === 'ready') {
+      console.log('[Orders] Spinner hidden, showing content');
+    }
+  }, [showLoader, bootState]);
 
   return (
     <View

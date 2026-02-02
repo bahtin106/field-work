@@ -67,116 +67,40 @@ export function SimpleAuthProvider({ children }) {
     const userId = user?.id;
     if (!userId) return null;
 
-    const fallbackProfile = buildProfileFromUser(user, 'fallback');
-
-    const tryFetchProfile = async () => {
-      try {
-        const baseQuery = supabase
-          .from('profiles')
-          .select(PROFILE_COLUMNS)
-          .or(`id.eq.${userId},user_id.eq.${userId}`)
-          .maybeSingle();
-        let { data, error } = await baseQuery;
-
-        if (error && (error.code === '42703' || /user_id/i.test(error.message || ''))) {
-          const fallbackQuery = supabase
-            .from('profiles')
-            .select(PROFILE_COLUMNS)
-            .eq('id', userId)
-            .maybeSingle();
-          const res = await fallbackQuery;
-          data = res.data;
-          error = res.error;
-        }
-
-        if (error) {
-          if (error.code === 'PGRST116') {
-            return null;
-          }
-          if (error.code === '42703' || /column .* does not exist/i.test(error.message || '')) {
-            return null;
-          }
-          console.error('SimpleAuth: profile query error', error);
-          return null;
-        }
-
-        if (!data) return null;
-        return normalizeProfileData(data, user, 'supabase');
-      } catch (err) {
-        return null;
-      }
-    };
-
+    console.log('[SimpleAuth] Loading profile for:', userId);
+    
     try {
-      const profileById = await tryFetchProfile();
-      if (profileById) return profileById;
-      const metadataProfile = buildProfileFromUser(user, 'pre-create');
-      const basePayload = {
-        id: userId,
-        user_id: userId,
-        role: metadataProfile?.role ?? 'worker',
-      };
-      if (metadataProfile?.first_name) basePayload.first_name = metadataProfile.first_name;
-      if (metadataProfile?.last_name) basePayload.last_name = metadataProfile.last_name;
-      if (metadataProfile?.full_name) basePayload.full_name = metadataProfile.full_name;
-      if (metadataProfile?.avatar_url) basePayload.avatar_url = metadataProfile.avatar_url;
-      if (metadataProfile?.company_id) basePayload.company_id = metadataProfile.company_id;
+      // ПРЯМОЙ ПРОСТОЙ ЗАПРОС
+      const { data, error } = await supabase
+        .from('profiles')
+        .select(PROFILE_COLUMNS)
+        .eq('id', userId)
+        .single();
 
-      const attemptCreate = async (payload) => {
-        return supabase
-          .from('profiles')
-          .insert(payload, { defaultToNull: true })
-          .select(PROFILE_COLUMNS)
-          .single();
-      };
-
-      let createPayload = { ...basePayload };
-      let createResult;
-
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        createResult = await attemptCreate(createPayload);
-        const creationError = createResult.error;
-
-        if (!creationError) {
-          break;
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // Профиля нет - создаем
+          console.log('[SimpleAuth] Creating new profile...');
+          const { data: created, error: createErr } = await supabase
+            .from('profiles')
+            .insert({ id: userId, user_id: userId, role: 'worker' })
+            .select(PROFILE_COLUMNS)
+            .single();
+          
+          if (createErr) {
+            console.error('[SimpleAuth] Create error:', createErr);
+            throw createErr;
+          }
+          return normalizeProfileData(created, user, 'created');
         }
-
-        const message = creationError.message || '';
-        const missingColumnMatch = message.match(/column "?([a-zA-Z0-9_]+)"?/i);
-        const missingColumn = missingColumnMatch?.[1];
-        const isUnsupportedColumn =
-          creationError.code === '42703' ||
-          creationError.code === 'PGRST204' ||
-          /column .* does not exist/i.test(message);
-
-        if (isUnsupportedColumn && missingColumn && missingColumn in createPayload) {
-          delete createPayload[missingColumn];
-          continue;
-        }
-
-        break;
+        throw error;
       }
 
-      const { data: createdProfile, error: createError } = createResult || {
-        data: null,
-        error: null,
-      };
-
-      if (createError) {
-        if (createError.code === '23505') {
-          const retryProfile = await tryFetchProfile('id');
-          return retryProfile || fallbackProfile;
-        }
-        return fallbackProfile;
-      }
-
-      if (createdProfile) {
-        return normalizeProfileData(createdProfile, user, 'created');
-      }
-
-      return fallbackProfile;
+      console.log('[SimpleAuth] Profile loaded:', data.role);
+      return normalizeProfileData(data, user, 'supabase');
     } catch (error) {
-      return fallbackProfile;
+      console.error('[SimpleAuth] Profile error:', error);
+      throw error;
     }
   }, []);
 
@@ -190,49 +114,12 @@ export function SimpleAuthProvider({ children }) {
   const scheduleProfileRetry = useCallback(
     (user, attempt = 1) => {
       if (!user?.id) return;
+      
+      // После fallback не переретраим - фоновая загрузка сама обновит при успехе
       clearProfileRetry();
-
-      const delay = Math.min(3000 * attempt, 12000);
-      profileRetryRef.current = setTimeout(() => {
-        loadProfile(user)
-          .then((profile) => {
-            if (!profile) {
-              setState((prev) =>
-                prev.user?.id === user.id
-                  ? { ...prev, profileError: 'profile-load-failed', profile: prev.profile }
-                  : prev,
-              );
-              scheduleProfileRetry(user, attempt + 1);
-              return;
-            }
-
-            setState((prev) => {
-              if (!prev.isAuthenticated || prev.user?.id !== user.id) return prev;
-              const prevSource = prev.profile?.__source;
-              const nextSource = profile.__source;
-              if (nextSource === 'fallback' && prevSource && prevSource !== 'fallback') {
-                return prev;
-              }
-              return {
-                ...prev,
-                profile,
-                profileError: null,
-              };
-            });
-
-            if (profile.__source === 'fallback') {
-              scheduleProfileRetry(user, attempt + 1);
-            } else {
-              clearProfileRetry();
-            }
-          })
-          .catch((error) => {
-            console.error('SimpleAuth: profile retry error', error);
-            scheduleProfileRetry(user, attempt + 1);
-          });
-      }, delay);
+      return;
     },
-    [loadProfile, clearProfileRetry],
+    [clearProfileRetry],
   );
 
   const handleAuthChange = useCallback(
@@ -263,50 +150,43 @@ export function SimpleAuthProvider({ children }) {
           return;
         }
 
-        const optimisticProfile = buildProfileFromUser(user, 'optimistic');
-        clearProfileRetry();
+        console.log('[SimpleAuth] Auth event:', event);
+        
+        // ВАЖНО: НЕ используем оптимистичный профиль, ЖДЕМ реальный из БД
         setState({
-          isInitializing: false,
+          isInitializing: true,
           isAuthenticated: true,
           user: user,
-          profile: optimisticProfile,
+          profile: null, // Профиль будет загружен
           profileError: null,
         });
-        bumpSessionEpoch();
 
-        loadProfile(user)
-          .then((profile) => {
-            const resolvedProfile = profile || optimisticProfile;
-            setState((prev) => {
-              if (!prev.isAuthenticated || prev.user?.id !== user.id) return prev;
-              const prevSource = prev.profile?.__source;
-              const nextSource = resolvedProfile.__source;
-              if (nextSource === 'fallback' && prevSource && prevSource !== 'fallback') {
-                return prev;
-              }
-              return {
-                ...prev,
-                profile: resolvedProfile,
-                profileError: profile ? null : 'profile-load-failed',
-              };
-            });
-
-            if (!profile) {
-              scheduleProfileRetry(user, 1);
-            } else if (profile.__source === 'fallback') {
-              scheduleProfileRetry(user, 1);
-            } else {
-              clearProfileRetry();
-            }
-          })
-          .catch((error) => {
-            console.error('SimpleAuth: background profile load failed', error);
-            setState((prev) => ({
-              ...prev,
-              profileError: 'profile-load-failed',
-            }));
-            scheduleProfileRetry(user, 1);
+        try {
+          const profile = await loadProfile(user);
+          console.log('[SimpleAuth] Setting profile state:', {
+            hasProfile: !!profile,
+            role: profile?.role,
+            source: profile?.__source,
           });
+          setState((prev) => ({
+            ...prev,
+            isInitializing: false,
+            profile: profile,
+            profileError: profile ? null : 'load-failed',
+          }));
+          if (profile) {
+            console.log('[SimpleAuth] Profile loaded, role:', profile.role);
+          }
+        } catch (error) {
+          console.error('[SimpleAuth] Profile load failed:', error);
+          setState((prev) => ({
+            ...prev,
+            isInitializing: false,
+            profileError: 'load-failed',
+          }));
+        }
+        
+        bumpSessionEpoch();
         return;
       }
 
@@ -315,7 +195,7 @@ export function SimpleAuthProvider({ children }) {
         isInitializing: false,
       }));
     },
-    [loadProfile, clearProfileRetry, scheduleProfileRetry],
+    [loadProfile, clearProfileRetry],
   );
 
   useEffect(() => {

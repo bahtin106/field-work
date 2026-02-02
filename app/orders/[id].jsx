@@ -16,7 +16,6 @@ import {
   Image,
   InteractionManager,
   Keyboard,
-  KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
@@ -25,10 +24,10 @@ import {
   StyleSheet,
   Text,
   ToastAndroid,
-  TouchableWithoutFeedback,
   UIManager,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import * as NavigationBar from 'expo-navigation-bar';
 
@@ -55,10 +54,11 @@ import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 
-import Screen from '../../components/layout/Screen';
+import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import SectionHeader from '../../components/ui/SectionHeader';
+import LabelValueRow from '../../components/ui/LabelValueRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { usePermissions } from '../../lib/permissions';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -72,10 +72,11 @@ const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 export default function OrderDetails() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const { has } = usePermissions();
+  const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
+  const insets = useSafeAreaInsets();
 
   const applyNavBar = useCallback(async () => {
     try {
@@ -1645,7 +1646,7 @@ export default function OrderDetails() {
     );
   }, [fullTitle, theme]);
 
-  if ((loading && !hydratedRef.current) || !order) {
+  if (permsLoading || (loading && !hydratedRef.current) || !order) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -1659,50 +1660,38 @@ export default function OrderDetails() {
   const canChangeStatus = canEdit() && order.status !== 'В ленте';
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <Screen
-        background="background"
-        edges={['top', 'bottom']}
-        headerOptions={{
+    <>
+      <SafeAreaView
+        style={{ flex: 1, backgroundColor: theme.colors.background }}
+        edges={['left', 'right']}
+      >
+      <AppHeader
+        back
+        options={{
           headerTitleAlign: 'left',
-          // Используем headerTitle как функцию — возвращаем <Text> (без "сырых" строк)
-          headerTitle: () => (
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={{
-                color: theme.colors.text,
-                fontSize: theme.typography?.sizes?.md || 16,
-                fontWeight: theme.typography?.weight?.semibold || '600',
-              }}
-            >
-              {shortTitle}
-            </Text>
-          ),
-          // Передаём полное название как сериализуемое поле, чтобы хедер мог показать marquee
-          fullTitle: fullTitle,
+          title: shortTitle,
           rightTextLabel: canEdit() && !editMode && order?.id ? t('order_details_edit') : undefined,
           onRightPress:
             canEdit() && !editMode && order?.id
               ? () => router.push(`/orders/edit/${order.id}`)
               : undefined,
         }}
+      />
+      <ScrollView
+        ref={detailsScrollRef}
+        contentContainerStyle={[
+          styles.contentWrap,
+          {
+            paddingBottom:
+              (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
+              (insets?.bottom ?? 0),
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        {/* Marquee overlay moved to AppHeader (uses layout measurements). */}
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-          <ScrollView
-            ref={detailsScrollRef}
-            contentContainerStyle={styles.container}
-            keyboardShouldPersistTaps="handled"
-          >
-            <SectionHeader topSpacing="xs">{t('order_details_general_data')}</SectionHeader>
-            <RNAnimated.View
-              style={[{ opacity: viewFade, transform: [{ translateY: viewTranslate }] }]}
-            >
-              <Card paddedXOnly>
+            <SectionHeader>{t('order_details_general_data')}</SectionHeader>
+            <Card paddedXOnly>
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_status')}</Text>
                   <View
@@ -1767,15 +1756,17 @@ export default function OrderDetails() {
                 </View>
                 <View style={base.sep} />
 
-                <Pressable style={base.row} onPress={openInYandex}>
-                  <Text style={base.label}>{t('order_details_address')}</Text>
-                  <View style={base.rightWrap}>
-                    <Text style={[base.value, styles.link]} numberOfLines={2}>
-                      {[order.address, order.region, order.city, order.street, order.house]
-                        .filter(Boolean)
-                        .join(', ') || t('order_details_address_not_specified')}
-                    </Text>
-                  </View>
+                <Pressable onPress={openInYandex}>
+                  <LabelValueRow
+                    label={t('order_details_address')}
+                    valueComponent={
+                      <Text style={[base.value, styles.link]} numberOfLines={2}>
+                        {[order.address, order.region, order.city, order.street, order.house]
+                          .filter(Boolean)
+                          .join(', ') || t('order_details_address_not_specified')}
+                      </Text>
+                    }
+                  />
                 </Pressable>
                 <View style={base.sep} />
 
@@ -1826,10 +1817,10 @@ export default function OrderDetails() {
                 </Pressable>
                 <View style={base.sep} />
 
-                <View style={base.row}>
-                  <Text style={base.label}>{t('order_details_phone')}</Text>
-                  <View style={base.rightWrap}>
-                    {(() => {
+                <LabelValueRow
+                  label={t('order_details_phone')}
+                  valueComponent={
+                    (() => {
                       const isAdmin = role === 'admin' || role === 'dispatcher';
                       const visiblePhone =
                         order?.customer_phone_visible || (isAdmin ? order?.phone : null);
@@ -1844,23 +1835,19 @@ export default function OrderDetails() {
                         );
                       }
                       return (
-                        <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                        <Text style={[base.value, { color: theme.colors.textSecondary }]}> 
                           {masked || t('order_details_phone_hidden')}
                         </Text>
                       );
-                    })()}
-                  </View>
-                </View>
+                    })()
+                  }
+                />
                 <View style={base.sep} />
 
-                <View style={base.row}>
-                  <Text style={base.label}>{t('order_details_amount')}</Text>
-                  <View style={base.rightWrap}>
-                    <Text style={base.value}>
-                      {formatMoney(order.price, order?.currency || companySettings?.currency)}
-                    </Text>
-                  </View>
-                </View>
+                <LabelValueRow
+                  label={t('order_details_amount')}
+                  value={formatMoney(order.price, order?.currency || companySettings?.currency)}
+                />
                 <View style={base.sep} />
 
                 <View style={base.row}>
@@ -1872,18 +1859,9 @@ export default function OrderDetails() {
                   </View>
                 </View>
               </Card>
-            </RNAnimated.View>
 
             {hasField('comment') && (
-              <RNAnimated.View
-                style={[
-                  {
-                    opacity: viewFade,
-                    transform: [{ translateY: viewTranslate }],
-                    marginTop: theme.spacing?.md || 12,
-                  },
-                ]}
-              >
+              <>
                 <SectionHeader>{t('order_details_description')}</SectionHeader>
                 <Card>
                   <Text
@@ -1911,7 +1889,7 @@ export default function OrderDetails() {
                     </Pressable>
                   )}
                 </Card>
-              </RNAnimated.View>
+              </>
             )}
 
             {!isFree && renderPhotoRow(t('order_details_contract_photo'), 'contract_file')}
@@ -1957,13 +1935,12 @@ export default function OrderDetails() {
               </Pressable>
             )}
           </ScrollView>
-        </TouchableWithoutFeedback>
-        {Platform.OS === 'ios' && !!bannerMessage && (
-          <View pointerEvents="none" style={styles.banner}>
-            <Text style={styles.bannerText}>{bannerMessage}</Text>
-          </View>
-        )}
-      </Screen>
+      {Platform.OS === 'ios' && !!bannerMessage && (
+        <View pointerEvents="none" style={styles.banner}>
+          <Text style={styles.bannerText}>{bannerMessage}</Text>
+        </View>
+      )}
+    </SafeAreaView>
 
       <Modal
         isVisible={workTypeModalVisible}
@@ -2305,7 +2282,7 @@ export default function OrderDetails() {
           </View>
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </>
   );
 }
 
@@ -2316,12 +2293,8 @@ function createStyles(theme) {
   const shadows = theme.shadows || {};
 
   return StyleSheet.create({
-    container: {
-      paddingTop: (sp.lg || 16) / 2,
-      paddingLeft: sp.lg || 16,
-      paddingRight: sp.lg || 16,
-      paddingBottom: 60,
-      backgroundColor: theme.colors.background,
+    contentWrap: {
+      paddingHorizontal: sp.lg || 16,
     },
     centered: {
       flex: 1,

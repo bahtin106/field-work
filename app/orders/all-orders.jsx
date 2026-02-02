@@ -90,7 +90,7 @@ export default function AllOrdersScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
-  const { has } = usePermissions();
+  const { has, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
 
   const styles = useMemo(
@@ -1001,7 +1001,7 @@ export default function AllOrdersScreen() {
           title: t('routes.orders/all-orders'),
         }}
       />
-      {allowed === null ? (
+      {loading || allowed === null ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>

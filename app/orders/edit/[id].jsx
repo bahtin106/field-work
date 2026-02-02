@@ -4,8 +4,6 @@ import { ru } from 'date-fns/locale';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -20,12 +18,11 @@ import { supabase } from '../../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../../lib/workTypes';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FiltersPanel from '../../../components/filters/FiltersPanel';
 import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
 import { useUsers } from '../../../components/hooks/useUsers';
-import Screen from '../../../components/layout/Screen';
+import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import Card from '../../../components/ui/Card';
 import { DateTimeModal } from '../../../components/ui/modals';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
@@ -140,6 +137,7 @@ export default function EditOrderScreen() {
 
   const router = useRouter();
   const { theme } = useTheme();
+  const formStyles = useEditFormStyles();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [saving, setSaving] = useState(false);
@@ -362,21 +360,10 @@ export default function EditOrderScreen() {
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        container: { padding: theme.spacing?.md ?? 16, paddingBottom: theme.spacing?.xl ?? 32 },
-        selectInput: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: theme.radii?.md ?? 10,
-          backgroundColor: theme.colors.surface,
-          padding: theme.spacing?.md ?? 12,
-          marginTop: theme.spacing?.xs ?? 4,
-        },
-        selectInputText: { fontSize: 16, color: theme.colors.text },
+        card: formStyles.card,
+        field: formStyles.field,
       }),
-    [theme],
+    [formStyles],
   );
 
   const showToast = (msg, type = 'info', options) => {
@@ -503,58 +490,35 @@ export default function EditOrderScreen() {
     }
   };
 
-  const headerOptions = useMemo(
-    () => ({
-      rightTextLabel: headerLabel,
-      onRightPress: handleSave,
-    }),
-    [handleSave, headerLabel],
-  );
-
   if (loading) {
     return (
-      <Screen background="background">
+      <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1 }} />
-      </Screen>
+      </EditScreenTemplate>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <>
+      <EditScreenTemplate
+      rightTextLabel={headerLabel}
+      onRightPress={handleSave}
+      scrollRef={scrollRef}
+      onScroll={(e) => {
+        try {
+          scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+        } catch {}
+      }}
     >
-      <Screen scroll={false} headerOptions={headerOptions}>
-        <KeyboardAwareScrollView
-          ref={scrollRef}
-          contentContainerStyle={[
-            styles.container,
-            {
-              paddingBottom: Math.max(
-                styles.container?.paddingBottom ?? 0,
-                Math.max(theme.components?.scrollView?.paddingBottom ?? 24, insets.bottom ?? 0),
-              ),
-            },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
-          showsVerticalScrollIndicator={false}
-          onScroll={(e) => {
-            try {
-              scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-            } catch {}
-          }}
-          scrollEventThrottle={16}
-        >
-          <SectionHeader bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
-          <Card>
+      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
+          <Card padded={false} style={styles.card}>
             <TextField
               ref={titleRef}
               label={T('order_field_title')}
               placeholder={T('order_placeholder_title')}
               value={title}
               onChangeText={setTitle}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: titleRef,
@@ -575,6 +539,7 @@ export default function EditOrderScreen() {
               onChangeText={setDescription}
               multiline
               minLines={3}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: descriptionRef,
@@ -591,6 +556,7 @@ export default function EditOrderScreen() {
               value={selectedEmployeeName}
               placeholder={T('order_details_not_assigned')}
               pressable
+              style={styles.field}
               onPress={() => setAssigneePickerVisible(true)}
             />
 
@@ -600,19 +566,21 @@ export default function EditOrderScreen() {
                 value={selectedWorkTypeName}
                 placeholder={T('order_details_work_type_not_selected')}
                 pressable
+                style={styles.field}
                 onPress={() => setWorkTypeModalVisible(true)}
               />
             )}
           </Card>
 
           <SectionHeader bottomSpacing="xs">Финансы</SectionHeader>
-          <Card>
+          <Card padded={false} style={styles.card}>
             <TextField
               label={T('order_details_amount')}
               placeholder="0.00"
               value={price}
               onChangeText={setPrice}
               keyboardType="decimal-pad"
+              style={styles.field}
             />
             <TextField
               label={T('order_details_fuel')}
@@ -620,16 +588,18 @@ export default function EditOrderScreen() {
               value={fuelCost}
               onChangeText={setFuelCost}
               keyboardType="decimal-pad"
+              style={styles.field}
             />
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_address')}</SectionHeader>
-          <Card>
+          <Card padded={false} style={styles.card}>
             <TextField
               ref={regionRef}
               label={T('order_field_region')}
               value={region}
               onChangeText={setRegion}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: regionRef,
@@ -645,6 +615,7 @@ export default function EditOrderScreen() {
               label={T('order_field_city')}
               value={city}
               onChangeText={setCity}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: cityRef,
@@ -660,6 +631,7 @@ export default function EditOrderScreen() {
               label={T('order_field_street')}
               value={street}
               onChangeText={setStreet}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: streetRef,
@@ -675,6 +647,7 @@ export default function EditOrderScreen() {
               label={T('order_field_house')}
               value={house}
               onChangeText={setHouse}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: houseRef,
@@ -688,12 +661,13 @@ export default function EditOrderScreen() {
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
-          <Card>
+          <Card padded={false} style={styles.card}>
             <TextField
               ref={customerNameRef}
               label={T('order_field_customer_name')}
               value={customerName}
               onChangeText={setCustomerName}
+              style={styles.field}
               onFocus={() =>
                 ensureVisibleField({
                   fieldRef: customerNameRef,
@@ -704,27 +678,36 @@ export default function EditOrderScreen() {
                 })
               }
             />
-            <PhoneInput value={phone} onChangeText={setPhone} />
+            <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
           </Card>
 
           <SectionHeader bottomSpacing="xs">
             {T('company_settings_sections_departure_helperText_departureOn')}
           </SectionHeader>
-          <Card>
-            <SectionHeader bottomSpacing="xs">{T('order_field_departure_date')}</SectionHeader>
-            <Pressable style={styles.selectInput} onPress={() => setShowDateModal(true)}>
-              <Text style={styles.selectInputText}>
-                {departureDate
+          <Card padded={false} style={styles.card}>
+            <TextField
+              label={T('order_field_departure_date')}
+              value={
+                departureDate
                   ? format(departureDate, 'd MMMM yyyy', { locale: ru })
-                  : T('placeholder_birthdate')}
-              </Text>
-            </Pressable>
+                  : T('placeholder_birthdate')
+              }
+              pressable
+              style={styles.field}
+              onPress={() => setShowDateModal(true)}
+            />
 
             {useDepartureTime && (
               <>
-                <SectionHeader bottomSpacing="xs">{T('order_field_departure_time')}</SectionHeader>
-                <Pressable
-                  style={styles.selectInput}
+                <TextField
+                  label={T('order_field_departure_time')}
+                  value={
+                    departureDate
+                      ? format(departureDate, 'HH:mm', { locale: ru })
+                      : T('placeholder_birthdate')
+                  }
+                  pressable
+                  style={styles.field}
                   onPress={() => {
                     if (!departureDate) {
                       setShowDateModal(true);
@@ -732,20 +715,13 @@ export default function EditOrderScreen() {
                     }
                     setShowTimeModal(true);
                   }}
-                >
-                  <Text style={styles.selectInputText}>
-                    {departureDate
-                      ? format(departureDate, 'HH:mm', { locale: ru })
-                      : T('placeholder_birthdate')}
-                  </Text>
-                </Pressable>
+                />
               </>
             )}
           </Card>
 
           <View style={{ height: theme.spacing?.xxl ?? 80 }} />
-        </KeyboardAwareScrollView>
-      </Screen>
+      </EditScreenTemplate>
 
       <Modal
         isVisible={workTypeModalVisible}
@@ -811,6 +787,6 @@ export default function EditOrderScreen() {
         mode="assignment"
         assignment={assignmentPanelConfig}
       />
-    </KeyboardAvoidingView>
+    </>
   );
 }

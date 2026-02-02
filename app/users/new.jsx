@@ -105,9 +105,8 @@ export default function NewUserScreen() {
   const [headerName, setHeaderName] = useState(t('placeholder_no_name'));
   const [email, setEmail] = useState('');
   const [role, setRole] = useState(ROLE.WORKER);
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const [inviteModalVisible, setInviteModalVisible] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
 
   const [phone, setPhone] = useState('');
   const [birthdate, setBirthdate] = useState(null);
@@ -214,11 +213,6 @@ export default function NewUserScreen() {
   }, []);
 
   const emailValid = useMemo(() => isValidEmailShared(email), [email]);
-  const passwordValid = useMemo(() => isValidPassword(password), [password]);
-  const passwordsMatch = useMemo(
-    () => !password || password === confirmPassword,
-    [password, confirmPassword],
-  );
 
   // Проверка email на существование (debounced)
   const checkEmailAvailability = useCallback(
@@ -287,16 +281,12 @@ export default function NewUserScreen() {
       if (!firstName.trim()) requiredFieldsMissing.push('firstName');
       if (!lastName.trim()) requiredFieldsMissing.push('lastName');
       if (!email.trim()) requiredFieldsMissing.push('email');
-      if (!password.trim()) requiredFieldsMissing.push('password');
-      if (!confirmPassword.trim()) requiredFieldsMissing.push('confirmPassword');
     }
 
     // Если есть незаполненные обязательные поля - показываем общее сообщение
     if (requiredFieldsMissing.length > 0) {
       errors.push(t('err_required_fields'));
     }
-
-    // Проверяем специфичные ошибки валидации (формат, соответствие и т.д.)
 
     // Email: если заполнен, но неверный формат
     if (email.trim() && !emailValid) {
@@ -308,33 +298,12 @@ export default function NewUserScreen() {
       errors.push(t('warn_email_already_taken'));
     }
 
-    // Пароль: если заполнен, но не соответствует требованиям
-    if (password.length > 0) {
-      const pwdValidation = getPasswordValidationErrors(password);
-      if (!pwdValidation.valid) {
-        if (pwdValidation.errors.includes('password_too_short')) {
-          errors.push(t('err_password_short'));
-        }
-        if (pwdValidation.errors.includes('password_invalid_chars')) {
-          errors.push(t('err_password_invalid_chars'));
-        }
-      }
-    }
-
-    // Пароли не совпадают (если оба заполнены)
-    if (password.length > 0 && confirmPassword.length > 0 && !passwordsMatch) {
-      errors.push(t('err_password_mismatch'));
-    }
-
     setValidationErrors(errors);
   }, [
     firstName,
     lastName,
     email,
     emailValid,
-    password,
-    confirmPassword,
-    passwordsMatch,
     submittedAttempt,
     emailCheckStatus,
     t,
@@ -364,7 +333,6 @@ export default function NewUserScreen() {
       email: '',
       phone: '',
       role: ROLE.WORKER,
-      password: false,
       birthdate: null,
       avatar: null,
     });
@@ -375,8 +343,6 @@ export default function NewUserScreen() {
       !lastName.trim() &&
       !email.trim() &&
       !String(phone || '').replace(/\D/g, '') &&
-      !password &&
-      !confirmPassword &&
       !birthdate &&
       !avatarUrl &&
       (departmentId == null || departmentId === '')
@@ -386,8 +352,6 @@ export default function NewUserScreen() {
     lastName,
     email,
     phone,
-    password,
-    confirmPassword,
     birthdate,
     avatarUrl,
     departmentId,
@@ -400,12 +364,11 @@ export default function NewUserScreen() {
       email: email.trim(),
       phone: String(phone || '').replace(/\D/g, ''),
       role,
-      password: password.length > 0,
       birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null,
       avatar: !!avatarUrl,
     });
     return snap !== initialSnapRef.current;
-  }, [firstName, lastName, email, phone, role, password, birthdate, avatarUrl]);
+  }, [firstName, lastName, email, phone, role, birthdate, avatarUrl]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -519,51 +482,63 @@ export default function NewUserScreen() {
 
   const handleCreate = useCallback(async () => {
     if (submitting) return;
-    Keyboard.dismiss(); // Закрываем клавиатуру при создании
+    Keyboard.dismiss();
     setSubmittedAttempt(true);
 
-    // Проверка всех обязательных полей
+    // Проверка обязательных полей (БЕЗ пароля)
     const missingFirst = !firstName.trim();
     const missingLast = !lastName.trim();
     const invalidEmail = !emailValid;
-    const invalidPwd = !passwordValid;
-    const mismatchPwd = !passwordsMatch;
     const emailTaken = emailCheckStatus === 'taken';
-
-    // Если email уже занят - показываем ошибку сразу
 
     if (emailTaken) {
       toastError(t('error_email_exists'));
       return;
     }
 
-    // Проверяем все обязательные поля и согласие
-    if (
-      missingFirst ||
-      missingLast ||
-      invalidEmail ||
-      invalidPwd ||
-      mismatchPwd ||
-      !consentChecked
-    ) {
-      // Прокручиваем к началу чтобы показать ошибки
-      if (!consentChecked) {
-        toastError('Для регистрации необходимо согласие с политикой конфиденциальности');
-      }
+    if (missingFirst || missingLast || invalidEmail) {
       scrollRef.current?.scrollTo({ y: 0, animated: true });
       return;
     }
 
-    setErr('');
+    // Показываем модалку подтверждения вместо прямого создания
+    setInviteEmail(String(email).trim().toLowerCase());
+    setInviteModalVisible(true);
+  }, [
+    submitting,
+    firstName,
+    lastName,
+    emailValid,
+    emailCheckStatus,
+    email,
+    router,
+    t,
+    toastError,
+    scrollRef,
+  ]);
+
+  // Отправка приглашения по волшебной ссылке
+  const handleInviteConfirm = useCallback(async () => {
+    if (submitting) return;
     setSubmitting(true);
+    setErr('');
+
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
       const phoneNormalized = String(phone || '').replace(/\D/g, '') || null;
+      const bdate = birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
 
-      // create auth user via edge function
+      // Вызываем edge function для отправки приглашения
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const url = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${FN_CREATE_USER}`;
+      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const url = `${supabaseUrl}/functions/v1/invite_user`;
+      
+      console.log('[handleInviteConfirm] Starting invite request');
+      console.log('[handleInviteConfirm] URL:', url);
+      console.log('[handleInviteConfirm] Has token:', !!token);
+      console.log('[handleInviteConfirm] Email:', inviteEmail);
+      
       const resp = await fetch(url, {
         method: 'POST',
         headers: {
@@ -572,78 +547,45 @@ export default function NewUserScreen() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          email: String(email).trim().toLowerCase(),
-          password: String(password),
+          email: inviteEmail,
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          full_name: fullName,
+          phone: phoneNormalized,
+          birthdate: bdate,
           role,
+          department_id: departmentId,
         }),
       });
+
+      console.log('[handleInviteConfirm] Response status:', resp.status);
+      
       const raw = await resp.text();
+      console.log('[handleInviteConfirm] Response body:', raw);
+      
       let body = null;
       try {
         body = raw ? JSON.parse(raw) : null;
       } catch {}
+
       if (!resp.ok) {
         const msg =
           (body && (body.message || body.error || body.details || body.hint)) ||
           raw ||
           `HTTP ${resp.status}`;
+        console.error('[handleInviteConfirm] Error:', { status: resp.status, msg, raw });
 
-        // Логируем для отладки
-        console.error('Create user error:', { status: resp.status, msg, raw });
-
-        // Переводим типичные ошибки на русский
         if (/already exists|email.*taken|user.*exists/i.test(String(msg))) {
           throw new Error(t('error_email_exists'));
         }
-        if (/password must be at least.*chars|password.*short/i.test(String(msg))) {
-          throw new Error(t('error_password_too_short'));
-        }
-        if (/invalid role/i.test(String(msg))) {
-          throw new Error(t('error_invalid_role'));
-        }
-        if (/unauthorized/i.test(String(msg))) {
-          throw new Error('Ошибка авторизации. Попробуйте выйти и войти снова.');
-        }
-        if (/forbidden/i.test(String(msg))) {
-          throw new Error('У вас нет прав для создания пользователей.');
-        }
-        if (/auth create error/i.test(String(msg))) {
-          // Показываем детали ошибки создания
-          const details = msg.match(/Auth create error: (.+)/i);
-          if (details && details[1]) {
-            throw new Error(`Не удалось создать пользователя: ${details[1]}`);
-          }
-          throw new Error(t('error_auth_failed'));
-        }
-
-        // Если не удалось распознать - показываем исходную ошибку для отладки
         throw new Error(msg);
       }
-      const userId = body?.user_id;
-      if (!userId) throw new Error(t('error_profile_not_updated'));
 
-      // Save profile fields
-      const bdate =
-        birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
-      const { error: upErr } = await supabase
-        .from(TABLES.profiles)
-        .update({
-          first_name: firstName.trim() || null,
-          last_name: lastName.trim() || null,
-          full_name: fullName || null,
-          phone: phoneNormalized,
-          birthdate: bdate,
-          role,
-        })
-        .eq('id', userId);
-      if (upErr) throw upErr;
+      console.log('[handleInviteConfirm] Success!');
 
-      // upload avatar if chosen
-      if (avatarUrl && avatarUrl.startsWith('file')) {
-        await uploadAvatar(userId, avatarUrl);
-      }
-
-      toastSuccess(t('toast_success'));
+      // Успешно отправили приглашение
+      setInviteModalVisible(false);
+      toastSuccess(`Приглашение отправлено на ${inviteEmail}`);
       setTimeout(() => router.replace('/users'), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       const msg = String(e?.message || t('toast_generic_error'));
@@ -656,22 +598,16 @@ export default function NewUserScreen() {
     submitting,
     firstName,
     lastName,
-    email,
-    password,
-    passwordsMatch,
-    emailValid,
-    passwordValid,
-    emailCheckStatus,
-    role,
     phone,
     birthdate,
-    avatarUrl,
+    role,
+    departmentId,
+    inviteEmail,
     router,
-    theme.timings?.backDelayMs,
+    theme,
     t,
     toastSuccess,
     toastError,
-    scrollRef,
   ]);
 
   const roleItems = useMemo(
@@ -881,87 +817,7 @@ export default function NewUserScreen() {
           />
         </Card>
 
-        {/* ConsentCheckbox удалён для экрана создания нового пользователя */}
-
-        <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
-        <Card paddedXOnly>
-          <View style={{ position: 'relative' }}>
-            <TextField
-              ref={pwdRef}
-              label={t('label_password_new')}
-              value={password}
-              onChangeText={setPassword}
-              placeholder={t('placeholder_new_password')}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.field}
-              forceValidation={submittedAttempt}
-              error={
-                submittedAttempt && !password.trim()
-                  ? 'required'
-                  : password.length > 0 && !passwordValid
-                    ? 'invalid'
-                    : undefined
-              }
-              filterInput={filterPasswordInput}
-              onInvalidInput={handleInvalidPasswordInput}
-              maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
-              rightSlot={
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Pressable
-                    onPress={() => {
-                      setShowPassword((v) => !v);
-                    }}
-                    android_ripple={{
-                      color: theme?.colors?.border ?? '#00000020',
-                      borderless: false,
-                      radius: 24,
-                    }}
-                    accessibilityLabel={
-                      showPassword ? t('a11y_hide_password') : t('a11y_show_password')
-                    }
-                    accessibilityRole="button"
-                    hitSlop={{
-                      top: theme.spacing.sm,
-                      bottom: theme.spacing.sm,
-                      left: theme.spacing.sm,
-                      right: theme.spacing.sm,
-                    }}
-                    style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
-                  >
-                    <Feather
-                      name={showPassword ? 'eye-off' : 'eye'}
-                      size={ICON_MD}
-                      color={theme.colors.primary ?? theme.colors.text}
-                    />
-                  </Pressable>
-                </View>
-              }
-            />
-          </View>
-
-          <TextField
-            label={t('label_password_repeat')}
-            value={confirmPassword}
-            onChangeText={setConfirmPassword}
-            placeholder={t('placeholder_repeat_password')}
-            secureTextEntry={!showPassword}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.field}
-            forceValidation={submittedAttempt}
-            error={
-              submittedAttempt && !confirmPassword.trim()
-                ? 'required'
-                : confirmPassword.length > 0 && !passwordsMatch
-                  ? 'mismatch'
-                  : undefined
-            }
-            filterInput={filterPasswordInput}
-            maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
-          />
-        </Card>
+        {/* Пароль отправляется по волшебной ссылке в письме - полей пароля не нужно */}
 
         <ConfirmModal
           visible={cancelVisible}
@@ -1055,6 +911,16 @@ export default function NewUserScreen() {
               setDobModalVisible(false);
             }
           }}
+        />
+
+        <ConfirmModal
+          visible={inviteModalVisible}
+          title="Отправить приглашение?"
+          message={`Письмо с ссылкой для создания пароля будет отправлено на:\n\n${inviteEmail}\n\nСотрудник сможет создать свой пароль и войти в приложение.`}
+          confirmLabel="Отправить"
+          cancelLabel="Отмена"
+          onConfirm={handleInviteConfirm}
+          onClose={() => setInviteModalVisible(false)}
         />
       </KeyboardAwareScrollView>
     </SafeAreaView>

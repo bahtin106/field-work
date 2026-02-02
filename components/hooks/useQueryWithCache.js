@@ -75,7 +75,7 @@ export function useQueryWithCache(options) {
         setIsRefreshing(false);
         setIsFetching(false);
       }
-    }, 10000); // 10 секунд максимум на загрузку
+    }, 35000); // 35 секунд максимум на загрузку (больше чем queryFn timeout)
 
     return () => clearTimeout(timeout);
   }, [enabled, isLoading, queryKey]);
@@ -129,9 +129,9 @@ export function useQueryWithCache(options) {
       // Создаем новый запрос
       const requestPromise = (async () => {
         try {
-          // КРИТИЧНО: Добавляем таймаут для queryFn
+          // КРИТИЧНО: Добавляем таймаут для queryFn - 30 секунд для медленных соединений
           const timeout = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Query timeout')), 15000),
+            setTimeout(() => reject(new Error('Query timeout')), 30000),
           );
 
           const result = await Promise.race([queryFn(), timeout]);
