@@ -147,6 +147,8 @@ export default {
   toast_password_copied: 'Пароль скопирован',
   toast_avatar_updated: 'Аватар обновлён',
   toast_avatar_pending: 'Изменения аватара будут сохранены при нажатии "Сохранить"',
+  toast_loading_info: 'Загружаю информацию…',
+  toast_deleting_employee: 'Удаление сотрудника…',
 
   btn_suspend: 'Отстранить',
 
@@ -253,6 +255,19 @@ export default {
   user_delete_needSuccessor: 'У сотрудника есть заявки. Выберите, кому переназначить их перед удалением.',
   user_delete_confirm_title: 'Удалить сотрудника?',
   user_delete_confirm_message: 'Это действие необратимо. Сотрудник будет удалён из системы.',
+  user_delete_no_orders_title: 'Сотрудник будет удалён из системы',
+  user_delete_no_orders_desc:
+    'У этого сотрудника нет заявок. После удаления все его данные и документы будут стёрты безвозвратно.',
+  user_delete_reassign_title: 'Переназначить заявки',
+  user_delete_reassign_desc:
+    'У сотрудника {n} активная заявка. Выберите сотрудника, на которого переназначить все заявки перед удалением.',
+  user_delete_reassigned_title: 'Переназначенные заявки',
+  user_delete_reassigned_desc: '{n} заявка(и) будут переназначены следующему сотруднику:',
+  err_check_orders_failed: 'Не удалось проверить заявки сотрудника',
+  err_successor_required_delete: 'Выберите сотрудника для переназначения заявок',
+  err_delete_failed_status: 'Ошибка удаления ({status})',
+  err_delete_failed: 'Ошибка удаления',
+  err_deactivate_failed: 'Не удалось деактивировать сотрудника',
   user_delete_no_orders_title: 'Сотрудник будет удален из системы',
   user_delete_no_orders_msg: 'У этого сотрудника нет заявок. После удаления все его данные и документы будут стерты безвозвратно.',
   user_delete_reassign_title: 'Переназначить заявки',
