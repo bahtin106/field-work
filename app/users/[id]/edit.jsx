@@ -1371,17 +1371,12 @@ export default function EditUser() {
       const errS = await setSuspended(userId, true);
       if (errS) throw new Error(errS.message || t('toast_generic_error'));
       
-      // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
-      allowLeaveRef.current = true;
-      
-      setIsSuspended(true);
-      // Инвалидируем кеш users для мгновенного обновления списка
+      // Инвалидируем кеш и разрешаем выход, затем сразу назад
       globalCache.invalidate('users:');
       toastSuccess(t('toast_suspended'));
       setSuspendVisible(false);
-      
-      // Навигируем назад
-      setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
+      allowLeaveRef.current = true;
+      router.back();
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
       toastError(e?.message || t('dlg_generic_warning'));
@@ -1399,17 +1394,12 @@ export default function EditUser() {
       const errS = await setSuspended(userId, false);
       if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
       
-      // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
-      allowLeaveRef.current = true;
-      
-      setIsSuspended(false);
-      // Инвалидируем кеш users для мгновенного обновления списка
+      // Инвалидируем кеш и разрешаем выход, затем сразу назад
       globalCache.invalidate('users:');
       toastSuccess(t('toast_unsuspended'));
       setUnsuspendVisible(false);
-      
-      // Навигируем назад
-      setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
+      allowLeaveRef.current = true;
+      router.back();
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
       toastError(e?.message || t('dlg_generic_warning'));
@@ -1523,14 +1513,12 @@ export default function EditUser() {
       // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
       allowLeaveRef.current = true;
 
-      // Инвалидируем кеш users для мгновенного обновления списка
+      // Инвалидируем кеш и разрешаем выход, затем сразу назад
+      allowLeaveRef.current = true;
       globalCache.invalidate('users:');
-
       toastSuccess(t('toast_deleted'));
       setDeleteVisible(false);
-      // Разрешаем выход без подтверждения (Apple-style: успешная операция)
-      allowLeaveRef.current = true;
-      setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
+      router.back();
     } catch (e) {
       console.error('Ошибка деактивации:', e);
       setErr(e?.message || t('dlg_generic_warning'));
