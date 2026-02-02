@@ -112,13 +112,22 @@ export default function UsersIndex() {
     await Promise.all([refreshUsers(), refreshDepartments()]);
   }, [refreshUsers, refreshDepartments]);
 
+  // Используем ref для отслеживания, был ли уже произведён рефреш после фокуса
+  const refreshOnFocusRef = React.useRef(false);
+
   useFocusEffect(
     useCallback(() => {
-      if (!usersRefreshing) {
+      // Обновляем данные при возврате на экран, но только один раз
+      if (!refreshOnFocusRef.current && !usersRefreshing && !departmentsRefreshing) {
+        refreshOnFocusRef.current = true;
         refreshAll();
       }
-      return () => {};
-    }, [refreshAll, usersRefreshing]),
+
+      // Cleanup: позволяем следующему фокусу снова обновить данные
+      return () => {
+        refreshOnFocusRef.current = false;
+      };
+    }, []),
   );
 
   // Проксирующая функция для совместимости с фильтрами
