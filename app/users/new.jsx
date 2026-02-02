@@ -600,6 +600,13 @@ export default function NewUserScreen() {
       const actionLink = body?.action_link || null;
       const newUserId = body?.user_id || null;
 
+      if (!__IS_PROD) {
+        console.log('[handleInviteConfirm] emailSent:', emailSent);
+        console.log('[handleInviteConfirm] actionLink:', actionLink);
+        console.log('[handleInviteConfirm] newUserId:', newUserId);
+        console.log('[handleInviteConfirm] body:', body);
+      }
+
       // Успешно создали приглашение
       setInviteModalVisible(false);
       
