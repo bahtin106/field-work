@@ -128,28 +128,15 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Если уперлись в лимит писем, создаём invite-link без отправки письма
-      const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
-        type: 'invite',
-        email: emailLower,
-        options: inviteOptions,
-      });
-
-      if (linkError) {
-        console.error('Invite link generation failed:', linkError);
-        return new Response(`Invite error: ${linkError?.message ?? 'unknown'}`, {
-          status: 400,
-          headers: cors,
-        });
-      }
-
-      newUserId = linkData?.user?.id;
-      actionLink = linkData?.action_link || null;
+      // Rate limit - user всё ещё создаётся, но письмо не отправляется
+      // Возвращаем пустой action_link чтобы показать ошибку на клиенте
+      console.log('[invite_user] Rate limit hit - user creation may still succeed');
       emailSent = false;
+      newUserId = inviteData?.user?.id || null;
     }
 
     if (!newUserId) {
-      return new Response('Failed to create invite', { status: 400, headers: cors });
+      return new Response('Failed to create user', { status: 400, headers: cors });
     }
 
     // Создаём профиль для пользователя
@@ -168,18 +155,24 @@ Deno.serve(async (req) => {
       invited_by: currentUser.id,
     };
 
+    console.log('[invite_user] Creating profile with data:', profileData);
+
     const { error: createProfileError } = await supabaseAdmin
       .from('profiles')
       .insert(profileData);
 
+    console.log('[invite_user] Insert result - error:', createProfileError?.message);
+
     if (createProfileError) {
       console.error('Profile creation failed:', createProfileError);
       // Профиль уже может быть создан автоматически, попробуем update
+      console.log('[invite_user] Trying to update profile instead');
       const { error: updateError } = await supabaseAdmin
         .from('profiles')
         .update(profileData)
         .eq('id', newUserId);
       
+      console.log('[invite_user] Update result - error:', updateError?.message);
       if (updateError) {
         console.error('Profile update failed:', updateError);
       }
@@ -194,7 +187,7 @@ Deno.serve(async (req) => {
         email: emailLower,
         email_sent: emailSent,
         action_link: actionLink,
-        message: emailSent ? 'Invitation sent' : 'Invitation link generated',
+        message: emailSent ? 'Invitation sent' : 'User created - email not sent due to rate limit',
       }),
       {
         status: 200,
