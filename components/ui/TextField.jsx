@@ -45,6 +45,9 @@ const TextField = forwardRef(function TextField(
   const [showPassword, setShowPassword] = useState(false);
   const baseInputHeight =
     theme.components?.input?.height ?? theme.components?.listItem?.height ?? 48;
+  const sepConfig = theme.components?.input?.separator || {};
+  const sepHeight = sepConfig.height ?? theme.components?.listItem?.dividerWidth ?? 1;
+  const sepEnabled = sepConfig.enabled ?? sepHeight > 0;
 
   // Автогроу включен по умолчанию, если явно не отключен в теме
   const autoGrowEnabled = autoGrow ?? theme.components?.input?.autoGrow !== false;
@@ -155,7 +158,7 @@ const TextField = forwardRef(function TextField(
         </View>
         {rightSlot && <View style={s.slot}>{rightSlot}</View>}
       </View>
-      {!hideSeparator && <View style={s.separator} />}
+      {!hideSeparator && sepEnabled ? <View style={s.separator} /> : null}
     </View>
   );
 });
@@ -239,6 +242,9 @@ export function SelectField({
   const { theme } = useTheme();
   const base = listItemStyles(theme);
   const s = selectStyles(theme);
+  const sepConfig = theme.components?.input?.separator || {};
+  const sepHeight = sepConfig.height ?? theme.components?.listItem?.dividerWidth ?? 1;
+  const sepEnabled = sepConfig.enabled ?? sepHeight > 0;
   const [rowWidth, setRowWidth] = React.useState(null);
   const chevronSize = theme.components.listItem.chevronSize || 20;
   const computedValueMaxWidth = React.useMemo(() => {
@@ -457,7 +463,7 @@ export const DateOfBirthField = ({
           </Text>
         </View>
       </View>
-      <View style={s.separator} />
+      {sepEnabled ? <View style={s.separator} /> : null}
     </View>
   );
 };

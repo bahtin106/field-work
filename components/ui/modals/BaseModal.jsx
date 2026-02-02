@@ -9,7 +9,6 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import Animated, {
@@ -321,17 +320,8 @@ const BaseModalImpl = (
             </Pressable>
           </Pressable>
 
-          {/* Content: tap inside modal dismisses keyboard */}
-          <TouchableWithoutFeedback
-            accessible={false}
-            onPress={() => {
-              try {
-                Keyboard.dismiss();
-              } catch (_) {}
-            }}
-          >
-            <View style={{ paddingHorizontal: theme.spacing.lg }}>{children}</View>
-          </TouchableWithoutFeedback>
+          {/* Content */}
+          <View style={{ paddingHorizontal: theme.spacing.lg }}>{children}</View>
 
           {/* Footer */}
           {footer ? (

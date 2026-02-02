@@ -112,11 +112,9 @@ export default function MultiSelectModal({
           </View>
         </View>
         <View style={s.itemRight}>
-          {isChecked ? (
-            <Feather name="check-circle" size={20} color={theme.colors.primary} />
-          ) : (
-            <Feather name="circle" size={20} color={theme.colors.textSecondary} />
-          )}
+          <View style={[s.checkbox, isChecked && s.checkboxChecked]}>
+            {isChecked && <Feather name="check" size={14} color="#FFFFFF" strokeWidth={3} />}
+          </View>
         </View>
       </Pressable>
     );
@@ -194,4 +192,17 @@ const styles = (t) =>
     itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
     itemRight: { marginLeft: 8, alignSelf: 'center' },
+    checkbox: {
+      width: 20,
+      height: 20,
+      borderRadius: 6,
+      borderWidth: 1.5,
+      borderColor: '#C7C7CC',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    checkboxChecked: {
+      backgroundColor: t.colors.primary,
+      borderColor: t.colors.primary,
+    },
   });

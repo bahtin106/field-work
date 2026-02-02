@@ -11,6 +11,7 @@ export default function PhoneInput({
   error,
   required = false,
   style,
+  placeholder = T('fields_phone_placeholder'),
 }) {
   const prevMaskedRef = useRef('');
 
@@ -47,7 +48,7 @@ export default function PhoneInput({
       label={label}
       value={masked}
       onChangeText={handleChange}
-      placeholder="+7 (___) ___-__-__"
+      placeholder={placeholder}
       keyboardType="phone-pad"
       maxLength={18} // "+7 (XXX) XXX-XX-XX"
       error={error}

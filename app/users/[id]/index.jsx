@@ -22,6 +22,7 @@ import IconButton from '../../../components/ui/IconButton';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 import SectionHeader from '../../../components/ui/SectionHeader';
+import LabelValueRow from '../../../components/ui/LabelValueRow';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { supabase } from '../../../lib/supabase';
 import { getDict, useI18nVersion } from '../../../src/i18n';
@@ -335,21 +336,20 @@ export default function UserView() {
 
         <SectionHeader>{t('section_personal', 'section_personal')}</SectionHeader>
         <Card paddedXOnly>
-          <View style={base.row}>
-            <Text style={base.label}>{t('view_label_name', 'view_label_name')}</Text>
-            <View style={base.rightWrap}>
-              <Text style={base.value}>
-                {firstName || lastName
-                  ? `${firstName || ''} ${lastName || ''}`.trim()
-                  : t('common_dash', 'common_dash')}
-              </Text>
-            </View>
-          </View>
+          <LabelValueRow
+            label={t('view_label_name', 'view_label_name')}
+            value={
+              firstName || lastName
+                ? `${firstName || ''} ${lastName || ''}`.trim()
+                : t('common_dash', 'common_dash')
+            }
+          />
           <View style={base.sep} />
-          <View style={base.row}>
-            <Text style={base.label}>{t('view_label_email', 'view_label_email')}</Text>
-            <View style={base.rightWrap}>
-              {email ? (
+
+          <LabelValueRow
+            label={t('view_label_email', 'view_label_email')}
+            valueComponent={
+              email ? (
                 <Pressable
                   accessibilityRole="link"
                   onPress={async () => {
@@ -367,8 +367,10 @@ export default function UserView() {
                 </Pressable>
               ) : (
                 <Text style={base.value}>{t('common_dash', 'common_dash')}</Text>
-              )}
-              {email ? (
+              )
+            }
+            rightActions={
+              email ? (
                 <IconButton
                   style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyEmail}
@@ -376,14 +378,15 @@ export default function UserView() {
                 >
                   <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                 </IconButton>
-              ) : null}
-            </View>
-          </View>
+              ) : null
+            }
+          />
           <View style={base.sep} />
-          <View style={base.row}>
-            <Text style={base.label}>{t('view_label_phone', 'view_label_phone')}</Text>
-            <View style={base.rightWrap}>
-              {phone ? (
+
+          <LabelValueRow
+            label={t('view_label_phone', 'view_label_phone')}
+            valueComponent={
+              phone ? (
                 <Pressable
                   accessibilityRole="link"
                   onPress={async () => {
@@ -401,8 +404,10 @@ export default function UserView() {
                 </Pressable>
               ) : (
                 <Text style={base.value}>{t('common_dash', 'common_dash')}</Text>
-              )}
-              {phone ? (
+              )
+            }
+            rightActions={
+              phone ? (
                 <IconButton
                   style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyPhone}
@@ -410,39 +415,35 @@ export default function UserView() {
                 >
                   <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                 </IconButton>
-              ) : null}
-            </View>
-          </View>
-
+              ) : null
+            }
+          />
           <View style={base.sep} />
-          <View style={base.row}>
-            <Text style={base.label}>{t('label_birthdate', 'label_birthdate')}</Text>
-            <View style={base.rightWrap}>
-              <Text style={base.value}>
-                {birthdate
-                  ? (() => {
-                      try {
-                        // Read optional offset from i18n dict (keeps parity with DateTimeModal)
-                        const dict = getDict?.() || {};
-                        const offset = Number(dict.month_label_offset ?? 0) || 0;
-                        const m = birthdate.getMonth(); // 0..11
-                        const keyIdx = (m + offset + 12) % 12;
-                        const monthName = t(
-                          `months_genitive_${keyIdx}`,
-                          `months_genitive_${keyIdx}`,
-                        );
-                        const day = birthdate.getDate();
-                        const year = birthdate.getFullYear();
-                        return `${day} ${monthName} ${year}`;
-                      } catch (e) {
-                        // Fallback to dash if anything goes wrong
-                        return t('common_dash', 'common_dash');
-                      }
-                    })()
-                  : t('common_dash', 'common_dash')}
-              </Text>
-            </View>
-          </View>
+
+          <LabelValueRow
+            label={t('label_birthdate', 'label_birthdate')}
+            value={
+              birthdate
+                ? (() => {
+                    try {
+                      const dict = getDict?.() || {};
+                      const offset = Number(dict.month_label_offset ?? 0) || 0;
+                      const m = birthdate.getMonth();
+                      const keyIdx = (m + offset + 12) % 12;
+                      const monthName = t(
+                        `months_genitive_${keyIdx}`,
+                        `months_genitive_${keyIdx}`,
+                      );
+                      const day = birthdate.getDate();
+                      const year = birthdate.getFullYear();
+                      return `${day} ${monthName} ${year}`;
+                    } catch (e) {
+                      return t('common_dash', 'common_dash');
+                    }
+                  })()
+                : t('common_dash', 'common_dash')
+            }
+          />
         </Card>
 
         <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader>

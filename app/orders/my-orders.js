@@ -44,7 +44,7 @@ export default function MyOrdersScreen() {
     theme?.colors?.textSecondary ??
     theme?.colors?.text;
 
-  const { has } = usePermissions();
+  const { has, loading: permLoading } = usePermissions();
 
   const styles = useMemo(
     () =>
@@ -911,6 +911,23 @@ export default function MyOrdersScreen() {
     }
     setBgRefreshing(false);
   }, [filter, makeCacheKey, filtersFingerprint]);
+
+  if (loading) {
+    return (
+      <Screen scroll={false} headerOptions={{ headerShown: false }}>
+        <AppHeader
+          back
+          options={{
+            headerTitleAlign: 'left',
+            title: t('routes.orders/my-orders'),
+          }}
+        />
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </Screen>
+    );
+  }
 
   return (
     <Screen scroll={false} headerOptions={{ headerShown: false }}>

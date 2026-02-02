@@ -30,11 +30,11 @@ const queryClient = new QueryClient({
     queries: {
       keepPreviousData: true,
       placeholderData: (prev) => prev,
-      staleTime: 5 * 60 * 1000,
+      staleTime: 2 * 60 * 1000,
       gcTime: 24 * 60 * 60 * 1000,
       retry: 1,
-      refetchOnMount: false,
-      refetchOnWindowFocus: false,
+      refetchOnMount: 'always',
+      refetchOnWindowFocus: true,
       refetchOnReconnect: true,
     },
   },
@@ -201,6 +201,14 @@ function RootLayoutInner() {
             >
               <Stack.Screen name="(auth)" />
               <Stack.Screen name="orders" />
+              <Stack.Screen name="app_settings/AppSettings" options={{ title: 'Настройки приложения' }} />
+              <Stack.Screen name="company_settings/index" options={{ title: 'Настройки компании' }} />
+              <Stack.Screen name="users/index" options={{ title: 'Пользователи' }} />
+              <Stack.Screen name="users/new" options={{ title: 'Новый пользователь' }} />
+              <Stack.Screen name="users/[id]/index" options={{ title: 'Пользователь' }} />
+              <Stack.Screen name="users/[id]/edit" options={{ title: 'Редактировать' }} />
+              <Stack.Screen name="billing/index" options={{ title: 'Биллинг' }} />
+              <Stack.Screen name="stats" options={{ title: 'Статистика' }} />
             </Stack>
             {isAuthenticated && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}

@@ -12,14 +12,13 @@ import {
   Keyboard,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import AppHeader from '../../../components/navigation/AppHeader';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
@@ -31,6 +30,7 @@ import { useToast } from '../../../components/ui/ToastProvider';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import {
   AlertModal,
+  BaseModal,
   ConfirmModal,
   DateTimeModal,
   SelectModal,
@@ -277,6 +277,7 @@ function DepartmentSelectModal({ visible, departments = [], departmentId, onSele
       visible={visible}
       title={t('user_department_title')}
       items={mapped}
+      selectedId={departmentId}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
     />
@@ -303,93 +304,13 @@ function RoleSelectModal({
       visible={visible}
       title={t('user_role_title')}
       items={items}
+      selectedId={role}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
     />
   );
 }
 
-function SuspendModal({
-  visible,
-  ordersAction = 'keep',
-  setOrdersAction,
-  openSuccessorPicker,
-  onConfirm,
-  onClose,
-}) {
-  const { t } = useTranslation();
-  const items = [
-    { id: 'keep', label: t('user_block_keepOrders') },
-    { id: 'reassign', label: t('user_block_reassign') },
-  ];
-  return (
-    <SelectModal
-      visible={visible}
-      title={t('user_changeStatus_title')}
-      items={items}
-      onSelect={(it) => {
-        try {
-          if (it.id === 'reassign') {
-            setOrdersAction?.('reassign');
-            openSuccessorPicker?.();
-          } else {
-            setOrdersAction?.('keep');
-            onConfirm?.();
-          }
-        } finally {
-          onClose?.();
-        }
-      }}
-      onClose={onClose}
-    />
-  );
-}
-
-function DeleteEmployeeModal({
-  visible,
-  successor,
-  openSuccessorPicker,
-  onConfirm,
-  saving,
-  onClose,
-}) {
-  const { t } = useTranslation();
-  // If successor not chosen yet — prompt to pick one; otherwise ask for destructive confirmation
-  if (!successor?.id) {
-    return (
-      <ConfirmModal
-        visible={visible}
-        title={t('user_delete_title')}
-        message={t('user_delete_needSuccessor')}
-        confirmLabel={t('btn_choose')}
-        cancelLabel={t('btn_cancel')}
-        confirmVariant="primary"
-        loading={false}
-        onConfirm={() => {
-          try {
-            openSuccessorPicker?.();
-          } finally {
-            onClose?.();
-          }
-        }}
-        onClose={onClose}
-      />
-    );
-  }
-  return (
-    <ConfirmModal
-      visible={visible}
-      title={t('user_delete_confirm_title')}
-      message={t('user_delete_confirm_message')}
-      confirmLabel={saving ? t('btn_deleting') : t('btn_delete')}
-      cancelLabel={t('btn_cancel')}
-      confirmVariant="destructive"
-      loading={!!saving}
-      onConfirm={onConfirm}
-      onClose={onClose}
-    />
-  );
-}
 // === end wrappers ===
 export default function EditUser() {
   const { theme } = useTheme();
@@ -397,6 +318,7 @@ export default function EditUser() {
   const ver = useI18nVersion();
   const router = useRouter();
   const navigation = useNavigation();
+  const formStyles = useEditFormStyles();
 
   const ROLE_DESCRIPTIONS_LOCAL = React.useMemo(
     () => ({
@@ -429,10 +351,10 @@ export default function EditUser() {
   const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const styles = React.useMemo(() => {
-    const horizontalPadding = theme.spacing?.lg ?? 16; // Фиксированное значение как fallback
     return StyleSheet.create({
       container: { flex: 1, backgroundColor: theme.colors.background },
-      scroll: { paddingHorizontal: horizontalPadding, flexGrow: 1 },
+
+      card: formStyles.card,
 
       rolePillHeader: {
         paddingHorizontal: theme.spacing.sm,
@@ -494,14 +416,6 @@ export default function EditUser() {
       },
       badgeOutlineText: { color: theme.colors.text, fontSize: theme.typography.sizes.xs },
       badgeText: { fontSize: theme.typography.sizes.xs, fontWeight: '600' },
-      card: {
-        backgroundColor: theme.colors.surface,
-        borderRadius: theme.radii.lg,
-        padding: theme.spacing.md,
-        borderColor: theme.colors.border,
-        borderWidth: theme.components.card.borderWidth,
-        marginBottom: theme.spacing.md,
-      },
       // section: используем base.sectionTitle из listItemStyles
       label: {
         fontWeight: '500',
@@ -510,10 +424,7 @@ export default function EditUser() {
         color: theme.colors.textSecondary,
       },
 
-      field: {
-        marginHorizontal: 0,
-        marginVertical: theme.components?.input?.fieldSpacing ?? theme.spacing.sm,
-      },
+      field: formStyles.field,
       errorCard: {
         backgroundColor: withAlpha(theme.colors.danger, 0.12),
         borderColor: theme.colors.danger,
@@ -578,7 +489,7 @@ export default function EditUser() {
       },
       centeredModal: { justifyContent: 'center', alignItems: 'center', margin: 0 },
     });
-  }, [theme]);
+  }, [theme, formStyles]);
 
   const roleColor = React.useCallback(
     (r) => {
@@ -729,6 +640,8 @@ export default function EditUser() {
   const [suspendVisible, setSuspendVisible] = useState(false);
   const [unsuspendVisible, setUnsuspendVisible] = useState(false);
   const [deleteVisible, setDeleteVisible] = useState(false);
+  const [activeOrdersCount, setActiveOrdersCount] = useState(0);
+  const [totalOrdersCount, setTotalOrdersCount] = useState(0);
   const [ordersAction, setOrdersAction] = useState('keep');
   const [successor, setSuccessor] = useState(null);
   const [successorError, setSuccessorError] = useState('');
@@ -838,28 +751,43 @@ export default function EditUser() {
       // Сохраняем изменения аватара в БД только если есть реальные изменения
       // pendingAvatarUrl === null означает "нет изменений", а не "удалить"
       if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
-        if (pendingAvatarUrl === '') {
-          // Пользователь явно удалил аватар (через deleteAvatar)
-          const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
-          const { data: list, error: listErr } = await supabase.storage
-            .from(STORAGE.AVATARS)
-            .list(prefix);
-          if (!listErr && Array.isArray(list) && list.length) {
-            const paths = list.map((f) => `${prefix}/${f.name}`);
-            await supabase.storage.from(STORAGE.AVATARS).remove(paths);
+        try {
+          if (pendingAvatarUrl === '') {
+            // Пользователь явно удалил аватар (через deleteAvatar)
+            const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
+            const { data: list, error: listErr } = await supabase.storage
+              .from(STORAGE.AVATARS)
+              .list(prefix);
+            if (!listErr && Array.isArray(list) && list.length) {
+              const paths = list.map((f) => `${prefix}/${f.name}`);
+              // Попытка удалить файлы — ошибка не критична, продолжаем дальше
+              try {
+                await supabase.storage.from(STORAGE.AVATARS).remove(paths);
+              } catch (_) {
+                // Игнорируем ошибку удаления файлов
+              }
+            }
+            const { error: updErr } = await supabase
+              .from(TABLES.profiles)
+              .update({ avatar_url: null })
+              .eq('id', userId);
+            if (updErr) throw updErr;
+          } else {
+            // Обновляем аватар в БД
+            const { error: updErr } = await supabase
+              .from(TABLES.profiles)
+              .update({ avatar_url: pendingAvatarUrl })
+              .eq('id', userId);
+            if (updErr) throw updErr;
           }
-          const { error: updErr } = await supabase
-            .from(TABLES.profiles)
-            .update({ avatar_url: null })
-            .eq('id', userId);
-          if (updErr) throw updErr;
-        } else {
-          // Обновляем аватар в БД
-          const { error: updErr } = await supabase
-            .from(TABLES.profiles)
-            .update({ avatar_url: pendingAvatarUrl })
-            .eq('id', userId);
-          if (updErr) throw updErr;
+        } catch (avatarErr) {
+          // Если ошибка только в удалении аватара, но профиль обновился — не бросаем ошибку
+          // иначе бросаем
+          const msg = avatarErr?.message || String(avatarErr);
+          if (!msg.includes('avatar') && !msg.includes('storage')) {
+            throw avatarErr;
+          }
+          // Ошибка аватара не критична, продолжаем
         }
         // Обновляем все состояния аватара после успешного сохранения
         // Если удалили (pendingAvatarUrl === ''), сохраняем null как финальное значение
@@ -895,21 +823,60 @@ export default function EditUser() {
           },
         };
 
-        const res = await fetch(FN_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(body),
-        });
+        try {
+          const res = await fetch(FN_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(body),
+          });
 
-        const result = await res.json();
-
-        if (!res.ok || result?.ok === false) {
-          const msg = result?.message || result?.error || result?.details || null;
-          throw new Error(msg || t('error_profile_not_updated'));
+          // Если статус не успешный — бросаем ошибку сразу
+          if (!res.ok) {
+            let errMsg = null;
+            try {
+              const text = await res.text();
+              if (text) {
+                try {
+                  const result = JSON.parse(text);
+                  errMsg = result?.message || result?.error || result?.details || null;
+                } catch (e) {}
+              }
+            } catch (e) {}
+            throw new Error(errMsg || `HTTP ${res.status}`);
+          }
+          // Если статус успешный — пытаемся прочитать ответ, но если не удалось — игнорируем
+          let result = null;
+          try {
+            const text = await res.text();
+            if (text) {
+              try {
+                result = JSON.parse(text);
+              } catch (e) {
+                // Невалидный JSON, но статус успешный — игнорируем
+              }
+            }
+          } catch (e) {
+            // Не удалось прочитать тело, но статус успешный — игнорируем
+          }
+          // Только если статус успешный и явно result.ok === false — бросаем
+          if (result && result.ok === false) {
+            const msg = result?.message || result?.error || result?.details || null;
+            throw new Error(msg || t('error_profile_not_updated'));
+          }
+        } catch (fetchErr) {
+          // ВАЖНО: Если ошибка "Network request failed" - игнорируем, т.к. запрос мог дойти до сервера
+          const errMsg = String(fetchErr?.message || '');
+          if (errMsg.toLowerCase().includes('network request failed')) {
+            console.warn('Admin update failed with network error, assuming server processed it');
+            // Не бросаем ошибку, считаем что сервер обработал запрос
+          } else {
+            // Другие ошибки пробрасываем
+            throw fetchErr;
+          }
         }
       } else {
         // Пользователь редактирует себя — прямое обновление профиля
@@ -936,31 +903,64 @@ export default function EditUser() {
 
         // Обновление email/password через edge-функцию (если заполнены)
         if ((String(email || '').trim() || newPassword) && APP_FUNCTIONS.UPDATE_USER) {
-          const { data: sess } = await supabase.auth.getSession();
-          const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-          const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
+          try {
+            const { data: sess } = await supabase.auth.getSession();
+            const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+            const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
 
-          const body = {
-            user_id: userId,
-            email: String(email || '').trim() || undefined,
-            password: newPassword && newPassword.length ? newPassword : undefined,
-          };
+            const body = {
+              user_id: userId,
+              email: String(email || '').trim() || undefined,
+              password: newPassword && newPassword.length ? newPassword : undefined,
+            };
 
-          const res = await fetch(FN_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(body),
-          });
+            const res = await fetch(FN_URL, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify(body),
+            });
 
-          const result = await res.json();
-
-          if (!res.ok || result?.ok === false) {
-            const msg = result?.message || result?.error || result?.details || null;
-            throw new Error(msg || t('error_auth_update_failed'));
+            if (!res.ok) {
+              let errMsg = null;
+              try {
+                const text = await res.text();
+                if (text) {
+                  try {
+                    const result = JSON.parse(text);
+                    errMsg = result?.message || result?.error || result?.details || null;
+                  } catch (e) {}
+                }
+              } catch (e) {}
+              throw new Error(errMsg || `HTTP ${res.status}`);
+            }
+            let result = null;
+            try {
+              const text = await res.text();
+              if (text) {
+                try {
+                  result = JSON.parse(text);
+                } catch (e) {}
+              }
+            } catch (e) {}
+            if (result && result.ok === false) {
+              const msg = result?.message || result?.error || result?.details || null;
+              throw new Error(msg || t('error_auth_update_failed'));
+            }
+          } catch (fetchErr) {
+            // ВАЖНО: Профиль УЖЕ обновлен выше, поэтому ошибка обновления email/password
+            // не должна блокировать успешное завершение. Игнорируем сетевые ошибки.
+            const errMsg = String(fetchErr?.message || '');
+            if (errMsg.toLowerCase().includes('network request failed')) {
+              // Игнорируем сетевую ошибку — профиль уже обновлен
+              console.warn('Email/password update failed with network error, but profile was updated');
+            } else {
+              // Другие ошибки (не сетевые) — пробрасываем
+              throw fetchErr;
+            }
           }
         }
       }
@@ -1226,7 +1226,15 @@ export default function EditUser() {
       } catch {}
     };
   }, [userId, fetchUser, fetchDepartments]);
-  const reassignOrders = async (fromUserId, toUserId) => {
+  const reassignActiveOrders = async (fromUserId, toUserId) => {
+    // Переназначаем ВСЕ заявки, независимо от статуса
+    const { error } = await supabase
+      .from(TABLES.orders)
+      .update({ assigned_to: toUserId })
+      .eq('assigned_to', fromUserId);
+    return error;
+  };
+  const reassignAllOrders = async (fromUserId, toUserId) => {
     const { error } = await supabase
       .from(TABLES.orders)
       .update({ assigned_to: toUserId })
@@ -1237,7 +1245,8 @@ export default function EditUser() {
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
+      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const FN_URL = `${supabaseUrl}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
       if (
         APP_FUNCTIONS.UPDATE_USER &&
         FN_URL &&
@@ -1273,45 +1282,6 @@ export default function EditUser() {
       return error ?? e;
     }
   };
-  const deleteUserEverywhere = async (uid) => {
-    const tryPaths =
-      APP_FUNCTIONS.DELETE_USERAliases && APP_FUNCTIONS.DELETE_USERAliases.length
-        ? APP_FUNCTIONS.DELETE_USERAliases.map((n) => '/' + String(n || '').replace(/^\//, ''))
-        : String(process.env.EXPO_PUBLIC_FN_DELETE_USER_ALIASES || '')
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .map((n) => '/' + n);
-    if (APP_FUNCTIONS.DELETE_USER) {
-      tryPaths.unshift('/' + String(APP_FUNCTIONS.DELETE_USER).replace(/^\//, ''));
-    }
-    try {
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const base = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1`;
-      for (const path of tryPaths) {
-        const url = base + path;
-        if (!url.startsWith('http')) continue;
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ user_id: uid }),
-        });
-        if (res.ok) return null;
-        let payload = null;
-        try {
-          payload = await res.json();
-        } catch (e) {}
-        if (payload && (payload.ok === true || payload.success === true)) return null;
-      }
-    } catch (e) {}
-    const { error } = await supabase.from(TABLES.profiles).delete().eq('id', uid);
-    return error;
-  };
   const onAskSuspend = () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
     if (meId && userId === meId) return; // не для себя
@@ -1319,6 +1289,26 @@ export default function EditUser() {
     setSuccessor(null);
     setSuccessorError('');
     setSuspendVisible(true);
+  };
+  
+  const loadAvailableEmployees = async () => {
+    try {
+      // Загружаем список активных сотрудников для выбора преемника
+      const { data, error } = await supabase
+        .from(TABLES.profiles)
+        .select('id, first_name, last_name, full_name, role')
+        .eq('is_suspended', false)
+        .neq('id', userId) // исключаем самого сотрудника
+        .order('full_name', { ascending: true });
+      
+      if (error) throw error;
+      
+      const employees = Array.isArray(data) ? data : [];
+      setPickerItems(employees);
+    } catch (e) {
+      console.error('Ошибка загрузки сотрудников:', e);
+      toastError('Не удалось загрузить список сотрудников');
+    }
   };
   const onAskUnsuspend = () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
@@ -1338,7 +1328,7 @@ export default function EditUser() {
           setSaving(false);
           return;
         }
-        const errR = await reassignOrders(userId, successor.id);
+        const errR = await reassignActiveOrders(userId, successor.id);
         if (errR) throw new Error(errR.message || t('toast_generic_error'));
       }
       const errS = await setSuspended(userId, true);
@@ -1372,34 +1362,112 @@ export default function EditUser() {
       setSaving(false);
     }
   };
-  const onAskDelete = () => {
+  const onAskDelete = async () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
     if (meId && userId === meId) return;
-    setSuccessor(null);
-    setSuccessorError('');
-    setDeleteVisible(true);
+
+    try {
+      setErr('');
+      toastInfo('Загружаю информацию...', { sticky: true });
+
+      // Вызываем edge function для проверки заявок
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const checkUrl = `${supabaseUrl}/functions/v1/check_employee_orders`;
+
+      console.log('[onAskDelete] checkUrl:', checkUrl);
+
+      const checkRes = await fetch(checkUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
+
+      console.log('[onAskDelete] checkRes.ok:', checkRes.ok, 'status:', checkRes.status);
+
+      if (!checkRes.ok) {
+        const errData = await checkRes.json().catch(() => ({}));
+        throw new Error(errData.error || `Ошибка проверки заявок (${checkRes.status})`);
+      }
+
+      const { activeOrdersCount, totalOrdersCount, availableEmployees } = await checkRes.json();
+
+      console.log('[onAskDelete] activeOrdersCount:', activeOrdersCount);
+
+      // Сохраняем количество заявок и список доступных сотрудников
+      setActiveOrdersCount(activeOrdersCount || 0);
+      setTotalOrdersCount(totalOrdersCount || 0);
+      setPickerItems(availableEmployees || []);
+      setSuccessor(null);
+      setSuccessorError('');
+      setDeleteVisible(true);
+    } catch (e) {
+      console.error('Ошибка при проверке заявок:', e);
+      setErr(e?.message || 'Не удалось проверить заявки сотрудника');
+      toastError(e?.message || 'Не удалось проверить заявки сотрудника');
+    }
   };
+
   const onConfirmDelete = async () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
     if (meId && userId === meId) return;
-    if (!successor?.id) {
-      setSuccessorError(t('err_successor_required'));
+
+    // Если есть заявки, но преемник не выбран — показываем ошибку
+    if (totalOrdersCount > 0 && !successor?.id) {
+      setSuccessorError('Выберите сотрудника для переназначения заявок');
       return;
     }
+
     try {
       setSaving(true);
       setErr('');
-      toastInfo(t('toast_saving'), { sticky: true });
-      const errR = await reassignOrders(userId, successor.id);
-      if (errR) throw new Error(errR.message || t('toast_generic_error'));
-      const errD = await deleteUserEverywhere(userId);
-      if (errD) throw new Error(errD.message || t('toast_generic_error'));
+      toastInfo('Удаление сотрудника...', { sticky: true });
+
+      // Вызываем edge function для деактивации
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const deleteUrl = `${supabaseUrl}/functions/v1/${APP_FUNCTIONS.DELETE_USER || 'delete_user'}`;
+
+      console.log('[onConfirmDelete] deleteUrl:', deleteUrl);
+
+      const deleteRes = await fetch(deleteUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          reassign_to: successor?.id || null,
+        }),
+      });
+
+      console.log('[onConfirmDelete] deleteRes.ok:', deleteRes.ok, 'status:', deleteRes.status);
+
+      if (!deleteRes.ok) {
+        const errData = await deleteRes.json().catch(() => ({}));
+        throw new Error(errData.error || errData.message || `Ошибка удаления (${deleteRes.status})`);
+      }
+
+      const payload = await deleteRes.json().catch(() => null);
+      if (payload && payload.ok === false) {
+        throw new Error(payload.message || 'Ошибка удаления');
+      }
+
       toastSuccess(t('toast_deleted'));
       setDeleteVisible(false);
       setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
+      console.error('Ошибка деактивации:', e);
       setErr(e?.message || t('dlg_generic_warning'));
-      toastError(e?.message || t('dlg_generic_warning'));
+      toastError(e?.message || 'Не удалось деактивировать сотрудника');
     } finally {
       setSaving(false);
     }
@@ -1407,31 +1475,27 @@ export default function EditUser() {
   const openSuccessorPickerFromDelete = () => {
     setPickerReturn('delete');
     setDeleteVisible(false);
+    loadAvailableEmployees();
     setPickerVisible(true);
   };
   const openSuccessorPickerFromSuspend = () => {
     setPickerReturn('suspend');
     setSuspendVisible(false);
+    loadAvailableEmployees();
     setPickerVisible(true);
   };
   if (loading || !meLoaded) {
     return (
-      <SafeAreaView
-        style={{ flex: 1, backgroundColor: theme.colors.background }}
-        edges={['left', 'right']}
-      >
+      <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
           <ActivityIndicator size={theme.components?.activityIndicator?.size ?? 'large'} />
         </View>
-      </SafeAreaView>
+      </EditScreenTemplate>
     );
   }
   if (!canEdit) {
     return (
-      <SafeAreaView
-        style={{ flex: 1, backgroundColor: theme.colors.background }}
-        edges={['left', 'right']}
-      >
+      <EditScreenTemplate scrollEnabled={false}>
         <View
           style={{
             padding: theme.spacing.lg,
@@ -1444,58 +1508,25 @@ export default function EditUser() {
             {t('error_no_access')}
           </Text>
         </View>
-      </SafeAreaView>
+      </EditScreenTemplate>
     );
   }
   const isSelfAdmin = meIsAdmin && meId === userId;
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
   return (
-    <SafeAreaView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
-      edges={['left', 'right']}
+    <EditScreenTemplate
+      title={headerName}
+      rightTextLabel={saving ? t('toast_saving') : t('header_save')}
+      onRightPress={handleSave}
+      scrollRef={scrollRef}
+      onScroll={(e) => {
+        try {
+          scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+        } catch (_) {}
+      }}
     >
-      <AppHeader
-        back
-        options={{
-          headerTitleAlign: 'left',
-          title: headerName,
-          rightTextLabel: saving ? t('toast_saving') : t('header_save'),
-          onRightPress: handleSave,
-        }}
-      />
-      <KeyboardAwareScrollView
-        contentContainerStyle={[
-          styles.scroll,
-          {
-            paddingBottom: Math.max(
-              24,
-              (theme.components?.scrollView?.paddingBottom ?? 24) + (insets?.bottom ?? 0),
-            ),
-          },
-        ]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        showsVerticalScrollIndicator={false}
-        contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
-        scrollEnabled={true}
-        bottomOffset={40}
-        onScroll={(e) => {
-          try {
-            scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-          } catch (_) {}
-        }}
-        scrollEventThrottle={16}
-      >
-        <TouchableWithoutFeedback
-          accessible={false}
-          onPress={() => {
-            try {
-              Keyboard.dismiss();
-            } catch (_) {}
-          }}
-        >
-          <View>
+      <View>
             <View
               style={[
                 styles.card,
@@ -1730,13 +1761,6 @@ export default function EditUser() {
                         pressable
                         onPress={() => setShowRoles(true)}
                       />
-                      <TextField
-                        label={t('label_status')}
-                        value={isSuspended ? t('status_suspended') : t('status_active')}
-                        style={styles.field}
-                        pressable
-                        onPress={() => (isSuspended ? onAskUnsuspend : onAskSuspend)()}
-                      />
                     </>
                   )}
                 </Card>
@@ -1771,7 +1795,6 @@ export default function EditUser() {
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                       <Pressable
                         onPress={() => {
-                          pwdRef.current?.blur();
                           setShowPassword((v) => !v);
                         }}
                         android_ripple={{
@@ -1815,9 +1838,27 @@ export default function EditUser() {
               </View>
             </Card>
 
+            {meIsAdmin && meId !== userId && !isSuspended && (
+              <UIButton
+                title={t('btn_suspend')}
+                variant="secondary"
+                onPress={onAskSuspend}
+                style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
+              />
+            )}
+
+            {meIsAdmin && meId !== userId && isSuspended && (
+              <UIButton
+                title={t('dlg_unsuspend_confirm')}
+                variant="primary"
+                onPress={onAskUnsuspend}
+                style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
+              />
+            )}
+
             {meIsAdmin && meId !== userId && (
               <UIButton
-                title={t('btn_delete')}
+                title={t('btn_delete_employee')}
                 variant="destructive"
                 onPress={onAskDelete}
                 style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
@@ -1872,6 +1913,7 @@ export default function EditUser() {
             />
             <SuspendModal
               visible={suspendVisible}
+              activeOrdersCount={activeOrdersCount}
               ordersAction={ordersAction}
               setOrdersAction={setOrdersAction}
               successor={successor}
@@ -1894,9 +1936,8 @@ export default function EditUser() {
             />
             <DeleteEmployeeModal
               visible={deleteVisible}
+              totalOrdersCount={totalOrdersCount}
               successor={successor}
-              successorError={successorError}
-              setSuccessorError={setSuccessorError}
               openSuccessorPicker={openSuccessorPickerFromDelete}
               onConfirm={onConfirmDelete}
               saving={saving}
@@ -1906,14 +1947,42 @@ export default function EditUser() {
             <SelectModal
               visible={pickerVisible}
               title={t('picker_user_title')}
-              items={(pickerItems || []).map((it) => ({
-                id: it.id,
-                label: it.name,
-                subtitle: t(`role_${it.role}`),
-                right: null,
-              }))}
+              items={(pickerItems || []).map((it) => {
+                const displayName = it.full_name || `${it.first_name || ''} ${it.last_name || ''}`.trim() || 'Без имени';
+                const initials = `${(it.first_name || '').slice(0, 1)}${(it.last_name || '').slice(0, 1)}`.toUpperCase();
+                const roleLabel = it.role ? t(`role_${it.role}`) : '';
+                
+                return {
+                  id: it.id,
+                  label: displayName,
+                  subtitle: roleLabel,
+                  role: it.role,
+                  icon: (
+                    <View
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: withAlpha(theme.colors.primary, 0.15),
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: theme.typography.sizes.sm,
+                          fontWeight: '600',
+                          color: theme.colors.primary,
+                        }}
+                      >
+                        {initials}
+                      </Text>
+                    </View>
+                  ),
+                };
+              })}
               onSelect={(item) => {
-                setSuccessor({ id: item.id, name: item.label, role: item.role });
+                setSuccessor({ id: item.id, name: item.label, role: item.role || 'worker' });
                 setSuccessorError('');
                 setPickerVisible(false);
                 if (pickerReturn === 'delete') setDeleteVisible(true);
@@ -2015,9 +2084,435 @@ export default function EditUser() {
                 }
               }}
             />
+      </View>
+    </EditScreenTemplate>
+  );
+}
+
+// ========== SuspendModal компонент ==========
+function SuspendModal({
+  visible,
+  activeOrdersCount = 0,
+  ordersAction = 'keep',
+  setOrdersAction,
+  successor,
+  successorError,
+  setSuccessorError,
+  openSuccessorPicker,
+  onConfirm,
+  saving,
+  onClose,
+}) {
+  const { t } = useTranslation();
+  const { theme } = useTheme();
+
+  const hasActiveOrders = activeOrdersCount > 0;
+  
+  const options = [
+    {
+      id: 'keep',
+      title: t('user_block_keepOrders'),
+      description: t('user_block_keepOrders_desc'),
+    },
+  ];
+  
+  // Добавляем опцию переназначения только если есть активные заявки
+  if (hasActiveOrders) {
+    options.push({
+      id: 'reassign',
+      title: t('user_block_reassign'),
+      description: t('user_block_reassign_desc'),
+    });
+  }
+
+  const footer = (
+    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md }}>
+      <UIButton
+        title={t('btn_cancel')}
+        variant="outline"
+        onPress={onClose}
+        disabled={saving}
+      />
+      <UIButton
+        title={saving ? t('btn_applying') : t('btn_apply')}
+        variant="primary"
+        onPress={onConfirm}
+        disabled={saving || (ordersAction === 'reassign' && !successor?.id)}
+      />
+    </View>
+  );
+
+  return (
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={t('user_changeStatus_title')}
+      maxHeightRatio={0.7}
+      footer={footer}
+    >
+      <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={true}>
+        {options.map((option) => {
+          const isSelected = option.id === ordersAction;
+          return (
+            <Pressable
+              key={option.id}
+              onPress={() => {
+                setOrdersAction(option.id);
+                setSuccessorError('');
+              }}
+              android_ripple={{
+                color: theme?.colors?.border ?? '#00000020',
+                borderless: false,
+              }}
+              style={({ pressed }) => [
+                {
+                  paddingVertical: theme.spacing.md,
+                  paddingHorizontal: theme.spacing.md,
+                  marginBottom: theme.spacing.md,
+                  borderWidth: theme.components?.card?.borderWidth ?? 1,
+                  borderColor: isSelected ? theme.colors.primary : theme.colors.border,
+                  borderRadius: theme.radii.lg,
+                  backgroundColor: isSelected
+                    ? withAlpha(theme.colors.primary, 0.08)
+                    : theme.colors.surface,
+                },
+                pressed && Platform.OS === 'ios' ? { opacity: 0.7 } : null,
+              ]}
+            >
+              {/* Заголовок опции */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginBottom: theme.spacing.xs,
+                }}
+              >
+                <View
+                  style={{
+                    width: 20,
+                    height: 20,
+                    borderRadius: 10,
+                    borderWidth: 2,
+                    borderColor: isSelected
+                      ? theme.colors.primary
+                      : theme.colors.border,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginRight: theme.spacing.sm,
+                  }}
+                >
+                  {isSelected && (
+                    <View
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: 5,
+                        backgroundColor: theme.colors.primary,
+                      }}
+                    />
+                  )}
+                </View>
+                <Text
+                  style={{
+                    fontSize: theme.typography.sizes.md,
+                    fontWeight: '600',
+                    color: theme.colors.text,
+                    flex: 1,
+                  }}
+                >
+                  {option.title}
+                </Text>
+              </View>
+
+              {/* Описание опции (видно только если выбрана) */}
+              {isSelected && (
+                <Text
+                  style={{
+                    fontSize: theme.typography.sizes.sm,
+                    color: theme.colors.textSecondary,
+                    marginLeft: 32,
+                    lineHeight: 20,
+                    marginTop: theme.spacing.xs,
+                  }}
+                >
+                  {option.description}
+                </Text>
+              )}
+
+              {/* Выбор преемника для "reassign" */}
+              {option.id === 'reassign' && isSelected && (
+                <View style={{ marginTop: theme.spacing.md, marginLeft: 32 }}>
+                  <Pressable
+                    onPress={openSuccessorPicker}
+                    style={({ pressed }) => [
+                      {
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        paddingHorizontal: theme.spacing.md,
+                        paddingVertical: theme.spacing.sm,
+                        borderWidth: theme.components.card.borderWidth,
+                        borderColor: successorError
+                          ? theme.colors.danger
+                          : withAlpha(theme.colors.text, 0.1),
+                        borderRadius: theme.radii.lg,
+                        backgroundColor: pressed
+                          ? withAlpha(theme.colors.primary, 0.04)
+                          : theme.colors.surface,
+                      },
+                    ]}
+                  >
+                    {/* Avatar */}
+                    <View
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 24,
+                        backgroundColor: withAlpha(theme.colors.primary, 0.12),
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: theme.spacing.md,
+                        borderWidth: theme.components.card.borderWidth,
+                        borderColor: withAlpha(theme.colors.primary, 0.2),
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: theme.typography.sizes.sm,
+                          fontWeight: '600',
+                          color: theme.colors.primary,
+                        }}
+                      >
+                        {successor?.name
+                          ? successor.name
+                              .split(' ')
+                              .map((n) => n[0])
+                              .join('')
+                              .toUpperCase()
+                              .slice(0, 2)
+                          : '?'}
+                      </Text>
+                    </View>
+
+                    {/* Content */}
+                    <View style={{ flex: 1 }}>
+                      {successor?.name ? (
+                        <>
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              fontSize: theme.typography.sizes.md,
+                              fontWeight: '500',
+                              color: theme.colors.text,
+                            }}
+                          >
+                            {successor.name}
+                          </Text>
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              fontSize: theme.typography.sizes.sm,
+                              color: theme.colors.textSecondary,
+                              marginTop: 2,
+                            }}
+                          >
+                            {t(`role_${successor.role || 'worker'}`)}
+                          </Text>
+                        </>
+                      ) : (
+                        <Text
+                          style={{
+                            fontSize: theme.typography.sizes.md,
+                            color: theme.colors.textSecondary,
+                          }}
+                        >
+                          {t('placeholder_pick_employee')}
+                        </Text>
+                      )}
+                    </View>
+
+                    {/* Chevron Icon */}
+                    <Feather
+                      name="chevron-right"
+                      size={24}
+                      color={theme.colors.textSecondary}
+                      style={{ marginLeft: theme.spacing.sm }}
+                    />
+                  </Pressable>
+
+                  {successorError && (
+                    <Text
+                      style={{
+                        color: theme.colors.danger,
+                        fontSize: theme.typography.sizes.xs,
+                        marginTop: theme.spacing.xs,
+                      }}
+                    >
+                      {successorError}
+                    </Text>
+                  )}
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </BaseModal>
+  );
+}
+
+// ========== DeleteEmployeeModal компонент ==========
+function DeleteEmployeeModal({
+  visible,
+  totalOrdersCount = 0,
+  successor,
+  openSuccessorPicker,
+  onConfirm,
+  saving,
+  onClose,
+}) {
+  const { t } = useTranslation();
+  const { theme } = useTheme();
+
+  const footer = (
+    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md }}>
+      <UIButton
+        title={t('btn_cancel')}
+        variant="outline"
+        onPress={onClose}
+        disabled={saving}
+      />
+      <UIButton
+        title={saving ? t('btn_deleting') : t('btn_delete')}
+        variant="destructive"
+        onPress={onConfirm}
+        disabled={saving || (totalOrdersCount > 0 && !successor?.id)}
+      />
+    </View>
+  );
+
+  return (
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={t('user_delete_title')}
+      maxHeightRatio={0.6}
+      footer={footer}
+    >
+      {totalOrdersCount === 0 ? (
+        <View style={{ paddingBottom: theme.spacing.md }}>
+          <Text
+            style={{
+              fontSize: theme.typography.sizes.md,
+              fontWeight: '500',
+              color: theme.colors.text,
+              marginBottom: theme.spacing.md,
+            }}
+          >
+            {t('user_delete_no_orders_title')}
+          </Text>
+          <Text
+            style={{
+              fontSize: theme.typography.sizes.sm,
+              color: theme.colors.textSecondary,
+              lineHeight: theme.typography.lineHeights?.md ?? 20,
+            }}
+          >
+            {t('user_delete_no_orders_msg')}
+          </Text>
+        </View>
+      ) : !successor?.id ? (
+        <>
+          <View style={{ paddingBottom: theme.spacing.md }}>
+            <Text
+              style={{
+                fontSize: theme.typography.sizes.md,
+                fontWeight: '500',
+                color: theme.colors.text,
+                marginBottom: theme.spacing.md,
+              }}
+            >
+              {t('user_delete_reassign_title')}
+            </Text>
+            <Text
+              style={{
+                fontSize: theme.typography.sizes.sm,
+                color: theme.colors.textSecondary,
+                lineHeight: theme.typography.lineHeights?.md ?? 20,
+              }}
+            >
+              {t('user_delete_reassign_msg').replace('{count}', totalOrdersCount)}
+            </Text>
           </View>
-        </TouchableWithoutFeedback>
-      </KeyboardAwareScrollView>
-    </SafeAreaView>
+          <UIButton
+            title={t('placeholder_pick_employee')}
+            variant="primary"
+            onPress={openSuccessorPicker}
+            size="sm"
+          />
+        </>
+      ) : (
+        <>
+          <View style={{ paddingBottom: theme.spacing.md }}>
+            <Text
+              style={{
+                fontSize: theme.typography.sizes.md,
+                fontWeight: '500',
+                color: theme.colors.text,
+                marginBottom: theme.spacing.md,
+              }}
+            >
+              {t('user_delete_reassigned_title')}
+            </Text>
+            <Text
+              style={{
+                fontSize: theme.typography.sizes.sm,
+                color: theme.colors.textSecondary,
+                marginBottom: theme.spacing.md,
+                lineHeight: theme.typography.lineHeights?.md ?? 20,
+              }}
+            >
+              {t('user_delete_reassigned_msg').replace('{count}', totalOrdersCount)}
+            </Text>
+          </View>
+          <View
+            style={{
+              backgroundColor: withAlpha(theme.colors.primary, 0.08),
+              borderRadius: theme.radii.lg,
+              padding: theme.spacing.md,
+              marginBottom: theme.spacing.lg,
+              borderWidth: theme.components?.card?.borderWidth ?? 1,
+              borderColor: theme.colors.border,
+            }}
+          >
+            <Text
+              numberOfLines={1}
+              style={{
+                fontSize: theme.typography.sizes.md,
+                fontWeight: '600',
+                color: theme.colors.text,
+              }}
+            >
+              {successor.name}
+            </Text>
+            <Text
+              numberOfLines={1}
+              style={{
+                fontSize: theme.typography.sizes.sm,
+                color: theme.colors.textSecondary,
+                marginTop: theme.spacing.xs,
+              }}
+            >
+              {t(`role_${successor.role || 'worker'}`)}
+            </Text>
+          </View>
+          <UIButton
+            title={t('placeholder_pick_employee') || 'Выбрать другого'}
+            variant="outline"
+            onPress={openSuccessorPicker}
+            size="sm"
+          />
+        </>
+      )}
+    </BaseModal>
   );
 }

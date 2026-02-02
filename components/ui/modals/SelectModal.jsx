@@ -18,6 +18,7 @@ export default function SelectModal({
   footer,
   initialSearch = '',
   maxHeightRatio = 0.75,
+  selectedId = null,
 }) {
   const { theme } = useTheme();
   const s = useMemo(() => styles(theme), [theme]);
@@ -43,6 +44,7 @@ export default function SelectModal({
 
   const renderDefaultItem = ({ item }) => {
     const disabled = !!item.disabled;
+    const isSelected = selectedId && item.id === selectedId;
     const handlePress = () => {
       if (disabled) return;
       // Если у элемента есть свой onPress, вызываем его
@@ -61,6 +63,7 @@ export default function SelectModal({
         android_ripple={{ color: theme.colors.ripple }}
         style={({ pressed }) => [
           s.item,
+          isSelected && s.itemSelected,
           { opacity: disabled ? 0.5 : 1 },
           pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
         ]}
@@ -82,7 +85,9 @@ export default function SelectModal({
           {item.right ? (
             item.right
           ) : (
-            <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
+            <View style={[s.radioButton, isSelected && s.radioButtonSelected]}>
+              {isSelected && <View style={s.radioDot} />}
+            </View>
           )}
         </View>
       </Pressable>
@@ -132,8 +137,33 @@ const styles = (t) =>
       backgroundColor: t.colors.surface,
       borderRadius: 12,
     },
+    itemSelected: {
+      backgroundColor: t.colors.surface,
+      borderColor: t.colors.primary,
+      borderWidth: 2,
+    },
     itemLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 8 },
     itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
+    itemTitleSelected: { color: t.colors.text },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
     itemRight: { marginLeft: 8, alignSelf: 'center' },
+    radioButton: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      borderWidth: 1.5,
+      borderColor: '#C7C7CC',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    radioButtonSelected: {
+      borderColor: t.colors.primary,
+      borderWidth: 1.5,
+    },
+    radioDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+      backgroundColor: t.colors.primary,
+    },
   });

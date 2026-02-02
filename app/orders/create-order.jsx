@@ -1,159 +1,70 @@
-// apps/field-work/app/orders/create-order.jsx
+// app/orders/create-order.jsx
+// Order creation screen using shared components/styles
 
-import { AntDesign, Feather } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  AppState,
   BackHandler,
   findNodeHandle,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
-  TextInput as RNTextInput,
-  ScrollView,
   StyleSheet,
   Text,
   UIManager,
   View,
 } from 'react-native';
-import { MaskedTextInput } from 'react-native-mask-text';
-import Modal from 'react-native-modal';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import Button from '../../components/ui/Button';
 
+import EditScreenTemplate, { useEditFormStyles } from '../../components/layout/EditScreenTemplate';
+import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
+import ClearButton from '../../components/ui/ClearButton';
+import SectionHeader from '../../components/ui/SectionHeader';
+import { listItemStyles } from '../../components/ui/listItemStyles';
+import TextField from '../../components/ui/TextField';
+import PhoneInput from '../../components/ui/PhoneInput';
+import { AlertModal, ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { usePermissions } from '../../lib/permissions';
 import { buildCustomPayload, fetchFormSchema } from '../../lib/settings';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import { getLocale } from '../../src/i18n';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import { withAlpha } from '../../theme/colors';
+
+const DEFAULT_FIELDS = [
+  { field_key: 'title', label: null, type: 'text', position: 10, required: true },
+  { field_key: 'fio', label: null, type: 'text', position: 20 },
+  { field_key: 'phone', label: null, type: 'phone', position: 30 },
+  { field_key: 'region', label: null, type: 'text', position: 40 },
+  { field_key: 'city', label: null, type: 'text', position: 50 },
+  { field_key: 'street', label: null, type: 'text', position: 60 },
+  { field_key: 'house', label: null, type: 'text', position: 70 },
+];
+
+const SCROLL_ANIMATION_DELAY = 200;
+const PHONE_REGEX = /^7\d{10}$/;
 
 export default function CreateOrderScreen() {
-  /* PERMISSIONS GUARD: create-order */
-  const { has } = usePermissions ? usePermissions() : { has: () => true };
+  const { has, loading } = usePermissions();
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const formStyles = useEditFormStyles();
+  const requiredSuffix = t('common_required_suffix');
 
-  const isDark = theme.name === 'dark' || theme.mode === 'dark';
+  const styles = useMemo(() => createStyles(theme), [theme]);
+  const base = useMemo(() => listItemStyles(theme), [theme]);
 
-  // palette available in render (icons etc.)
-  const palette = useMemo(
-    () => ({
-      bg: theme.colors?.background ?? theme.colors?.surface,
-      card: theme.colors?.surface,
-      text: theme.colors?.text,
-      textMuted: theme.colors?.textSecondary ?? theme.colors?.text,
-      border: theme.colors?.border,
-      borderSoft: theme.colors?.border,
-      inputBg: theme.colors?.inputBg ?? theme.colors?.surface,
-      primary: theme.colors?.primary,
-      secondary: theme.colors?.inputBg ?? theme.colors?.surface,
-      destructive: theme.colors?.danger ?? theme.colors?.error ?? theme.colors?.primary,
-      toggleTrack: theme.colors?.border,
-      toggleTrackOn: theme.colors?.primary,
-      knob: theme.colors?.surface,
-      icon: theme.colors?.textSecondary ?? theme.colors?.text,
-      onPrimary: theme.colors?.onPrimary ?? theme.colors?.surface,
-    }),
-    [theme],
-  );
+  const scrollRef = useRef(null);
+  const dateFieldRef = useRef(null);
+  const timeFieldRef = useRef(null);
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        container: { flex: 1, backgroundColor: palette.bg },
-        scroll: { padding: 16, paddingBottom: 40 },
-        pageTitle: {
-          fontSize: 20,
-          fontWeight: '600',
-          marginBottom: 16,
-          textAlign: 'center',
-          color: palette.text,
-        },
-
-        card: {
-          backgroundColor: palette.card,
-          borderRadius: 12,
-          padding: 12,
-          borderColor: palette.borderSoft,
-          borderWidth: 1,
-          marginBottom: 12,
-        },
-        section: { marginTop: 6, marginBottom: 8, fontWeight: '600', color: palette.text },
-        label: {
-          fontWeight: '500',
-          marginBottom: 4,
-          marginTop: 12,
-          color: isDark ? '#E3E3E6' : '#333',
-        },
-        input: {
-          borderWidth: 1,
-          borderColor: palette.border,
-          backgroundColor: palette.inputBg,
-          color: palette.text,
-          borderRadius: 10,
-          padding: 10,
-        },
-        selectInput: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          borderWidth: 1,
-          borderColor: palette.border,
-          borderRadius: 10,
-          backgroundColor: palette.inputBg,
-          padding: 12,
-          marginTop: 4,
-        },
-        selectInputText: { fontSize: 16, color: palette.text },
-        modalContainer: { backgroundColor: palette.card, borderRadius: 12, padding: 20 },
-        modalTitle: { fontSize: 18, fontWeight: '600', marginBottom: 12, color: palette.text },
-        modalText: { fontSize: 15, color: palette.textMuted, marginBottom: 20 },
-        modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
-        assigneeOption: { paddingVertical: 10 },
-        assigneeText: { fontSize: 16, color: palette.text },
-
-        toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8 },
-        toggle: {
-          width: 42,
-          height: 26,
-          borderRadius: 13,
-          backgroundColor: palette.toggleTrack,
-          padding: 2,
-          justifyContent: 'center',
-        },
-        toggleOn: { backgroundColor: palette.toggleTrackOn },
-        knob: {
-          width: 22,
-          height: 22,
-          borderRadius: 11,
-          backgroundColor: palette.knob,
-          alignSelf: 'flex-start',
-        },
-        knobOn: { alignSelf: 'flex-end' },
-        toggleLabel: { fontSize: 14, color: palette.text },
-      }),
-    [theme],
-  );
-
-  // deny access if no rights
-  if (!has('canCreateOrders')) {
-    return (
-      <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <Text style={{ fontSize: 16, color: theme.colors?.textSecondary }}>
-          У вас нет прав на создание заявок
-        </Text>
-      </SafeAreaView>
-    );
-  }
-
-  // ----------------------- STATE / SCHEMA -----------------------
   const [schema, setSchema] = useState({ context: 'create', fields: [] });
-  const [ready, setReady] = useState(false);
   const [form, setForm] = useState({});
-  const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
-
   const [description, setDescription] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -161,126 +72,149 @@ export default function CreateOrderScreen() {
   const [assigneeId, setAssigneeId] = useState(null);
   const [urgent, setUrgent] = useState(false);
   const [users, setUsers] = useState([]);
+  const [toFeed, setToFeed] = useState(false);
+  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+  const [workTypes, setWorkTypes] = useState([]);
+  const [workTypeId, setWorkTypeId] = useState(null);
+
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
-  const [toFeed, setToFeed] = useState(false);
-  // Виды работ (по компании)
-  const [companyId, setCompanyId] = useState(null);
-  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
-  const [workTypes, setWorkTypes] = useState([]);
-  const [workTypeId, setWorkTypeId] = useState(null);
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+  const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
+  const [savedDraft, setSavedDraft] = useState(null);
+  
+  const intentionalExitRef = useRef(false);
 
-  const scrollRef = useRef(null);
-  const dateFieldRef = useRef(null);
-  const timeFieldRef = useRef(null);
+  const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
 
-  const showWarning = (message) => {
-    setWarningMessage(message);
-    setWarningVisible(true);
-  };
-  const handleCancelPress = () => setCancelVisible(true);
-  const confirmCancel = () => {
-    setCancelVisible(false);
-    router.back();
-  };
+  const DRAFT_KEY = 'draft_create_order';
 
-  const scrollToHandle = (targetRef) => {
-    if (scrollRef.current && targetRef.current) {
-      UIManager.measureLayout(
-        targetRef.current,
-        findNodeHandle(scrollRef.current),
-        () => {},
-        (_x, y) => {
-          scrollRef.current.scrollTo({ y, animated: true });
-        },
-      );
+  // Сохранить черновик
+  const saveDraft = useCallback(async () => {
+    try {
+      const draft = {
+        form,
+        description,
+        departureDate: departureDate?.toISOString(),
+        workTypeId,
+        assigneeId,
+        urgent,
+        toFeed,
+        timestamp: Date.now(),
+      };
+      await AsyncStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    } catch (e) {
+      console.warn('[CreateOrder] Save draft failed:', e);
     }
-  };
+  }, [form, description, departureDate, workTypeId, assigneeId, urgent, toFeed]);
 
-  useFocusEffect(
-    useCallback(() => {
-      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-        setCancelVisible(true);
-        return true;
-      });
-      return () => subscription.remove();
-    }, []),
-  );
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const data = await fetchFormSchema('create');
-        if (!mounted) return;
-        const defaults = [
-          {
-            field_key: 'title',
-            label: 'Название заявки',
-            type: 'text',
-            position: 10,
-            required: true,
-          },
-          { field_key: 'fio', label: 'Имя заказчика', type: 'text', position: 20 },
-          { field_key: 'phone', label: 'Телефон', type: 'phone', position: 30 },
-          { field_key: 'region', label: 'Район или область', type: 'text', position: 40 },
-          { field_key: 'city', label: 'Город или н.п.', type: 'text', position: 50 },
-          { field_key: 'street', label: 'Улица или СНТ', type: 'text', position: 60 },
-          { field_key: 'house', label: 'Дом или участок', type: 'text', position: 70 },
-        ];
-        const fields =
-          Array.isArray(data?.fields) && data.fields.length > 0 ? data.fields : defaults;
-        setSchema({ context: 'create', fields });
-
-        const init = {};
-        for (const f of fields) init[f.field_key] = '';
-        setForm(init);
-      } catch (e) {
-        console.warn('get_form_schema failed:', e?.message || e);
-      } finally {
-        if (mounted) setReady(true);
-      }
-    })();
-
-    const loadUsers = async () => {
-      const { data: userList, error } = await supabase
-        .from('profiles')
-        .select('id, first_name, last_name, role')
-        .in('role', ['worker', 'dispatcher', 'admin']);
-      if (!error) setUsers(userList || []);
-      setAssigneeId(null);
-    };
-    loadUsers();
-    return () => {
-      mounted = false;
-    };
+  // Загрузить черновик
+  const loadDraft = useCallback(async () => {
+    try {
+      const json = await AsyncStorage.getItem(DRAFT_KEY);
+      if (!json) return null;
+      const draft = JSON.parse(json);
+      return draft;
+    } catch (e) {
+      console.warn('[CreateOrder] Load draft failed:', e);
+      return null;
+    }
   }, []);
 
-  // Загрузка companyId и списка видов работ
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const cid = await getMyCompanyId();
-        if (!alive) return;
-        setCompanyId(cid);
-        if (cid) {
-          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
-          if (!alive) return;
-          setUseWorkTypesFlag(!!flag);
-          setWorkTypes(types || []);
-          if (!flag) setWorkTypeId(null);
-        }
-      } catch (e) {
-        console.warn('workTypes bootstrap failed:', e?.message || e);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+  // Удалить черновик
+  const deleteDraft = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(DRAFT_KEY);
+    } catch (e) {
+      console.warn('[CreateOrder] Delete draft failed:', e);
+    }
+  }, []);
+
+  // Восстановить данные из черновика
+  const restoreDraft = useCallback((draft) => {
+    if (!draft) return;
+    setForm(draft.form || {});
+    setDescription(draft.description || '');
+    setDepartureDate(draft.departureDate ? new Date(draft.departureDate) : null);
+    setWorkTypeId(draft.workTypeId || null);
+    setAssigneeId(draft.assigneeId || null);
+    setUrgent(draft.urgent || false);
+    setToFeed(draft.toFeed || false);
+  }, []);
+
+  const withRequiredLabel = useCallback(
+    (label, required) => {
+      if (!required || !label) return label;
+      if (String(label).includes('*')) return label;
+      return `${label}${requiredSuffix}`;
+    },
+    [requiredSuffix],
+  );
+
+  const showWarning = useCallback((message) => {
+    setWarningMessage(message);
+    setWarningVisible(true);
+  }, []);
+
+  // Проверяем есть ли непустые данные в форме
+  const hasChanges = useCallback(() => {
+    return (
+      !!(form.title?.trim()) ||
+      !!(form.region?.trim()) ||
+      !!(form.city?.trim()) ||
+      !!(form.street?.trim()) ||
+      !!(form.house?.trim()) ||
+      !!(form.fio?.trim()) ||
+      !!(form.phone?.trim()) ||
+      !!(form.customer_name?.trim()) ||
+      !!description?.trim() ||
+      !!departureDate ||
+      !!workTypeId ||
+      !!assigneeId ||
+      !!urgent ||
+      !!toFeed
+    );
+  }, [form, description, departureDate, workTypeId, assigneeId, urgent, toFeed]);
+
+  const handleCancelPress = useCallback(() => {
+    // Показываем модалку только если есть изменения
+    if (hasChanges()) {
+      setCancelVisible(true);
+    } else {
+      intentionalExitRef.current = true; // Явный выход - не сохраняем черновик
+      router.back();
+    }
+  }, [hasChanges]);
+
+  const confirmCancel = useCallback(() => {
+    intentionalExitRef.current = true; // Явный выход - не сохраняем черновик
+    setCancelVisible(false);
+    router.back();
+  }, []);
+
+  const scrollToHandle = useCallback((targetRef) => {
+    if (!scrollRef.current || !targetRef.current) return;
+    const targetHandle = findNodeHandle(targetRef.current);
+    const scrollHandle = findNodeHandle(scrollRef.current);
+    if (!targetHandle || !scrollHandle) return;
+    UIManager.measureLayout(
+      targetHandle,
+      scrollHandle,
+      () => {},
+      (_x, y) => {
+        scrollRef.current.scrollTo({ y, animated: true });
+      },
+    );
+  }, []);
+
+  const normalizePhone = useCallback((val) => {
+    const raw = String(val || '').replace(/\D/g, '');
+    if (!raw) return null;
+    const digits = raw.replace(/^8(\d{10})$/, '7$1');
+    if (!PHONE_REGEX.test(digits)) return null;
+    return `+7${digits.slice(1)}`;
   }, []);
 
   const getField = useCallback(
@@ -288,136 +222,81 @@ export default function CreateOrderScreen() {
     [schema],
   );
 
-  // ------------------------- HELPERS -------------------------
-  const normalizePhone = (val) => {
-    const raw = String(val || '').replace(/\D/g, '');
-    if (!raw) return null;
-    const digits = raw.replace(/^8(\d{10})$/, '7$1');
-    if (digits.length !== 11 || !digits.startsWith('7')) return null;
-    return `+7${digits.slice(1)}`;
-  };
+  const getFieldLabel = useCallback(
+    (fieldKey, fallback) => {
+      const field = getField(fieldKey);
+      if (field?.label) return field.label;
 
-  const TextField = ({
-    label,
-    placeholder,
-    value,
-    onChangeText,
-    multiline = false,
-    keyboardType,
-    secureTextEntry,
-    ...rest
-  }) => (
-    <View>
-      {!!label && <Text style={styles.label}>{label}</Text>}
-      <RNTextInput
-        style={[styles.input, multiline && { height: 100 }]}
-        placeholder={placeholder || label}
-        placeholderTextColor={
-          theme.colors?.placeholder ?? theme.colors?.textSecondary ?? theme.colors?.text
-        }
-        value={value}
-        onChangeText={onChangeText}
-        multiline={multiline}
-        keyboardType={keyboardType}
-        secureTextEntry={secureTextEntry}
-        {...rest}
-      />
-    </View>
+      const labelMap = {
+        title: t('order_field_title'),
+        fio: t('order_field_customer_name'),
+        phone: t('order_details_phone'),
+        region: t('order_field_region'),
+        city: t('order_field_city'),
+        street: t('order_field_street'),
+        house: t('order_field_house'),
+        time_window_start: t('create_order_label_date'),
+        assigned_to: t('create_order_label_executor'),
+      };
+
+      return labelMap[fieldKey] || fallback || fieldKey;
+    },
+    [getField, t],
   );
 
-  const renderTextInput = (key, placeholder) => {
-    const f = getField(key);
-    if (!f) return null;
-    const label = f?.label || placeholder || key;
-    const val = form[key] ?? '';
-    return (
-      <TextField
-        key={key}
-        label={`${label}${f?.required ? ' *' : ''}`}
-        placeholder={placeholder || label}
-        value={val}
-        onChangeText={(t) => setField(key, t)}
-      />
-    );
-  };
-
-  const renderPhoneInput = (key = 'phone') => {
-    const f = getField(key);
-    if (!f) return null;
-    const val = form[key] ?? '';
-    const label = f?.label || 'Телефон';
-    return (
-      <View key={key}>
-        <Text style={styles.label}>
-          {label}
-          {f?.required ? ' *' : ''}
-        </Text>
-        <MaskedTextInput
-          style={styles.input}
-          mask="+7 (999) 999-99-99"
-          keyboardType="phone-pad"
-          placeholder="+7 (___) ___-__-__"
-          placeholderTextColor={
-            theme.colors?.placeholder ?? theme.colors?.textSecondary ?? theme.colors?.text
-          }
-          value={val}
-          onChangeText={(text, rawText) => setField(key, rawText)}
-        />
-      </View>
-    );
-  };
-
-  // ------------------------- SUBMIT -------------------------
-  // Validate required fields from Form Builder (create schema)
-  function validateRequiredBySchemaCreate() {
+  const validateRequiredFields = useCallback(() => {
     try {
-      const arr = (schema?.fields || []).filter((f) => f?.required);
-      if (!arr.length) return { ok: true };
+      const requiredFields = (schema?.fields || []).filter((f) => f?.required);
+      if (!requiredFields.length) return { ok: true };
+
       const missing = [];
-      for (const f of arr) {
+      for (const f of requiredFields) {
         const k = f.field_key;
         const v = form[k];
+
         if (k === 'phone') {
           const normalized = normalizePhone(form.phone);
-          if (!normalized) missing.push(f.label || k);
+          if (!normalized) missing.push(f.label || getFieldLabel(k));
         } else if (k === 'time_window_start') {
-          if (!departureDate) missing.push(f.label || k);
+          if (!departureDate) missing.push(f.label || getFieldLabel(k));
         } else if (k === 'assigned_to') {
-          // required only if NOT sending to feed
-          if (!toFeed && !assigneeId) missing.push(f.label || k);
-        } else {
-          if (v === null || v === undefined || String(v).trim() === '') {
-            missing.push(f.label || k);
-          }
+          if (!toFeed && !assigneeId) missing.push(f.label || getFieldLabel(k));
+        } else if (v === null || v === undefined || String(v).trim() === '') {
+          missing.push(f.label || getFieldLabel(k));
         }
       }
+
       if (missing.length) {
-        return { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` };
+        return {
+          ok: false,
+          msg: t('order_validation_fill_required').replace('{fields}', missing.join(', ')),
+        };
       }
+
       return { ok: true };
-    } catch (_e) {
+    } catch {
       return { ok: true };
     }
-  }
+  }, [schema, form, departureDate, toFeed, assigneeId, normalizePhone, getFieldLabel, t]);
 
-  const handleSubmit = async () => {
-    // Validate required fields defined in admin Form Builder (create schema)
-    const reqCheck = validateRequiredBySchemaCreate();
+  const handleSubmit = useCallback(async () => {
+    const reqCheck = validateRequiredFields();
     if (!reqCheck.ok) {
       showWarning(reqCheck.msg);
       return;
     }
+
     const title = (form.title || '').trim();
-    if (useWorkTypes && !workTypeId) return showWarning('Выберите вид работ');
-    if (!title) return showWarning('Укажите название заявки');
-    if (!departureDate) return showWarning('Укажите дату выезда');
-    if (!toFeed && !assigneeId) return showWarning('Выберите исполнителя или отправьте в ленту');
+    if (useWorkTypes && !workTypeId) return showWarning(t('order_validation_work_type_required'));
+    if (!title) return showWarning(t('order_validation_title_required'));
+    if (!departureDate) return showWarning(t('order_validation_date_required'));
+    if (!toFeed && !assigneeId) return showWarning(t('order_validation_executor_required'));
 
     const phoneField = getField('phone');
     let phoneFormatted = null;
     if (phoneField) {
       phoneFormatted = normalizePhone(form.phone);
-      if (!phoneFormatted) return showWarning('Введите корректный номер телефона');
+      if (!phoneFormatted) return showWarning(t('order_validation_phone_format'));
     }
 
     const custom = buildCustomPayload(schema.fields, form);
@@ -433,354 +312,678 @@ export default function CreateOrderScreen() {
       phone: phoneFormatted,
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: departureDate ? departureDate.toISOString() : null,
-      status: toFeed ? 'В ленте' : 'Новый',
-      urgent: urgent,
-      // store the currency for this order (company default if available)
+      status: toFeed ? t('order_status_in_feed') : t('order_status_new'),
+      urgent,
       currency: companySettings?.currency ?? null,
       custom,
     };
 
     const { error } = await supabase.from('orders').insert(payload);
-    if (error) {
-      showWarning(error.message);
-    } else {
+    if (error) showWarning(error.message);
+    else {
+      intentionalExitRef.current = true; // Успешное создание - не сохраняем черновик
+      await deleteDraft(); // Удаляем черновик после успешного создания
       router.replace('/orders/order-success');
     }
-  };
+  }, [
+    validateRequiredFields,
+    form,
+    useWorkTypes,
+    workTypeId,
+    departureDate,
+    toFeed,
+    assigneeId,
+    getField,
+    normalizePhone,
+    description,
+    urgent,
+    companySettings,
+    schema,
+    showWarning,
+    t,
+    deleteDraft,
+  ]);
 
-  // ------------------------- UI -------------------------
+  useFocusEffect(
+    useCallback(() => {
+      const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (hasChanges()) {
+          setCancelVisible(true);
+        } else {
+          intentionalExitRef.current = true; // Явный выход - не сохраняем черновик
+          router.back();
+        }
+        return true;
+      });
+      return () => subscription.remove();
+    }, [hasChanges]),
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await fetchFormSchema('create');
+        if (!mounted) return;
+        const fields =
+          Array.isArray(data?.fields) && data.fields.length > 0 ? data.fields : DEFAULT_FIELDS;
+        setSchema({ context: 'create', fields });
+        const init = {};
+        for (const f of fields) init[f.field_key] = '';
+        setForm(init);
+      } catch (e) {
+        console.warn('[CreateOrder] get_form_schema failed:', e?.message || e);
+      }
+    })();
+
+    const loadUsers = async () => {
+      const { data: userList, error } = await supabase
+        .from('profiles')
+        .select('id, first_name, last_name, role')
+        .in('role', ['worker', 'dispatcher', 'admin']);
+      if (!error && mounted) setUsers(userList || []);
+    };
+    loadUsers();
+
+    // Проверяем черновик при монтировании
+    (async () => {
+      const draft = await loadDraft();
+      if (draft && mounted) {
+        setSavedDraft(draft);
+        setDraftRestoreVisible(true);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [loadDraft]);
+
+  // AppState listener - сохраняем черновик при сворачивании/закрытии приложения
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState) => {
+      // Если приложение уходит в background или inactive и это НЕ явный выход
+      if ((nextAppState === 'background' || nextAppState === 'inactive') && !intentionalExitRef.current) {
+        // Сохраняем черновик только если есть изменения
+        if (hasChanges()) {
+          saveDraft();
+        }
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription?.remove();
+  }, [saveDraft, hasChanges]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const cid = await getMyCompanyId();
+        if (!alive) return;
+        if (cid) {
+          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+          if (!alive) return;
+          setUseWorkTypesFlag(!!flag);
+          setWorkTypes(types || []);
+          if (!flag) setWorkTypeId(null);
+        }
+      } catch (e) {
+        console.warn('[CreateOrder] workTypes bootstrap failed:', e?.message || e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const renderTextField = useCallback(
+    ({ label, placeholder, value, onChangeText, multiline = false, keyboardType, required, maxLength }) => (
+      <TextField
+        label={withRequiredLabel(label, required)}
+        placeholder={placeholder || label}
+        value={value}
+        onChangeText={onChangeText}
+        multiline={multiline}
+        keyboardType={keyboardType}
+        maxLength={maxLength}
+        style={formStyles.field}
+        forceValidation={false}
+      />
+    ),
+    [formStyles, withRequiredLabel],
+  );
+
+  const renderTextInput = useCallback(
+    (key, placeholder, opts = {}) => {
+      const f = getField(key);
+      if (!f) return null;
+      const label = withRequiredLabel(getFieldLabel(key, placeholder), f.required);
+      const val = form[key] ?? '';
+      return (
+        <View key={key}>
+          {renderTextField({
+            label,
+            placeholder: placeholder || label,
+            value: val,
+            onChangeText: (text) => setField(key, text),
+            required: f.required,
+            ...opts,
+          })}
+        </View>
+      );
+    },
+    [getField, getFieldLabel, form, renderTextField, setField, withRequiredLabel],
+  );
+
+  const renderPhoneInput = useCallback(
+    (key = 'phone') => {
+      const f = getField(key);
+      if (!f) return null;
+      const label = withRequiredLabel(getFieldLabel(key), f.required);
+      const val = form[key] ?? '';
+      return (
+        <PhoneInput
+          key={key}
+          label={label}
+          value={val}
+          onChangeText={(raw, meta) => setField(key, raw)}
+          placeholder={t('create_order_placeholder_phone')}
+          style={formStyles.field}
+        />
+      );
+    },
+    [getField, getFieldLabel, form, setField, formStyles, t, withRequiredLabel],
+  );
+
+  const renderToggle = useCallback(
+    (value, onPress, label) => {
+      const sep = theme.components?.input?.separator || {};
+      const insetKey = sep.insetX || 'lg';
+      const ml = Number(theme.spacing?.[insetKey] ?? 0) || 0;
+      return (
+        <View>
+          <View style={[base.row, formStyles.field, { paddingHorizontal: ml }]}>
+            <Text style={styles.toggleLabel}>{label}</Text>
+            <Pressable onPress={onPress} style={[styles.toggle, value && styles.toggleOn]}>
+              <View style={[styles.knob, value && styles.knobOn]} />
+            </Pressable>
+          </View>
+          <View style={styles.separator} />
+        </View>
+      );
+    },
+    [styles, base, formStyles, theme],
+  );
+
+
+  const selectedWorkTypeName = useMemo(() => {
+    if (!workTypeId) return null;
+    const found = workTypes.find((w) => w.id === workTypeId);
+    return found?.name || t('create_order_work_type_selected');
+  }, [workTypeId, workTypes, t]);
+
+  const selectedAssigneeName = useMemo(() => {
+    if (!assigneeId) return null;
+    const u = users.find((x) => x.id === assigneeId);
+    return (
+      [u?.first_name, u?.last_name].filter(Boolean).join(' ') ||
+      t('create_order_executor_selected')
+    );
+  }, [assigneeId, users, t]);
+
+  const formatDate = useCallback((date) => {
+    if (!date) return null;
+    return date.toLocaleDateString(getLocale(), {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+    });
+  }, []);
+
+  const formatTime = useCallback((date) => {
+    if (!date) return null;
+    return date.toLocaleTimeString(getLocale(), {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }, []);
+
+  const workTypeItems = useMemo(() => {
+    if (!workTypes.length) {
+      return [
+        {
+          id: 'empty',
+          label: t('create_order_modal_work_type_empty'),
+          disabled: true,
+        },
+      ];
+    }
+    return workTypes.map((wt) => ({ id: wt.id, label: wt.name }));
+  }, [workTypes, t]);
+
+  const assigneeItems = useMemo(() => {
+    const items = [
+      {
+        id: 'feed',
+        label: t('create_order_executor_in_feed'),
+        onPress: () => {
+          setToFeed(true);
+          setAssigneeId(null);
+          setAssigneeModalVisible(false);
+        },
+      },
+    ];
+    users.forEach((user) => {
+      const label = [user.first_name, user.last_name].filter(Boolean).join(' ');
+      items.push({
+        id: user.id,
+        label: label || t('common_dash'),
+        onPress: () => {
+          setAssigneeId(user.id);
+          setToFeed(false);
+          setAssigneeModalVisible(false);
+        },
+      });
+    });
+    return items;
+  }, [users, t]);
+
+  if (loading) {
+    return (
+      <EditScreenTemplate title={t('create_order_title')} scrollEnabled={false}>
+        <View style={styles.permissionContainer}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
+  if (!has('canCreateOrders')) {
+    return (
+      <EditScreenTemplate title={t('create_order_title')} scrollEnabled={false}>
+        <View style={styles.permissionContainer}>
+          <Text style={styles.permissionText}>{t('create_order_no_permission')}</Text>
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
-    >
-      <SafeAreaView
-        style={{ flex: 1, backgroundColor: styles.container.backgroundColor }}
-        edges={['top', 'left', 'right']}
-      >
-        <View style={styles.container}>
-          <ScrollView
-            ref={scrollRef}
-            contentContainerStyle={styles.scroll}
-            keyboardShouldPersistTaps="always"
-            keyboardDismissMode={Platform.OS === 'ios' ? 'on-drag' : 'none'}
-            contentInsetAdjustmentBehavior="automatic"
-          >
-            <Text style={styles.pageTitle}>Создание новой заявки</Text>
+    <>
+      <EditScreenTemplate title={t('create_order_title')} scrollRef={scrollRef} onBack={handleCancelPress}>
+        <SectionHeader topSpacing="xs" bottomSpacing="xs">
+          {t('create_order_section_main')}
+        </SectionHeader>
+          <Card padded={false} style={formStyles.card}>
+            {renderTextField({
+              label: getFieldLabel('title'),
+              placeholder: t('create_order_placeholder_title'),
+              value: form.title || '',
+              onChangeText: (text) => setField('title', text),
+              required: getField('title')?.required,
+            })}
+            {renderTextField({
+              label: t('order_field_description'),
+              placeholder: t('create_order_placeholder_description'),
+              value: description,
+              onChangeText: setDescription,
+              multiline: true,
+            })}
 
-            {/* ОСНОВНОЕ */}
-            <View style={styles.card}>
-              <Text style={styles.section}>Основное</Text>
-              {renderTextInput('title', 'Например: Обрезка деревьев')}
+            {useWorkTypes && (
               <TextField
-                label="Описание"
-                placeholder="Подробности (если есть)"
-                value={description}
-                onChangeText={setDescription}
-                multiline
+                label={withRequiredLabel(t('create_order_work_type_label'), true)}
+                value={selectedWorkTypeName || t('create_order_work_type_placeholder')}
+                pressable
+                style={formStyles.field}
+                onPress={() => setWorkTypeModalVisible(true)}
               />
+            )}
+          </Card>
 
-              {/* WORK TYPE SELECTOR (показываем только если включено в компании) */}
-              {useWorkTypes && (
-                <View>
-                  <Text style={styles.label}>Вид работ *</Text>
-                  <Pressable
-                    style={styles.selectInput}
-                    onPress={() => setWorkTypeModalVisible(true)}
-                  >
-                    <Text style={styles.selectInputText}>
-                      {workTypeId
-                        ? workTypes.find((w) => w.id === workTypeId)?.name || 'Выбран вид работ'
-                        : 'Выберите вид работ...'}
-                    </Text>
-                    <AntDesign name="down" size={16} color={palette.icon} />
-                  </Pressable>
-                </View>
+          <SectionHeader>{t('create_order_section_address')}</SectionHeader>
+          <Card padded={false} style={formStyles.card}>
+            {renderTextField({
+              label: getFieldLabel('region'),
+              placeholder: t('create_order_placeholder_region'),
+              value: form.region || '',
+              onChangeText: (text) => setField('region', text),
+              required: getField('region')?.required,
+            })}
+            {renderTextField({
+              label: getFieldLabel('city'),
+              placeholder: t('create_order_placeholder_city'),
+              value: form.city || '',
+              onChangeText: (text) => setField('city', text),
+              required: getField('city')?.required,
+            })}
+            {renderTextField({
+              label: getFieldLabel('street'),
+              placeholder: t('create_order_placeholder_street'),
+              value: form.street || '',
+              onChangeText: (text) => setField('street', text),
+              required: getField('street')?.required,
+            })}
+            {renderTextField({
+              label: getFieldLabel('house'),
+              placeholder: t('create_order_placeholder_house'),
+              value: form.house || '',
+              onChangeText: (text) => setField('house', text),
+              required: getField('house')?.required,
+            })}
+          </Card>
+
+          <SectionHeader>{t('create_order_section_customer')}</SectionHeader>
+          <Card padded={false} style={formStyles.card}>
+            {renderTextField({
+              label: getFieldLabel('fio'),
+              placeholder: t('create_order_placeholder_customer'),
+              value: form.fio || '',
+              onChangeText: (text) => setField('fio', text),
+              required: getField('fio')?.required,
+            })}
+            {renderPhoneInput('phone')}
+          </Card>
+
+          <SectionHeader>{t('create_order_section_planning')}</SectionHeader>
+          <Card padded={false} style={formStyles.card}>
+            {renderToggle(urgent, () => setUrgent((v) => !v), t('create_order_label_urgent'))}
+
+            <TextField
+              label={withRequiredLabel(
+                getFieldLabel('time_window_start', t('create_order_label_date')),
+                true,
               )}
-            </View>
+              value={formatDate(departureDate) || t('create_order_placeholder_date')}
+              pressable
+              style={formStyles.field}
+              ref={dateFieldRef}
+              rightSlot={
+                departureDate ? (
+                  <ClearButton
+                    onPress={() => setDepartureDate(null)}
+                    accessibilityLabel={t('common_clear')}
+                  />
+                ) : null
+              }
+              onPress={() => {
+                setShowDatePicker(true);
+                setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
+              }}
+            />
 
-            {/* АДРЕС */}
-            <View style={styles.card}>
-              <Text style={styles.section}>Адрес</Text>
-              {renderTextInput('region', 'Например: Саратовская область')}
-              {renderTextInput('city', 'Например: Энгельс')}
-              {renderTextInput('street', 'Например: ул. Центральная')}
-              {renderTextInput('house', 'Например: 15А')}
-            </View>
+            <DateTimeModal
+              visible={showDatePicker}
+              initial={departureDate || new Date()}
+              mode="date"
+              allowFutureDates
+              onApply={(selected) => {
+                setDepartureDate((prev) => {
+                  if (prev) {
+                    const d = new Date(selected);
+                    d.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+                    return d;
+                  }
+                  return selected;
+                });
+              }}
+              onClose={() => setShowDatePicker(false)}
+            />
 
-            {/* ЗАКАЗЧИК */}
-            <View style={styles.card}>
-              <Text style={styles.section}>Заказчик</Text>
-              {renderTextInput('fio', 'ФИО или просто имя')}
-              {renderPhoneInput('phone')}
-            </View>
-
-            {/* ПЛАНИРОВАНИЕ */}
-            <View style={styles.card}>
-              <Text style={styles.section}>Планирование</Text>
-              <View style={styles.toggleRow}>
-                <Pressable
-                  onPress={() => setUrgent((v) => !v)}
-                  style={[styles.toggle, urgent && styles.toggleOn]}
-                >
-                  <View style={[styles.knob, urgent && styles.knobOn]} />
-                </Pressable>
-                <Text style={styles.toggleLabel}>Срочная</Text>
-              </View>
-
-              <Text style={styles.label}>
-                {getField('time_window_start')?.label || 'Дата выезда'} *
-              </Text>
-              <View
-                ref={(ref) => {
-                  if (ref) dateFieldRef.current = findNodeHandle(ref);
-                }}
-              >
-                <Pressable
-                  style={styles.selectInput}
+            {useDepartureTime && (
+              <>
+                <TextField
+                  label={t('create_order_label_time')}
+                  value={formatTime(departureDate) || t('create_order_placeholder_time')}
+                  pressable
+                  style={formStyles.field}
+                  ref={timeFieldRef}
+                  rightSlot={
+                    departureDate ? (
+                      <ClearButton
+                        onPress={() => {
+                          const base = departureDate;
+                          const d = new Date(base);
+                          d.setHours(0, 0, 0, 0);
+                          setDepartureDate(d);
+                        }}
+                        accessibilityLabel={t('common_clear')}
+                      />
+                    ) : null
+                  }
                   onPress={() => {
-                    setShowDatePicker(true);
-                    setTimeout(() => scrollToHandle(dateFieldRef), 200);
+                    if (!departureDate) {
+                      setShowDatePicker(true);
+                      setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
+                      return;
+                    }
+                    setShowTimePicker(true);
+                    setTimeout(() => scrollToHandle(timeFieldRef), SCROLL_ANIMATION_DELAY);
                   }}
-                >
-                  <Text style={styles.selectInputText}>
-                    {departureDate
-                      ? departureDate.toLocaleDateString('ru-RU', {
-                          day: '2-digit',
-                          month: 'long',
-                          year: 'numeric',
-                        })
-                      : 'Выберите дату'}
-                  </Text>
-                  <AntDesign name="calendar" size={16} color={palette.icon} />
-                </Pressable>
-              </View>
-              {showDatePicker && (
-                <DateTimePicker
-                  value={departureDate || new Date()}
-                  mode="date"
-                  display="default"
-                  minimumDate={new Date()}
-                  onChange={(event, selected) => {
-                    setShowDatePicker(false);
+                />
+
+                <DateTimeModal
+                  visible={showTimePicker && !!departureDate}
+                  initial={departureDate || new Date()}
+                  mode="time"
+                  onApply={(selected) => {
                     if (selected) {
-                      // если время уже выбрано, сохраняем его
                       setDepartureDate((prev) => {
-                        if (prev) {
-                          const d = new Date(selected);
-                          d.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
-                          return d;
-                        }
-                        return selected;
+                        const base = prev || new Date();
+                        const d = new Date(base);
+                        d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+                        return d;
                       });
                     }
                   }}
+                  onClose={() => setShowTimePicker(false)}
                 />
-              )}
-
-              {/* Время выезда (опционально, включается настройкой компании) */}
-              {useDepartureTime && (
-                <>
-                  <Text style={styles.label}>Время выезда</Text>
-                  <View
-                    ref={(ref) => {
-                      if (ref) timeFieldRef.current = findNodeHandle(ref);
-                    }}
-                  >
-                    <Pressable
-                      style={styles.selectInput}
-                      onPress={() => {
-                        if (!departureDate) {
-                          setShowDatePicker(true);
-                          setTimeout(() => scrollToHandle(dateFieldRef), 200);
-                          return;
-                        }
-                        setShowTimePicker(true);
-                        setTimeout(() => scrollToHandle(timeFieldRef), 200);
-                      }}
-                    >
-                      <Text style={styles.selectInputText}>
-                        {departureDate
-                          ? departureDate.toLocaleTimeString('ru-RU', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })
-                          : 'Сначала выберите дату'}
-                      </Text>
-                      <Feather name="clock" size={16} color={palette.icon} />
-                    </Pressable>
-                  </View>
-                  {showTimePicker && departureDate && (
-                    <DateTimePicker
-                      value={departureDate}
-                      mode="time"
-                      is24Hour
-                      display="default"
-                      onChange={(event, selected) => {
-                        setShowTimePicker(false);
-                        if (selected) {
-                          setDepartureDate((prev) => {
-                            const base = prev || new Date();
-                            const d = new Date(base);
-                            d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-                            return d;
-                          });
-                        }
-                      }}
-                    />
-                  )}
-                </>
-              )}
-
-              <View style={[styles.toggleRow, { marginTop: 12 }]}>
-                <Pressable
-                  onPress={() =>
-                    setToFeed((prev) => {
-                      const nv = !prev;
-                      if (nv) setAssigneeId(null);
-                      return nv;
-                    })
-                  }
-                  style={[styles.toggle, toFeed && styles.toggleOn]}
-                >
-                  <View style={[styles.knob, toFeed && styles.knobOn]} />
-                </Pressable>
-                <Text style={styles.toggleLabel}>Отправить в ленту</Text>
-              </View>
-
-              <Text style={styles.label}>
-                {getField('assigned_to')?.label || 'Исполнитель'} {toFeed ? '' : '*'}
-              </Text>
-              <Pressable
-                style={[styles.selectInput, toFeed && { opacity: 0.5 }]}
-                onPress={() => setAssigneeModalVisible(true)}
-                disabled={toFeed}
-              >
-                <Text style={styles.selectInputText}>
-                  {assigneeId
-                    ? (() => {
-                        const u = users.find((x) => x.id === assigneeId);
-                        return (
-                          [u?.first_name, u?.last_name].filter(Boolean).join(' ') ||
-                          'Выбран исполнитель'
-                        );
-                      })()
-                    : toFeed
-                      ? 'В общую ленту'
-                      : 'Выберите исполнителя...'}
-                </Text>
-                <AntDesign name="down" size={16} color={palette.icon} />
-              </Pressable>
-            </View>
-
-            <View style={{ marginTop: 20 }}>
-              <Button title="Создать заявку" onPress={handleSubmit} />
-            </View>
-            <View style={{ marginTop: 12 }}>
-              <Button title="Отменить" onPress={handleCancelPress} variant="secondary" />
-            </View>
-          </ScrollView>
-        </View>
-
-        {/* МОДАЛКИ */}
-        <Modal
-          isVisible={cancelVisible}
-          onBackdropPress={() => setCancelVisible(false)}
-          useNativeDriver
-          backdropOpacity={0.3}
-        >
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Отменить создание заявки?</Text>
-            <Text style={styles.modalText}>Все данные будут потеряны. Вы уверены?</Text>
-            <View style={styles.modalActions}>
-              <Button title="Остаться" onPress={() => setCancelVisible(false)} />
-              <Button title="Выйти" onPress={confirmCancel} variant="destructive" />
-            </View>
-          </View>
-        </Modal>
-
-        <Modal
-          isVisible={workTypeModalVisible}
-          onBackdropPress={() => setWorkTypeModalVisible(false)}
-          useNativeDriver
-          backdropOpacity={0.3}
-        >
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Выберите вид работ</Text>
-            {workTypes.length === 0 ? (
-              <Text style={styles.modalText}>
-                Список пуст. Добавьте виды работ в настройках компании.
-              </Text>
-            ) : (
-              workTypes.map((t) => (
-                <Pressable
-                  key={t.id}
-                  onPress={() => {
-                    setWorkTypeId(t.id);
-                    setWorkTypeModalVisible(false);
-                  }}
-                  style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.8 }]}
-                >
-                  <Text style={styles.assigneeText}>{t.name}</Text>
-                </Pressable>
-              ))
+              </>
             )}
-          </View>
-        </Modal>
 
-        <Modal
-          isVisible={assigneeModalVisible}
-          onBackdropPress={() => setAssigneeModalVisible(false)}
-          useNativeDriver
-          backdropOpacity={0.3}
-        >
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Выберите исполнителя</Text>
-            <Pressable
-              onPress={() => {
-                setToFeed(true);
-                setAssigneeId(null);
-                setAssigneeModalVisible(false);
-              }}
-              style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.8 }]}
-            >
-              <Text style={styles.assigneeText}>В общую ленту</Text>
-            </Pressable>
-            <View style={{ height: 8 }} />
-            {users.map((user) => (
-              <Pressable
-                key={user.id}
-                onPress={() => {
-                  setAssigneeId(user.id);
-                  setToFeed(false);
-                  setAssigneeModalVisible(false);
-                }}
-                style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.8 }]}
-              >
-                <Text style={styles.assigneeText}>
-                  {[user.first_name, user.last_name].filter(Boolean).join(' ')}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </Modal>
+            {renderToggle(
+              toFeed,
+              () => {
+                setToFeed((prev) => {
+                  const nv = !prev;
+                  if (nv) setAssigneeId(null);
+                  return nv;
+                });
+              },
+              t('create_order_label_to_feed'),
+            )}
 
-        <Modal
-          isVisible={warningVisible}
-          onBackdropPress={() => setWarningVisible(false)}
-          useNativeDriver
-          backdropOpacity={0.3}
-        >
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>Внимание</Text>
-            <Text style={styles.modalText}>{warningMessage}</Text>
-            <View style={styles.modalActions}>
-              <Button title="Ок" onPress={() => setWarningVisible(false)} />
-            </View>
+            <TextField
+              label={withRequiredLabel(
+                getFieldLabel('assigned_to', t('create_order_label_executor')),
+                !toFeed,
+              )}
+              value={
+                toFeed
+                  ? t('create_order_executor_in_feed')
+                  : selectedAssigneeName || t('create_order_placeholder_executor')
+              }
+              pressable
+              style={formStyles.field}
+              onPress={() => setAssigneeModalVisible(true)}
+            />
+          </Card>
+
+          <View style={styles.buttonContainer}>
+            <Button title={t('create_order_btn_create')} onPress={handleSubmit} />
           </View>
-        </Modal>
-      </SafeAreaView>
-    </KeyboardAvoidingView>
+          <View style={styles.buttonSpacer}>
+            <Button
+              title={t('create_order_btn_cancel')}
+              onPress={handleCancelPress}
+              variant="secondary"
+            />
+          </View>
+      </EditScreenTemplate>
+
+      <ConfirmModal
+        visible={cancelVisible}
+        title={t('create_order_modal_cancel_title')}
+        message={t('create_order_modal_cancel_text')}
+        confirmLabel={t('create_order_modal_cancel_exit')}
+        cancelLabel={t('create_order_modal_cancel_stay')}
+        confirmVariant="destructive"
+        onConfirm={confirmCancel}
+        onClose={() => setCancelVisible(false)}
+      />
+
+      <SelectModal
+        visible={workTypeModalVisible}
+        title={t('create_order_modal_work_type_title')}
+        items={workTypeItems}
+        searchable={false}
+        selectedId={workTypeId}
+        onSelect={(item) => {
+          if (!item?.id || item.disabled) return;
+          setWorkTypeId(item.id);
+          setWorkTypeModalVisible(false);
+        }}
+        onClose={() => setWorkTypeModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={assigneeModalVisible}
+        title={t('create_order_modal_executor_title')}
+        items={assigneeItems}
+        searchable
+        onSelect={(item) => item?.onPress?.()}
+        onClose={() => setAssigneeModalVisible(false)}
+      />
+
+      <AlertModal
+        visible={warningVisible}
+        title={t('create_order_modal_warning_title')}
+        message={warningMessage}
+        buttonLabel={t('create_order_modal_warning_ok')}
+        onClose={() => setWarningVisible(false)}
+      />
+
+      <ConfirmModal
+        visible={draftRestoreVisible}
+        title="Восстановить черновик?"
+        message={
+          savedDraft
+            ? `Найден несохранённый черновик от ${new Date(savedDraft.timestamp).toLocaleString('ru-RU')}`
+            : 'Найден несохранённый черновик'
+        }
+        confirmLabel="Восстановить"
+        cancelLabel="Начать заново"
+        onConfirm={async () => {
+          restoreDraft(savedDraft);
+          setDraftRestoreVisible(false);
+          setSavedDraft(null);
+        }}
+        onClose={async () => {
+          await deleteDraft();
+          setDraftRestoreVisible(false);
+          setSavedDraft(null);
+        }}
+      />
+    </>
   );
+}
+
+function createStyles(theme) {
+  const sp = theme.spacing || {};
+  const typo = theme.typography || {};
+  const rad = theme.radii || {};
+  const col = theme.colors || {};
+  const sep = theme.components?.input?.separator || {};
+  const insetKey = sep.insetX || 'lg';
+  const sepHeight = sep.height ?? theme.components?.listItem?.dividerWidth ?? 1;
+  const alpha = sep.alpha ?? 0.18;
+  const sepColor = withAlpha(col.primary, alpha);
+  const ml = Number(sp?.[insetKey] ?? 0) || 0;
+  const mr = Number(sp?.[insetKey] ?? 0) || 0;
+
+  const TOGGLE_WIDTH = 42;
+  const TOGGLE_HEIGHT = 26;
+  const KNOB_SIZE = 22;
+  const INPUT_MULTILINE_HEIGHT = 100;
+
+  return StyleSheet.create({
+    permissionContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: sp.xl || 24,
+    },
+    permissionText: {
+      fontSize: typo.sizes?.md || 16,
+      color: col.textSecondary,
+      textAlign: 'center',
+    },
+    fieldContainer: {
+      paddingVertical: sp.xs || 6,
+    },
+    input: {
+      borderWidth: 1,
+      borderColor: col.border,
+      backgroundColor: col.inputBg,
+      color: col.text,
+      borderRadius: rad.md || 10,
+      padding: sp.md || 10,
+      fontSize: typo.sizes?.md || 16,
+      marginTop: sp.xs || 4,
+    },
+    inputMultiline: {
+      height: INPUT_MULTILINE_HEIGHT,
+      textAlignVertical: 'top',
+    },
+    selectInput: {
+      borderWidth: 1,
+      borderColor: col.border,
+      borderRadius: rad.md || 10,
+      backgroundColor: col.inputBg,
+      padding: sp.md || 12,
+      marginTop: sp.xs || 4,
+    },
+    selectInputDisabled: {
+      opacity: 0.5,
+    },
+    separator: {
+      height: sepHeight,
+      backgroundColor: sepColor,
+      marginLeft: ml,
+      marginRight: mr,
+    },
+    toggleLabel: {
+      color: col.text,
+      fontSize: typo.sizes?.md || 16,
+      fontWeight: typo.weight?.regular || '400',
+    },
+    toggle: {
+      width: TOGGLE_WIDTH,
+      height: TOGGLE_HEIGHT,
+      borderRadius: TOGGLE_HEIGHT / 2,
+      backgroundColor: col.border,
+      padding: 2,
+      justifyContent: 'center',
+    },
+    toggleOn: {
+      backgroundColor: col.primary,
+    },
+    knob: {
+      width: KNOB_SIZE,
+      height: KNOB_SIZE,
+      borderRadius: KNOB_SIZE / 2,
+      backgroundColor: col.surface,
+      alignSelf: 'flex-start',
+    },
+    knobOn: {
+      alignSelf: 'flex-end',
+    },
+    buttonContainer: {
+      marginTop: sp.lg || 20,
+    },
+    buttonSpacer: {
+      marginTop: sp.md || 12,
+    },
+  });
 }

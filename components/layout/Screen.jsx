@@ -94,16 +94,8 @@ export default function Screen({
           {showHeader && (
             <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
           )}
-          <TouchableWithoutFeedback
-            accessible={false}
-            onPress={() => {
-              try {
-                Keyboard.dismiss();
-              } catch (_) {}
-            }}
-          >
-            <View style={{ flex: 1 }}>{children}</View>
-          </TouchableWithoutFeedback>
+          {showHeader && <GlobalCurrencyRecalcBanner />}
+          <View style={{ flex: 1 }}>{children}</View>
         </>
       )}
     </SafeAreaView>
