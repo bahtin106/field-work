@@ -112,22 +112,20 @@ export default function UsersIndex() {
     await Promise.all([refreshUsers(), refreshDepartments()]);
   }, [refreshUsers, refreshDepartments]);
 
-  // Используем ref для отслеживания, был ли уже произведён рефреш после фокуса
-  const refreshOnFocusRef = React.useRef(false);
-
+  // Обновляем данные при возврате на экран (Apple-style: свежие данные, но без спама)
+  const lastRefreshRef = React.useRef(0);
+  
   useFocusEffect(
     useCallback(() => {
-      // Обновляем данные при возврате на экран, но только один раз
-      if (!refreshOnFocusRef.current && !usersRefreshing && !departmentsRefreshing) {
-        refreshOnFocusRef.current = true;
+      const now = Date.now();
+      const timeSinceLastRefresh = now - lastRefreshRef.current;
+      
+      // Обновляем только если прошло больше 1 секунды с последнего обновления
+      if (timeSinceLastRefresh > 1000 && !usersRefreshing && !departmentsRefreshing) {
+        lastRefreshRef.current = now;
         refreshAll();
       }
-
-      // Cleanup: позволяем следующему фокусу снова обновить данные
-      return () => {
-        refreshOnFocusRef.current = false;
-      };
-    }, []),
+    }, [refreshAll, usersRefreshing, departmentsRefreshing]),
   );
 
   // Проксирующая функция для совместимости с фильтрами
