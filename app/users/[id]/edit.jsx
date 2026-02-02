@@ -39,6 +39,7 @@ import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase } from '../../../lib/supabase';
+import { globalCache } from '../../../lib/cache/DataCache';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -1370,8 +1371,13 @@ export default function EditUser() {
       const errS = await setSuspended(userId, true);
       if (errS) throw new Error(errS.message || t('toast_generic_error'));
       setIsSuspended(true);
+      
+      // Инвалидируем кеш users для мгновенного обновления списка
+      globalCache.invalidate('users:');
+      
       toastSuccess(t('toast_suspended'));
       setSuspendVisible(false);
+      setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
       toastError(e?.message || t('dlg_generic_warning'));
@@ -1389,8 +1395,13 @@ export default function EditUser() {
       const errS = await setSuspended(userId, false);
       if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
       setIsSuspended(false);
+      
+      // Инвалидируем кеш users для мгновенного обновления списка
+      globalCache.invalidate('users:');
+      
       toastSuccess(t('toast_unsuspended'));
       setUnsuspendVisible(false);
+      setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
       toastError(e?.message || t('dlg_generic_warning'));
@@ -1500,6 +1511,9 @@ export default function EditUser() {
       if (payload && payload.ok === false) {
         throw new Error(payload.message || t('err_delete_failed'));
       }
+
+      // Инвалидируем кеш users для мгновенного обновления списка
+      globalCache.invalidate('users:');
 
       toastSuccess(t('toast_deleted'));
       setDeleteVisible(false);
