@@ -1377,6 +1377,8 @@ export default function EditUser() {
       
       toastSuccess(t('toast_suspended'));
       setSuspendVisible(false);
+      // Разрешаем выход без подтверждения (Apple-style: успешная операция)
+      allowLeaveRef.current = true;
       setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
@@ -1401,6 +1403,8 @@ export default function EditUser() {
       
       toastSuccess(t('toast_unsuspended'));
       setUnsuspendVisible(false);
+      // Разрешаем выход без подтверждения (Apple-style: успешная операция)
+      allowLeaveRef.current = true;
       setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
@@ -1517,6 +1521,8 @@ export default function EditUser() {
 
       toastSuccess(t('toast_deleted'));
       setDeleteVisible(false);
+      // Разрешаем выход без подтверждения (Apple-style: успешная операция)
+      allowLeaveRef.current = true;
       setTimeout(() => router.back(), theme.timings?.backDelayMs ?? 300);
     } catch (e) {
       console.error('Ошибка деактивации:', e);
