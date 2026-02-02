@@ -1,4 +1,5 @@
 import { Feather } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -108,6 +109,9 @@ export default function NewUserScreen() {
   const [role, setRole] = useState(ROLE.WORKER);
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteErrorVisible, setInviteErrorVisible] = useState(false);
+  const [inviteLink, setInviteLink] = useState(null);
+  const [inviteUserId, setInviteUserId] = useState(null);
 
   const [phone, setPhone] = useState('');
   const [birthdate, setBirthdate] = useState(null);
@@ -535,10 +539,12 @@ export default function NewUserScreen() {
       const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
       const url = `${supabaseUrl}/functions/v1/invite_user`;
       
-      console.log('[handleInviteConfirm] Starting invite request');
-      console.log('[handleInviteConfirm] URL:', url);
-      console.log('[handleInviteConfirm] Has token:', !!token);
-      console.log('[handleInviteConfirm] Email:', inviteEmail);
+      if (!__IS_PROD) {
+        console.log('[handleInviteConfirm] Starting invite request');
+        console.log('[handleInviteConfirm] URL:', url);
+        console.log('[handleInviteConfirm] Has token:', !!token);
+        console.log('[handleInviteConfirm] Email:', inviteEmail);
+      }
       
       const resp = await fetch(url, {
         method: 'POST',
@@ -559,10 +565,10 @@ export default function NewUserScreen() {
         }),
       });
 
-      console.log('[handleInviteConfirm] Response status:', resp.status);
+      if (!__IS_PROD) console.log('[handleInviteConfirm] Response status:', resp.status);
       
       const raw = await resp.text();
-      console.log('[handleInviteConfirm] Response body:', raw);
+      if (!__IS_PROD) console.log('[handleInviteConfirm] Response body:', raw);
       
       let body = null;
       try {
@@ -574,24 +580,40 @@ export default function NewUserScreen() {
           (body && (body.message || body.error || body.details || body.hint)) ||
           raw ||
           `HTTP ${resp.status}`;
-        console.error('[handleInviteConfirm] Error:', { status: resp.status, msg, raw });
+        if (!__IS_PROD) console.error('[handleInviteConfirm] Error:', { status: resp.status, msg, raw });
 
-        if (/already exists|email.*taken|user.*exists/i.test(String(msg))) {
+        const msgStr = String(msg || '');
+        if (/already exists|email.*taken|user.*exists/i.test(msgStr)) {
           throw new Error(t('error_email_exists'));
         }
-        throw new Error(msg);
+        if (/rate limit|too many|limit exceeded/i.test(msgStr) || resp.status === 429) {
+          throw new Error(t('err_invite_rate_limit'));
+        }
+
+        throw new Error(t('err_invite_failed'));
       }
 
-      console.log('[handleInviteConfirm] Success!');
+      if (!__IS_PROD) console.log('[handleInviteConfirm] Success!');
 
-      // Успешно отправили приглашение
+      const emailSent = body?.email_sent !== false;
+      const actionLink = body?.action_link || null;
+      const newUserId = body?.user_id || null;
+
+      // Успешно создали приглашение
       setInviteModalVisible(false);
-      toastSuccess(`Приглашение отправлено на ${inviteEmail}`);
       
-      // Очищаем кеш и переходим обратно
-      globalCache.invalidate('users:');
-      allowLeaveRef.current = true;
-      router.replace('/users');
+      if (emailSent) {
+        toastSuccess(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
+        // Очищаем кеш и переходим обратно
+        globalCache.invalidate('users:');
+        allowLeaveRef.current = true;
+        router.replace('/users');
+      } else if (actionLink) {
+        // Email не отправился - показываем модаль с ссылкой
+        setInviteLink(actionLink);
+        setInviteUserId(newUserId);
+        setInviteErrorVisible(true);
+      }
     } catch (e) {
       const msg = String(e?.message || t('toast_generic_error'));
       setErr(msg);
@@ -612,6 +634,7 @@ export default function NewUserScreen() {
     theme,
     t,
     toastSuccess,
+    toastInfo,
     toastError,
   ]);
 
@@ -920,12 +943,52 @@ export default function NewUserScreen() {
 
         <ConfirmModal
           visible={inviteModalVisible}
-          title="Отправить приглашение?"
-          message={`Письмо с ссылкой для создания пароля будет отправлено на:\n\n${inviteEmail}\n\nСотрудник сможет создать свой пароль и войти в приложение.`}
-          confirmLabel="Отправить"
-          cancelLabel="Отмена"
+          title={t('invite_modal_title')}
+          message={
+            <Text
+              style={{
+                fontSize: theme.typography.sizes.md,
+                color: theme.colors.textSecondary,
+              }}
+            >
+              {t('invite_modal_body_prefix')}
+              {'\n\n'}
+              <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                {inviteEmail}
+              </Text>
+              {'\n\n'}
+              {t('invite_modal_body_suffix')}
+            </Text>
+          }
+          confirmLabel={t('invite_modal_confirm')}
+          cancelLabel={t('btn_cancel')}
           onConfirm={handleInviteConfirm}
           onClose={() => setInviteModalVisible(false)}
+        />
+
+        <ConfirmModal
+          visible={inviteErrorVisible}
+          title={t('invite_error_modal_title')}
+          message={t('invite_error_modal_message')}
+          confirmLabel={t('invite_error_copy_link')}
+          cancelLabel={t('invite_error_goto_users')}
+          confirmVariant="primary"
+          onConfirm={async () => {
+            if (inviteLink) {
+              await Clipboard.setStringAsync(inviteLink);
+              toastInfo(t('toast_link_copied'));
+            }
+            setInviteErrorVisible(false);
+            globalCache.invalidate('users:');
+            allowLeaveRef.current = true;
+            router.replace('/users');
+          }}
+          onClose={() => {
+            setInviteErrorVisible(false);
+            globalCache.invalidate('users:');
+            allowLeaveRef.current = true;
+            router.replace('/users');
+          }}
         />
       </KeyboardAwareScrollView>
     </SafeAreaView>

@@ -18,6 +18,15 @@ export function ConfirmModal({
   onClose,
 }) {
   const { theme } = useTheme();
+  const renderMessage = () => {
+    if (message == null) return null;
+    if (React.isValidElement(message)) return message;
+    return (
+      <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
+        {message}
+      </Text>
+    );
+  };
   const footer = (
     <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md }}>
       <Pressable
@@ -66,11 +75,7 @@ export function ConfirmModal({
       maxHeightRatio={0.5}
       footer={footer}
     >
-      <View style={{ marginBottom: theme.spacing.md }}>
-        <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.textSecondary }}>
-          {message}
-        </Text>
-      </View>
+      <View style={{ marginBottom: theme.spacing.md }}>{renderMessage()}</View>
     </BaseModal>
   );
 }
