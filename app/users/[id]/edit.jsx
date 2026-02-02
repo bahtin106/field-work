@@ -1513,12 +1513,11 @@ export default function EditUser() {
       // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
       allowLeaveRef.current = true;
 
-      // Инвалидируем кеш и разрешаем выход, затем сразу назад
-      allowLeaveRef.current = true;
+      // Инвалидируем кеш и переходим на список пользователей (не возвращаемся на удаленный профиль)
       globalCache.invalidate('users:');
       toastSuccess(t('toast_deleted'));
       setDeleteVisible(false);
-      router.back();
+      router.replace('/users');
     } catch (e) {
       console.error('Ошибка деактивации:', e);
       setErr(e?.message || t('dlg_generic_warning'));
@@ -2430,7 +2429,7 @@ function SuspendModal({
               lineHeight: bodyLineHeight,
             }}
           >
-            {t('user_block_keepOrders_desc')}
+            {t('user_block_noOrders_desc')}
           </Text>
         </View>
       )}
