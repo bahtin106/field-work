@@ -41,6 +41,10 @@ export default {
   btn_apply: 'Apply',
   header_save: 'Save',
   header_edit_user: 'Edit',
+  user_block_keepOrders: 'Keep orders with employee',
+  user_block_keepOrders_desc: 'The employee will be suspended. All their orders will remain with them.',
+  user_block_noOrders_desc: 'This employee has no active orders. After suspension, they will not be able to use the app.',
+  user_block_reassign: 'Reassign all orders',
   // Finances
   company_settings_sections_finances_title: 'Finances',
   company_settings_sections_finances_items_currency: 'Currency',
