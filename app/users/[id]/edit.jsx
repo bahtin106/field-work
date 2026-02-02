@@ -1570,7 +1570,7 @@ export default function EditUser() {
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
   return (
     <EditScreenTemplate
-      title={headerName}
+      title={t('header_edit_user')}
       rightTextLabel={saving ? t('toast_saving') : t('header_save')}
       onRightPress={handleSave}
       scrollRef={scrollRef}
