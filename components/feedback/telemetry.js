@@ -30,7 +30,7 @@ function redact(s, keep = 6) {
 function dlog(...a) {
   if (_cfg.debug)
     try {
-      console.log('[telemetry]', ...a);
+      console.info('[telemetry]', ...a);
     } catch {}
 }
 function dwarn(...a) {
@@ -283,3 +283,4 @@ export async function pingTelemetry() {
   }
   return ok;
 }
+

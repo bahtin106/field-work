@@ -85,7 +85,7 @@ const BaseModalImpl = (
   const s = useMemo(() => baseSheetStyles(theme), [theme]);
 
   const [rnVisible, setRnVisible] = useState(false);
-  const [modalKey, setModalKey] = useState(0);
+  const [modalKey, _setModalKey] = useState(0);
 
   // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
   const [kbInset, setKbInset] = useState(0);
@@ -114,7 +114,7 @@ const BaseModalImpl = (
         }
         setKbInset(h);
         setKbTop(top);
-      } catch (_) {}
+      } catch {}
     });
     const subHide = Keyboard.addListener(hideE, () => {
       setKbInset(0);
@@ -124,7 +124,7 @@ const BaseModalImpl = (
       try {
         subShow?.remove?.();
         subHide?.remove?.();
-      } catch (_) {}
+      } catch {}
     };
   }, [rnVisible]);
 
@@ -167,7 +167,7 @@ const BaseModalImpl = (
       setRnVisible(false);
       try {
         onClose?.();
-      } catch (_) {}
+      } catch {}
     }, 250);
   };
   useImperativeHandle(ref, () => ({ close }));
@@ -248,7 +248,7 @@ const BaseModalImpl = (
         setRnVisible(false);
         try {
           onClose?.();
-        } catch (_) {}
+        } catch {}
       }}
     >
       {/* Backdrop: if keyboard visible, dismiss it first; otherwise close modal */}
@@ -258,7 +258,7 @@ const BaseModalImpl = (
           if (kbInset > 0) {
             try {
               Keyboard.dismiss();
-            } catch (_) {}
+            } catch {}
             return;
           }
           if (!disableBackdropClose) close();
@@ -304,7 +304,7 @@ const BaseModalImpl = (
             onPress={() => {
               try {
                 if (kbInset > 0) Keyboard.dismiss();
-              } catch (_) {}
+              } catch {}
             }}
           >
             <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>

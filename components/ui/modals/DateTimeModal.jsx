@@ -69,7 +69,7 @@ export default function DateTimeModal({
   // Build month labels directly via i18n keys.
   // If a locale file doesn't contain these keys, t(...) will return the key itself
   // which helps to visually spot missing translations (no automatic Intl fallback).
-  const _dict = getDict?.() || {};
+  const _dict = React.useMemo(() => getDict?.() || {}, []);
   const _srcShort = Array.from({ length: 12 }, (_, i) => T(`months_short_${i}`));
   const _srcGen = Array.from({ length: 12 }, (_, i) => T(`months_genitive_${i}`));
 
@@ -93,14 +93,14 @@ export default function DateTimeModal({
           dict: _dict && Object.keys(_dict || {}).length ? 'loaded' : 'none',
         });
       }
-    } catch (e) {}
-  }, [visible]);
+    } catch {}
+  }, [visible, MONTHS_ABBR, MONTHS_GEN, _dict, _offset]);
 
-  const daysInMonth = (m, yNullable) => {
+  const daysInMonth = React.useCallback((m, yNullable) => {
     // m is zero-based month index (0 = January). If year not provided, use baseDate's year.
     const y = yNullable ?? baseDate.getFullYear();
     return new Date(y, m + 1, 0).getDate();
-  };
+  }, [baseDate]);
   const years = React.useMemo(() => {
     const y = new Date().getFullYear();
     const maxYear = allowFutureDates ? y + 10 : y; // Добавляем 10 лет в будущее для заявок
@@ -148,6 +148,8 @@ export default function DateTimeModal({
     dYearIdx,
     years,
     withYear,
+    baseDate,
+    daysInMonth,
     currentYear,
     currentMonth,
     currentDay,
@@ -209,7 +211,7 @@ export default function DateTimeModal({
     if (mode === 'date') return withYear ? `${d} ${mName} ${y}` : `${d} ${mName}`;
     if (mode === 'time') return `${hh}:${mm}`;
     return withYear ? `${d} ${mName} ${y}, ${hh}:${mm}` : `${d} ${mName}, ${hh}:${mm}`;
-  }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData]);
+  }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData, MONTHS_GEN, baseDate, withYear]);
 
   const innerGap = theme.components?.datetimeModal?.innerGap ?? theme.spacing?.sm ?? 8;
   const minWheelWidth = theme.components?.datetimeModal?.wheelMinWidth ?? 64;

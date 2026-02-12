@@ -1,5 +1,4 @@
 // app/company_settings/sections/NotificationSettings.jsx
-import React from 'react';
 import { View, Text } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 

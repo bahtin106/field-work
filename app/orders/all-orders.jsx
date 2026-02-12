@@ -1,4 +1,3 @@
-/* global __DEV__ */
 // app/orders/all-orders.jsx
 
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
@@ -313,7 +312,7 @@ export default function AllOrdersScreen() {
           color: mutedColor,
         },
       }),
-    [theme],
+    [theme, mutedColor],
   );
 
   const router = useRouter();
@@ -326,7 +325,7 @@ export default function AllOrdersScreen() {
         return true;
       });
       return () => sub.remove();
-    }, []),
+    }, [router]),
   );
   const { filter, executor, department, search, work_type, materials } = useLocalSearchParams();
 
@@ -344,7 +343,7 @@ export default function AllOrdersScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [executorFilter, setExecutorFilter] = useState(executor || null);
-  const [hasMore, setHasMore] = useState(true);
+  const [_hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [departmentFilter, setDepartmentFilter] = useState(null);
@@ -352,7 +351,7 @@ export default function AllOrdersScreen() {
   useEffect(() => {
     if (departmentFilterInit != null && !Number.isNaN(departmentFilterInit))
       setDepartmentFilter(Number(departmentFilterInit));
-  }, []);
+  }, [departmentFilterInit]);
   const [workTypeFilter, setWorkTypeFilter] = useState(
     work_type
       ? String(work_type)
@@ -361,7 +360,7 @@ export default function AllOrdersScreen() {
           .filter((n) => !Number.isNaN(n))
       : [],
   );
-  const [materialsFilter, setMaterialsFilter] = useState(
+  const [materialsFilter, _setMaterialsFilter] = useState(
     materials
       ? String(materials)
           .split(',')
@@ -401,9 +400,9 @@ export default function AllOrdersScreen() {
 
   // ✅ FIX: missing states causing ReferenceError
   const [filterModalVisible, setFilterModalVisible] = useState(false);
-  const [filterOptions, setFilterOptions] = useState({ work_type: [], materials: [] });
+  const [_filterOptions, setFilterOptions] = useState({ work_type: [], materials: [] });
   const [tmpWorkType, setTmpWorkType] = useState(workTypeFilter || []);
-  const [tmpMaterials, setTmpMaterials] = useState(materialsFilter || []);
+  const [_tmpMaterials, setTmpMaterials] = useState(materialsFilter || []);
   const [tmpExecutor, setTmpExecutor] = useState(executorFilter || null);
   const [executorSearch, setExecutorSearch] = useState('');
 
@@ -517,48 +516,33 @@ export default function AllOrdersScreen() {
     }
   };
 
-  const normalizeStatus = (raw) => {
+  const _normalizeStatus = (raw) => {
     if (raw === 'completed') return 'done';
     if (raw === 'in_progress') return 'in_progress';
     if (raw === 'new') return 'new';
     return 'all';
   };
-
-  const formatAddress = (o) => {
-    const parts = [o.region, o.city, o.street, o.house]
-      .filter(Boolean)
-      .map((s) => String(s).trim())
-      .filter(Boolean);
-    return parts.length ? parts.join(', ') : '—';
-  };
-
-  const getExecutorName = (executorId) => {
-    if (!executorId) return 'Не назначен';
-    const ex = executors.find((e) => e.id === executorId);
-    const name = [ex?.first_name, ex?.last_name].filter(Boolean).join(' ').trim();
-    return name || 'Не назначен';
-  };
-
   // Поиск: используем phone_visible вместо phone
-  const filteredOrders = (orders || []).filter((o) => {
+  const filteredOrders = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    const haystack = [
-      o.title,
-      o.fio,
-      o.customer_phone_visible, // ⬅️ телефон из orders_secure
-      o.region,
-      o.city,
-      o.street,
-      o.house,
-    ]
-      .filter(Boolean)
-      .map(String)
-      .join(' ')
-      .toLowerCase();
-    return haystack.includes(q);
-  });
-
+    return (orders || []).filter((o) => {
+      if (!q) return true;
+      const haystack = [
+        o.title,
+        o.fio,
+        o.customer_phone_visible,
+        o.region,
+        o.city,
+        o.street,
+        o.house,
+      ]
+        .filter(Boolean)
+        .map(String)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [orders, searchQuery]);
   // Ленивая загрузка при скролле (как в Instagram/Telegram)
   const loadMore = useCallback(async () => {
     if (isFetchingNextPage || !hasNextPage || loading) return;
@@ -566,29 +550,42 @@ export default function AllOrdersScreen() {
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, loading]);
 
   // Рендер элемента списка
+  const returnParamsRef = useRef({
+    filter: statusFilter,
+    executor: executorFilter,
+    department: departmentFilter,
+    search: searchQuery,
+  });
+  useEffect(() => {
+    returnParamsRef.current = {
+      filter: statusFilter,
+      executor: executorFilter,
+      department: departmentFilter,
+      search: searchQuery,
+    };
+  }, [departmentFilter, executorFilter, searchQuery, statusFilter]);
+  const openOrderDetails = useCallback(
+    async (orderId) => {
+      await ensureRequestPrefetch(queryClient, orderId).catch(() => {});
+      router.push({
+        pathname: `/orders/${orderId}`,
+        params: {
+          returnTo: '/orders/all-orders',
+          returnParams: JSON.stringify(returnParamsRef.current),
+        },
+      });
+    },
+    [queryClient, router],
+  );
   const renderItem = useCallback(
     ({ item: order }) => (
       <DynamicOrderCard
         order={order}
         context="all_orders"
-        onPress={async () => {
-          await ensureRequestPrefetch(queryClient, order.id).catch(() => {});
-          router.push({
-            pathname: `/orders/${order.id}`,
-            params: {
-              returnTo: '/orders/all-orders',
-              returnParams: JSON.stringify({
-                filter: statusFilter,
-                executor: executorFilter,
-                department: departmentFilter,
-                search: searchQuery,
-              }),
-            },
-          });
-        }}
+        onPress={() => openOrderDetails(order.id)}
       />
     ),
-    [router, statusFilter, executorFilter, departmentFilter, searchQuery, queryClient],
+    [openOrderDetails],
   );
 
   // Футер со спиннером при загрузке
@@ -876,3 +873,5 @@ export default function AllOrdersScreen() {
     </Screen>
   );
 }
+
+

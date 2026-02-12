@@ -1,5 +1,4 @@
 // components/ui/Card.jsx
-import React from 'react';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useTheme } from '../../theme';
 

@@ -1,5 +1,5 @@
 // /useAppLastSeen.js
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from './lib/supabase';
 
@@ -9,22 +9,22 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
   const inFlightRef = useRef(false);
   const mountedRef = useRef(false);
 
-  async function updateLastSeen(uid, src) {
+  const updateLastSeen = useCallback(async (_uid, _src) => {
     // 1) RPC (предпочтительно)
     try {
-      const { data, error } = await supabase.rpc('touch_last_seen');
+      const { error } = await supabase.rpc('touch_last_seen');
       if (!error) {
         return true;
       }
-    } catch (e) {
+    } catch {
       // silent catch
     }
 
     // 2) Больше НЕ делаем UPDATE в profiles — это и даёт "permission denied" при RLS.
     return false;
-  }
+  }, []);
 
-  async function ping(src = 'unknown') {
+  const ping = useCallback(async (src = 'unknown') => {
     // Не шевелимся, если приложение не активно — убираем сетевые ошибки в фоне
     if (appStateRef.current !== 'active') {
       return;
@@ -39,7 +39,7 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       // безопасный вызов без крашей при отсутствии сессии
       const { data: { user } = {}, error: userErr } = await supabase.auth
         .getUser()
-        .catch((e) => ({ error: e }));
+        .catch((_e) => ({ error: _e }));
 
       if (userErr?.message?.includes?.('Auth session missing')) {
         return;
@@ -57,15 +57,15 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       if (ok) {
         lastSentAtRef.current = now;
       }
-    } catch (e) {
+    } catch (_e) {
       // подавляем сетевые ошибки, чтобы не сыпались красные логи
-      if (!e?.message?.includes?.('Network request failed')) {
+      if (!_e?.message?.includes?.('Network request failed')) {
         // silent catch
       }
     } finally {
       inFlightRef.current = false;
     }
-  }
+  }, [minIntervalMs, updateLastSeen]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -105,5 +105,5 @@ export function useAppLastSeen(minIntervalMs = 60_000) {
       clearInterval(intervalId);
       mountedRef.current = false;
     };
-  }, [minIntervalMs]);
+  }, [minIntervalMs, ping]);
 }

@@ -2,7 +2,7 @@
 import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 import { useNavigation } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -50,7 +50,6 @@ const [DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE] = (() => {
 
 let installEdgeToEdgeWarnFilter;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   installEdgeToEdgeWarnFilter =
     require('../../src/utils/devWarnFilter')?.installEdgeToEdgeWarnFilter;
 } catch (e) {
@@ -77,7 +76,7 @@ async function ensurePushPermission() {
     if (Platform.OS === 'web') {
       try {
         if (Linking?.openSettings) await Linking.openSettings();
-      } catch (e) {}
+      } catch {}
       return { granted: false, token: null };
     }
 
@@ -189,7 +188,7 @@ export default function AppSettings() {
     } catch (e) {
       __devLog('nav.setParams failed:', e?.message || e);
     }
-  }, [ver]);
+  }, [nav, t, ver]);
 
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
@@ -205,7 +204,7 @@ export default function AppSettings() {
   const _curLangLabel = t(`language_${_curLocale}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
-  const futureFeature = () => toast.info(t('settings_soon'));
+  const futureFeature = useCallback(() => toast.info(t('settings_soon')), [t, toast]);
   const [prefs, setPrefs] = useState({
     allow: true,
     new_orders: true,
@@ -214,7 +213,7 @@ export default function AppSettings() {
     quiet_start: null,
     quiet_end: null,
   });
-  const [loadingPrefs, setLoadingPrefs] = useState(false);
+  const [_loadingPrefs, _setLoadingPrefs] = useState(false);
   const [eventsOpen, setEventsOpen] = useState(false);
   const [timePickerOpen, setTimePickerOpen] = useState(null);
   const [timeValue, setTimeValue] = useState(new Date());
@@ -364,7 +363,7 @@ export default function AppSettings() {
     }
   }, [permData]);
 
-  async function savePrefs(patch) {
+  const savePrefs = useCallback(async (patch) => {
     try {
       const uid = await getUid();
       const next = { ...prefs, ...patch };
@@ -388,7 +387,7 @@ export default function AppSettings() {
       else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
       return { ok: false, message: msg };
     }
-  }
+  }, [prefs, refreshPrefs, t]);
 
   function toTimeStr(v) {
     if (!v) return null;
@@ -442,17 +441,20 @@ export default function AppSettings() {
 
   const bothQuietSet = (obj) => !!toTimeStr(obj.quiet_start) && !!toTimeStr(obj.quiet_end);
 
-  const openTimePicker = (which) => () => {
-    const bothNull = !toTimeStr(prefs.quiet_start) && !toTimeStr(prefs.quiet_end);
-    const fallback = which === 'start' ? APP_DEFAULTS?.quietStart : APP_DEFAULTS?.quietEnd;
-    const base =
-      which === 'start'
-        ? (prefs.quiet_start ?? (bothNull ? fallback : null))
-        : (prefs.quiet_end ?? (bothNull ? fallback : null));
-    const d = toDateFromStr(toTimeStr(base));
-    setTimeValue(d);
-    setTimePickerOpen(which);
-  };
+  const openTimePicker = useCallback(
+    (which) => () => {
+      const bothNull = !toTimeStr(prefs.quiet_start) && !toTimeStr(prefs.quiet_end);
+      const fallback = which === 'start' ? APP_DEFAULTS?.quietStart : APP_DEFAULTS?.quietEnd;
+      const base =
+        which === 'start'
+          ? (prefs.quiet_start ?? (bothNull ? fallback : null))
+          : (prefs.quiet_end ?? (bothNull ? fallback : null));
+      const d = toDateFromStr(toTimeStr(base));
+      setTimeValue(d);
+      setTimePickerOpen(which);
+    },
+    [prefs.quiet_end, prefs.quiet_start],
+  );
 
   const onTimePicked = async (_ev, dateOrUndefined) => {
     if (!timePickerOpen) return;
@@ -511,7 +513,7 @@ export default function AppSettings() {
     }
   };
 
-  async function savePushToken(token) {
+  const savePushToken = useCallback(async (token) => {
     try {
       const uid = await getUid();
       if (!token) throw new Error('NO_TOKEN');
@@ -525,9 +527,9 @@ export default function AppSettings() {
       if (m.includes('permission denied') || m.includes('rls')) msg = t('errors_rls');
       return { ok: false, message: msg };
     }
-  }
+  }, [t]);
 
-  async function removePushToken() {
+  const removePushToken = useCallback(async () => {
     try {
       const uid = await getUid();
       await deletePushTokenHelper(uid);
@@ -536,9 +538,9 @@ export default function AppSettings() {
       __devLog('removePushToken failed:', e?.message || e);
       return { ok: false };
     }
-  }
+  }, []);
 
-  const onToggleAllow = async (val) => {
+  const onToggleAllow = useCallback(async (val) => {
     const prev = prefs.allow;
     setPrefs((p) => ({ ...p, allow: val }));
 
@@ -597,7 +599,7 @@ export default function AppSettings() {
       toast.info(t('push_off'));
       return;
     }
-  };
+  }, [prefs.allow, removePushToken, savePrefs, savePushToken, t, toast]);
 
   const onToggleEvent = (key) => async (val) => {
     const prev = prefs[key];
@@ -610,7 +612,7 @@ export default function AppSettings() {
     }
   };
 
-  const onResetQuietTimes = async () => {
+  const onResetQuietTimes = useCallback(async () => {
     const prev = { quiet_start: prefs.quiet_start, quiet_end: prefs.quiet_end };
     const patch = { quiet_start: null, quiet_end: null };
     setPrefs((p) => ({ ...p, ...patch }));
@@ -621,7 +623,7 @@ export default function AppSettings() {
     } else {
       toast.info(t('quiet_off'));
     }
-  };
+  }, [prefs.quiet_end, prefs.quiet_start, savePrefs, t, toast]);
 
   // --- UI sections (structure without hardcoded texts; titles/labels come from i18n) ---
   const sectionBase = useMemo(
@@ -679,7 +681,14 @@ export default function AppSettings() {
           label: t(`settings_sections_${sec.key}_items_${it.key}`, it.label),
         })),
       })),
-    [_curLocale, theme, canCreateOrders, ver],
+    [
+      _curLangLabel,
+      futureFeature,
+      onResetQuietTimes,
+      onToggleAllow,
+      openTimePicker,
+      t,
+    ],
   );
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
@@ -703,7 +712,7 @@ export default function AppSettings() {
           return it;
         }),
       })),
-    [sectionBase, prefs, isLoadingPrefs, _curLangLabel],
+    [sectionBase, prefs, isLoadingPrefs, _curLangLabel, t],
   );
 
   return (

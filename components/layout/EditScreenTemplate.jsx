@@ -71,7 +71,7 @@ export default function EditScreenTemplate({
             onPress={() => {
               try {
                 Keyboard.dismiss();
-              } catch (_) {}
+              } catch {}
             }}
           >
             <View>{children}</View>

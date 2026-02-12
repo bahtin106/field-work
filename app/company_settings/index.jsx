@@ -1,5 +1,4 @@
 // app/company_settings/index.jsx
-import { useRoute } from '@react-navigation/native';
 import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
 import {
@@ -19,7 +18,6 @@ import { BaseModal, SelectModal } from '../../components/ui/modals';
 import TextField, { SelectField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
-import { useI18nVersion } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -207,7 +205,7 @@ function getOffsetMinutes(zone) {
     );
     const diffMin = Math.round((asUTC - now.getTime()) / 60000);
     return diffMin;
-  } catch (e) {
+  } catch {
     try {
       const now = new Date();
       const utc = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
@@ -252,17 +250,15 @@ export default function CompanySettings() {
   const toast = useToast();
   const { theme } = useTheme();
   const nav = useNavigation();
-  const route = useRoute();
   const router = useRouter();
   const { t } = useTranslation();
-  const ver = useI18nVersion();
   const queryClient = useQueryClient();
   const companyQueryKey = React.useMemo(() => ['companySettings'], []);
 
   // Load company settings via shared query cache.
   const {
     data: companyData,
-    isLoading: isLoadingCompany,
+    isLoading: _isLoadingCompany,
     refetch: refreshCompany,
   } = useQuery({
     queryKey: companyQueryKey,
@@ -361,7 +357,7 @@ export default function CompanySettings() {
   const [currency, setCurrency] = React.useState(null);
   const [currencyRate, setCurrencyRate] = React.useState('');
   const [fetchRateError, setFetchRateError] = React.useState(null);
-  const [currencyModalKey, setCurrencyModalKey] = React.useState(0);
+  const [_currencyModalKey, _setCurrencyModalKey] = React.useState(0);
   const [fetchingRate, setFetchingRate] = React.useState(false);
   const [rateDisplayDirection, setRateDisplayDirection] = React.useState('old_to_new');
   const [isAdmin, setIsAdmin] = React.useState(false);
@@ -376,7 +372,7 @@ export default function CompanySettings() {
   const closeCompanyEditor = React.useCallback(() => {
     try {
       Keyboard.dismiss();
-    } catch (_) {}
+    } catch {}
     setCompanyNameOpen(false);
     setCompanyNameError('');
     setSavingCompany(false);
@@ -384,7 +380,7 @@ export default function CompanySettings() {
     setTimeout(() => {
       try {
         setCompanyModalKey((k) => k + 1);
-      } catch (_) {}
+      } catch {}
     }, 0);
   }, []);
 
@@ -407,7 +403,7 @@ export default function CompanySettings() {
       const title = t(titleKeyPrimary) || t(titleKeyFallback) || titleKeyFallback;
       nav.setParams({ headerTitle: title });
     } catch {}
-  }, [ver, t]);
+  }, [nav, t]);
 
   // РћР±РЅРѕРІР»СЏРµРј state РєРѕРіРґР° РїСЂРёС…РѕРґСЏС‚ РґР°РЅРЅС‹Рµ РёР· РєРµС€Р°
   React.useEffect(() => {
@@ -483,7 +479,7 @@ export default function CompanySettings() {
     [t, refreshCompany, queryClient],
   );
 
-  const onSubmitCompanyName = React.useCallback(() => {
+  const _onSubmitCompanyName = React.useCallback(() => {
     const name = String(companyName || '').trim();
     if (!name || name === companyNameInitial) return;
     toast
@@ -495,7 +491,7 @@ export default function CompanySettings() {
       .then(() => {
         setCompanyNameInitial(name);
       });
-  }, [companyName, companyNameInitial, updateSetting, t]);
+  }, [companyName, companyNameInitial, updateSetting, t, toast]);
 
   // Time zones list
   const tzItems = React.useMemo(() => {
@@ -549,7 +545,7 @@ export default function CompanySettings() {
         error: (e) => e?.message || t('toast_error'),
       });
     },
-    [updateSetting, t],
+    [updateSetting, t, toast],
   );
 
   const onToggleDepartureTime = React.useCallback(
@@ -561,7 +557,7 @@ export default function CompanySettings() {
         error: (e) => e?.message || t('toast_error'),
       });
     },
-    [updateSetting, t],
+    [updateSetting, t, toast],
   );
 
   // Currency options (use i18n keys for labels)
@@ -621,10 +617,9 @@ export default function CompanySettings() {
     try {
       for (const prov of providers) {
         try {
-          // eslint-disable-next-line no-await-in-loop
           const rate = await prov();
           if (rate && !Number.isNaN(Number(rate)) && Number(rate) > 0) return Number(rate);
-        } catch (_e) {
+        } catch {
           // try next provider
         }
       }
@@ -670,7 +665,7 @@ export default function CompanySettings() {
       // open confirm modal where admin can edit rate and choose recalc mode
       setCurrencyConfirmOpen(true);
     },
-    [currency, fetchRateFromApi],
+    [currency, fetchRateFromApi, MODAL_RECALC_METHODS],
   );
 
   // Auto-fetch rate helper used both by button and when modal opens
@@ -707,7 +702,7 @@ export default function CompanySettings() {
       setFetchRateError(t('modal_currency_rate_fetch_failed') || 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєСѓСЂСЃ');
       autoFetchedRef.current = true;
       return null;
-    } catch (err) {
+    } catch {
       setFetchRateError(t('modal_currency_rate_fetch_failed') || 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєСѓСЂСЃ');
       autoFetchedRef.current = true;
       return null;
@@ -718,7 +713,6 @@ export default function CompanySettings() {
 
   // When confirm modal opens, auto-load rate (if not already set)
   React.useEffect(() => {
-    let alive = true;
     (async () => {
       if (!currencyConfirmOpen || !pendingCurrency) return;
       // only auto-fetch once per modal open; do not auto-fetch on user clearing the field
@@ -729,12 +723,12 @@ export default function CompanySettings() {
       }
       try {
         await autoFetchRate();
-      } catch (_) {
+      } catch {
         autoFetchedRef.current = true;
       }
     })();
     return () => {
-      alive = false;
+      // no-op cleanup
     };
   }, [currencyConfirmOpen, pendingCurrency, currencyRate, autoFetchRate]);
 
@@ -765,7 +759,7 @@ export default function CompanySettings() {
           : null;
 
         // Call RPC
-        const { data: rpcData, error: rpcErr } = await supabase.rpc('company_set_currency', {
+        const { error: rpcErr } = await supabase.rpc('company_set_currency', {
           p_company_id: companyId,
           p_new_currency: pendingCurrency,
           p_rate: normalizedRate,
@@ -782,7 +776,7 @@ export default function CompanySettings() {
           await queryClient.invalidateQueries({
             predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'orders',
           });
-        } catch (_) {}
+        } catch {}
 
         // If recalc requested, try to detect enqueued job and wait for it (best-effort)
         if (recalc) {
@@ -812,7 +806,6 @@ export default function CompanySettings() {
               }
               if (j.status === 'failed') break;
               // wait before next poll
-              // eslint-disable-next-line no-await-in-loop
               await new Promise((r) => setTimeout(r, 2500));
             }
             // final cache invalidation after job
@@ -853,7 +846,7 @@ export default function CompanySettings() {
         { id: 'off', label: t('settings_phone_mode_off') },
       ];
     }
-  }, [ver, t]);
+  }, [t]);
 
   const onPickPhoneMode = React.useCallback(
     (it) => {
@@ -879,7 +872,7 @@ export default function CompanySettings() {
         error: (e) => e?.message || t('toast_error'),
       });
     },
-    [updateSetting, t, windowBefore, windowAfter, decomposeMinutes],
+    [updateSetting, t, toast, windowBefore, windowAfter, decomposeMinutes],
   );
 
   const phoneModeLabel = React.useMemo(() => {
@@ -911,7 +904,7 @@ export default function CompanySettings() {
       DEPARTURE: t('settings_sections_departure_title'),
       PHONE: t('settings_sections_phone_title'),
     }),
-    [ver, t],
+    [t],
   );
 
   return (
@@ -1279,7 +1272,7 @@ export default function CompanySettings() {
                 try {
                   setConfirmLoading(true);
                   await performCurrencyChange(needsRecalc);
-                } catch (err) {
+                } catch {
                   toast.show(err?.message || t('toast_error'), 'error');
                 } finally {
                   setConfirmLoading(false);
@@ -1764,3 +1757,4 @@ const styles = (t) =>
     },
     caption: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm },
   });
+

@@ -1,5 +1,5 @@
 // app/company_settings/sections/DepartmentsSettings.jsx
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -19,7 +19,7 @@ export default function DepartmentsSettings() {
   const [departments, setDepartments] = useState([]); // {id, name, is_enabled}
   const [deptName, setDeptName] = useState('');
   const [deptLoading, setDeptLoading] = useState(true);
-  const [deptError, setDeptError] = useState('');
+  const [_deptError, setDeptError] = useState('');
   const [deleteDlg, setDeleteDlg] = useState({
     open: false,
     id: null,
@@ -46,7 +46,7 @@ export default function DepartmentsSettings() {
         toast.error(e?.message || 'Не удалось получить компанию');
       }
     })();
-  }, []);
+  }, [toast]);
 
   // realtime subscription
   useEffect(() => {
@@ -116,7 +116,7 @@ export default function DepartmentsSettings() {
         target: null,
         hasEmployees,
       });
-    } catch (e) {
+    } catch {
       setDeleteDlg({
         open: true,
         id: dept.id,
@@ -193,7 +193,7 @@ export default function DepartmentsSettings() {
     return () => {
       alive = false;
     };
-  }, [companyId]);
+  }, [companyId, toast]);
 
   return (
     <Screen>

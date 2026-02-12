@@ -4,7 +4,7 @@
 
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   BackHandler,
@@ -45,7 +45,7 @@ function withAlpha(color, a) {
  *  - visible, onClose
  *  - departments, rolesOptions
  *  - values, setValue, defaults
- *  - onReset, onApply
+ *  - onApply
  */
 export default function FiltersPanel({
   visible,
@@ -55,7 +55,6 @@ export default function FiltersPanel({
   values = {},
   setValue,
   defaults = {},
-  onReset,
   onApply,
   mode = 'filters',
   assignment = null,
@@ -68,11 +67,15 @@ export default function FiltersPanel({
   const isAssignmentMode = mode === 'assignment' && assignment;
   const normalizeSelectionId = (id) =>
     id !== null && id !== undefined ? String(id) : null;
-  const assignmentEmployees = isAssignmentMode
-    ? Array.isArray(assignment?.employees)
-      ? assignment.employees
-      : []
-    : [];
+  const assignmentEmployees = useMemo(
+    () =>
+      isAssignmentMode
+        ? Array.isArray(assignment?.employees)
+          ? assignment.employees
+          : []
+        : [],
+    [assignment?.employees, isAssignmentMode],
+  );
   const assignmentDefaultId = normalizeSelectionId(assignment?.defaults?.selectedId ?? null);
   const searchList = !isAssignmentMode && Array.isArray(searchItems) ? searchItems : assignmentEmployees;
 
@@ -127,7 +130,7 @@ export default function FiltersPanel({
       setDraft(snap);
       setBaseline(snap);
     }
-  }, [visible]);
+  }, [visible, values.departments, values.roles, values.suspended]);
 
   // Animation (slide from right like a page). Kept mounted.
   const tx = useRef(new Animated.Value(visible ? 0 : SCREEN_W)).current;
@@ -196,7 +199,7 @@ export default function FiltersPanel({
       });
     }
     return cats;
-  }, [assignment?.includeUnassigned, departments, isAssignmentMode, t]);
+  }, [assignment?.includeUnassigned, departments, isAssignmentMode]);
 
   const SEARCH_CATEGORY_KEY = 'search';
   const categories = useMemo(() => {
@@ -213,7 +216,7 @@ export default function FiltersPanel({
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departments, isAssignmentMode, showSearchCategory, t]);
+  }, [assignmentCategories, departments, isAssignmentMode, showSearchCategory]);
 
   const restoredCategoryRef = useRef(false);
   const lastCategoriesRef = useRef(null);
@@ -272,7 +275,7 @@ export default function FiltersPanel({
             return;
           }
         }
-      } catch (e) {
+      } catch {
         // Ignore storage errors
       }
       if (categories.length > 0) {
@@ -309,7 +312,7 @@ export default function FiltersPanel({
             '@filtersPanelLastCategory',
             JSON.stringify({ categoryKey: activeCat, timestamp: Date.now() }),
           );
-        } catch (e) {
+        } catch {
           // Ignore storage errors
         }
       };
@@ -496,7 +499,7 @@ export default function FiltersPanel({
       resetBtnText: { color: c.primary, fontSize: ty.sizes.sm, fontWeight: ty.weight.semibold },
       iconButton: { padding: 8, marginRight: 4 },
     });
-  }, [c, sz, ty]);
+  }, [c, sz, ty, sh, BACK_BUTTON_SIZE, OVERLAY_Z_INDEX, RATIO_MIN, RATIO_MAX, theme]);
 
   const optionRow = useMemo(
     () => ({

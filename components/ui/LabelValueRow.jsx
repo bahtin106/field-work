@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { useMemo } from 'react';
+import { View, Text } from 'react-native';
+import { useTheme } from '../../theme/ThemeProvider';
 import { listItemStyles } from './listItemStyles';
 
 /**
@@ -29,7 +30,7 @@ export default function LabelValueRow({
   maxValueLines = 3,
   style,
 }) {
-  const theme = (require('../../theme')?.useTheme?.() || {}).theme || {};
+  const { theme } = useTheme();
   const base = useMemo(() => listItemStyles(theme), [theme]);
 
   const renderLabel = () => {

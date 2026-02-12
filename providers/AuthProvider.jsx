@@ -1,3 +1,8 @@
+/**
+ * @deprecated Legacy provider kept for backward compatibility.
+ * The app uses `SimpleAuthProvider` in `app/_layout.js`.
+ * Do not wire this provider into runtime without a migration plan.
+ */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { globalCache } from '../lib/cache/DataCache';
@@ -76,7 +81,7 @@ export function AuthProvider({ children, queryClient, persister }) {
 
   const bootstrapSession = useCallback(
     async (session) => {
-      console.log('AuthProvider: bootstrapSession called', { hasSession: !!session });
+      console.info('AuthProvider: bootstrapSession called', { hasSession: !!session });
       setState((prev) => ({
         ...prev,
         isInitializing: true,
@@ -88,7 +93,7 @@ export function AuthProvider({ children, queryClient, persister }) {
 
       const hasSession = !!session?.access_token;
       if (!hasSession) {
-        console.log('AuthProvider: no session, clearing state');
+        console.info('AuthProvider: no session, clearing state');
         await clearClientCaches();
         setState((prev) => ({
           ...prev,
@@ -134,7 +139,7 @@ export function AuthProvider({ children, queryClient, persister }) {
           lookupColumn,
         });
         const isValidUser = !!nextUser && !!profile;
-        console.log('AuthProvider: bootstrapSession decision', {
+        console.info('AuthProvider: bootstrapSession decision', {
           userId: nextUser?.id,
           isValidUser,
           profileId: profile?.id,
@@ -178,7 +183,7 @@ export function AuthProvider({ children, queryClient, persister }) {
     let active = true;
 
     const loadSession = async () => {
-      console.log('AuthProvider: loadSession started');
+      console.info('AuthProvider: loadSession started');
       try {
         // короткий таймаут на получение сессии, чтобы не висеть долго при проблемах сети
         const withTimeoutLocal = (p, ms = 4000) =>
@@ -199,7 +204,7 @@ export function AuthProvider({ children, queryClient, persister }) {
           data: { session: null },
           error: null,
         };
-        console.log('AuthProvider: getSession result', { hasSession: !!session, error });
+        console.info('AuthProvider: getSession result', { hasSession: !!session, error });
         if (!active) return;
 
         if (error) {
@@ -228,19 +233,19 @@ export function AuthProvider({ children, queryClient, persister }) {
     loadSession();
 
     const { data: authSub } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('AuthProvider: onAuthStateChange', {
+      console.info('AuthProvider: onAuthStateChange', {
         event,
         hasSession: !!session,
         userId: session?.user?.id,
       });
       if (!active) return;
       if (event === 'SIGNED_OUT') {
-        console.log('AuthProvider: handling SIGNED_OUT');
+        console.info('AuthProvider: handling SIGNED_OUT');
         await bootstrapSession(null);
         return;
       }
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        console.log('AuthProvider: handling SIGNED_IN/TOKEN_REFRESHED');
+        console.info('AuthProvider: handling SIGNED_IN/TOKEN_REFRESHED');
         await bootstrapSession(session);
       }
     });
@@ -279,3 +284,4 @@ export function useAuthContext() {
   }
   return ctx;
 }
+

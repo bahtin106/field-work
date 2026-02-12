@@ -242,9 +242,6 @@ export function SelectField({
   const { theme } = useTheme();
   const base = listItemStyles(theme);
   const s = selectStyles(theme);
-  const sepConfig = theme.components?.input?.separator || {};
-  const sepHeight = sepConfig.height ?? theme.components?.listItem?.dividerWidth ?? 1;
-  const sepEnabled = sepConfig.enabled ?? sepHeight > 0;
   const [rowWidth, setRowWidth] = React.useState(null);
   const chevronSize = theme.components.listItem.chevronSize || 20;
   const computedValueMaxWidth = React.useMemo(() => {
@@ -267,7 +264,7 @@ export function SelectField({
           try {
             const w = e?.nativeEvent?.layout?.width;
             if (w && w !== rowWidth) setRowWidth(w);
-          } catch (_) {}
+          } catch {}
         }}
         style={[
           base.row,
@@ -427,7 +424,7 @@ export function serializeDobForSupabase(v) {
 export const DateOfBirthField = ({
   label = T('fields.dob'),
   value,
-  onChange, // kept for API compatibility (not used internally)
+  onChange: _onChange, // kept for API compatibility (not used internally)
   style,
 }) => {
   const { theme } = useTheme();

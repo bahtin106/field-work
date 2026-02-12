@@ -1,6 +1,6 @@
 // components/ui/ValidationAlert.jsx
 import { Feather } from '@expo/vector-icons';
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';

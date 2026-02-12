@@ -1,8 +1,6 @@
 // app/users/[id]/edit.jsx
 
 import { AntDesign, Feather } from '@expo/vector-icons';
-import Constants from 'expo-constants';
-import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -24,12 +22,11 @@ import EditScreenTemplate, { useEditFormStyles } from '../../../components/layou
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
-import IconButton from '../../../components/ui/IconButton';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import SecurePasswordInput from '../../../components/SecurePasswordInput';
-import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../../src/shared/feedback';
+import { useFeedback, ScreenBanner, FieldErrorText, FEEDBACK_CODES, getMessageByCode } from '../../../src/shared/feedback';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
@@ -37,7 +34,7 @@ import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import { AVATAR, STORAGE, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
-import { supabase, supabaseAdmin, EMAIL_SERVICE_URL } from '../../../lib/supabase';
+import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
 import { useMyCompanyIdQuery } from '../../../src/features/profile/queries';
@@ -66,7 +63,7 @@ const getImagePickerMediaTypesImages = () => {
     if (ImagePicker.MediaType && ImagePicker.MediaType.image) return ImagePicker.MediaType.image;
     if (ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.image)
       return ImagePicker.MediaTypeOptions.image;
-  } catch (e) {
+  } catch {
     // ignore
   }
   return null;
@@ -174,12 +171,12 @@ function formatDateRU(date, withYear = true) {
     return '';
   }
 }
-function daysInMonth(monthIdx, yearNullable) {
+function _daysInMonth(monthIdx, yearNullable) {
   if (monthIdx === 1 && yearNullable == null) return 29;
   const y = yearNullable ?? new Date().getFullYear();
   return new Date(y, monthIdx + 1, 0).getDate();
 }
-function range(a, b) {
+function _range(a, b) {
   const arr = [];
   for (let i = a; i <= b; i++) arr.push(i);
   return arr;
@@ -280,7 +277,7 @@ function RoleSelectModal({
   visible,
   role,
   roles = [],
-  roleLabels = {},
+  roleLabels: _roleLabels = {},
   roleDescriptions = {},
   onSelect,
   onClose,
@@ -307,7 +304,7 @@ function RoleSelectModal({
 export default function EditUser() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const ver = useI18nVersion();
+  const _ver = useI18nVersion();
   const queryClient = useQueryClient();
   const router = useRouter();
   const navigation = useNavigation();
@@ -320,13 +317,13 @@ export default function EditUser() {
     }),
     [t],
   );
-  const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
+  const _MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
   const MEDIA_QUALITY = typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85;
 
   const ICON_MD = theme.icons?.md ?? 22;
-  const ICON_SM = theme.icons?.sm ?? 18;
+  const _ICON_SM = theme.icons?.sm ?? 18;
   const ICONBUTTON_TOUCH = theme.components?.iconButton?.size ?? 32;
-  const TRAILING_WIDTH =
+  const _TRAILING_WIDTH =
     theme.components?.input?.trailingSlotWidth ??
     ICONBUTTON_TOUCH +
       theme.spacing.sm +
@@ -338,11 +335,11 @@ export default function EditUser() {
     Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)),
   );
   const RADIO_SIZE = theme.components?.radio?.size ?? ICON_MD;
-  const RADIO_DOT =
+  const _RADIO_DOT =
     theme.components?.radio?.dot ??
     Math.max(theme.components?.radio?.dotMin ?? 6, Math.round(RADIO_SIZE / 2 - 3));
-  const TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
-  const base = React.useMemo(() => listItemStyles(theme), [theme]);
+  const _TOAST_MAX_W = theme.components?.toast?.maxWidth ?? 440;
+  const _base = React.useMemo(() => listItemStyles(theme), [theme]);
   const styles = React.useMemo(() => {
     return StyleSheet.create({
       container: { flex: 1, backgroundColor: theme.colors.background },
@@ -498,7 +495,7 @@ export default function EditUser() {
     showBanner,
     clearBanner,
     showSuccessToast,
-    showErrorToast,
+    showErrorToast: _showErrorToast,
     showInfoToast,
   } = useFeedback();
 
@@ -584,15 +581,15 @@ export default function EditUser() {
   const [withYear, setWithYear] = useState(true);
   const [dobModalVisible, setDobModalVisible] = useState(false);
   const [confirmPwdVisible, setConfirmPwdVisible] = useState(false);
-  const [pendingSave, setPendingSave] = useState(false);
-  const [focusFirst, setFocusFirst] = useState(false);
-  const [focusLast, setFocusLast] = useState(false);
-  const [focusEmail, setFocusEmail] = useState(false);
-  const [focusPhone, setFocusPhone] = useState(false);
-  const [focusPwd, setFocusPwd] = useState(false);
+  const [_pendingSave, setPendingSave] = useState(false);
+  const [_focusFirst, setFocusFirst] = useState(false);
+  const [_focusLast, setFocusLast] = useState(false);
+  const [_focusEmail, setFocusEmail] = useState(false);
+  const [_focusPhone, setFocusPhone] = useState(false);
+  const [_focusPwd, _setFocusPwd] = useState(false);
   const [role, setRole] = useState(ROLE.WORKER);
   const [newPassword, setNewPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [_showPassword, _setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
   const [resetPwdVisible, setResetPwdVisible] = useState(false);
   const [resettingPwd, setResettingPwd] = useState(false);
@@ -616,25 +613,25 @@ export default function EditUser() {
       const fileData = new Uint8Array(ab);
       const filename = `${AVA_PREFIX}${Date.now()}.jpg`;
       const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
-      console.log('[uploadAvatar] uploading to storage', { bucket: STORAGE.AVATARS, path, size: fileData?.length });
+      console.debug('[uploadAvatar] uploading to storage', { bucket: STORAGE.AVATARS, path, size: fileData?.length });
       const uploadResp = await supabase.storage.from(STORAGE.AVATARS).upload(path, fileData, {
         contentType: AVA_MIME,
         upsert: false,
       });
-      console.log('[uploadAvatar] uploadResp', uploadResp);
+      console.debug('[uploadAvatar] uploadResp', uploadResp);
       if (uploadResp.error) throw uploadResp.error;
       // Try to get public URL; if bucket is private, fallback to signed URL
       const pubResp = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
-      console.log('[uploadAvatar] getPublicUrl resp', pubResp);
+      console.debug('[uploadAvatar] getPublicUrl resp', pubResp);
       const publicUrl = pubResp?.data?.publicUrl || null;
       let finalUrl = publicUrl;
       if (!finalUrl) {
         try {
           const signed = await supabase.storage.from(STORAGE.AVATARS).createSignedUrl(path, 60);
-          console.log('[uploadAvatar] createSignedUrl resp', signed);
+          console.debug('[uploadAvatar] createSignedUrl resp', signed);
           finalUrl = signed?.data?.signedUrl || null;
         } catch (e) {
-          console.log('[uploadAvatar] createSignedUrl failed', e?.message || e);
+          console.debug('[uploadAvatar] createSignedUrl failed', e?.message || e);
         }
       }
       // Не обновляем БД сразу, только сохраняем временный URL
@@ -721,20 +718,20 @@ export default function EditUser() {
   const [successor, setSuccessor] = useState(null);
   const [successorError, setSuccessorError] = useState('');
   const [pickerVisible, setPickerVisible] = useState(false);
-  const [pickerQuery, setPickerQuery] = useState('');
+  const [_pickerQuery, _setPickerQuery] = useState('');
   const [pickerItems, setPickerItems] = useState([]);
-  const [pickerLoading, setPickerLoading] = useState(false);
+  const [_pickerLoading, _setPickerLoading] = useState(false);
   const [pickerReturn, setPickerReturn] = useState(null); // 'delete' | 'suspend' | null
   const scrollRef = useRef(null);
-  const pwdRef = useRef(null);
+  const _pwdRef = useRef(null);
   const firstNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
   const phoneRef = useRef(null);
-  const dobFieldRef = useRef(null);
-  const deptFieldRef = useRef(null);
-  const roleFieldRef = useRef(null);
-  const statusFieldRef = useRef(null);
+  const _dobFieldRef = useRef(null);
+  const _deptFieldRef = useRef(null);
+  const _roleFieldRef = useRef(null);
+  const _statusFieldRef = useRef(null);
   const insets = useSafeAreaInsets();
   const scrollYRef = useRef(0);
   const headerHeight = theme?.components?.header?.height ?? 56;
@@ -834,7 +831,7 @@ export default function EditUser() {
               // Попытка удалить файлы — ошибка не критична, продолжаем дальше
               try {
                 await supabase.storage.from(STORAGE.AVATARS).remove(paths);
-              } catch (_) {
+              } catch {
                 // Игнорируем ошибку удаления файлов
               }
             }
@@ -891,13 +888,13 @@ export default function EditUser() {
           .from(TABLES.profiles)
           .update(profilePatch)
           .eq('id', userId);
-        console.log('[proceedSave] profiles.update (admin)', { profErr, profData, profilePatch, userId });
+        console.debug('[proceedSave] profiles.update (admin)', { profErr, profData, profilePatch, userId });
 
         if (profErr) throw profErr;
 
         // Если нужно обновить пароль — используем email-server API
         if (newPassword && newPassword.length) {
-          console.log('[proceedSave] [Admin Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
+          console.debug('[proceedSave] [Admin Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
 
           const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
             method: 'POST',
@@ -910,7 +907,7 @@ export default function EditUser() {
             }),
           });
 
-          console.log('[proceedSave] Password update response status:', res.status);
+          console.debug('[proceedSave] Password update response status:', res.status);
 
           if (!res.ok) {
             const text = await res.text();
@@ -919,13 +916,13 @@ export default function EditUser() {
           }
 
           const result = await res.json();
-          console.log('[proceedSave] Password update result:', result);
+          console.debug('[proceedSave] Password update result:', result);
 
           if (!result.success) {
             throw new Error(result.message || 'Password update failed');
           }
 
-          console.log('[proceedSave] Password updated successfully');
+          console.debug('[proceedSave] Password updated successfully');
         }
       } else {
         // Пользователь редактирует себя
@@ -945,13 +942,13 @@ export default function EditUser() {
           .from(TABLES.profiles)
           .update(profilePatch)
           .eq('id', userId);
-        console.log('[proceedSave] profiles.update (self)', { profErr, profData, profilePatch, userId });
+        console.debug('[proceedSave] profiles.update (self)', { profErr, profData, profilePatch, userId });
 
         if (profErr) throw profErr;
 
         // Если нужно обновить пароль — используем email-server API
         if (newPassword && newPassword.length) {
-          console.log('[proceedSave] [Self Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
+          console.debug('[proceedSave] [Self Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
 
           const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
             method: 'POST',
@@ -964,7 +961,7 @@ export default function EditUser() {
             }),
           });
 
-          console.log('[proceedSave] Password update response status:', res.status);
+          console.debug('[proceedSave] Password update response status:', res.status);
 
           if (!res.ok) {
             const text = await res.text();
@@ -973,13 +970,13 @@ export default function EditUser() {
           }
 
           const result = await res.json();
-          console.log('[proceedSave] Password update result:', result);
+          console.debug('[proceedSave] Password update result:', result);
 
           if (!result.success) {
             throw new Error(result.message || 'Password update failed');
           }
 
-          console.log('[proceedSave] Password updated successfully');
+          console.debug('[proceedSave] Password updated successfully');
         }
       }
 
@@ -1025,7 +1022,7 @@ export default function EditUser() {
     }
   };
 
-  const handleSave = useCallback(async () => {
+  const handleSave = async () => {
     Keyboard.dismiss(); // ��������� ���������� ��� ����������
     setErr('');
     clearBanner();
@@ -1067,24 +1064,11 @@ export default function EditUser() {
     }
 
     await proceedSave();
-  }, [
-    firstName,
-    lastName,
-    emailValid,
-    phone,
-    requiredMsg,
-    t,
-    proceedSave,
-    meId,
-    userId,
-    newPassword,
-    confirmPassword,
-    clearBanner,
-  ]);
+  };
 
   const cancelRef = useRef(null);
 
-  const onPressCancel = React.useCallback(() => {
+  const _onPressCancel = React.useCallback(() => {
     if (cancelRef.current) return cancelRef.current();
   }, []);
 
@@ -1105,9 +1089,9 @@ export default function EditUser() {
     if (initialSnap) {
       allowLeaveRef.current = false;
     }
-  }, [firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId]);
+  }, [initialSnap, firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId]);
   // password strength check removed for edit screen per request
-  const formatName = (p) => {
+  const _formatName = (p) => {
     const n1 = (p.first_name || '').trim();
     const n2 = (p.last_name || '').trim();
     const fn = (p.full_name || '').trim();
@@ -1197,7 +1181,7 @@ export default function EditUser() {
       .eq('assigned_to', fromUserId);
     return error;
   };
-  const reassignAllOrders = async (fromUserId, toUserId) => {
+  const _reassignAllOrders = async (fromUserId, toUserId) => {
     const { error } = await supabase
       .from(TABLES.orders)
       .update({ assigned_to: toUserId })
@@ -1249,7 +1233,7 @@ export default function EditUser() {
       const tempPassword = generateTempPassword();
       
       // 1. Обновляем пароль через email-server API
-      console.log('[Edit] [Password Reset] Updating password via email-server at:', EMAIL_SERVICE_URL);
+      console.debug('[Edit] [Password Reset] Updating password via email-server at:', EMAIL_SERVICE_URL);
       
       const updateResponse = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
         method: 'POST',
@@ -1260,7 +1244,7 @@ export default function EditUser() {
         }),
       });
 
-      console.log('[Edit] [Password Reset] Update response status:', updateResponse.status);
+      console.debug('[Edit] [Password Reset] Update response status:', updateResponse.status);
 
       if (!updateResponse.ok) {
         const errorText = await updateResponse.text();
@@ -1269,16 +1253,16 @@ export default function EditUser() {
       }
 
       const updateResult = await updateResponse.json();
-      console.log('[Edit] [Password Reset] Update result:', updateResult);
+      console.debug('[Edit] [Password Reset] Update result:', updateResult);
 
       if (!updateResult.success) {
         throw new Error(updateResult.message || 'Password update failed');
       }
 
-      console.log('[Edit] [Password Reset] Password updated successfully');
+      console.debug('[Edit] [Password Reset] Password updated successfully');
 
       // 2. Отправляем пароль по email
-      console.log('[Edit] [Password Reset] Sending email to:', email);
+      console.debug('[Edit] [Password Reset] Sending email to:', email);
       
       const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
         method: 'POST',
@@ -1292,7 +1276,7 @@ export default function EditUser() {
         }),
       });
 
-      console.log('[Edit] [Password Reset] Email response status:', emailResponse.status);
+      console.debug('[Edit] [Password Reset] Email response status:', emailResponse.status);
 
       if (!emailResponse.ok) {
         const emailError = await emailResponse.text();
@@ -1431,13 +1415,13 @@ export default function EditUser() {
       showInfoToast(t('toast_loading_info'), { sticky: true });
 
       // Вызываем RPC функцию для проверки заявок
-      console.log('[onAskDelete] calling check_employee_orders for userId:', userId);
+      console.debug('[onAskDelete] calling check_employee_orders for userId:', userId);
 
       const { data, error } = await supabase.rpc('check_employee_orders', {
         employee_id: userId
       });
 
-      console.log('[onAskDelete] result:', { data, error });
+      console.debug('[onAskDelete] result:', { data, error });
 
       if (error) {
         throw new Error(error.message || 'Ошибка проверки заявок');
@@ -1445,7 +1429,7 @@ export default function EditUser() {
 
       const { activeOrdersCount, totalOrdersCount, availableEmployees } = data || {};
 
-      console.log('[onAskDelete] activeOrdersCount:', activeOrdersCount);
+      console.debug('[onAskDelete] activeOrdersCount:', activeOrdersCount);
 
       // Сохраняем количество заявок и список доступных сотрудников
       setActiveOrdersCount(activeOrdersCount || 0);
@@ -1477,14 +1461,14 @@ export default function EditUser() {
       showInfoToast(t('toast_deleting_employee'), { sticky: true });
 
       // Вызываем RPC функцию для деактивации
-      console.log('[onConfirmDelete] calling deactivate_employee:', { userId, successorId: successor?.id });
+      console.debug('[onConfirmDelete] calling deactivate_employee:', { userId, successorId: successor?.id });
 
       const { data, error } = await supabase.rpc('deactivate_employee', {
         employee_id: userId,
         reassign_to: successor?.id || null,
       });
 
-      console.log('[onConfirmDelete] result:', { data, error });
+      console.debug('[onConfirmDelete] result:', { data, error });
 
       if (error) {
         throw new Error(error.message || t('err_delete_failed'));
@@ -1561,7 +1545,7 @@ export default function EditUser() {
       onScroll={(e) => {
         try {
           scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-        } catch (_) {}
+        } catch {}
       }}
     >
       <View>
@@ -1772,10 +1756,10 @@ export default function EditUser() {
               <PhoneInput
                 ref={phoneRef}
                 value={phone}
-                onChangeText={(val, meta) => {
-                  setPhone(val);
-                  clearFieldError('phone');
-                }}
+              onChangeText={(val, _meta) => {
+                setPhone(val);
+                clearFieldError('phone');
+              }}
                 error={phoneError ? 'invalid' : undefined}
                 style={styles.field}
                 onFocus={() => {

@@ -30,10 +30,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { ROLE, ROLE_LABELS, EDITABLE_ROLES as ROLES } from '../../constants/roles';
 import {
   AUTH_CONSTRAINTS,
-  filterPasswordInput,
-  getPasswordValidationErrors,
   isValidEmail as isValidEmailShared,
-  isValidPassword,
 } from '../../lib/authValidation';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
 import { supabase, supabaseAdmin, EMAIL_SERVICE_URL } from '../../lib/supabase';
@@ -51,7 +48,7 @@ const __pick = (val, devFallback) => (val != null ? val : __IS_PROD ? null : dev
 const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
 const AVA_MIME = AVATAR.MIME;
 
-const FN_CREATE_USER =
+const _FN_CREATE_USER =
   process.env.EXPO_PUBLIC_FN_CREATE_USER || (APP_FUNCTIONS.CREATE_USER ?? 'create_user');
 
 let ROLE_LABELS_LOCAL = ROLE_LABELS;
@@ -102,12 +99,12 @@ function formatDateRU(date, withYear = true) {
 export default function NewUserScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const ver = useI18nVersion();
+  const _ver = useI18nVersion();
   const queryClient = useQueryClient();
   const router = useRouter();
   const navigation = useNavigation();
   const { banner, showBanner, clearBanner, showSuccessToast, showInfoToast } = useFeedback();
-  const base = useMemo(() => listItemStyles(theme), [theme]);
+  const _base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
 
   // state
@@ -119,8 +116,8 @@ export default function NewUserScreen() {
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteSuccessScreen, setInviteSuccessScreen] = useState(false);
-  const [inviteLink, setInviteLink] = useState(null);
-  const [inviteUserId, setInviteUserId] = useState(null);
+  const [inviteLink, _setInviteLink] = useState(null);
+  const [_inviteUserId, _setInviteUserId] = useState(null);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
 
   const [phone, setPhone] = useState('');
@@ -152,7 +149,7 @@ export default function NewUserScreen() {
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
 
   // Согласие с политикой
-  const [consentChecked, setConsentChecked] = useState(false);
+  const [_consentChecked, _setConsentChecked] = useState(false);
 
   // Validation states
   const [emailCheckStatus, setEmailCheckStatus] = useState(null); // null | 'checking' | 'available' | 'taken'
@@ -161,18 +158,18 @@ export default function NewUserScreen() {
   const firstNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
-  const pwdRef = useRef(null);
+  const _pwdRef = useRef(null);
   const phoneRef = useRef(null);
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const allowLeaveRef = useRef(false);
   const emailCheckTimeoutRef = useRef(null);
 
-  const MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
+  const _MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
   const MEDIA_QUALITY = typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85;
-  const ICON_MD = theme.icons?.md ?? 22;
-  const ICON_SM = theme.icons?.sm ?? 18;
-  const ICONBUTTON_TOUCH = theme.components?.iconButton?.size ?? 32;
+  const _ICON_MD = theme.icons?.md ?? 22;
+  const _ICON_SM = theme.icons?.sm ?? 18;
+  const _ICONBUTTON_TOUCH = theme.components?.iconButton?.size ?? 32;
 
   const styles = useMemo(
     () =>
@@ -226,7 +223,7 @@ export default function NewUserScreen() {
     [theme],
   );
 
-  const MIN_PASSWORD_LENGTH = useMemo(() => {
+  const _MIN_PASSWORD_LENGTH = useMemo(() => {
     const envVal = Number(process.env.EXPO_PUBLIC_PASSWORD_MIN_LENGTH || 0) || 0;
     const sharedMin = Number(AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH || 0) || 0;
     return Math.max(sharedMin, envVal || 6);
@@ -297,7 +294,7 @@ export default function NewUserScreen() {
         setEmailCheckStatus(null);
       }
     },
-    [TABLES.profiles],
+    [],
   );
 
   // Debounced email check
@@ -328,7 +325,7 @@ export default function NewUserScreen() {
   }, [clearBanner]);
 
   // Обработчик недопустимых символов в пароле
-  const handleInvalidPasswordInput = useCallback(() => {
+  const _handleInvalidPasswordInput = useCallback(() => {
     setInvalidCharWarning(true);
 
     // Автоскрытие предупреждения через 3 секунды
@@ -423,7 +420,7 @@ export default function NewUserScreen() {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     return status === 'granted';
   };
-  const uploadAvatar = async (userId, uri) => {
+  const _uploadAvatar = async (userId, uri) => {
     try {
       const resp = await fetch(uri);
       const ab = await resp.arrayBuffer();
@@ -480,7 +477,7 @@ export default function NewUserScreen() {
     if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
   };
 
-  const warn = (key) => {
+  const _warn = (key) => {
     showInfoToast(t(key));
   };
 
@@ -545,8 +542,8 @@ export default function NewUserScreen() {
       const bdate = birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
 
       if (!__IS_PROD) {
-        console.log('[handleInviteConfirm] Starting user creation via Admin API');
-        console.log('[handleInviteConfirm] Email:', inviteEmail);
+        console.debug('[handleInviteConfirm] Starting user creation via Admin API');
+        console.debug('[handleInviteConfirm] Email:', inviteEmail);
       }
 
       const tempPassword = generateTempPassword();
@@ -569,7 +566,7 @@ export default function NewUserScreen() {
       }
 
       if (!__IS_PROD) {
-        console.log('[handleInviteConfirm] Creating user via createUser');
+        console.debug('[handleInviteConfirm] Creating user via createUser');
       }
 
       const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({
@@ -598,7 +595,7 @@ export default function NewUserScreen() {
       }
 
       if (!__IS_PROD) {
-        console.log('[handleInviteConfirm] User created, ID:', newUserId);
+        console.debug('[handleInviteConfirm] User created, ID:', newUserId);
       }
 
       // 3. Создаем профиль через RPC функцию
@@ -615,7 +612,7 @@ export default function NewUserScreen() {
         p_user_id: newUserId,
       });
 
-      if (!__IS_PROD) console.log('[handleInviteConfirm] RPC result:', { data: rpcData, error: rpcError });
+      if (!__IS_PROD) console.debug('[handleInviteConfirm] RPC result:', { data: rpcData, error: rpcError });
 
       if (rpcError) {
         // Если профиль не создался, удаляем пользователя
@@ -633,12 +630,12 @@ export default function NewUserScreen() {
         throw new Error(rpcError.message || t('err_invite_failed'));
       }
 
-      if (!__IS_PROD) console.log('[handleInviteConfirm] Success!');
+      if (!__IS_PROD) console.debug('[handleInviteConfirm] Success!');
 
       // Отправляем письмо с приглашением
       try {
         if (!__IS_PROD) {
-          console.log('[handleInviteConfirm] Sending invitation email to:', inviteEmail);
+          console.debug('[handleInviteConfirm] Sending invitation email to:', inviteEmail);
         }
 
         const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
@@ -657,7 +654,7 @@ export default function NewUserScreen() {
           console.warn('[handleInviteConfirm] Email sending failed, but user was created');
         } else {
           if (!__IS_PROD) {
-            console.log('[handleInviteConfirm] Email sent successfully');
+            console.debug('[handleInviteConfirm] Email sent successfully');
           }
         }
       } catch (emailError) {
@@ -697,8 +694,8 @@ export default function NewUserScreen() {
     queryClient,
     t,
     showSuccessToast,
-    showInfoToast,
     showBanner,
+    clearBanner,
   ]);
 
   const roleItems = useMemo(
@@ -706,7 +703,7 @@ export default function NewUserScreen() {
     [],
   );
 
-  const onCancel = () => {
+  const _onCancel = () => {
     if (isDirty) {
       setCancelVisible(true);
       return;

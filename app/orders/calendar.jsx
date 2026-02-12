@@ -24,6 +24,8 @@ import Animated, {
   cancelAnimation,
   interpolate,
   runOnJS,
+  scrollTo,
+  useAnimatedRef,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useDerivedValue,
@@ -120,31 +122,8 @@ function resolveSnapTarget(progress, velocityY, totalDistance) {
   return progress > CALENDAR_GESTURE.SNAP_PROGRESS_THRESHOLD ? totalDistance : 0;
 }
 
-function resolveMonthSwipeOffset(translationX, velocityX, pageWidth) {
-  'worklet';
-  const distanceThreshold = pageWidth * CALENDAR_GESTURE.MONTH_SWIPE_DISTANCE_RATIO;
-  if (translationX <= -distanceThreshold || velocityX <= -CALENDAR_GESTURE.MONTH_SWIPE_VELOCITY_X) {
-    return 1;
-  }
-  if (translationX >= distanceThreshold || velocityX >= CALENDAR_GESTURE.MONTH_SWIPE_VELOCITY_X) {
-    return -1;
-  }
-  return 0;
-}
-
-function isHorizontalMonthSwipeIntent(translationX, translationY, velocityX, velocityY) {
-  'worklet';
-  const absTx = Math.abs(translationX);
-  const absTy = Math.abs(translationY);
-  const absVx = Math.abs(velocityX);
-  const absVy = Math.abs(velocityY);
-  const distanceDominant = absTx >= absTy * CALENDAR_GESTURE.MONTH_SWIPE_DIRECTION_RATIO;
-  const velocityDominant = absVx >= absVy * CALENDAR_GESTURE.MONTH_SWIPE_VELOCITY_DIRECTION_RATIO;
-  return distanceDominant || velocityDominant;
-}
-
 export default function CalendarScreen() {
-  const { user, profile, isAuthenticated, isInitializing } = useAuth();
+  const { profile, isAuthenticated, isInitializing } = useAuth();
   const { theme } = useTheme();
   const { t } = useTranslation();
   const router = useRouter();
@@ -225,20 +204,26 @@ export default function CalendarScreen() {
   const isCollapsedShared = useSharedValue(false);
   const isSnappingShared = useSharedValue(false);
   const panHasDrivenCollapse = useSharedValue(false);
-  const flatListRef = useRef(null);
+  const monthPagerRef = useAnimatedRef();
   const lastHandledPageIndex = useRef(MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndexRef = useRef(MONTH_LIST_MIDDLE_INDEX);
   const monthScrollRafRef = useRef(null);
   const pendingScrollTargetIndexRef = useRef(null);
   const [visibleMonthRenderIndex, setVisibleMonthRenderIndex] = useState(MONTH_LIST_MIDDLE_INDEX);
-  const [isMonthHydrating, setIsMonthHydrating] = useState(false);
-  const hydrateOrdersTimerRef = useRef(null);
+  const settledMonthOffsetX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const deferInitialMeasureRef = useRef(true);
-  const initialMonthRef = useRef(startOfMonth(new Date()));
+  const [monthWindowAnchor, setMonthWindowAnchor] = useState(startOfMonth(new Date()));
+  const YEAR_LIST_RADIUS = 120;
+  const YEAR_LIST_MIDDLE_INDEX = YEAR_LIST_RADIUS;
+  const initialYearRef = useRef(currentMonth.getFullYear());
+  const yearFlatListRef = useRef(null);
+  const lastHandledYearPageIndex = useRef(YEAR_LIST_MIDDLE_INDEX);
+  const visibleYearIndexRef = useRef(YEAR_LIST_MIDDLE_INDEX);
+  const [visibleYearRenderIndex, setVisibleYearRenderIndex] = useState(YEAR_LIST_MIDDLE_INDEX);
 
   const dynamicMonths = useMemo(() => {
     const months = [];
-    const baseMonth = initialMonthRef.current;
+    const baseMonth = monthWindowAnchor;
     for (
       let i = -CALENDAR_LAYOUT.MONTH_WINDOW_RADIUS;
       i <= CALENDAR_LAYOUT.MONTH_WINDOW_RADIUS - 1;
@@ -247,22 +232,26 @@ export default function CalendarScreen() {
       months.push(startOfMonth(new Date(baseMonth.getFullYear(), baseMonth.getMonth() + i, 1)));
     }
     return months;
+  }, [monthWindowAnchor]);
+  const dynamicYears = useMemo(() => {
+    const years = [];
+    const baseYear = initialYearRef.current;
+    for (let i = -YEAR_LIST_RADIUS; i <= YEAR_LIST_RADIUS; i++) {
+      years.push(baseYear + i);
+    }
+    return years;
   }, []);
   const monthWeeksByIndex = useMemo(
     () => dynamicMonths.map((monthDate) => getMonthWeeks(monthDate.getFullYear(), monthDate.getMonth())),
     [dynamicMonths],
   );
-  const weekRowsByIndex = useMemo(
-    () =>
-      dynamicMonths.map(
-        (monthDate) => getMonthWeeks(monthDate.getFullYear(), monthDate.getMonth()).length,
-      ),
-    [dynamicMonths],
-  );
-
   const activeVisibleMonth = useMemo(
     () => dynamicMonths[visibleMonthRenderIndex] ?? currentMonth,
     [currentMonth, dynamicMonths, visibleMonthRenderIndex],
+  );
+  const activeVisibleYear = useMemo(
+    () => dynamicYears[visibleYearRenderIndex] ?? currentMonth.getFullYear(),
+    [currentMonth, dynamicYears, visibleYearRenderIndex],
   );
   const monthWeeks = useMemo(
     () => getMonthWeeks(activeVisibleMonth.getFullYear(), activeVisibleMonth.getMonth()),
@@ -316,6 +305,15 @@ export default function CalendarScreen() {
     },
     [dynamicMonths.length, layoutMetrics.cardWidth],
   );
+  const resolveYearPageIndex = useCallback(
+    (offsetX) => {
+      const pageWidth = layoutMetrics.cardWidth;
+      if (!pageWidth) return 0;
+      const maxIndex = Math.max(0, dynamicYears.length - 1);
+      return clamp(Math.round(offsetX / pageWidth), 0, maxIndex);
+    },
+    [dynamicYears.length, layoutMetrics.cardWidth],
+  );
 
   const commitVisibleMonthIndex = useCallback(
     (pageIndex) => {
@@ -331,26 +329,24 @@ export default function CalendarScreen() {
     },
     [handlePageChange, visibleMonthIndex],
   );
-
-  const clearHydrateOrdersTimer = useCallback(() => {
-    if (hydrateOrdersTimerRef.current != null) {
-      clearTimeout(hydrateOrdersTimerRef.current);
-      hydrateOrdersTimerRef.current = null;
-    }
-  }, []);
-
-  const markMonthNavigationStart = useCallback(() => {
-    clearHydrateOrdersTimer();
-    setIsMonthHydrating(true);
-  }, [clearHydrateOrdersTimer]);
-
-  const markMonthNavigationSettled = useCallback(() => {
-    clearHydrateOrdersTimer();
-    hydrateOrdersTimerRef.current = setTimeout(() => {
-      setIsMonthHydrating(false);
-      hydrateOrdersTimerRef.current = null;
-    }, 90);
-  }, [clearHydrateOrdersTimer]);
+  const commitVisibleYearIndex = useCallback(
+    (pageIndex) => {
+      if (
+        pageIndex < 0 ||
+        pageIndex >= dynamicYears.length ||
+        lastHandledYearPageIndex.current === pageIndex
+      ) {
+        return;
+      }
+      lastHandledYearPageIndex.current = pageIndex;
+      visibleYearIndexRef.current = pageIndex;
+      setVisibleYearRenderIndex(pageIndex);
+      const nextYear = dynamicYears[pageIndex];
+      if (!Number.isFinite(nextYear)) return;
+      setCurrentMonth((prev) => startOfMonth(new Date(nextYear, prev.getMonth(), 1)));
+    },
+    [dynamicYears],
+  );
 
   const monthScrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -374,9 +370,8 @@ export default function CalendarScreen() {
           cancelAnimationFrame(monthScrollRafRef.current);
         } catch {}
       }
-      clearHydrateOrdersTimer();
     };
-  }, [clearHydrateOrdersTimer]);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -398,9 +393,10 @@ export default function CalendarScreen() {
     visibleMonthIndex.value = targetIndex;
     setVisibleMonthRenderIndex(targetIndex);
     monthScrollX.value = layoutMetrics.cardWidth * targetIndex;
-    if (flatListRef.current && !isCollapsed) {
+    settledMonthOffsetX.value = layoutMetrics.cardWidth * targetIndex;
+    if (monthPagerRef.current && !isCollapsed) {
       try {
-        flatListRef.current.scrollToIndex({ index: targetIndex, animated: false });
+        monthPagerRef.current.scrollToIndex({ index: targetIndex, animated: false });
       } catch {}
     }
   }, [
@@ -408,9 +404,22 @@ export default function CalendarScreen() {
     dynamicMonths,
     isCollapsed,
     layoutMetrics.cardWidth,
+    monthPagerRef,
     monthScrollX,
+    settledMonthOffsetX,
     visibleMonthIndex,
   ]);
+  useEffect(() => {
+    if (!layoutMetrics.cardWidth) return;
+    const targetIndex = dynamicYears.findIndex((yearValue) => yearValue === currentMonth.getFullYear());
+    if (targetIndex < 0) return;
+    lastHandledYearPageIndex.current = targetIndex;
+    visibleYearIndexRef.current = targetIndex;
+    setVisibleYearRenderIndex(targetIndex);
+    try {
+      yearFlatListRef.current?.scrollToIndex?.({ index: targetIndex, animated: false });
+    } catch {}
+  }, [currentMonth, dynamicYears, layoutMetrics.cardWidth]);
 
   useFocusEffect(
     useCallback(() => {
@@ -702,14 +711,35 @@ export default function CalendarScreen() {
         yearViewContainer: {
           flex: 1,
         },
+        yearPager: {
+          flex: 1,
+          width: layoutMetrics.cardWidth,
+        },
+        yearPage: {
+          width: layoutMetrics.cardWidth,
+          flex: 1,
+        },
       }),
     [theme, layoutMetrics],
   );
 
   const stageAtoBProgress = useDerivedValue(() => {
     return Math.min(collapseTranslate.value / stageOneDistanceSafe, 1);
-  });
+  }, [dynamicMonths.length, layoutMetrics.cardWidth, visibleMonthIndex]);
   const monthCollapsePhaseSplit = CALENDAR_GESTURE.MONTH_COLLAPSE_PHASE_SPLIT;
+  const settledWeeksHeight = useSharedValue(measuredWeekRowHeight * actualWeekRows);
+
+  useEffect(() => {
+    const targetRows = monthWeeksByIndex[visibleMonthRenderIndex]?.length ?? actualWeekRows;
+    const targetHeight = measuredWeekRowHeight * targetRows;
+    settledWeeksHeight.value = targetHeight;
+  }, [
+    actualWeekRows,
+    measuredWeekRowHeight,
+    monthWeeksByIndex,
+    settledWeeksHeight,
+    visibleMonthRenderIndex,
+  ]);
 
   useDerivedValue(() => {
     const progress = stageAtoBProgress.value;
@@ -733,18 +763,8 @@ export default function CalendarScreen() {
     () => ({
       height: (() => {
         const progress = stageAtoBProgress.value;
-        const pageWidth = layoutMetrics.cardWidth || 1;
-        const maxIndex = Math.max(0, dynamicMonths.length - 1);
-        const pagePosition = monthScrollX.value / pageWidth;
-        const leftIndex = Math.max(0, Math.min(Math.floor(pagePosition), maxIndex));
-        const rightIndex = Math.max(0, Math.min(leftIndex + 1, maxIndex));
-        const rawT = pagePosition - leftIndex;
-        const t = Math.max(0, Math.min(rawT, 1));
-        const leftRows = weekRowsByIndex[leftIndex] ?? actualWeekRows;
-        const rightRows = weekRowsByIndex[rightIndex] ?? leftRows;
-        const swipeRows = leftRows + (rightRows - leftRows) * t;
         if (progress <= 0.001) {
-          return resolvedMonthHeaderHeight + measuredDayNamesHeight + measuredWeekRowHeight * swipeRows;
+          return resolvedMonthHeaderHeight + measuredDayNamesHeight + settledWeeksHeight.value;
         }
         const fullWeeksHeight = measuredWeekRowHeight * actualWeekRows;
         const selectedWeekTop = selectedWeekIndex * measuredWeekRowHeight;
@@ -769,14 +789,12 @@ export default function CalendarScreen() {
     }),
     [
       actualWeekRows,
-      dynamicMonths.length,
-      layoutMetrics.cardWidth,
       measuredDayNamesHeight,
       resolvedMonthHeaderHeight,
       measuredWeekRowHeight,
       monthCollapsePhaseSplit,
+      settledWeeksHeight,
       selectedWeekIndex,
-      weekRowsByIndex,
     ],
   );
 
@@ -807,18 +825,8 @@ export default function CalendarScreen() {
 
   const weeksClipStyle = useAnimatedStyle(() => {
     const progress = stageAtoBProgress.value;
-    const pageWidth = layoutMetrics.cardWidth || 1;
-    const maxIndex = Math.max(0, dynamicMonths.length - 1);
-    const pagePosition = monthScrollX.value / pageWidth;
-    const leftIndex = Math.max(0, Math.min(Math.floor(pagePosition), maxIndex));
-    const rightIndex = Math.max(0, Math.min(leftIndex + 1, maxIndex));
-    const rawT = pagePosition - leftIndex;
-    const t = Math.max(0, Math.min(rawT, 1));
-    const leftRows = weekRowsByIndex[leftIndex] ?? actualWeekRows;
-    const rightRows = weekRowsByIndex[rightIndex] ?? leftRows;
-    const swipeRows = leftRows + (rightRows - leftRows) * t;
     if (progress <= 0.001) {
-      return { height: measuredWeekRowHeight * swipeRows, overflow: 'hidden' };
+      return { height: settledWeeksHeight.value, overflow: 'hidden' };
     }
     const fullHeight = measuredWeekRowHeight * actualWeekRows;
     const selectedWeekTop = selectedWeekIndex * measuredWeekRowHeight;
@@ -840,12 +848,10 @@ export default function CalendarScreen() {
     return { height, overflow: 'hidden' };
   }, [
     actualWeekRows,
-    dynamicMonths.length,
-    layoutMetrics.cardWidth,
     measuredWeekRowHeight,
     monthCollapsePhaseSplit,
+    settledWeeksHeight,
     selectedWeekIndex,
-    weekRowsByIndex,
   ]);
 
   const weeksTranslateStyle = useAnimatedStyle(() => {
@@ -861,12 +867,33 @@ export default function CalendarScreen() {
   }, [measuredWeekRowHeight, monthCollapsePhaseSplit, selectedWeekIndex]);
 
   const switchMode = useCallback((nextMode, opts = {}) => {
-    if (nextMode === 'month' && opts.newMonth) {
-      setCurrentMonth(opts.newMonth);
-      setSelectedDate(format(opts.newMonth, 'yyyy-MM-dd'));
+    if (nextMode === 'month') {
+      const targetMonth = startOfMonth(opts.newMonth ?? currentMonth);
+      setMonthWindowAnchor(targetMonth);
+      setCurrentMonth(targetMonth);
+      setSelectedDate(format(targetMonth, 'yyyy-MM-dd'));
+      lastHandledPageIndex.current = MONTH_LIST_MIDDLE_INDEX;
+      visibleMonthIndexRef.current = MONTH_LIST_MIDDLE_INDEX;
+      visibleMonthIndex.value = MONTH_LIST_MIDDLE_INDEX;
+      setVisibleMonthRenderIndex(MONTH_LIST_MIDDLE_INDEX);
+      monthScrollX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
+      settledMonthOffsetX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
+      requestAnimationFrame(() => {
+        try {
+          monthPagerRef.current?.scrollToIndex?.({ index: MONTH_LIST_MIDDLE_INDEX, animated: false });
+        } catch {}
+      });
     }
     setViewMode(nextMode);
-  }, []);
+  }, [
+    currentMonth,
+    layoutMetrics.cardWidth,
+    monthPagerRef,
+    monthScrollX,
+    settledMonthOffsetX,
+    visibleMonthIndex,
+    MONTH_LIST_MIDDLE_INDEX,
+  ]);
 
   const scrollToMonthByOffset = useCallback(
     (offset) => {
@@ -880,7 +907,6 @@ export default function CalendarScreen() {
         Math.max(0, dynamicMonths.length - 1),
       );
       if (nextIndex === baseIndex) return;
-      markMonthNavigationStart();
       pendingScrollTargetIndexRef.current = nextIndex;
       if (monthScrollRafRef.current != null) return;
       monthScrollRafRef.current = requestAnimationFrame(() => {
@@ -892,17 +918,38 @@ export default function CalendarScreen() {
         visibleMonthIndex.value = targetIndex;
         setVisibleMonthRenderIndex(targetIndex);
         try {
-          flatListRef.current?.scrollToIndex?.({ index: targetIndex, animated: true });
-        } catch {
-          markMonthNavigationSettled();
-        }
+          monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: true });
+        } catch {}
       });
     },
-    [dynamicMonths.length, markMonthNavigationSettled, markMonthNavigationStart, visibleMonthIndex],
+    [dynamicMonths.length, monthPagerRef, visibleMonthIndex],
   );
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
   const goToNextMonth = useCallback(() => scrollToMonthByOffset(1), [scrollToMonthByOffset]);
+  const ordersSwipeStartOffset = useSharedValue(0);
+  const ordersSwipeLiveOffset = useSharedValue(0);
+  const finishOrdersSwipe = useCallback(() => {
+    const nextIndex = resolvePageIndex(ordersSwipeLiveOffset.value);
+    try {
+      monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
+    } catch {}
+    commitVisibleMonthIndex(nextIndex);
+  }, [commitVisibleMonthIndex, monthPagerRef, ordersSwipeLiveOffset, resolvePageIndex]);
+  const scrollYearByOffset = useCallback(
+    (offset) => {
+      const baseIndex = visibleYearIndexRef.current;
+      const nextIndex = clamp(baseIndex + offset, 0, Math.max(0, dynamicYears.length - 1));
+      if (nextIndex === baseIndex) return;
+      visibleYearIndexRef.current = nextIndex;
+      try {
+        yearFlatListRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
+      } catch {}
+    },
+    [dynamicYears.length],
+  );
+  const goToPreviousYear = useCallback(() => scrollYearByOffset(-1), [scrollYearByOffset]);
+  const goToNextYear = useCallback(() => scrollYearByOffset(1), [scrollYearByOffset]);
 
   const getItemLayout = useCallback(
     (data, index) => ({
@@ -956,6 +1003,7 @@ export default function CalendarScreen() {
 
   // Жест для области календаря (всегда работает)
   const calendarGesture = Gesture.Pan()
+    .enabled(false)
     .hitSlop(gestureHitSlop)
     .activeOffsetY([-gestureActiveOffsetY, gestureActiveOffsetY])
     .failOffsetX([-gestureFailOffsetX, gestureFailOffsetX])
@@ -1015,10 +1063,7 @@ export default function CalendarScreen() {
       calendarGestureLock.value = 0;
     });
 
-  const ordersListNativeGesture = useMemo(
-    () => Gesture.Native(),
-    [visibleMonthRenderIndex],
-  );
+  const ordersListNativeGesture = useMemo(() => Gesture.Native(), []);
   const ordersMonthGesture = Gesture.Pan()
     .hitSlop(gestureHitSlop)
     .activeOffsetX([-gestureActiveOffsetX, gestureActiveOffsetX])
@@ -1026,6 +1071,15 @@ export default function CalendarScreen() {
     .onBegin(() => {
       'worklet';
       ordersGestureLock.value = 0;
+    })
+    .onStart(() => {
+      'worklet';
+      const pageWidth = layoutMetrics.cardWidth;
+      const baseOffset = visibleMonthIndex.value * pageWidth;
+      ordersSwipeStartOffset.value = baseOffset;
+      ordersSwipeLiveOffset.value = baseOffset;
+      monthScrollX.value = baseOffset;
+      scrollTo(monthPagerRef, baseOffset, 0, false);
     })
     .onUpdate((event) => {
       'worklet';
@@ -1037,19 +1091,20 @@ export default function CalendarScreen() {
         if (absTx > absTy * directionLockRatio) ordersGestureLock.value = 1;
         else if (absTy > absTx * directionLockRatio) ordersGestureLock.value = 2;
       }
+      if (ordersGestureLock.value !== 1) return;
+      const pageWidth = layoutMetrics.cardWidth;
+      const maxOffset = Math.max(0, (dynamicMonths.length - 1) * pageWidth);
+      const nextOffset = clamp(ordersSwipeStartOffset.value - tx, 0, maxOffset);
+      ordersSwipeLiveOffset.value = nextOffset;
+      monthScrollX.value = nextOffset;
+      scrollTo(monthPagerRef, nextOffset, 0, false);
     })
-    .onEnd((event) => {
+    .onEnd(() => {
       'worklet';
       if (isSnappingShared.value) return;
       if (ordersGestureLock.value === 2) return;
-      const translationX = Number.isFinite(event?.translationX) ? event.translationX : 0;
-      const translationY = Number.isFinite(event?.translationY) ? event.translationY : 0;
-      const velocityX = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
-      const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-      if (!isHorizontalMonthSwipeIntent(translationX, translationY, velocityX, velocityY)) return;
-      const offset = resolveMonthSwipeOffset(translationX, velocityX, layoutMetrics.cardWidth);
-      if (!offset) return;
-      runOnJS(scrollToMonthByOffset)(offset);
+      if (ordersGestureLock.value !== 1) return;
+      runOnJS(finishOrdersSwipe)();
     })
     .onFinalize(() => {
       'worklet';
@@ -1057,7 +1112,7 @@ export default function CalendarScreen() {
     });
 
   const ordersPanGesture = Gesture.Pan()
-    .enabled(true)
+    .enabled(false)
     .hitSlop(gestureHitSlop)
     .activeOffsetY([-gestureActiveOffsetY, gestureActiveOffsetY])
     .failOffsetX([-gestureFailOffsetX, gestureFailOffsetX])
@@ -1087,7 +1142,7 @@ export default function CalendarScreen() {
         if (absTy > absTx * directionLockRatio) ordersGestureLock.value = 2;
         else if (absTx > absTy * directionLockRatio) ordersGestureLock.value = 1;
       }
-      if (ordersGestureLock.value === 1) return;
+      if (ordersGestureLock.value !== 2) return;
 
       const isFullyCollapsed =
         collapseTranslate.value >=
@@ -1109,6 +1164,7 @@ export default function CalendarScreen() {
     })
     .onEnd((event) => {
       'worklet';
+      if (ordersGestureLock.value !== 2) return;
       if (!panHasDrivenCollapse.value) {
         const atEdge =
           collapseTranslate.value <= 0 ||
@@ -1123,7 +1179,7 @@ export default function CalendarScreen() {
       ordersGestureLock.value = 0;
     });
 
-  const ordersCombinedGesture = Gesture.Simultaneous(ordersPanGesture, ordersMonthGesture);
+  const ordersCombinedGesture = Gesture.Race(ordersMonthGesture, ordersPanGesture);
 
   useFocusEffect(
     useCallback(() => {
@@ -1184,12 +1240,37 @@ export default function CalendarScreen() {
   );
 
   const displayedOrders = selectedDateOrders;
-  const selectedMonthKey = selectedDate ? selectedDate.slice(0, 7) : '';
-  const ordersRenderNeighbors = CALENDAR_LAYOUT.MONTH_RENDER_NEIGHBORS;
-
-  const getOrdersForDateKey = useCallback(
-    (dateKey) => (dateKey ? calendarIndex.byDate[dateKey] ?? [] : []),
-    [calendarIndex.byDate],
+  const ordersListExtraData = useMemo(
+    () => ({
+      selectedDate,
+      count: displayedOrders.length,
+    }),
+    [displayedOrders.length, selectedDate],
+  );
+  const ordersListContentContainerStyle = useMemo(
+    () => ({
+      paddingHorizontal: theme.spacing.md,
+      paddingBottom: Math.max(theme.spacing.xl, insets.bottom),
+    }),
+    [insets.bottom, theme.spacing.md, theme.spacing.xl],
+  );
+  const orderKeyExtractor = useCallback(
+    (item) => String(item?.id ?? item?.order_id ?? item?.uuid),
+    [],
+  );
+  const renderOrderItem = useCallback(
+    ({ item }) => (
+      <DynamicOrderCard
+        order={item}
+        context="calendar"
+        onPress={() => router.push(`/orders/${item.id}`)}
+      />
+    ),
+    [router],
+  );
+  const ordersEmptyComponent = useMemo(
+    () => <Text style={styles.noOrders}>Нет заявок</Text>,
+    [styles.noOrders],
   );
 
   const markedDates = useMemo(
@@ -1209,8 +1290,8 @@ export default function CalendarScreen() {
     setRefreshing(true);
     try {
       await refetchCalendar();
-    } catch (e) {
-      console.error('Failed to refresh orders:', e);
+    } catch {
+      console.error('Failed to refresh orders');
     } finally {
       setRefreshing(false);
     }
@@ -1232,16 +1313,16 @@ export default function CalendarScreen() {
     };
   }, [displayedOrders, queryClient]);
 
-  const ordersInnerStyle = useAnimatedStyle(
-    () => ({
-      transform: [
-        {
-          translateX: -monthScrollX.value,
-        },
-      ],
-    }),
-    [layoutMetrics.cardWidth],
-  );
+  const ordersContentAnimatedStyle = useAnimatedStyle(() => {
+    const pageWidth = Math.max(layoutMetrics.cardWidth, 1);
+    const distance = Math.abs(monthScrollX.value - settledMonthOffsetX.value);
+    const startFade = 0;
+    const endFade = pageWidth * 0.54;
+    const fadeSpan = Math.max(endFade - startFade, 1);
+    const progress = distance <= startFade ? 0 : Math.min((distance - startFade) / fadeSpan, 1);
+    const eased = progress * progress * (3 - 2 * progress);
+    return { opacity: 1 - eased };
+  });
 
   return (
     <Screen
@@ -1257,48 +1338,48 @@ export default function CalendarScreen() {
         }}
       />
       <View style={styles.container}>
+        <Animated.View style={styles.tabsWrapper}>
+          <View style={styles.tabsContent}>
+            {['Год', 'Месяц', 'Неделя', 'День', 'Расписание'].map((label, index) => {
+              const isActive =
+                (index === 0 && viewMode === 'year') ||
+                (index === 1 && viewMode === 'month') ||
+                (index > 1 && viewMode === label.toLowerCase());
+              return (
+                <Pressable
+                  key={label}
+                  onPress={() => {
+                    if (index === 0) switchMode('year');
+                    else if (index === 1) switchMode('month');
+                    // Other modes not yet implemented
+                  }}
+                  style={styles.tabItem}
+                  android_ripple={{ color: theme.colors.overlayNavBar }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isActive }}
+                >
+                  <Text
+                    style={[styles.viewPanelText, isActive && { color: theme.colors.primary }]}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {label}
+                  </Text>
+                  <View
+                    style={[
+                      styles.tabIndicator,
+                      {
+                        backgroundColor: isActive ? theme.colors.primary : 'transparent',
+                      },
+                    ]}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
+        </Animated.View>
         {viewMode === 'month' ? (
           <>
-            <Animated.View style={styles.tabsWrapper}>
-              <View style={styles.tabsContent}>
-                {['Год', 'Месяц', 'Неделя', 'День', 'Расписание'].map((label, index) => {
-                  const isActive =
-                    (index === 0 && viewMode === 'year') ||
-                    (index === 1 && viewMode === 'month') ||
-                    (index > 1 && viewMode === label.toLowerCase());
-                  return (
-                    <Pressable
-                      key={label}
-                      onPress={() => {
-                        if (index === 0) switchMode('year');
-                        else if (index === 1) switchMode('month');
-                        // Other modes not yet implemented
-                      }}
-                      style={styles.tabItem}
-                      android_ripple={{ color: theme.colors.overlayNavBar }}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isActive }}
-                    >
-                      <Text
-                        style={[styles.viewPanelText, isActive && { color: theme.colors.primary }]}
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                      >
-                        {label}
-                      </Text>
-                      <View
-                        style={[
-                          styles.tabIndicator,
-                          {
-                            backgroundColor: isActive ? theme.colors.primary : 'transparent',
-                          },
-                        ]}
-                      />
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </Animated.View>
             <GestureDetector gesture={calendarGesture}>
               <Animated.View style={[calendarContentStyle]}>
                 <View style={[styles.calendarContent]}>
@@ -1320,7 +1401,7 @@ export default function CalendarScreen() {
                     ))}
                   </View>
                   <AnimatedFlatList
-                    ref={flatListRef}
+                    ref={monthPagerRef}
                     data={dynamicMonths}
                     horizontal
                     pagingEnabled
@@ -1336,11 +1417,17 @@ export default function CalendarScreen() {
                     removeClippedSubviews={true}
                     scrollEventThrottle={16}
                     onScroll={monthScrollHandler}
+                    onScrollEndDrag={(event) => {
+                      const vx = Math.abs(Number(event?.nativeEvent?.velocity?.x) || 0);
+                      if (vx > 0.05) return;
+                      const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
+                      const nextIndex = resolvePageIndex(offsetX);
+                      commitVisibleMonthIndex(nextIndex);
+                    }}
                     onMomentumScrollEnd={(event) => {
                       const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
                       const nextIndex = resolvePageIndex(offsetX);
                       commitVisibleMonthIndex(nextIndex);
-                      markMonthNavigationSettled();
                     }}
                     renderItem={({ item: monthDate, index }) => {
                       const itemMonthWeeks = monthWeeksByIndex[index] ?? [];
@@ -1400,132 +1487,113 @@ export default function CalendarScreen() {
                   }}
                 >
                   <Animated.View
-                    style={[
-                      {
-                        flexDirection: 'row',
-                        width: layoutMetrics.cardWidth * dynamicMonths.length,
-                        flex: 1,
-                      },
-                      ordersInnerStyle,
-                    ]}
+                    style={[{ width: layoutMetrics.cardWidth, flex: 1 }, ordersContentAnimatedStyle]}
+                    renderToHardwareTextureAndroid={true}
+                    needsOffscreenAlphaCompositing={true}
+                    collapsable={false}
                   >
-                    {dynamicMonths.map((monthDate, index) => {
-                      const isNearbyPage =
-                        Math.abs(index - visibleMonthRenderIndex) <= ordersRenderNeighbors;
-                      if (!isNearbyPage) {
-                        return (
-                          <View
-                            key={`orders-placeholder-${monthDate.getTime()}-${index}`}
-                            style={{ width: layoutMetrics.cardWidth, flex: 1 }}
-                          />
-                        );
-                      }
-
-                      const monthKey = format(monthDate, 'yyyy-MM');
-                      const pageDateKey =
-                        monthKey === selectedMonthKey
-                          ? selectedDate
-                          : format(startOfMonth(monthDate), 'yyyy-MM-dd');
-                      const ordersForPage = getOrdersForDateKey(pageDateKey);
-                      const isActivePage = index === visibleMonthRenderIndex;
-                      const shouldRenderList = isActivePage && !isMonthHydrating;
-
-                      return (
-                        <View
-                          key={`orders-page-${monthDate.getTime()}-${index}`}
-                          style={{ width: layoutMetrics.cardWidth, flex: 1 }}
+                    <View style={styles.ordersHeader}>
+                      <Text style={styles.ordersTitle}>
+                        Заявки на {formatDayLabel(selectedDate)}
+                      </Text>
+                      <View style={styles.ordersHeaderActions}>
+                        <Pressable
+                          onPress={onRefresh}
+                          android_ripple={{ color: theme.colors.overlayNavBar }}
+                          style={styles.refreshButton}
+                          disabled={refreshing}
                         >
-                          <View style={styles.ordersHeader}>
-                            <Text style={styles.ordersTitle}>
-                              Заявки на {formatDayLabel(pageDateKey)}
-                            </Text>
-                            <View style={styles.ordersHeaderActions}>
-                              <Pressable
-                                onPress={onRefresh}
-                                android_ripple={{ color: theme.colors.overlayNavBar }}
-                                style={styles.refreshButton}
-                                disabled={refreshing}
-                              >
-                                {refreshing ? (
-                                  <ActivityIndicator size="small" color={theme.colors.primary} />
-                                ) : (
-                                  <Feather
-                                    name="refresh-cw"
-                                    size={16}
-                                    color={theme.colors.textSecondary}
-                                  />
-                                )}
-                              </Pressable>
-                            </View>
-                          </View>
-                          {shouldRenderList ? (
-                            <GestureDetector gesture={ordersListNativeGesture}>
-                              <FlatList
-                                data={ordersForPage}
-                                extraData={{
-                                  selectedDate,
-                                  count: ordersForPage.length,
-                                  isCollapsed,
-                                  isSnapping,
-                                  pageDateKey,
-                                }}
-                                initialNumToRender={6}
-                                maxToRenderPerBatch={8}
-                                updateCellsBatchingPeriod={40}
-                                removeClippedSubviews={true}
-                                keyExtractor={(item) =>
-                                  String(item?.id ?? item?.order_id ?? item?.uuid)
-                                }
-                                contentContainerStyle={{
-                                  paddingHorizontal: theme.spacing.md,
-                                  paddingBottom: Math.max(theme.spacing.xl, insets.bottom),
-                                }}
-                                style={{ flex: 1 }}
-                                scrollEnabled={isCollapsed && !isSnapping}
-                                bounces={false}
-                                scrollEventThrottle={16}
-                                onScroll={(event) => {
-                                  const pageActive = index === visibleMonthIndexRef.current;
-                                  if (!pageActive) return;
-                                  scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                                }}
-                                onScrollBeginDrag={() => {
-                                  if (!isCollapsed) scrollY.value = 0;
-                                }}
-                                onMomentumScrollEnd={(event) => {
-                                  const pageActive = index === visibleMonthIndexRef.current;
-                                  if (!pageActive) return;
-                                  scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                                }}
-                                ListEmptyComponent={<Text style={styles.noOrders}>Нет заявок</Text>}
-                                renderItem={({ item }) => (
-                                  <DynamicOrderCard
-                                    order={item}
-                                    context="calendar"
-                                    onPress={() => router.push(`/orders/${item.id}`)}
-                                  />
-                                )}
-                              />
-                            </GestureDetector>
+                          {refreshing ? (
+                            <ActivityIndicator size="small" color={theme.colors.primary} />
                           ) : (
-                            <View style={{ flex: 1 }} />
+                            <Feather name="refresh-cw" size={16} color={theme.colors.textSecondary} />
                           )}
-                        </View>
-                      );
-                    })}
+                        </Pressable>
+                      </View>
+                    </View>
+                    <GestureDetector gesture={ordersListNativeGesture}>
+                      <FlatList
+                        data={displayedOrders}
+                        extraData={ordersListExtraData}
+                        initialNumToRender={6}
+                        maxToRenderPerBatch={8}
+                        updateCellsBatchingPeriod={40}
+                        removeClippedSubviews={false}
+                        keyExtractor={orderKeyExtractor}
+                        contentContainerStyle={ordersListContentContainerStyle}
+                        style={{ flex: 1 }}
+                        scrollEnabled={isCollapsed && !isSnapping}
+                        bounces={false}
+                        scrollEventThrottle={16}
+                        onScroll={(event) => {
+                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
+                        }}
+                        onScrollBeginDrag={() => {
+                          if (!isCollapsed) scrollY.value = 0;
+                        }}
+                        onMomentumScrollEnd={(event) => {
+                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
+                        }}
+                        ListEmptyComponent={ordersEmptyComponent}
+                        renderItem={renderOrderItem}
+                      />
+                    </GestureDetector>
                   </Animated.View>
                 </View>
               </View>
             </GestureDetector>
           </>
         ) : (
-          <YearView
-            style={styles.yearViewContainer}
-            year={currentMonth.getFullYear()}
-            currentMonthIndex={currentMonth.getMonth()}
-            onMonthPress={(newMonth) => switchMode('month', { newMonth })}
-            markedDates={markedDates}
-          />
+          <View style={[styles.calendarContent, { flex: 1 }]}>
+            <CalendarMonthHeader
+              label={String(activeVisibleYear)}
+              onPreviousMonth={goToPreviousYear}
+              onNextMonth={goToNextYear}
+              arrowHitSlop={arrowHitSlop}
+              headerAnimatedStyle={headerAnimatedStyle}
+              styles={styles}
+              theme={theme}
+            />
+            <FlatList
+              ref={yearFlatListRef}
+              style={styles.yearPager}
+              data={dynamicYears}
+              horizontal
+              pagingEnabled
+              initialNumToRender={3}
+              showsHorizontalScrollIndicator={false}
+              keyExtractor={(item, index) => `year-${item}-${index}`}
+              getItemLayout={getItemLayout}
+              initialScrollIndex={YEAR_LIST_MIDDLE_INDEX}
+              windowSize={3}
+              maxToRenderPerBatch={3}
+              updateCellsBatchingPeriod={40}
+              removeClippedSubviews={true}
+              onScrollEndDrag={(event) => {
+                const vx = Math.abs(Number(event?.nativeEvent?.velocity?.x) || 0);
+                if (vx > 0.05) return;
+                const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
+                const nextIndex = resolveYearPageIndex(offsetX);
+                commitVisibleYearIndex(nextIndex);
+              }}
+              onMomentumScrollEnd={(event) => {
+                const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
+                const nextIndex = resolveYearPageIndex(offsetX);
+                commitVisibleYearIndex(nextIndex);
+              }}
+              renderItem={({ item: yearValue }) => (
+                <View style={styles.yearPage}>
+                  <YearView
+                    style={styles.yearViewContainer}
+                    year={yearValue}
+                    currentMonthIndex={currentMonth.getMonth()}
+                    onMonthPress={(newMonth) => switchMode('month', { newMonth })}
+                    markedDates={markedDates}
+                  />
+                </View>
+              )}
+            />
+          </View>
         )}
       </View>
     </Screen>

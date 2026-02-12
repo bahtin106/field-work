@@ -2,7 +2,7 @@
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import logger from '../lib/logger';
 import { usePermissions } from '../lib/permissions';
@@ -87,7 +87,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   // ДИАГНОСТИКА: что приходит в props
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
-    console.log('[UniversalHome] Props:', {
+    console.info('[UniversalHome] Props:', {
       hasUser: !!user,
       userId: user?.id,
       hasProvidedProfile: !!providedProfile,
@@ -124,7 +124,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   // ДИАГНОСТИКА: проверка fetchProfile
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
-    console.log('[UniversalHome] Profile fetch decision:', {
+    console.info('[UniversalHome] Profile fetch decision:', {
       uid,
       hasProvidedProfile: !!providedProfile,
       providedProfileSource: providedProfile?.__source,
@@ -178,7 +178,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   // ДИАГНОСТИКА: готовность к загрузке счетчиков
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
-    console.log('[UniversalHome] Counts readiness:', {
+    console.info('[UniversalHome] Counts readiness:', {
       uid,
       resolvedRole,
       readyForCounts,
@@ -210,9 +210,9 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const openSelfProfileEdit = () => {
     if (uid) router.push(`/users/${uid}`);
   };
-  const openAppSettings = () => router.push('/app_settings/AppSettings');
-  const openCompanySettings = () => router.push('/company_settings');
-  const openStats = () => router.push('/stats');
+  const openAppSettings = useCallback(() => router.push('/app_settings/AppSettings'), [router]);
+  const openCompanySettings = useCallback(() => router.push('/company_settings'), [router]);
+  const openStats = useCallback(() => router.push('/stats'), [router]);
   const openCreateOrder = () => router.push('/orders/create-order');
   const handleLogout = async () => {
     try {
@@ -258,7 +258,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
           visible: isAdmin,
         },
       ].filter((i) => i.visible),
-    [isAdmin],
+    [isAdmin, openAppSettings, openStats, openCompanySettings],
   );
 
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -529,3 +529,4 @@ const createStyles = (theme) =>
     summaryLabel: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
     actionWrapper: { marginBottom: theme.spacing.md },
   });
+

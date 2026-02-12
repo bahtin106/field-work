@@ -2,7 +2,6 @@
 import { Feather } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { ru as dfnsRu } from 'date-fns/locale';
-import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
@@ -13,6 +12,7 @@ function capitalizeLabel(value) {
 
 export function CalendarMonthHeader({
   monthDate,
+  label,
   onPreviousMonth,
   onNextMonth,
   arrowHitSlop,
@@ -21,7 +21,7 @@ export function CalendarMonthHeader({
   styles,
   theme,
 }) {
-  const monthLabel = capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dfnsRu }));
+  const monthLabel = label ?? capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dfnsRu }));
 
   return (
     <Animated.View style={[headerAnimatedStyle]}>
