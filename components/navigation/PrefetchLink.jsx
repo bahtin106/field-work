@@ -38,9 +38,9 @@ export function PrefetchLink({
       try {
         await prefetchManager.prefetchPage(prefetchKey);
         hasPrefetched.current = true;
-        console.log(`[PrefetchLink] Prefetched: ${prefetchKey}`);
+        console.info(`[PrefetchLink] Prefetched: ${prefetchKey}`);
       } catch (error) {
-        console.log(`[PrefetchLink] Failed to prefetch ${prefetchKey}:`, error.message);
+        console.info(`[PrefetchLink] Failed to prefetch ${prefetchKey}:`, error.message);
       }
     }, prefetchDelay);
   }, [prefetchKey, prefetchDelay]);
@@ -116,9 +116,10 @@ export function useLinkPrefetch() {
     try {
       await prefetchManager.prefetchPage(prefetchKey);
     } catch (error) {
-      console.log(`[useLinkPrefetch] Failed to prefetch ${prefetchKey}:`, error.message);
+      console.info(`[useLinkPrefetch] Failed to prefetch ${prefetchKey}:`, error.message);
     }
   }, []);
 
   return { prefetch };
 }
+

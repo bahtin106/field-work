@@ -24,8 +24,13 @@ function UserCardContent({
   const rad = theme.radii;
 
   // Получаем тени из темы для текущей платформы
-  const cardShadows =
-    Platform.OS === 'ios' ? (theme.shadows?.card?.ios ?? {}) : (theme.shadows?.card?.android ?? {});
+  const cardShadows = useMemo(
+    () =>
+      Platform.OS === 'ios'
+        ? (theme.shadows?.card?.ios ?? {})
+        : (theme.shadows?.card?.android ?? {}),
+    [theme],
+  );
 
   const styles = useMemo(
     () =>
@@ -100,7 +105,24 @@ function UserCardContent({
           color: c.danger,
         },
       }),
-    [theme, cardShadows],
+    [
+      theme,
+      cardShadows,
+      c.border,
+      c.danger,
+      c.surface,
+      c.text,
+      c.textSecondary,
+      rad.lg,
+      rad.md,
+      sz.md,
+      sz.sm,
+      sz.xl,
+      ty.sizes.md,
+      ty.sizes.sm,
+      ty.sizes.xs,
+      ty.weight.semibold,
+    ],
   );
 
   const fullName =

@@ -1,5 +1,4 @@
 // src/shared/feedback/ScreenBanner.jsx
-import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { t as T } from '../../i18n';

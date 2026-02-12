@@ -75,7 +75,7 @@ export async function setLocale(next) {
     } catch {}
     notify();
     return true;
-  } catch (e) {
+  } catch {
     return false;
   }
 }

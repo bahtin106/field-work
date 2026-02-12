@@ -21,7 +21,7 @@ export default function App() {
           if (target && currentlyFocused === target) return false;
           // Otherwise dismiss keyboard (user tapped outside)
           Keyboard.dismiss();
-        } catch (_) {}
+        } catch {}
         return false;
       }}
     >

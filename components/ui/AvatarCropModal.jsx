@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, View, StyleSheet, Image, Text, Pressable, ActivityIndicator, Dimensions } from 'react-native';
 import { PanGestureHandler, PinchGestureHandler, RotationGestureHandler, TapGestureHandler } from 'react-native-gesture-handler';
+import ImageZoom from 'react-native-image-pan-zoom';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -10,19 +11,23 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 let Reanimated;
 try {
   Reanimated = require('react-native-reanimated');
-} catch (e) {
+} catch {
   Reanimated = null;
 }
 
 const HAS_REANIMATED = !!(Reanimated && Reanimated.useSharedValue && Reanimated.useAnimatedGestureHandler);
 
+// Native cropper integration removed — use unified JS cropper for consistent UX in Expo.
+
 function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [imageSize, setImageSize] = useState({ w: 0, h: 0 });
   const [shape, setShape] = useState('circle'); // 'circle' or 'square'
-  const containerSize = Math.min(Dimensions.get('window').width - 48, 360);
+  const windowW = Dimensions.get('window').width;
+  const windowH = Dimensions.get('window').height;
+  const containerSize = Math.min(windowW - 48, Math.min(windowW, windowH) - 200);
   const scaleRef = useRef(1);
   const translateRef = useRef({ x: 0, y: 0 });
   const lastScaleRef = useRef(1);
@@ -30,70 +35,51 @@ function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
   const rotationRef = useRef(0);
   const lastRotationRef = useRef(0);
   const [_, setTick] = useState(0);
+  // ImageZoom state
+  const zoomStateRef = useRef({ scale: 1, positionX: 0, positionY: 0 });
 
   useEffect(() => {
     if (!uri) return;
     Image.getSize(uri, (w, h) => setImageSize({ w, h }), () => setImageSize({ w: 0, h: 0 }));
   }, [uri]);
 
-  const onPanGestureEvent = (event) => {
+  // Use ImageZoom's onMove to track pan/zoom
+  const onZoomMove = (e) => {
     try {
-      const e = event.nativeEvent;
-      translateRef.current.x = lastTranslateRef.current.x + (e.translationX || 0);
-      translateRef.current.y = lastTranslateRef.current.y + (e.translationY || 0);
+      const { scale = 1, positionX = 0, positionY = 0 } = e || {};
+      zoomStateRef.current.scale = scale;
+      zoomStateRef.current.positionX = positionX;
+      zoomStateRef.current.positionY = positionY;
       setTick((t) => t + 1);
-    } catch (err) {}
+    } catch {}
   };
 
-  const onPanHandlerStateChange = (event) => {
-    const e = event.nativeEvent;
-    if (e.state === 5 || e.oldState === 4) {
-      lastTranslateRef.current.x = translateRef.current.x;
-      lastTranslateRef.current.y = translateRef.current.y;
-    }
-  };
+  // pinch handled by ImageZoom
 
-  const onPinchGestureEvent = (event) => {
+  const _onRotateGestureEvent = (event) => {
     try {
-      const e = event.nativeEvent;
-      const s = Math.max(1, Math.min(3, lastScaleRef.current * (e.scale || 1)));
-      scaleRef.current = s;
+      const _e = event.nativeEvent;
+      rotationRef.current = lastRotationRef.current + (_e.rotation || 0);
       setTick((t) => t + 1);
-    } catch (err) {}
+    } catch {}
   };
 
-  const onPinchHandlerStateChange = (event) => {
-    const e = event.nativeEvent;
-    if (e.state === 5 || e.oldState === 4) {
-      lastScaleRef.current = scaleRef.current;
-    }
-  };
-
-  const onRotateGestureEvent = (event) => {
-    try {
-      const e = event.nativeEvent;
-      rotationRef.current = lastRotationRef.current + (e.rotation || 0);
-      setTick((t) => t + 1);
-    } catch (err) {}
-  };
-
-  const onRotateHandlerStateChange = (event) => {
-    const e = event.nativeEvent;
-    if (e.state === 5 || e.oldState === 4) {
+  const _onRotateHandlerStateChange = (event) => {
+    const _e = event.nativeEvent;
+    if (_e.state === 5 || _e.oldState === 4) {
       lastRotationRef.current = rotationRef.current;
     }
   };
 
-  const onDoubleTapHandler = (event) => {
+  const _onDoubleTapHandler = (event) => {
     try {
-      const e = event.nativeEvent;
-      if (e.state === 5) {
-        const target = scaleRef.current > 1.5 ? 1 : 2;
-        scaleRef.current = target;
-        lastScaleRef.current = target;
+      const _e = event.nativeEvent;
+      if (_e.state === 5) {
+        const target = zoomStateRef.current.scale > 1.5 ? 1 : 2;
+        zoomStateRef.current.scale = target;
         setTick((t) => t + 1);
       }
-    } catch (err) {}
+    } catch {}
   };
 
   const rotate90 = () => {
@@ -131,10 +117,11 @@ function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
       }
       const container = containerSize;
       const fitScale = Math.min(container / iw, container / ih);
-      const displayedW = iw * fitScale * scaleRef.current;
-      const displayedH = ih * fitScale * scaleRef.current;
-      const offsetX = translateRef.current.x + (container - displayedW) / 2;
-      const offsetY = translateRef.current.y + (container - displayedH) / 2;
+      const zoom = zoomStateRef.current.scale || 1;
+      const displayedW = iw * fitScale * zoom;
+      const displayedH = ih * fitScale * zoom;
+      const offsetX = (zoomStateRef.current.positionX || 0) + (container - displayedW) / 2;
+      const offsetY = (zoomStateRef.current.positionY || 0) + (container - displayedH) / 2;
       const cropX = Math.max(0, Math.round(((0 - offsetX) / displayedW) * iw));
       const cropY = Math.max(0, Math.round(((0 - offsetY) / displayedH) * ih));
       const cropSize = Math.round((container / displayedW) * iw);
@@ -146,7 +133,7 @@ function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
       ];
       const manipResult = await ImageManipulator.manipulateAsync(uri, actions, { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG });
       onConfirm?.(manipResult.uri);
-    } catch (e) {
+    } catch {
       onCancel?.();
     } finally {
       setLoading(false);
@@ -155,44 +142,51 @@ function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
 
   return (
     <Modal visible={!!visible} transparent animationType="slide">
-      <View style={[styles.backdrop, { backgroundColor: theme.colors.modalBackdrop || 'rgba(0,0,0,0.6)' }]}> 
-        <View style={[styles.container, { width: containerSize + 32, backgroundColor: theme.colors.surface }]}> 
-          <Text style={{ fontSize: theme.typography.sizes.md, fontWeight: '600', marginBottom: theme.spacing.md, color: theme.colors.text }}>{t('profile_photo_crop_title') || 'Обрезать фото'}</Text>
-          <View style={{ alignSelf: 'center', width: containerSize, height: containerSize, backgroundColor: theme.colors.background, overflow: 'hidden' }}>
+      <View style={[styles.backdrop, { backgroundColor: theme.colors.modalBackdrop || 'rgba(0,0,0,0.85)' }]}> 
+        <View style={[styles.fullscreenContainer, { backgroundColor: theme.colors.surface }]}> 
+          <View style={styles.headerRowTop}>
+            <Pressable onPress={onCancel} style={styles.headerBtn}>
+              <Text style={{ color: theme.colors.textSecondary }}>{t('btn_cancel') || 'Отмена'}</Text>
+            </Pressable>
+            <Text style={{ fontSize: theme.typography.sizes.lg, fontWeight: '700', color: theme.colors.text }}>{t('profile_photo_crop_title') && t('profile_photo_crop_title') !== 'profile_photo_crop_title' ? t('profile_photo_crop_title') : 'Обрезать фото'}</Text>
+            <Pressable onPress={handleConfirm} style={styles.headerBtn}>
+              <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>{t('btn_apply') || 'Применить'}</Text>
+            </Pressable>
+          </View>
+          <View style={{ alignSelf: 'center', width: containerSize, height: containerSize, backgroundColor: theme.colors.background, overflow: 'hidden', borderRadius: 8 }}>
             {uri ? (
-              <TapGestureHandler numberOfTaps={2} onHandlerStateChange={onDoubleTapHandler}>
-                <RotationGestureHandler onGestureEvent={onRotateGestureEvent} onHandlerStateChange={onRotateHandlerStateChange}>
-                  <PinchGestureHandler onGestureEvent={onPinchGestureEvent} onHandlerStateChange={onPinchHandlerStateChange}>
-                    <PanGestureHandler onGestureEvent={onPanGestureEvent} onHandlerStateChange={onPanHandlerStateChange}>
-                      <View style={{ width: containerSize, height: containerSize, alignItems: 'center', justifyContent: 'center' }}>
-                        <Image
-                          source={{ uri }}
-                          style={{
-                            width: containerSize,
-                            height: containerSize,
-                            transform: [
-                              { translateX: translateRef.current.x },
-                              { translateY: translateRef.current.y },
-                              { scale: scaleRef.current },
-                              { rotate: `${rotationRef.current}rad` },
-                            ],
-                            resizeMode: 'contain',
-                          }}
-                        />
-                        {/* Grid / rule of thirds overlay */}
-                        <View pointerEvents="none" style={[styles.grid, { width: containerSize, height: containerSize }]}> 
-                          <View style={styles.gridLineHorizontal} />
-                          <View style={[styles.gridLineHorizontal, { top: '66%' }]} />
-                          <View style={[styles.gridLineHorizontal, { top: '33%' }]} />
-                          <View style={styles.gridLineVertical} />
-                          <View style={[styles.gridLineVertical, { left: '66%' }]} />
-                          <View style={[styles.gridLineVertical, { left: '33%' }]} />
-                        </View>
-                      </View>
-                    </PanGestureHandler>
-                  </PinchGestureHandler>
-                </RotationGestureHandler>
-              </TapGestureHandler>
+              <ImageZoom
+                cropWidth={containerSize}
+                cropHeight={containerSize}
+                imageWidth={containerSize}
+                imageHeight={containerSize}
+                onMove={({ positionX, positionY, scale }) => onZoomMove({ positionX, positionY, scale })}
+                panToMove={true}
+                pinchToZoom={true}
+                enableCenterFocus={false}
+              >
+                <View style={{ width: containerSize, height: containerSize, alignItems: 'center', justifyContent: 'center' }}>
+                  <Image
+                    source={{ uri }}
+                    style={{
+                      width: containerSize,
+                      height: containerSize,
+                      transform: [
+                        { rotate: `${rotationRef.current}rad` },
+                      ],
+                      resizeMode: 'contain',
+                    }}
+                  />
+                  <View pointerEvents="none" style={[styles.grid, { width: containerSize, height: containerSize }]}> 
+                    <View style={styles.gridLineHorizontal} />
+                    <View style={[styles.gridLineHorizontal, { top: '66%' }]} />
+                    <View style={[styles.gridLineHorizontal, { top: '33%' }]} />
+                    <View style={styles.gridLineVertical} />
+                    <View style={[styles.gridLineVertical, { left: '66%' }]} />
+                    <View style={[styles.gridLineVertical, { left: '33%' }]} />
+                  </View>
+                </View>
+              </ImageZoom>
             ) : (
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                 <ActivityIndicator size="large" />
@@ -201,32 +195,38 @@ function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
             <View pointerEvents="none" style={[styles.cropOverlay, { width: containerSize, height: containerSize, borderRadius: shape === 'circle' ? containerSize / 2 : 6, borderColor: theme.colors.border }]} />
           </View>
 
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: theme.spacing.md, marginTop: theme.spacing.md }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
-              <Pressable onPress={rotate90} style={[styles.actionBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('rotate')}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>⤾</Text>
-              </Pressable>
-              <Pressable onPress={resetTransforms} style={[styles.actionBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('reset')}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>⟲</Text>
-              </Pressable>
-              <Pressable onPress={() => setShape(shape === 'circle' ? 'square' : 'circle')} style={[styles.actionBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('toggle_shape')}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>{shape === 'circle' ? '●' : '◻'}</Text>
-              </Pressable>
-            </View>
+          <View style={{ marginTop: theme.spacing.md }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+                <Pressable onPress={rotate90} style={[styles.largeBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('rotate')}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>⤾</Text>
+                </Pressable>
+                <Pressable onPress={resetTransforms} style={[styles.largeBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('reset')}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>⟲</Text>
+                </Pressable>
+                <Pressable onPress={() => setShape(shape === 'circle' ? 'square' : 'circle')} style={[styles.largeBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('toggle_shape')}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>{shape === 'circle' ? '●' : '◻'}</Text>
+                </Pressable>
+              </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md }}>
-              <Pressable onPress={zoomOut} style={[styles.zoomBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>−</Text>
-              </Pressable>
-              <Pressable onPress={zoomIn} style={[styles.zoomBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>+</Text>
-              </Pressable>
-              <Pressable onPress={onCancel} style={{ padding: theme.spacing.sm }}>
-                <Text style={{ color: theme.colors.textSecondary }}>{t('btn_cancel') || 'Отмена'}</Text>
-              </Pressable>
-              <Pressable onPress={handleConfirm} style={{ padding: theme.spacing.sm }}>
-                <Text style={{ color: theme.colors.primary }}>{t('btn_apply') || 'Применить'}</Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
+                <Pressable onPress={zoomOut} style={[styles.roundBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>−</Text>
+                </Pressable>
+                <Text style={{ minWidth: 48, textAlign: 'center', color: theme.colors.text }}>{Math.round((scaleRef?.current || scale?.value || 1) * 100)}%</Text>
+                <Pressable onPress={zoomIn} style={[styles.roundBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>+</Text>
+                </Pressable>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: theme.spacing.md, alignItems: 'center' }}>
+                <Pressable onPress={onCancel} style={{ paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.md }}>
+                  <Text style={{ color: theme.colors.textSecondary }}>{t('btn_cancel') || 'Отмена'}</Text>
+                </Pressable>
+                <Pressable onPress={handleConfirm} style={{ paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.md }}>
+                  <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>{t('btn_apply') || 'Применить'}</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -238,7 +238,7 @@ function FallbackCropper({ visible, uri, onCancel, onConfirm }) {
 function ReanimatedCropper({ visible, uri, onCancel, onConfirm }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const [loading, setLoading] = useState(false);
+  const [_loading, setLoading] = useState(false);
   const [imageSize, setImageSize] = useState({ w: 0, h: 0 });
   const [shape, setShape] = useState('circle');
   const containerSize = Math.min(Dimensions.get('window').width - 48, 360);
@@ -345,7 +345,7 @@ function ReanimatedCropper({ visible, uri, onCancel, onConfirm }) {
       const actions = [{ crop: { originX: cropX, originY: cropY, width: cropW, height: cropH } }];
       const manipResult = await ImageManipulator.manipulateAsync(uri, actions, { compress: 0.9, format: ImageManipulator.SaveFormat.JPEG });
       onConfirm?.(manipResult.uri);
-    } catch (e) {
+    } catch {
       onCancel?.();
     } finally {
       setLoading(false);
@@ -356,7 +356,11 @@ function ReanimatedCropper({ visible, uri, onCancel, onConfirm }) {
     <Modal visible={!!visible} transparent animationType="slide">
       <View style={[styles.backdrop, { backgroundColor: theme.colors.modalBackdrop || 'rgba(0,0,0,0.6)' }]}> 
         <View style={[styles.container, { width: containerSize + 32, backgroundColor: theme.colors.surface }]}> 
-          <Text style={{ fontSize: theme.typography.sizes.md, fontWeight: '600', marginBottom: theme.spacing.md, color: theme.colors.text }}>{t('profile_photo_crop_title') || 'Обрезать фото'}</Text>
+          {(() => {
+            const tt = t('profile_photo_crop_title');
+            const titleText = tt && tt !== 'profile_photo_crop_title' ? tt : 'Обрезать фото';
+            return <Text style={{ fontSize: theme.typography.sizes.md, fontWeight: '600', marginBottom: theme.spacing.md, color: theme.colors.text }}>{titleText}</Text>;
+          })()}
           <View style={{ alignSelf: 'center', width: containerSize, height: containerSize, backgroundColor: theme.colors.background, overflow: 'hidden' }}>
             {uri ? (
               <TapGestureHandler numberOfTaps={2} onGestureEvent={doubleTapHandler}>
@@ -386,32 +390,38 @@ function ReanimatedCropper({ visible, uri, onCancel, onConfirm }) {
             <View pointerEvents="none" style={[styles.cropOverlay, { width: containerSize, height: containerSize, borderRadius: shape === 'circle' ? containerSize / 2 : 6, borderColor: theme.colors.border }]} />
           </View>
 
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: theme.spacing.md, marginTop: theme.spacing.md }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
-              <Pressable onPress={rotate90} style={[styles.actionBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('rotate')}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>⤾</Text>
-              </Pressable>
-              <Pressable onPress={resetTransforms} style={[styles.actionBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('reset')}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>⟲</Text>
-              </Pressable>
-              <Pressable onPress={() => setShape(shape === 'circle' ? 'square' : 'circle')} style={[styles.actionBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('toggle_shape')}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>{shape === 'circle' ? '●' : '◻'}</Text>
-              </Pressable>
-            </View>
+          <View style={{ marginTop: theme.spacing.md }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+                <Pressable onPress={rotate90} style={[styles.largeBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('rotate')}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>⤾</Text>
+                </Pressable>
+                <Pressable onPress={resetTransforms} style={[styles.largeBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('reset')}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>⟲</Text>
+                </Pressable>
+                <Pressable onPress={() => setShape(shape === 'circle' ? 'square' : 'circle')} style={[styles.largeBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]} accessibilityLabel={t('toggle_shape')}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>{shape === 'circle' ? '●' : '◻'}</Text>
+                </Pressable>
+              </View>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.md }}>
-              <Pressable onPress={zoomOut} style={[styles.zoomBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>−</Text>
-              </Pressable>
-              <Pressable onPress={zoomIn} style={[styles.zoomBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
-                <Text style={{ fontSize: theme.typography.sizes.md, color: theme.colors.text }}>+</Text>
-              </Pressable>
-              <Pressable onPress={onCancel} style={{ padding: theme.spacing.sm }}>
-                <Text style={{ color: theme.colors.textSecondary }}>{t('btn_cancel') || 'Отмена'}</Text>
-              </Pressable>
-              <Pressable onPress={handleConfirm} style={{ padding: theme.spacing.sm }}>
-                <Text style={{ color: theme.colors.primary }}>{t('btn_apply') || 'Применить'}</Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.sm }}>
+                <Pressable onPress={zoomOut} style={[styles.roundBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>−</Text>
+                </Pressable>
+                <Text style={{ minWidth: 48, textAlign: 'center', color: theme.colors.text }}>{Math.round((scale?.value || 1) * 100)}%</Text>
+                <Pressable onPress={zoomIn} style={[styles.roundBtn, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+                  <Text style={{ fontSize: theme.typography.sizes.lg, color: theme.colors.text }}>+</Text>
+                </Pressable>
+              </View>
+
+              <View style={{ flexDirection: 'row', gap: theme.spacing.md, alignItems: 'center' }}>
+                <Pressable onPress={onCancel} style={{ paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.md }}>
+                  <Text style={{ color: theme.colors.textSecondary }}>{t('btn_cancel') || 'Отмена'}</Text>
+                </Pressable>
+                <Pressable onPress={handleConfirm} style={{ paddingVertical: theme.spacing.sm, paddingHorizontal: theme.spacing.md }}>
+                  <Text style={{ color: theme.colors.primary, fontWeight: '700' }}>{t('btn_apply') || 'Применить'}</Text>
+                </Pressable>
+              </View>
             </View>
           </View>
         </View>
@@ -420,8 +430,10 @@ function ReanimatedCropper({ visible, uri, onCancel, onConfirm }) {
   );
 }
 
+
+
 export default function AvatarCropModal(props) {
-  // If Reanimated native is available, use AAA Reanimated version, else fallback.
+  // Prefer Reanimated version when available, otherwise use JS fallback.
   if (HAS_REANIMATED) return <ReanimatedCropper {...props} />;
   return <FallbackCropper {...props} />;
 }
@@ -435,4 +447,10 @@ const styles = StyleSheet.create({
   grid: { position: 'absolute', left: 0, top: 0, opacity: 0.5 },
   gridLineHorizontal: { position: 'absolute', left: 0, right: 0, height: 1, backgroundColor: 'rgba(255,255,255,0.35)', top: '50%' },
   gridLineVertical: { position: 'absolute', top: 0, bottom: 0, width: 1, backgroundColor: 'rgba(255,255,255,0.35)', left: '50%' },
+  largeBtn: { width: 48, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 1 },
+  roundBtn: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center', borderWidth: 1 },
+  fullscreenContainer: { width: '92%', maxWidth: 760, borderRadius: 12, padding: 16 },
+  headerRowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  headerBtn: { paddingVertical: 8, paddingHorizontal: 12 },
+  toolbarBottom: { marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
 });

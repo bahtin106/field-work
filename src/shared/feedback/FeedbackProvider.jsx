@@ -1,5 +1,5 @@
 // src/shared/feedback/FeedbackProvider.jsx
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useToast } from '../../../components/ui/ToastProvider';
 
 const FeedbackContext = createContext(null);

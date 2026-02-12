@@ -12,6 +12,62 @@ function normalizeOrder(row) {
   };
 }
 
+function buildConcurrencyError(message, latest = null) {
+  const error = new Error(message || 'Request was changed by another user');
+  error.code = 'CONFLICT';
+  error.latest = latest;
+  return error;
+}
+
+export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
+  return measureNetwork('requests.update.withVersion', async () => {
+    if (!id) throw new Error('Order id is required');
+
+    // Preferred path: DB-side atomic RPC.
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
+        p_order_id: String(id),
+        p_expected_updated_at: expectedUpdatedAt,
+        p_patch: patch ?? {},
+      });
+      if (rpcError) throw rpcError;
+
+      if (!rpcData) {
+        if (!expectedUpdatedAt) {
+          throw new Error('Order not found');
+        }
+        const latest = await getRequestById(id);
+        throw buildConcurrencyError('Order was modified concurrently', latest || null);
+      }
+
+      return getRequestById(id);
+    } catch (rpcFailure) {
+      const msg = String(rpcFailure?.message || '').toLowerCase();
+      const missingRpc =
+        msg.includes('function') && (msg.includes('does not exist') || msg.includes('not found'));
+      if (!missingRpc) {
+        throw rpcFailure;
+      }
+    }
+
+    // Fallback path before migration is applied.
+    let query = supabase.from('orders').update(patch).eq('id', id);
+    if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt);
+    const { data, error } = await query.select('id, updated_at').maybeSingle();
+    if (error) throw error;
+
+    if (!data) {
+      if (!expectedUpdatedAt) {
+        throw new Error('Order not found');
+      }
+      const latest = await getRequestById(id);
+      throw buildConcurrencyError('Order was modified concurrently', latest || null);
+    }
+
+    return getRequestById(id);
+  });
+}
+
 export async function listRequests(params = {}) {
   return measureNetwork('requests.list', async () => {
     const {
@@ -73,12 +129,8 @@ export async function getRequestById(id) {
   });
 }
 
-export async function updateRequest(id, patch) {
-  return measureNetwork('requests.update', async () => {
-    const { error } = await supabase.from('orders').update(patch).eq('id', id);
-    if (error) throw error;
-    return getRequestById(id);
-  });
+export async function updateRequest(id, patch, expectedUpdatedAt = null) {
+  return updateRequestWithVersion(id, patch, expectedUpdatedAt);
 }
 
 export async function listRequestExecutors() {

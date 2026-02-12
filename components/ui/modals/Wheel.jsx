@@ -1,5 +1,5 @@
 // components/ui/modals/Wheel.jsx
-import React, { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { View, Text, FlatList, Platform } from 'react-native';
 import { useTheme } from '../../../theme';
 
@@ -31,7 +31,7 @@ export default function Wheel({
         isSyncingRef.current = false;
       }, 0);
     }
-  }, [index, data.length]);
+  }, [index, data.length, selIndex]);
 
   useEffect(() => {
     if (selIndex > data.length - 1) {
@@ -44,7 +44,7 @@ export default function Wheel({
       }, 0);
       onIndexChange?.(next);
     }
-  }, [data.length]);
+  }, [data.length, onIndexChange, selIndex]);
 
   const snapOffsets = useMemo(() => data.map((_, i) => i * ITEM_HEIGHT_DP), [data]);
 

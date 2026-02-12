@@ -1,6 +1,6 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Feather } from '@expo/vector-icons';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   BackHandler,
@@ -303,7 +303,7 @@ export default function OrdersFiltersPanel({
           borderColor: c.border,
         },
       }),
-    [c, hasChanges, rad.md, sz, ty, sh, APPLY_BUTTON_HEIGHT],
+    [c, hasChanges, rad.md, sz, ty, sh, APPLY_BUTTON_HEIGHT, theme],
   );
 
   if (!mounted && !visible) return null;

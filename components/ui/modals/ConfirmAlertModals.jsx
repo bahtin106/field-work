@@ -59,7 +59,7 @@ export function ConfirmModal({
             setTimeout(() => {
               try {
                 onConfirm?.();
-              } catch (_) {}
+              } catch {}
             }, 360);
           }
         }}

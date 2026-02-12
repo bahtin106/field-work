@@ -36,7 +36,7 @@ export function useCompanySettings() {
           .eq('id', profile.company_id)
           .single();
         return data;
-      } catch (e) {
+      } catch {
         // If the extended select failed due to unknown column, fallback to legacy select
         try {
           const { data } = await supabase

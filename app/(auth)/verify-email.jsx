@@ -1,17 +1,15 @@
 import { useRouter, useSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
 import { useTheme } from '../../theme';
-import { useTranslation } from '../../src/i18n/useTranslation';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/ui/ToastProvider';
 
 export default function VerifyEmailScreen() {
   const { theme } = useTheme();
-  const { t } = useTranslation();
   const router = useRouter();
   const params = useSearchParams();
   const { success: toastSuccess, error: toastError } = useToast();

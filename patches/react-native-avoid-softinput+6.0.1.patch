@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-avoid-softinput/android/src/newarch/java/com/reactnativeavoidsoftinput/AvoidSoftInputViewManager.kt b/node_modules/react-native-avoid-softinput/android/src/newarch/java/com/reactnativeavoidsoftinput/AvoidSoftInputViewManager.kt
+index 0dae51e..35b4cb9 100644
+--- a/node_modules/react-native-avoid-softinput/android/src/newarch/java/com/reactnativeavoidsoftinput/AvoidSoftInputViewManager.kt
++++ b/node_modules/react-native-avoid-softinput/android/src/newarch/java/com/reactnativeavoidsoftinput/AvoidSoftInputViewManager.kt
+@@ -30,7 +30,7 @@ class AvoidSoftInputViewManager :
+     override fun prepareToRecycleView(
+         reactContext: ThemedReactContext,
+         view: ReactViewGroup
+-    ): ReactViewGroup {
++    ): ReactViewGroup? {
+         (view as AvoidSoftInputView).cleanup()
+         return super.prepareToRecycleView(reactContext, view)
+     }

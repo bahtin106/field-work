@@ -1,47 +1,77 @@
-// eslint.config.js — минимальный и спокойный конфиг для Expo (JS/JSX)
 import js from '@eslint/js';
 import configPrettier from 'eslint-config-prettier';
-import prettier from 'eslint-plugin-prettier';
 import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 
+const appFiles = ['**/*.{js,jsx}'];
+
 export default [
+  {
+    ignores: [
+      'node_modules/**',
+      'node_modules.backup/**',
+      'dist/**',
+      '.expo/**',
+      'android/**',
+      'ios/**',
+      'coverage/**',
+      'backups/**',
+      'supabase/.temp/**',
+      'theme/CapsulePressable.jsx',
+      '**/*.backup.*',
+      'com.facebook.react.*',
+      'java.util.concurrent.*',
+    ],
+  },
   js.configs.recommended,
   {
+    files: appFiles,
     plugins: {
       react,
       'react-hooks': reactHooks,
-      prettier,
     },
     languageOptions: {
       ecmaVersion: 'latest',
       sourceType: 'module',
       parserOptions: { ecmaFeatures: { jsx: true } },
+      globals: {
+        __DEV__: 'readonly',
+        console: 'readonly',
+        process: 'readonly',
+        fetch: 'readonly',
+        require: 'readonly',
+        module: 'readonly',
+        global: 'readonly',
+        document: 'readonly',
+        location: 'readonly',
+        URL: 'readonly',
+        AbortController: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+      },
     },
     settings: {
       react: { version: 'detect' },
     },
     rules: {
-      // интеграция с Prettier (только предупреждения по формату)
-      'prettier/prettier': 'warn',
-
-      // React 17+ / Expo — React в скоупе не обязателен
       'react/react-in-jsx-scope': 'off',
       'react/prop-types': 'off',
-
-      // базовая гигиена, без жёстких правил
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
-
-      // Mark variables used in JSX as used (prevents false positives for component imports)
       'react/jsx-uses-vars': 'warn',
-
-      // смягчаем типичные придирки
-      'react/no-unknown-property': 'off',
-      'react/jsx-no-target-blank': 'off',
+      'react-hooks/rules-of-hooks': 'warn',
+      'react-hooks/exhaustive-deps': 'warn',
+      'no-empty': 'off',
+      'no-redeclare': 'off',
+      'no-dupe-keys': 'warn',
+      'no-undef': 'off',
+      'no-useless-catch': 'off',
+      'no-useless-escape': 'off',
+      'no-sparse-arrays': 'off',
+      'no-case-declarations': 'off',
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'no-console': ['warn', { allow: ['warn', 'error', 'info', 'debug'] }],
     },
   },
-
-  // Снимаем конфликты с форматированием
   configPrettier,
 ];

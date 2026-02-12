@@ -1,5 +1,5 @@
 import { useRootNavigationState, useRouter, useSegments } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import logger from '../../lib/logger';
 
 export default function AuthNavigator({ isLoggedIn, onNavigationComplete }) {
@@ -9,7 +9,7 @@ export default function AuthNavigator({ isLoggedIn, onNavigationComplete }) {
   const navigationAttempts = useRef(0);
   const timeoutRef = useRef(null);
 
-  const performNavigation = async () => {
+  const performNavigation = useCallback(async () => {
     if (!navigationState?.key) {
       logger.warn('Navigation not ready, waiting...');
       return false;
@@ -37,7 +37,7 @@ export default function AuthNavigator({ isLoggedIn, onNavigationComplete }) {
       logger.warn(`Navigation failed (attempt ${navigationAttempts.current}):`, e);
       return false;
     }
-  };
+  }, [isLoggedIn, navigationState?.key, router, segments]);
 
   useEffect(() => {
     // Сбрасываем счетчик попыток при изменении статуса логина
@@ -72,7 +72,7 @@ export default function AuthNavigator({ isLoggedIn, onNavigationComplete }) {
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [isLoggedIn, navigationState?.key, segments]);
+  }, [isLoggedIn, navigationState?.key, onNavigationComplete, performNavigation, segments]);
 
   return null;
 }

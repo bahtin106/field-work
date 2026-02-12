@@ -1,5 +1,4 @@
 // src/shared/feedback/FieldErrorText.jsx
-import React from 'react';
 import { StyleSheet, Text } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 

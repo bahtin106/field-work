@@ -430,6 +430,7 @@ export default function CreateOrderScreen() {
     schema,
     clearBanner,
     requiredMsg,
+    showBanner,
     focusField,
     t,
     deleteDraft,
@@ -580,7 +581,7 @@ export default function CreateOrderScreen() {
     ],
   );
 
-  const renderTextInput = useCallback(
+  const _renderTextInput = useCallback(
     (key, placeholder, opts = {}) => {
       const f = getField(key);
       if (!f) return null;
@@ -617,7 +618,7 @@ export default function CreateOrderScreen() {
             key={key}
             label={label}
             value={val}
-            onChangeText={(raw, meta) => {
+            onChangeText={(raw, _meta) => {
               setField(key, raw);
               clearFieldError(key);
             }}

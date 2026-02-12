@@ -11,7 +11,7 @@ import { useToast } from '../ui/ToastProvider';
 let __labels = null;
 try {
   __labels = require('../../i18n/labels');
-} catch (_) {}
+} catch {}
 const t = (key, fallback) => {
   const mod = __labels || {};
   if (typeof mod.t === 'function') return mod.t(key, fallback);

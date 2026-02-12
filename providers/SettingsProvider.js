@@ -1,4 +1,4 @@
-// providers/SettingsProvider.js
+﻿// providers/SettingsProvider.js
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   createContext,
@@ -67,12 +67,12 @@ export default function SettingsProvider({ children }) {
   }, []);
 
   const fetchRemote = useCallback(async () => {
-    // Если нет активной сессии — пропускаем удалённый вызов (иначе прилетает permission denied)
+    // Р•СЃР»Рё РЅРµС‚ Р°РєС‚РёРІРЅРѕР№ СЃРµСЃСЃРёРё вЂ” РїСЂРѕРїСѓСЃРєР°РµРј СѓРґР°Р»С‘РЅРЅС‹Р№ РІС‹Р·РѕРІ (РёРЅР°С‡Рµ РїСЂРёР»РµС‚Р°РµС‚ permission denied)
     try {
       const { data: ses } = await supabase.auth.getSession();
       if (!ses?.session) return null;
-    } catch (e) {
-      return null; // ошибки получения сессии не критичны здесь
+    } catch {
+      return null; // РѕС€РёР±РєРё РїРѕР»СѓС‡РµРЅРёСЏ СЃРµСЃСЃРёРё РЅРµ РєСЂРёС‚РёС‡РЅС‹ Р·РґРµСЃСЊ
     }
     const { data, error } = await supabase.rpc('get_active_settings');
     if (error) throw error;
@@ -103,7 +103,7 @@ export default function SettingsProvider({ children }) {
           await saveToCache(data);
         }
       } catch (e) {
-        // Только логируем реальные ошибки, отсутствие сессии больше не вызывает исключение
+        // РўРѕР»СЊРєРѕ Р»РѕРіРёСЂСѓРµРј СЂРµР°Р»СЊРЅС‹Рµ РѕС€РёР±РєРё, РѕС‚СЃСѓС‚СЃС‚РІРёРµ СЃРµСЃСЃРёРё Р±РѕР»СЊС€Рµ РЅРµ РІС‹Р·С‹РІР°РµС‚ РёСЃРєР»СЋС‡РµРЅРёРµ
         globalThis?.console?.warn?.('Initial fetch failed:', e?.message || e);
       } finally {
         if (mounted) setReady(true);
@@ -247,7 +247,7 @@ export default function SettingsProvider({ children }) {
         id: uuid(),
         mode,
         key: `custom_${next}`,
-        label: 'Новое поле',
+        label: 'РќРѕРІРѕРµ РїРѕР»Рµ',
         placeholder: '',
         help_text: '',
         type: 'text',
@@ -312,37 +312,25 @@ export default function SettingsProvider({ children }) {
     }
   };
 
-  const value = useMemo(
-    () => ({
-      ready,
-      settings,
-      refreshSettings,
-      getFieldByKey,
-      isFieldVisible,
-      isFieldRequired,
-      mediaRequirements,
-      presetsByContext,
-      // admin
-      fieldsByMode,
-      reloadFormFields,
-      addField,
-      updateField,
-      deleteField,
-      moveField,
-      saving,
-    }),
-    [
-      ready,
-      settings,
-      refreshSettings,
-      getFieldByKey,
-      isFieldVisible,
-      isFieldRequired,
-      mediaRequirements,
-      presetsByContext,
-      saving,
-    ],
-  );
+  const value = {
+    ready,
+    settings,
+    refreshSettings,
+    getFieldByKey,
+    isFieldVisible,
+    isFieldRequired,
+    mediaRequirements,
+    presetsByContext,
+    // admin
+    fieldsByMode,
+    reloadFormFields,
+    addField,
+    updateField,
+    deleteField,
+    moveField,
+    saving,
+  };
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }
+

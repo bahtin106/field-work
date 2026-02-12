@@ -24,7 +24,6 @@ import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_COD
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
-  getPasswordValidationErrors,
   isValidEmail,
   isValidPassword,
 } from '../../lib/authValidation';
@@ -194,12 +193,6 @@ export default function RegisterScreen() {
       ? t('register_error_company_name')
       : null);
 
-  const initials = useMemo(
-    () =>
-      `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
-    [firstName, lastName],
-  );
-
   // Email availability check
   const checkEmailAvailability = useCallback(async (emailToCheck) => {
     if (!emailToCheck || !isValidEmail(emailToCheck)) {
@@ -250,7 +243,7 @@ export default function RegisterScreen() {
         clearTimeout(emailCheckTimeoutRef.current);
       }
     };
-  }, [email, emailValid, checkEmailAvailability]);
+  }, [email, emailValid, checkEmailAvailability, theme.timings.emailDebounceMs]);
 
   const didClearBannerRef = useRef(false);
   useEffect(() => {
@@ -264,7 +257,7 @@ export default function RegisterScreen() {
     setTimeout(() => {
       setInvalidCharWarning(false);
     }, theme.timings.invalidInputWarningMs);
-  }, []);
+  }, [theme.timings.invalidInputWarningMs]);
 
   const handleRegister = useCallback(async () => {
     if (submitting) return;
@@ -401,10 +394,10 @@ export default function RegisterScreen() {
     lastName,
     email,
     password,
-    confirmPassword,
     passwordsMatch,
     emailValid,
     passwordValid,
+    consentChecked,
     emailCheckStatus,
     accountType,
     companyName,
@@ -414,6 +407,7 @@ export default function RegisterScreen() {
     showBanner,
     clearBanner,
     requiredMsg,
+    theme.timings.postRegisterNavDelayMs,
   ]);
 
   return (

@@ -1,4 +1,3 @@
-import React from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { useCompanySettings } from '../hooks/useCompanySettings';
 import { useTranslation } from '../src/i18n/useTranslation';
