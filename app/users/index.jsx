@@ -193,7 +193,23 @@ export default function UsersIndex() {
         emptyWrap: { padding: sz.lg, alignItems: 'center' },
         emptyText: { color: c.textSecondary },
       }),
-    [theme],
+    [
+      theme,
+      c.background,
+      c.danger,
+      c.text,
+      c.textSecondary,
+      rad.md,
+      scrollPaddingBottom,
+      sz.lg,
+      sz.sm,
+      sz.xs,
+      ty.sizes.sm,
+      ty.sizes.xl,
+      ty.sizes.xs,
+      ty.weight.bold,
+      ty.weight.semibold,
+    ],
   );
 
   // --- Debounce for search (theme.timings)
@@ -253,7 +269,7 @@ export default function UsersIndex() {
     [router],
   );
 
-  const rolePillStyle = (role) => {
+  const rolePillStyle = useCallback((role) => {
     const color =
       role === ROLE.ADMIN
         ? theme.colors?.primary
@@ -270,7 +286,7 @@ export default function UsersIndex() {
       ],
       text: [styles.rolePillText, { color }],
     };
-  };
+  }, [theme.colors, ALPHA_PILL_BG, ALPHA_PILL_BORDER, styles.rolePill, styles.rolePillText]);
 
   // Robust Postgres timestamptz → Date parser (handles most common variants, treats no-TZ as UTC)
   function parsePgTs(ts) {
@@ -471,7 +487,7 @@ export default function UsersIndex() {
       }).format(d);
       return `${t('users_lastSeen_prefix')} ${datePart}`;
     },
-    [isOnlineNow, getRelativeTime, t],
+    [isOnlineNow, getRelativeTime],
   );
 
   // Memoized department map for fast lookup
@@ -502,7 +518,7 @@ export default function UsersIndex() {
         />
       );
     },
-    [departmentMap, goToUser, rolePillStyle, formatPresence, isOnlineNow, t],
+    [departmentMap, goToUser, rolePillStyle, formatPresence, isOnlineNow],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);

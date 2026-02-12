@@ -3,7 +3,6 @@
 // app/orders/index.jsx
 import { useFocusEffect } from '@react-navigation/native';
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
-import * as SplashScreen from 'expo-splash-screen';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -137,7 +136,7 @@ export default function IndexScreen() {
   const { user: authUser, profile: authProfile } = useAuth();
 
   // Параллельно тянем разрешение на просмотр всех заявок (кэш общий через React Query)
-  const { data: canViewAll, isLoading: isPermLoading } = useQuery({
+  const { data: _canViewAll, isLoading: isPermLoading } = useQuery({
     queryKey: ['perm-canViewAll'],
     queryFn: fetchCanViewAll,
     staleTime: 5 * 60 * 1000,
@@ -202,29 +201,6 @@ export default function IndexScreen() {
     });
     return () => unsub && unsub();
   }, [qc]);
-
-  // Гарантированно прячем Expo Splash при заходе на экран (после логина)
-  useFocusEffect(
-    React.useCallback(() => {
-      let done = false;
-      (async () => {
-        try {
-          await SplashScreen.hideAsync();
-        } catch {}
-        // страховка: повторно через тик
-        setTimeout(() => {
-          if (!done) {
-            try {
-              SplashScreen.hideAsync();
-            } catch {}
-          }
-        }, 120);
-      })();
-      return () => {
-        done = true;
-      };
-    }, []),
-  );
 
   // Home prefetch through the shared query layer (deferred to avoid blocking tab navigation).
   React.useEffect(() => {
@@ -343,7 +319,7 @@ export default function IndexScreen() {
     if (currentState !== bootState) {
       setBootState(currentState);
     }
-  }, []);
+  }, [bootState]);
 
   // Основной эффект: переход в ready когда загрузки завершены + минимальное время прошло
   React.useEffect(() => {
@@ -397,7 +373,7 @@ export default function IndexScreen() {
   React.useEffect(() => {
     if (!VERBOSE_ORDERS_BOOT_LOGS) return;
     if (showLoader) {
-      console.log('[Orders] Spinner visible:', {
+      console.debug('[Orders] Spinner visible:', {
         bootState,
         hasTrustedRole: hasTrustedProfileRole,
         profileRole,
@@ -409,19 +385,23 @@ export default function IndexScreen() {
         elapsed: Date.now() - fetchStartTime,
       });
     } else if (bootState === 'ready') {
-      console.log('[Orders] Spinner hidden, showing content');
+      console.debug('[Orders] Spinner hidden, showing content');
     }
-  }, [showLoader, bootState]);
+  }, [
+    showLoader,
+    bootState,
+    hasTrustedProfileRole,
+    profileRole,
+    profileSource,
+    isRoleLoading,
+    isPermLoading,
+    criticalFetching,
+    forceReadyReason,
+    fetchStartTime,
+  ]);
 
   return (
-    <View
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
-      onLayout={() => {
-        try {
-          SplashScreen.hideAsync();
-        } catch (e) {}
-      }}
-    >
+    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
       {forceReadyReason && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>

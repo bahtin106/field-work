@@ -22,10 +22,12 @@ function withAlpha(color, a) {
   }
   return `rgba(0,0,0,${a})`;
 }
+const EMPTY_ROUTE_PARAMS = {};
 
 export default function AppHeader({ options = {}, back, route, onBackPress: onBackPressProp }) {
   const { theme } = useTheme();
   const nav = useNavigation();
+  const routeParams = route?.params || EMPTY_ROUTE_PARAMS;
   const pathname = usePathname?.() || '';
   const title = useRouteTitle(options, route, pathname);
 
@@ -33,24 +35,24 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   // используем её напрямую — это позволяет передавать JSX из Screen headerOptions.
   let headerTitleElement = null;
   try {
-    const candidate = options?.headerTitle ?? route?.params?.headerTitle;
+    const candidate = options?.headerTitle ?? routeParams?.headerTitle;
     if (typeof candidate === 'function') {
       headerTitleElement = candidate();
     }
-  } catch (e) {
+  } catch {
     headerTitleElement = null;
   }
 
-  const backLabel = options?.headerBackTitle ?? route?.params?.headerBackTitle;
+  const backLabel = options?.headerBackTitle ?? routeParams?.headerBackTitle;
   const wantCenterTitle =
-    options?.headerTitleAlign === 'center' || route?.params?.centerTitle === true;
+    options?.headerTitleAlign === 'center' || routeParams?.centerTitle === true;
 
   // Универсальный текст заголовка: берём fullTitle (если есть) или обычный title
   const titleText = useMemo(() => {
-    const ft = options?.fullTitle ?? route?.params?.fullTitle;
+    const ft = options?.fullTitle ?? routeParams.fullTitle;
     if (ft) return String(ft);
     return typeof title === 'string' ? title : String(title ?? '');
-  }, [options?.fullTitle, route?.params?.fullTitle, title]);
+  }, [options?.fullTitle, title, routeParams.fullTitle]);
 
   const onBack = useCallback(() => {
     try {
@@ -60,13 +62,13 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
         return;
       }
       // Затем route.params
-      if (route?.params?.onBackPress && typeof route.params.onBackPress === 'function') {
-        route.params.onBackPress();
+      if (routeParams.onBackPress && typeof routeParams.onBackPress === 'function') {
+        routeParams.onBackPress();
         return;
       }
-    } catch (e) {}
+    } catch {}
     nav.goBack();
-  }, [onBackPressProp, route?.params?.onBackPress, nav]);
+  }, [onBackPressProp, routeParams, nav]);
 
   const onClose = useCallback(() => {
     nav.goBack();
@@ -91,18 +93,16 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
 
   const rightPress = useCallback(() => {
     if (typeof options?.onRightPress === 'function') return options.onRightPress();
-    if (typeof route?.params?.onRightPress === 'function') return route.params.onRightPress();
+    if (typeof routeParams.onRightPress === 'function') return routeParams.onRightPress();
     // Global action registry by id to avoid non-serializable params
-    const actionId = route?.params?.onRightPressId;
+    const actionId = routeParams.onRightPressId;
     const fn =
       actionId && globalThis?.__headerActions ? globalThis.__headerActions[actionId] : null;
     if (typeof fn === 'function') return fn();
-    if (route?.params?.headerButtonTo) return router.push(route.params.headerButtonTo);
+    if (routeParams.headerButtonTo) return router.push(routeParams.headerButtonTo);
   }, [
-    options?.onRightPress,
-    route?.params?.onRightPress,
-    route?.params?.onRightPressId,
-    route?.params?.headerButtonTo,
+    options,
+    routeParams,
   ]);
 
   // ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----

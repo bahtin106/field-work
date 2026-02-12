@@ -1,4 +1,4 @@
-/* global AbortController, clearTimeout */
+/* global AbortController, clearTimeout, setTimeout */
 
 /**
  * Custom hook для логики входа с правильной обработкой:
@@ -34,6 +34,7 @@ export function useAuthLogin() {
   const abortControllerRef = useRef(null);
   const isMountedRef = useRef(false);
   const loginTimeoutRef = useRef(null);
+  const loginAttemptIdRef = useRef(0);
 
   // Валидация (мемоизированная для зависимостей)
   const emailValid = isValidEmail(email);
@@ -51,8 +52,6 @@ export function useAuthLogin() {
    * Выполняет логин с правильной обработкой ошибок
    */
   const performLogin = useCallback(async (emailTrim, passwordValue) => {
-    console.log('useAuthLogin: performLogin called', { email: emailTrim });
-
     // Убедимся, что компонент ещё смонтирован
     if (!isMountedRef.current) {
       logger.warn('performLogin called after unmount');
@@ -68,6 +67,7 @@ export function useAuthLogin() {
     // Отменяем предыдущий запрос если он ещё активен
     abortControllerRef.current?.abort();
     abortControllerRef.current = new AbortController();
+    const attemptId = ++loginAttemptIdRef.current;
 
     setLoading(true);
     setError('');
@@ -78,22 +78,17 @@ export function useAuthLogin() {
         email: emailTrim,
         password: passwordValue,
       }); // Проверяем, смонтирован ли компонент и не был ли отменён запрос
-      if (!isMountedRef.current || abortControllerRef.current?.signal.aborted) {
+      if (
+        !isMountedRef.current ||
+        abortControllerRef.current?.signal.aborted ||
+        attemptId !== loginAttemptIdRef.current
+      ) {
         logger.debug('Login request abandoned (unmounted or aborted)');
         return false;
       }
 
       if (authErr) {
         // Логируем ошибку для аналитики
-        console.log('[DEBUG] Auth attempt during login:', { 
-          errorKey: mapSupabaseAuthError(authErr),
-          email: emailTrim,
-          errorStatus: authErr?.status,
-          errorMessage: authErr?.message,
-          errorCode: authErr?.code,
-          fullError: authErr
-        });
-        
         logAuthError('login', authErr, { email: emailTrim });
 
         // Маппируем на UI-ошибку
@@ -113,14 +108,7 @@ export function useAuthLogin() {
         return false;
       }
 
-      console.log('useAuthLogin: Login successful', {
-        email: emailTrim,
-        hasSession: !!data.session,
-        sessionData: data.session,
-      });
       logger.info('Login successful', { email: emailTrim, hasSession: !!data.session });
-
-      console.log('useAuthLogin: Login successful, waiting for navigation');
 
       // Быстрая очистка после успешного логина
       const clearLoadingTimer = setTimeout(() => {
@@ -129,7 +117,6 @@ export function useAuthLogin() {
           setEmail('');
           setPassword('');
           setError('');
-          console.log('useAuthLogin: Cleared state after successful login');
         }
       }, 500);
 
@@ -193,7 +180,6 @@ export function useAuthLogin() {
   }, []);
 
   const reset = useCallback(() => {
-    console.log('useAuthLogin: resetting form');
     setEmail('');
     setPassword('');
     setError('');

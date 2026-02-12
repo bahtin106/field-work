@@ -7,7 +7,7 @@ import { useTheme } from '../../theme';
 let __labels = null;
 try {
   __labels = require('../../i18n/labels');
-} catch (_) {}
+} catch {}
 const i18nT = (key, fallback) => {
   const mod = __labels || {};
   if (typeof mod.t === 'function') return mod.t(key, fallback);
@@ -50,7 +50,7 @@ export default function ToastProvider({ children }) {
       mounted.value = false;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, []);
+  }, [mounted]);
 
   const endHide = () => {
     visibleRef.current = false;
@@ -64,11 +64,11 @@ export default function ToastProvider({ children }) {
     }
     // плавное скрытие вниз + фейд
     ty.value = withTiming(20, { duration: 200, easing: Easing.in(Easing.quad) });
-    op.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, (finished) => {
+    op.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, () => {
       if (!mounted.value) return;
       runOnJS(endHide)();
     });
-  }, [ty, op]);
+  }, [ty, op, mounted]);
 
   const show = useCallback(
     (text, type = 'info', opts = {}) => {

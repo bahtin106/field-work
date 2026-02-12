@@ -1,5 +1,5 @@
 // src/FeedbackForm.jsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { logEvent } from './telemetry';
 export default function FeedbackForm({ onClose, onSubmit }) {
   const [text, setText] = useState('');

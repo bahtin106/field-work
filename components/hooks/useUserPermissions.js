@@ -1,5 +1,5 @@
 // components/hooks/useUserPermissions.js
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { getUserRole } from '../../lib/getUserRole';
@@ -164,14 +164,14 @@ export function useUserPermissions() {
 
   const isFetching = useIsFetching();
 
-  const doRefresh = async () => {
+  const doRefresh = useCallback(async () => {
     try {
       await qc.invalidateQueries({ queryKey: ['perm-canViewAll'] });
     } catch {}
-  };
+  }, [qc]);
 
   const pollTimer = useRef(null);
-  const kickoffSafetyPoll = () => {
+  const kickoffSafetyPoll = useCallback(() => {
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
       pollTimer.current = null;
@@ -185,7 +185,7 @@ export function useUserPermissions() {
         pollTimer.current = null;
       }
     }, 1200);
-  };
+  }, [doRefresh]);
 
   const appStateRef = useRef(AppState.currentState);
 
@@ -245,7 +245,7 @@ export function useUserPermissions() {
         pollTimer.current = null;
       }
     };
-  }, []);
+  }, [doRefresh, kickoffSafetyPoll]);
 
   return {
     role,

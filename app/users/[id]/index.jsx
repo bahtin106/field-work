@@ -1,8 +1,8 @@
 // app/users/[id]/index.jsx
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -52,7 +52,6 @@ export default function UserView() {
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
   const router = useRouter();
-  const navigation = useNavigation();
 
   // Предотвращаем setState после размонтирования (паттерн как в AppSettings)
   const mountedRef = React.useRef(false);
@@ -63,7 +62,7 @@ export default function UserView() {
     };
   }, []);
 
-  const ver = useI18nVersion();
+  useI18nVersion();
   const { t } = useTranslation();
   const {
     data: userData,
@@ -110,7 +109,7 @@ export default function UserView() {
       dispatcher: t('role_dispatcher', 'role_dispatcher'),
       worker: t('role_worker', 'role_worker'),
     }),
-    [ver],
+    [t],
   );
 
   const roleLabel = ROLE_LABELS[role] || t('role_worker', 'role_worker');
@@ -148,7 +147,7 @@ export default function UserView() {
       } catch {}
       return false;
     }
-  }, [email, toast]);
+  }, [email, t, toast]);
 
   const onCopyPhone = React.useCallback(async () => {
     if (!phone) return false;
@@ -174,7 +173,7 @@ export default function UserView() {
       } catch {}
       return false;
     }
-  }, [phone, toast]);
+  }, [phone, t, toast]);
 
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
@@ -346,7 +345,7 @@ export default function UserView() {
                 const day = dateObj.getDate();
                 const year = dateObj.getFullYear();
                 return `${day} ${monthName} ${year}`;
-              } catch (e) {
+              } catch {
                 return t('common_dash', 'common_dash');
               }
             })()}

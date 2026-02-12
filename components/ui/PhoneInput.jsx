@@ -1,5 +1,5 @@
 // components/ui/PhoneInput.jsx
-import React, { useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import TextField from './TextField';
 import { maskApply, normalizeRu } from './phone';
 import { t as T } from '../../src/i18n';
@@ -9,7 +9,6 @@ export default function PhoneInput({
   value,
   onChangeText,
   error,
-  required = false,
   style,
   placeholder = T('fields_phone_placeholder'),
 }) {

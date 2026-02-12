@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { useCompanySettings } from '../hooks/useCompanySettings';
@@ -25,22 +25,6 @@ function withAlpha(color, a) {
 }
 
 /* ===== Utils ===== */
-
-function formatPhoneDisplay(raw) {
-  try {
-    if (!raw) return '';
-    const digits = String(raw)
-      .replace(/\D/g, '')
-      .replace(/^8(\d{10})$/, '7$1');
-    if (digits.length === 11 && digits.startsWith('7')) {
-      const p = digits.slice(1);
-      return `+7 (${p.slice(0, 3)}) ${p.slice(3, 6)}-${p.slice(6, 8)}-${p.slice(8, 10)}`;
-    }
-    return String(raw);
-  } catch {
-    return String(raw || '');
-  }
-}
 
 /* ===== Name cache for executor (avoid N requests in lists) ===== */
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
@@ -170,7 +154,7 @@ function looksLikeUuid(s) {
   return false;
 }
 
-export default function DynamicOrderCard({
+function DynamicOrderCard({
   order,
   context = 'all_orders', // 'all_orders' | 'my_orders' | 'calendar' | 'order_card'
   onPress,
@@ -182,23 +166,24 @@ export default function DynamicOrderCard({
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
 
   // Presets with safe defaults: exclude time_window_start from middle block
-  const presetRaw = presetsByContext(context);
-  const preset = {
-    fields:
-      Array.isArray(presetRaw?.fields) && presetRaw.fields.length > 0
-        ? presetRaw.fields.filter((k) => k !== 'time_window_start')
-        : ['title', 'customer_name', 'address'],
-    pills:
-      Array.isArray(presetRaw?.pills) && presetRaw.pills.length > 0 ? presetRaw.pills : ['status'],
-    secondary:
-      Array.isArray(presetRaw?.secondary) && presetRaw.secondary.length > 0
-        ? presetRaw.secondary
-        : ['assigned_to_name'],
-  };
+  const preset = useMemo(() => {
+    const presetRaw = presetsByContext(context);
+    return {
+      fields:
+        Array.isArray(presetRaw?.fields) && presetRaw.fields.length > 0
+          ? presetRaw.fields.filter((k) => k !== 'time_window_start')
+          : ['title', 'customer_name', 'address'],
+      pills:
+        Array.isArray(presetRaw?.pills) && presetRaw.pills.length > 0 ? presetRaw.pills : ['status'],
+      secondary:
+        Array.isArray(presetRaw?.secondary) && presetRaw.secondary.length > 0
+          ? presetRaw.secondary
+          : ['assigned_to_name'],
+    };
+  }, [context, presetsByContext]);
 
-  const fields = useMemo(() => preset.fields, [preset]);
-  const pills = useMemo(() => preset.pills, [preset]);
-  const secondary = useMemo(() => preset.secondary, [preset]);
+  const fields = useMemo(() => preset.fields, [preset.fields]);
+  const pills = useMemo(() => preset.pills, [preset.pills]);
 
   // Primary rows
   const primaryRows = useMemo(() => {
@@ -468,13 +453,19 @@ export default function DynamicOrderCard({
         alignSelf: 'stretch',
         width: '100%',
         marginVertical: 8,
-
-        ...(theme.shadows?.level1?.[Platform.OS] || {
-          shadowColor: theme.colors.shadow || '#000',
-          shadowOpacity: theme.mode === 'dark' ? 0.25 : 0.05,
-          shadowRadius: 4,
-          elevation: 1,
-        }),
+        ...(context === 'calendar'
+          ? {
+              shadowColor: 'transparent',
+              shadowOpacity: 0,
+              shadowRadius: 0,
+              elevation: 0,
+            }
+          : theme.shadows?.level1?.[Platform.OS] || {
+              shadowColor: theme.colors.shadow || '#000',
+              shadowOpacity: theme.mode === 'dark' ? 0.25 : 0.05,
+              shadowRadius: 4,
+              elevation: 1,
+            }),
       }}
     >
       {/* Header */}
@@ -584,3 +575,15 @@ export default function DynamicOrderCard({
     </TouchableOpacity>
   );
 }
+
+function areCardPropsEqual(prev, next) {
+  return (
+    prev.order === next.order &&
+    prev.context === next.context &&
+    prev.viewerRole === next.viewerRole &&
+    prev.onPress === next.onPress
+  );
+}
+
+const MemoizedDynamicOrderCard = memo(DynamicOrderCard, areCardPropsEqual);
+export default MemoizedDynamicOrderCard;

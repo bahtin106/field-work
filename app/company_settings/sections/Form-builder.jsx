@@ -1,7 +1,7 @@
 // app/company_settings/sections/form-builder.jsx
 
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 // Unified theme & UI components
 import {
   ActivityIndicator,
@@ -19,19 +19,12 @@ import TextField from '../../../components/ui/TextField';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 // If you have ThemeProvider — we use it. Otherwise, we fall back to system scheme.
-let useAppTheme;
-try {
-  // optional import; avoid crash if file/path missing
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  useAppTheme = require('../../../theme/ThemeProvider').useTheme;
-} catch {}
-
 let supabaseDefault, supabaseNamed;
 try {
   const mod = require('../../../lib/supabase');
   supabaseDefault = mod.default;
   supabaseNamed = mod.supabase;
-} catch (e) {
+} catch {
   // keep undefined — we'll throw below if both missing
 }
 
@@ -131,18 +124,13 @@ export default function FormBuilderScreen() {
           setIsAdmin(['admin', 'dispatcher'].includes(prof?.role));
           setCompanyId(prof?.company_id ?? null);
         }
-      } catch (e) {
+      } catch {
         setIsAdmin(false);
       } finally {
         setRoleChecked(true);
       }
     })();
   }, []);
-
-  useEffect(() => {
-    if (!isAdmin || !roleChecked) return;
-    loadFields(contextTab);
-  }, [isAdmin, roleChecked, contextTab, companyId]);
 
   // ===== Phone visibility helpers (for field_key='phone') =====
   const PHONE_ROLES = ['admin', 'dispatcher', 'worker'];
@@ -166,7 +154,7 @@ export default function FormBuilderScreen() {
         map[r.role] = { mode: r.mode, offset_minutes: r.offset_minutes ?? 0 };
       });
       return map;
-    } catch (e) {
+    } catch {
       return { ...PHONE_DEFAULTS };
     }
   }
@@ -193,7 +181,7 @@ export default function FormBuilderScreen() {
     }
   }
 
-  async function loadFields(ctx) {
+  const loadFields = useCallback(async (ctx) => {
     setLoading(true);
     setError('');
     setNotice('');
@@ -232,7 +220,7 @@ export default function FormBuilderScreen() {
           } else {
             r = await supabase.from('app_form_fields').select('*');
           }
-        } catch (e) {
+        } catch {
           r = await supabase.from('app_form_fields').select('*');
         }
         if (r.error) throw r.error;
@@ -271,7 +259,12 @@ export default function FormBuilderScreen() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [companyId]);
+
+  useEffect(() => {
+    if (!isAdmin || !roleChecked) return;
+    loadFields(contextTab);
+  }, [contextTab, isAdmin, loadFields, roleChecked]);
 
   function safeParseArray(s) {
     try {
@@ -454,8 +447,8 @@ export default function FormBuilderScreen() {
       // Back-compat transforms
       const mapOrderIndexToOrder = (arr) =>
         arr.map(({ order_index, ...rest }) => ({ ...rest, order: Number(order_index) || 0 }));
-      const stripContext = (arr) => arr.map(({ context, ...rest }) => rest);
-      const stripCompany = (arr) => arr.map(({ company_id, ...rest }) => rest);
+      const stripContext = (arr) => arr.map(({ context: _context, ...rest }) => rest);
+      const stripCompany = (arr) => arr.map(({ company_id: _company_id, ...rest }) => rest);
 
       const candidates = [
         { transform: (x) => x },
@@ -1278,3 +1271,4 @@ function Row({ children, style }) {
     </View>
   );
 }
+

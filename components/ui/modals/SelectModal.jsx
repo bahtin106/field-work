@@ -1,5 +1,4 @@
 // components/ui/modals/SelectModal.jsx
-import { Feather } from '@expo/vector-icons';
 import React, { useMemo, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { t as T } from '../../../src/i18n';

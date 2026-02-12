@@ -1,6 +1,6 @@
-/**
- * ADVANCED ПРИМЕРЫ использования SecurePasswordInput
- * Продвинутые кейсы и интеграции
+﻿/**
+ * ADVANCED РџР РРњР•Р Р« РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ SecurePasswordInput
+ * РџСЂРѕРґРІРёРЅСѓС‚С‹Рµ РєРµР№СЃС‹ Рё РёРЅС‚РµРіСЂР°С†РёРё
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -8,7 +8,7 @@ import { Alert, Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import SecurePasswordInput from '../components/SecurePasswordInput';
 
 // =============================================================================
-// ПРИМЕР 1: Password strength meter с анимацией
+// РџР РРњР•Р  1: Password strength meter СЃ Р°РЅРёРјР°С†РёРµР№
 // =============================================================================
 export function PasswordStrengthMeter() {
   const [password, setPassword] = useState('');
@@ -25,7 +25,7 @@ export function PasswordStrengthMeter() {
   };
 
   const strength = calculateStrength(password);
-  const strengthLabels = ['Очень слабый', 'Слабый', 'Средний', 'Хороший', 'Сильный', 'Отличный'];
+  const strengthLabels = ['РћС‡РµРЅСЊ СЃР»Р°Р±С‹Р№', 'РЎР»Р°Р±С‹Р№', 'РЎСЂРµРґРЅРёР№', 'РҐРѕСЂРѕС€РёР№', 'РЎРёР»СЊРЅС‹Р№', 'РћС‚Р»РёС‡РЅС‹Р№'];
   const strengthColors = ['#f44336', '#ff9800', '#ffc107', '#8bc34a', '#4caf50', '#00897b'];
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export function PasswordStrengthMeter() {
       easing: Easing.out(Easing.quad),
       useNativeDriver: false,
     }).start();
-  }, [strength]);
+  }, [strength, strengthAnim]);
 
   const strengthWidth = strengthAnim.interpolate({
     inputRange: [0, 6],
@@ -47,7 +47,7 @@ export function PasswordStrengthMeter() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Введите пароль"
+        placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ"
       />
 
       <View style={styles.strengthContainer}>
@@ -72,7 +72,7 @@ export function PasswordStrengthMeter() {
 }
 
 // =============================================================================
-// ПРИМЕР 2: Двухэтапная верификация пароля
+// РџР РРњР•Р  2: Р”РІСѓС…СЌС‚Р°РїРЅР°СЏ РІРµСЂРёС„РёРєР°С†РёСЏ РїР°СЂРѕР»СЏ
 // =============================================================================
 export function TwoStepPasswordVerification() {
   const [step, setStep] = useState(1);
@@ -86,11 +86,11 @@ export function TwoStepPasswordVerification() {
     <View style={styles.container}>
       {step === 1 ? (
         <View>
-          <Text style={styles.title}>Шаг 1: Текущий пароль</Text>
+          <Text style={styles.title}>РЁР°Рі 1: РўРµРєСѓС‰РёР№ РїР°СЂРѕР»СЊ</Text>
           <SecurePasswordInput
             value={currentPassword}
             onChangeText={setCurrentPassword}
-            placeholder="Введите текущий пароль"
+            placeholder="Р’РІРµРґРёС‚Рµ С‚РµРєСѓС‰РёР№ РїР°СЂРѕР»СЊ"
             returnKeyType="next"
           />
 
@@ -98,51 +98,51 @@ export function TwoStepPasswordVerification() {
             <TouchableOpacity
               style={styles.button}
               onPress={() => {
-                // Проверить текущий пароль
+                // РџСЂРѕРІРµСЂРёС‚СЊ С‚РµРєСѓС‰РёР№ РїР°СЂРѕР»СЊ
                 setStep(2);
               }}
             >
-              <Text style={styles.buttonText}>Далее</Text>
+              <Text style={styles.buttonText}>Р”Р°Р»РµРµ</Text>
             </TouchableOpacity>
           )}
         </View>
       ) : (
         <View>
-          <Text style={styles.title}>Шаг 2: Новый пароль</Text>
+          <Text style={styles.title}>РЁР°Рі 2: РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ</Text>
           <SecurePasswordInput
             value={newPassword}
             onChangeText={setNewPassword}
-            placeholder="Новый пароль"
+            placeholder="РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ"
             returnKeyType="next"
           />
 
           <SecurePasswordInput
             value={confirmPassword}
             onChangeText={setConfirmPassword}
-            placeholder="Подтвердите пароль"
+            placeholder="РџРѕРґС‚РІРµСЂРґРёС‚Рµ РїР°СЂРѕР»СЊ"
             returnKeyType="done"
           />
 
           {newPassword !== confirmPassword && confirmPassword.length > 0 && (
-            <Text style={styles.errorText}>Пароли не совпадают</Text>
+            <Text style={styles.errorText}>РџР°СЂРѕР»Рё РЅРµ СЃРѕРІРїР°РґР°СЋС‚</Text>
           )}
 
           <TouchableOpacity
             style={[styles.button, !canProceed && styles.buttonDisabled]}
             disabled={!canProceed}
             onPress={() => {
-              Alert.alert('Успех', 'Пароль изменен');
+              Alert.alert('РЈСЃРїРµС…', 'РџР°СЂРѕР»СЊ РёР·РјРµРЅРµРЅ');
               setStep(1);
               setNewPassword('');
               setConfirmPassword('');
               setCurrentPassword('');
             }}
           >
-            <Text style={styles.buttonText}>Изменить пароль</Text>
+            <Text style={styles.buttonText}>РР·РјРµРЅРёС‚СЊ РїР°СЂРѕР»СЊ</Text>
           </TouchableOpacity>
 
           <TouchableOpacity style={styles.buttonSecondary} onPress={() => setStep(1)}>
-            <Text style={styles.buttonSecondaryText}>Назад</Text>
+            <Text style={styles.buttonSecondaryText}>РќР°Р·Р°Рґ</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -151,7 +151,7 @@ export function TwoStepPasswordVerification() {
 }
 
 // =============================================================================
-// ПРИМЕР 3: Пароль с истечением срока действия
+// РџР РРњР•Р  3: РџР°СЂРѕР»СЊ СЃ РёСЃС‚РµС‡РµРЅРёРµРј СЃСЂРѕРєР° РґРµР№СЃС‚РІРёСЏ
 // =============================================================================
 export function PasswordWithExpiration() {
   const [password, setPassword] = useState('');
@@ -173,10 +173,10 @@ export function PasswordWithExpiration() {
 
   const getExpiryStatus = () => {
     if (!daysUntilExpire) return null;
-    if (daysUntilExpire <= 0) return { text: 'Истек', color: '#f44336' };
+    if (daysUntilExpire <= 0) return { text: 'РСЃС‚РµРє', color: '#f44336' };
     if (daysUntilExpire <= 7)
-      return { text: `Истекает через ${daysUntilExpire} дн.`, color: '#ff9800' };
-    return { text: `Истекает через ${daysUntilExpire} дн.`, color: '#4caf50' };
+      return { text: `РСЃС‚РµРєР°РµС‚ С‡РµСЂРµР· ${daysUntilExpire} РґРЅ.`, color: '#ff9800' };
+    return { text: `РСЃС‚РµРєР°РµС‚ С‡РµСЂРµР· ${daysUntilExpire} РґРЅ.`, color: '#4caf50' };
   };
 
   const expiryStatus = getExpiryStatus();
@@ -186,7 +186,7 @@ export function PasswordWithExpiration() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Введите пароль"
+        placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ"
         onFocus={() => setPasswordSetDate(new Date())}
       />
 
@@ -198,15 +198,15 @@ export function PasswordWithExpiration() {
 }
 
 // =============================================================================
-// ПРИМЕР 4: Интеграция с Biometric Authentication
+// РџР РРњР•Р  4: РРЅС‚РµРіСЂР°С†РёСЏ СЃ Biometric Authentication
 // =============================================================================
 export function PasswordWithBiometric() {
   const [password, setPassword] = useState('');
-  const [useBiometric, setUseBiometric] = useState(false);
-  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [_useBiometric, _setUseBiometric] = useState(false);
+  const [biometricAvailable, _setBiometricAvailable] = useState(false);
 
   useEffect(() => {
-    // Проверить доступность биометрии
+    // РџСЂРѕРІРµСЂРёС‚СЊ РґРѕСЃС‚СѓРїРЅРѕСЃС‚СЊ Р±РёРѕРјРµС‚СЂРёРё
     checkBiometricAvailability();
   }, []);
 
@@ -223,16 +223,16 @@ export function PasswordWithBiometric() {
   const handleBiometricLogin = async () => {
     try {
       // const authenticated = await LocalAuthentication.authenticateAsync({
-      //   reason: 'Используйте биометрию для входа',
-      //   fallbackLabel: 'Использовать пароль',
+      //   reason: 'РСЃРїРѕР»СЊР·СѓР№С‚Рµ Р±РёРѕРјРµС‚СЂРёСЋ РґР»СЏ РІС…РѕРґР°',
+      //   fallbackLabel: 'РСЃРїРѕР»СЊР·РѕРІР°С‚СЊ РїР°СЂРѕР»СЊ',
       //   disableDeviceFallback: false,
       // });
       // if (authenticated.success) {
-      //   // Получить пароль из secure storage
-      //   // и автоматически залогиниться
+      //   // РџРѕР»СѓС‡РёС‚СЊ РїР°СЂРѕР»СЊ РёР· secure storage
+      //   // Рё Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°Р»РѕРіРёРЅРёС‚СЊСЃСЏ
       // }
-    } catch (error) {
-      Alert.alert('Ошибка', 'Ошибка при использовании биометрии');
+    } catch {
+      Alert.alert('РћС€РёР±РєР°', 'РћС€РёР±РєР° РїСЂРё РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё Р±РёРѕРјРµС‚СЂРёРё');
     }
   };
 
@@ -241,12 +241,12 @@ export function PasswordWithBiometric() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Введите пароль"
+        placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ"
       />
 
       {biometricAvailable && (
         <TouchableOpacity style={styles.biometricButton} onPress={handleBiometricLogin}>
-          <Text style={styles.biometricButtonText}>Использовать Face ID</Text>
+          <Text style={styles.biometricButtonText}>РСЃРїРѕР»СЊР·РѕРІР°С‚СЊ Face ID</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -254,28 +254,28 @@ export function PasswordWithBiometric() {
 }
 
 // =============================================================================
-// ПРИМЕР 5: Пароль с невидимыми требованиями (NIST рекомендации)
+// РџР РРњР•Р  5: РџР°СЂРѕР»СЊ СЃ РЅРµРІРёРґРёРјС‹РјРё С‚СЂРµР±РѕРІР°РЅРёСЏРјРё (NIST СЂРµРєРѕРјРµРЅРґР°С†РёРё)
 // =============================================================================
 export function AdvancedPasswordRequirements() {
   const [password, setPassword] = useState('');
 
   const requirements = {
     minLength: {
-      label: 'Минимум 8 символов (рекомендуется 12+)',
+      label: 'РњРёРЅРёРјСѓРј 8 СЃРёРјРІРѕР»РѕРІ (СЂРµРєРѕРјРµРЅРґСѓРµС‚СЃСЏ 12+)',
       met: password.length >= 8,
     },
     noCommonPatterns: {
-      label: 'Не содержит распространенные паттерны',
+      label: 'РќРµ СЃРѕРґРµСЂР¶РёС‚ СЂР°СЃРїСЂРѕСЃС‚СЂР°РЅРµРЅРЅС‹Рµ РїР°С‚С‚РµСЂРЅС‹',
       met: !['password', 'qwerty', '123456', 'admin', 'letmein'].some((pattern) =>
         password.toLowerCase().includes(pattern),
       ),
     },
     noRepeatingChars: {
-      label: 'Не содержит 3+ одинаковых символов подряд',
+      label: 'РќРµ СЃРѕРґРµСЂР¶РёС‚ 3+ РѕРґРёРЅР°РєРѕРІС‹С… СЃРёРјРІРѕР»РѕРІ РїРѕРґСЂСЏРґ',
       met: !/(.)\1{2,}/.test(password),
     },
     mixedCharacters: {
-      label: 'Разные типы символов (буквы, цифры)',
+      label: 'Р Р°Р·РЅС‹Рµ С‚РёРїС‹ СЃРёРјРІРѕР»РѕРІ (Р±СѓРєРІС‹, С†РёС„СЂС‹)',
       met: /[a-z]/i.test(password) && /[0-9]/.test(password),
     },
   };
@@ -297,7 +297,7 @@ export function AdvancedPasswordRequirements() {
         {Object.entries(requirements).map(([key, { label, met }]) => (
           <View key={key} style={styles.requirementRow}>
             <Text style={[styles.requirementMark, met && styles.requirementMet]}>
-              {met ? '✓' : '○'}
+              {met ? 'вњ“' : 'в—‹'}
             </Text>
             <Text style={[styles.requirementText, met && styles.requirementMetText]}>{label}</Text>
           </View>
@@ -308,25 +308,25 @@ export function AdvancedPasswordRequirements() {
 }
 
 // =============================================================================
-// ПРИМЕР 6: Пароль с истории проверок
+// РџР РРњР•Р  6: РџР°СЂРѕР»СЊ СЃ РёСЃС‚РѕСЂРёРё РїСЂРѕРІРµСЂРѕРє
 // =============================================================================
 export function PasswordWithHistory() {
   const [password, setPassword] = useState('');
   const [passwordHistory, setPasswordHistory] = useState([]);
-  const [cantReuseFor] = useState(5); // Не использовать 5 предыдущих паролей
+  const [cantReuseFor] = useState(5); // РќРµ РёСЃРїРѕР»СЊР·РѕРІР°С‚СЊ 5 РїСЂРµРґС‹РґСѓС‰РёС… РїР°СЂРѕР»РµР№
 
   const handleSubmit = async () => {
     const isInHistory = passwordHistory.some((oldPwd) => oldPwd === password);
 
     if (isInHistory) {
-      Alert.alert('Ошибка', `Не используйте пароли из последних ${cantReuseFor} попыток`);
+      Alert.alert('РћС€РёР±РєР°', `РќРµ РёСЃРїРѕР»СЊР·СѓР№С‚Рµ РїР°СЂРѕР»Рё РёР· РїРѕСЃР»РµРґРЅРёС… ${cantReuseFor} РїРѕРїС‹С‚РѕРє`);
       return;
     }
 
-    // Отправить пароль
+    // РћС‚РїСЂР°РІРёС‚СЊ РїР°СЂРѕР»СЊ
     setPasswordHistory((prev) => [password, ...prev].slice(0, cantReuseFor));
     setPassword('');
-    Alert.alert('Успех', 'Пароль успешно изменен');
+    Alert.alert('РЈСЃРїРµС…', 'РџР°СЂРѕР»СЊ СѓСЃРїРµС€РЅРѕ РёР·РјРµРЅРµРЅ');
   };
 
   return (
@@ -334,19 +334,19 @@ export function PasswordWithHistory() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Новый пароль"
+        placeholder="РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ"
         returnKeyType="done"
         onSubmitEditing={handleSubmit}
       />
 
       {passwordHistory.length > 0 && (
         <View style={styles.historyContainer}>
-          <Text style={styles.historyTitle}>История паролей (последние {cantReuseFor}):</Text>
+          <Text style={styles.historyTitle}>РСЃС‚РѕСЂРёСЏ РїР°СЂРѕР»РµР№ (РїРѕСЃР»РµРґРЅРёРµ {cantReuseFor}):</Text>
           <View style={styles.historyList}>
             {passwordHistory.map((_, index) => (
               <View key={index} style={styles.historyItem}>
                 <Text style={styles.historyIndex}>{index + 1}</Text>
-                <Text style={styles.historyMask}>••••••••</Text>
+                <Text style={styles.historyMask}>вЂўвЂўвЂўвЂўвЂўвЂўвЂўвЂў</Text>
                 <Text style={styles.historyDate}>{new Date().toLocaleDateString('ru')}</Text>
               </View>
             ))}
@@ -357,7 +357,7 @@ export function PasswordWithHistory() {
   );
 }
 
-// Стили
+// РЎС‚РёР»Рё
 const styles = StyleSheet.create({
   container: {
     padding: 16,
@@ -516,3 +516,6 @@ export default {
   AdvancedPasswordRequirements,
   PasswordWithHistory,
 };
+
+
+

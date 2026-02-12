@@ -1,4 +1,3 @@
-/* global __DEV__ */
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -27,7 +26,6 @@ import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
-import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -43,8 +41,6 @@ export default function MyOrdersScreen() {
     theme?.colors?.muted ??
     theme?.colors?.textSecondary ??
     theme?.colors?.text;
-
-  const { has, loading: permLoading } = usePermissions();
 
   const styles = useMemo(
     () =>
@@ -98,7 +94,7 @@ export default function MyOrdersScreen() {
           color: mutedColor,
         },
       }),
-    [theme],
+    [theme, mutedColor],
   );
 
   const ORDER_FILTER_DEFAULTS = {
@@ -164,7 +160,7 @@ export default function MyOrdersScreen() {
         return true;
       });
       return () => sub.remove();
-    }, []),
+    }, [router]),
   );
 
   const { companyId } = useMyCompanyId();
@@ -281,18 +277,10 @@ export default function MyOrdersScreen() {
     return parts.join(t('common_bullet'));
   }, [filters.values, orderStatusOptions, workTypeOptions, t]);
 
-  function __canSeePhone(o) {
-    try {
-      return Boolean(o && o.customer_phone_visible);
-    } catch {
-      return false;
-    }
-  }
-
   // Shared caches
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
   LIST_CACHE.my ||= {};
-  const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+  const listCacheMy = LIST_CACHE.my;
   const seenFilterRef = useRef(new Set());
   const makeCacheKey = useCallback(
     (key, fp) => `${(typeof key === 'string' ? key : 'all') || 'all'}:${fp || ''}`,
@@ -318,9 +306,8 @@ export default function MyOrdersScreen() {
     }
     const key = 'feed';
     const cacheKey = makeCacheKey(key, filtersFingerprint);
-    return LIST_CACHE.my[cacheKey] ? false : true;
+    return listCacheMy[cacheKey] ? false : true;
   });
-  const [userId, setUserId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const hydratedRef = useRef(false);
 
@@ -412,7 +399,7 @@ export default function MyOrdersScreen() {
   useEffect(() => {
     if (!isFocused) return;
     const prefetchFeed = async () => {
-      const cached = LIST_CACHE.my.feed;
+      const cached = listCacheMy.feed;
       if (Array.isArray(cached) && cached.length) {
         updateFeedMeta(cached);
         return;
@@ -430,13 +417,13 @@ export default function MyOrdersScreen() {
         .range(0, PAGE_SIZE - 1);
 
       if (!error && Array.isArray(data)) {
-        LIST_CACHE.my.feed = data;
+        listCacheMy.feed = data;
         updateFeedMeta(data);
       }
     };
 
     prefetchFeed();
-  }, [isFocused, updateFeedMeta]);
+  }, [isFocused, updateFeedMeta, listCacheMy]);
 
   // Если пользователь зашёл в «Ленту» — считаем, что он увидел текущие заявки
   useEffect(() => {
@@ -472,13 +459,13 @@ export default function MyOrdersScreen() {
     /* seed from cache */
     const k = typeof seedFilter === 'string' && seedFilter.length ? seedFilter : filter || 'all';
     const listKey = `${k}:${filtersFingerprint}`;
-    if (LIST_CACHE.my[listKey]) {
-      setOrders(LIST_CACHE.my[listKey]);
+    if (listCacheMy[listKey]) {
+      setOrders(listCacheMy[listKey]);
       hydratedRef.current = true;
     }
     if (typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
     if (typeof seedSearch === 'string') setSearchQuery(seedSearch);
-  }, [seedFilter, seedSearch]);
+  }, [seedFilter, seedSearch, filter, filtersFingerprint, listCacheMy]);
 
   useEffect(() => {
     if (!isFocused) return;
@@ -488,7 +475,7 @@ export default function MyOrdersScreen() {
 
       // Первая страница - проверяем кэш
       if (pageNum === 1) {
-        const cached = LIST_CACHE.my[cacheKey];
+        const cached = listCacheMy[cacheKey];
         if (cached && cached.length) {
           setOrders(cached);
           hydratedRef.current = true;
@@ -509,8 +496,6 @@ export default function MyOrdersScreen() {
         setLoading(false);
         return;
       }
-      setUserId(uid);
-
       let query = supabase.from('orders_secure_v2').select('*');
       if (key === 'feed') {
         query = query.is('assigned_to', null);
@@ -573,7 +558,7 @@ export default function MyOrdersScreen() {
           if (!alive) return;
           const emptyResult = [];
           setOrders(emptyResult);
-          LIST_CACHE.my[cacheKey] = emptyResult;
+          listCacheMy[cacheKey] = emptyResult;
           queryClient.setQueryData(['orders', 'my', 'recent'], emptyResult);
           setHasMore(false);
           setLoading(false);
@@ -596,7 +581,7 @@ export default function MyOrdersScreen() {
       if (!error && Array.isArray(normalized)) {
         if (pageNum === 1) {
           setOrders(normalized);
-          LIST_CACHE.my[cacheKey] = normalized;
+          listCacheMy[cacheKey] = normalized;
           seenFilterRef.current.add(cacheKey);
           if (key === 'feed') updateFeedMeta(normalized);
         } else {
@@ -631,7 +616,7 @@ export default function MyOrdersScreen() {
     setPage(1);
     setHasMore(true);
     fetchUserAndOrders();
-  }, [filter, filtersFingerprint, isFocused]);
+  }, [filter, filtersFingerprint, isFocused, listCacheMy, filters.values, orders.length, queryClient, updateFeedMeta, useWorkTypesFlag]);
 
   // Загрузка следующей страницы при достижении конца списка
   const loadMore = useCallback(async () => {
@@ -716,26 +701,37 @@ export default function MyOrdersScreen() {
     });
   }, [orders, searchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
   // Рендер элемента списка
+  const returnParamsRef = useRef({
+    seedFilter: filter,
+    seedSearch: searchQuery,
+  });
+  useEffect(() => {
+    returnParamsRef.current = {
+      seedFilter: filter,
+      seedSearch: searchQuery,
+    };
+  }, [filter, searchQuery]);
+  const openOrderDetails = useCallback(
+    (orderId) => {
+      router.push({
+        pathname: `/orders/${orderId}`,
+        params: {
+          returnTo: '/orders/my-orders',
+          returnParams: JSON.stringify(returnParamsRef.current),
+        },
+      });
+    },
+    [router],
+  );
   const renderItem = useCallback(
     ({ item: order }) => (
       <DynamicOrderCard
         order={order}
         context="my_orders"
-        onPress={() =>
-          router.push({
-            pathname: `/orders/${order.id}`,
-            params: {
-              returnTo: '/orders/my-orders',
-              returnParams: JSON.stringify({
-                seedFilter: filter,
-                seedSearch: searchQuery,
-              }),
-            },
-          })
-        }
+        onPress={() => openOrderDetails(order.id)}
       />
     ),
-    [router, filter, searchQuery],
+    [openOrderDetails],
   );
 
   // Футер со спиннером при загрузке
@@ -844,7 +840,7 @@ export default function MyOrdersScreen() {
       styles,
       feedState,
       feedPulse,
-      filters.open,
+      filters,
       filterSummary,
       filteredOrders.length,
       orders.length,
@@ -909,12 +905,12 @@ export default function MyOrdersScreen() {
         time_window_start: o.time_window_start ?? null,
       }));
       setOrders(normalized);
-      LIST_CACHE.my[cacheKey] = normalized;
+      listCacheMy[cacheKey] = normalized;
       if (key === 'feed') updateFeedMeta(normalized);
       setHasMore(normalized.length === PAGE_SIZE);
     }
     setBgRefreshing(false);
-  }, [filter, makeCacheKey, filtersFingerprint, updateFeedMeta]);
+  }, [filter, makeCacheKey, filtersFingerprint, updateFeedMeta, listCacheMy]);
 
   if (loading && orders.length === 0) {
     return (

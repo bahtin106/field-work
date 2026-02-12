@@ -1,6 +1,7 @@
 // components/calendar/YearView.jsx
-import React, { useMemo } from 'react';
-import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { formatDateKey, getMonthDays, isToday } from '../../lib/calendarUtils';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -46,15 +47,26 @@ function getMonthMatrix(year) {
     for (let i = 0; i < padded.length; i += 7) {
       weeks.push(padded.slice(i, i + 7));
     }
+    while (weeks.length < 6) {
+      weeks.push(Array.from({ length: 7 }, () => ({ day: null, date: null })));
+    }
     months.push({ monthIndex: m, weeks });
   }
   return months;
 }
 
-export default function YearView({ year, onMonthPress, markedDates, style, currentMonthIndex }) {
+export default function YearView({
+  year,
+  onMonthPress,
+  markedDates,
+  style,
+  currentMonthIndex,
+  transitionDirection = 0,
+}) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const screenWidth = Dimensions.get('window').width;
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const [viewport, setViewport] = useState({ width: windowWidth, height: windowHeight });
   const activeMonthIndex =
     typeof currentMonthIndex === 'number' ? currentMonthIndex : new Date().getMonth();
 
@@ -71,21 +83,48 @@ export default function YearView({ year, onMonthPress, markedDates, style, curre
     lg: theme.spacing?.lg ?? 16,
   };
 
-  const baseTypography = {
-    title: theme.typography?.sizes?.md ?? 15,
-    header: theme.typography?.sizes?.xs ?? 11,
-    number: theme.typography?.sizes?.sm ?? 13,
-    fontFamily: theme.typography?.fontFamily,
-    weight: theme.typography?.weight ?? {},
-  };
+  const baseTypography = useMemo(
+    () => ({
+      title: theme.typography?.sizes?.md ?? 15,
+      header: theme.typography?.sizes?.xs ?? 11,
+      number: theme.typography?.sizes?.sm ?? 13,
+      fontFamily: theme.typography?.fontFamily,
+      weight: theme.typography?.weight ?? {},
+    }),
+    [theme],
+  );
 
-  const horizontalPadding = spacing.lg;
-  const columnGap = spacing.md;
-  const availableWidth = Math.max(0, screenWidth - horizontalPadding * 2 - columnGap * 2);
-  const monthWidth = availableWidth / 3;
-  const innerPad = spacing.sm * 0.45;
-  const dayCellWidth = (monthWidth - innerPad * 2) / 7;
-  const verticalPadding = spacing.lg;
+  const gridHorizontalPadding = spacing.md;
+  const gridVerticalPadding = spacing.sm;
+  const columnGap = spacing.sm;
+  const rowGap = spacing.md;
+  const monthInnerPad = spacing.xs * 0.9;
+
+  const contentWidth = Math.max(0, viewport.width - gridHorizontalPadding * 2);
+  const contentHeight = Math.max(0, viewport.height - gridVerticalPadding * 2);
+  const monthWidth = Math.max(0, (contentWidth - columnGap * 2) / 3);
+  const monthHeight = Math.max(0, (contentHeight - rowGap * 3) / 4);
+
+  const titleLineHeight = Math.max(16, Math.min(baseTypography.title * 1.18, monthHeight * 0.14));
+  const dayHeaderFontSizeEstimate = Math.max(
+    7,
+    Math.min(baseTypography.header * 0.95, monthHeight * 0.055),
+  );
+  const dayHeaderLineHeight = dayHeaderFontSizeEstimate * 1.15;
+  const dayHeaderTopGap = spacing.xs * 0.75;
+  const dayHeaderBottomGap = spacing.xs * 0.35;
+  const weekGap = spacing.xs * 0.18;
+
+  const dayCellWidthByColumns = (monthWidth - monthInnerPad * 2) / 7;
+  const weeksHeightBudget =
+    monthHeight -
+    titleLineHeight -
+    dayHeaderTopGap -
+    dayHeaderLineHeight -
+    dayHeaderBottomGap -
+    weekGap * 5;
+  const dayCellWidthByHeight = weeksHeightBudget / 6;
+  const dayCellWidth = Math.max(7.8, Math.min(dayCellWidthByColumns, dayCellWidthByHeight));
 
   const typography = useMemo(() => {
     const header = Math.min(baseTypography.header * 1.15, dayCellWidth * 0.42);
@@ -106,35 +145,42 @@ export default function YearView({ year, onMonthPress, markedDates, style, curre
           flex: 1,
           backgroundColor: theme.colors.card || theme.colors.surface,
           borderRadius: theme.radii?.lg ?? 16,
-          marginHorizontal: spacing.md,
+          marginHorizontal: spacing.xs,
           borderWidth: 1,
           borderColor: theme.colors.border,
           overflow: 'hidden',
         },
         content: {
-          paddingVertical: verticalPadding,
-          gap: spacing.lg,
+          flex: 1,
+          paddingHorizontal: gridHorizontalPadding,
+          paddingVertical: gridVerticalPadding,
+          alignItems: 'center',
+          justifyContent: 'space-between',
         },
         row: {
           flexDirection: 'row',
-          justifyContent: 'space-between',
-          paddingHorizontal: horizontalPadding,
+          justifyContent: 'flex-start',
+          width: monthWidth * 3 + columnGap * 2,
+          height: monthHeight,
         },
         monthCard: {
           width: monthWidth,
-          paddingHorizontal: innerPad,
-          paddingVertical: spacing.xs,
+          height: monthHeight,
+          marginRight: columnGap,
+          paddingHorizontal: monthInnerPad,
+          paddingVertical: spacing.xs * 0.2,
+        },
+        monthCardLast: {
+          marginRight: 0,
         },
         monthTitle: {
           fontFamily: typography.fontFamily,
           fontWeight: typography.weight?.bold ?? '700',
-          fontSize: typography.title,
+          fontSize: Math.min(typography.title, monthHeight * 0.155),
           color: theme.colors.text,
           textAlign: 'center',
-          lineHeight: typography.title * 1.2,
+          lineHeight: titleLineHeight,
           includeFontPadding: false,
-          numberOfLines: 1,
-          ellipsizeMode: 'clip',
         },
         monthTitleCurrent: {
           color: theme.colors.primary,
@@ -142,26 +188,22 @@ export default function YearView({ year, onMonthPress, markedDates, style, curre
         dayHeaderRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
-          marginTop: spacing.xs * 0.5,
-          marginBottom: spacing.xs * 0.5,
+          marginTop: dayHeaderTopGap,
+          marginBottom: dayHeaderBottomGap,
         },
         dayHeader: {
           width: dayCellWidth,
           fontFamily: typography.fontFamily,
           fontWeight: typography.weight?.medium ?? '500',
-          fontSize: typography.header,
-          lineHeight: typography.header * 1.15,
+          fontSize: Math.min(typography.header, dayHeaderFontSizeEstimate),
+          lineHeight: dayHeaderLineHeight,
           color: theme.colors.textSecondary,
           textAlign: 'center',
           includeFontPadding: false,
-          numberOfLines: 1,
-          ellipsizeMode: 'clip',
-          adjustsFontSizeToFit: true,
-          minimumFontScale: 0.75,
         },
         weeks: {
           flexDirection: 'column',
-          gap: spacing.xs * 0.35,
+          rowGap: weekGap,
         },
         weekRow: {
           flexDirection: 'row',
@@ -182,10 +224,6 @@ export default function YearView({ year, onMonthPress, markedDates, style, curre
           color: theme.colors.text,
           textAlign: 'center',
           includeFontPadding: false,
-          numberOfLines: 1,
-          ellipsizeMode: 'clip',
-          adjustsFontSizeToFit: true,
-          minimumFontScale: 0.75,
         },
         dayNumberToday: {
           color: theme.colors.primary,
@@ -203,16 +241,58 @@ export default function YearView({ year, onMonthPress, markedDates, style, curre
           backgroundColor: theme.colors.primary,
         },
       }),
-    [theme, typography, spacing, monthWidth, dayCellWidth, horizontalPadding, innerPad],
+    [
+      columnGap,
+      dayCellWidth,
+      dayHeaderBottomGap,
+      dayHeaderFontSizeEstimate,
+      dayHeaderLineHeight,
+      dayHeaderTopGap,
+      gridHorizontalPadding,
+      gridVerticalPadding,
+      monthHeight,
+      monthInnerPad,
+      monthWidth,
+      spacing.xs,
+      theme,
+      titleLineHeight,
+      typography,
+      weekGap,
+    ],
   );
 
-  const renderMonth = (monthIndex) => {
+  const transitionX = useSharedValue(0);
+  const transitionOpacity = useSharedValue(1);
+
+  useEffect(() => {
+    const startOffset = transitionDirection > 0 ? 24 : transitionDirection < 0 ? -24 : 0;
+    transitionX.value = startOffset;
+    transitionOpacity.value = startOffset === 0 ? 1 : 0.82;
+    transitionX.value = withTiming(0, { duration: 240 });
+    transitionOpacity.value = withTiming(1, { duration: 240 });
+  }, [transitionDirection, transitionOpacity, transitionX, year]);
+
+  const transitionStyle = useAnimatedStyle(() => ({
+    opacity: transitionOpacity.value,
+    transform: [{ translateX: transitionX.value }],
+  }));
+
+  const onRootLayout = (event) => {
+    const { width, height } = event.nativeEvent.layout;
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+    setViewport((prev) => {
+      if (Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1) return prev;
+      return { width, height };
+    });
+  };
+
+  const renderMonth = (monthIndex, isLastInRow = false) => {
     const { weeks } = monthsMatrix[monthIndex];
     const monthDate = new Date(year, monthIndex, 1);
     return (
       <Pressable
         key={monthIndex}
-        style={styles.monthCard}
+        style={[styles.monthCard, isLastInRow && styles.monthCardLast]}
         onPress={() => onMonthPress?.(monthDate)}
         android_ripple={{ color: theme.colors.ripple }}
         accessibilityRole="button"
@@ -257,15 +337,19 @@ export default function YearView({ year, onMonthPress, markedDates, style, curre
   };
 
   return (
-    <ScrollView style={[styles.container, style]} contentContainerStyle={styles.content}>
-      {monthRows.map((row, rowIdx) => (
-        <View key={`row-${rowIdx}`} style={styles.row}>
-          {row.map((_, idx) => {
-            const monthIndex = rowIdx * 3 + idx;
-            return renderMonth(monthIndex);
-          })}
+    <Animated.View style={[{ flex: 1, width: '100%' }, transitionStyle]} onLayout={onRootLayout}>
+      <View style={[styles.container, style]}>
+        <View style={styles.content}>
+        {monthRows.map((row, rowIdx) => (
+          <View key={`row-${rowIdx}`} style={styles.row}>
+            {row.map((_, idx) => {
+              const monthIndex = rowIdx * 3 + idx;
+              return renderMonth(monthIndex, idx === row.length - 1);
+            })}
+          </View>
+        ))}
         </View>
-      ))}
-    </ScrollView>
+      </View>
+    </Animated.View>
   );
 }

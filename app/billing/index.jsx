@@ -20,7 +20,7 @@ export default function BillingScreen() {
       const titleKeyFallback = 'routes.billing';
       nav.setParams({ headerTitle: t(titleKeyPrimary) || t(titleKeyFallback) || titleKeyFallback });
     } catch {}
-  }, [ver, t]);
+  }, [nav, ver, t]);
 
   return (
     <Screen background="background">

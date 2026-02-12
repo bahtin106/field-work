@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef } from 'react';
-import { ActivityIndicator, DevSettings, LogBox, Platform, View } from 'react-native';
+import { ActivityIndicator, DevSettings, LogBox, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -25,13 +25,7 @@ import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 
 function LastSeenTracker() {
-  try {
-    if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      useAppLastSeen(30_000);
-    }
-  } catch {
-    // silent
-  }
+  useAppLastSeen(30_000);
   return null;
 }
 
@@ -48,7 +42,7 @@ function RootLayoutInner() {
   useEffect(() => {
     try {
       patchRouter(router, { debounceMs: 600 });
-    } catch (_) {
+    } catch {
       // noop
     }
   }, [router]);

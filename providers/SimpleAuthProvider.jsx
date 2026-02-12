@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { bumpSessionEpoch } from '../lib/sessionEpoch';
 import { supabase } from '../lib/supabase';
+
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS = 'id, first_name, last_name, full_name, role, avatar_url, company_id';
+const PROFILE_LOAD_TIMEOUT_MS = 8000;
+const IS_DEV = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
 
 const buildProfileFromUser = (user, source = 'user-metadata') => {
   if (!user?.id) return null;
@@ -61,32 +64,42 @@ export function SimpleAuthProvider({ children }) {
     profile: null,
     profileError: null,
   });
+
   const profileRetryRef = useRef(null);
+  const authRequestIdRef = useRef(0);
+  const lastInitialSessionUserIdRef = useRef(null);
+  const profileRef = useRef(null);
+
+  useEffect(() => {
+    profileRef.current = state.profile;
+  }, [state.profile]);
+
+  const debugLog = useCallback((...args) => {
+    if (IS_DEV) console.debug(...args);
+  }, []);
 
   const loadProfile = useCallback(async (user) => {
     const userId = user?.id;
     if (!userId) return null;
 
-    console.log('[SimpleAuth] Loading profile for:', userId);
-    
+    debugLog('[SimpleAuth] Loading profile for:', userId);
+
     try {
-      // ПРЯМОЙ ПРОСТОЙ ЗАПРОС
-      const { data, error } = await supabase
-        .from('profiles')
-        .select(PROFILE_COLUMNS)
-        .eq('id', userId)
-        .single();
+      const profileQuery = supabase.from('profiles').select(PROFILE_COLUMNS).eq('id', userId).single();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('profile-load-timeout')), PROFILE_LOAD_TIMEOUT_MS),
+      );
+      const { data, error } = await Promise.race([profileQuery, timeoutPromise]);
 
       if (error) {
         if (error.code === 'PGRST116') {
-          // Профиля нет - создаем
-          console.log('[SimpleAuth] Creating new profile...');
+          debugLog('[SimpleAuth] Creating new profile...');
           const { data: created, error: createErr } = await supabase
             .from('profiles')
             .insert({ id: userId, user_id: userId, role: 'worker' })
             .select(PROFILE_COLUMNS)
             .single();
-          
+
           if (createErr) {
             console.error('[SimpleAuth] Create error:', createErr);
             throw createErr;
@@ -96,13 +109,18 @@ export function SimpleAuthProvider({ children }) {
         throw error;
       }
 
-      console.log('[SimpleAuth] Profile loaded:', data.role);
+      debugLog('[SimpleAuth] Profile loaded:', data.role);
       return normalizeProfileData(data, user, 'supabase');
     } catch (error) {
-      console.error('[SimpleAuth] Profile error:', error);
+      const isTimeout = error?.message === 'profile-load-timeout';
+      if (isTimeout) {
+        console.warn('[SimpleAuth] Profile load timed out');
+      } else {
+        console.error('[SimpleAuth] Profile error:', error);
+      }
       throw error;
     }
-  }, []);
+  }, [debugLog]);
 
   const clearProfileRetry = useCallback(() => {
     if (profileRetryRef.current) {
@@ -111,21 +129,13 @@ export function SimpleAuthProvider({ children }) {
     }
   }, []);
 
-  const scheduleProfileRetry = useCallback(
-    (user, attempt = 1) => {
-      if (!user?.id) return;
-      
-      // После fallback не переретраим - фоновая загрузка сама обновит при успехе
-      clearProfileRetry();
-      return;
-    },
-    [clearProfileRetry],
-  );
-
   const handleAuthChange = useCallback(
     async (event, session) => {
       if (event === 'SIGNED_OUT' || !session) {
         clearProfileRetry();
+        authRequestIdRef.current += 1;
+        lastInitialSessionUserIdRef.current = null;
+        profileRef.current = null;
         setState({
           isInitializing: false,
           isAuthenticated: false,
@@ -150,51 +160,81 @@ export function SimpleAuthProvider({ children }) {
           return;
         }
 
-        console.log('[SimpleAuth] Auth event:', event);
-        
-        // Попытка загрузить профиль из БД с fallback на metadata
-        setState({
-          isInitializing: true,
+        if (event === 'INITIAL_SESSION' && lastInitialSessionUserIdRef.current === user.id) {
+          return;
+        }
+        if (event === 'INITIAL_SESSION') {
+          lastInitialSessionUserIdRef.current = user.id;
+        }
+
+        debugLog('[SimpleAuth] Auth event:', event);
+
+        const requestId = ++authRequestIdRef.current;
+        const shouldBlockUi = event !== 'TOKEN_REFRESHED';
+
+        setState((prev) => ({
+          isInitializing: shouldBlockUi ? true : prev.isInitializing,
           isAuthenticated: true,
-          user: user,
-          profile: null, // Будет заполнен из БД или metadata
+          user,
+          profile: shouldBlockUi ? null : prev.profile,
           profileError: null,
-        });
+        }));
 
         try {
           const profile = await loadProfile(user);
-          console.log('[SimpleAuth] Setting profile state:', {
+          if (requestId !== authRequestIdRef.current) return;
+
+          debugLog('[SimpleAuth] Setting profile state:', {
             hasProfile: !!profile,
             role: profile?.role,
             source: profile?.__source,
           });
+
           setState((prev) => ({
             ...prev,
-            isInitializing: false,
-            profile: profile,
+            isInitializing: shouldBlockUi ? false : prev.isInitializing,
+            profile,
             profileError: profile ? null : 'load-failed',
           }));
+
           if (profile) {
-            console.log('[SimpleAuth] Profile loaded, role:', profile.role);
+            debugLog('[SimpleAuth] Profile loaded, role:', profile.role);
           }
         } catch (error) {
-          console.error('[SimpleAuth] Profile load failed, using fallback from metadata:', error?.message);
-          
-          // Fallback: используем оптимистичный профиль из metadata
+          if (requestId !== authRequestIdRef.current) return;
+          const isTimeout = error?.message === 'profile-load-timeout';
+          const hasExistingProfile = !!profileRef.current;
+
+          if (isTimeout) {
+            console.warn('[SimpleAuth] Profile load timeout during auth sync');
+          } else {
+            console.error('[SimpleAuth] Profile load failed, using fallback from metadata:', error?.message);
+          }
+
+          if (!shouldBlockUi && hasExistingProfile) {
+            setState((prev) => ({
+              ...prev,
+              isInitializing: prev.isInitializing,
+              profileError: isTimeout ? 'refresh-timeout-using-current-profile' : 'refresh-error-using-current-profile',
+            }));
+            bumpSessionEpoch();
+            return;
+          }
+
           const fallbackProfile = buildProfileFromUser(user, 'metadata-fallback');
-          console.log('[SimpleAuth] Using fallback profile:', {
+          debugLog('[SimpleAuth] Using fallback profile:', {
             role: fallbackProfile?.role,
             source: fallbackProfile?.__source,
           });
-          
+
           setState((prev) => ({
             ...prev,
-            isInitializing: false,
+            isInitializing: shouldBlockUi ? false : prev.isInitializing,
             profile: fallbackProfile,
-            profileError: 'db-error-using-fallback', // Ошибка БД, но используем fallback
+            profileError: 'db-error-using-fallback',
           }));
         }
-        
+
         bumpSessionEpoch();
         return;
       }
@@ -204,7 +244,7 @@ export function SimpleAuthProvider({ children }) {
         isInitializing: false,
       }));
     },
-    [loadProfile, clearProfileRetry],
+    [loadProfile, clearProfileRetry, debugLog],
   );
 
   useEffect(() => {
@@ -222,12 +262,7 @@ export function SimpleAuthProvider({ children }) {
           if (!mounted) return;
 
           if (error) {
-            console.warn(
-              'SimpleAuth: getSession error (attempt %s/%s)',
-              attempt,
-              MAX_ATTEMPTS,
-              error,
-            );
+            console.warn('SimpleAuth: getSession error (attempt %s/%s)', attempt, MAX_ATTEMPTS, error);
             if (attempt === MAX_ATTEMPTS) {
               setState({
                 isInitializing: false,

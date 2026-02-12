@@ -620,7 +620,7 @@ export default function StatsScreen() {
       }
     };
     initialize();
-  }, []);
+  }, [loadMe]);
 
   // Reload when dependencies change
   useFocusEffect(
@@ -629,7 +629,7 @@ export default function StatsScreen() {
         if (isManager) loadUsers();
         loadStats();
       }
-    }, [me, isManager, selectedUserId, periodRange]),
+    }, [isManager, loadStats, loadUsers, me]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -811,7 +811,7 @@ export default function StatsScreen() {
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>По статусам</Text>
             <View style={styles.chartCard}>
-              {stats.statusBreakdown.map((item, index) => (
+              {stats.statusBreakdown.map((item) => (
                 <View key={item.status} style={styles.statusItem}>
                   <View style={styles.statusLeft}>
                     <View style={[styles.statusDot, { backgroundColor: item.color }]} />

@@ -1,22 +1,23 @@
 // components/calendar/CalendarWeekRow.jsx
-import React from 'react';
+import { memo } from 'react';
 import { View } from 'react-native';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { CalendarGridCell } from './CalendarGridCell';
 
-export function CalendarWeekRow({
+function CalendarWeekRowComponent({
   week,
   monthDate,
   weekIdx,
   selectedDate,
   todayKey,
   eventCountsByDate,
-  isCollapsed,
   dayCellSize,
   onDatePress,
   styles,
   theme,
   indicatorSlotAnimatedStyle,
+  eventCountAnimatedStyle,
+  eventDotAnimatedStyle,
   onRowLayout,
 }) {
   return (
@@ -46,21 +47,41 @@ export function CalendarWeekRow({
             cell={cell}
             dayKey={dayKey}
             eventCount={eventCount}
-            isSelectedDay={isSelectedDay}
-            isToday={isToday}
             isTodaySelected={isTodaySelected}
             showOutline={showOutline}
             highlightTodayWhenNotSelected={highlightTodayWhenNotSelected}
             isCurrentMonth={isCurrentMonth}
-            showCounts={!isCollapsed}
             dayCellSize={dayCellSize}
-            onPress={() => onDatePress(dayKey)}
+            onDatePress={onDatePress}
             styles={styles}
             theme={theme}
             indicatorSlotAnimatedStyle={indicatorSlotAnimatedStyle}
+            eventCountAnimatedStyle={eventCountAnimatedStyle}
+            eventDotAnimatedStyle={eventDotAnimatedStyle}
           />
         );
       })}
     </View>
   );
 }
+
+function areEqual(prev, next) {
+  return (
+    prev.week === next.week &&
+    prev.monthDate?.getTime?.() === next.monthDate?.getTime?.() &&
+    prev.weekIdx === next.weekIdx &&
+    prev.selectedDate === next.selectedDate &&
+    prev.todayKey === next.todayKey &&
+    prev.eventCountsByDate === next.eventCountsByDate &&
+    prev.dayCellSize === next.dayCellSize &&
+    prev.onDatePress === next.onDatePress &&
+    prev.styles === next.styles &&
+    prev.theme === next.theme &&
+    prev.indicatorSlotAnimatedStyle === next.indicatorSlotAnimatedStyle &&
+    prev.eventCountAnimatedStyle === next.eventCountAnimatedStyle &&
+    prev.eventDotAnimatedStyle === next.eventDotAnimatedStyle &&
+    prev.onRowLayout === next.onRowLayout
+  );
+}
+
+export const CalendarWeekRow = memo(CalendarWeekRowComponent, areEqual);

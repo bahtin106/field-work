@@ -1,6 +1,6 @@
 // theme/ThemeProvider.jsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Appearance, FlatList, Platform, ScrollView, SectionList, Text } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { tokens } from './tokens';
@@ -246,7 +246,7 @@ const ThemeContext = createContext({
 
 export const ThemeProvider = ({ children }) => {
   const [mode, setMode] = useState('light');
-  const [hydrated, setHydrated] = useState(false);
+  const [_hydrated, setHydrated] = useState(false);
   const [, force] = useState(0);
 
   useEffect(() => {

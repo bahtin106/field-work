@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, View, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
@@ -38,7 +38,7 @@ export default function Dialog({
       });
       scale.value = withTiming(0.96, { duration: 140, easing: Easing.inOut(Easing.quad) });
     }
-  }, [visible]);
+  }, [mounted, progress, scale, visible]);
 
   const overlayStyle = useAnimatedStyle(() => ({
     opacity: progress.value * (Platform.OS === 'ios' ? 0.38 : 0.42),

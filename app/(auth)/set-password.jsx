@@ -118,7 +118,7 @@ export default function SetPasswordScreen() {
     }
 
     setValidationErrors(errors);
-  }, [password, confirmPassword, submittedAttempt, t]);
+  }, [password, confirmPassword, passwordsMatch, submittedAttempt, t]);
 
   const handleInvalidPasswordInput = useCallback(() => {
     setInvalidCharWarning(true);

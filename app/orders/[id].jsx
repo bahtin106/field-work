@@ -7,7 +7,7 @@ import { BlurView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -15,7 +15,6 @@ import {
   findNodeHandle,
   Image,
   InteractionManager,
-  Keyboard,
   Linking,
   Platform,
   Pressable,
@@ -66,6 +65,7 @@ import {
   useRequest,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { updateRequestWithVersion } from '../../src/features/requests/api';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
@@ -462,7 +462,7 @@ export default function OrderDetails() {
     } catch (e) {
       console.warn('Sync photos error:', e);
     }
-  }, [order?.id]);
+  }, [order]);
 
   const fetchServerPhotos = useCallback(async (orderId) => {
     try {
@@ -547,11 +547,11 @@ export default function OrderDetails() {
       // ПЕРЕДЕЛАНО: сохраняем статус "В работе" в БД и перезагружаем заявку
       if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
         try {
-          const { error: updateError } = await supabase
-            .from('orders')
-            .update({ status: 'В работе' })
-            .eq('id', id);
-          if (updateError) throw updateError;
+          await updateRequestWithVersion(
+            id,
+            { status: 'В работе' },
+            fetchedOrder?.updated_at || null,
+          );
 
           await queryClient.invalidateQueries({ queryKey: ['requests'] });
           await queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
@@ -664,7 +664,7 @@ export default function OrderDetails() {
   const handlePhonePress = useCallback(() => {
     const p = order?.customer_phone_visible;
     if (p) Linking.openURL(`tel:${formatPhoneE164(p)}`);
-  }, [order]);
+  }, [order, formatPhoneE164]);
 
   const handlePhoneLongPress = useCallback(async () => {
     const p = order?.customer_phone_visible;
@@ -732,12 +732,19 @@ export default function OrderDetails() {
 
         const updated = [...(order[category] || []), publicUrl];
 
-        const { error: updateError } = await supabase
-          .from('orders')
-          .update({ [category]: updated })
-          .eq('id', order.id);
+        let updateError = null;
+        try {
+          await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
+        } catch (e) {
+          updateError = e;
+        }
 
         if (updateError) {
+          if (updateError?.code === 'CONFLICT' && updateError?.latest) {
+            setOrder(updateError.latest);
+            showToast('Заявка уже обновилась на другом устройстве.');
+            return;
+          }
           showToast('Ошибка сохранения ссылки');
           return;
         }
@@ -763,10 +770,12 @@ export default function OrderDetails() {
         await supabase.storage.from('orders-photos').remove([relativePath]);
       }
 
-      const { error } = await supabase
-        .from('orders')
-        .update({ [category]: updated })
-        .eq('id', order.id);
+      let error = null;
+      try {
+        await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
+      } catch (e) {
+        error = e;
+      }
 
       if (!error) {
         setOrder({ ...order, [category]: updated });
@@ -805,12 +814,19 @@ export default function OrderDetails() {
       return;
     }
 
-    const { error } = await supabase
-      .from('orders')
-      .update({ status: 'Завершённая' })
-      .eq('id', order.id);
+    let error = null;
+    try {
+      await updateRequestWithVersion(order.id, { status: 'Завершённая' }, order?.updated_at || null);
+    } catch (e) {
+      error = e;
+    }
 
     if (error) {
+      if (error?.code === 'CONFLICT' && error?.latest) {
+        setOrder(error.latest);
+        showToast('Заявка уже обновилась на другом устройстве.');
+        return;
+      }
       showToast(t('order_toast_finish_error'));
       return;
     }
@@ -839,12 +855,12 @@ export default function OrderDetails() {
       } else {
         showToast('Упс, заявку уже принял кто-то другой');
       }
-    } catch (e) {
+    } catch {
       showToast(t('order_toast_network_error'));
     }
   }, [order, users, userId, showToast, t]);
 
-  const handleSubmitEdit = useCallback(async () => {
+  const _handleSubmitEdit = useCallback(async () => {
     const reqCheck = validateRequiredBySchemaEdit();
     if (!reqCheck.ok) {
       showWarning(reqCheck.msg);
@@ -895,14 +911,23 @@ export default function OrderDetails() {
       return;
     }
 
-    const { data, error } = await supabase
-      .from('orders')
-      .update(payload)
-      .eq('id', targetId)
-      .select()
-      .single();
+    let data = null;
+    let error = null;
+    try {
+      data = await updateRequestWithVersion(targetId, payload, order?.updated_at || null);
+    } catch (e) {
+      error = e;
+    }
 
     if (error) {
+      if (error?.code === 'CONFLICT') {
+        if (error?.latest) {
+          setOrder(error.latest);
+          initialFormSnapshotRef.current = makeSnapshotFromOrder(error.latest);
+        }
+        showToast('Заявка уже изменена на другом устройстве. Данные обновлены.');
+        return;
+      }
       showToast(error.message || t('order_save_error'));
     } else {
       setOrder(data);
@@ -956,6 +981,7 @@ export default function OrderDetails() {
     street,
     house,
     customerName,
+    description,
     phone,
     departureDate,
     assigneeId,
@@ -982,11 +1008,22 @@ export default function OrderDetails() {
       if (!canEdit()) return;
       try {
         if (next === t('order_status_in_feed')) {
-          const { error } = await supabase
-            .from('orders')
-            .update({ status: t('order_status_in_feed'), assigned_to: null })
-            .eq('id', order.id);
+          let error = null;
+          try {
+            await updateRequestWithVersion(
+              order.id,
+              { status: t('order_status_in_feed'), assigned_to: null },
+              order?.updated_at || null,
+            );
+          } catch (e) {
+            error = e;
+          }
           if (error) {
+            if (error?.code === 'CONFLICT' && error?.latest) {
+              setOrder(error.latest);
+              showToast('Статус уже изменен с другого устройства.');
+              return;
+            }
             showToast(t('order_toast_status_updated'));
             return;
           }
@@ -1003,8 +1040,18 @@ export default function OrderDetails() {
           return;
         }
 
-        const { error } = await supabase.from('orders').update({ status: next }).eq('id', order.id);
+        let error = null;
+        try {
+          await updateRequestWithVersion(order.id, { status: next }, order?.updated_at || null);
+        } catch (e) {
+          error = e;
+        }
         if (error) {
+          if (error?.code === 'CONFLICT' && error?.latest) {
+            setOrder(error.latest);
+            showToast('Статус уже изменен с другого устройства.');
+            return;
+          }
           showToast('Не удалось сменить статус');
           return;
         }
@@ -1119,7 +1166,7 @@ export default function OrderDetails() {
     } else {
       router.replace('/orders/my-orders');
     }
-  }, [editMode, returnTo, backTargetPath, pathname, router, returnParams, navigation]);
+  }, [editMode, returnTo, backTargetPath, pathname, router, returnParams, navigation, requestCloseEdit]);
 
   const requestCloseEdit = useCallback(() => {
     if (formIsDirty()) {
@@ -1134,7 +1181,7 @@ export default function OrderDetails() {
     setWarningVisible(true);
   }, []);
 
-  const scrollToDateField = useCallback(() => {
+  const _scrollToDateField = useCallback(() => {
     const node = dateFieldRef.current;
     const scrollNode = findNodeHandle(detailsScrollRef.current);
     if (!node || !scrollNode) return;
@@ -1432,7 +1479,7 @@ export default function OrderDetails() {
     if (!order?.id || firstContentTrackedRef.current) return;
     firstContentTrackedRef.current = true;
     markFirstContent('RequestView');
-  }, [order?.id]);
+  }, [order, order?.id]);
 
   useRequestRealtimeSync({ enabled: !!id, companyId });
 
@@ -1446,7 +1493,7 @@ export default function OrderDetails() {
       try {
         const data = await fetchFormSchema('edit');
         if (mounted && data && Array.isArray(data.fields)) setSchemaEdit(data);
-      } catch (e) {
+      } catch {
         // silent fallback
       }
     })();
@@ -1583,13 +1630,6 @@ export default function OrderDetails() {
     resetZoom();
   }, [viewerIndex, resetZoom]);
 
-  // Компонент заголовка: измеряет ширины и анимирует пролистывание длинного текста
-  const HeaderTitle = useCallback(
-    ({ text }) => {
-      return null; // removed: headerTitle не используется напрямую — реализовано через MarqueeHeader ниже
-    },
-    [theme],
-  );
   // Короткая версия для заголовка native (обязательно строка — чтобы не ломать Screen/header)
   const fullTitle = order?.title || t('routes.orders/[id]', 'routes.orders/[id]');
   const shortTitle = useMemo(() => {
@@ -1597,92 +1637,6 @@ export default function OrderDetails() {
     const max = 36;
     return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
   }, [fullTitle]);
-
-  // Абсолютный оверлей с marquee-прокруткой (не блокирует клики)
-  const MarqueeHeader = useCallback(() => {
-    const containerW = useRef(0);
-    const textW = useRef(0);
-    const anim = useRef(new RNAnimated.Value(0)).current;
-    const running = useRef(false);
-
-    useEffect(() => {
-      running.current = true;
-      let mounted = true;
-
-      const start = () => {
-        if (!mounted) return;
-        const overflow = Math.max(0, (textW.current || 0) - (containerW.current || 0));
-        if (overflow <= 2) {
-          RNAnimated.timing(anim, { toValue: 0, duration: 120, useNativeDriver: true }).start();
-          return;
-        }
-        const duration = Math.max(900, Math.round(overflow * 12));
-        const seq = RNAnimated.sequence([
-          RNAnimated.delay(700),
-          RNAnimated.timing(anim, { toValue: -overflow, duration, useNativeDriver: true }),
-          RNAnimated.delay(900),
-          RNAnimated.timing(anim, { toValue: 0, duration, useNativeDriver: true }),
-        ]);
-        const loop = () => {
-          if (!running.current || !mounted) return;
-          seq.start(({ finished }) => {
-            if (finished && running.current && mounted) loop();
-          });
-        };
-        loop();
-      };
-
-      start();
-      return () => {
-        mounted = false;
-        running.current = false;
-        anim.stopAnimation?.();
-      };
-    }, [fullTitle, anim]);
-
-    // позиционирование: берем высоту header из theme или дефолт 56
-    const headerH = theme?.components?.header?.height ?? 56;
-    const leftOffset = 56; // оставить место для back button
-    const rightOffset = 96; // место для правой кнопки
-
-    return (
-      <View
-        pointerEvents="none"
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: leftOffset,
-          right: rightOffset,
-          height: headerH,
-          justifyContent: 'center',
-          overflow: 'hidden',
-        }}
-      >
-        <View
-          style={{ overflow: 'hidden', width: '100%' }}
-          onLayout={(e) => {
-            containerW.current = e.nativeEvent.layout.width || 0;
-          }}
-        >
-          <RNAnimated.Text
-            numberOfLines={1}
-            ellipsizeMode="clip"
-            onLayout={(e) => {
-              textW.current = e.nativeEvent.layout.width || 0;
-            }}
-            style={{
-              transform: [{ translateX: anim }],
-              color: theme.colors.text,
-              fontSize: theme.typography?.sizes?.md || 16,
-              fontWeight: theme.typography?.weight?.semibold || '600',
-            }}
-          >
-            {fullTitle}
-          </RNAnimated.Text>
-        </View>
-      </View>
-    );
-  }, [fullTitle, theme]);
 
   if (permsLoading || loading || !order) {
     return (
@@ -1693,7 +1647,7 @@ export default function OrderDetails() {
   }
 
   const statusMeta = getStatusMeta(order.status);
-  const selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
+  const _selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
   const canChangeStatus = canEdit() && order.status !== 'В ленте';
 

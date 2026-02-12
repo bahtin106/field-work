@@ -99,7 +99,7 @@ export default function IconButton({
   const onPressIn = () => {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e) {}
+    } catch {}
     Animated.timing(scale, {
       toValue: 0.94,
       duration: 80,
@@ -120,7 +120,7 @@ export default function IconButton({
       if (ok) {
         try {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        } catch (e) {}
+        } catch {}
         setSuccess(true);
 
         // Плавная анимация появления галочки

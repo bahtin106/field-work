@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 
@@ -13,7 +13,6 @@ function createStyles(theme) {
   const rad = theme.radii;
   const controlH = theme?.components?.input?.height ?? 44;
   const iconSize = theme?.components?.icon?.sizeSm ?? 18;
-  const ALPHA_RIPPLE = theme?.components?.ripple?.alpha ?? 0.13;
 
   return StyleSheet.create({
     container: {

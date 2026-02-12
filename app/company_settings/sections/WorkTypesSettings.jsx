@@ -49,7 +49,7 @@ export default function WorkTypesSettings() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [toast]);
 
   const toggleUseWT = async () => {
     try {

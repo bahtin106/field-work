@@ -1,5 +1,5 @@
 // app/company_settings/sections/RoleAccessSettings.jsx
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../../../theme/ThemeProvider';
 import {
   View,
@@ -108,7 +108,7 @@ export default function RoleAccessSettings() {
             setPermMatrix(deepClone(START_PRESET));
           }
         }
-      } catch (e) {
+      } catch {
         // не падаем, показываем START_PRESET
       } finally {
         if (mounted) setLoading(false);
@@ -181,11 +181,11 @@ export default function RoleAccessSettings() {
         setTimeout(() => {
           try {
             supabase.removeChannel(ch);
-          } catch (_) {}
+          } catch {}
         }, 250);
-      } catch (_) {}
+      } catch {}
       Alert.alert('Сохранено', 'Права обновлены в базе данных.');
-    } catch (e) {
+    } catch {
       Alert.alert('Ошибка сохранения', e?.message || 'Не удалось сохранить права.');
     } finally {
       setSaving(false);
@@ -317,12 +317,11 @@ export default function RoleAccessSettings() {
         ))}
       </View>
     );
-  }, [permMatrix]);
+  }, [permMatrix, theme]);
 
   return (
     <Screen
       background="background"
-      edges={['top', 'bottom']}
       edges={['top', 'bottom']}
       style={{ flex: 1, backgroundColor: theme.colors.background }}
     >

@@ -92,6 +92,21 @@ export function useRequestRealtimeSync({ enabled = true, companyId = null } = {}
 
   useEffect(() => {
     if (!enabled) return;
+    const changedIds = new Set();
+    let flushTimer = null;
+
+    const flushInvalidations = () => {
+      flushTimer = null;
+      const ids = Array.from(changedIds);
+      changedIds.clear();
+
+      for (const rowId of ids) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(rowId) });
+      }
+      queryClient.invalidateQueries({ queryKey: ['requests', 'all'] });
+      queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
+      queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
+    };
 
     const filter = companyId ? `company_id=eq.${companyId}` : undefined;
     const channel = supabase
@@ -107,14 +122,19 @@ export function useRequestRealtimeSync({ enabled = true, companyId = null } = {}
         (payload) => {
           const rowId = payload?.new?.id || payload?.old?.id;
           if (rowId) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(rowId) });
+            changedIds.add(rowId);
           }
-          queryClient.invalidateQueries({ queryKey: ['requests'] });
+          if (flushTimer == null) {
+            flushTimer = setTimeout(flushInvalidations, 150);
+          }
         },
       )
       .subscribe();
 
     return () => {
+      if (flushTimer != null) {
+        clearTimeout(flushTimer);
+      }
       try {
         supabase.removeChannel(channel);
       } catch {}
@@ -126,7 +146,8 @@ export function useUpdateRequestMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, patch }) => updateRequest(id, patch),
+    mutationFn: ({ id, patch, expectedUpdatedAt = null }) =>
+      updateRequest(id, patch, expectedUpdatedAt),
     onMutate: async ({ id, patch }) => {
       const detailKey = queryKeys.requests.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
@@ -136,9 +157,12 @@ export function useUpdateRequestMutation() {
       }
       return { previous, detailKey };
     },
-    onError: (_error, _variables, context) => {
+    onError: (error, _variables, context) => {
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
+      }
+      if (error?.code === 'CONFLICT' && error?.latest?.id) {
+        queryClient.setQueryData(queryKeys.requests.detail(error.latest.id), error.latest);
       }
     },
     onSuccess: (next) => {

@@ -83,7 +83,7 @@ export default function Screen({
             onPress={() => {
               try {
                 Keyboard.dismiss();
-              } catch (_) {}
+              } catch {}
             }}
           >
             <View style={{ flex: 1 }}>{children}</View>

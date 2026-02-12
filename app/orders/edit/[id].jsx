@@ -1,7 +1,7 @@
 // apps/field-work/app/orders/edit/[id].jsx
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   ActivityIndicator,
@@ -383,7 +383,7 @@ export default function EditOrderScreen() {
       headerResetRef.current = null;
     }
     setHeaderLabel(saving ? T('toast_saving') : T('header_save'));
-  }, [saving, T]);
+  }, [saving]);
 
   useEffect(() => {
     return () => {
@@ -478,12 +478,12 @@ export default function EditOrderScreen() {
             if (r && r.current && typeof r.current.blur === 'function') {
               r.current.blur();
             }
-          } catch (e) {
+          } catch {
             // ignore
           }
         },
       );
-    } catch (e) {
+    } catch {
       // ignore
     }
 
@@ -565,7 +565,11 @@ export default function EditOrderScreen() {
         ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
       };
 
-      await updateRequestMutation.mutateAsync({ id, patch: payload });
+      await updateRequestMutation.mutateAsync({
+        id,
+        patch: payload,
+        expectedUpdatedAt: orderData?.updated_at || null,
+      });
       snapshotRef.current = buildSnapshot({
         title,
         description,
@@ -590,7 +594,15 @@ export default function EditOrderScreen() {
       if (__DEV__) {
         console.warn('order save failed', err?.message || err);
       }
-      showToast(T('order_save_error'), 'error');
+      if (err?.code === 'CONFLICT') {
+        showToast(
+          'Заявка уже была изменена на другом устройстве. Открыта актуальная версия, проверьте поля.',
+          'warning',
+        );
+        await refetchOrder();
+      } else {
+        showToast(T('order_save_error'), 'error');
+      }
     } finally {
       setSaving(false);
     }
