@@ -18,12 +18,43 @@ function clamp(value, min, max) {
 }
 
 function getMonthWeeks(year, month) {
-  const days = getMonthDays(year, month, 1);
-  const padded = [...days];
-  while (padded.length % 7 !== 0) padded.push({ day: null, date: null });
+  const monthDays = getMonthDays(year, month, 1).map((d) => ({ ...d, isCurrentMonth: true }));
+  const leadingCount = monthDays.findIndex((d) => d?.day);
+  const safeLeadingCount = leadingCount < 0 ? 0 : leadingCount;
+  const prevMonthDate = new Date(year, month, 0);
+  const prevMonthYear = prevMonthDate.getFullYear();
+  const prevMonthIndex = prevMonthDate.getMonth();
+  const prevMonthTotalDays = prevMonthDate.getDate();
+
+  const leading = Array.from({ length: safeLeadingCount }, (_, idx) => {
+    const day = prevMonthTotalDays - safeLeadingCount + idx + 1;
+    return {
+      day,
+      date: new Date(prevMonthYear, prevMonthIndex, day),
+      isCurrentMonth: false,
+    };
+  });
+
+  const current = monthDays.filter((d) => d?.day);
+  const base = [...leading, ...current];
+  const trailingCount = (7 - (base.length % 7)) % 7;
+  const nextMonthDate = new Date(year, month + 1, 1);
+  const nextMonthYear = nextMonthDate.getFullYear();
+  const nextMonthIndex = nextMonthDate.getMonth();
+  const trailing = Array.from({ length: trailingCount }, (_, idx) => {
+    const day = idx + 1;
+    return {
+      day,
+      date: new Date(nextMonthYear, nextMonthIndex, day),
+      isCurrentMonth: false,
+    };
+  });
+
+  const filled = [...base, ...trailing];
+
   const weeks = [];
-  for (let i = 0; i < padded.length; i += 7) {
-    weeks.push(padded.slice(i, i + 7));
+  for (let i = 0; i < filled.length; i += 7) {
+    weeks.push(filled.slice(i, i + 7));
   }
   return weeks;
 }

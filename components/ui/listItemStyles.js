@@ -40,6 +40,7 @@ export const listItemStyles = (t) =>
       justifyContent: 'flex-end',
       flexShrink: 1,
       minWidth: 0,
+      paddingRight: t.spacing.xs,
     },
 
     // Wrapper for value text/component

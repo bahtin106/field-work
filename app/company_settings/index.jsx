@@ -24,8 +24,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 import { Feather } from '@expo/vector-icons';
-import { useQueryClient } from '@tanstack/react-query';
-import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
 
@@ -93,8 +92,8 @@ const FALLBACK_TZ = [
   'Asia/Yakutsk',
   'Asia/Vladivostok',
   'Asia/Sakhalin',
-  'Asia/Magадан',
-  'Asia/Кamчатка',
+  'Asia/MagР°РґР°РЅ',
+  'Asia/РљamС‡Р°С‚РєР°',
   'Asia/Tbilisi',
   'Asia/Yerevan',
   'Asia/Baku',
@@ -158,29 +157,29 @@ function getAllTimeZones() {
   return FALLBACK_TZ.filter(isZoneSupported);
 }
 
-/** RU-friendly city names; fallback → last segment */
+/** RU-friendly city names; fallback в†’ last segment */
 const RU_CITY = {
-  'Europe/Moscow': 'Москва',
-  'Europe/Kaliningrad': 'Калининград',
-  'Europe/Samara': 'Самара',
-  'Europe/Saratov': 'Саратов',
-  'Asia/Yekaterinburg': 'Екатеринбург',
-  'Asia/Omsk': 'Омск',
-  'Asia/Novosibirsk': 'Новосибирск',
-  'Asia/Krasnoyarsk': 'Красноярск',
-  'Asia/Irkutsk': 'Иркутск',
-  'Asia/Yakutsk': 'Якутск',
-  'Asia/Vladivostok': 'Владивосток',
-  'Asia/Magadan': 'Магадан',
-  'Asia/Sakhalin': 'Сахалин',
-  'Asia/Кamчатка': 'Камчатка',
-  'Asia/Almaty': 'Алматы',
-  'Asia/Aqtau': 'Актау',
-  'Asia/Aqtobe': 'Актобе',
-  'Asia/Atyrau': 'Атырау',
-  'Asia/Oral': 'Орал',
-  'Asia/Qostanay': 'Костанай',
-  'Asia/Qyzylorda': 'Кызылорда',
+  'Europe/Moscow': 'РњРѕСЃРєРІР°',
+  'Europe/Kaliningrad': 'РљР°Р»РёРЅРёРЅРіСЂР°Рґ',
+  'Europe/Samara': 'РЎР°РјР°СЂР°',
+  'Europe/Saratov': 'РЎР°СЂР°С‚РѕРІ',
+  'Asia/Yekaterinburg': 'Р•РєР°С‚РµСЂРёРЅР±СѓСЂРі',
+  'Asia/Omsk': 'РћРјСЃРє',
+  'Asia/Novosibirsk': 'РќРѕРІРѕСЃРёР±РёСЂСЃРє',
+  'Asia/Krasnoyarsk': 'РљСЂР°СЃРЅРѕСЏСЂСЃРє',
+  'Asia/Irkutsk': 'РСЂРєСѓС‚СЃРє',
+  'Asia/Yakutsk': 'РЇРєСѓС‚СЃРє',
+  'Asia/Vladivostok': 'Р’Р»Р°РґРёРІРѕСЃС‚РѕРє',
+  'Asia/Magadan': 'РњР°РіР°РґР°РЅ',
+  'Asia/Sakhalin': 'РЎР°С…Р°Р»РёРЅ',
+  'Asia/РљamС‡Р°С‚РєР°': 'РљР°РјС‡Р°С‚РєР°',
+  'Asia/Almaty': 'РђР»РјР°С‚С‹',
+  'Asia/Aqtau': 'РђРєС‚Р°Сѓ',
+  'Asia/Aqtobe': 'РђРєС‚РѕР±Рµ',
+  'Asia/Atyrau': 'РђС‚С‹СЂР°Сѓ',
+  'Asia/Oral': 'РћСЂР°Р»',
+  'Asia/Qostanay': 'РљРѕСЃС‚Р°РЅР°Р№',
+  'Asia/Qyzylorda': 'РљС‹Р·С‹Р»РѕСЂРґР°',
 };
 
 function getOffsetMinutes(zone) {
@@ -230,13 +229,13 @@ function formatUtcOffset(totalMinutes) {
   return `UTC${sign}${hh}:${mm}`;
 }
 
-/** Build label "Город — UTC+03:00" */
+/** Build label "Р“РѕСЂРѕРґ вЂ” UTC+03:00" */
 function zoneToItem(zone, deviceZone, t) {
   const offsetMin = getOffsetMinutes(zone);
   const offset = formatUtcOffset(offsetMin);
   const city = RU_CITY[zone] ?? zone.split('/').pop().replace(/_/g, ' ');
   const isDevice = zone === deviceZone;
-  const label = `${city} — ${offset}`;
+  const label = `${city} вЂ” ${offset}`;
   const basic = [
     zone,
     offset,
@@ -245,7 +244,7 @@ function zoneToItem(zone, deviceZone, t) {
     offset.replace('UTC', '').replace(':00', '').trim(),
     `${offsetMin >= 0 ? '+' : ''}${Math.floor(offsetMin / 60)}`,
   ].join(' ');
-  const subtitle = isDevice ? `${basic} · ${t('timezone_subtitle_device')}` : basic;
+  const subtitle = isDevice ? `${basic} В· ${t('timezone_subtitle_device')}` : basic;
   return { id: zone, label, subtitle, offsetMin, city };
 }
 
@@ -258,14 +257,15 @@ export default function CompanySettings() {
   const { t } = useTranslation();
   const ver = useI18nVersion();
   const queryClient = useQueryClient();
+  const companyQueryKey = React.useMemo(() => ['companySettings'], []);
 
-  // Загружаем настройки компании с кешем
+  // Load company settings via shared query cache.
   const {
     data: companyData,
     isLoading: isLoadingCompany,
-    refresh: refreshCompany,
-  } = useQueryWithCache({
-    queryKey: 'companySettings',
+    refetch: refreshCompany,
+  } = useQuery({
+    queryKey: companyQueryKey,
     queryFn: async () => {
       const {
         data: { user },
@@ -291,15 +291,15 @@ export default function CompanySettings() {
 
       return companyRow;
     },
-    ttl: 5 * 60 * 1000, // 5 минут
-    staleTime: 2 * 60 * 1000, // 2 минуты
-    placeholderData: null,
-    enableRealtime: true,
-    realtimeTable: 'companies',
-    supabaseClient: supabase,
+    gcTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev ?? null,
   });
 
-  // Единицы времени и преобразователи — зависят от t, поэтому внутри компонента
+  // Intentionally avoid broad realtime subscription here.
+  // Company settings are updated via explicit saves and targeted query invalidation/refetch.
+
+  // Р•РґРёРЅРёС†С‹ РІСЂРµРјРµРЅРё Рё РїСЂРµРѕР±СЂР°Р·РѕРІР°С‚РµР»Рё вЂ” Р·Р°РІРёСЃСЏС‚ РѕС‚ t, РїРѕСЌС‚РѕРјСѓ РІРЅСѓС‚СЂРё РєРѕРјРїРѕРЅРµРЅС‚Р°
   const UNIT_ITEMS = React.useMemo(
     () => [
       { id: 'min', label: t('time_unit_minutes'), mul: 1 },
@@ -325,7 +325,7 @@ export default function CompanySettings() {
     [UNIT_ITEMS],
   );
 
-  // Батч-обновление нескольких полей компаний
+  // Р‘Р°С‚С‡-РѕР±РЅРѕРІР»РµРЅРёРµ РЅРµСЃРєРѕР»СЊРєРёС… РїРѕР»РµР№ РєРѕРјРїР°РЅРёР№
   const updateSettings = React.useCallback(
     async (patch) => {
       if (!supabase) throw new Error(t('errors_noDb'));
@@ -343,7 +343,7 @@ export default function CompanySettings() {
       const { error } = await supabase.from('companies').update(patch).eq('id', companyId);
       if (error) throw error;
 
-      // Обновляем кеш после успешного сохранения
+      // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ
       await refreshCompany();
 
       return true;
@@ -353,7 +353,7 @@ export default function CompanySettings() {
 
   const s = React.useMemo(() => styles(theme), [theme]);
 
-  // Инициализация state из кеша
+  // РРЅРёС†РёР°Р»РёР·Р°С†РёСЏ state РёР· РєРµС€Р°
   const [timeZone, setTimeZone] = React.useState(
     () => companyData?.timezone || getDeviceTimeZone(),
   );
@@ -409,7 +409,7 @@ export default function CompanySettings() {
     } catch {}
   }, [ver, t]);
 
-  // Обновляем state когда приходят данные из кеша
+  // РћР±РЅРѕРІР»СЏРµРј state РєРѕРіРґР° РїСЂРёС…РѕРґСЏС‚ РґР°РЅРЅС‹Рµ РёР· РєРµС€Р°
   React.useEffect(() => {
     if (!companyData) return;
 
@@ -472,10 +472,10 @@ export default function CompanySettings() {
       const { error: upErr } = await supabase.from('companies').update(payload).eq('id', companyId);
       if (upErr) throw upErr;
 
-      // Обновляем кеш после успешного сохранения
+      // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РїРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ
       await refreshCompany();
 
-      // Инвалидируем кеш настроек компании для немедленного обновления UI
+      // РРЅРІР°Р»РёРґРёСЂСѓРµРј РєРµС€ РЅР°СЃС‚СЂРѕРµРє РєРѕРјРїР°РЅРёРё РґР»СЏ РЅРµРјРµРґР»РµРЅРЅРѕРіРѕ РѕР±РЅРѕРІР»РµРЅРёСЏ UI
       await queryClient.invalidateQueries({ queryKey: ['companySettings'] });
 
       return true;
@@ -519,7 +519,7 @@ export default function CompanySettings() {
 
   const timeZoneLabel = tzMap.get(timeZone)?.label || timeZone;
 
-  // Нормализованный курс для передачи на сервер и отображения
+  // РќРѕСЂРјР°Р»РёР·РѕРІР°РЅРЅС‹Р№ РєСѓСЂСЃ РґР»СЏ РїРµСЂРµРґР°С‡Рё РЅР° СЃРµСЂРІРµСЂ Рё РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ
   const parsedDisplayed = React.useMemo(() => {
     const n = Number(currencyRate);
     return Number.isFinite(n) ? n : null;
@@ -632,7 +632,7 @@ export default function CompanySettings() {
       // As a last resort, if both currencies are same, return 1
       if (String(base).toUpperCase() === String(target).toUpperCase()) return 1;
 
-      setFetchRateError('Не удалось загрузить курс с внешних сервисов');
+      setFetchRateError('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєСѓСЂСЃ СЃ РІРЅРµС€РЅРёС… СЃРµСЂРІРёСЃРѕРІ');
       return null;
     } finally {
       setFetchingRate(false);
@@ -704,11 +704,11 @@ export default function CompanySettings() {
         autoFetchedRef.current = true;
         return rate;
       }
-      setFetchRateError(t('modal_currency_rate_fetch_failed') || 'Не удалось загрузить курс');
+      setFetchRateError(t('modal_currency_rate_fetch_failed') || 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєСѓСЂСЃ');
       autoFetchedRef.current = true;
       return null;
     } catch (err) {
-      setFetchRateError(t('modal_currency_rate_fetch_failed') || 'Не удалось загрузить курс');
+      setFetchRateError(t('modal_currency_rate_fetch_failed') || 'РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РєСѓСЂСЃ');
       autoFetchedRef.current = true;
       return null;
     } finally {
@@ -859,7 +859,7 @@ export default function CompanySettings() {
     (it) => {
       setPhoneModeOpen(false);
       if (it.id === 'window') {
-        // Откроем модалку настройки интервала.
+        // РћС‚РєСЂРѕРµРј РјРѕРґР°Р»РєСѓ РЅР°СЃС‚СЂРѕР№РєРё РёРЅС‚РµСЂРІР°Р»Р°.
         try {
           const b = decomposeMinutes(windowBefore);
           const a = decomposeMinutes(windowAfter);
@@ -1025,7 +1025,7 @@ export default function CompanySettings() {
             <SelectField
               label={
                 <Text style={s.itemLabel}>
-                  {t('settings_company_currency_label') || 'Валюта компании'}
+                  {t('settings_company_currency_label') || 'Р’Р°Р»СЋС‚Р° РєРѕРјРїР°РЅРёРё'}
                 </Text>
               }
               value={
@@ -1270,7 +1270,7 @@ export default function CompanySettings() {
                 if (needsRecalc) {
                   if (!currencyRate || Number.isNaN(Number(currencyRate))) {
                     toast.show(
-                      t('modal_currency_rate_required') || 'Введите курс для пересчёта',
+                      t('modal_currency_rate_required') || 'Р’РІРµРґРёС‚Рµ РєСѓСЂСЃ РґР»СЏ РїРµСЂРµСЃС‡С‘С‚Р°',
                       'info',
                     );
                     return;
@@ -1487,7 +1487,7 @@ export default function CompanySettings() {
         </View>
       </BaseModal>
 
-      {/* Настройка интервала показа телефона */}
+      {/* РќР°СЃС‚СЂРѕР№РєР° РёРЅС‚РµСЂРІР°Р»Р° РїРѕРєР°Р·Р° С‚РµР»РµС„РѕРЅР° */}
       <BaseModal
         visible={windowModalOpen}
         onClose={() => setWindowModalOpen(false)}
@@ -1558,7 +1558,7 @@ export default function CompanySettings() {
         }
       >
         <View style={{ gap: theme.spacing.lg }}>
-          {/* Группа: До выезда */}
+          {/* Р“СЂСѓРїРїР°: Р”Рѕ РІС‹РµР·РґР° */}
           <View
             style={{
               backgroundColor: theme.colors.surface,
@@ -1597,7 +1597,7 @@ export default function CompanySettings() {
             </View>
           </View>
 
-          {/* Группа: После выезда */}
+          {/* Р“СЂСѓРїРїР°: РџРѕСЃР»Рµ РІС‹РµР·РґР° */}
           <View
             style={{
               backgroundColor: theme.colors.surface,
@@ -1648,7 +1648,7 @@ export default function CompanySettings() {
             </Text>
           </View>
 
-          {/* Сводка текущего выбора */}
+          {/* РЎРІРѕРґРєР° С‚РµРєСѓС‰РµРіРѕ РІС‹Р±РѕСЂР° */}
           <View
             style={{
               flexDirection: 'row',
@@ -1689,7 +1689,7 @@ export default function CompanySettings() {
         </View>
       </BaseModal>
 
-      {/* Выбор единицы для "за" */}
+      {/* Р’С‹Р±РѕСЂ РµРґРёРЅРёС†С‹ РґР»СЏ "Р·Р°" */}
       <SelectModal
         visible={beforeUnitOpen}
         title={t('modal_pick_unit')}
@@ -1702,7 +1702,7 @@ export default function CompanySettings() {
         searchable={false}
       />
 
-      {/* Выбор единицы для "после" */}
+      {/* Р’С‹Р±РѕСЂ РµРґРёРЅРёС†С‹ РґР»СЏ "РїРѕСЃР»Рµ" */}
       <SelectModal
         visible={afterUnitOpen}
         title={t('modal_pick_unit')}

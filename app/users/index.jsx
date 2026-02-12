@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  InteractionManager,
   Keyboard,
   Platform,
   RefreshControl,
@@ -14,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -21,13 +23,16 @@ import { useTheme } from '../../theme/ThemeProvider';
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import { useFilters } from '../../components/hooks/useFilters';
-// Cache-enabled hooks
-import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
-import { useUsers } from '../../components/hooks/useUsers';
 import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
-import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import { pluralizeRu } from '../../lib/pluralize';
+import {
+  ensureEmployeePrefetch,
+  useDepartmentsQuery,
+  useEmployees,
+  useEmployeesRealtimeSync,
+} from '../../src/features/employees/queries';
+import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
@@ -54,6 +59,7 @@ export default function UsersIndex() {
   useTranslation(); // subscribe to i18n changes without re-plumbing
 
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -69,30 +75,32 @@ export default function UsersIndex() {
     ttl: 5000, // 5 seconds
   });
 
-  const { companyId, loading: companyIdLoading } = useMyCompanyId();
+  const { data: companyId, isLoading: companyIdLoading } = useMyCompanyIdQuery();
 
   // ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА: оба хука вызываются одновременно на верхнем уровне компонента
   // Это обеспечивает параллельную загрузку данных
   const {
-    users,
+    data: users = [],
     isLoading: usersLoading,
-    isRefreshing: usersRefreshing,
-    refresh: refreshUsers,
-  } = useUsers({
-    filters: filters.values,
-    enabled: !companyIdLoading, // КРИТИЧНО: включаем когда companyId завершил загрузку
+    isRefetching: usersRefreshing,
+    refetch: refreshUsers,
+  } = useEmployees(filters.values, {
+    enabled: !companyIdLoading,
+    refetchInterval: 20 * 1000,
+    refetchIntervalInBackground: false,
   });
 
   const {
-    departments,
+    data: departments = [],
     isLoading: departmentsLoading,
-    isRefreshing: departmentsRefreshing,
-    refresh: refreshDepartments,
-  } = useDepartmentsHook({
+    isRefetching: departmentsRefreshing,
+    refetch: refreshDepartments,
+  } = useDepartmentsQuery({
     companyId,
     enabled: !!companyId,
     onlyEnabled: true,
   });
+  useEmployeesRealtimeSync({ enabled: true });
 
   // Включаем фильтрацию по отделам, когда они загружены
   useEffect(() => {
@@ -199,6 +207,28 @@ export default function UsersIndex() {
   const onRefresh = useCallback(async () => {
     await refreshAll();
   }, [refreshAll]);
+
+  const onViewableItemsChanged = useMemo(
+    () => ({ viewableItems }) => {
+      const ids = viewableItems
+        .map((item) => item?.item?.id)
+        .filter(Boolean)
+        .slice(0, 6);
+
+      const task = InteractionManager.runAfterInteractions(() => {
+        ids.forEach((id) => {
+          ensureEmployeePrefetch(queryClient, id).catch(() => {});
+        });
+      });
+
+      return () => {
+        try {
+          task.cancel?.();
+        } catch {}
+      };
+    },
+    [queryClient],
+  );
 
   const filtered = useMemo(() => {
     if (!debouncedQ) return users;
@@ -538,6 +568,8 @@ export default function UsersIndex() {
             data={filtered}
             keyExtractor={keyExtractor}
             renderItem={renderItem}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
             refreshControl={
               <RefreshControl
                 refreshing={isRefreshing}

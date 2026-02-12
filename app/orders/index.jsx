@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Animated,
   BackHandler,
+  InteractionManager,
   Platform,
   StyleSheet,
   Text,
@@ -18,10 +19,13 @@ import { useAuth } from '../../components/hooks/useAuth';
 import UniversalHome from '../../components/UniversalHome';
 import appReadyState from '../../lib/appReadyState';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
-import { prefetchManager } from '../../lib/prefetch';
 import { onSessionEpoch } from '../../lib/sessionEpoch';
 import { supabase } from '../../lib/supabase';
+import { listCalendarRequests, listRequests } from '../../src/features/requests/api';
+import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme/ThemeProvider';
+
+const VERBOSE_ORDERS_BOOT_LOGS = __DEV__ && globalThis?.__VERBOSE_ORDERS_BOOT_LOGS__ === true;
 
 // Убираем глобальный «одноразовый» флаг и делаем состояние загрузки привязанным к сессии
 // Это предотвращает белый экран при повторном логине: каждый логин имеет собственный bootstrap.
@@ -222,21 +226,70 @@ export default function IndexScreen() {
     }, []),
   );
 
-  // Запуск фоновой предзагрузки данных (профессиональный подход)
+  // Home prefetch through the shared query layer (deferred to avoid blocking tab navigation).
   React.useEffect(() => {
-    // Инициализируем prefetch с QueryClient
-    prefetchManager.init(qc);
+    const userId = authUser?.id;
+    if (!userId) return;
+    const roleForCalendar = authProfile?.role || role || 'worker';
 
-    // Запускаем через 500ms - данные должны быть готовы до открытия страниц
     const timer = setTimeout(() => {
-      prefetchManager.start();
-    }, 500);
+      const task = InteractionManager.runAfterInteractions(() => {
+        // Do not prefetch everything in one burst; it can delay first tab switch.
+        qc
+          .prefetchInfiniteQuery({
+            queryKey: queryKeys.requests.my({}),
+            queryFn: ({ pageParam = 1 }) =>
+              listRequests({ scope: 'my', page: pageParam, pageSize: 20 }),
+            initialPageParam: 1,
+            getNextPageParam: (lastPage, allPages) => {
+              if (!Array.isArray(lastPage) || lastPage.length < 20) return undefined;
+              return allPages.length + 1;
+            },
+            staleTime: 20 * 1000,
+          })
+          .catch(() => {});
+
+        setTimeout(() => {
+          qc
+            .prefetchQuery({
+              queryKey: queryKeys.requests.calendar({ userId, role: roleForCalendar }),
+              queryFn: () => listCalendarRequests({ userId, role: roleForCalendar }),
+              staleTime: 20 * 1000,
+            })
+            .catch(() => {});
+        }, 250);
+
+        setTimeout(() => {
+          qc
+            .prefetchInfiniteQuery({
+              queryKey: queryKeys.requests.all({}),
+              queryFn: ({ pageParam = 1 }) =>
+                listRequests({ scope: 'all', page: pageParam, pageSize: 20 }),
+              initialPageParam: 1,
+              getNextPageParam: (lastPage, allPages) => {
+                if (!Array.isArray(lastPage) || lastPage.length < 20) return undefined;
+                return allPages.length + 1;
+              },
+              staleTime: 20 * 1000,
+            })
+            .catch(() => {});
+        }, 650);
+      });
+
+      return () => {
+        try {
+          task?.cancel?.();
+        } catch {}
+      };
+    }, 1200);
 
     return () => {
       clearTimeout(timer);
-      prefetchManager.stop();
+      try {
+        // no-op if task was not created yet
+      } catch {}
     };
-  }, [qc]);
+  }, [qc, authUser?.id, authProfile?.role, role]);
 
   // Новая логика bootstrap: независимая от глобального флага, действует на каждую сессию
   // Состояния:
@@ -342,6 +395,7 @@ export default function IndexScreen() {
 
   // ДИАГНОСТИКА: Логируем состояние загрузки для отладки
   React.useEffect(() => {
+    if (!VERBOSE_ORDERS_BOOT_LOGS) return;
     if (showLoader) {
       console.log('[Orders] Spinner visible:', {
         bootState,

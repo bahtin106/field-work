@@ -1,8 +1,10 @@
 // app/users/[id]/edit.jsx
 
 import { AntDesign, Feather } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
+import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -26,21 +28,19 @@ import IconButton from '../../../components/ui/IconButton';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
-import { useToast } from '../../../components/ui/ToastProvider';
+import SecurePasswordInput from '../../../components/SecurePasswordInput';
+import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../../src/shared/feedback';
+import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
-import {
-  AlertModal,
-  BaseModal,
-  ConfirmModal,
-  DateTimeModal,
-  SelectModal,
-} from '../../../components/ui/modals';
+import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
+import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
-import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../../lib/constants';
+import { AVATAR, STORAGE, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
-import { supabase } from '../../../lib/supabase';
-import { globalCache } from '../../../lib/cache/DataCache';
+import { supabase, supabaseAdmin, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
+import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
+import { useMyCompanyIdQuery } from '../../../src/features/profile/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -50,50 +50,27 @@ const TABLES = {
   departments: TBL.DEPARTMENTS || 'departments',
 };
 
-const __EDIT_CFG = (() => {
-  try {
-    const mix = process.env.EXPO_PUBLIC_EDIT_CONFIG_JSON;
-    if (mix) {
-      const o = JSON.parse(mix);
-      if (o && typeof o === 'object') return o;
-    }
-  } catch (_) {}
-  return {};
-})();
-const __EDIT_BUCKETS = (() => {
-  try {
-    const s = process.env.EXPO_PUBLIC_BUCKETS_JSON;
-    if (s) {
-      const o = JSON.parse(s);
-      if (o && typeof o === 'object') return o;
-    }
-  } catch (_) {}
-  return __EDIT_CFG.buckets || {};
-})();
-const __EDIT_FUNCTIONS = (() => {
-  try {
-    const s = process.env.EXPO_PUBLIC_FUNCTIONS_JSON;
-    if (s) {
-      const o = JSON.parse(s);
-      if (o && typeof o === 'object') return o;
-    }
-  } catch (_) {}
-  return __EDIT_CFG.functions || {};
-})();
-const __IS_PROD = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
-const __pick = (val, devFallback) => (val != null ? val : __IS_PROD ? null : devFallback);
-
-const BUCKETS = STORAGE;
+const MIN_PASSWORD_LENGTH = Number(process.env.EXPO_PUBLIC_MIN_PASSWORD_LENGTH) || 8;
 const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
 const AVA_MIME = AVATAR.MIME;
 
-const FUNCTIONS = APP_FUNCTIONS;
-
-const FN_GET_PROFILE =
-  process.env.EXPO_PUBLIC_RPC_GET_PROFILE ||
-  (__EDIT_FUNCTIONS.getProfileWithEmail ?? 'admin_get_profile_with_email');
-
 const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
+
+// Helper: determine supported mediaTypes option across expo-image-picker versions
+const getImagePickerMediaTypesImages = () => {
+  try {
+    if (ImagePicker.MediaType && ImagePicker.MediaType.Images) return ImagePicker.MediaType.Images;
+    if (ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images)
+      return ImagePicker.MediaTypeOptions.Images;
+    // some versions may export lowercase or different fields
+    if (ImagePicker.MediaType && ImagePicker.MediaType.image) return ImagePicker.MediaType.image;
+    if (ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.image)
+      return ImagePicker.MediaTypeOptions.image;
+  } catch (e) {
+    // ignore
+  }
+  return null;
+};
 
 import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
 let ROLE_LABELS_LOCAL = ROLE_LABELS;
@@ -240,16 +217,29 @@ function AvatarSheetModal({
   onTakePhoto,
   onPickFromLibrary,
   onDeletePhoto,
+  onViewPhoto,
   onClose,
 }) {
   const { t } = useTranslation();
 
+  const { theme } = useTheme();
+  const ICON_SM = theme.icons?.sm ?? 18;
+
+  const chevron = (color) => (
+    <Feather name="chevron-right" size={ICON_SM} color={color} />
+  );
+
   const items = [
-    { id: 'camera', label: t('profile_photo_take') },
-    { id: 'library', label: t('profile_photo_choose') },
-    // Показываем опцию удаления только если фото есть
-    ...(hasAvatar ? [{ id: 'delete', label: t('profile_photo_delete') }] : []),
+    { id: 'camera', label: t('profile_photo_take'), right: chevron(theme.colors.textSecondary) },
+    { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
+    ...(hasAvatar
+      ? [
+          { id: 'view', label: t('profile_photo_view') || t('profile_photo_preview') || 'Просмотр фото', right: chevron(theme.colors.textSecondary) },
+          { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.destructive || theme.colors.danger) },
+        ]
+      : []),
   ];
+
   return (
     <SelectModal
       visible={visible}
@@ -259,8 +249,9 @@ function AvatarSheetModal({
       onSelect={(it) => {
         try {
           if (it.id === 'camera') onTakePhoto?.();
-          if (it.id === 'library') onPickFromLibrary?.();
-          if (it.id === 'delete') onDeletePhoto?.();
+          else if (it.id === 'library') onPickFromLibrary?.();
+          else if (it.id === 'delete') onDeletePhoto?.();
+          else if (it.id === 'view') onViewPhoto?.();
         } finally {
           onClose?.();
         }
@@ -317,6 +308,7 @@ export default function EditUser() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const ver = useI18nVersion();
+  const queryClient = useQueryClient();
   const router = useRouter();
   const navigation = useNavigation();
   const formStyles = useEditFormStyles();
@@ -502,41 +494,88 @@ export default function EditUser() {
     [theme],
   );
   const {
-    success: toastSuccess,
-    error: toastError,
-    info: toastInfo,
-    setAnchorOffset,
-    loading: toastLoading,
-    promise: toastPromise,
-  } = useToast();
+    banner,
+    showBanner,
+    clearBanner,
+    showSuccessToast,
+    showErrorToast,
+    showInfoToast,
+  } = useFeedback();
 
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
 
-  const [meIsAdmin, setMeIsAdmin] = useState(false);
-  const [meId, setMeId] = useState(null);
-  const [meLoaded, setMeLoaded] = useState(false);
-  const canEdit = meIsAdmin || (meId && meId === userId);
+  const { data: employeeData, isLoading: employeeLoading, refetch: refetchEmployee } = useEmployee(
+    userId,
+    {
+      enabled: !!userId,
+      placeholderData: (prev) => prev,
+      refetchOnMount: 'stale',
+    },
+  );
+  const meIsAdmin = !!employeeData?.meIsAdmin;
+  const meId = employeeData?.myUid || null;
+  const canEdit = !!meId && (meIsAdmin || meId === userId);
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [initialAvatarUrl, setInitialAvatarUrl] = useState(null); // Изначальный аватар из БД
   const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Временный аватар до сохранения
   const avatarSaveTimestampRef = useRef(0); // Timestamp последнего сохранения аватара
   const [avatarSheet, setAvatarSheet] = useState(false);
+  const [cropVisible, setCropVisible] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
   const [avatarKey, setAvatarKey] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
+  const emailValid = useMemo(() => isValidEmailStrict(email), [email]);
+  const requiredMsg = useMemo(() => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t), [t]);
+  const shouldShowError = useCallback(
+    (field) => submittedAttempt || !!touched[field],
+    [submittedAttempt, touched],
+  );
+  const clearFieldError = useCallback((field) => {
+    setFieldErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
 
   const headerName = useMemo(() => {
     const name = `${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim();
     return name || t('placeholder_no_name');
   }, [firstName, lastName, t]);
+  const firstNameError =
+    fieldErrors.firstName?.message ||
+    (shouldShowError('firstName') && !firstName.trim() ? requiredMsg : null);
+  const lastNameError =
+    fieldErrors.lastName?.message ||
+    (shouldShowError('lastName') && !lastName.trim() ? requiredMsg : null);
+  const emailError =
+    fieldErrors.email?.message ||
+    (shouldShowError('email') && (!email.trim()
+      ? requiredMsg
+      : !emailValid
+        ? getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t)
+        : null));
+  const phoneError =
+    fieldErrors.phone?.message ||
+    (shouldShowError('phone') && !isValidPhone(String(phone || ''))
+      ? t('err_phone')
+      : null);
   const [birthdate, setBirthdate] = useState(null);
   const [departmentId, setDepartmentId] = useState(null);
-  const [departments, setDepartments] = useState([]);
+  const { data: companyId } = useMyCompanyIdQuery();
+  const { data: departments = [] } = useDepartmentsQuery({
+    companyId,
+    enabled: !!companyId,
+    onlyEnabled: true,
+  });
   const [deptModalVisible, setDeptModalVisible] = useState(false);
   const activeDeptName = useMemo(() => {
     const d = (departments || []).find((x) => String(x.id) === String(departmentId));
@@ -554,7 +593,11 @@ export default function EditUser() {
   const [role, setRole] = useState(ROLE.WORKER);
   const [newPassword, setNewPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetPwdVisible, setResetPwdVisible] = useState(false);
+  const [resettingPwd, setResettingPwd] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
+  const [viewAvatarVisible, setViewAvatarVisible] = useState(false);
 
   const [err, setErr] = useState('');
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
@@ -573,16 +616,31 @@ export default function EditUser() {
       const fileData = new Uint8Array(ab);
       const filename = `${AVA_PREFIX}${Date.now()}.jpg`;
       const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
-      const { error: upErr } = await supabase.storage
-        .from(STORAGE.AVATARS)
-        .upload(path, fileData, { contentType: AVA_MIME, upsert: false });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
-      const publicUrl = pub?.publicUrl || null;
+      console.log('[uploadAvatar] uploading to storage', { bucket: STORAGE.AVATARS, path, size: fileData?.length });
+      const uploadResp = await supabase.storage.from(STORAGE.AVATARS).upload(path, fileData, {
+        contentType: AVA_MIME,
+        upsert: false,
+      });
+      console.log('[uploadAvatar] uploadResp', uploadResp);
+      if (uploadResp.error) throw uploadResp.error;
+      // Try to get public URL; if bucket is private, fallback to signed URL
+      const pubResp = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
+      console.log('[uploadAvatar] getPublicUrl resp', pubResp);
+      const publicUrl = pubResp?.data?.publicUrl || null;
+      let finalUrl = publicUrl;
+      if (!finalUrl) {
+        try {
+          const signed = await supabase.storage.from(STORAGE.AVATARS).createSignedUrl(path, 60);
+          console.log('[uploadAvatar] createSignedUrl resp', signed);
+          finalUrl = signed?.data?.signedUrl || null;
+        } catch (e) {
+          console.log('[uploadAvatar] createSignedUrl failed', e?.message || e);
+        }
+      }
       // Не обновляем БД сразу, только сохраняем временный URL
-      setPendingAvatarUrl(publicUrl);
-      setAvatarUrl(publicUrl);
-      toastInfo(t('toast_avatar_pending'));
+      setPendingAvatarUrl(finalUrl);
+      setAvatarUrl(finalUrl);
+      // avatar change will be captured by isDirty and confirmed on exit
     } catch (e) {
       setErr(e?.message || t('toast_generic_error'));
     }
@@ -594,7 +652,7 @@ export default function EditUser() {
       // null означает "нет изменений", '' означает "удалить"
       setPendingAvatarUrl('');
       setAvatarUrl(null);
-      toastInfo(t('toast_avatar_pending'));
+      // avatar change will be captured by isDirty and confirmed on exit
     } catch (e) {
       setErr(e?.message || t('toast_generic_error'));
     }
@@ -605,14 +663,17 @@ export default function EditUser() {
       setErr(t('error_camera_denied'));
       return;
     }
-    const res = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
+    const mediaTypesOpt = getImagePickerMediaTypesImages();
+    const camOpts = {
+      allowsEditing: false,
       aspect: [1, 1],
       quality: MEDIA_QUALITY,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    });
+    };
+    if (mediaTypesOpt) camOpts.mediaTypes = mediaTypesOpt;
+    const res = await ImagePicker.launchCameraAsync(camOpts);
     if (!res.canceled && res.assets && res.assets[0]?.uri) {
-      await uploadAvatar(res.assets[0].uri);
+      setCropSrc(res.assets[0].uri);
+      setCropVisible(true);
     }
   };
   const pickFromLibrary = async () => {
@@ -621,21 +682,34 @@ export default function EditUser() {
       setErr(t('error_library_denied'));
       return;
     }
-    const res = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: true,
+    const mediaTypesOpt = getImagePickerMediaTypesImages();
+    const libOpts = {
+      allowsEditing: false,
       aspect: [1, 1],
       quality: MEDIA_QUALITY,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       selectionLimit: 1,
-    });
+    };
+    if (mediaTypesOpt) libOpts.mediaTypes = mediaTypesOpt;
+    const res = await ImagePicker.launchImageLibraryAsync(libOpts);
     if (!res.canceled && res.assets && res.assets[0]?.uri) {
-      await uploadAvatar(res.assets[0].uri);
+      setCropSrc(res.assets[0].uri);
+      setCropVisible(true);
     }
+  };
+
+  const onCropCancel = () => {
+    setCropVisible(false);
+    setCropSrc(null);
+  };
+
+  const onCropConfirm = async (croppedUri) => {
+    setCropVisible(false);
+    setCropSrc(null);
+    // proceed with upload
+    await uploadAvatar(croppedUri);
   };
   const [cancelVisible, setCancelVisible] = useState(false);
   const [cancelKey, setCancelKey] = useState(0);
-  const [warningVisible, setWarningVisible] = useState(false);
-  const [warningMessage, setWarningMessage] = useState('');
   const [initialSnap, setInitialSnap] = useState(null);
   const [isSuspended, setIsSuspended] = useState(false);
   const [suspendVisible, setSuspendVisible] = useState(false);
@@ -667,6 +741,7 @@ export default function EditUser() {
 
   const isDirty = useMemo(() => {
     if (!initialSnap) return false;
+    const avatarCurrent = pendingAvatarUrl === null ? (avatarUrl || null) : pendingAvatarUrl === '' ? null : pendingAvatarUrl;
     const current = JSON.stringify({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
@@ -677,9 +752,14 @@ export default function EditUser() {
       newPassword: newPassword || null,
       departmentId: departmentId || null,
       isSuspended: !!isSuspended,
+      avatar: avatarCurrent,
     });
     return current !== initialSnap;
-  }, [firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, initialSnap]);
+  }, [firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId, pendingAvatarUrl, avatarUrl, initialSnap]);
+  const isDirtyRef = useRef(false);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
   useFocusEffect(
     useCallback(() => {
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -694,29 +774,19 @@ export default function EditUser() {
       return () => sub.remove();
     }, [isDirty]),
   );
-  useFocusEffect(
-    useCallback(() => {
-      fetchDepartments();
-      return () => {};
-    }, [fetchDepartments]),
-  );
   const allowLeaveRef = useRef(false);
-  const autoClearLoadingRef = useRef(null);
-  useEffect(() => {
-    if (loading || !meLoaded) {
-      autoClearLoadingRef.current = setTimeout(
-        () => setLoading(false),
-        theme.timings?.requestTimeoutMs ?? 12000,
-      );
-    }
-    return () => {
-      if (autoClearLoadingRef.current) clearTimeout(autoClearLoadingRef.current);
-    };
-  }, [loading]);
-  const showWarning = (msg) => {
-    setWarningMessage(String(msg || t('dlg_generic_warning')));
-    setWarningVisible(true);
-  };
+  const generateTempPassword = useCallback(() => {
+    const words = ['pilot', 'eagle', 'tiger', 'wolf', 'bear', 'lion', 'shark', 'hawk', 'fox', 'star'];
+    const word = words[Math.floor(Math.random() * words.length)];
+    const digits = Math.floor(1000 + Math.random() * 9000);
+    return word + digits;
+  }, []);
+    const showWarning = useCallback((msg) => {
+    showBanner({ message: String(msg || t('dlg_generic_warning')), severity: 'warning' });
+  }, [showBanner, t]);
+  const showError = useCallback((msg) => {
+    showBanner({ message: String(msg || t('toast_generic_error')), severity: 'error' });
+  }, [showBanner, t]);
   const confirmCancel = () => {
     setCancelVisible(false);
     // Восстанавливаем изначальный аватар при отмене
@@ -747,7 +817,7 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
-      toastInfo(t('toast_saving'), { sticky: true });
+      showInfoToast(t('toast_saving'), { sticky: true });
 
       // Сохраняем изменения аватара в БД только если есть реальные изменения
       // pendingAvatarUrl === null означает "нет изменений", а не "удалить"
@@ -804,165 +874,112 @@ export default function EditUser() {
       const computedFullName = buildFullName(firstName, lastName);
       const normalizedFullName = computedFullName || null;
 
-      if (meIsAdmin && meId && userId && meId !== userId && APP_FUNCTIONS.UPDATE_USER) {
-        const { data: sess } = await supabase.auth.getSession();
-        const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-        const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
-
-        const body = {
-          user_id: userId,
-          email: String(email || '').trim() || undefined,
-          password: newPassword && newPassword.length ? newPassword : undefined,
-          role,
-          profile: {
-            first_name: firstName.trim() || null,
-            last_name: lastName.trim() || null,
-            full_name: normalizedFullName,
-            phone: String(phone || '').replace(/\D/g, '') || null,
-            birthdate: birthdate ? __ymdLocal(birthdate) : null,
-            department_id: departmentId || null,
-          },
-        };
-
-        try {
-          const res = await fetch(FN_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify(body),
-          });
-
-          // Если статус не успешный — бросаем ошибку сразу
-          if (!res.ok) {
-            let errMsg = null;
-            try {
-              const text = await res.text();
-              if (text) {
-                try {
-                  const result = JSON.parse(text);
-                  errMsg = result?.message || result?.error || result?.details || null;
-                } catch (e) {}
-              }
-            } catch (e) {}
-            throw new Error(errMsg || `HTTP ${res.status}`);
-          }
-          // Если статус успешный — пытаемся прочитать ответ, но если не удалось — игнорируем
-          let result = null;
-          try {
-            const text = await res.text();
-            if (text) {
-              try {
-                result = JSON.parse(text);
-              } catch (e) {
-                // Невалидный JSON, но статус успешный — игнорируем
-              }
-            }
-          } catch (e) {
-            // Не удалось прочитать тело, но статус успешный — игнорируем
-          }
-          // Только если статус успешный и явно result.ok === false — бросаем
-          if (result && result.ok === false) {
-            const msg = result?.message || result?.error || result?.details || null;
-            throw new Error(msg || t('error_profile_not_updated'));
-          }
-        } catch (fetchErr) {
-          // ВАЖНО: Если ошибка "Network request failed" - игнорируем, т.к. запрос мог дойти до сервера
-          const errMsg = String(fetchErr?.message || '');
-          if (errMsg.toLowerCase().includes('network request failed')) {
-            console.warn('Admin update failed with network error, assuming server processed it');
-            // Не бросаем ошибку, считаем что сервер обработал запрос
-          } else {
-            // Другие ошибки пробрасываем
-            throw fetchErr;
-          }
-        }
-      } else {
-        // Пользователь редактирует себя — прямое обновление профиля
-        const payload = {
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
+      if (meIsAdmin && meId && userId && meId !== userId) {
+        // Админ редактирует другого пользователя
+        const profilePatch = {
+          first_name: firstName.trim() || null,
+          last_name: lastName.trim() || null,
           full_name: normalizedFullName,
           phone: String(phone || '').replace(/\D/g, '') || null,
           birthdate: birthdate ? __ymdLocal(birthdate) : null,
-          department_id: meIsAdmin ? departmentId || null : undefined,
+          department_id: departmentId || null,
+          role,
         };
-        Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+        Object.keys(profilePatch).forEach((k) => profilePatch[k] === undefined && delete profilePatch[k]);
 
-        const { data: updRows, error: updProfileErr } = await supabase
+        const { data: profData, error: profErr } = await supabase
           .from(TABLES.profiles)
-          .update(payload)
-          .eq('id', userId)
-          .select('id');
+          .update(profilePatch)
+          .eq('id', userId);
+        console.log('[proceedSave] profiles.update (admin)', { profErr, profData, profilePatch, userId });
 
-        if (updProfileErr) throw updProfileErr;
-        if (!Array.isArray(updRows) || updRows.length === 0) {
-          throw new Error(t('error_profile_not_updated'));
-        }
+        if (profErr) throw profErr;
 
-        // Обновление email/password через edge-функцию (если заполнены)
-        if ((String(email || '').trim() || newPassword) && APP_FUNCTIONS.UPDATE_USER) {
-          try {
-            const { data: sess } = await supabase.auth.getSession();
-            const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-            const FN_URL = `${process.env.EXPO_PUBLIC_SUPABASE_URL}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
+        // Если нужно обновить пароль — используем email-server API
+        if (newPassword && newPassword.length) {
+          console.log('[proceedSave] [Admin Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
 
-            const body = {
-              user_id: userId,
-              email: String(email || '').trim() || undefined,
-              password: newPassword && newPassword.length ? newPassword : undefined,
-            };
+          const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              userId: userId,
+              newPassword: newPassword,
+            }),
+          });
 
-            const res = await fetch(FN_URL, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify(body),
-            });
+          console.log('[proceedSave] Password update response status:', res.status);
 
-            if (!res.ok) {
-              let errMsg = null;
-              try {
-                const text = await res.text();
-                if (text) {
-                  try {
-                    const result = JSON.parse(text);
-                    errMsg = result?.message || result?.error || result?.details || null;
-                  } catch (e) {}
-                }
-              } catch (e) {}
-              throw new Error(errMsg || `HTTP ${res.status}`);
-            }
-            let result = null;
-            try {
-              const text = await res.text();
-              if (text) {
-                try {
-                  result = JSON.parse(text);
-                } catch (e) {}
-              }
-            } catch (e) {}
-            if (result && result.ok === false) {
-              const msg = result?.message || result?.error || result?.details || null;
-              throw new Error(msg || t('error_auth_update_failed'));
-            }
-          } catch (fetchErr) {
-            // ВАЖНО: Профиль УЖЕ обновлен выше, поэтому ошибка обновления email/password
-            // не должна блокировать успешное завершение. Игнорируем сетевые ошибки.
-            const errMsg = String(fetchErr?.message || '');
-            if (errMsg.toLowerCase().includes('network request failed')) {
-              // Игнорируем сетевую ошибку — профиль уже обновлен
-              console.warn('Email/password update failed with network error, but profile was updated');
-            } else {
-              // Другие ошибки (не сетевые) — пробрасываем
-              throw fetchErr;
-            }
+          if (!res.ok) {
+            const text = await res.text();
+            console.error('[proceedSave] Password update failed:', text);
+            throw new Error(`Password update failed: ${text}`);
           }
+
+          const result = await res.json();
+          console.log('[proceedSave] Password update result:', result);
+
+          if (!result.success) {
+            throw new Error(result.message || 'Password update failed');
+          }
+
+          console.log('[proceedSave] Password updated successfully');
+        }
+      } else {
+        // Пользователь редактирует себя
+        const profilePatch = {
+          first_name: firstName.trim() || null,
+          last_name: lastName.trim() || null,
+          full_name: normalizedFullName,
+          phone: String(phone || '').replace(/\D/g, '') || null,
+          birthdate: birthdate ? __ymdLocal(birthdate) : null,
+        };
+        if (meIsAdmin) {
+          profilePatch.department_id = departmentId || null;
+        }
+        Object.keys(profilePatch).forEach((k) => profilePatch[k] === undefined && delete profilePatch[k]);
+
+        const { data: profData, error: profErr } = await supabase
+          .from(TABLES.profiles)
+          .update(profilePatch)
+          .eq('id', userId);
+        console.log('[proceedSave] profiles.update (self)', { profErr, profData, profilePatch, userId });
+
+        if (profErr) throw profErr;
+
+        // Если нужно обновить пароль — используем email-server API
+        if (newPassword && newPassword.length) {
+          console.log('[proceedSave] [Self Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
+
+          const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              userId: userId,
+              newPassword: newPassword,
+            }),
+          });
+
+          console.log('[proceedSave] Password update response status:', res.status);
+
+          if (!res.ok) {
+            const text = await res.text();
+            console.error('[proceedSave] Password update failed:', text);
+            throw new Error(`Password update failed: ${text}`);
+          }
+
+          const result = await res.json();
+          console.log('[proceedSave] Password update result:', result);
+
+          if (!result.success) {
+            throw new Error(result.message || 'Password update failed');
+          }
+
+          console.log('[proceedSave] Password updated successfully');
         }
       }
 
@@ -980,62 +997,89 @@ export default function EditUser() {
           newPassword: null,
           departmentId: departmentId || null,
           isSuspended,
+          avatar: avatarUrl || null,
         }),
       );
+      queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
+        ...(prev || {}),
+        first_name: firstName.trim() || null,
+        last_name: lastName.trim() || null,
+        full_name: buildFullName(firstName, lastName) || null,
+        email: String(email || '').trim(),
+        phone: String(phone || '').replace(/\D/g, '') || null,
+        birthdate: birthdate ? __ymdLocal(birthdate) : null,
+        role,
+        department_id: departmentId || null,
+        avatar_url: avatarUrl || null,
+        isSuspended: !!isSuspended,
+        meIsAdmin,
+        myUid: meId,
+      }));
       allowLeaveRef.current = true;
-      toastSuccess(t('toast_success'));
+      showSuccessToast(t('toast_success'));
     } catch (e) {
       setErr(e?.message || t('error_save_failed'));
-      toastError(e?.message || t('error_save_failed'));
+      showError(e?.message || t('error_save_failed'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleSave = useCallback(async () => {
-    Keyboard.dismiss(); // Закрываем клавиатуру при сохранении
+    Keyboard.dismiss(); // ��������� ���������� ��� ����������
     setErr('');
+    clearBanner();
+    setFieldErrors({});
     setSubmittedAttempt(true);
     if (!firstName.trim()) {
-      showWarning(t('err_first_name'));
+      setFieldErrors({ firstName: { message: requiredMsg } });
+      firstNameRef.current?.focus?.();
       return;
     }
     if (!lastName.trim()) {
-      showWarning(t('err_last_name'));
+      setFieldErrors({ lastName: { message: requiredMsg } });
+      lastNameRef.current?.focus?.();
       return;
     }
     if (!emailValid) {
-      showWarning(t('err_email'));
+      setFieldErrors({ email: { message: getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t) } });
+      emailRef.current?.focus?.();
       return;
     }
     if (String(phone || '').trim() && !isValidPhone(String(phone || ''))) {
-      showWarning(t('err_phone'));
+      setFieldErrors({ phone: { message: t('err_phone') } });
+      phoneRef.current?.focus?.();
       return;
     }
-    if (!passwordValid) {
-      showWarning(t('err_password_short'));
-      return;
-    }
-    if (newPassword && newPassword.length > 0) {
-      setPendingSave(true);
+    // Если редактируем собственный профиль и задан новый пароль — проверяем его
+    if (meId && meId === userId && newPassword && newPassword.length) {
+      if (newPassword.length < MIN_PASSWORD_LENGTH) {
+        setFieldErrors({ newPassword: { message: t('error_password_too_short') || `Минимум ${MIN_PASSWORD_LENGTH}` } });
+        return;
+      }
+      if (confirmPassword !== newPassword) {
+        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'Пароли не совпадают' } });
+        return;
+      }
+      // Подтверждаем действие (покажем модал подтверждения)
       setConfirmPwdVisible(true);
       return;
     }
+
     await proceedSave();
   }, [
     firstName,
     lastName,
     emailValid,
     phone,
-    passwordValid,
-    newPassword,
-    showWarning,
+    requiredMsg,
     t,
     proceedSave,
-    setErr,
-    setSubmittedAttempt,
-    setPendingSave,
-    setConfirmPwdVisible,
+    meId,
+    userId,
+    newPassword,
+    confirmPassword,
+    clearBanner,
   ]);
 
   const cancelRef = useRef(null);
@@ -1062,37 +1106,7 @@ export default function EditUser() {
       allowLeaveRef.current = false;
     }
   }, [firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId]);
-  const passwordValid = useMemo(
-    () => newPassword.length === 0 || newPassword.length >= 6,
-    [newPassword],
-  );
-  const emailValid = useMemo(() => isValidEmailStrict(email), [email]);
-  const fetchDepartments = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from(TABLES.departments)
-        .select('id, name')
-        .order('name', { ascending: true });
-      if (error) throw error;
-      setDepartments(Array.isArray(data) ? data : []);
-    } catch (e) {}
-  }, []);
-  const fetchMe = useCallback(async () => {
-    const { data: authUser } = await supabase.auth.getUser();
-    const uid = authUser?.user?.id;
-    if (!uid) {
-      setMeLoaded(true);
-      return;
-    }
-    setMeId(uid);
-    const { data: me } = await supabase
-      .from(TABLES.profiles)
-      .select('id, role')
-      .eq('id', uid)
-      .single();
-    setMeIsAdmin(me?.role === ROLE.ADMIN);
-    setMeLoaded(true);
-  }, []);
+  // password strength check removed for edit screen per request
   const formatName = (p) => {
     const n1 = (p.first_name || '').trim();
     const n2 = (p.last_name || '').trim();
@@ -1105,109 +1119,54 @@ export default function EditUser() {
     const parts = [(first || '').trim(), (last || '').trim()].filter(Boolean);
     return parts.join(' ').replace(/\s+/g, ' ').trim();
   };
-  const fetchUser = useCallback(async () => {
-    setLoading(true);
-    try {
-      let adminRow = null;
-      if (meIsAdmin) {
-        const { data, error } = await supabase.rpc(FN_GET_PROFILE, { target_user_id: userId });
-        if (error) throw error;
-        adminRow = Array.isArray(data) ? data[0] : data;
-        setEmail(adminRow?.email || '');
-        setRole(adminRow?.user_role || ROLE.WORKER);
-        if (adminRow?.birthdate) {
-          const d = new Date(adminRow.birthdate);
-          setBirthdate(!isNaN(d.getTime()) ? d : null);
-        } else {
-          setBirthdate(null);
-        }
-      } else {
-        const { data: auth } = await supabase.auth.getUser();
-        if (auth?.user?.id === userId) setEmail(auth?.user?.email || '');
-      }
-
-      const { data: prof } = await supabase
-        .from(TABLES.profiles)
-        .select(
-          'first_name, last_name, full_name, phone, is_suspended, suspended_at, avatar_url, department_id, role, birthdate',
-        )
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (prof) {
-        setFirstName(prof.first_name || '');
-        setLastName(prof.last_name || '');
-        setDepartmentId(prof?.department_id ?? null);
-        if (typeof prof.avatar_url !== 'undefined') {
-          // Защита от race condition: не обновляем аватар в течение 3 секунд после сохранения
-          const timeSinceLastSave = Date.now() - (avatarSaveTimestampRef.current || 0);
-          const AVATAR_SAVE_PROTECTION_MS = 3000; // 3 секунды
-
-          if (timeSinceLastSave < AVATAR_SAVE_PROTECTION_MS) {
-            // Недавно сохранили аватар, пропускаем обновление из БД
-            return;
-          }
-
-          // Сохраняем текущий pendingAvatarUrl чтобы не потерять его при Realtime обновлениях
-          setPendingAvatarUrl((current) => {
-            // Если есть временный аватар (загружен или помечен на удаление), сохраняем его
-            // current === '' означает "пользователь удалил, но не сохранил"
-            // current === "url" означает "пользователь загрузил, но не сохранил"
-            if (current !== null) {
-              // Для отображения: если помечен на удаление (''), показываем null
-              setAvatarUrl(current === '' ? null : current);
-              setInitialAvatarUrl(prof.avatar_url || null);
-              return current;
-            }
-            // Иначе используем аватар из БД
-            setAvatarUrl(prof.avatar_url || null);
-            setInitialAvatarUrl(prof.avatar_url || null);
-            return null;
-          });
-        }
-        if (typeof prof.phone !== 'undefined')
-          setPhone(String(prof.phone || '').replace(/\D/g, ''));
-        setIsSuspended(!!(prof?.is_suspended || prof?.suspended_at));
-        if (!meIsAdmin && prof?.birthdate) {
-          const d = new Date(prof.birthdate);
-          setBirthdate(!isNaN(d.getTime()) ? d : null);
-        }
-        if (!meIsAdmin) setRole(prof.role || ROLE.WORKER);
-      }
-
-      setInitialSnap(
-        JSON.stringify({
-          firstName: (prof?.first_name || '').trim(),
-          lastName: (prof?.last_name || '').trim(),
-          email: (meIsAdmin ? adminRow?.email || '' : email).trim?.() || '',
-          phone: String(prof?.phone || '').replace(/\D/g, '') || '',
-          birthdate: (meIsAdmin ? adminRow?.birthdate : prof?.birthdate || null)
-            ? String(meIsAdmin ? adminRow?.birthdate : prof?.birthdate)
-            : null,
-          role: meIsAdmin ? adminRow?.user_role || ROLE.WORKER : prof?.role || ROLE.WORKER,
-          newPassword: null,
-          departmentId: prof?.department_id ?? null,
-          isSuspended: !!(prof?.is_suspended || prof?.suspended_at),
-        }),
-      );
-    } catch (e) {
-      setErr(e?.message || t('toast_generic_error'));
-      toastError(e?.message || t('toast_generic_error'));
-    } finally {
-      setLoading(false);
-    }
-  }, [userId, meIsAdmin, email]);
-
   useEffect(() => {
-    fetchMe();
-  }, [fetchMe]);
+    if (!employeeData) return;
+    if (isDirtyRef.current) return;
 
-  useEffect(() => {
-    if (meLoaded) {
-      fetchUser();
-      fetchDepartments();
+    const avatarFromDb = employeeData?.avatar_url || null;
+    const timeSinceLastSave = Date.now() - (avatarSaveTimestampRef.current || 0);
+    const AVATAR_SAVE_PROTECTION_MS = 3000;
+
+    setFirstName(employeeData?.first_name || '');
+    setLastName(employeeData?.last_name || '');
+    setEmail(employeeData?.email || '');
+    setDepartmentId(employeeData?.department_id ?? null);
+    setPhone(String(employeeData?.phone || '').replace(/\D/g, ''));
+    setIsSuspended(!!employeeData?.isSuspended);
+    setRole(employeeData?.role || ROLE.WORKER);
+
+    const parsedBirthdate = __parseLocalYMD(employeeData?.birthdate || null);
+    setBirthdate(parsedBirthdate);
+    setWithYear(!!parsedBirthdate);
+
+    if (timeSinceLastSave >= AVATAR_SAVE_PROTECTION_MS) {
+      setPendingAvatarUrl((current) => {
+        if (current !== null) {
+          setAvatarUrl(current === '' ? null : current);
+          setInitialAvatarUrl(avatarFromDb);
+          return current;
+        }
+        setAvatarUrl(avatarFromDb);
+        setInitialAvatarUrl(avatarFromDb);
+        return null;
+      });
     }
-  }, [meLoaded, fetchUser, fetchDepartments]);
+
+    setInitialSnap(
+      JSON.stringify({
+        firstName: (employeeData?.first_name || '').trim(),
+        lastName: (employeeData?.last_name || '').trim(),
+        email: String(employeeData?.email || '').trim(),
+        phone: String(employeeData?.phone || '').replace(/\D/g, '') || '',
+        birthdate: employeeData?.birthdate ? String(employeeData.birthdate) : null,
+        role: employeeData?.role || ROLE.WORKER,
+        newPassword: null,
+        departmentId: employeeData?.department_id ?? null,
+        isSuspended: !!employeeData?.isSuspended,
+        avatar: employeeData?.avatar_url ? String(employeeData.avatar_url) : null,
+      }),
+    );
+  }, [employeeData]);
   useEffect(() => {
     if (!userId) return;
     const channel = supabase
@@ -1216,8 +1175,11 @@ export default function EditUser() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
         () => {
-          fetchUser();
-          fetchDepartments();
+          if (isDirtyRef.current) {
+            // TODO: consider merging remote changes into form without clobbering local edits
+            return;
+          }
+          refetchEmployee();
         },
       )
       .subscribe();
@@ -1226,7 +1188,7 @@ export default function EditUser() {
         channel.unsubscribe();
       } catch {}
     };
-  }, [userId, fetchUser, fetchDepartments]);
+  }, [userId, refetchEmployee]);
   const reassignActiveOrders = async (fromUserId, toUserId) => {
     // Переназначаем ВСЕ заявки, независимо от статуса
     const { error } = await supabase
@@ -1244,43 +1206,108 @@ export default function EditUser() {
   };
   const setSuspended = async (uid, value) => {
     try {
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const FN_URL = `${supabaseUrl}/functions/v1/${APP_FUNCTIONS.UPDATE_USER || ''}`;
-      if (
-        APP_FUNCTIONS.UPDATE_USER &&
-        FN_URL &&
-        FN_URL.includes('/functions/v1/') &&
-        FN_URL.startsWith('http')
-      ) {
-        try {
-          const res = await fetch(FN_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              user_id: uid,
-              is_suspended: !!value,
-              suspended_at: value ? new Date().toISOString() : null,
-            }),
-          });
-        } catch (e) {}
-      }
+      // Прямое обновление в базе данных через Supabase клиент
       const { error: updErr } = await supabase
         .from(TABLES.profiles)
-        .update({ is_suspended: !!value, suspended_at: value ? new Date().toISOString() : null })
+        .update({ 
+          is_suspended: !!value, 
+          suspended_at: value ? new Date().toISOString() : null,
+          updated_at: new Date().toISOString()
+        })
         .eq('id', uid);
-      return updErr ?? null;
+      
+      if (updErr) {
+        console.error('Error updating suspension status:', updErr);
+        throw updErr;
+      }
+      
+      return null;
     } catch (e) {
-      const { error } = await supabase
-        .from(TABLES.profiles)
-        .update({ is_suspended: !!value, suspended_at: value ? new Date().toISOString() : null })
-        .eq('id', uid);
-      return error ?? e;
+      console.error('setSuspended error:', e);
+      return e;
+    }
+  };
+  const onAskResetPassword = () => {
+    if (!meIsAdmin) return showWarning(t('error_no_access'));
+    if (meId && userId === meId) return;
+    setResetPwdVisible(true);
+  };
+  const onConfirmResetPassword = async () => {
+    if (!meIsAdmin) return showWarning(t('error_no_access'));
+    if (meId && userId === meId) return;
+    if (!email) {
+      showError(t('err_reset_password_failed'));
+      setResetPwdVisible(false);
+      return;
+    }
+
+    try {
+      setResettingPwd(true);
+      setErr('');
+      showInfoToast(t('toast_reset_password_sending'), { sticky: true });
+
+      const tempPassword = generateTempPassword();
+      
+      // 1. Обновляем пароль через email-server API
+      console.log('[Edit] [Password Reset] Updating password via email-server at:', EMAIL_SERVICE_URL);
+      
+      const updateResponse = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: userId,
+          newPassword: tempPassword,
+        }),
+      });
+
+      console.log('[Edit] [Password Reset] Update response status:', updateResponse.status);
+
+      if (!updateResponse.ok) {
+        const errorText = await updateResponse.text();
+        console.error('[Edit] [Password Reset] Update failed:', errorText);
+        throw new Error(`Password update failed: ${updateResponse.status}`);
+      }
+
+      const updateResult = await updateResponse.json();
+      console.log('[Edit] [Password Reset] Update result:', updateResult);
+
+      if (!updateResult.success) {
+        throw new Error(updateResult.message || 'Password update failed');
+      }
+
+      console.log('[Edit] [Password Reset] Password updated successfully');
+
+      // 2. Отправляем пароль по email
+      console.log('[Edit] [Password Reset] Sending email to:', email);
+      
+      const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'password-reset',
+          email,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          tempPassword,
+        }),
+      });
+
+      console.log('[Edit] [Password Reset] Email response status:', emailResponse.status);
+
+      if (!emailResponse.ok) {
+        const emailError = await emailResponse.text();
+        console.warn('[Edit] [Password Reset] Email send failed:', emailError);
+        // Пароль уже обновлен, показываем успех даже если email не отправился
+        showSuccessToast(t('toast_reset_password_sent'));
+      } else {
+        showSuccessToast(t('toast_reset_password_sent'));
+      }
+    } catch (e) {
+      console.error('[Edit] Password reset failed:', e);
+      showError(e?.message || t('err_reset_password_failed'));
+    } finally {
+      setResettingPwd(false);
+      setResetPwdVisible(false);
     }
   };
   const onAskSuspend = async () => {
@@ -1289,30 +1316,18 @@ export default function EditUser() {
 
     try {
       setErr('');
-      toastInfo(t('toast_loading_info'), { sticky: true });
+      showInfoToast(t('toast_loading_info'), { sticky: true });
 
-      // Вызываем edge function для проверки заявок
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const checkUrl = `${supabaseUrl}/functions/v1/check_employee_orders`;
-
-      const checkRes = await fetch(checkUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ user_id: userId }),
+      // Вызываем RPC функцию для проверки заявок
+      const { data, error } = await supabase.rpc('check_employee_orders', {
+        employee_id: userId
       });
 
-      if (!checkRes.ok) {
-        const errData = await checkRes.json().catch(() => ({}));
-        throw new Error(errData.error || `Ошибка проверки заявок (${checkRes.status})`);
+      if (error) {
+        throw new Error(error.message || 'Ошибка проверки заявок');
       }
 
-      const { activeOrdersCount, availableEmployees } = await checkRes.json();
+      const { activeOrdersCount, availableEmployees } = data || {};
 
       // Сохраняем количество заявок и список доступных сотрудников
       setActiveOrdersCount(activeOrdersCount || 0);
@@ -1324,7 +1339,7 @@ export default function EditUser() {
     } catch (e) {
       console.error('Ошибка при проверке заявок:', e);
       setErr(e?.message || t('err_check_orders_failed'));
-      toastError(e?.message || t('err_check_orders_failed'));
+      showError(e?.message || t('err_check_orders_failed'));
     }
   };
   
@@ -1344,7 +1359,7 @@ export default function EditUser() {
       setPickerItems(employees);
     } catch (e) {
       console.error('Ошибка загрузки сотрудников:', e);
-      toastError('Не удалось загрузить список сотрудников');
+      showError('Не удалось загрузить список сотрудников');
     }
   };
   const onAskUnsuspend = () => {
@@ -1358,7 +1373,7 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
-      toastInfo(t('toast_saving'), { sticky: true });
+      showInfoToast(t('toast_saving'), { sticky: true });
       if (ordersAction === 'reassign') {
         if (!successor?.id) {
           setSuccessorError(t('err_successor_required'));
@@ -1372,14 +1387,14 @@ export default function EditUser() {
       if (errS) throw new Error(errS.message || t('toast_generic_error'));
       
       // Инвалидируем кеш и разрешаем выход, затем сразу назад
-      globalCache.invalidate('users:');
-      toastSuccess(t('toast_suspended'));
+      await queryClient.invalidateQueries({ queryKey: ['employees'] });
+      showSuccessToast(t('toast_suspended'));
       setSuspendVisible(false);
       allowLeaveRef.current = true;
       router.back();
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
-      toastError(e?.message || t('dlg_generic_warning'));
+      showError(e?.message || t('dlg_generic_warning'));
     } finally {
       setSaving(false);
     }
@@ -1390,19 +1405,19 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
-      toastInfo(t('toast_saving'), { sticky: true });
+      showInfoToast(t('toast_saving'), { sticky: true });
       const errS = await setSuspended(userId, false);
       if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
       
       // Инвалидируем кеш и разрешаем выход, затем сразу назад
-      globalCache.invalidate('users:');
-      toastSuccess(t('toast_unsuspended'));
+      await queryClient.invalidateQueries({ queryKey: ['employees'] });
+      showSuccessToast(t('toast_unsuspended'));
       setUnsuspendVisible(false);
       allowLeaveRef.current = true;
       router.back();
     } catch (e) {
       setErr(e?.message || t('dlg_generic_warning'));
-      toastError(e?.message || t('dlg_generic_warning'));
+      showError(e?.message || t('dlg_generic_warning'));
     } finally {
       setSaving(false);
     }
@@ -1413,34 +1428,22 @@ export default function EditUser() {
 
     try {
       setErr('');
-      toastInfo(t('toast_loading_info'), { sticky: true });
+      showInfoToast(t('toast_loading_info'), { sticky: true });
 
-      // Вызываем edge function для проверки заявок
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const checkUrl = `${supabaseUrl}/functions/v1/check_employee_orders`;
+      // Вызываем RPC функцию для проверки заявок
+      console.log('[onAskDelete] calling check_employee_orders for userId:', userId);
 
-      console.log('[onAskDelete] checkUrl:', checkUrl);
-
-      const checkRes = await fetch(checkUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ user_id: userId }),
+      const { data, error } = await supabase.rpc('check_employee_orders', {
+        employee_id: userId
       });
 
-      console.log('[onAskDelete] checkRes.ok:', checkRes.ok, 'status:', checkRes.status);
+      console.log('[onAskDelete] result:', { data, error });
 
-      if (!checkRes.ok) {
-        const errData = await checkRes.json().catch(() => ({}));
-        throw new Error(errData.error || `Ошибка проверки заявок (${checkRes.status})`);
+      if (error) {
+        throw new Error(error.message || 'Ошибка проверки заявок');
       }
 
-      const { activeOrdersCount, totalOrdersCount, availableEmployees } = await checkRes.json();
+      const { activeOrdersCount, totalOrdersCount, availableEmployees } = data || {};
 
       console.log('[onAskDelete] activeOrdersCount:', activeOrdersCount);
 
@@ -1454,7 +1457,7 @@ export default function EditUser() {
     } catch (e) {
       console.error('Ошибка при проверке заявок:', e);
       setErr(e?.message || t('err_check_orders_failed'));
-      toastError(e?.message || t('err_check_orders_failed'));
+      showError(e?.message || t('err_check_orders_failed'));
     }
   };
 
@@ -1471,57 +1474,38 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
-      toastInfo(t('toast_deleting_employee'), { sticky: true });
+      showInfoToast(t('toast_deleting_employee'), { sticky: true });
 
-      // Вызываем edge function для деактивации
-      const { data: sess } = await supabase.auth.getSession();
-      const token = sess?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const deleteUrl = `${supabaseUrl}/functions/v1/${APP_FUNCTIONS.DELETE_USER || 'delete_user'}`;
+      // Вызываем RPC функцию для деактивации
+      console.log('[onConfirmDelete] calling deactivate_employee:', { userId, successorId: successor?.id });
 
-      console.log('[onConfirmDelete] deleteUrl:', deleteUrl);
-
-      const deleteRes = await fetch(deleteUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          user_id: userId,
-          reassign_to: successor?.id || null,
-        }),
+      const { data, error } = await supabase.rpc('deactivate_employee', {
+        employee_id: userId,
+        reassign_to: successor?.id || null,
       });
 
-      console.log('[onConfirmDelete] deleteRes.ok:', deleteRes.ok, 'status:', deleteRes.status);
+      console.log('[onConfirmDelete] result:', { data, error });
 
-      if (!deleteRes.ok) {
-        const errData = await deleteRes.json().catch(() => ({}));
-        throw new Error(
-          errData.error ||
-            errData.message ||
-            t('err_delete_failed_status').replace('{status}', String(deleteRes.status)),
-        );
+      if (error) {
+        throw new Error(error.message || t('err_delete_failed'));
       }
 
-      const payload = await deleteRes.json().catch(() => null);
-      if (payload && payload.ok === false) {
-        throw new Error(payload.message || t('err_delete_failed'));
+      if (data && data.success === false) {
+        throw new Error(data.message || t('err_delete_failed'));
       }
 
       // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
       allowLeaveRef.current = true;
 
       // Инвалидируем кеш и переходим на список пользователей (не возвращаемся на удаленный профиль)
-      globalCache.invalidate('users:');
-      toastSuccess(t('toast_deleted'));
+      await queryClient.invalidateQueries({ queryKey: ['employees'] });
+      showSuccessToast(t('toast_deleted'));
       setDeleteVisible(false);
       router.replace('/users');
     } catch (e) {
       console.error('Ошибка деактивации:', e);
       setErr(e?.message || t('dlg_generic_warning'));
-      toastError(e?.message || t('err_deactivate_failed'));
+      showError(e?.message || t('err_deactivate_failed'));
     } finally {
       setSaving(false);
     }
@@ -1538,7 +1522,7 @@ export default function EditUser() {
     loadAvailableEmployees();
     setPickerVisible(true);
   };
-  if (loading || !meLoaded) {
+  if (employeeLoading && !employeeData) {
     return (
       <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -1678,11 +1662,18 @@ export default function EditUser() {
                 </View>
               </View>
             </View>
-            {err ? (
-              <View style={styles.errorCard}>
-                <Text style={styles.errorTitle}>{t('dlg_alert_title')}</Text>
-                <Text style={styles.errorText}>{err}</Text>
-              </View>
+            {banner ? (
+              <ScreenBanner
+                message={banner}
+                onClose={clearBanner}
+                style={{ marginBottom: theme.spacing.md }}
+              />
+            ) : err ? (
+              <ScreenBanner
+                message={{ message: err, severity: 'error' }}
+                onClose={() => setErr('')}
+                style={{ marginBottom: theme.spacing.md }}
+              />
             ) : null}
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
               {t('section_personal')}
@@ -1695,7 +1686,10 @@ export default function EditUser() {
                 placeholderTextColor={theme.colors.inputPlaceholder}
                 style={styles.field}
                 value={firstName}
-                onChangeText={setFirstName}
+                onChangeText={(val) => {
+                  setFirstName(val);
+                  clearFieldError('firstName');
+                }}
                 onFocus={() => {
                   setFocusFirst(true);
                   ensureVisibleField({
@@ -1706,10 +1700,14 @@ export default function EditUser() {
                     headerHeight,
                   });
                 }}
-                onBlur={() => setFocusFirst(false)}
+                onBlur={() => {
+                  setFocusFirst(false);
+                  setTouched((prev) => ({ ...prev, firstName: true }));
+                }}
                 forceValidation={submittedAttempt}
-                error={!firstName.trim() ? 'required' : undefined}
+                error={firstNameError ? 'invalid' : undefined}
               />
+              <FieldErrorText message={firstNameError} />
               <TextField
                 ref={lastNameRef}
                 label={t('label_last_name')}
@@ -1717,7 +1715,10 @@ export default function EditUser() {
                 placeholderTextColor={theme.colors.inputPlaceholder}
                 style={styles.field}
                 value={lastName}
-                onChangeText={setLastName}
+                onChangeText={(val) => {
+                  setLastName(val);
+                  clearFieldError('lastName');
+                }}
                 onFocus={() => {
                   setFocusLast(true);
                   ensureVisibleField({
@@ -1728,10 +1729,14 @@ export default function EditUser() {
                     headerHeight,
                   });
                 }}
-                onBlur={() => setFocusLast(false)}
+                onBlur={() => {
+                  setFocusLast(false);
+                  setTouched((prev) => ({ ...prev, lastName: true }));
+                }}
                 forceValidation={submittedAttempt}
-                error={!lastName.trim() ? 'required' : undefined}
+                error={lastNameError ? 'invalid' : undefined}
               />
+              <FieldErrorText message={lastNameError} />
               <TextField
                 ref={emailRef}
                 label={t('label_email')}
@@ -1742,7 +1747,10 @@ export default function EditUser() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(val) => {
+                  setEmail(val);
+                  clearFieldError('email');
+                }}
                 onFocus={() => {
                   setFocusEmail(true);
                   ensureVisibleField({
@@ -1753,17 +1761,22 @@ export default function EditUser() {
                     headerHeight,
                   });
                 }}
-                onBlur={() => setFocusEmail(false)}
+                onBlur={() => {
+                  setFocusEmail(false);
+                  setTouched((prev) => ({ ...prev, email: true }));
+                }}
                 forceValidation={submittedAttempt}
-                error={!emailValid ? 'invalid' : undefined}
+                error={emailError ? 'invalid' : undefined}
               />
+              <FieldErrorText message={emailError} />
               <PhoneInput
                 ref={phoneRef}
                 value={phone}
                 onChangeText={(val, meta) => {
                   setPhone(val);
+                  clearFieldError('phone');
                 }}
-                error={!isValidPhone(String(phone || '')) ? t('err_phone') : undefined}
+                error={phoneError ? 'invalid' : undefined}
                 style={styles.field}
                 onFocus={() => {
                   setFocusPhone(true);
@@ -1775,8 +1788,12 @@ export default function EditUser() {
                     headerHeight,
                   });
                 }}
-                onBlur={() => setFocusPhone(false)}
+                onBlur={() => {
+                  setFocusPhone(false);
+                  setTouched((prev) => ({ ...prev, phone: true }));
+                }}
               />
+              <FieldErrorText message={phoneError} />
               <TextField
                 label={t('label_birthdate')}
                 value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
@@ -1793,6 +1810,40 @@ export default function EditUser() {
                 }
               />
             </Card>
+
+            {meId && meId === userId && (
+              <>
+                <SectionHeader bottomSpacing="xs">
+                  {`Пароль (мин ${MIN_PASSWORD_LENGTH} символов)`}
+                </SectionHeader>
+                <Card>
+                  <SecurePasswordInput
+                    value={newPassword}
+                    onChangeText={(v) => {
+                      setNewPassword(v);
+                      // clear errors when typing
+                      setFieldErrors((prev) => ({ ...prev, newPassword: undefined }));
+                    }}
+                    placeholder={t('register_placeholder_password')}
+                    inputStyle={styles.field}
+                  />
+                  <FieldErrorText message={fieldErrors.newPassword?.message} />
+
+                  <View style={{ height: theme.spacing.sm }} />
+
+                  <SecurePasswordInput
+                    value={confirmPassword}
+                    onChangeText={(v) => {
+                      setConfirmPassword(v);
+                      setFieldErrors((prev) => ({ ...prev, confirmPassword: undefined }));
+                    }}
+                    placeholder={t('register_placeholder_password')}
+                    inputStyle={styles.field}
+                  />
+                  <FieldErrorText message={fieldErrors.confirmPassword?.message} />
+                </Card>
+              </>
+            )}
 
             {meIsAdmin && (
               <>
@@ -1821,76 +1872,15 @@ export default function EditUser() {
               </>
             )}
 
-            <SectionHeader bottomSpacing="xs">{t('section_password')}</SectionHeader>
-            <Card>
-              <View style={{ position: 'relative' }}>
-                <TextField
-                  ref={pwdRef}
-                  onFocus={() => {
-                    setFocusPwd(true);
-                    ensureVisibleField({
-                      fieldRef: pwdRef,
-                      scrollRef,
-                      scrollYRef,
-                      insetsBottom: insets.bottom ?? 0,
-                      headerHeight,
-                    });
-                  }}
-                  onBlur={() => setFocusPwd(false)}
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  placeholder={t('placeholder_new_password')}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  error={undefined}
-                  style={styles.field}
-                  rightSlot={
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Pressable
-                        onPress={() => {
-                          setShowPassword((v) => !v);
-                        }}
-                        android_ripple={{
-                          color: theme?.colors?.border ?? '#00000020',
-                          borderless: false,
-                          radius: 24,
-                        }}
-                        accessibilityLabel={
-                          showPassword ? t('a11y_hide_password') : t('a11y_show_password')
-                        }
-                        accessibilityRole="button"
-                        hitSlop={{
-                          top: theme.spacing.sm,
-                          bottom: theme.spacing.sm,
-                          left: theme.spacing.sm,
-                          right: theme.spacing.sm,
-                        }}
-                        style={{ padding: theme.spacing.xs, borderRadius: theme.radii.md }}
-                      >
-                        <Feather
-                          name={showPassword ? 'eye-off' : 'eye'}
-                          size={ICON_MD}
-                          color={theme.colors.primary ?? theme.colors.text}
-                        />
-                      </Pressable>
-                      {!!newPassword && (
-                        <IconButton
-                          onPress={async () => {
-                            await Clipboard.setStringAsync(newPassword || '');
-                            toastSuccess(t('toast_password_copied'));
-                          }}
-                          accessibilityLabel={t('a11y_copy_password')}
-                          size={ICONBUTTON_TOUCH}
-                        >
-                          <Feather name="copy" size={ICON_SM} />
-                        </IconButton>
-                      )}
-                    </View>
-                  }
-                />
-              </View>
-            </Card>
+            {meIsAdmin && meId !== userId && (
+              <UIButton
+                title={t('btn_reset_password')}
+                variant="outline"
+                onPress={onAskResetPassword}
+                style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
+                disabled={resettingPwd}
+              />
+            )}
 
             {meIsAdmin && meId !== userId && !isSuspended && (
               <UIButton
@@ -1919,17 +1909,7 @@ export default function EditUser() {
               />
             )}
 
-            {newPassword.length > 0 && !passwordValid ? (
-              <Text
-                style={{
-                  marginTop: theme.spacing.xs,
-                  color: theme.colors.danger,
-                  fontSize: theme.typography.sizes.xs,
-                }}
-              >
-                {t('err_password_short')}
-              </Text>
-            ) : null}
+            
 
             {/* Exit without saving confirmation */}
             <ConfirmModal
@@ -1942,14 +1922,6 @@ export default function EditUser() {
               cancelLabel={t('dlg_leave_cancel')}
               confirmVariant="destructive"
               onConfirm={confirmCancel}
-            />
-            {/* Alert message */}
-            <AlertModal
-              visible={warningVisible}
-              onClose={() => setWarningVisible(false)}
-              title={t('dlg_alert_title')}
-              message={warningMessage}
-              buttonLabel={t('dlg_ok')}
             />
             {/* Confirm password update */}
             <ConfirmModal
@@ -1964,6 +1936,16 @@ export default function EditUser() {
               cancelLabel={t('header_cancel')}
               confirmVariant="primary"
               onConfirm={() => proceedSave()}
+            />
+            <ConfirmModal
+              visible={resetPwdVisible}
+              onClose={() => setResetPwdVisible(false)}
+              title={t('dlg_reset_password_title')}
+              message={t('dlg_reset_password_msg')}
+              confirmLabel={resettingPwd ? t('toast_saving') : t('btn_reset_password')}
+              cancelLabel={t('header_cancel')}
+              confirmVariant="primary"
+              onConfirm={onConfirmResetPassword}
             />
             <SuspendModal
               visible={suspendVisible}
@@ -2063,8 +2045,31 @@ export default function EditUser() {
               onTakePhoto={pickFromCamera}
               onPickFromLibrary={pickFromLibrary}
               onDeletePhoto={deleteAvatar}
+              onViewPhoto={() => {
+                setViewAvatarVisible(true);
+              }}
               onClose={() => setAvatarSheet(false)}
             />
+            <AvatarCropModal visible={cropVisible} uri={cropSrc} onCancel={onCropCancel} onConfirm={onCropConfirm} />
+
+            <BaseModal
+              visible={viewAvatarVisible}
+              onClose={() => setViewAvatarVisible(false)}
+              title={t('profile_photo_title')}
+              maxHeightRatio={0.9}
+            >
+              <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
+                {avatarUrl ? (
+                  <Image
+                    source={{ uri: avatarUrl }}
+                    style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
+                    resizeMode="contain"
+                  />
+                ) : (
+                  <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'Нет фото'}</Text>
+                )}
+              </View>
+            </BaseModal>
             <DepartmentSelectModal
               visible={deptModalVisible}
               departmentId={departmentId}
@@ -2595,3 +2600,23 @@ function DeleteEmployeeModal({
     </BaseModal>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

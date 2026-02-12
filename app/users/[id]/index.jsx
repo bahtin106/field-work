@@ -15,7 +15,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useQueryWithCache } from '../../../components/hooks/useQueryWithCache';
 import AppHeader from '../../../components/navigation/AppHeader';
 import Card from '../../../components/ui/Card';
 import IconButton from '../../../components/ui/IconButton';
@@ -24,7 +23,7 @@ import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone'
 import SectionHeader from '../../../components/ui/SectionHeader';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import { useToast } from '../../../components/ui/ToastProvider';
-import { supabase } from '../../../lib/supabase';
+import { useEmployee, useEmployeesRealtimeSync } from '../../../src/features/employees/queries';
 import { getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme';
@@ -66,107 +65,24 @@ export default function UserView() {
 
   const ver = useI18nVersion();
   const { t } = useTranslation();
-  const [meIsAdmin, setMeIsAdmin] = useState(false);
-  const [myUid, setMyUid] = useState(null);
-
-  // Кеширование профиля пользователя с Realtime
   const {
     data: userData,
     isLoading: loading,
     error: loadError,
-    refresh,
-  } = useQueryWithCache({
-    queryKey: `user:${userId}`,
-    queryFn: async () => {
-      if (!userId) throw new Error(t('errors_user_not_found', 'errors_user_not_found'));
-
-      // Always know who is logged in for comparison
-      const { data: auth } = await supabase.auth.getUser();
-      const uid = auth?.user?.id || null;
-      const authEmail = auth?.user?.email || '';
-
-      // Try to get extended data via RPC ONLY if admin (RLS-safe)
-      let rpcRow = null;
-      let iAmAdmin = false;
-      if (uid) {
-        const { data: me } = await supabase.from('profiles').select('role').eq('id', uid).single();
-        iAmAdmin = me?.role === 'admin';
-        if (iAmAdmin) {
-          const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', {
-            target_user_id: userId,
-          });
-          rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
-        }
-      }
-
-      // Base profile fields
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select(
-          'first_name, last_name, phone, avatar_url, department_id, is_suspended, suspended_at, birthdate, role',
-        )
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (!prof) throw new Error(t('errors_user_not_found', 'errors_user_not_found'));
-
-      // Load department name
-      let departmentName = null;
-      const depId = prof?.department_id ?? null;
-      if (depId) {
-        const { data: d } = await supabase
-          .from('departments')
-          .select('name')
-          .eq('id', depId)
-          .maybeSingle();
-        departmentName = d?.name || null;
-      }
-
-      // email logic: admin sees all, non-admin only their own
-      let email = '';
-      if (rpcRow?.email) {
-        email = rpcRow.email;
-      } else if (uid && userId === uid && authEmail) {
-        email = authEmail;
-      }
-
-      // birthdate: prefer profiles, fallback to RPC for admins
-      const bd = prof?.birthdate ?? rpcRow?.birthdate ?? null;
-      let birthdate = null;
-      if (bd) {
-        const d = new Date(bd);
-        birthdate = !isNaN(d.getTime()) ? d : null;
-      }
-
-      return {
-        firstName: prof.first_name || '',
-        lastName: prof.last_name || '',
-        avatarUrl: prof.avatar_url || null,
-        phone: String(prof.phone || ''),
-        isSuspended: !!(prof?.is_suspended || prof?.suspended_at),
-        role: prof.role || rpcRow?.user_role || 'worker',
-        birthdate,
-        departmentName,
-        email,
-        meIsAdmin: iAmAdmin,
-        myUid: uid,
-      };
-    },
-    ttl: 3 * 60 * 1000, // 3 минуты (профиль может меняться)
-    staleTime: 1 * 60 * 1000, // 1 минута
-    placeholderData: null,
-    enableRealtime: true,
-    realtimeTable: 'profiles',
-    supabaseClient: supabase,
+    refetch,
+  } = useEmployee(userId, {
     enabled: !!userId,
+    staleTime: 2 * 60 * 1000,
+    refetchOnMount: 'always',
   });
+  useEmployeesRealtimeSync({ enabled: !!userId });
 
   // Гарантируем обновление при возврате на экран (после редактирования)
   // Используем ref для refresh чтобы избежать бесконечной перезагрузки
-  const refreshRef = React.useRef(refresh);
+  const refreshRef = React.useRef(refetch);
   React.useEffect(() => {
-    refreshRef.current = refresh;
-  }, [refresh]);
+    refreshRef.current = refetch;
+  }, [refetch]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -177,14 +93,6 @@ export default function UserView() {
       }
     }, [userId]),
   );
-
-  // Sync кешированных данных в state
-  useEffect(() => {
-    if (userData && mountedRef.current) {
-      setMeIsAdmin(userData.meIsAdmin);
-      setMyUid(userData.myUid);
-    }
-  }, [userData]);
 
   const avatarUrl = userData?.avatarUrl || null;
   const firstName = userData?.firstName || '';
@@ -208,6 +116,8 @@ export default function UserView() {
   const roleLabel = ROLE_LABELS[role] || t('role_worker', 'role_worker');
 
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
+  const meIsAdmin = !!userData?.meIsAdmin;
+  const myUid = userData?.myUid || null;
   const canEdit = meIsAdmin || (myUid && myUid === userId);
   const handleEditPress = React.useCallback(() => {
     router.push(`/users/${userId}/edit`);
@@ -265,8 +175,6 @@ export default function UserView() {
       return false;
     }
   }, [phone, toast]);
-
-  // useQueryWithCache автоматически обновляет при focus благодаря refetchOnFocus: true
 
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
@@ -372,7 +280,6 @@ export default function UserView() {
             rightActions={
               email ? (
                 <IconButton
-                  style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
                   onPress={onCopyEmail}
                   accessibilityLabel={t('a11y_copy_email', 'a11y_copy_email')}
                 >
@@ -407,42 +314,42 @@ export default function UserView() {
               )
             }
             rightActions={
-              phone ? (
-                <IconButton
-                  style={{ marginLeft: theme.spacing[theme.components?.row?.gapX || 'md'] }}
-                  onPress={onCopyPhone}
-                  accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
-                >
-                  <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
-                </IconButton>
-              ) : null
+                phone ? (
+                  <IconButton
+                    onPress={onCopyPhone}
+                    accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
+                  >
+                    <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                  </IconButton>
+                ) : null
             }
           />
           <View style={base.sep} />
 
           <LabelValueRow
             label={t('label_birthdate', 'label_birthdate')}
-            value={
-              birthdate
-                ? (() => {
-                    try {
-                      const dict = getDict?.() || {};
-                      const offset = Number(dict.month_label_offset ?? 0) || 0;
-                      const m = birthdate.getMonth();
-                      const keyIdx = (m + offset + 12) % 12;
-                      const monthName = t(
-                        `months_genitive_${keyIdx}`,
-                        `months_genitive_${keyIdx}`,
-                      );
-                      const day = birthdate.getDate();
-                      const year = birthdate.getFullYear();
-                      return `${day} ${monthName} ${year}`;
-                    } catch (e) {
-                      return t('common_dash', 'common_dash');
-                    }
-                  })()
-                : t('common_dash', 'common_dash')
-            }
+            value={(() => {
+              if (!birthdate) return t('common_dash', 'common_dash');
+              let dateObj = birthdate;
+              // Если birthdate строка — преобразуем
+              if (typeof birthdate === 'string') {
+                const parsed = new Date(birthdate);
+                if (!isNaN(parsed)) dateObj = parsed;
+              }
+              if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return t('common_dash', 'common_dash');
+              try {
+                const dict = getDict?.() || {};
+                const offset = Number(dict.month_label_offset ?? 0) || 0;
+                const m = dateObj.getMonth();
+                const keyIdx = (m + offset + 12) % 12;
+                const monthName = t(`months_genitive_${keyIdx}`, `months_genitive_${keyIdx}`);
+                const day = dateObj.getDate();
+                const year = dateObj.getFullYear();
+                return `${day} ${monthName} ${year}`;
+              } catch (e) {
+                return t('common_dash', 'common_dash');
+              }
+            })()}
           />
         </Card>
 

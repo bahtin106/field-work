@@ -2,6 +2,7 @@ import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,9 +17,10 @@ import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/mo
 import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
-import { useToast } from '../../components/ui/ToastProvider';
-import ValidationAlert from '../../components/ui/ValidationAlert';
+import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import { useTheme } from '../../theme';
+import { useDepartmentsQuery } from '../../src/features/employees/queries';
+import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 
 // i18n
 import { useI18nVersion } from '../../src/i18n';
@@ -34,8 +36,7 @@ import {
   isValidPassword,
 } from '../../lib/authValidation';
 import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
-import { supabase } from '../../lib/supabase';
-import { globalCache } from '../../lib/cache/DataCache';
+import { supabase, supabaseAdmin, EMAIL_SERVICE_URL } from '../../lib/supabase';
 import { getDict, t as T } from '../../src/i18n';
 
 // --- locals / env-driven ---
@@ -58,6 +59,13 @@ try {
   const fromEnv = process.env.EXPO_PUBLIC_ROLE_LABELS_JSON;
   if (fromEnv) ROLE_LABELS_LOCAL = { ...ROLE_LABELS_LOCAL, ...JSON.parse(fromEnv) };
 } catch {}
+
+const generateTempPassword = () => {
+  const words = ['pilot', 'eagle', 'tiger', 'wolf', 'bear', 'lion', 'shark', 'hawk', 'fox', 'star'];
+  const word = words[Math.floor(Math.random() * words.length)];
+  const digits = Math.floor(1000 + Math.random() * 9000);
+  return word + digits;
+};
 
 // --- helpers ---
 function withAlpha(color, a) {
@@ -95,9 +103,10 @@ export default function NewUserScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const ver = useI18nVersion();
+  const queryClient = useQueryClient();
   const router = useRouter();
   const navigation = useNavigation();
-  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const { banner, showBanner, clearBanner, showSuccessToast, showInfoToast } = useFeedback();
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
 
@@ -120,7 +129,12 @@ export default function NewUserScreen() {
   const [dobModalVisible, setDobModalVisible] = useState(false);
 
   const [departmentId, setDepartmentId] = useState(null);
-  const [departments, setDepartments] = useState([]);
+  const { data: companyId } = useMyCompanyIdQuery();
+  const { data: departments = [] } = useDepartmentsQuery({
+    companyId,
+    enabled: !!companyId,
+    onlyEnabled: true,
+  });
   const [deptModalVisible, setDeptModalVisible] = useState(false);
   const activeDeptName = useMemo(() => {
     const d = (departments || []).find((x) => String(x.id) === String(departmentId));
@@ -132,7 +146,8 @@ export default function NewUserScreen() {
 
   const [showRoles, setShowRoles] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [err, setErr] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
   const [cancelVisible, setCancelVisible] = useState(false);
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
 
@@ -140,7 +155,6 @@ export default function NewUserScreen() {
   const [consentChecked, setConsentChecked] = useState(false);
 
   // Validation states
-  const [validationErrors, setValidationErrors] = useState([]);
   const [emailCheckStatus, setEmailCheckStatus] = useState(null); // null | 'checking' | 'available' | 'taken'
   const [invalidCharWarning, setInvalidCharWarning] = useState(false);
 
@@ -219,6 +233,38 @@ export default function NewUserScreen() {
   }, []);
 
   const emailValid = useMemo(() => isValidEmailShared(email), [email]);
+  const shouldShowError = useCallback(
+    (field) => submittedAttempt || !!touched[field],
+    [submittedAttempt, touched],
+  );
+  const clearFieldError = useCallback((field) => {
+    setFieldErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
+  const requiredMsg = useMemo(
+    () => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
+    [t],
+  );
+  const firstNameError =
+    fieldErrors.firstName?.message ||
+    (shouldShowError('firstName') && !firstName.trim() ? requiredMsg : null);
+  const lastNameError =
+    fieldErrors.lastName?.message ||
+    (shouldShowError('lastName') && !lastName.trim() ? requiredMsg : null);
+  const emailError =
+    fieldErrors.email?.message ||
+    ((shouldShowError('email') || emailCheckStatus === 'taken') &&
+    !email.trim()
+      ? requiredMsg
+      : email.trim() && !emailValid
+        ? getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t)
+        : emailCheckStatus === 'taken'
+          ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
+          : null);
 
   // Проверка email на существование (debounced)
   const checkEmailAvailability = useCallback(
@@ -277,43 +323,9 @@ export default function NewUserScreen() {
     };
   }, [email, emailValid, checkEmailAvailability]);
 
-  // Сбор всех ошибок валидации для отображения
   useEffect(() => {
-    const errors = [];
-    const requiredFieldsMissing = [];
-
-    // Проверяем обязательные поля (помеченные звездочкой)
-    if (submittedAttempt) {
-      if (!firstName.trim()) requiredFieldsMissing.push('firstName');
-      if (!lastName.trim()) requiredFieldsMissing.push('lastName');
-      if (!email.trim()) requiredFieldsMissing.push('email');
-    }
-
-    // Если есть незаполненные обязательные поля - показываем общее сообщение
-    if (requiredFieldsMissing.length > 0) {
-      errors.push(t('err_required_fields'));
-    }
-
-    // Email: если заполнен, но неверный формат
-    if (email.trim() && !emailValid) {
-      errors.push(t('err_email_invalid_format'));
-    }
-
-    // Email: если уже занят
-    if (emailCheckStatus === 'taken') {
-      errors.push(t('warn_email_already_taken'));
-    }
-
-    setValidationErrors(errors);
-  }, [
-    firstName,
-    lastName,
-    email,
-    emailValid,
-    submittedAttempt,
-    emailCheckStatus,
-    t,
-  ]);
+    clearBanner();
+  }, [clearBanner]);
 
   // Обработчик недопустимых символов в пароле
   const handleInvalidPasswordInput = useCallback(() => {
@@ -434,14 +446,14 @@ export default function NewUserScreen() {
       setAvatarUrl(publicUrl);
       return publicUrl;
     } catch (e) {
-      setErr(e?.message || t('toast_generic_error'));
+      showBanner({ message: e?.message || t('toast_generic_error'), severity: 'error' });
       return null;
     }
   };
   const pickFromCamera = async () => {
     const ok = await ensureCameraPerms();
     if (!ok) {
-      setErr(t('error_camera_denied'));
+      showBanner({ message: t('error_camera_denied'), severity: 'error' });
       return;
     }
     const res = await ImagePicker.launchCameraAsync({
@@ -455,7 +467,7 @@ export default function NewUserScreen() {
   const pickFromLibrary = async () => {
     const ok = await ensureLibraryPerms();
     if (!ok) {
-      setErr(t('error_library_denied'));
+      showBanner({ message: t('error_library_denied'), severity: 'error' });
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({
@@ -468,22 +480,8 @@ export default function NewUserScreen() {
     if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
   };
 
-  const fetchDepartments = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from(TABLES.departments)
-        .select('id, name')
-        .order('name', { ascending: true });
-      if (!error) setDepartments(Array.isArray(data) ? data : []);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    fetchDepartments();
-  }, [fetchDepartments]);
-
   const warn = (key) => {
-    toastInfo(t(key));
+    showInfoToast(t(key));
   };
 
   const handleCreate = useCallback(async () => {
@@ -498,11 +496,24 @@ export default function NewUserScreen() {
     const emailTaken = emailCheckStatus === 'taken';
 
     if (emailTaken) {
-      toastError(t('error_email_exists'));
+      setFieldErrors((prev) => ({
+        ...prev,
+        email: {
+          code: FEEDBACK_CODES.EMAIL_TAKEN,
+          message: getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t),
+        },
+      }));
       return;
     }
 
     if (missingFirst || missingLast || invalidEmail) {
+      if (missingFirst) {
+        firstNameRef.current?.focus?.();
+      } else if (missingLast) {
+        lastNameRef.current?.focus?.();
+      } else {
+        emailRef.current?.focus?.();
+      }
       scrollRef.current?.scrollTo({ y: 0, animated: true });
       return;
     }
@@ -517,9 +528,7 @@ export default function NewUserScreen() {
     emailValid,
     emailCheckStatus,
     email,
-    router,
     t,
-    toastError,
     scrollRef,
   ]);
 
@@ -527,105 +536,151 @@ export default function NewUserScreen() {
   const handleInviteConfirm = useCallback(async () => {
     if (submitting) return;
     setSubmitting(true);
-    setErr('');
+    clearBanner();
+    setFieldErrors({});
 
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
       const phoneNormalized = String(phone || '').replace(/\D/g, '') || null;
       const bdate = birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
 
-      // Вызываем edge function для отправки приглашения
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-      const supabaseUrl = supabase.supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
-      const url = `${supabaseUrl}/functions/v1/invite_user`;
-      
       if (!__IS_PROD) {
-        console.log('[handleInviteConfirm] Starting invite request');
-        console.log('[handleInviteConfirm] URL:', url);
-        console.log('[handleInviteConfirm] Has token:', !!token);
+        console.log('[handleInviteConfirm] Starting user creation via Admin API');
         console.log('[handleInviteConfirm] Email:', inviteEmail);
       }
-      
-      const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          email: inviteEmail,
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          full_name: fullName,
-          phone: phoneNormalized,
-          birthdate: bdate,
-          role,
-          department_id: departmentId,
-        }),
+
+      const tempPassword = generateTempPassword();
+
+      // 1. Проверяем, не существует ли уже пользователь с таким email
+      const { data: existingProfile } = await supabase
+        .from(TABLES.profiles)
+        .select('id, email')
+        .ilike('email', inviteEmail)
+        .maybeSingle();
+
+      if (existingProfile) {
+        throw new Error(t('error_email_exists'));
+      }
+
+      // 2. Создаем пользователя через Admin.inviteUserByEmail
+      // Это более надежный метод, чем createUser или signUp
+      if (!supabaseAdmin) {
+        throw new Error('Admin client not configured');
+      }
+
+      if (!__IS_PROD) {
+        console.log('[handleInviteConfirm] Creating user via createUser');
+      }
+
+      const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({
+        email: inviteEmail,
+        password: tempPassword,
+        email_confirm: true,
+        user_metadata: {
+          first_name: firstName.trim() || null,
+          last_name: lastName.trim() || null,
+          full_name: fullName || null,
+        }
       });
 
-      if (!__IS_PROD) console.log('[handleInviteConfirm] Response status:', resp.status);
-      
-      const raw = await resp.text();
-      if (!__IS_PROD) console.log('[handleInviteConfirm] Response body:', raw);
-      
-      let body = null;
-      try {
-        body = raw ? JSON.parse(raw) : null;
-      } catch {}
+      if (userError) {
+        console.error('[handleInviteConfirm] CreateUser error:', userError);
+        const msgStr = String(userError.message || '');
+        if (/already.*registered|email.*exists|email.*taken|duplicate|user.*exists/i.test(msgStr)) {
+          throw new Error(t('error_email_exists'));
+        }
+        throw new Error(userError.message || t('err_invite_failed'));
+      }
 
-      if (!resp.ok) {
-        const msg =
-          (body && (body.message || body.error || body.details || body.hint)) ||
-          raw ||
-          `HTTP ${resp.status}`;
-        if (!__IS_PROD) console.error('[handleInviteConfirm] Error:', { status: resp.status, msg, raw });
+      const newUserId = userData?.user?.id;
+      if (!newUserId) {
+        throw new Error('Failed to get user ID');
+      }
 
-        const msgStr = String(msg || '');
+      if (!__IS_PROD) {
+        console.log('[handleInviteConfirm] User created, ID:', newUserId);
+      }
+
+      // 3. Создаем профиль через RPC функцию
+      const { data: rpcData, error: rpcError } = await supabase.rpc('invite_user', {
+        p_email: inviteEmail,
+        p_first_name: firstName.trim() || null,
+        p_last_name: lastName.trim() || null,
+        p_full_name: fullName || null,
+        p_phone: phoneNormalized,
+        p_birthdate: bdate,
+        p_role: role,
+        p_department_id: departmentId,
+        p_temp_password: tempPassword,
+        p_user_id: newUserId,
+      });
+
+      if (!__IS_PROD) console.log('[handleInviteConfirm] RPC result:', { data: rpcData, error: rpcError });
+
+      if (rpcError) {
+        // Если профиль не создался, удаляем пользователя
+        try {
+          await supabaseAdmin.auth.admin.deleteUser(newUserId);
+          console.error('[handleInviteConfirm] Rolled back user creation');
+        } catch (e) {
+          console.error('[handleInviteConfirm] Failed to rollback:', e);
+        }
+
+        const msgStr = String(rpcError.message || '');
         if (/already exists|email.*taken|user.*exists/i.test(msgStr)) {
           throw new Error(t('error_email_exists'));
         }
-        if (/rate limit|too many|limit exceeded/i.test(msgStr) || resp.status === 429) {
-          throw new Error(t('err_invite_rate_limit'));
-        }
-
-        throw new Error(t('err_invite_failed'));
+        throw new Error(rpcError.message || t('err_invite_failed'));
       }
 
       if (!__IS_PROD) console.log('[handleInviteConfirm] Success!');
 
-      const emailSent = body?.email_sent === true;
-      const actionLink = body?.action_link || null;
-      const newUserId = body?.user_id || null;
+      // Отправляем письмо с приглашением
+      try {
+        if (!__IS_PROD) {
+          console.log('[handleInviteConfirm] Sending invitation email to:', inviteEmail);
+        }
 
-      if (!__IS_PROD) {
-        console.log('[handleInviteConfirm] emailSent:', emailSent);
-        console.log('[handleInviteConfirm] actionLink:', actionLink);
-        console.log('[handleInviteConfirm] newUserId:', newUserId);
-        console.log('[handleInviteConfirm] body:', body);
+        const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'invite',
+            email: inviteEmail,
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            tempPassword: tempPassword,
+          }),
+        });
+
+        if (!emailResponse.ok) {
+          console.warn('[handleInviteConfirm] Email sending failed, but user was created');
+        } else {
+          if (!__IS_PROD) {
+            console.log('[handleInviteConfirm] Email sent successfully');
+          }
+        }
+      } catch (emailError) {
+        console.warn('[handleInviteConfirm] Email sending error:', emailError);
       }
 
-      // Успешно создали приглашение
+      // Успешно создали приглашение и отправили письмо
       setInviteModalVisible(false);
-      
-      if (emailSent) {
-        // Письмо отправилось успешно
-        toastSuccess(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
-        globalCache.invalidate('users:');
-        allowLeaveRef.current = true;
-        router.replace('/users');
-      } else if (actionLink) {
-        // Email не отправился - показываем экран с ссылкой для копирования
-        setInviteLink(actionLink);
-        setInviteUserId(newUserId);
-        setInviteSuccessScreen(true);
-      }
+      showSuccessToast(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
+      await queryClient.invalidateQueries({ queryKey: ['employees'] });
+      allowLeaveRef.current = true;
+      router.replace('/users');
     } catch (e) {
-      const msg = String(e?.message || t('toast_generic_error'));
-      setErr(msg);
-      toastError(msg);
+      const normalized = normalizeError(e, { t, fieldMap: { email: 'email' } });
+      if (Object.keys(normalized.fieldErrors || {}).length) {
+        setFieldErrors((prev) => ({ ...prev, ...normalized.fieldErrors }));
+      }
+      if (normalized.screenError) {
+        showBanner({
+          ...normalized.screenError,
+          action: { label: t('btn_retry'), onPress: handleInviteConfirm },
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -639,11 +694,11 @@ export default function NewUserScreen() {
     departmentId,
     inviteEmail,
     router,
-    theme,
+    queryClient,
     t,
-    toastSuccess,
-    toastInfo,
-    toastError,
+    showSuccessToast,
+    showInfoToast,
+    showBanner,
   ]);
 
   const roleItems = useMemo(
@@ -725,42 +780,29 @@ export default function NewUserScreen() {
           </View>
         </Card>
 
-        {/* Ошибки БД */}
-        {err ? (
-          <ValidationAlert
-            messages={[err]}
-            type="error"
+        {banner ? (
+          <ScreenBanner
+            message={banner}
+            onClose={clearBanner}
             style={{ marginBottom: theme.spacing.md }}
           />
         ) : null}
 
-        {/* Ошибки валидации */}
-        {validationErrors.length > 0 && (
-          <ValidationAlert
-            messages={validationErrors}
-            type="error"
-            style={{ marginBottom: theme.spacing.md }}
-          />
-        )}
-
-        {/* Предупреждение о недопустимых символах в пароле */}
         {invalidCharWarning && (
-          <ValidationAlert
-            messages={[t('err_password_invalid_chars')]}
-            type="warning"
+          <ScreenBanner
+            message={{ message: t('err_password_invalid_chars'), severity: 'warning' }}
+            onClose={() => setInvalidCharWarning(false)}
             style={{ marginBottom: theme.spacing.md }}
           />
         )}
 
-        {/* Статус проверки email */}
         {emailCheckStatus === 'checking' && emailValid && (
-          <ValidationAlert
-            messages={[t('warn_checking_email')]}
-            type="info"
+          <ScreenBanner
+            message={{ message: t('warn_checking_email'), severity: 'info' }}
+            onClose={() => setEmailCheckStatus(null)}
             style={{ marginBottom: theme.spacing.md }}
           />
         )}
-
         <SectionHeader bottomSpacing="xs">{t('section_personal')}</SectionHeader>
         <Card paddedXOnly>
           <TextField
@@ -769,20 +811,30 @@ export default function NewUserScreen() {
             placeholder={t('placeholder_first_name')}
             style={styles.field}
             value={firstName}
-            onChangeText={setFirstName}
+            onChangeText={(val) => {
+              setFirstName(val);
+              clearFieldError('firstName');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
             forceValidation={submittedAttempt}
-            error={submittedAttempt && !firstName.trim() ? 'required' : undefined}
+            error={firstNameError ? 'invalid' : undefined}
           />
+          <FieldErrorText message={firstNameError} />
           <TextField
             ref={lastNameRef}
             label={t('label_last_name')}
             placeholder={t('placeholder_last_name')}
             style={styles.field}
             value={lastName}
-            onChangeText={setLastName}
+            onChangeText={(val) => {
+              setLastName(val);
+              clearFieldError('lastName');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, lastName: true }))}
             forceValidation={submittedAttempt}
-            error={submittedAttempt && !lastName.trim() ? 'required' : undefined}
+            error={lastNameError ? 'invalid' : undefined}
           />
+          <FieldErrorText message={lastNameError} />
           <TextField
             ref={emailRef}
             label={t('label_email')}
@@ -792,18 +844,15 @@ export default function NewUserScreen() {
             autoCapitalize="none"
             autoCorrect={false}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(val) => {
+              setEmail(val);
+              clearFieldError('email');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, email: true }))}
             forceValidation={submittedAttempt}
-            error={
-              submittedAttempt && !email.trim()
-                ? 'required'
-                : email.trim() && !emailValid
-                  ? 'invalid'
-                  : emailCheckStatus === 'taken'
-                    ? 'taken'
-                    : undefined
-            }
+            error={emailError ? 'invalid' : undefined}
           />
+          <FieldErrorText message={emailError} />
           <PhoneInput
             ref={phoneRef}
             value={phone}
@@ -1101,7 +1150,7 @@ export default function NewUserScreen() {
             <Pressable
               onPress={() => {
                 setInviteSuccessScreen(false);
-                globalCache.invalidate('users:');
+                queryClient.invalidateQueries({ queryKey: ['employees'] }).catch(() => {});
                 allowLeaveRef.current = true;
                 router.replace('/users');
               }}
@@ -1136,3 +1185,12 @@ export default function NewUserScreen() {
     </SafeAreaView>
   );
 }
+
+
+
+
+
+
+
+
+

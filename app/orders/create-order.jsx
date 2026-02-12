@@ -24,7 +24,8 @@ import SectionHeader from '../../components/ui/SectionHeader';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import TextField from '../../components/ui/TextField';
 import PhoneInput from '../../components/ui/PhoneInput';
-import { AlertModal, ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { usePermissions } from '../../lib/permissions';
 import { buildCustomPayload, fetchFormSchema } from '../../lib/settings';
@@ -55,6 +56,7 @@ export default function CreateOrderScreen() {
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const formStyles = useEditFormStyles();
   const requiredSuffix = t('common_required_suffix');
+  const { banner, showBanner, clearBanner } = useFeedback();
 
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -62,6 +64,7 @@ export default function CreateOrderScreen() {
   const scrollRef = useRef(null);
   const dateFieldRef = useRef(null);
   const timeFieldRef = useRef(null);
+  const fieldRefs = useRef({});
 
   const [schema, setSchema] = useState({ context: 'create', fields: [] });
   const [form, setForm] = useState({});
@@ -78,8 +81,9 @@ export default function CreateOrderScreen() {
   const [workTypeId, setWorkTypeId] = useState(null);
 
   const [cancelVisible, setCancelVisible] = useState(false);
-  const [warningVisible, setWarningVisible] = useState(false);
-  const [warningMessage, setWarningMessage] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
+  const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
@@ -153,10 +157,26 @@ export default function CreateOrderScreen() {
     [requiredSuffix],
   );
 
-  const showWarning = useCallback((message) => {
-    setWarningMessage(message);
-    setWarningVisible(true);
+  useEffect(() => {
+    clearBanner();
+  }, [clearBanner]);
+
+  const shouldShowError = useCallback(
+    (field) => submittedAttempt || !!touched[field],
+    [submittedAttempt, touched],
+  );
+  const clearFieldError = useCallback((field) => {
+    setFieldErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
   }, []);
+  const requiredMsg = useMemo(
+    () => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
+    [t],
+  );
 
   // Проверяем есть ли непустые данные в форме
   const hasChanges = useCallback(() => {
@@ -209,6 +229,25 @@ export default function CreateOrderScreen() {
     );
   }, []);
 
+  const focusField = useCallback(
+    (key) => {
+      const ref = fieldRefs.current[key];
+      if (ref && typeof ref.focus === 'function') {
+        ref.focus();
+      }
+      if (ref) {
+        scrollToHandle({ current: ref });
+        return;
+      }
+      if (key === 'time_window_start') {
+        scrollToHandle(dateFieldRef);
+      } else if (key === 'assigned_to') {
+        scrollToHandle(dateFieldRef);
+      }
+    },
+    [scrollToHandle],
+  );
+
   const normalizePhone = useCallback((val) => {
     const raw = String(val || '').replace(/\D/g, '');
     if (!raw) return null;
@@ -250,19 +289,30 @@ export default function CreateOrderScreen() {
       if (!requiredFields.length) return { ok: true };
 
       const missing = [];
+      const missingKeys = [];
       for (const f of requiredFields) {
         const k = f.field_key;
         const v = form[k];
 
         if (k === 'phone') {
           const normalized = normalizePhone(form.phone);
-          if (!normalized) missing.push(f.label || getFieldLabel(k));
+          if (!normalized) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
         } else if (k === 'time_window_start') {
-          if (!departureDate) missing.push(f.label || getFieldLabel(k));
+          if (!departureDate) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
         } else if (k === 'assigned_to') {
-          if (!toFeed && !assigneeId) missing.push(f.label || getFieldLabel(k));
+          if (!toFeed && !assigneeId) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
         } else if (v === null || v === undefined || String(v).trim() === '') {
           missing.push(f.label || getFieldLabel(k));
+          missingKeys.push(k);
         }
       }
 
@@ -270,6 +320,7 @@ export default function CreateOrderScreen() {
         return {
           ok: false,
           msg: t('order_validation_fill_required').replace('{fields}', missing.join(', ')),
+          missingKeys,
         };
       }
 
@@ -280,23 +331,53 @@ export default function CreateOrderScreen() {
   }, [schema, form, departureDate, toFeed, assigneeId, normalizePhone, getFieldLabel, t]);
 
   const handleSubmit = useCallback(async () => {
+    setSubmittedAttempt(true);
+    clearBanner();
+    setFieldErrors({});
+
     const reqCheck = validateRequiredFields();
     if (!reqCheck.ok) {
-      showWarning(reqCheck.msg);
+      const nextErrors = {};
+      (reqCheck.missingKeys || []).forEach((k) => {
+        nextErrors[k] = { message: requiredMsg };
+      });
+      setFieldErrors(nextErrors);
+      if (reqCheck.missingKeys?.length) focusField(reqCheck.missingKeys[0]);
       return;
     }
 
     const title = (form.title || '').trim();
-    if (useWorkTypes && !workTypeId) return showWarning(t('order_validation_work_type_required'));
-    if (!title) return showWarning(t('order_validation_title_required'));
-    if (!departureDate) return showWarning(t('order_validation_date_required'));
-    if (!toFeed && !assigneeId) return showWarning(t('order_validation_executor_required'));
+    const nextErrors = {};
+    if (useWorkTypes && !workTypeId) {
+      nextErrors.work_type_id = { message: t('order_validation_work_type_required') };
+    }
+    if (!title) {
+      nextErrors.title = { message: t('order_validation_title_required') };
+    }
+    if (!departureDate) {
+      nextErrors.time_window_start = { message: t('order_validation_date_required') };
+    }
+    if (!toFeed && !assigneeId) {
+      nextErrors.assigned_to = { message: t('order_validation_executor_required') };
+    }
+    if (Object.keys(nextErrors).length) {
+      setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
+      focusField(Object.keys(nextErrors)[0]);
+      return;
+    }
 
     const phoneField = getField('phone');
     let phoneFormatted = null;
     if (phoneField) {
       phoneFormatted = normalizePhone(form.phone);
-      if (!phoneFormatted) return showWarning(t('order_validation_phone_format'));
+      if (!phoneFormatted) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          phone: { message: t('order_validation_phone_format') },
+        }));
+        focusField('phone');
+        return;
+      }
     }
 
     const custom = buildCustomPayload(schema.fields, form);
@@ -319,8 +400,16 @@ export default function CreateOrderScreen() {
     };
 
     const { error } = await supabase.from('orders').insert(payload);
-    if (error) showWarning(error.message);
-    else {
+    if (error) {
+      const normalized = normalizeError(error, { t });
+      if (normalized.screenError) {
+        showBanner({
+          ...normalized.screenError,
+          action: { label: t('btn_retry'), onPress: handleSubmit },
+        });
+      }
+      return;
+    } else {
       intentionalExitRef.current = true; // Успешное создание - не сохраняем черновик
       await deleteDraft(); // Удаляем черновик после успешного создания
       router.replace('/orders/order-success');
@@ -339,7 +428,9 @@ export default function CreateOrderScreen() {
     urgent,
     companySettings,
     schema,
-    showWarning,
+    clearBanner,
+    requiredMsg,
+    focusField,
     t,
     deleteDraft,
   ]);
@@ -438,20 +529,55 @@ export default function CreateOrderScreen() {
   }, []);
 
   const renderTextField = useCallback(
-    ({ label, placeholder, value, onChangeText, multiline = false, keyboardType, required, maxLength }) => (
-      <TextField
-        label={withRequiredLabel(label, required)}
-        placeholder={placeholder || label}
-        value={value}
-        onChangeText={onChangeText}
-        multiline={multiline}
-        keyboardType={keyboardType}
-        maxLength={maxLength}
-        style={formStyles.field}
-        forceValidation={false}
-      />
-    ),
-    [formStyles, withRequiredLabel],
+    ({
+      fieldKey,
+      label,
+      placeholder,
+      value,
+      onChangeText,
+      multiline = false,
+      keyboardType,
+      required,
+      maxLength,
+    }) => {
+      const errMsg = fieldKey ? fieldErrors?.[fieldKey]?.message : null;
+      const showErr = fieldKey ? shouldShowError(fieldKey) : false;
+      const finalErr = showErr ? errMsg : null;
+      return (
+        <>
+          <TextField
+            ref={(r) => {
+              if (fieldKey) fieldRefs.current[fieldKey] = r;
+            }}
+            label={withRequiredLabel(label, required)}
+            placeholder={placeholder || label}
+            value={value}
+            onChangeText={(val) => {
+              onChangeText?.(val);
+              if (fieldKey) clearFieldError(fieldKey);
+            }}
+            onBlur={() => {
+              if (fieldKey) setTouched((prev) => ({ ...prev, [fieldKey]: true }));
+            }}
+            multiline={multiline}
+            keyboardType={keyboardType}
+            maxLength={maxLength}
+            style={formStyles.field}
+            forceValidation={submittedAttempt}
+            error={finalErr ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={finalErr} />
+        </>
+      );
+    },
+    [
+      formStyles,
+      withRequiredLabel,
+      fieldErrors,
+      shouldShowError,
+      clearFieldError,
+      submittedAttempt,
+    ],
   );
 
   const renderTextInput = useCallback(
@@ -463,6 +589,7 @@ export default function CreateOrderScreen() {
       return (
         <View key={key}>
           {renderTextField({
+            fieldKey: key,
             label,
             placeholder: placeholder || label,
             value: val,
@@ -482,18 +609,38 @@ export default function CreateOrderScreen() {
       if (!f) return null;
       const label = withRequiredLabel(getFieldLabel(key), f.required);
       const val = form[key] ?? '';
+      const errMsg = fieldErrors?.[key]?.message;
+      const finalErr = shouldShowError(key) ? errMsg : null;
       return (
-        <PhoneInput
-          key={key}
-          label={label}
-          value={val}
-          onChangeText={(raw, meta) => setField(key, raw)}
-          placeholder={t('create_order_placeholder_phone')}
-          style={formStyles.field}
-        />
+        <>
+          <PhoneInput
+            key={key}
+            label={label}
+            value={val}
+            onChangeText={(raw, meta) => {
+              setField(key, raw);
+              clearFieldError(key);
+            }}
+            placeholder={t('create_order_placeholder_phone')}
+            style={formStyles.field}
+            error={finalErr ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={finalErr} />
+        </>
       );
     },
-    [getField, getFieldLabel, form, setField, formStyles, t, withRequiredLabel],
+    [
+      getField,
+      getFieldLabel,
+      form,
+      setField,
+      formStyles,
+      t,
+      withRequiredLabel,
+      fieldErrors,
+      shouldShowError,
+      clearFieldError,
+    ],
   );
 
   const renderToggle = useCallback(
@@ -612,17 +759,25 @@ export default function CreateOrderScreen() {
   return (
     <>
       <EditScreenTemplate title={t('create_order_title')} scrollRef={scrollRef} onBack={handleCancelPress}>
+        {banner ? (
+          <ScreenBanner
+            message={banner}
+            onClose={clearBanner}
+            style={{ marginBottom: theme.spacing.md }}
+          />
+        ) : null}
         <SectionHeader topSpacing="xs" bottomSpacing="xs">
           {t('create_order_section_main')}
         </SectionHeader>
           <Card padded={false} style={formStyles.card}>
-            {renderTextField({
-              label: getFieldLabel('title'),
-              placeholder: t('create_order_placeholder_title'),
-              value: form.title || '',
-              onChangeText: (text) => setField('title', text),
-              required: getField('title')?.required,
-            })}
+        {renderTextField({
+          fieldKey: 'title',
+          label: getFieldLabel('title'),
+          placeholder: t('create_order_placeholder_title'),
+          value: form.title || '',
+          onChangeText: (text) => setField('title', text),
+          required: getField('title')?.required,
+        })}
             {renderTextField({
               label: t('order_field_description'),
               placeholder: t('create_order_placeholder_description'),
@@ -632,13 +787,23 @@ export default function CreateOrderScreen() {
             })}
 
             {useWorkTypes && (
-              <TextField
-                label={withRequiredLabel(t('create_order_work_type_label'), true)}
-                value={selectedWorkTypeName || t('create_order_work_type_placeholder')}
-                pressable
-                style={formStyles.field}
-                onPress={() => setWorkTypeModalVisible(true)}
-              />
+              <>
+                <TextField
+                  label={withRequiredLabel(t('create_order_work_type_label'), true)}
+                  value={selectedWorkTypeName || t('create_order_work_type_placeholder')}
+                  pressable
+                  style={formStyles.field}
+                  onPress={() => setWorkTypeModalVisible(true)}
+                  error={
+                    shouldShowError('work_type_id') && fieldErrors?.work_type_id ? 'invalid' : undefined
+                  }
+                />
+                <FieldErrorText
+                  message={
+                    shouldShowError('work_type_id') ? fieldErrors?.work_type_id?.message : null
+                  }
+                />
+              </>
             )}
           </Card>
 
@@ -699,6 +864,11 @@ export default function CreateOrderScreen() {
               pressable
               style={formStyles.field}
               ref={dateFieldRef}
+              error={
+                shouldShowError('time_window_start') && fieldErrors?.time_window_start
+                  ? 'invalid'
+                  : undefined
+              }
               rightSlot={
                 departureDate ? (
                   <ClearButton
@@ -711,6 +881,13 @@ export default function CreateOrderScreen() {
                 setShowDatePicker(true);
                 setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
               }}
+            />
+            <FieldErrorText
+              message={
+                shouldShowError('time_window_start')
+                  ? fieldErrors?.time_window_start?.message
+                  : null
+              }
             />
 
             <DateTimeModal
@@ -807,6 +984,14 @@ export default function CreateOrderScreen() {
               pressable
               style={formStyles.field}
               onPress={() => setAssigneeModalVisible(true)}
+              error={
+                shouldShowError('assigned_to') && fieldErrors?.assigned_to ? 'invalid' : undefined
+              }
+            />
+            <FieldErrorText
+              message={
+                shouldShowError('assigned_to') ? fieldErrors?.assigned_to?.message : null
+              }
             />
           </Card>
 
@@ -854,14 +1039,6 @@ export default function CreateOrderScreen() {
         searchable
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setAssigneeModalVisible(false)}
-      />
-
-      <AlertModal
-        visible={warningVisible}
-        title={t('create_order_modal_warning_title')}
-        message={warningMessage}
-        buttonLabel={t('create_order_modal_warning_ok')}
-        onClose={() => setWarningVisible(false)}
       />
 
       <ConfirmModal
@@ -987,3 +1164,4 @@ function createStyles(theme) {
     },
   });
 }
+

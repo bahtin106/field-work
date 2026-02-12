@@ -10,6 +10,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 type ReqBody = {
   user_id: string;
+  changed_by?: string | null;
   email?: string | null;
   new_password?: string | null;
   password?: string | null;
@@ -55,7 +56,7 @@ serve(async (req: Request) => {
       global: { headers: { 'x-application': 'edge-update-user' } },
     });
 
-    const { user_id, email, new_password, password, role, profile, is_suspended, suspended_at } =
+    const { user_id, changed_by, email, new_password, password, role, profile, is_suspended, suspended_at } =
       body;
 
     // 1) Обновление полей профиля (если переданы)
@@ -103,13 +104,52 @@ serve(async (req: Request) => {
 
     // 2) Email/пароль — только в auth (если переданы)
     const authPatch: { email?: string; password?: string } = {};
+    let passwordChanged = false;
+    
     if (email && email.trim().length > 0) authPatch.email = email.trim();
     const pwd = password || new_password;
-    if (pwd && pwd.length >= 6) authPatch.password = pwd;
+    if (pwd && pwd.length >= 6) {
+      authPatch.password = pwd;
+      passwordChanged = true;
+    }
 
     if (Object.keys(authPatch).length > 0) {
+      console.log(`[UPDATE_USER] Updating auth for user ${user_id}:`, {
+        hasEmail: !!authPatch.email,
+        hasPassword: passwordChanged,
+      });
+      
       const { error: authErr } = await admin.auth.admin.updateUserById(user_id, authPatch);
-      if (authErr) throw new Error('Auth update failed: ' + authErr.message);
+      
+      if (authErr) {
+        console.error(`[UPDATE_USER] Auth update failed for user ${user_id}:`, authErr);
+        throw new Error('Auth update failed: ' + authErr.message);
+      }
+      
+      console.log(`[UPDATE_USER] Auth update successful for user ${user_id}`);
+
+      // 3) Логируем изменение пароля в таблицу password_change_log (если существует)
+      if (passwordChanged) {
+        try {
+          console.log(`[UPDATE_USER] Logging password change for user ${user_id}`);
+          const { error: logErr } = await admin
+            .from('password_change_log')
+            .insert({
+              user_id,
+              changed_at: new Date().toISOString(),
+              changed_by: changed_by || user_id, // Если changed_by не указан, значит пользователь меняет свой пароль
+            });
+          
+          if (logErr) {
+            // Логирование — не критично, но выведем в лог
+            console.warn(`[UPDATE_USER] Failed to log password change:`, logErr.message);
+          } else {
+            console.log(`[UPDATE_USER] Password change logged successfully for user ${user_id}`);
+          }
+        } catch (logException) {
+          console.warn(`[UPDATE_USER] Exception while logging password change:`, logException);
+        }
+      }
     }
 
     return new Response(JSON.stringify({ ok: true }), {
@@ -117,6 +157,7 @@ serve(async (req: Request) => {
       status: 200,
     });
   } catch (e: any) {
+    console.error(`[UPDATE_USER] Error:`, e?.message);
     return new Response(JSON.stringify({ ok: false, message: e?.message ?? 'Unknown error' }), {
       headers: { 'Content-Type': 'application/json', ...cors },
       status: 200, // Всегда 200, чтобы клиент не падал с generic ошибкой

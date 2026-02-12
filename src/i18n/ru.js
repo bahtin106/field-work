@@ -29,16 +29,23 @@ export default {
   btn_save: 'Сохранить',
   btn_delete: 'Удалить',
   btn_suspend: 'Отстранить',
+  btn_reset_password: 'Сбросить пароль',
   btn_deleting: 'Удаляю…',
   btn_applying: 'Применяю…',
   btn_delete_employee: 'Удалить пользователя',
   btn_login: 'Войти',
   btn_create: 'Создать',
+  btn_retry: 'Повторить',
   btn_create_employee: 'Создать сотрудника',
   btn_choose: 'Выбрать',
   header_cancel: 'Закрыть',
   header_save: 'Сохранить',
   header_edit_user: 'Редактирование',
+  dlg_reset_password_title: 'Сброс пароля',
+  dlg_reset_password_msg: 'Отправить сотруднику новый пароль?',
+  toast_reset_password_sending: 'Сбрасываю пароль…',
+  toast_reset_password_sent: 'Новый пароль отправлен',
+  err_reset_password_failed: 'Не удалось сбросить пароль',
 
   // Просмотр профиля (app/users/[id])
   // Роли
@@ -101,6 +108,7 @@ export default {
   errors_invalid_credentials: 'Неверный e-mail или пароль',
   errors_auth_error: 'Ошибка авторизации',
   err_required_fields: 'Укажите необходимые данные',
+  err_required_field: 'Обязательное поле',
   err_first_name: 'Укажите имя',
   err_last_name: 'Укажите фамилию',
   err_email: 'Укажите корректный e-mail',
@@ -110,6 +118,14 @@ export default {
   err_password_invalid_chars:
     'Пароль содержит недопустимые символы. Используйте только латинские буквы, цифры и спецсимволы',
   err_password_mismatch: 'Пароли не совпадают',
+  // Дополнительные метки силы пароля, используемые на странице редактирования профиля
+  pwd_strength_very_weak: 'Очень слабый',
+  pwd_strength_weak: 'Слабый',
+  pwd_strength_medium: 'Средний',
+  pwd_strength_good: 'Хороший',
+  pwd_strength_strong: 'Сильный',
+  // Совместимый ключ для сообщения о несовпадении паролей (используется в форме)
+  error_passwords_mismatch: 'Пароли не совпадают',
   err_successor_required: 'Выберите правопреемника',
   err_unsuspend_failed: 'Не удалось снять отстранение',
   err_invite_rate_limit: 'Слишком много запросов. Попробуйте чуть позже',
@@ -203,6 +219,7 @@ export default {
   register_company_name_placeholder: 'ООО «Пример»',
   register_error_account_type: 'Выберите тип аккаунта',
   register_error_company_name: 'Укажите название компании',
+  register_error_consent_required: 'Для регистрации необходимо согласие с политикой конфиденциальности',
   register_success: 'Регистрация успешна!',
   register_success_please_login: 'Регистрация успешна! Войдите в систему',
   register_link: 'Зарегистрироваться',
@@ -604,6 +621,7 @@ export default {
   order_details_work_type_not_selected: 'не выбран',
   order_section_customer: 'Заказчик',
   order_section_address: 'Адрес',
+  order_section_finances: 'Финансы',
   order_section_work_type: 'Тип работ',
   order_details_departure_date: 'Дата выезда',
   order_details_departure_not_specified: 'не указана',
@@ -611,6 +629,7 @@ export default {
   order_details_phone_hidden: 'Скрыт',
   order_details_amount: 'Сумма',
   order_details_fuel: 'ГСМ',
+  order_placeholder_amount: '0.00',
   order_details_description: 'Описание',
   order_details_description_empty: '—',
   order_details_show_full: 'Показать полностью',
@@ -671,6 +690,8 @@ export default {
   order_field_customer_name: 'Имя заказчика',
   order_field_departure_date: 'Дата выезда *',
   order_field_departure_time: 'Время выезда',
+  order_placeholder_departure_date: 'Выберите дату',
+  order_placeholder_departure_time: 'Сначала выберите дату',
 
   // Валидация заявки
   order_validation_fill_required: 'Заполните обязательные поля: {fields}',
@@ -682,8 +703,12 @@ export default {
   order_validation_executor_required: 'Выберите исполнителя или отправьте в ленту',
   order_validation_work_type_required: 'Выберите тип работ',
   order_validation_phone_format: 'Введите корректный номер телефона формата +7 (9__) ___-__-__',
+  order_validation_amount_format: 'Введите корректную сумму',
+  order_validation_fuel_format: 'Введите корректную сумму ГСМ',
   order_validation_no_order_id: 'Id заявки не найден',
   order_save_error: 'Ошибка сохранения',
+  order_load_error: 'Не удалось загрузить заявку',
+  order_not_found: 'Заявка не найдена',
 
   // Статусы заявок
   order_status_in_feed: 'В ленте',

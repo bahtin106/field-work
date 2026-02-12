@@ -52,7 +52,7 @@ export function useCompanySettings() {
         }
       }
     },
-    staleTime: 1000, // Уменьшаем до 1 секунды для быстрого отклика на изменения
+    staleTime: 60 * 1000,
     placeholderData: (prev) => prev,
   });
 

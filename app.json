@@ -12,8 +12,10 @@
       "**/*"
     ],
     "extra": {
-      "supabaseUrl": "https://fopalcvzdkftsvhqszcx.supabase.co",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvcGFsY3Z6ZGtmdHN2aHFzemN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyOTk5OTIsImV4cCI6MjA2OTg3NTk5Mn0.GJ7W9E_Oap78oBtDTl_ATpb1zcz3UI-dl7x9Ujv9QlY",
+      "supabaseUrl": "https://supabase.monitorapp.ru",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzcwMTI0NjE4LCJleHAiOjIwODU0ODQ2MTh9.AHQIpGhGL9NH8i6v6oNs7counMqIjmbpjFNZ0BHXc4w",
+      "supabaseServiceKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3NzAxMjQ2MTksImV4cCI6MjA4NTQ4NDYxOX0.82TaDhX4A1J8xuExtPJUINQD2CNEmkioYNTDq9TEhl4",
+      "emailServiceUrl": "https://api.monitorapp.ru",
       "eas": {
         "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
       }

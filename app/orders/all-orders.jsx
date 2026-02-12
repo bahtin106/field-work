@@ -1,7 +1,7 @@
 /* global __DEV__ */
 // app/orders/all-orders.jsx
 
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -24,19 +24,24 @@ import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
-import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import {
+  ensureRequestPrefetch,
+  useAllRequests,
+  useRequestExecutors,
+  useRequestFilterOptions,
+  useRequestRealtimeSync,
+} from '../../src/features/requests/queries';
+import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
-const DEBUG_ALL_ORDERS = false;
-const logAllOrders = (...args) => {
-  if (DEBUG_ALL_ORDERS && __DEV__) console.warn(...args);
-};
+const EMPTY_ARRAY = [];
 
 // ===== HARD PERMISSION GUARD (independent from usePermissions) =====
 async function checkCanViewAll() {
@@ -92,6 +97,12 @@ export default function AllOrdersScreen() {
   const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
   const { has, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
+  const isFocused = useIsFocused();
+  const effectiveAllowed = allowed ?? (!permLoading ? has('canViewAllOrders') : null);
+
+  useEffect(() => {
+    markScreenMount('AllRequests');
+  }, []);
 
   const styles = useMemo(
     () =>
@@ -317,11 +328,6 @@ export default function AllOrdersScreen() {
       return () => sub.remove();
     }, []),
   );
-
-  // Global cache with TTL
-  const CACHE_TTL_MS = 5 * 60 * 1000; // 5 минут (совпадает с React Query staleTime)
-  const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
-  LIST_CACHE.all ||= {};
   const { filter, executor, department, search, work_type, materials } = useLocalSearchParams();
 
   const [statusFilter, setStatusFilter] = useState(
@@ -334,87 +340,14 @@ export default function AllOrdersScreen() {
           : filter || 'all',
   );
 
-  // Вычисляем начальный cacheKey на основе реального statusFilter
-  const cacheKeyInitial = useMemo(() => {
-    const initialStatus =
-      filter === 'completed'
-        ? 'done'
-        : filter === 'in_progress'
-          ? 'in_progress'
-          : filter === 'new'
-            ? 'new'
-            : filter || 'all';
-    return JSON.stringify({ status: initialStatus, ex: null, dept: null, wt: '' });
-  }, [filter]);
-
-  const hydratedRef = useRef(false);
-
-  const [orders, setOrders] = useState(() => {
-    // 1. Проверяем prefetch кэш для быстрого старта
-    const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
-    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
-      hydratedRef.current = true; // Сразу помечаем как гидратированный!
-      logAllOrders(`[AllOrders] 🚀 MOUNT: Found ${prefetchData.length} items in prefetch cache!`);
-      return prefetchData;
-    }
-
-    // 2. Проверяем React Query кэш с фильтрами
-    const queryKey = ['orders', 'all', cacheKeyInitial];
-    const cachedQueryData = queryClient.getQueryData(queryKey);
-    if (cachedQueryData) {
-      logAllOrders(
-        `[AllOrders] 🚀 MOUNT: Found ${cachedQueryData.length} items in React Query cache!`,
-      );
-      return cachedQueryData;
-    }
-
-    // 3. Fallback на globalThis
-    const cached = LIST_CACHE.all[cacheKeyInitial];
-    if (cached?.data) {
-      logAllOrders(`[AllOrders] MOUNT: Found ${cached.data.length} items in globalThis cache`);
-      return cached.data;
-    }
-
-    return [];
-  });
-
-  const [loading, setLoading] = useState(() => {
-    // Если есть prefetch данные - не показываем лоадер
-    const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
-    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
-      logAllOrders(`[AllOrders] MOUNT: loading=false (prefetch cache hit)`);
-      return false;
-    }
-
-    // Если есть данные в кэше - не показываем лоадер
-    const queryKey = ['orders', 'all', cacheKeyInitial];
-    const cachedQueryData = queryClient.getQueryData(queryKey);
-    if (cachedQueryData) {
-      logAllOrders(`[AllOrders] MOUNT: loading=false (React Query cache hit)`);
-      return false;
-    }
-
-    const cached = LIST_CACHE.all[cacheKeyInitial];
-    if (cached?.data) {
-      logAllOrders(`[AllOrders] MOUNT: loading=false (globalThis cache hit)`);
-      return false;
-    }
-
-    return true;
-  });
-
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [executorFilter, setExecutorFilter] = useState(executor || null);
-
-  // Пагинация (как в Instagram/Telegram)
-  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const PAGE_SIZE = 10;
 
   const [departmentFilter, setDepartmentFilter] = useState(null);
-  const [departments, setDepartments] = useState([]);
-  const [departmentSearch, setDepartmentSearch] = useState('');
   const [departmentFilterInit] = useState(department ? Number(department) : null);
   useEffect(() => {
     if (departmentFilterInit != null && !Number.isNaN(departmentFilterInit))
@@ -472,27 +405,8 @@ export default function AllOrdersScreen() {
   const [tmpWorkType, setTmpWorkType] = useState(workTypeFilter || []);
   const [tmpMaterials, setTmpMaterials] = useState(materialsFilter || []);
   const [tmpExecutor, setTmpExecutor] = useState(executorFilter || null);
-  const [executors, setExecutors] = useState([]);
   const [executorSearch, setExecutorSearch] = useState('');
 
-  const sortedExecutors = useMemo(() => {
-    const list = executors ? [...executors] : [];
-    return list.sort((a, b) => {
-      const an = [a.first_name || '', a.last_name || ''].join(' ').trim();
-      const bn = [b.first_name || '', b.last_name || ''].join(' ').trim();
-      return an.localeCompare(bn, 'ru');
-    });
-  }, [executors]);
-  const sortedWorkTypes = useMemo(() => {
-    return [...(filterOptions.work_type || [])].sort((a, b) =>
-      String(a).localeCompare(String(b), 'ru'),
-    );
-  }, [filterOptions.work_type]);
-  const sortedMaterials = useMemo(() => {
-    return [...(filterOptions.materials || [])].sort((a, b) =>
-      String(a).localeCompare(String(b), 'ru'),
-    );
-  }, [filterOptions.materials]);
   const filteredExecutors = useMemo(() => {
     let list = executors || [];
     // constrain by department when selected
@@ -506,16 +420,38 @@ export default function AllOrdersScreen() {
     );
   }, [executors, executorSearch, departmentFilter]);
 
-  const cacheKey = useMemo(
-    () =>
-      JSON.stringify({
-        status: statusFilter,
-        ex: executorFilter || null,
-        dept: departmentFilter || null,
-        wt: (workTypeFilter || []).join(','),
-      }),
-    [statusFilter, executorFilter, departmentFilter, workTypeFilter],
+  const { data: companyId } = useMyCompanyIdQuery();
+  const allRequestsParams = useMemo(() => {
+    const next = {};
+    if (statusFilter && statusFilter !== 'all') next.status = statusFilter;
+    if (executorFilter) next.executorId = executorFilter;
+    if (departmentFilter != null) next.departmentId = departmentFilter;
+    if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
+      next.workTypeIds = workTypeFilter;
+    }
+    return next;
+  }, [statusFilter, executorFilter, departmentFilter, useWorkTypes, workTypeFilter]);
+
+  const {
+    items: requestItems = [],
+    isLoading: requestsLoading,
+    refetch: refetchRequests,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useAllRequests(
+    allRequestsParams,
+    {
+      enabled: effectiveAllowed === true,
+      refetchInterval: isFocused ? 20 * 1000 : false,
+      refetchIntervalInBackground: false,
+    },
   );
+  const { data: executorsData } = useRequestExecutors({ enabled: effectiveAllowed === true });
+  const executors = useMemo(() => executorsData ?? EMPTY_ARRAY, [executorsData]);
+  const { data: filterOptionsData } = useRequestFilterOptions({ enabled: effectiveAllowed === true });
+
+  useRequestRealtimeSync({ enabled: effectiveAllowed === true, companyId });
 
   // Ensure executor selection is consistent with selected department
   useEffect(() => {
@@ -527,257 +463,42 @@ export default function AllOrdersScreen() {
   }, [departmentFilter, executorFilter, executors]);
 
   // ✅ Serve cached data immediately when filters change (fix for stale list after toggling chips)
+  const lastItemsSignatureRef = useRef('');
   useEffect(() => {
-    // Проверяем React Query кэш ПЕРВЫМ
-    const queryKey = ['orders', 'all', cacheKey];
-    const cachedQueryData = queryClient.getQueryData(queryKey);
-
-    if (cachedQueryData) {
-      if (__DEV__)
-        console.warn(
-          `[Orders] Filter changed - loaded from React Query cache (${cachedQueryData.length} items)`,
-        );
-      setOrders(cachedQueryData);
-      setLoading(false);
-      return;
+    const signature = Array.isArray(requestItems)
+      ? requestItems.map((item) => `${item?.id || ''}:${item?.updated_at || ''}`).join('|')
+      : '';
+    if (lastItemsSignatureRef.current !== signature) {
+      lastItemsSignatureRef.current = signature;
+      setOrders(requestItems);
     }
+    setLoading(requestsLoading && requestItems.length === 0);
+    setHasMore(!!hasNextPage);
+    setLoadingMore(isFetchingNextPage);
+  }, [hasNextPage, isFetchingNextPage, requestItems, requestsLoading]);
 
-    // Fallback на globalThis
-    const cached = LIST_CACHE.all[cacheKey];
-    if (cached) {
-      if (__DEV__)
-        console.warn(
-          `[Orders] Filter changed - loaded from globalThis cache (${cached.data?.length || 0} items)`,
-        );
-      setOrders(cached.data || []);
-      setLoading(false);
-    } else {
-      setLoading(true);
+  useEffect(() => {
+    if (filterOptionsData) {
+      setFilterOptions(filterOptionsData);
     }
-  }, [cacheKey, queryClient]);
+  }, [filterOptionsData]);
 
+  const firstContentMarkedRef = useRef(false);
   useEffect(() => {
-    const fetchExecutors = async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, first_name, last_name, department_id')
-        .neq('role', 'client');
+    if (firstContentMarkedRef.current) return;
+    if (requestsLoading) return;
+    firstContentMarkedRef.current = true;
+    markFirstContent('AllRequests');
+  }, [requestsLoading]);
 
-      if (!error) setExecutors(data || []);
-    };
-    fetchExecutors();
-  }, []);
-
-  useEffect(() => {
-    const fetchDepartments = async () => {
-      const { data, error } = await supabase
-        .from('departments')
-        .select('id, name')
-        .order('name', { ascending: true });
-      if (!error) setDepartments(data || []);
-    };
-    fetchDepartments();
-  }, []);
-
-  useEffect(() => {
-    const loadFilterOptions = async () => {
-      const { data, error } = await supabase.rpc('get_order_filter_options');
-      if (!error && data) {
-        setFilterOptions({
-          work_type: Array.isArray(data.work_type) ? data.work_type : [],
-          materials: Array.isArray(data.materials) ? data.materials : [],
-        });
-      }
-    };
-    loadFilterOptions();
-  }, []);
-
-  // Auto refresh by TTL (background, no spinner if cache exists)
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      // Проверяем React Query кэш ПЕРВЫМ
-      const queryKey = ['orders', 'all', cacheKey];
-      const cachedQueryData = queryClient.getQueryData(queryKey);
-      const queryState = queryClient.getQueryState(queryKey);
-
-      // Если данные есть в React Query И они свежие (< 5 минут) - НЕ ЗАГРУЖАЕМ!
-      if (cachedQueryData && queryState?.dataUpdatedAt) {
-        const age = Date.now() - queryState.dataUpdatedAt;
-        const staleTime = 5 * 60 * 1000; // 5 минут (совпадает с prefetch!)
-
-        if (age < staleTime) {
-          logAllOrders(
-            `[AllOrders] ✓ Using React Query cache (${cachedQueryData.length} items, age: ${Math.round(age / 1000)}s)`,
-          );
-          setOrders(cachedQueryData);
-          setLoading(false);
-          return; // НЕ загружаем с сервера!
-        }
-      }
-
-      // Fallback: проверяем globalThis cache
-      const cached = LIST_CACHE.all[cacheKey];
-      const freshNeeded = !cached || Date.now() - (cached.ts || 0) > CACHE_TTL_MS;
-
-      if (!freshNeeded && cached) {
-        logAllOrders(
-          `[AllOrders] ✓ Loaded from globalThis cache (${cached.data?.length || 0} items)`,
-        );
-        setOrders(cached.data || []);
-        setLoading(false);
-        return;
-      }
-
-      // Если дошли сюда - нужно загрузить с сервера
-      // Если есть prefetch данные и это первая загрузка - используем их
-      if (hydratedRef.current && orders.length > 0 && !cached) {
-        logAllOrders('[AllOrders] ⏭ Skip network load (using prefetch data)');
-        setLoading(false);
-        return;
-      }
-
-      logAllOrders(`[AllOrders] Loading from network...`);
-
-      // Build base query
-      let query = supabase.from('orders_secure_v2').select('*');
-      if (statusFilter === 'feed') {
-        query = query.is('assigned_to', null);
-      } else {
-        const statusValue = mapStatusToDb(statusFilter);
-        if (statusValue) query = query.eq('status', statusValue);
-        if (executorFilter) query = query.eq('assigned_to', executorFilter);
-      }
-      if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
-
-      // Work types: secure view may not expose work_type_id -> filter by ids from base table
-      if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
-        const ids = await getOrderIdsByWorkTypes(workTypeFilter);
-        if (!ids.length) {
-          if (!alive) return;
-          const emptyResult = [];
-          setOrders(emptyResult);
-          LIST_CACHE.all[cacheKey] = { data: emptyResult, ts: Date.now() };
-          queryClient.setQueryData(queryKey, emptyResult); // Сохраняем в React Query
-          setLoading(false);
-          return;
-        }
-        query = query.in('id', ids);
-      }
-
-      const { data, error } = await query
-        .order('time_window_start', { ascending: false })
-        .range(0, PAGE_SIZE - 1); // ПАГИНАЦИЯ: только первые 10!
-      if (!alive) return;
-      if (!error) {
-        const resultRaw = data || [];
-        const result = resultRaw.map((o) => ({
-          ...o,
-          time_window_start: o.time_window_start ?? null,
-        }));
-        logAllOrders(`[AllOrders] 🌐 Loaded from network (${result.length} items)`);
-        setOrders(result);
-        setHasMore(result.length === PAGE_SIZE); // Есть ли ещё данные?
-        LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
-        queryClient.setQueryData(queryKey, result); // Сохраняем в React Query кэш!
-      }
-      setLoading(false);
-    };
-
-    // ВСЕГДА проверяем prefetch СНАЧАЛА и откладываем загрузку
-    const prefetchData = queryClient.getQueryData(['orders', 'all', 'recent']);
-    if (
-      hydratedRef.current &&
-      orders.length > 0 &&
-      Array.isArray(prefetchData) &&
-      prefetchData.length > 0
-    ) {
-      logAllOrders(
-        '[AllOrders] ⏭ Skip immediate fetch (prefetch satisfied), schedule background refresh',
-      );
-      // Фоновое обновление через задержку (как в my-orders)
-      const timer = setTimeout(() => {
-        logAllOrders('[AllOrders] 🔄 Background refresh start');
-        tick();
-      }, 1200);
-
-      // Периодическая проверка каждые 5 минут
-      const id = setInterval(tick, 5 * 60 * 1000);
-
-      return () => {
-        alive = false;
-        clearTimeout(timer);
-        clearInterval(id);
-      };
-    }
-
-    // Если нет prefetch - тоже откладываем на 1200ms (даем время для кэша)
-    const timer = setTimeout(() => {
-      tick();
-    }, 1200);
-    const id = setInterval(tick, 5 * 60 * 1000);
-
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-      clearInterval(id);
-    };
-  }, [
-    cacheKey,
-    statusFilter,
-    executorFilter,
-    departmentFilter,
-    workTypeFilter,
-    useWorkTypes,
-    queryClient,
-    orders.length,
-  ]);
-
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setRefreshing(true);
-      setLoading(true);
-      setPage(1); // Сброс пагинации
-      setHasMore(true);
-
-      let query = supabase.from('orders_secure_v2').select('*');
-      if (statusFilter === 'feed') {
-        query = query.is('assigned_to', null);
-      } else {
-        const statusValue = mapStatusToDb(statusFilter);
-        if (statusValue) query = query.eq('status', statusValue);
-        if (executorFilter) query = query.eq('assigned_to', executorFilter);
-      }
-      if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
-
-      if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
-        const ids = await getOrderIdsByWorkTypes(workTypeFilter);
-        if (!ids.length) {
-          setOrders([]);
-          setHasMore(false);
-          LIST_CACHE.all[cacheKey] = { data: [], ts: Date.now() };
-          return;
-        }
-        query = query.in('id', ids);
-      }
-      const { data, error } = await query
-        .order('time_window_start', { ascending: false })
-        .range(0, PAGE_SIZE - 1); // ПАГИНАЦИЯ
-      if (!error) {
-        const resultRaw = data || [];
-        const result = resultRaw.map((o) => ({
-          ...o,
-          time_window_start: o.time_window_start ?? null,
-        }));
-        setOrders(result);
-        setHasMore(result.length === PAGE_SIZE);
-        LIST_CACHE.all[cacheKey] = { data: result, ts: Date.now() };
-      }
+      await refetchRequests();
     } finally {
       setRefreshing(false);
-      setLoading(false);
     }
-  };
+  }, [refetchRequests]);
 
   const getStatusLabel = (key) => {
     switch (key) {
@@ -840,66 +561,9 @@ export default function AllOrdersScreen() {
 
   // Ленивая загрузка при скролле (как в Instagram/Telegram)
   const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore || loading) return;
-
-    // Loading next page
-
-    setLoadingMore(true);
-    const nextPage = page + 1;
-    setPage(nextPage);
-
-    try {
-      let query = supabase.from('orders_secure_v2').select('*');
-      if (statusFilter === 'feed') {
-        query = query.is('assigned_to', null);
-      } else {
-        const statusValue = mapStatusToDb(statusFilter);
-        if (statusValue) query = query.eq('status', statusValue);
-        if (executorFilter) query = query.eq('assigned_to', executorFilter);
-      }
-      if (departmentFilter != null) query = query.eq('department_id', Number(departmentFilter));
-
-      if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
-        const ids = await getOrderIdsByWorkTypes(workTypeFilter);
-        if (!ids.length) {
-          setHasMore(false);
-          setLoadingMore(false);
-          return;
-        }
-        query = query.in('id', ids);
-      }
-
-      const from = (nextPage - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-
-      const { data, error } = await query
-        .order('time_window_start', { ascending: false })
-        .range(from, to);
-
-      if (!error && Array.isArray(data)) {
-        const normalized = data.map((o) => ({
-          ...o,
-          time_window_start: o.time_window_start ?? null,
-        }));
-        setOrders((prev) => [...prev, ...normalized]);
-        setHasMore(normalized.length === PAGE_SIZE);
-
-        // Loaded successfully
-      }
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [
-    loadingMore,
-    hasMore,
-    loading,
-    page,
-    statusFilter,
-    executorFilter,
-    departmentFilter,
-    workTypeFilter,
-    useWorkTypes,
-  ]);
+    if (isFetchingNextPage || !hasNextPage || loading) return;
+    await fetchNextPage();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, loading]);
 
   // Рендер элемента списка
   const renderItem = useCallback(
@@ -907,7 +571,8 @@ export default function AllOrdersScreen() {
       <DynamicOrderCard
         order={order}
         context="all_orders"
-        onPress={() =>
+        onPress={async () => {
+          await ensureRequestPrefetch(queryClient, order.id).catch(() => {});
           router.push({
             pathname: `/orders/${order.id}`,
             params: {
@@ -919,11 +584,11 @@ export default function AllOrdersScreen() {
                 search: searchQuery,
               }),
             },
-          })
-        }
+          });
+        }}
       />
     ),
-    [router, statusFilter, executorFilter, departmentFilter, searchQuery],
+    [router, statusFilter, executorFilter, departmentFilter, searchQuery, queryClient],
   );
 
   // Футер со спиннером при загрузке
@@ -937,6 +602,18 @@ export default function AllOrdersScreen() {
   }, [loadingMore, theme.colors.primary]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
+  const onViewableItemsChanged = useMemo(
+    () => ({ viewableItems }) => {
+      viewableItems
+        .map((item) => item?.item?.id)
+        .filter(Boolean)
+        .slice(0, 6)
+        .forEach((id) => {
+          ensureRequestPrefetch(queryClient, id).catch(() => {});
+        });
+    },
+    [queryClient],
+  );
 
   // Заголовок списка с фильтрами
   const ListHeaderComponent = useCallback(
@@ -950,7 +627,6 @@ export default function AllOrdersScreen() {
               key={key}
               onPress={() => {
                 setStatusFilter(key);
-                setPage(1);
                 setHasMore(true);
                 router.setParams({ filter: key });
               }}
@@ -1001,11 +677,11 @@ export default function AllOrdersScreen() {
           title: t('routes.orders/all-orders'),
         }}
       />
-      {loading || allowed === null ? (
+      {loading || effectiveAllowed === null ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
         </View>
-      ) : !allowed ? (
+      ) : !effectiveAllowed ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <Text
             style={{
@@ -1024,6 +700,8 @@ export default function AllOrdersScreen() {
             data={filteredOrders}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
+            onViewableItemsChanged={onViewableItemsChanged}
+            viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
             ListHeaderComponent={ListHeaderComponent}
             ListFooterComponent={renderFooter}
             ListEmptyComponent={

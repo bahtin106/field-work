@@ -1,5 +1,5 @@
 /* global __DEV__ */
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -154,6 +154,7 @@ export default function MyOrdersScreen() {
   );
 
   const router = useRouter();
+  const isFocused = useIsFocused();
 
   // Из вкладки «Мои» кнопка Назад ведёт на Главную
   useFocusEffect(
@@ -409,6 +410,7 @@ export default function MyOrdersScreen() {
 
   // Prefetch «Лента» на входе, чтобы индикатор был виден сразу на вкладке «Все»
   useEffect(() => {
+    if (!isFocused) return;
     const prefetchFeed = async () => {
       const cached = LIST_CACHE.my.feed;
       if (Array.isArray(cached) && cached.length) {
@@ -434,7 +436,7 @@ export default function MyOrdersScreen() {
     };
 
     prefetchFeed();
-  }, [updateFeedMeta]);
+  }, [isFocused, updateFeedMeta]);
 
   // Если пользователь зашёл в «Ленту» — считаем, что он увидел текущие заявки
   useEffect(() => {
@@ -479,6 +481,7 @@ export default function MyOrdersScreen() {
   }, [seedFilter, seedSearch]);
 
   useEffect(() => {
+    if (!isFocused) return;
     const fetchUserAndOrders = async (isBackground = false, pageNum = 1) => {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
       const cacheKey = `${key}:${filtersFingerprint}`;
@@ -628,7 +631,7 @@ export default function MyOrdersScreen() {
     setPage(1);
     setHasMore(true);
     fetchUserAndOrders();
-  }, [filter, filtersFingerprint]);
+  }, [filter, filtersFingerprint, isFocused]);
 
   // Загрузка следующей страницы при достижении конца списка
   const loadMore = useCallback(async () => {
@@ -876,6 +879,7 @@ export default function MyOrdersScreen() {
     const { data: sessionData } = await supabase.auth.getSession();
     const uid = sessionData?.session?.user?.id;
     if (!uid) {
+      setBgRefreshing(false);
       return;
     }
 
@@ -910,9 +914,9 @@ export default function MyOrdersScreen() {
       setHasMore(normalized.length === PAGE_SIZE);
     }
     setBgRefreshing(false);
-  }, [filter, makeCacheKey, filtersFingerprint]);
+  }, [filter, makeCacheKey, filtersFingerprint, updateFeedMeta]);
 
-  if (loading) {
+  if (loading && orders.length === 0) {
     return (
       <Screen scroll={false} headerOptions={{ headerShown: false }}>
         <AppHeader
