@@ -1,0 +1,10 @@
+# Exclude local dev assets and large server files from EAS build archive
+supabase/
+supabase_*/
+**/.temp/
+node_modules.backup/
+.env
+.env.*
+*.sql
+*.md
+temp_prefetch.txt

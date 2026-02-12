@@ -1,12 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import NetInfo from '@react-native-community/netinfo';
-import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
-import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef } from 'react';
-import { ActivityIndicator, AppState, DevSettings, LogBox, Platform, View } from 'react-native';
+import { ActivityIndicator, DevSettings, LogBox, Platform, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -22,43 +18,11 @@ import { loadUserLocale } from '../lib/userLocale';
 import SettingsProvider from '../providers/SettingsProvider';
 import { SimpleAuthProvider, useAuthContext } from '../providers/SimpleAuthProvider';
 import { initI18n, setLocale } from '../src/i18n';
+import { FeedbackProvider } from '../src/shared/feedback';
+import QueryProvider from '../src/shared/query/QueryProvider';
+import { queryClient } from '../src/shared/query/queryClient';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      keepPreviousData: true,
-      placeholderData: (prev) => prev,
-      staleTime: 2 * 60 * 1000,
-      gcTime: 24 * 60 * 60 * 1000,
-      retry: 1,
-      refetchOnMount: 'always',
-      refetchOnWindowFocus: true,
-      refetchOnReconnect: true,
-    },
-  },
-});
-
-try {
-  queryClient.setQueryDefaults(['session'], { retry: 0, gcTime: 0, cacheTime: 0 });
-  queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: 5 * 60 * 1000 });
-  queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: 5 * 60 * 1000 });
-  queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: 5 * 60 * 1000 });
-} catch (e) {
-  // silent catch
-}
-
-const persister = createAsyncStoragePersister({ storage: AsyncStorage });
-
-onlineManager.setEventListener((setOnline) =>
-  NetInfo.addEventListener((state) => setOnline(!!state.isConnected)),
-);
-
-focusManager.setEventListener((handleFocus) => {
-  const sub = AppState.addEventListener('change', (s) => handleFocus(s === 'active'));
-  return () => sub.remove();
-});
 
 function LastSeenTracker() {
   try {
@@ -84,7 +48,9 @@ function RootLayoutInner() {
   useEffect(() => {
     try {
       patchRouter(router, { debounceMs: 600 });
-    } catch (_) {}
+    } catch (_) {
+      // noop
+    }
   }, [router]);
   const segments = useSegments();
   const splashHiddenRef = useRef(false);
@@ -221,37 +187,20 @@ function RootLayoutInner() {
 
 export default function RootLayout() {
   return (
-    <PersistQueryClientProvider
-      client={queryClient}
-      persistOptions={{
-        persister,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        dehydrateOptions: {
-          shouldDehydrateQuery: (q) => {
-            const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
-            if (
-              key0 === 'session' ||
-              key0 === 'userRole' ||
-              key0 === 'profile' ||
-              key0 === 'perm-canViewAll'
-            )
-              return false;
-            return q.state.status === 'success';
-          },
-        },
-      }}
-    >
+    <QueryProvider>
       <SafeAreaProvider>
         <KeyboardProvider>
           <ThemeProvider>
             <ToastProvider>
-              <SimpleAuthProvider>
-                <RootLayoutInner />
-              </SimpleAuthProvider>
+              <FeedbackProvider>
+                <SimpleAuthProvider>
+                  <RootLayoutInner />
+                </SimpleAuthProvider>
+              </FeedbackProvider>
             </ToastProvider>
           </ThemeProvider>
         </KeyboardProvider>
       </SafeAreaProvider>
-    </PersistQueryClientProvider>
+    </QueryProvider>
   );
 }

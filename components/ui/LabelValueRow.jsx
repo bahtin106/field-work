@@ -65,13 +65,10 @@ export default function LabelValueRow({
       <View style={{ flex: 1, minWidth: 8 }} />
 
       {/* Right side: value + optional actions */}
-      <View style={base.rightWrap}>
-        <View style={base.valueWrapper}>
-          {renderValue()}
-        </View>
-        
+      <View style={[base.rightWrap, { paddingRight: 0 }]}>
+        {renderValue()}
         {rightActions && (
-          <View style={{ marginLeft: theme.spacing?.xs || 8 }}>
+          <View style={{ marginLeft: 4 }}>
             {rightActions}
           </View>
         )}

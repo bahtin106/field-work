@@ -1,0 +1,187 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║                 ✅ ГОТОВОЕ РЕШЕНИЕ: СМЕНА ПАРОЛЯ НА VPS                    ║
+║                   (для локальной Supabase БЕЗ edge functions)              ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+## 📊 ЧТО БЫЛО СДЕЛАНО
+
+### 1. Создан API endpoint на Node.js
+📄 Файл: server/routes/updatePassword.js
+- Обновляет пароль в auth.users
+- Логирует действие
+- Простой и надежный
+
+### 2. Обновлен фронтенд
+📄 Файл: app/users/[id]/edit.jsx
+- Вместо edge-функции вызывает API
+- Добавлены логи для диагностики
+- Улучшена обработка ошибок
+
+### 3. Создана документация
+📄 Файлы:
+- PASSWORD_FIX_QUICK_LOCAL_SUPABASE.md (читайте это первым!)
+- 00_LOCAL_SUPABASE_PASSWORD_FIX.md (подробно)
+- deploy-local-supabase-fix.sh (развертывание на Linux)
+- deploy-local-supabase-fix.bat (развертывание на Windows)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 🚀 БЫСТРЫЙ СТАРТ (3 ШАГА)
+
+### Шаг 1: Скопировать файл на VPS
+
+Вариант A (Linux/Mac с SSH):
+```bash
+scp server/routes/updatePassword.js root@5.35.91.118:/var/www/app/routes/
+```
+
+Вариант B (Windows):
+- Используйте WinSCP или PuTTY для копирования
+- Скопируйте server\routes\updatePassword.js на VPS в папку routes
+
+Вариант C (автоматический скрипт):
+```bash
+bash deploy-local-supabase-fix.sh root 5.35.91.118 /var/www/app
+```
+
+### Шаг 2: Добавить роут в приложение
+
+Откройте главный файл приложения (app.js, server.js, index.js) и добавьте:
+
+```javascript
+const updatePasswordRoute = require('./routes/updatePassword');
+app.use('/api', updatePasswordRoute);
+```
+
+### Шаг 3: Перезагрузить приложение
+
+На VPS выполните:
+```bash
+pm2 restart all
+# или
+systemctl restart your-app-name
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## ✅ ПРОВЕРКА РАБОТЫ
+
+### Способ 1: В приложении (рекомендуется)
+1. Откройте приложение field-work
+2. Перейдите в редактирование профиля сотрудника
+3. Измените пароль
+4. Откройте F12 → Console в браузере
+5. Должны видеть логи [proceedSave]
+
+### Способ 2: Через curl
+```bash
+curl -X POST http://5.35.91.118:3000/api/update-password \
+  -H "Content-Type: application/json" \
+  -d '{"user_id":"test-uuid","password":"Test123456"}'
+```
+
+Ожидаемый ответ: `{"ok":true,"message":"Password updated successfully"}`
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 📁 СТРУКТУРА ФАЙЛОВ
+
+```
+field-work/
+├── server/
+│   └── routes/
+│       └── updatePassword.js ← НОВЫЙ ФАЙЛ (скопировать на VPS)
+│
+├── app/users/[id]/
+│   └── edit.jsx ← ОБНОВЛЕН (изменены вызовы API)
+│
+└── Документация (прочитать первым):
+    ├── PASSWORD_FIX_QUICK_LOCAL_SUPABASE.md ← НАЧНИТЕ С ЭТОГО
+    ├── 00_LOCAL_SUPABASE_PASSWORD_FIX.md
+    ├── deploy-local-supabase-fix.sh
+    └── deploy-local-supabase-fix.bat
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 🧪 ЧТО ВИДНО ПРИ РАБОТЕ
+
+### На клиенте (браузер консоль F12):
+```
+[proceedSave] Attempting to update auth credentials
+[proceedSave] Calling update-password API at: http://5.35.91.118:3000
+[proceedSave] Response status: 200
+[proceedSave] Password/email update successful
+```
+
+### На VPS (логи приложения):
+```
+[UPDATE_PASSWORD] Updating password for user: abc-def-ghi
+[UPDATE_PASSWORD] Password updated successfully for user: abc-def-ghi
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## ❌ ЕСЛИ ЧТО-ТО НЕ РАБОТАЕТ
+
+| Проблема | Решение |
+|----------|---------|
+| **404 Not Found** | Убедитесь, что добавили `app.use('/api', updatePasswordRoute)` |
+| **Supabase error** | Проверьте SUPABASE_URL и SUPABASE_SERVICE_ROLE_KEY в .env |
+| **CORS error** | Добавьте в app: `const cors = require('cors'); app.use(cors());` |
+| **Ничего не меняется** | Проверьте логи VPS, может быть старый процесс еще запущен |
+| **Нет логов на VPS** | Запустите: `pm2 logs your-app-name` и повторите попытку |
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 📋 ЧЕК-ЛИСТ РАЗВЕРТЫВАНИЯ
+
+- [ ] Скопировал updatePassword.js на VPS в папку routes
+- [ ] Добавил `const updatePasswordRoute = require('./routes/updatePassword');`
+- [ ] Добавил `app.use('/api', updatePasswordRoute);`
+- [ ] Перезагрузил приложение: `pm2 restart all`
+- [ ] Протестировал в браузере: F12 → Console, измененил пароль
+- [ ] Вижу логи [proceedSave] в консоли
+- [ ] Пароль успешно меняется
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 💡 ДОПОЛНИТЕЛЬНО
+
+### Если нужна история смен паролей в БД:
+1. Раскомментируйте блок в updatePassword.js (там указано)
+2. Выполните SQL из SETUP_PASSWORD_LOGS.sql в локальной Supabase
+3. Пересоберите приложение
+
+### Переменные окружения:
+На VPS обязательно должны быть:
+```
+SUPABASE_URL=https://your-supabase
+SUPABASE_SERVICE_ROLE_KEY=your-key
+```
+
+### Импорт Supabase:
+Если ваш способ импорта другой, отредактируйте эту строку в updatePassword.js:
+```javascript
+const { supabaseAdmin } = require('../lib/supabase');
+```
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## ✅ ИТОГО
+
+✓ Решение готово к развертыванию
+✓ Не требуется edge functions (работает с локальной Supabase)
+✓ Использует существующий Node.js на VPS
+✓ Просто скопировать и включить
+✓ Логирование на обеих сторонах (клиент + сервер)
+
+**Время развертывания:** 5-10 минут
+
+**Документация:** Читайте PASSWORD_FIX_QUICK_LOCAL_SUPABASE.md
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           🎯 ГОТОВО К ИСПОЛЬЗОВАНИЮ                        ║
+╚══════════════════════════════════════════════════════════════════════════════╝

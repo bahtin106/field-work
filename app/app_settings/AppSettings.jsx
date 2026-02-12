@@ -12,7 +12,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useQueryWithCache } from '../../components/hooks/useQueryWithCache';
+import { useQuery } from '@tanstack/react-query';
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
@@ -73,7 +73,7 @@ async function getNotifications() {
 
 async function ensurePushPermission() {
   try {
-    // Web: expo-notifications не поддерживаются; не запускаем токен-флоу
+    // Web: expo-notifications РЅРµ РїРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ; РЅРµ Р·Р°РїСѓСЃРєР°РµРј С‚РѕРєРµРЅ-С„Р»РѕСѓ
     if (Platform.OS === 'web') {
       try {
         if (Linking?.openSettings) await Linking.openSettings();
@@ -235,13 +235,14 @@ export default function AppSettings() {
     };
   }, []);
 
-  // Кеширование настроек уведомлений с Realtime
+  // РљРµС€РёСЂРѕРІР°РЅРёРµ РЅР°СЃС‚СЂРѕРµРє СѓРІРµРґРѕРјР»РµРЅРёР№ СЃ Realtime
   const {
     data: prefsData,
     isLoading: isLoadingPrefs,
-    refresh: refreshPrefs,
-  } = useQueryWithCache({
-    queryKey: 'appSettings:notifPrefs',
+    refetch: refreshPrefs,
+    error: prefsError,
+  } = useQuery({
+    queryKey: ['appSettings', 'notifPrefs'],
     queryFn: async () => {
       let uid = null;
       try {
@@ -263,7 +264,6 @@ export default function AppSettings() {
         throw prefsErr;
       }
 
-      // default quiet hours, если пусто
       const qs = data?.quiet_start,
         qe = data?.quiet_end;
       const bothEmpty = (!qs || String(qs).trim() === '') && (!qe || String(qe).trim() === '');
@@ -277,28 +277,63 @@ export default function AppSettings() {
 
       return data;
     },
-    ttl: 5 * 60 * 1000, // 5 минут
-    staleTime: 2 * 60 * 1000, // 2 минуты
-    placeholderData: null,
-    enableRealtime: true,
-    realtimeTable: TBL.NOTIF_PREFS,
-    supabaseClient: supabase,
-    onError: (e) => {
-      __devLog('loadPrefs error:', e?.message || e);
-      toast.error(t('errors_loadSettings'));
-    },
+    gcTime: 5 * 60 * 1000,
+    staleTime: 2 * 60 * 1000,
+    placeholderData: (prev) => prev ?? null,
   });
 
-  // Обновляем local state когда приходят данные из кеша
+  useEffect(() => {
+    if (!prefsError) return;
+    __devLog('loadPrefs error:', prefsError?.message || prefsError);
+    toast.error(t('errors_loadSettings'));
+  }, [prefsError, t, toast]);
+
+  useEffect(() => {
+    let active = true;
+    let channel = null;
+
+    (async () => {
+      try {
+        const uid = await getUid();
+        if (!active || !uid) return;
+
+        channel = supabase
+          .channel(`app-settings:notif-prefs:${uid}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: TBL.NOTIF_PREFS,
+              filter: `user_id=eq.${uid}`,
+            },
+            () => {
+              refreshPrefs().catch(() => {});
+            },
+          )
+          .subscribe();
+      } catch {}
+    })();
+
+    return () => {
+      active = false;
+      if (!channel) return;
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
+    };
+  }, [refreshPrefs]);
+
+  // РћР±РЅРѕРІР»СЏРµРј local state РєРѕРіРґР° РїСЂРёС…РѕРґСЏС‚ РґР°РЅРЅС‹Рµ РёР· РєРµС€Р°
   useEffect(() => {
     if (prefsData && mounted.current) {
       setPrefs((p) => ({ ...p, ...prefsData }));
     }
   }, [prefsData]);
 
-  // Загрузка разрешений пользователя с кешем
-  const { data: permData } = useQueryWithCache({
-    queryKey: 'appSettings:userPerm',
+  // Р—Р°РіСЂСѓР·РєР° СЂР°Р·СЂРµС€РµРЅРёР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃ РєРµС€РµРј
+  const { data: permData } = useQuery({
+    queryKey: ['appSettings', 'userPerm'],
     queryFn: async () => {
       try {
         const uid = await getUid();
@@ -318,9 +353,9 @@ export default function AppSettings() {
         return false;
       }
     },
-    ttl: 5 * 60 * 1000,
+    gcTime: 5 * 60 * 1000,
     staleTime: 2 * 60 * 1000,
-    placeholderData: false,
+    placeholderData: (prev) => prev ?? false,
   });
 
   useEffect(() => {
@@ -343,7 +378,7 @@ export default function AppSettings() {
         else if (/timeout|network|failed to fetch/i.test(error.message)) msg = t('errors_network');
         return { ok: false, message: msg };
       }
-      // Обновляем кеш после сохранения
+      // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РїРѕСЃР»Рµ СЃРѕС…СЂР°РЅРµРЅРёСЏ
       await refreshPrefs();
       return { ok: true };
     } catch (e) {
@@ -472,7 +507,7 @@ export default function AppSettings() {
       setPrefs(prevPrefs);
       toast.error(message || t('quiet_saveFail'));
     } else {
-      toast.info(t('quiet_range') + `${toTimeStr(next.quiet_start)}–${toTimeStr(next.quiet_end)}`);
+      toast.info(t('quiet_range') + `${toTimeStr(next.quiet_start)}вЂ“${toTimeStr(next.quiet_end)}`);
     }
   };
 
@@ -815,3 +850,4 @@ const styles = (t) =>
     contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
     sectionWrap: { marginBottom: 0 },
   });
+

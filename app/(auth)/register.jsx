@@ -20,8 +20,7 @@ import PrivacyPolicyModal from '../../components/ui/modals/PrivacyPolicyModal';
 import RadioGroupField from '../../components/ui/RadioGroupField';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
-import { useToast } from '../../components/ui/ToastProvider';
-import ValidationAlert from '../../components/ui/ValidationAlert';
+import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
@@ -98,7 +97,7 @@ export default function RegisterScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const router = useRouter();
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { banner, showBanner, clearBanner, showSuccessToast } = useFeedback();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(theme, insets), [theme, insets]);
   // Form state
@@ -115,9 +114,9 @@ export default function RegisterScreen() {
 
   // UI state
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [touched, setTouched] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
-  const [validationErrors, setValidationErrors] = useState([]);
   // Согласие с политикой
   const [consentChecked, setConsentChecked] = useState(false);
   const [emailCheckStatus, setEmailCheckStatus] = useState(null);
@@ -136,6 +135,64 @@ export default function RegisterScreen() {
     () => !password || password === confirmPassword,
     [password, confirmPassword],
   );
+  const shouldShowError = useCallback(
+    (field) => submittedAttempt || !!touched[field],
+    [submittedAttempt, touched],
+  );
+  const clearFieldError = useCallback((field) => {
+    setFieldErrors((prev) => {
+      if (!prev?.[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []);
+  const requiredMsg = useMemo(
+    () => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
+    [t],
+  );
+  const firstNameError =
+    fieldErrors.firstName?.message ||
+    (shouldShowError('firstName') && !firstName.trim() ? requiredMsg : null);
+  const lastNameError =
+    fieldErrors.lastName?.message ||
+    (shouldShowError('lastName') && !lastName.trim() ? requiredMsg : null);
+  const emailError =
+    fieldErrors.email?.message ||
+    ((shouldShowError('email') || emailCheckStatus === 'taken') &&
+    !email.trim()
+      ? requiredMsg
+      : email.trim() && !emailValid
+        ? getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t)
+        : emailCheckStatus === 'taken'
+          ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
+          : null);
+  const passwordError =
+    fieldErrors.password?.message ||
+    (shouldShowError('password') && !password.trim()
+      ? requiredMsg
+      : password.length > 0 && !passwordValid
+        ? getMessageByCode(FEEDBACK_CODES.PASSWORD_TOO_SHORT, t)
+        : null);
+  const confirmPasswordError =
+    fieldErrors.confirmPassword?.message ||
+    (shouldShowError('confirmPassword') && !confirmPassword.trim()
+      ? requiredMsg
+      : confirmPassword.length > 0 && !passwordsMatch
+        ? getMessageByCode(FEEDBACK_CODES.PASSWORD_MISMATCH, t)
+        : null);
+  const accountTypeError =
+    fieldErrors.accountType?.message ||
+    (shouldShowError('accountType') && !accountType
+      ? t('register_error_account_type')
+      : null);
+  const companyNameError =
+    fieldErrors.companyName?.message ||
+    (shouldShowError('companyName') &&
+    accountType === 'company' &&
+    !companyName.trim()
+      ? t('register_error_company_name')
+      : null);
 
   const initials = useMemo(
     () =>
@@ -195,60 +252,12 @@ export default function RegisterScreen() {
     };
   }, [email, emailValid, checkEmailAvailability]);
 
-  // Validation
+  const didClearBannerRef = useRef(false);
   useEffect(() => {
-    const errors = [];
-
-    if (submittedAttempt) {
-      if (!firstName.trim()) errors.push(t('err_first_name'));
-      if (!lastName.trim()) errors.push(t('err_last_name'));
-      if (!email.trim()) errors.push(t('err_email'));
-      if (!password.trim()) errors.push(t('err_password_short'));
-      if (!confirmPassword.trim()) errors.push(t('err_password_mismatch'));
-      if (!accountType) errors.push(t('register_error_account_type'));
-      if (accountType === 'company' && !companyName.trim())
-        errors.push(t('register_error_company_name'));
-    }
-
-    if (email.trim() && !emailValid) {
-      errors.push(t('err_email_invalid_format'));
-    }
-
-    if (emailCheckStatus === 'taken') {
-      errors.push(t('warn_email_already_taken'));
-    }
-
-    if (password.length > 0) {
-      const pwdValidation = getPasswordValidationErrors(password);
-      if (!pwdValidation.valid) {
-        if (pwdValidation.errors.includes('password_too_short')) {
-          errors.push(t('err_password_short'));
-        }
-        if (pwdValidation.errors.includes('password_invalid_chars')) {
-          errors.push(t('err_password_invalid_chars'));
-        }
-      }
-    }
-
-    if (password.length > 0 && confirmPassword.length > 0 && !passwordsMatch) {
-      errors.push(t('err_password_mismatch'));
-    }
-
-    setValidationErrors(errors);
-  }, [
-    firstName,
-    lastName,
-    email,
-    emailValid,
-    password,
-    confirmPassword,
-    passwordsMatch,
-    accountType,
-    companyName,
-    submittedAttempt,
-    emailCheckStatus,
-    t,
-  ]);
+    if (didClearBannerRef.current) return;
+    didClearBannerRef.current = true;
+    clearBanner();
+  }, [clearBanner]);
 
   const handleInvalidPasswordInput = useCallback(() => {
     setInvalidCharWarning(true);
@@ -261,6 +270,8 @@ export default function RegisterScreen() {
     if (submitting) return;
     Keyboard.dismiss();
     setSubmittedAttempt(true);
+    clearBanner();
+    setFieldErrors({});
 
     const missingFirst = !firstName.trim();
     const missingLast = !lastName.trim();
@@ -282,13 +293,36 @@ export default function RegisterScreen() {
       needsCompanyName ||
       !consentChecked
     ) {
-      if (emailTaken) toastError(t('error_email_exists'));
-      if (!consentChecked)
-        toastError('Для регистрации необходимо согласие с политикой конфиденциальности');
+      const nextFieldErrors = {};
+      if (missingFirst) nextFieldErrors.firstName = { message: requiredMsg };
+      if (missingLast) nextFieldErrors.lastName = { message: requiredMsg };
+      if (invalidEmail) nextFieldErrors.email = { message: getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t) };
+      if (emailTaken) nextFieldErrors.email = { message: getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t) };
+      if (invalidPwd) nextFieldErrors.password = { message: getMessageByCode(FEEDBACK_CODES.PASSWORD_TOO_SHORT, t) };
+      if (mismatchPwd) nextFieldErrors.confirmPassword = { message: getMessageByCode(FEEDBACK_CODES.PASSWORD_MISMATCH, t) };
+      if (noAccountType) nextFieldErrors.accountType = { message: t('register_error_account_type') };
+      if (needsCompanyName) nextFieldErrors.companyName = { message: t('register_error_company_name') };
+      if (Object.keys(nextFieldErrors).length) setFieldErrors(nextFieldErrors);
+      if (!consentChecked) {
+        showBanner({
+          message: t('register_error_consent_required'),
+          severity: 'warning',
+        });
+        // TODO: add inline consent error under checkbox when ConsentCheckbox supports it
+      }
+      if (missingFirst) {
+        firstNameRef.current?.focus?.();
+      } else if (missingLast) {
+        lastNameRef.current?.focus?.();
+      } else if (invalidEmail || emailTaken) {
+        emailRef.current?.focus?.();
+      } else if (invalidPwd) {
+        pwdRef.current?.focus?.();
+      }
       return;
     }
 
-    setError('');
+    clearBanner();
     setSubmitting(true);
 
     try {
@@ -341,16 +375,23 @@ export default function RegisterScreen() {
       });
 
       if (loginErr) {
-        toastSuccess(t('register_success_please_login'));
+        showSuccessToast(t('register_success_please_login'));
         setTimeout(() => router.replace('/(auth)/login'), theme.timings.postRegisterNavDelayMs);
       } else {
-        toastSuccess(t('register_success'));
+        showSuccessToast(t('register_success'));
         // Navigation will happen automatically via _layout
       }
     } catch (e) {
-      const msg = e?.message ? String(e.message) : t('toast_generic_error');
-      setError(msg);
-      toastError(msg);
+      const normalized = normalizeError(e, { t, fieldMap: { email: 'email' } });
+      if (Object.keys(normalized.fieldErrors || {}).length) {
+        setFieldErrors((prev) => ({ ...prev, ...normalized.fieldErrors }));
+      }
+      if (normalized.screenError) {
+        showBanner({
+          ...normalized.screenError,
+          action: { label: t('btn_retry'), onPress: handleRegister },
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -369,8 +410,10 @@ export default function RegisterScreen() {
     companyName,
     router,
     t,
-    toastSuccess,
-    toastError,
+    showSuccessToast,
+    showBanner,
+    clearBanner,
+    requiredMsg,
   ]);
 
   return (
@@ -394,35 +437,26 @@ export default function RegisterScreen() {
 
             {/* Avatar - removed */}
 
-            {/* Errors */}
-            {error ? (
-              <ValidationAlert
-                messages={[error]}
-                type="error"
+            {banner ? (
+              <ScreenBanner
+                message={banner}
+                onClose={clearBanner}
                 style={{ marginBottom: theme.spacing.sm }}
               />
             ) : null}
 
-            {validationErrors.length > 0 && (
-              <ValidationAlert
-                messages={validationErrors}
-                type="error"
-                style={{ marginBottom: theme.spacing.sm }}
-              />
-            )}
-
             {invalidCharWarning && (
-              <ValidationAlert
-                messages={[t('err_password_invalid_chars')]}
-                type="warning"
+              <ScreenBanner
+                message={{ message: t('err_password_invalid_chars'), severity: 'warning' }}
+                onClose={() => setInvalidCharWarning(false)}
                 style={{ marginBottom: theme.spacing.sm }}
               />
             )}
 
             {emailCheckStatus === 'checking' && emailValid && (
-              <ValidationAlert
-                messages={[t('warn_checking_email')]}
-                type="info"
+              <ScreenBanner
+                message={{ message: t('warn_checking_email'), severity: 'info' }}
+                onClose={() => setEmailCheckStatus(null)}
                 style={{ marginBottom: theme.spacing.sm }}
               />
             )}
@@ -436,22 +470,32 @@ export default function RegisterScreen() {
                 placeholder={t('placeholder_first_name')}
                 style={styles.field}
                 value={firstName}
-                onChangeText={setFirstName}
+                onChangeText={(val) => {
+                  setFirstName(val);
+                  clearFieldError('firstName');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
                 forceValidation={submittedAttempt}
-                error={submittedAttempt && !firstName.trim() ? 'required' : undefined}
+                error={firstNameError ? 'invalid' : undefined}
                 editable={!submitting}
               />
+              <FieldErrorText message={firstNameError} />
               <TextField
                 ref={lastNameRef}
                 label={t('label_last_name')}
                 placeholder={t('placeholder_last_name')}
                 style={styles.field}
                 value={lastName}
-                onChangeText={setLastName}
+                onChangeText={(val) => {
+                  setLastName(val);
+                  clearFieldError('lastName');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, lastName: true }))}
                 forceValidation={submittedAttempt}
-                error={submittedAttempt && !lastName.trim() ? 'required' : undefined}
+                error={lastNameError ? 'invalid' : undefined}
                 editable={!submitting}
               />
+              <FieldErrorText message={lastNameError} />
               <TextField
                 ref={emailRef}
                 label={t('label_email')}
@@ -461,19 +505,16 @@ export default function RegisterScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 value={email}
-                onChangeText={setEmail}
+                onChangeText={(val) => {
+                  setEmail(val);
+                  clearFieldError('email');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, email: true }))}
                 forceValidation={submittedAttempt}
-                error={
-                  submittedAttempt && !email.trim()
-                    ? 'required'
-                    : email.trim() && !emailValid
-                      ? 'invalid'
-                      : emailCheckStatus === 'taken'
-                        ? 'taken'
-                        : undefined
-                }
+                error={emailError ? 'invalid' : undefined}
                 editable={!submitting}
               />
+              <FieldErrorText message={emailError} />
             </Card>
 
             {/* Account type */}
@@ -481,7 +522,10 @@ export default function RegisterScreen() {
             <Card paddedXOnly>
               <RadioGroupField
                 value={accountType}
-                onChange={setAccountType}
+                onChange={(val) => {
+                  setAccountType(val);
+                  clearFieldError('accountType');
+                }}
                 disabled={submitting}
                 options={[
                   {
@@ -497,23 +541,27 @@ export default function RegisterScreen() {
                 ]}
                 renderExpanded={(id) =>
                   id === 'company' ? (
-                    <TextField
-                      label={t('register_company_name')}
-                      placeholder={t('register_company_name_placeholder')}
-                      style={styles.field}
-                      value={companyName}
-                      onChangeText={setCompanyName}
-                      forceValidation={submittedAttempt}
-                      error={
-                        submittedAttempt && accountType === 'company' && !companyName.trim()
-                          ? 'required'
-                          : undefined
-                      }
-                      editable={!submitting}
-                    />
+                    <>
+                      <TextField
+                        label={t('register_company_name')}
+                        placeholder={t('register_company_name_placeholder')}
+                        style={styles.field}
+                        value={companyName}
+                        onChangeText={(val) => {
+                          setCompanyName(val);
+                          clearFieldError('companyName');
+                        }}
+                        onBlur={() => setTouched((prev) => ({ ...prev, companyName: true }))}
+                        forceValidation={submittedAttempt}
+                        error={companyNameError ? 'invalid' : undefined}
+                        editable={!submitting}
+                      />
+                      <FieldErrorText message={companyNameError} />
+                    </>
                   ) : null
                 }
               />
+              <FieldErrorText message={accountTypeError} />
             </Card>
 
             {/* Company name handled inside RadioGroupField when 'company' selected */}
@@ -530,20 +578,18 @@ export default function RegisterScreen() {
                 ref={pwdRef}
                 label={t('register_label_password')}
                 value={password}
-                onChangeText={setPassword}
+                onChangeText={(val) => {
+                  setPassword(val);
+                  clearFieldError('password');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, password: true }))}
                 placeholder={t('register_placeholder_password')}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
                 style={styles.field}
                 forceValidation={submittedAttempt}
-                error={
-                  submittedAttempt && !password.trim()
-                    ? 'required'
-                    : password.length > 0 && !passwordValid
-                      ? 'invalid'
-                      : undefined
-                }
+                error={passwordError ? 'invalid' : undefined}
                 filterInput={filterPasswordInput}
                 onInvalidInput={handleInvalidPasswordInput}
                 maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
@@ -566,28 +612,28 @@ export default function RegisterScreen() {
                 }
                 editable={!submitting}
               />
+              <FieldErrorText message={passwordError} />
 
               <TextField
                 label={t('label_password_repeat')}
                 value={confirmPassword}
-                onChangeText={setConfirmPassword}
+                onChangeText={(val) => {
+                  setConfirmPassword(val);
+                  clearFieldError('confirmPassword');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, confirmPassword: true }))}
                 placeholder={t('placeholder_repeat_password')}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
                 style={styles.field}
                 forceValidation={submittedAttempt}
-                error={
-                  submittedAttempt && !confirmPassword.trim()
-                    ? 'required'
-                    : confirmPassword.length > 0 && !passwordsMatch
-                      ? 'mismatch'
-                      : undefined
-                }
+                error={confirmPasswordError ? 'invalid' : undefined}
                 filterInput={filterPasswordInput}
                 maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
                 editable={!submitting}
               />
+              <FieldErrorText message={confirmPasswordError} />
             </Card>
 
             <ConsentCheckbox

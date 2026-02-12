@@ -11,6 +11,8 @@ import { useTheme } from '../theme/ThemeProvider';
 import Button from './ui/Button';
 import Card from './ui/Card';
 
+const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
+
 function isUuid(s) {
   return (
     typeof s === 'string' &&
@@ -84,6 +86,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   // ДИАГНОСТИКА: что приходит в props
   useEffect(() => {
+    if (!VERBOSE_HOME_LOGS) return;
     console.log('[UniversalHome] Props:', {
       hasUser: !!user,
       userId: user?.id,
@@ -120,6 +123,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   
   // ДИАГНОСТИКА: проверка fetchProfile
   useEffect(() => {
+    if (!VERBOSE_HOME_LOGS) return;
     console.log('[UniversalHome] Profile fetch decision:', {
       uid,
       hasProvidedProfile: !!providedProfile,
@@ -173,6 +177,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   // ДИАГНОСТИКА: готовность к загрузке счетчиков
   useEffect(() => {
+    if (!VERBOSE_HOME_LOGS) return;
     console.log('[UniversalHome] Counts readiness:', {
       uid,
       resolvedRole,

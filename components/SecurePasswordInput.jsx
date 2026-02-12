@@ -33,77 +33,16 @@ const SecurePasswordInput = React.forwardRef(
   ) => {
     const [isSecure, setIsSecure] = useState(true);
     const [displayValue, setDisplayValue] = useState(value);
-    const [lastCharShowTime, setLastCharShowTime] = useState(null);
-    const hideCharTimeoutRef = useRef(null);
     const inputRef = useRef(null);
 
     // Синхронизируем внешнее значение
     useEffect(() => {
       setDisplayValue(value);
     }, [value]);
-
-    // Показываем последний символ на время перед маскировкой
-    const handleChangeText = (text) => {
-      // Очищаем предыдущий таймаут
-      if (hideCharTimeoutRef.current) {
-        clearTimeout(hideCharTimeoutRef.current);
-      }
-
-      setDisplayValue(text);
-
-      // Вызываем callback
-      if (onChangeText) {
-        onChangeText(text);
-      }
-
-      // Если текст не пустой и мы в режиме скрытия пароля,
-      // показываем последний символ на 0.5 секунды
-      if (text.length > 0 && isSecure) {
-        setLastCharShowTime(Date.now());
-
-        hideCharTimeoutRef.current = setTimeout(() => {
-          setLastCharShowTime(null);
-        }, 500);
-      }
-    };
-
-    // Обработка пасты (при автозаполнении)
-    const handlePaste = (text) => {
-      handleChangeText(text);
-    };
-
-    // Получаем отображаемый текст:
-    // - Если видимый режим: показываем весь пароль
-    // - Если режим маскировки и только что ввели символ: показываем последний символ + маски
-    // - Иначе: полная маскировка
-    const getDisplayText = () => {
-      if (!isSecure) {
-        return displayValue;
-      }
-
-      if (displayValue.length === 0) {
-        return '';
-      }
-
-      // Проверяем, нужно ли показывать последний символ
-      const shouldShowLastChar = lastCharShowTime && Date.now() - lastCharShowTime < 500;
-
-      if (shouldShowLastChar) {
-        const maskedPart = '•'.repeat(displayValue.length - 1);
-        return maskedPart + displayValue[displayValue.length - 1];
-      }
-
-      return '•'.repeat(displayValue.length);
-    };
-
-    // Очищаем таймаут при размонтировании
-    useEffect(() => {
-      return () => {
-        if (hideCharTimeoutRef.current) {
-          clearTimeout(hideCharTimeoutRef.current);
-        }
+      const handleChangeText = (text) => {
+        setDisplayValue(text);
+        if (onChangeText) onChangeText(text);
       };
-    }, []);
 
     const toggleSecure = () => {
       setIsSecure(!isSecure);
@@ -118,14 +57,14 @@ const SecurePasswordInput = React.forwardRef(
         <TextInput
           ref={ref || inputRef}
           style={[styles.input, inputStyle]}
-          value={getDisplayText()}
+          value={displayValue != null ? String(displayValue) : ''}
           onChangeText={handleChangeText}
           placeholder={placeholder}
           placeholderTextColor="#999"
           editable={editable}
-          secureTextEntry={false} // Мы сами управляем маскировкой через getDisplayText()
+          secureTextEntry={isSecure}
           // iOS AutoFill поддержка - сообщаем системе, что это поле пароля
-          textContentType={isSecure ? 'password' : 'none'}
+          textContentType={'password'}
           autoComplete={Platform.OS === 'android' ? 'password' : undefined}
           // Клавиатура и поведение
           returnKeyType={returnKeyType}
@@ -140,8 +79,8 @@ const SecurePasswordInput = React.forwardRef(
           onBlur={onBlur}
           // Доступность
           testID={testID}
-          accessibilityLabel={placeholder}
-          accessibilityHint="Защищенное поле ввода пароля"
+            accessibilityLabel={placeholder}
+            accessibilityHint="Защищенное поле ввода пароля"
         />
 
         {showVisibilityToggle && (
@@ -171,6 +110,8 @@ const styles = StyleSheet.create({
   container: {
     position: 'relative',
     width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   input: {
     flex: 1,
@@ -187,8 +128,9 @@ const styles = StyleSheet.create({
   toggleButton: {
     position: 'absolute',
     right: 12,
-    top: '50%',
-    transform: [{ translateY: -11 }],
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
     padding: 8,
     zIndex: 10,
   },

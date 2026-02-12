@@ -1,0 +1,13 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Install base dependencies
+RUN npm install express nodemailer cors pg
+
+# Copy email server code
+COPY email-server.cjs /app/email-server.js
+
+EXPOSE 3000
+
+CMD ["node", "/app/email-server.js"]

@@ -2,7 +2,9 @@
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
+  ActivityIndicator,
   Keyboard,
   Pressable,
   StyleSheet,
@@ -11,13 +13,16 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 
-import { usePathname, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
-import { fetchFormSchema } from '../../../lib/settings';
-import { supabase } from '../../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../../lib/workTypes';
+import {
+  ensureRequestAssigneeNamePrefetch,
+  useRequest,
+  useRequestRealtimeSync,
+  useUpdateRequestMutation,
+} from '../../../src/features/requests/queries';
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FiltersPanel from '../../../components/filters/FiltersPanel';
 import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
@@ -34,112 +39,22 @@ import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme/ThemeProvider';
 
-const fetchOrderData = async (orderId) => {
-  const { data: row, error } = await supabase
-    .from('orders_secure_v2')
-    .select('*')
-    .eq('id', orderId)
-    .single();
-  if (error) throw error;
-
-  const normalizedRow = row
-    ? {
-        ...row,
-        time_window_start: row.time_window_start ?? null,
-      }
-    : row;
-
-  let wtId = normalizedRow.work_type_id ?? null;
-  if (wtId == null) {
-    const { data: row2, error: error2 } = await supabase
-      .from('orders')
-      .select('work_type_id')
-      .eq('id', orderId)
-      .single();
-    if (error2) throw error2;
-    wtId = row2?.work_type_id ?? null;
-  }
-
-  // Дополнительно подгружаем профиль назначенного пользователя, чтобы сразу показать имя
-  if (normalizedRow?.assigned_to) {
-    try {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('first_name, last_name, full_name, email')
-        .eq('id', row.assigned_to)
-        .maybeSingle();
-      // добавляем профиль в возвращаемую строку
-      normalizedRow.assignee_profile = profile || null;
-    } catch (e) {
-      // если ошибка — не мешаем основному ответу
-      normalizedRow.assignee_profile = null;
-    }
-  } else {
-    normalizedRow.assignee_profile = null;
-  }
-
-  return { row: normalizedRow, fallbackWorkTypeId: wtId };
-};
-
 export default function EditOrderScreen() {
-  const pathname = usePathname();
-  const id = React.useMemo(() => {
-    try {
-      const path = String(pathname || '');
-      const clean = path.split('?')[0];
-      const parts = clean.split('/').filter(Boolean);
-      const extractedId = parts.length ? parts[parts.length - 1] : null;
-      return extractedId;
-    } catch {
-      return null;
-    }
-  }, [pathname]);
+  const { id: rawId } = useLocalSearchParams();
+  const id = Array.isArray(rawId) ? rawId[0] : rawId;
 
+  const updateRequestMutation = useUpdateRequestMutation();
   const queryClient = useQueryClient();
-  const realtimeSubscriptionRef = useRef(null);
 
-  // Реалтайм подписка на изменения заявки
-  useEffect(() => {
-    if (!id) return;
-
-    const setupRealtimeSubscription = () => {
-      try {
-        realtimeSubscriptionRef.current = supabase
-          .channel(`order:${id}`)
-          .on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'orders',
-              filter: `id=eq.${id}`,
-            },
-            (payload) => {
-              // Инвалидируем кэш при изменении другим пользователем
-              queryClient.invalidateQueries({ queryKey: ['order', id] });
-            },
-          )
-          .subscribe();
-      } catch (e) {
-        console.warn('Failed to setup realtime subscription:', e?.message);
-      }
-    };
-
-    setupRealtimeSubscription();
-
-    return () => {
-      if (realtimeSubscriptionRef.current) {
-        realtimeSubscriptionRef.current.unsubscribe();
-        realtimeSubscriptionRef.current = null;
-      }
-    };
-  }, [id, queryClient]);
-
-  const router = useRouter();
   const { theme } = useTheme();
   const formStyles = useEditFormStyles();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
-  const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
+  const {
+    success: toastSuccess,
+    error: toastError,
+    warning: toastWarning,
+    info: toastInfo,
+  } = useToast();
   const [saving, setSaving] = useState(false);
   const [companyId, setCompanyId] = useState(null);
   const { departments } = useDepartmentsHook({
@@ -147,6 +62,7 @@ export default function EditOrderScreen() {
     enabled: !!companyId,
     onlyEnabled: true,
   });
+  useRequestRealtimeSync({ enabled: !!id && !!companyId, companyId });
 
   // moved up: состояние видимости picker должно быть доступно до вызова useUsers
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
@@ -156,12 +72,10 @@ export default function EditOrderScreen() {
     filters: {},
     enabled: assigneePickerVisible,
   });
-  const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [region, setRegion] = useState('');
@@ -196,6 +110,10 @@ export default function EditOrderScreen() {
   // модальные состояния (были удалены ранее — вернуть)
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
+  const hydratedOrderIdRef = useRef(null);
+  const snapshotRef = useRef(null);
+  const userEditedRef = useRef(false);
+  const assignedLabelRequestIdRef = useRef(0);
 
   // имя выбранного исполнителя (восстановлено)
   const selectedEmployeeName = useMemo(() => {
@@ -215,42 +133,23 @@ export default function EditOrderScreen() {
   }, [assigneeId, employees]);
 
   const refreshAssignedLabel = useCallback(async (userId) => {
+    const requestId = ++assignedLabelRequestIdRef.current;
     if (!userId) {
       setAssignedEmployeeLabel('');
       return;
     }
     try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('first_name, last_name, full_name, email')
-        .eq('id', userId)
-        .maybeSingle();
-      if (!data) {
-        setAssignedEmployeeLabel('');
-        return;
-      }
-      const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
-      const normalizedFullName = (data.full_name || '').trim();
-      const candidate = nameParts || normalizedFullName || data.email || '';
-      setAssignedEmployeeLabel(candidate);
+      const data = await ensureRequestAssigneeNamePrefetch(queryClient, userId);
+      if (assignedLabelRequestIdRef.current !== requestId) return;
+      setAssignedEmployeeLabel(String(data || ''));
     } catch (e) {
-      console.warn('assigned name fetch', e?.message || e);
+      if (assignedLabelRequestIdRef.current !== requestId) return;
+      if (__DEV__) {
+        console.warn('assigned name fetch', e?.message || e);
+      }
       setAssignedEmployeeLabel('');
     }
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const data = await fetchFormSchema('edit');
-        if (mounted && data && Array.isArray(data.fields)) setSchemaEdit(data);
-      } catch {}
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     let alive = true;
@@ -266,7 +165,9 @@ export default function EditOrderScreen() {
           setWorkTypes(types || []);
         }
       } catch (e) {
-        console.warn('workTypes bootstrap', e?.message || e);
+        if (__DEV__) {
+          console.warn('workTypes bootstrap', e?.message || e);
+        }
       }
     })();
     return () => {
@@ -277,45 +178,102 @@ export default function EditOrderScreen() {
   const {
     data: orderData,
     isLoading: orderLoading,
+    error: orderError,
     refetch: refetchOrder,
-  } = useQuery({
-    queryKey: ['order', id],
-    queryFn: () => fetchOrderData(id),
-    enabled: !!id,
-    // Сделать данные немедленно устаревшими и всегда перефетчивать при монтировании,
-    // чтобы на экран редактирования попадали актуальные значения из Supabase.
-    staleTime: 0,
-    refetchOnMount: 'always',
-  });
+  } = useRequest(id);
 
-  useEffect(() => {
-    if (!id) return;
-    // Явный рефетч при смене id (на случай, если кэш всё ещё возвращается раньше)
-    refetchOrder().catch(() => {
-      /* ignore errors here — handled в useQuery/эффектах выше */
-    });
-  }, [id, refetchOrder]);
+  const normalizeRuPhoneForDb = useCallback((input) => {
+    const digits = String(input || '').replace(/\D/g, '');
+    if (!digits) return null;
 
-  useEffect(() => {
-    if (!id) {
-      setLoading(false);
-      return;
+    let normalized = digits;
+    if (normalized.length === 11 && normalized.startsWith('8')) {
+      normalized = `7${normalized.slice(1)}`;
+    } else if (normalized.length === 10 && normalized.startsWith('9')) {
+      normalized = `7${normalized}`;
     }
-    setLoading(orderLoading);
-    if (!orderData || orderLoading) return;
 
-    const { row, fallbackWorkTypeId } = orderData;
-    setTitle(row.title || '');
-    setDescription(row.comment || '');
-    setRegion(row.region || '');
-    setCity(row.city || '');
-    setStreet(row.street || '');
-    setHouse(row.house || '');
-    setCustomerName(row.fio || row.customer_name || '');
+    if (normalized.length !== 11) return null;
+    if (!normalized.startsWith('7')) return null;
+    if (normalized[1] !== '9') return null;
+    return `+${normalized}`;
+  }, []);
+
+  const parseDecimalOrNull = useCallback((input) => {
+    const raw = String(input ?? '').trim();
+    if (!raw) return null;
+    const normalized = raw.replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, []);
+
+  const normalizeDateOrNull = useCallback((input) => {
+    if (!input) return null;
+    const d = input instanceof Date ? input : new Date(input);
+    return Number.isNaN(d?.getTime?.()) ? null : d;
+  }, []);
+  const displayDepartureDate = useMemo(
+    () => normalizeDateOrNull(departureDate),
+    [departureDate, normalizeDateOrNull],
+  );
+
+  const buildSnapshot = useCallback(
+    (draft) =>
+      JSON.stringify({
+        title: String(draft.title || '').trim(),
+        description: String(draft.description || '').trim(),
+        region: String(draft.region || '').trim(),
+        city: String(draft.city || '').trim(),
+        street: String(draft.street || '').trim(),
+        house: String(draft.house || '').trim(),
+        customerName: String(draft.customerName || '').trim(),
+        phone: String(draft.phone || '').replace(/\D/g, ''),
+        departureDateIso: normalizeDateOrNull(draft.departureDate)?.toISOString() || null,
+        assigneeId: draft.assigneeId || null,
+        toFeed: !!draft.toFeed,
+        urgent: !!draft.urgent,
+        departmentId: draft.departmentId || null,
+        price: String(draft.price ?? '').trim(),
+        fuelCost: String(draft.fuelCost ?? '').trim(),
+        workTypeId: draft.workTypeId || null,
+      }),
+    [normalizeDateOrNull],
+  );
+
+  useEffect(() => {
+    if (!id || !orderData) return;
+    const isNewOrderScreenOpen = hydratedOrderIdRef.current !== id;
+    if (!isNewOrderScreenOpen && userEditedRef.current) return;
+
+    const row = orderData;
+    const nextTitle = row.title || '';
+    const nextDescription = row.comment || '';
+    const nextRegion = row.region || '';
+    const nextCity = row.city || '';
+    const nextStreet = row.street || '';
+    const nextHouse = row.house || '';
+    const nextCustomerName = row.fio || row.customer_name || '';
     const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
+    const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
+    const nextAssigneeId = row.assigned_to || null;
+    const nextToFeed = !row.assigned_to;
+    const nextUrgent = !!row.urgent;
+    const nextDepartmentId = row.department_id || null;
+    const nextWorkTypeId = row.work_type_id || null;
+    const nextPrice = row.price !== null && row.price !== undefined ? String(row.price) : '';
+    const nextFuelCost =
+      row.fuel_cost !== null && row.fuel_cost !== undefined ? String(row.fuel_cost) : '';
+
+    setTitle(nextTitle);
+    setDescription(nextDescription);
+    setRegion(nextRegion);
+    setCity(nextCity);
+    setStreet(nextStreet);
+    setHouse(nextHouse);
+    setCustomerName(nextCustomerName);
     setPhone(raw);
-    setDepartureDate(row.time_window_start ? new Date(row.time_window_start) : null);
-    setAssigneeId(row.assigned_to || null);
+    setDepartureDate(nextDepartureDate);
+    setAssigneeId(nextAssigneeId);
 
     // Если профиль уже пришёл вместе с заказом — используем его сразу, иначе делаем отдельный fetch
     if (row.assigned_to && row.assignee_profile) {
@@ -331,17 +289,39 @@ export default function EditOrderScreen() {
       setAssignedEmployeeLabel('');
     }
 
-    setToFeed(!row.assigned_to);
-    setUrgent(!!row.urgent);
-    setDepartmentId(row.department_id || null);
-    setWorkTypeId(row.work_type_id || fallbackWorkTypeId || null);
-    setPrice(row.price !== null && row.price !== undefined ? String(row.price) : '');
-    setFuelCost(row.fuel_cost !== null && row.fuel_cost !== undefined ? String(row.fuel_cost) : '');
-  }, [id, orderData, orderLoading, refreshAssignedLabel]);
+    setToFeed(nextToFeed);
+    setUrgent(nextUrgent);
+    setDepartmentId(nextDepartmentId);
+    setWorkTypeId(nextWorkTypeId);
+    setPrice(nextPrice);
+    setFuelCost(nextFuelCost);
+
+    snapshotRef.current = buildSnapshot({
+      title: nextTitle,
+      description: nextDescription,
+      region: nextRegion,
+      city: nextCity,
+      street: nextStreet,
+      house: nextHouse,
+      customerName: nextCustomerName,
+      phone: raw,
+      departureDate: nextDepartureDate,
+      assigneeId: nextAssigneeId,
+      toFeed: nextToFeed,
+      urgent: nextUrgent,
+      departmentId: nextDepartmentId,
+      price: nextPrice,
+      fuelCost: nextFuelCost,
+      workTypeId: nextWorkTypeId,
+    });
+    userEditedRef.current = false;
+    hydratedOrderIdRef.current = id;
+  }, [id, orderData, buildSnapshot, refreshAssignedLabel, normalizeDateOrNull]);
 
   // Оптимизируем вызов refreshAssignedLabel — не запрашиваем, если label уже установлен
   useEffect(() => {
     if (!assigneeId) {
+      assignedLabelRequestIdRef.current += 1;
       setAssignedEmployeeLabel('');
       return;
     }
@@ -350,12 +330,69 @@ export default function EditOrderScreen() {
   }, [assigneeId, refreshAssignedLabel, assignedEmployeeLabel]);
 
   useEffect(() => {
+    return () => {
+      assignedLabelRequestIdRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!id || hydratedOrderIdRef.current !== id || !snapshotRef.current) return;
+    const current = buildSnapshot({
+      title,
+      description,
+      region,
+      city,
+      street,
+      house,
+      customerName,
+      phone,
+      departureDate,
+      assigneeId,
+      toFeed,
+      urgent,
+      departmentId,
+      price,
+      fuelCost,
+      workTypeId,
+    });
+    userEditedRef.current = current !== snapshotRef.current;
+  }, [
+    id,
+    title,
+    description,
+    region,
+    city,
+    street,
+    house,
+    customerName,
+    phone,
+    departureDate,
+    assigneeId,
+    toFeed,
+    urgent,
+    departmentId,
+    price,
+    fuelCost,
+    workTypeId,
+    buildSnapshot,
+  ]);
+
+  useEffect(() => {
     if (headerResetRef.current && saving) {
       clearTimeout(headerResetRef.current);
       headerResetRef.current = null;
     }
     setHeaderLabel(saving ? T('toast_saving') : T('header_save'));
   }, [saving, T]);
+
+  useEffect(() => {
+    return () => {
+      if (headerResetRef.current) {
+        clearTimeout(headerResetRef.current);
+        headerResetRef.current = null;
+      }
+    };
+  }, []);
 
   const styles = useMemo(
     () =>
@@ -379,13 +416,17 @@ export default function EditOrderScreen() {
     try {
       if (type === 'error') {
         toastError?.(text, options);
+      } else if (type === 'warning') {
+        toastWarning?.(text, options);
       } else if (type === 'success') {
         toastSuccess?.(text, options);
       } else {
         toastInfo?.(text, options);
       }
     } catch (e) {
-      console.warn('Toast error:', e);
+      if (__DEV__) {
+        console.warn('Toast error:', e);
+      }
     }
   };
 
@@ -418,6 +459,11 @@ export default function EditOrderScreen() {
   );
 
   const handleSave = async () => {
+    if (saving) return;
+    if (!id) {
+      showToast(T('order_validation_no_order_id'), 'error');
+      return;
+    }
     if (companySettings?.recalc_in_progress) {
       showToast(T('settings_recalc_in_progress'), 'warning');
       return;
@@ -442,10 +488,29 @@ export default function EditOrderScreen() {
     }
 
     if (!title.trim()) return showToast(T('order_validation_title_required'), 'error');
-    if (!departureDate) return showToast(T('order_validation_date_required'), 'error');
+    if (!normalizeDateOrNull(departureDate)) {
+      return showToast(T('order_validation_date_required'), 'error');
+    }
     const rawPhone = (phone || '').replace(/\D/g, '');
     if (rawPhone && !isValidPhone(String(phone || ''))) {
       return showToast(T('order_validation_phone_format'), 'error');
+    }
+    if (rawPhone && !normalizeRuPhoneForDb(phone)) {
+      return showToast(T('order_validation_phone_format'), 'error');
+    }
+    const parsedPrice = parseDecimalOrNull(price);
+    const parsedFuelCost = parseDecimalOrNull(fuelCost);
+    if (String(price ?? '').trim() && parsedPrice === null) {
+      return showToast(T('order_validation_amount_format'), 'error');
+    }
+    if (String(fuelCost ?? '').trim() && parsedFuelCost === null) {
+      return showToast(T('order_validation_fuel_format'), 'error');
+    }
+    if (parsedPrice != null && parsedPrice < 0) {
+      return showToast(T('order_validation_amount_format'), 'error');
+    }
+    if (parsedFuelCost != null && parsedFuelCost < 0) {
+      return showToast(T('order_validation_fuel_format'), 'error');
     }
 
     await proceedSave();
@@ -453,10 +518,35 @@ export default function EditOrderScreen() {
 
   const proceedSave = async () => {
     try {
+      if (saving) return;
       setSaving(true);
       showToast(T('toast_saving'), 'info', { sticky: true });
 
-      const rawPhone = (phone || '').replace(/\D/g, '');
+      const normalizedDepartureDate = normalizeDateOrNull(departureDate);
+      if (!normalizedDepartureDate) {
+        showToast(T('order_validation_date_required'), 'error');
+        return;
+      }
+
+      const normalizedPhone = normalizeRuPhoneForDb(phone);
+      const parsedPrice = parseDecimalOrNull(price);
+      const parsedFuelCost = parseDecimalOrNull(fuelCost);
+      if (String(price ?? '').trim() && parsedPrice === null) {
+        showToast(T('order_validation_amount_format'), 'error');
+        return;
+      }
+      if (String(fuelCost ?? '').trim() && parsedFuelCost === null) {
+        showToast(T('order_validation_fuel_format'), 'error');
+        return;
+      }
+      if (parsedPrice != null && parsedPrice < 0) {
+        showToast(T('order_validation_amount_format'), 'error');
+        return;
+      }
+      if (parsedFuelCost != null && parsedFuelCost < 0) {
+        showToast(T('order_validation_fuel_format'), 'error');
+        return;
+      }
       const payload = {
         title,
         comment: description,
@@ -465,35 +555,96 @@ export default function EditOrderScreen() {
         street,
         house,
         fio: customerName,
-        phone: rawPhone ? `+7${rawPhone.slice(1)}` : null,
+        phone: normalizedPhone,
         assigned_to: toFeed ? null : assigneeId,
-        time_window_start: departureDate.toISOString(),
+        time_window_start: normalizedDepartureDate.toISOString(),
         urgent,
         department_id: departmentId || null,
-        price: price ? parseFloat(price) : null,
-        fuel_cost: fuelCost ? parseFloat(fuelCost) : null,
+        price: parsedPrice,
+        fuel_cost: parsedFuelCost,
         ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
       };
 
-      const { error } = await supabase.from('orders').update(payload).eq('id', id);
-      if (error) {
-        showToast(error.message || T('error_save_failed'), 'error');
-        return;
-      }
-      // Инвалидируем кэш и получаем свежие данные
-      await queryClient.invalidateQueries({ queryKey: ['order', id] });
+      await updateRequestMutation.mutateAsync({ id, patch: payload });
+      snapshotRef.current = buildSnapshot({
+        title,
+        description,
+        region,
+        city,
+        street,
+        house,
+        customerName,
+        phone,
+        departureDate,
+        assigneeId,
+        toFeed,
+        urgent,
+        departmentId,
+        price,
+        fuelCost,
+        workTypeId,
+      });
+      userEditedRef.current = false;
       showToast(T('toast_success'), 'success');
     } catch (err) {
-      showToast(err?.message || T('error_save_failed'), 'error');
+      if (__DEV__) {
+        console.warn('order save failed', err?.message || err);
+      }
+      showToast(T('order_save_error'), 'error');
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  if (orderLoading && !orderData) {
     return (
       <EditScreenTemplate scrollEnabled={false}>
-        <View style={{ flex: 1 }} />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size={theme.components?.activityIndicator?.size ?? 'large'} />
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
+  if (orderError) {
+    return (
+      <EditScreenTemplate scrollEnabled={false}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+            {T('order_load_error')}
+          </Text>
+          <Pressable
+            onPress={() => {
+              refetchOrder();
+            }}
+            style={({ pressed }) => [
+              {
+                marginTop: theme.spacing?.md ?? 12,
+                paddingHorizontal: theme.spacing?.md ?? 12,
+                paddingVertical: theme.spacing?.sm ?? 8,
+                borderRadius: theme.radii?.md ?? 8,
+                borderWidth: theme.components?.card?.borderWidth ?? 1,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surface,
+              },
+              pressed ? { opacity: 0.8 } : null,
+            ]}
+          >
+            <Text style={{ color: theme.colors.text }}>{T('btn_retry')}</Text>
+          </Pressable>
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
+  if (!orderData) {
+    return (
+      <EditScreenTemplate scrollEnabled={false}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+            {T('order_not_found')}
+          </Text>
+        </View>
       </EditScreenTemplate>
     );
   }
@@ -572,11 +723,11 @@ export default function EditOrderScreen() {
             )}
           </Card>
 
-          <SectionHeader bottomSpacing="xs">Финансы</SectionHeader>
+          <SectionHeader bottomSpacing="xs">{T('order_section_finances')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             <TextField
               label={T('order_details_amount')}
-              placeholder="0.00"
+              placeholder={T('order_placeholder_amount')}
               value={price}
               onChangeText={setPrice}
               keyboardType="decimal-pad"
@@ -584,7 +735,7 @@ export default function EditOrderScreen() {
             />
             <TextField
               label={T('order_details_fuel')}
-              placeholder="0.00"
+              placeholder={T('order_placeholder_amount')}
               value={fuelCost}
               onChangeText={setFuelCost}
               keyboardType="decimal-pad"
@@ -688,9 +839,9 @@ export default function EditOrderScreen() {
             <TextField
               label={T('order_field_departure_date')}
               value={
-                departureDate
-                  ? format(departureDate, 'd MMMM yyyy', { locale: ru })
-                  : T('placeholder_birthdate')
+                displayDepartureDate
+                  ? format(displayDepartureDate, 'd MMMM yyyy', { locale: ru })
+                  : T('order_placeholder_departure_date')
               }
               pressable
               style={styles.field}
@@ -702,14 +853,14 @@ export default function EditOrderScreen() {
                 <TextField
                   label={T('order_field_departure_time')}
                   value={
-                    departureDate
-                      ? format(departureDate, 'HH:mm', { locale: ru })
-                      : T('placeholder_birthdate')
+                    displayDepartureDate
+                      ? format(displayDepartureDate, 'HH:mm', { locale: ru })
+                      : T('order_placeholder_departure_time')
                   }
                   pressable
                   style={styles.field}
                   onPress={() => {
-                    if (!departureDate) {
+                    if (!displayDepartureDate) {
                       setShowDateModal(true);
                       return;
                     }
@@ -768,10 +919,10 @@ export default function EditOrderScreen() {
       <DateTimeModal
         visible={showTimeModal}
         mode="time"
-        initial={departureDate || new Date()}
+        initial={displayDepartureDate || new Date()}
         allowFutureDates={true}
         onApply={(time) => {
-          const baseDate = departureDate || new Date();
+          const baseDate = displayDepartureDate || new Date();
           const newDate = new Date(baseDate);
           newDate.setHours(time.getHours(), time.getMinutes(), 0, 0);
           setDepartureDate(newDate);
@@ -790,3 +941,4 @@ export default function EditOrderScreen() {
     </>
   );
 }
+
