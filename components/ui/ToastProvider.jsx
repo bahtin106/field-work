@@ -105,6 +105,7 @@ export default function ToastProvider({ children }) {
     setAnchorOffset,
     success: (t) => show(t, 'success'),
     error: (t) => show(t, 'error'),
+    warning: (t) => show(t, 'warning'),
     info: (t) => show(t, 'info'),
     loading: (text) => show(text ?? i18nT('toast.loading'), 'info', { sticky: true }),
     promise: (p, m = {}) => {
@@ -130,6 +131,11 @@ export default function ToastProvider({ children }) {
   const palette = (t) => ({
     info: { bg: t.colors.surface, fg: t.colors.text, border: t.colors.border },
     success: { bg: t.colors.surface, fg: t.colors.success, border: t.colors.success },
+    warning: {
+      bg: t.colors.surface,
+      fg: t.colors.warning || '#ff9800',
+      border: t.colors.warning || '#ff9800',
+    },
     error: { bg: t.colors.surface, fg: t.colors.danger, border: t.colors.danger },
   });
   const p = palette(theme)[msg?.type || 'info'];

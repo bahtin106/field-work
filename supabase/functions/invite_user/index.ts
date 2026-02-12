@@ -120,6 +120,8 @@ Deno.serve(async (req) => {
       const msg = String(inviteError?.message || '');
       const isRateLimit = /rate limit|too many|limit exceeded/i.test(msg);
 
+      console.log('[invite_user] inviteError msg:', msg, 'isRateLimit:', isRateLimit);
+
       if (!isRateLimit) {
         console.error('Invite failed:', inviteError);
         return new Response(`Invite error: ${inviteError?.message ?? 'unknown'}`, {
@@ -136,6 +138,7 @@ Deno.serve(async (req) => {
     }
 
     if (!newUserId) {
+      console.error('[invite_user] newUserId is null after inviteUserByEmail - returning 400');
       return new Response('Failed to create user', { status: 400, headers: cors });
     }
 

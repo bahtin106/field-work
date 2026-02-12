@@ -1,92 +1,26 @@
-/**
- * useUsers - Хук для работы со списком пользователей
- * Использует систему кэширования и автоматическую синхронизацию
- */
-
-import { useCallback, useMemo } from 'react';
-import { supabase } from '../../lib/supabase';
+import { useMemo } from 'react';
+import { useEmployees, useEmployeesRealtimeSync } from '../../src/features/employees/queries';
 import { useAuth } from './useAuth';
-import { useQueryWithCache } from './useQueryWithCache';
-import { useRealtimeSync } from './useRealtimeSync';
 
 export function useUsers(options = {}) {
   const { filters = {}, enabled = true } = options;
   const { isAuthenticated } = useAuth();
+  const queryEnabled = enabled && isAuthenticated;
 
-  // Генерируем уникальный ключ кэша на основе фильтров
-  const queryKey = useMemo(() => {
-    const filterStr = JSON.stringify(filters);
-    return `users:${filterStr}`;
-  }, [filters]);
-
-  // Функция загрузки пользователей
-  const fetchUsers = useCallback(async () => {
-    let query = supabase
-      .from('profiles')
-      .select(
-        'id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at',
-      )
-      .order('full_name', { ascending: true, nullsFirst: false });
-
-    // Применяем фильтры
-    if (Array.isArray(filters.departments) && filters.departments.length > 0) {
-      const deptIds = filters.departments.map((d) => (typeof d === 'number' ? d : String(d)));
-      query = query.in('department_id', deptIds);
-    }
-
-    if (Array.isArray(filters.roles) && filters.roles.length > 0) {
-      query = query.in('role', filters.roles);
-    }
-
-    if (filters.suspended === true) {
-      query = query.or('is_suspended.eq.true,suspended_at.not.is.null');
-    } else if (filters.suspended === false) {
-      query = query.eq('is_suspended', false).is('suspended_at', null);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    if (!Array.isArray(data)) return [];
-    return data.map((row) => {
-      const nameParts = `${row.first_name || ''} ${row.last_name || ''}`.trim();
-      const candidate =
-        nameParts ||
-        (row.full_name || '').trim();
-      const normalizedFullName = candidate || null;
-      return {
-        ...row,
-        full_name: normalizedFullName,
-        display_name: normalizedFullName || row.email || '',
-      };
-    });
-  }, [filters]);
-
-  // Используем систему кэширования
-  const { data, isLoading, isRefreshing, refresh, error } = useQueryWithCache({
-    queryKey,
-    queryFn: fetchUsers,
-    ttl: 5 * 60 * 1000, // 5 минут
-    staleTime: 2 * 60 * 1000, // 2 минуты считаем данные свежими
-    enabled: enabled && isAuthenticated, // КРИТИЧНО: загружаем только если есть авторизация
-    placeholderData: [], // Показываем пустой массив пока грузятся данные из кеша
+  const { data, isLoading, isFetching, refetch, error } = useEmployees(filters, {
+    enabled: queryEnabled,
+    placeholderData: (prev) => prev ?? [],
   });
 
-  // Автоматическая синхронизация через Realtime
-  // ⚠️ Важно: не подписываемся если пользователь не аутентифицирован
-  useRealtimeSync({
-    supabaseClient: supabase,
-    table: 'profiles',
-    queryKey,
-    onUpdate: refresh,
-    enabled: enabled && isAuthenticated,
-  });
+  useEmployeesRealtimeSync({ enabled: queryEnabled });
+
+  const isRefreshing = useMemo(() => Boolean(data) && isFetching, [data, isFetching]);
 
   return {
     users: data || [],
     isLoading,
     isRefreshing,
-    refresh,
+    refresh: refetch,
     error,
   };
 }

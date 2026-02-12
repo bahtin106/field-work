@@ -85,6 +85,15 @@ export function useAuthLogin() {
 
       if (authErr) {
         // Логируем ошибку для аналитики
+        console.log('[DEBUG] Auth attempt during login:', { 
+          errorKey: mapSupabaseAuthError(authErr),
+          email: emailTrim,
+          errorStatus: authErr?.status,
+          errorMessage: authErr?.message,
+          errorCode: authErr?.code,
+          fullError: authErr
+        });
+        
         logAuthError('login', authErr, { email: emailTrim });
 
         // Маппируем на UI-ошибку

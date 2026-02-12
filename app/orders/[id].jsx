@@ -61,12 +61,19 @@ import SectionHeader from '../../components/ui/SectionHeader';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { usePermissions } from '../../lib/permissions';
+import {
+  ensureRequestPrefetch,
+  useRequest,
+  useRequestRealtimeSync,
+} from '../../src/features/requests/queries';
+import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useQueryClient } from '@tanstack/react-query';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
-const ORDER_CACHE = (globalThis.ORDER_CACHE ||= new Map());
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
 export default function OrderDetails() {
@@ -113,11 +120,13 @@ export default function OrderDetails() {
   const router = useRouter();
   const navigation = useNavigation();
   const isNavigatingRef = useRef(false);
+  const queryClient = useQueryClient();
+  const firstContentTrackedRef = useRef(false);
+  const lastRequestSyncRef = useRef('');
 
   const [order, setOrder] = useState(null);
   const [orderReady, setOrderReady] = useState(false);
   const [workTypesReady, setWorkTypesReady] = useState(false);
-  const hydratedRef = useRef(false);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [executorName, setExecutorName] = useState(null);
@@ -166,6 +175,11 @@ export default function OrderDetails() {
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+  const { data: requestData } = useRequest(id, {
+    enabled: !!id,
+    staleTime: 45 * 1000,
+    refetchOnMount: false,
+  });
 
   const initialFormSnapshotRef = useRef('');
   const detailsScrollRef = useRef(null);
@@ -179,6 +193,19 @@ export default function OrderDetails() {
   const panRef = useRef(null);
   const tapRef = useRef(null);
   const pinchRef = useRef(null);
+
+  const hasMeaningfulOrderDiff = useCallback((prevOrder, nextOrder) => {
+    if (!prevOrder) return true;
+    if (!nextOrder) return false;
+    return (
+      prevOrder.id !== nextOrder.id ||
+      (prevOrder.updated_at || null) !== (nextOrder.updated_at || null) ||
+      (prevOrder.status || null) !== (nextOrder.status || null) ||
+      (prevOrder.assigned_to || null) !== (nextOrder.assigned_to || null) ||
+      (prevOrder.time_window_start || null) !== (nextOrder.time_window_start || null) ||
+      (prevOrder.title || null) !== (nextOrder.title || null)
+    );
+  }, []);
 
   const showToast = useCallback((msg) => {
     if (Platform.OS === 'android') {
@@ -467,14 +494,6 @@ export default function OrderDetails() {
       return;
     }
 
-    const cached = ORDER_CACHE.get(id);
-    if (cached) {
-      setOrder(cached);
-      hydratedRef.current = true;
-      setWorkTypeId(cached.work_type_id ?? null);
-      setOrderReady(true);
-    }
-
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const uid = sessionData?.session?.user?.id || null;
@@ -489,13 +508,8 @@ export default function OrderDetails() {
         setRole(profile?.role || null);
       }
 
-      const { data: fetchedOrderRaw, error } = await supabase
-        .from('orders_secure_v2')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
+      const fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
+      if (!fetchedOrderRaw) throw new Error('Order not found');
 
       const fetchedOrder = fetchedOrderRaw
         ? {
@@ -530,8 +544,6 @@ export default function OrderDetails() {
         } catch {}
       }
 
-      // ORDER_CACHE.set(id, fetchedOrder); // удалено: кэш обновим после выбора итогового заказа
-
       // ПЕРЕДЕЛАНО: сохраняем статус "В работе" в БД и перезагружаем заявку
       if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
         try {
@@ -541,25 +553,19 @@ export default function OrderDetails() {
             .eq('id', id);
           if (updateError) throw updateError;
 
-          const { data: refreshed, error: refErr } = await supabase
-            .from('orders_secure_v2')
-            .select('*')
-            .eq('id', id)
-            .single();
-
-          const nextOrder = refErr ? { ...fetchedOrder, status: 'В работе' } : refreshed;
-          ORDER_CACHE.set(id, nextOrder);
-          setOrder(nextOrder);
+          await queryClient.invalidateQueries({ queryKey: ['requests'] });
+          await queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
+          const refreshed = await ensureRequestPrefetch(queryClient, id);
+          const nextOrder = refreshed || { ...fetchedOrder, status: 'В работе' };
+          setOrder((prev) => (hasMeaningfulOrderDiff(prev, nextOrder) ? nextOrder : prev));
           setWorkTypeId(nextOrder.work_type_id ?? null);
         } catch (e) {
           console.warn('Persist status error:', e);
-          ORDER_CACHE.set(id, fetchedOrder);
-          setOrder(fetchedOrder);
+          setOrder((prev) => (hasMeaningfulOrderDiff(prev, fetchedOrder) ? fetchedOrder : prev));
           setWorkTypeId(fetchedOrder.work_type_id ?? null);
         }
       } else {
-        ORDER_CACHE.set(id, fetchedOrder);
-        setOrder(fetchedOrder);
+        setOrder((prev) => (hasMeaningfulOrderDiff(prev, fetchedOrder) ? fetchedOrder : prev));
         setWorkTypeId(fetchedOrder.work_type_id ?? null);
       }
 
@@ -648,7 +654,7 @@ export default function OrderDetails() {
       console.warn('Fetch data error:', e);
       setOrderReady(true);
     }
-  }, [id, fetchServerPhotos, makeSnapshotFromOrder]);
+  }, [id, fetchServerPhotos, hasMeaningfulOrderDiff, makeSnapshotFromOrder, queryClient]);
 
   const canEdit = useCallback(
     () => has('canEditOrders') && !companySettings?.recalc_in_progress,
@@ -1399,6 +1405,38 @@ export default function OrderDetails() {
   );
 
   useEffect(() => {
+    markScreenMount('RequestView');
+  }, []);
+
+  useEffect(() => {
+    if (!requestData || editMode) return;
+    const syncToken = JSON.stringify({
+      id: requestData?.id ?? null,
+      updated_at: requestData?.updated_at ?? null,
+      status: requestData?.status ?? null,
+      assigned_to: requestData?.assigned_to ?? null,
+      time_window_start: requestData?.time_window_start ?? null,
+    });
+    if (lastRequestSyncRef.current === syncToken) return;
+    lastRequestSyncRef.current = syncToken;
+
+    setOrder((prev) => {
+      if (!prev) return { ...requestData };
+      const merged = { ...prev, ...requestData };
+      return hasMeaningfulOrderDiff(prev, merged) ? merged : prev;
+    });
+    if (!orderReady) setOrderReady(true);
+  }, [requestData, editMode, hasMeaningfulOrderDiff, orderReady]);
+
+  useEffect(() => {
+    if (!order?.id || firstContentTrackedRef.current) return;
+    firstContentTrackedRef.current = true;
+    markFirstContent('RequestView');
+  }, [order?.id]);
+
+  useRequestRealtimeSync({ enabled: !!id, companyId });
+
+  useEffect(() => {
     applyNavBar();
   }, [applyNavBar]);
 
@@ -1646,7 +1684,7 @@ export default function OrderDetails() {
     );
   }, [fullTitle, theme]);
 
-  if (permsLoading || (loading && !hydratedRef.current) || !order) {
+  if (permsLoading || loading || !order) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={theme.colors.primary} />

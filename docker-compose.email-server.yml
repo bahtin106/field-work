@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  email-server:
+    image: email-server:latest
+    container_name: email-server
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - SMTP_HOST=localhost
+      - SMTP_PORT=25
+      - SMTP_FROM=MonitorApp <noreply@monitorapp.ru>
+      - SMTP_REPLY_TO=support@monitorapp.ru
+      - DEBUG_EMAIL=false
+    volumes:
+      - ./email-server.cjs:/app/email-server.js:ro
+      - ./package.json:/app/package.json:ro
+      - ./package-lock.json:/app/package-lock.json:ro
+    working_dir: /app
+    command: ["node", "email-server.js"]

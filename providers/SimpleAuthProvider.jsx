@@ -152,12 +152,12 @@ export function SimpleAuthProvider({ children }) {
 
         console.log('[SimpleAuth] Auth event:', event);
         
-        // ВАЖНО: НЕ используем оптимистичный профиль, ЖДЕМ реальный из БД
+        // Попытка загрузить профиль из БД с fallback на metadata
         setState({
           isInitializing: true,
           isAuthenticated: true,
           user: user,
-          profile: null, // Профиль будет загружен
+          profile: null, // Будет заполнен из БД или metadata
           profileError: null,
         });
 
@@ -178,11 +178,20 @@ export function SimpleAuthProvider({ children }) {
             console.log('[SimpleAuth] Profile loaded, role:', profile.role);
           }
         } catch (error) {
-          console.error('[SimpleAuth] Profile load failed:', error);
+          console.error('[SimpleAuth] Profile load failed, using fallback from metadata:', error?.message);
+          
+          // Fallback: используем оптимистичный профиль из metadata
+          const fallbackProfile = buildProfileFromUser(user, 'metadata-fallback');
+          console.log('[SimpleAuth] Using fallback profile:', {
+            role: fallbackProfile?.role,
+            source: fallbackProfile?.__source,
+          });
+          
           setState((prev) => ({
             ...prev,
             isInitializing: false,
-            profileError: 'load-failed',
+            profile: fallbackProfile,
+            profileError: 'db-error-using-fallback', // Ошибка БД, но используем fallback
           }));
         }
         
