@@ -4,10 +4,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import logger from '../lib/logger';
+import { useAuthContext } from '../providers/SimpleAuthProvider';
+import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
+import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
+import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import Button from './ui/Button';
 import Card from './ui/Card';
 
@@ -31,7 +34,7 @@ async function fetchProfile(uid) {
   try {
     const { data: byUserId } = await supabase
       .from('profiles')
-      .select('full_name, first_name, last_name, avatar_url, role')
+      .select('full_name, first_name, last_name, avatar_url, role, company_id, department_id')
       .eq('user_id', uid)
       .maybeSingle();
     if (byUserId) return byUserId;
@@ -39,7 +42,7 @@ async function fetchProfile(uid) {
 
   const { data: byId } = await supabase
     .from('profiles')
-    .select('full_name, first_name, last_name, avatar_url, role')
+    .select('full_name, first_name, last_name, avatar_url, role, company_id, department_id')
     .eq('id', uid)
     .maybeSingle();
   return byId || null;
@@ -80,11 +83,14 @@ async function fetchCountsAll() {
 
 export default function UniversalHome({ role, user, profile: providedProfile }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const router = useRouter();
+  const { signOut } = useAuthContext();
+  const { isSuperAdmin } = useSuperAdminAccess();
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const qc = useQueryClient();
 
-  // ДИАГНОСТИКА: что приходит в props
+  // Debug: inspect incoming auth/profile props.
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
     console.info('[UniversalHome] Props:', {
@@ -108,7 +114,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   const [scope, setScope] = useState('my');
 
-  // ====== Сессия / профиль ======
+  // ====== Session / profile ======
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
@@ -121,7 +127,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   const shouldFetchProfile = !!uid && (!providedProfile || providedProfile.__source === 'fallback');
   
-  // ДИАГНОСТИКА: проверка fetchProfile
+  // Debug: profile fetch decision.
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
     console.info('[UniversalHome] Profile fetch decision:', {
@@ -136,10 +142,10 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
     enabled: shouldFetchProfile,
-    staleTime: 5 * 60 * 1000, // 5 минут (было 1 минута)
+    staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     refetchOnMount: 'stale',
-    placeholderData: (prev) => prev, // Мгновенный показ старых данных
+    placeholderData: (prev) => prev,
   });
 
   const profileFromQuery = profileData ? { ...profileData, __source: 'supabase-query' } : null;
@@ -152,30 +158,32 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const firstName = currentProfile?.first_name || '';
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_url || null;
+  const companyId = currentProfile?.company_id || null;
+  const deptIdFromProfile = currentProfile?.department_id || null;
 
-  // Роль: приоритет отдаем prop (из _layout кэша), потом profile, потом roleFromPerms
-  // Это гарантирует что UI не зависнет в ожидании permissions
+  // Prefer explicit role from props, then profile, then permissions fallback.
+  // This keeps UI responsive while permissions are still loading.
   const resolvedRole = role || currentProfile?.role || roleFromPerms || 'worker';
 
-  // Админ без ожидания пермишенов
+  // РђРґРјРёРЅ Р±РµР· РѕР¶РёРґР°РЅРёСЏ РїРµСЂРјРёС€РµРЅРѕРІ
   const isAdmin = resolvedRole === 'admin';
 
-  // Область просмотра
+  // РћР±Р»Р°СЃС‚СЊ РїСЂРѕСЃРјРѕС‚СЂР°
   const canViewAll = isAdmin || (!permsLoading && has?.('canViewAllOrders') === true);
 
-  // ★ Новое: право на создание заявок учитывает isAdmin и загрузку пермишенов
-  const canCreateOrders = isAdmin || (!permsLoading && has?.('canCreateOrders') === true); // ★
+  // в… РќРѕРІРѕРµ: РїСЂР°РІРѕ РЅР° СЃРѕР·РґР°РЅРёРµ Р·Р°СЏРІРѕРє СѓС‡РёС‚С‹РІР°РµС‚ isAdmin Рё Р·Р°РіСЂСѓР·РєСѓ РїРµСЂРјРёС€РµРЅРѕРІ
+  const canCreateOrders = isAdmin || (!permsLoading && has?.('canCreateOrders') === true);
 
   useEffect(() => {
     if (!canViewAll && scope !== 'my') setScope('my');
   }, [canViewAll, scope]);
 
-  // ====== Счётчики ======
-  // Гарантируем, что счётчики загружаются когда есть uid И роль определена
-  // profileLoading НЕ блокирует счетчики - они могут загружаться параллельно
+  // ====== Counters ======
+  // Р“Р°СЂР°РЅС‚РёСЂСѓРµРј, С‡С‚Рѕ СЃС‡С‘С‚С‡РёРєРё Р·Р°РіСЂСѓР¶Р°СЋС‚СЃСЏ РєРѕРіРґР° РµСЃС‚СЊ uid Р СЂРѕР»СЊ РѕРїСЂРµРґРµР»РµРЅР°
+  // profileLoading РќР• Р±Р»РѕРєРёСЂСѓРµС‚ СЃС‡РµС‚С‡РёРєРё - РѕРЅРё РјРѕРіСѓС‚ Р·Р°РіСЂСѓР¶Р°С‚СЊСЃСЏ РїР°СЂР°Р»Р»РµР»СЊРЅРѕ
   const readyForCounts = !!uid && !!resolvedRole;
 
-  // ДИАГНОСТИКА: готовность к загрузке счетчиков
+  // Debug: readiness for counts queries.
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
     console.info('[UniversalHome] Counts readiness:', {
@@ -190,38 +198,35 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     queryKey: ['counts', 'my', uid],
     queryFn: () => fetchCountsMy(uid),
     enabled: readyForCounts,
-    staleTime: 2 * 60 * 1000, // 2 минуты (было 30 сек)
+    staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
-    placeholderData: (prev) => prev, // Показываем старые данные мгновенно
+    placeholderData: (prev) => prev,
   });
 
   const { data: allCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
     queryKey: ['counts', 'all'],
     queryFn: fetchCountsAll,
     enabled: readyForCounts && canViewAll,
-    staleTime: 2 * 60 * 1000, // 2 минуты (было 30 сек)
+    staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     refetchOnMount: false,
-    placeholderData: (prev) => prev, // Показываем старые данные мгновенно
+    placeholderData: (prev) => prev,
   });
 
-  // ====== Навигация ======
+  // ====== РќР°РІРёРіР°С†РёСЏ ======
   const openSelfProfileEdit = () => {
     if (uid) router.push(`/users/${uid}`);
   };
   const openAppSettings = useCallback(() => router.push('/app_settings/AppSettings'), [router]);
   const openCompanySettings = useCallback(() => router.push('/company_settings'), [router]);
+  const openAdministration = useCallback(() => router.push('/admin'), [router]);
   const openStats = useCallback(() => router.push('/stats'), [router]);
   const openCreateOrder = () => router.push('/orders/create-order');
   const handleLogout = async () => {
     try {
-      logger.warn('Начинаем выход...');
-      const { logout } = await import('../lib/auth');
-      await logout({ qc });
-    } catch (e) {
-      logger.warn('Ошибка при выходе:', e);
-    }
+      await signOut();
+    } catch {}
   };
 
   const openOrdersWithFilter = (key) => {
@@ -238,30 +243,68 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
       [
         {
           key: 'app',
-          title: 'Настройка приложения',
+          title: t('home_menu_app_settings'),
           icon: 'sliders',
           onPress: openAppSettings,
           visible: true,
         },
         {
           key: 'stats',
-          title: 'Статистика',
+          title: t('home_menu_stats'),
           icon: 'bar-chart-2',
           onPress: openStats,
           visible: true,
         },
         {
           key: 'company',
-          title: 'Настройки компании',
+          title: t('home_menu_company_settings'),
           icon: 'settings',
           onPress: openCompanySettings,
           visible: isAdmin,
         },
+        {
+          key: 'administration',
+          title: t('settings_company_administration'),
+          icon: 'shield',
+          onPress: openAdministration,
+          visible: isSuperAdmin,
+        },
       ].filter((i) => i.visible),
-    [isAdmin, openAppSettings, openStats, openCompanySettings],
+    [isAdmin, isSuperAdmin, openAppSettings, openStats, openCompanySettings, openAdministration, t],
   );
 
   const styles = useMemo(() => createStyles(theme), [theme]);
+
+  // Fetch company name if companyId is available
+  const { data: companyRow } = useQuery({
+    queryKey: ['company', companyId],
+    queryFn: async () => {
+      if (!companyId) return null;
+      const { data } = await supabase.from('companies').select('id, name').eq('id', companyId).maybeSingle();
+      return data || null;
+    },
+    enabled: !!companyId,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+  });
+
+  const companyName = companyRow?.name || null;
+
+  // Fetch department name if department id available
+  const departmentIdToUse = deptIdFromProfile;
+  const { data: departmentRow } = useQuery({
+    queryKey: ['department', departmentIdToUse],
+    queryFn: async () => {
+      if (!departmentIdToUse) return null;
+      const { data } = await supabase.from('departments').select('id, name').eq('id', departmentIdToUse).maybeSingle();
+      return data || null;
+    },
+    enabled: !!departmentIdToUse,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+  });
+
+  const departmentName = departmentRow?.name || null;
 
   const initials = useMemo(() => {
     const a = (firstName || '').trim().slice(0, 1);
@@ -277,17 +320,20 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   const counts = scope === 'all' && canViewAll ? allCounts : myCounts;
 
-  // Убрали блокирующий спиннер - показываем UI сразу, даже если профиль загружается
-  // Плейсхолдеры в тексте покажут "—" пока данные грузятся
+  // Render UI immediately even if profile is still loading.
 
   return (
     <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
       <Card style={styles.cardRounded} padded={false}>
-        <Pressable
+          <Pressable
           onPress={openSelfProfileEdit}
           android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
           accessibilityRole="button"
-          style={({ pressed }) => [styles.profileRow, pressed && styles.rowPressed]}
+          style={({ pressed }) => [
+            styles.profileRow,
+            { backgroundColor: withAlpha(theme.colors.primary, 0.06), borderColor: withAlpha(theme.colors.primary, 0.18) },
+            pressed && styles.rowPressed,
+          ]}
         >
           {avatarUrl ? (
             <View style={styles.avatarWrap}>
@@ -301,15 +347,30 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
           <View style={styles.profileInfo}>
             <Text style={styles.profileName} numberOfLines={1}>
-              {profileLoading ? '—' : fullName || '—'}
+              {profileLoading ? t('common_dash') : fullName || t('common_dash')}
             </Text>
-            <Text style={styles.profileRole} numberOfLines={1}>
-              {resolvedRole === 'admin'
-                ? 'Администратор'
-                : resolvedRole === 'dispatcher'
-                  ? 'Диспетчер'
-                  : 'Работник'}
-            </Text>
+            <View style={styles.profileMetaRow}>
+              <Text style={styles.rolePill} numberOfLines={1}>
+                {resolvedRole === 'admin'
+                  ? t('role_admin')
+                  : resolvedRole === 'dispatcher'
+                    ? t('role_dispatcher')
+                    : t('role_worker')}
+              </Text>
+              {companyName ? (
+                <View style={styles.companyPillWrap}>
+                  <Text style={styles.companyPill} numberOfLines={1}>
+                    {companyName}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+            {departmentName ? (
+              <View style={styles.departmentRow}>
+                <FeatherIcon name="home" size={14} color={theme.colors.textSecondary} style={{ marginRight: 6 }} />
+                <Text style={styles.departmentText} numberOfLines={1}>{departmentName}</Text>
+              </View>
+            ) : null}
           </View>
 
           <FeatherIcon
@@ -381,7 +442,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
                   style={{ marginRight: 6 }}
                 />
                 <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
-                  {s === 'my' ? 'Мои' : 'Все'}
+                  {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
                 </Text>
               </Pressable>
             );
@@ -391,7 +452,12 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
       <View style={styles.summaryContainer}>
         {['feed', 'new', 'progress', 'all'].map((key) => {
-          const labelMap = { feed: 'В ленте', new: 'Новые', progress: 'В работе', all: 'Все' };
+          const labelMap = {
+            feed: t('home_summary_feed'),
+            new: t('home_summary_new'),
+            progress: t('home_summary_progress'),
+            all: t('home_summary_all'),
+          };
           let numberColor = theme.colors.text;
           if (key === 'new') numberColor = theme.colors.primary;
           if (key === 'progress') numberColor = theme.colors.success || theme.colors.primary;
@@ -408,17 +474,14 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
             </Pressable>
           );
         })}
-      </View>
-
-      {/* ★ Тут заменили условие на canCreateOrders */}
-      {canCreateOrders && (
+      </View>      {canCreateOrders && (
         <View style={styles.actionWrapper}>
-          <Button title="Создать заявку" onPress={openCreateOrder} />
+          <Button title={t('home_btn_create_order')} onPress={openCreateOrder} />
         </View>
       )}
 
       <View style={styles.actionWrapper}>
-        <Button title="Выйти из профиля" variant="destructive" onPress={handleLogout} />
+        <Button title={t('home_btn_logout')} variant='destructive' onPress={handleLogout} />
       </View>
     </ScrollView>
   );
@@ -477,6 +540,56 @@ const createStyles = (theme) =>
       fontSize: theme.typography.sizes.sm,
       color: theme.colors.textSecondary || theme.colors.text,
     },
+    profileMeta: {
+      marginTop: 2,
+      fontSize: theme.typography.sizes.xs ?? 12,
+      color: theme.colors.textSecondary || theme.colors.text,
+    },
+    profileMetaRow: {
+      marginTop: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    rolePill: {
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+      borderRadius: 999,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+      backgroundColor: theme.colors.primary,
+      color: theme.colors.onPrimary || '#fff',
+    },
+    companyPillWrap: {
+      marginLeft: theme.spacing.sm,
+      borderRadius: 999,
+      overflow: 'hidden',
+      alignSelf: 'flex-start',
+    },
+    companyPill: {
+      paddingHorizontal: theme.spacing.sm,
+      paddingVertical: 6,
+      borderRadius: 999,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+      backgroundColor: withAlpha(theme.colors.primary, 0.12),
+      color: theme.colors.primary,
+    },
+    departmentRow: {
+      marginTop: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    departmentText: {
+      fontSize: theme.typography.sizes.xs ?? 12,
+      color: theme.colors.textSecondary || theme.colors.text,
+    },
+    profileMetaInline: {
+      marginLeft: theme.spacing.sm,
+      fontSize: theme.typography.sizes.xs ?? 12,
+      color: theme.colors.textSecondary || theme.colors.text,
+      flex: 1,
+    },
     menuCard: {},
     menuRow: {
       flexDirection: 'row',
@@ -529,4 +642,8 @@ const createStyles = (theme) =>
     summaryLabel: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
     actionWrapper: { marginBottom: theme.spacing.md },
   });
+
+
+
+
 
