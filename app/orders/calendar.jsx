@@ -31,6 +31,7 @@ import Animated, {
   useDerivedValue,
   useSharedValue,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -49,6 +50,7 @@ import {
 } from '../../src/features/requests/queries';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { CALENDAR_GESTURE, CALENDAR_LAYOUT } from '../../constants/layout';
@@ -122,6 +124,24 @@ function resolveSnapTarget(progress, velocityY, totalDistance) {
   return progress > CALENDAR_GESTURE.SNAP_PROGRESS_THRESHOLD ? totalDistance : 0;
 }
 
+function resolveGestureIntent(tx, ty, vx, vy, distanceThreshold, dominanceRatio, velocityThreshold) {
+  'worklet';
+  const absTx = Math.abs(tx);
+  const absTy = Math.abs(ty);
+  if (absTx < distanceThreshold && absTy < distanceThreshold) return 0;
+
+  const horizontalByDistance = absTx >= absTy * dominanceRatio;
+  const verticalByDistance = absTy >= absTx * dominanceRatio;
+  if (horizontalByDistance) return 1;
+  if (verticalByDistance) return 2;
+
+  const absVx = Math.abs(vx);
+  const absVy = Math.abs(vy);
+  if (absVx >= velocityThreshold && absVx > absVy) return 1;
+  if (absVy >= velocityThreshold && absVy > absVx) return 2;
+  return 0;
+}
+
 export default function CalendarScreen() {
   const { profile, isAuthenticated, isInitializing } = useAuth();
   const { theme } = useTheme();
@@ -159,6 +179,8 @@ export default function CalendarScreen() {
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [viewMode, setViewMode] = useState('month');
+  const ordersSwapOverlayOpacity = useSharedValue(0);
+  const [isOrdersSwapping, setIsOrdersSwapping] = useState(false);
 
   useEffect(() => {
     markScreenMount('Calendar');
@@ -201,16 +223,21 @@ export default function CalendarScreen() {
   const scrollY = useSharedValue(0);
   const monthScrollX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
+  const previewMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
   const isCollapsedShared = useSharedValue(false);
   const isSnappingShared = useSharedValue(false);
   const panHasDrivenCollapse = useSharedValue(false);
   const monthPagerRef = useAnimatedRef();
+  const ordersListRef = useRef(null);
   const lastHandledPageIndex = useRef(MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndexRef = useRef(MONTH_LIST_MIDDLE_INDEX);
+  const monthMomentumStartedRef = useRef(false);
   const monthScrollRafRef = useRef(null);
+  const pendingDragEndCommitRafRef = useRef(null);
   const pendingScrollTargetIndexRef = useRef(null);
   const [visibleMonthRenderIndex, setVisibleMonthRenderIndex] = useState(MONTH_LIST_MIDDLE_INDEX);
   const settledMonthOffsetX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
+  const monthSwipeInteraction = useSharedValue(0);
   const deferInitialMeasureRef = useRef(true);
   const [monthWindowAnchor, setMonthWindowAnchor] = useState(startOfMonth(new Date()));
   const YEAR_LIST_RADIUS = 120;
@@ -295,6 +322,9 @@ export default function CalendarScreen() {
     },
     [dynamicMonths],
   );
+  const previewVisibleMonthIndex = useCallback((pageIndex) => {
+    setVisibleMonthRenderIndex((prev) => (prev === pageIndex ? prev : pageIndex));
+  }, []);
 
   const resolvePageIndex = useCallback(
     (offsetX) => {
@@ -318,6 +348,8 @@ export default function CalendarScreen() {
   const commitVisibleMonthIndex = useCallback(
     (pageIndex) => {
       visibleMonthIndex.value = pageIndex;
+      settledMonthOffsetX.value = layoutMetrics.cardWidth * pageIndex;
+      monthSwipeInteraction.value = 0;
       handlePageChange(pageIndex);
       pendingScrollTargetIndexRef.current = null;
       if (monthScrollRafRef.current != null) {
@@ -327,7 +359,47 @@ export default function CalendarScreen() {
         monthScrollRafRef.current = null;
       }
     },
-    [handlePageChange, visibleMonthIndex],
+    [handlePageChange, layoutMetrics.cardWidth, monthSwipeInteraction, settledMonthOffsetX, visibleMonthIndex],
+  );
+  const resolveMonthDateKeyByIndex = useCallback(
+    (pageIndex) => {
+      const monthDate = dynamicMonths[pageIndex];
+      if (!monthDate) return null;
+      return format(startOfMonth(monthDate), 'yyyy-MM-dd');
+    },
+    [dynamicMonths],
+  );
+  const requestMonthCommit = useCallback(
+    (nextIndex) => {
+      const nextDateKey = resolveMonthDateKeyByIndex(nextIndex);
+      if (nextDateKey && nextDateKey !== displayDateKey) {
+        setIsOrdersSwapping(true);
+        setDisplayDateKey(null);
+        setDisplayTitleDateKey(null);
+        cancelAnimation(ordersSwapOverlayOpacity);
+        ordersSwapOverlayOpacity.value = 1;
+        commitVisibleMonthIndex(nextIndex);
+        setDisplayDateKey(nextDateKey);
+        setDisplayTitleDateKey(nextDateKey);
+        try {
+          ordersListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+        } catch {}
+        ordersSwapOverlayOpacity.value = withTiming(0, {
+          duration: CALENDAR_GESTURE.MONTH_TRANSITION_SHOW_DURATION,
+        }, (finished) => {
+          if (!finished) return;
+          runOnJS(setIsOrdersSwapping)(false);
+        });
+        return;
+      }
+      commitVisibleMonthIndex(nextIndex);
+    },
+    [
+      commitVisibleMonthIndex,
+      displayDateKey,
+      ordersSwapOverlayOpacity,
+      resolveMonthDateKeyByIndex,
+    ],
   );
   const commitVisibleYearIndex = useCallback(
     (pageIndex) => {
@@ -354,10 +426,23 @@ export default function CalendarScreen() {
       const pageWidth = layoutMetrics.cardWidth;
       if (!pageWidth) return;
       const maxIndex = Math.max(0, dynamicMonths.length - 1);
-      const nextIndex = clamp(Math.round(event.contentOffset.x / pageWidth), 0, maxIndex);
-      visibleMonthIndex.value = nextIndex;
+      const rawIndex = clamp(event.contentOffset.x / pageWidth, 0, maxIndex);
+      const committedIndex = clamp(Math.round(rawIndex), 0, maxIndex);
+      visibleMonthIndex.value = committedIndex;
+
+      // Hysteresis prevents 1-frame flips old<->new around page boundaries.
+      const currentPreview = previewMonthIndex.value;
+      let nextPreview = currentPreview;
+      const delta = rawIndex - currentPreview;
+      if (delta > 0.5 && currentPreview < maxIndex) nextPreview = currentPreview + 1;
+      else if (delta < -0.5 && currentPreview > 0) nextPreview = currentPreview - 1;
+
+      if (nextPreview !== currentPreview) {
+        previewMonthIndex.value = nextPreview;
+        runOnJS(previewVisibleMonthIndex)(nextPreview);
+      }
     },
-  });
+  }, [dynamicMonths.length, layoutMetrics.cardWidth, previewMonthIndex, previewVisibleMonthIndex]);
 
   useEffect(() => {
     monthScrollX.value = layoutMetrics.cardWidth * visibleMonthIndex.value;
@@ -368,6 +453,11 @@ export default function CalendarScreen() {
       if (monthScrollRafRef.current != null) {
         try {
           cancelAnimationFrame(monthScrollRafRef.current);
+        } catch {}
+      }
+      if (pendingDragEndCommitRafRef.current != null) {
+        try {
+          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
         } catch {}
       }
     };
@@ -391,6 +481,7 @@ export default function CalendarScreen() {
     lastHandledPageIndex.current = targetIndex;
     visibleMonthIndexRef.current = targetIndex;
     visibleMonthIndex.value = targetIndex;
+    previewMonthIndex.value = targetIndex;
     setVisibleMonthRenderIndex(targetIndex);
     monthScrollX.value = layoutMetrics.cardWidth * targetIndex;
     settledMonthOffsetX.value = layoutMetrics.cardWidth * targetIndex;
@@ -406,6 +497,7 @@ export default function CalendarScreen() {
     layoutMetrics.cardWidth,
     monthPagerRef,
     monthScrollX,
+    previewMonthIndex,
     settledMonthOffsetX,
     visibleMonthIndex,
   ]);
@@ -515,16 +607,6 @@ export default function CalendarScreen() {
     () =>
       StyleSheet.create({
         container: { flex: 1 },
-        handleContainer: {
-          alignItems: 'center',
-          paddingVertical: theme.spacing.xs,
-        },
-        handleBar: {
-          width: theme.spacing.xl,
-          height: 4,
-          borderRadius: 999,
-          backgroundColor: theme.colors.border,
-        },
         tabsWrapper: {
           paddingHorizontal: theme.spacing.md,
           paddingTop: theme.spacing.xs,
@@ -808,6 +890,20 @@ export default function CalendarScreen() {
     );
     return { height };
   }, [indicatorSlotBaseHeight]);
+  const eventCountAnimatedStyle = useAnimatedStyle(() => {
+    const progress = stageAtoBProgress.value;
+    return {
+      opacity: interpolate(progress, [0, 1], [1, 0], Extrapolate.CLAMP),
+      transform: [{ scale: interpolate(progress, [0, 1], [1, 0.24], Extrapolate.CLAMP) }],
+    };
+  });
+  const eventDotAnimatedStyle = useAnimatedStyle(() => {
+    const progress = stageAtoBProgress.value;
+    return {
+      opacity: interpolate(progress, [0, 0.03, 0.65], [0, 0, 1], Extrapolate.CLAMP),
+      transform: [{ scale: interpolate(progress, [0, 0.65], [0.24, 1], Extrapolate.CLAMP) }],
+    };
+  });
 
   const headerAnimatedStyle = useAnimatedStyle(
     () => ({
@@ -875,6 +971,7 @@ export default function CalendarScreen() {
       lastHandledPageIndex.current = MONTH_LIST_MIDDLE_INDEX;
       visibleMonthIndexRef.current = MONTH_LIST_MIDDLE_INDEX;
       visibleMonthIndex.value = MONTH_LIST_MIDDLE_INDEX;
+      previewMonthIndex.value = MONTH_LIST_MIDDLE_INDEX;
       setVisibleMonthRenderIndex(MONTH_LIST_MIDDLE_INDEX);
       monthScrollX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
       settledMonthOffsetX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
@@ -890,6 +987,7 @@ export default function CalendarScreen() {
     layoutMetrics.cardWidth,
     monthPagerRef,
     monthScrollX,
+    previewMonthIndex,
     settledMonthOffsetX,
     visibleMonthIndex,
     MONTH_LIST_MIDDLE_INDEX,
@@ -916,13 +1014,14 @@ export default function CalendarScreen() {
         if (typeof targetIndex !== 'number') return;
         visibleMonthIndexRef.current = targetIndex;
         visibleMonthIndex.value = targetIndex;
+        previewMonthIndex.value = targetIndex;
         setVisibleMonthRenderIndex(targetIndex);
         try {
           monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: true });
         } catch {}
       });
     },
-    [dynamicMonths.length, monthPagerRef, visibleMonthIndex],
+    [dynamicMonths.length, monthPagerRef, previewMonthIndex, visibleMonthIndex],
   );
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
@@ -934,8 +1033,13 @@ export default function CalendarScreen() {
     try {
       monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
     } catch {}
-    commitVisibleMonthIndex(nextIndex);
-  }, [commitVisibleMonthIndex, monthPagerRef, ordersSwipeLiveOffset, resolvePageIndex]);
+    requestMonthCommit(nextIndex);
+  }, [
+    monthPagerRef,
+    ordersSwipeLiveOffset,
+    requestMonthCommit,
+    resolvePageIndex,
+  ]);
   const scrollYearByOffset = useCallback(
     (offset) => {
       const baseIndex = visibleYearIndexRef.current;
@@ -960,14 +1064,22 @@ export default function CalendarScreen() {
     [layoutMetrics.cardWidth],
   );
 
-  const listScrollTopThreshold = theme.spacing.sm + theme.spacing.xs;
+  // More forgiving for downward swipe: allow collapse even when the list
+  // is slightly offset from top to avoid "hard" downward gesture feel.
+  const listScrollTopThreshold = theme.spacing.lg * 1.4;
+  const downwardUnlockDistance = Math.max(18, theme.spacing.md * 1.6);
   const gestureActiveOffsetX = CALENDAR_GESTURE.PAN_ACTIVE_OFFSET_X;
   const gestureActiveOffsetY = CALENDAR_GESTURE.PAN_ACTIVE_OFFSET_Y;
   const gestureFailOffsetX = CALENDAR_GESTURE.PAN_FAIL_OFFSET_X;
-  const gestureFailOffsetY = CALENDAR_GESTURE.PAN_FAIL_OFFSET_Y;
   const gestureHitSlop = CALENDAR_GESTURE.PAN_HIT_SLOP;
   const directionLockDistance = CALENDAR_GESTURE.DIRECTION_LOCK_DISTANCE;
   const directionLockRatio = CALENDAR_GESTURE.DIRECTION_LOCK_RATIO;
+  const lockDistance = Math.max(8, directionLockDistance);
+  const lockRatio = Math.max(1.3, directionLockRatio);
+  const lockVelocity = 320;
+  const activeOffsetX = Math.max(6, gestureActiveOffsetX);
+  const activeOffsetY = Math.max(6, gestureActiveOffsetY);
+  const verticalFailOffsetX = gestureFailOffsetX + 12;
   const calendarGestureLock = useSharedValue(0); // 0 unknown, 1 horizontal, 2 vertical
   const ordersGestureLock = useSharedValue(0); // 0 unknown, 1 horizontal, 2 vertical
   const snapCollapseToNearest = (velocityY) => {
@@ -1001,121 +1113,84 @@ export default function CalendarScreen() {
     );
   };
 
-  // Жест для области календаря (всегда работает)
-  const calendarGesture = Gesture.Pan()
-    .enabled(false)
-    .hitSlop(gestureHitSlop)
-    .activeOffsetY([-gestureActiveOffsetY, gestureActiveOffsetY])
-    .failOffsetX([-gestureFailOffsetX, gestureFailOffsetX])
-    .onBegin(() => {
-      'worklet';
-      calendarGestureLock.value = 0;
-    })
-    .onStart(() => {
-      'worklet';
-      cancelAnimation(collapseTranslate);
-      panHasDrivenCollapse.value = false;
-      if (isSnappingShared.value) {
-        isSnappingShared.value = false;
-        runOnJS(setSnappingState)(false);
-      }
-      gestureStart.value = collapseTranslate.value;
-    })
-    .onUpdate((event) => {
-      'worklet';
-      const ty = event?.translationY;
-      if (!Number.isFinite(ty)) return;
-      const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
-      const absTx = Math.abs(tx);
-      const absTy = Math.abs(ty);
-      if (calendarGestureLock.value === 0 && (absTx > directionLockDistance || absTy > directionLockDistance)) {
-        if (absTy > absTx * directionLockRatio) calendarGestureLock.value = 2;
-        else if (absTx > absTy * directionLockRatio) calendarGestureLock.value = 1;
-      }
-      if (calendarGestureLock.value === 1) return;
-      const isFullyCollapsed =
-        collapseTranslate.value >=
-        stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-      const isFullyExpanded = collapseTranslate.value <= 0;
-      const listIsAwayFromTop = scrollY.value > listScrollTopThreshold;
-      if (isSnappingShared.value) return;
-      if (ty < 0 && isFullyCollapsed) return;
-      if (ty > 0 && isFullyExpanded) return;
-      if (ty > 0 && listIsAwayFromTop) return;
-      const next = gestureStart.value - ty;
-      const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
-      collapseTranslate.value = clamp(next, 0, safeMax);
-      panHasDrivenCollapse.value = true;
-    })
-    .onEnd((event) => {
-      'worklet';
-      if (!panHasDrivenCollapse.value) {
-        const atEdge =
-          collapseTranslate.value <= 0 ||
-          collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-        if (atEdge) return;
-      }
-      const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-      snapCollapseToNearest(velocityY);
-    })
-    .onFinalize(() => {
-      'worklet';
-      calendarGestureLock.value = 0;
-    });
+  const createVerticalCollapseGesture = (lockShared) =>
+    Gesture.Pan()
+      .enabled(true)
+      .hitSlop(gestureHitSlop)
+      .activeOffsetY([-activeOffsetY, activeOffsetY])
+      .failOffsetX([-verticalFailOffsetX, verticalFailOffsetX])
+      .onBegin(() => {
+        'worklet';
+        lockShared.value = 0;
+      })
+      .onStart(() => {
+        'worklet';
+        cancelAnimation(collapseTranslate);
+        panHasDrivenCollapse.value = false;
+        if (isSnappingShared.value) {
+          isSnappingShared.value = false;
+          runOnJS(setSnappingState)(false);
+        }
+        gestureStart.value = collapseTranslate.value;
+      })
+      .onUpdate((event) => {
+        'worklet';
+        const ty = event?.translationY;
+        if (!Number.isFinite(ty)) return;
+        const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
+        const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
+        const vy = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+        if (lockShared.value === 0) {
+          lockShared.value = resolveGestureIntent(
+            tx,
+            ty,
+            vx,
+            vy,
+            lockDistance,
+            lockRatio,
+            lockVelocity,
+          );
+        }
+        if (lockShared.value === 1) return;
+        const isFullyCollapsed =
+          collapseTranslate.value >=
+          stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+        const isFullyExpanded = collapseTranslate.value <= 0;
+        const listIsAwayFromTop = scrollY.value > listScrollTopThreshold;
+        if (isSnappingShared.value) return;
+        if (ty < 0 && isFullyCollapsed) return;
+        if (ty > 0 && isFullyExpanded) return;
+        if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
+        const next = gestureStart.value - ty;
+        const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
+        collapseTranslate.value = clamp(next, 0, safeMax);
+        panHasDrivenCollapse.value = true;
+      })
+      .onEnd((event) => {
+        'worklet';
+        if (!panHasDrivenCollapse.value) {
+          const atEdge =
+            collapseTranslate.value <= 0 ||
+            collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+          if (atEdge) return;
+        }
+        const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+        snapCollapseToNearest(velocityY);
+      })
+      .onFinalize(() => {
+        'worklet';
+        lockShared.value = 0;
+      });
+
+  // Единая вертикальная логика для верхней и нижней области.
+  const calendarGesture = createVerticalCollapseGesture(calendarGestureLock);
 
   const ordersListNativeGesture = useMemo(() => Gesture.Native(), []);
-  const ordersMonthGesture = Gesture.Pan()
+  const ordersCombinedGesture = Gesture.Pan()
+    .enabled(true)
     .hitSlop(gestureHitSlop)
-    .activeOffsetX([-gestureActiveOffsetX, gestureActiveOffsetX])
-    .failOffsetY([-gestureFailOffsetY, gestureFailOffsetY])
-    .onBegin(() => {
-      'worklet';
-      ordersGestureLock.value = 0;
-    })
-    .onStart(() => {
-      'worklet';
-      const pageWidth = layoutMetrics.cardWidth;
-      const baseOffset = visibleMonthIndex.value * pageWidth;
-      ordersSwipeStartOffset.value = baseOffset;
-      ordersSwipeLiveOffset.value = baseOffset;
-      monthScrollX.value = baseOffset;
-      scrollTo(monthPagerRef, baseOffset, 0, false);
-    })
-    .onUpdate((event) => {
-      'worklet';
-      const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
-      const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
-      const absTx = Math.abs(tx);
-      const absTy = Math.abs(ty);
-      if (ordersGestureLock.value === 0 && (absTx > directionLockDistance || absTy > directionLockDistance)) {
-        if (absTx > absTy * directionLockRatio) ordersGestureLock.value = 1;
-        else if (absTy > absTx * directionLockRatio) ordersGestureLock.value = 2;
-      }
-      if (ordersGestureLock.value !== 1) return;
-      const pageWidth = layoutMetrics.cardWidth;
-      const maxOffset = Math.max(0, (dynamicMonths.length - 1) * pageWidth);
-      const nextOffset = clamp(ordersSwipeStartOffset.value - tx, 0, maxOffset);
-      ordersSwipeLiveOffset.value = nextOffset;
-      monthScrollX.value = nextOffset;
-      scrollTo(monthPagerRef, nextOffset, 0, false);
-    })
-    .onEnd(() => {
-      'worklet';
-      if (isSnappingShared.value) return;
-      if (ordersGestureLock.value === 2) return;
-      if (ordersGestureLock.value !== 1) return;
-      runOnJS(finishOrdersSwipe)();
-    })
-    .onFinalize(() => {
-      'worklet';
-      ordersGestureLock.value = 0;
-    });
-
-  const ordersPanGesture = Gesture.Pan()
-    .enabled(false)
-    .hitSlop(gestureHitSlop)
-    .activeOffsetY([-gestureActiveOffsetY, gestureActiveOffsetY])
-    .failOffsetX([-gestureFailOffsetX, gestureFailOffsetX])
+    .activeOffsetX([-activeOffsetX, activeOffsetX])
+    .activeOffsetY([-activeOffsetY, activeOffsetY])
     .simultaneousWithExternalGesture(ordersListNativeGesture)
     .onBegin(() => {
       'worklet';
@@ -1130,18 +1205,43 @@ export default function CalendarScreen() {
         runOnJS(setSnappingState)(false);
       }
       gestureStart.value = collapseTranslate.value;
+
+      const pageWidth = layoutMetrics.cardWidth;
+      const baseOffset = visibleMonthIndex.value * pageWidth;
+      ordersSwipeStartOffset.value = baseOffset;
+      ordersSwipeLiveOffset.value = baseOffset;
+      monthScrollX.value = baseOffset;
+      scrollTo(monthPagerRef, baseOffset, 0, false);
     })
     .onUpdate((event) => {
       'worklet';
-      const ty = event?.translationY;
-      if (!Number.isFinite(ty)) return;
-
-      const absTy = Math.abs(ty);
-      const absTx = Math.abs(Number.isFinite(event?.translationX) ? event.translationX : 0);
-      if (ordersGestureLock.value === 0 && (absTx > directionLockDistance || absTy > directionLockDistance)) {
-        if (absTy > absTx * directionLockRatio) ordersGestureLock.value = 2;
-        else if (absTx > absTy * directionLockRatio) ordersGestureLock.value = 1;
+      const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
+      const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
+      const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
+      const vy = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+      if (ordersGestureLock.value === 0) {
+        ordersGestureLock.value = resolveGestureIntent(
+          tx,
+          ty,
+          vx,
+          vy,
+          lockDistance,
+          lockRatio,
+          lockVelocity,
+        );
       }
+
+      if (ordersGestureLock.value === 1) {
+        monthSwipeInteraction.value = 1;
+        const pageWidth = layoutMetrics.cardWidth;
+        const maxOffset = Math.max(0, (dynamicMonths.length - 1) * pageWidth);
+        const nextOffset = clamp(ordersSwipeStartOffset.value - tx, 0, maxOffset);
+        ordersSwipeLiveOffset.value = nextOffset;
+        monthScrollX.value = nextOffset;
+        scrollTo(monthPagerRef, nextOffset, 0, false);
+        return;
+      }
+
       if (ordersGestureLock.value !== 2) return;
 
       const isFullyCollapsed =
@@ -1153,9 +1253,7 @@ export default function CalendarScreen() {
       if (isSnappingShared.value) return;
       if (ty < 0 && isFullyCollapsed) return;
       if (ty > 0 && isFullyExpanded) return;
-
-      // Down: first return list to top, then start expanding calendar.
-      if (ty > 0 && listIsAwayFromTop) return;
+      if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
 
       const next = gestureStart.value - ty;
       const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
@@ -1164,7 +1262,16 @@ export default function CalendarScreen() {
     })
     .onEnd((event) => {
       'worklet';
+      if (isSnappingShared.value) return;
+
+      if (ordersGestureLock.value === 1) {
+        monthSwipeInteraction.value = 0;
+        runOnJS(finishOrdersSwipe)();
+        return;
+      }
+
       if (ordersGestureLock.value !== 2) return;
+      monthSwipeInteraction.value = 0;
       if (!panHasDrivenCollapse.value) {
         const atEdge =
           collapseTranslate.value <= 0 ||
@@ -1176,10 +1283,9 @@ export default function CalendarScreen() {
     })
     .onFinalize(() => {
       'worklet';
+      monthSwipeInteraction.value = 0;
       ordersGestureLock.value = 0;
     });
-
-  const ordersCombinedGesture = Gesture.Race(ordersMonthGesture, ordersPanGesture);
 
   useFocusEffect(
     useCallback(() => {
@@ -1234,18 +1340,26 @@ export default function CalendarScreen() {
     return { byDate, marksBase, countByDate };
   }, [orders, theme.colors.primary]);
 
-  const selectedDateOrders = useMemo(
-    () => (selectedDate ? (calendarIndex.byDate[selectedDate] ?? []) : []),
-    [selectedDate, calendarIndex],
+  const committedMonthKey = format(currentMonth, 'yyyy-MM');
+  const selectedMonthKey = selectedDate ? selectedDate.slice(0, 7) : 'none';
+  const targetMonthKey = committedMonthKey;
+  const effectiveSelectedDate = useMemo(
+    () => (selectedMonthKey === targetMonthKey ? selectedDate : `${targetMonthKey}-01`),
+    [selectedDate, selectedMonthKey, targetMonthKey],
   );
-
-  const displayedOrders = selectedDateOrders;
+  const [displayDateKey, setDisplayDateKey] = useState(effectiveSelectedDate);
+  const [displayTitleDateKey, setDisplayTitleDateKey] = useState(effectiveSelectedDate);
+  const displayedOrders = useMemo(
+    () => (displayDateKey ? (calendarIndex.byDate[displayDateKey] ?? []) : []),
+    [calendarIndex.byDate, displayDateKey],
+  );
   const ordersListExtraData = useMemo(
-    () => ({
-      selectedDate,
-      count: displayedOrders.length,
-    }),
-    [displayedOrders.length, selectedDate],
+    () => ({ selectedDate: displayDateKey, count: displayedOrders.length }),
+    [displayDateKey, displayedOrders.length],
+  );
+  const ordersTitleDateLabel = useMemo(
+    () => (displayTitleDateKey ? formatDayLabel(displayTitleDateKey) : ''),
+    [displayTitleDateKey],
   );
   const ordersListContentContainerStyle = useMemo(
     () => ({
@@ -1263,26 +1377,32 @@ export default function CalendarScreen() {
       <DynamicOrderCard
         order={item}
         context="calendar"
-        onPress={() => router.push(`/orders/${item.id}`)}
+        onPress={async () => {
+          const registry = getPrefetchRegistry();
+          await registry
+            .run(`request-detail:${item?.id}`, () => ensureRequestPrefetch(queryClient, item?.id))
+            .catch(() => {});
+          router.push(`/orders/${item.id}`);
+        }}
       />
     ),
-    [router],
+    [queryClient, router],
   );
   const ordersEmptyComponent = useMemo(
-    () => <Text style={styles.noOrders}>Нет заявок</Text>,
-    [styles.noOrders],
+    () => (isOrdersSwapping ? null : <Text style={styles.noOrders}>Нет заявок</Text>),
+    [isOrdersSwapping, styles.noOrders],
   );
 
   const markedDates = useMemo(
     () => ({
       ...calendarIndex.marksBase,
-      [selectedDate]: {
-        ...(calendarIndex.marksBase[selectedDate] || {}),
+      [effectiveSelectedDate]: {
+        ...(calendarIndex.marksBase[effectiveSelectedDate] || {}),
         selected: true,
         selectedColor: theme.colors.primary,
       },
     }),
-    [calendarIndex, selectedDate, theme.colors.primary],
+    [calendarIndex, effectiveSelectedDate, theme.colors.primary],
   );
 
   const onRefresh = useCallback(async () => {
@@ -1298,11 +1418,22 @@ export default function CalendarScreen() {
   }, [isAuthenticated, isInitializing, profile, refetchCalendar]);
 
   useEffect(() => {
+    if (isOrdersSwapping) return;
+    if (!effectiveSelectedDate || !displayDateKey) return;
+    if (effectiveSelectedDate === displayDateKey) return;
+    if (effectiveSelectedDate.slice(0, 7) === displayDateKey.slice(0, 7)) {
+      setDisplayDateKey(effectiveSelectedDate);
+      setDisplayTitleDateKey(effectiveSelectedDate);
+    }
+  }, [displayDateKey, effectiveSelectedDate, isOrdersSwapping]);
+
+  useEffect(() => {
     if (!Array.isArray(displayedOrders) || displayedOrders.length === 0) return;
 
     const task = InteractionManager.runAfterInteractions(() => {
+      const registry = getPrefetchRegistry();
       displayedOrders.slice(0, 5).forEach((order) => {
-        ensureRequestPrefetch(queryClient, order?.id).catch(() => {});
+        registry.run(`request-detail:${order?.id}`, () => ensureRequestPrefetch(queryClient, order?.id)).catch(() => {});
       });
     });
 
@@ -1313,15 +1444,27 @@ export default function CalendarScreen() {
     };
   }, [displayedOrders, queryClient]);
 
-  const ordersContentAnimatedStyle = useAnimatedStyle(() => {
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        queryClient.cancelQueries({ queryKey: ['requests', 'calendar'] });
+        queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
+      },
+      [queryClient],
+    ),
+  );
+
+  const ordersSwapOverlayStyle = useAnimatedStyle(() => ({
+    opacity: ordersSwapOverlayOpacity.value,
+  }));
+  const ordersSwipeFadeStyle = useAnimatedStyle(() => {
+    if (monthSwipeInteraction.value < 0.5) {
+      return { opacity: 1 };
+    }
     const pageWidth = Math.max(layoutMetrics.cardWidth, 1);
     const distance = Math.abs(monthScrollX.value - settledMonthOffsetX.value);
-    const startFade = 0;
-    const endFade = pageWidth * 0.54;
-    const fadeSpan = Math.max(endFade - startFade, 1);
-    const progress = distance <= startFade ? 0 : Math.min((distance - startFade) / fadeSpan, 1);
-    const eased = progress * progress * (3 - 2 * progress);
-    return { opacity: 1 - eased };
+    const progress = Math.min(distance / (pageWidth * 0.6), 1);
+    return { opacity: 1 - progress };
   });
 
   return (
@@ -1405,29 +1548,64 @@ export default function CalendarScreen() {
                     data={dynamicMonths}
                     horizontal
                     pagingEnabled
-                    initialNumToRender={3}
+                    initialNumToRender={5}
                     scrollEnabled={!isCollapsed}
                     showsHorizontalScrollIndicator={false}
                     keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
                     getItemLayout={getItemLayout}
                     initialScrollIndex={MONTH_LIST_MIDDLE_INDEX}
-                    windowSize={3}
-                    maxToRenderPerBatch={3}
-                    updateCellsBatchingPeriod={40}
-                    removeClippedSubviews={true}
+                    windowSize={5}
+                    maxToRenderPerBatch={5}
+                    updateCellsBatchingPeriod={16}
+                    removeClippedSubviews={false}
                     scrollEventThrottle={16}
                     onScroll={monthScrollHandler}
+                    onScrollBeginDrag={() => {
+                      if (pendingDragEndCommitRafRef.current != null) {
+                        try {
+                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
+                        } catch {}
+                        pendingDragEndCommitRafRef.current = null;
+                      }
+                      monthMomentumStartedRef.current = false;
+                      monthSwipeInteraction.value = 1;
+                    }}
+                    onMomentumScrollBegin={() => {
+                      if (pendingDragEndCommitRafRef.current != null) {
+                        try {
+                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
+                        } catch {}
+                        pendingDragEndCommitRafRef.current = null;
+                      }
+                      monthMomentumStartedRef.current = true;
+                      monthSwipeInteraction.value = 1;
+                    }}
                     onScrollEndDrag={(event) => {
-                      const vx = Math.abs(Number(event?.nativeEvent?.velocity?.x) || 0);
-                      if (vx > 0.05) return;
-                      const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
-                      const nextIndex = resolvePageIndex(offsetX);
-                      commitVisibleMonthIndex(nextIndex);
+                      if (pendingDragEndCommitRafRef.current != null) {
+                        try {
+                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
+                        } catch {}
+                        pendingDragEndCommitRafRef.current = null;
+                      }
+                      pendingDragEndCommitRafRef.current = requestAnimationFrame(() => {
+                        pendingDragEndCommitRafRef.current = null;
+                        const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
+                        const nextIndex = resolvePageIndex(offsetX);
+                        if (monthMomentumStartedRef.current) return;
+                        requestMonthCommit(nextIndex);
+                      });
                     }}
                     onMomentumScrollEnd={(event) => {
+                      if (pendingDragEndCommitRafRef.current != null) {
+                        try {
+                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
+                        } catch {}
+                        pendingDragEndCommitRafRef.current = null;
+                      }
+                      monthMomentumStartedRef.current = false;
                       const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
                       const nextIndex = resolvePageIndex(offsetX);
-                      commitVisibleMonthIndex(nextIndex);
+                      requestMonthCommit(nextIndex);
                     }}
                     renderItem={({ item: monthDate, index }) => {
                       const itemMonthWeeks = monthWeeksByIndex[index] ?? [];
@@ -1461,6 +1639,8 @@ export default function CalendarScreen() {
                                   styles={styles}
                                   theme={theme}
                                   indicatorSlotAnimatedStyle={indicatorSlotAnimatedStyle}
+                                  eventCountAnimatedStyle={eventCountAnimatedStyle}
+                                  eventDotAnimatedStyle={eventDotAnimatedStyle}
                                   onRowLayout={weekIdx === 0 ? onWeekRowLayout : undefined}
                                 />
                               ))}
@@ -1475,9 +1655,6 @@ export default function CalendarScreen() {
             </GestureDetector>
             <GestureDetector gesture={ordersCombinedGesture}>
               <View style={{ flex: 1, width: '100%' }}>
-                <Animated.View style={styles.handleContainer}>
-                  <View style={styles.handleBar} />
-                </Animated.View>
                 <View
                   style={{
                     width: layoutMetrics.cardWidth,
@@ -1487,14 +1664,12 @@ export default function CalendarScreen() {
                   }}
                 >
                   <Animated.View
-                    style={[{ width: layoutMetrics.cardWidth, flex: 1 }, ordersContentAnimatedStyle]}
-                    renderToHardwareTextureAndroid={true}
-                    needsOffscreenAlphaCompositing={true}
+                    style={[{ width: layoutMetrics.cardWidth, flex: 1 }, ordersSwipeFadeStyle]}
                     collapsable={false}
                   >
                     <View style={styles.ordersHeader}>
                       <Text style={styles.ordersTitle}>
-                        Заявки на {formatDayLabel(selectedDate)}
+                        Заявки на {ordersTitleDateLabel}
                       </Text>
                       <View style={styles.ordersHeaderActions}>
                         <Pressable
@@ -1512,32 +1687,43 @@ export default function CalendarScreen() {
                       </View>
                     </View>
                     <GestureDetector gesture={ordersListNativeGesture}>
-                      <FlatList
-                        data={displayedOrders}
-                        extraData={ordersListExtraData}
-                        initialNumToRender={6}
-                        maxToRenderPerBatch={8}
-                        updateCellsBatchingPeriod={40}
-                        removeClippedSubviews={false}
-                        keyExtractor={orderKeyExtractor}
-                        contentContainerStyle={ordersListContentContainerStyle}
-                        style={{ flex: 1 }}
-                        scrollEnabled={isCollapsed && !isSnapping}
-                        bounces={false}
-                        scrollEventThrottle={16}
-                        onScroll={(event) => {
-                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                        }}
-                        onScrollBeginDrag={() => {
-                          if (!isCollapsed) scrollY.value = 0;
-                        }}
-                        onMomentumScrollEnd={(event) => {
-                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                        }}
-                        ListEmptyComponent={ordersEmptyComponent}
-                        renderItem={renderOrderItem}
-                      />
+                      <View style={{ flex: 1 }}>
+                        <FlatList
+                          ref={ordersListRef}
+                          data={displayedOrders}
+                          extraData={ordersListExtraData}
+                          initialNumToRender={6}
+                          maxToRenderPerBatch={8}
+                          updateCellsBatchingPeriod={40}
+                          removeClippedSubviews={false}
+                          keyExtractor={orderKeyExtractor}
+                          contentContainerStyle={ordersListContentContainerStyle}
+                          style={{ flex: 1 }}
+                          scrollEnabled={isCollapsed && !isSnapping && !isOrdersSwapping}
+                          bounces={false}
+                          scrollEventThrottle={16}
+                          onScroll={(event) => {
+                            scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
+                          }}
+                          onScrollBeginDrag={() => {
+                            if (!isCollapsed) scrollY.value = 0;
+                          }}
+                          onMomentumScrollEnd={(event) => {
+                            scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
+                          }}
+                          ListEmptyComponent={ordersEmptyComponent}
+                          renderItem={renderOrderItem}
+                        />
+                      </View>
                     </GestureDetector>
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        StyleSheet.absoluteFillObject,
+                        { backgroundColor: theme.colors.background },
+                        ordersSwapOverlayStyle,
+                      ]}
+                    />
                   </Animated.View>
                 </View>
               </View>

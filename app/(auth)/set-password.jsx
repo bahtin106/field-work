@@ -18,6 +18,7 @@ import Card from '../../components/ui/Card';
 import TextField from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import ValidationAlert from '../../components/ui/ValidationAlert';
+import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
@@ -45,6 +46,16 @@ export default function SetPasswordScreen() {
   const [invalidCharWarning, setInvalidCharWarning] = useState(false);
 
   const pwdRef = useRef(null);
+  const confirmPwdRef = useRef(null);
+  const scrollRef = useRef(null);
+  const scrollYRef = useRef(0);
+  const headerHeight = theme?.components?.header?.height ?? 56;
+  const { scrollToFirstInvalid } = useFormAutoScroll({
+    scrollRef,
+    scrollYRef,
+    insetsBottom: insets.bottom ?? 0,
+    headerHeight,
+  });
 
   const passwordValid = useMemo(() => isValidPassword(password), [password]);
   const passwordsMatch = useMemo(
@@ -133,6 +144,10 @@ export default function SetPasswordScreen() {
     setSubmittedAttempt(true);
 
     if (!passwordValid || !passwordsMatch) {
+      scrollToFirstInvalid([
+        { invalid: !password.trim() || !passwordValid, ref: pwdRef },
+        { invalid: !confirmPassword.trim() || !passwordsMatch, ref: confirmPwdRef },
+      ]);
       return;
     }
 
@@ -160,7 +175,19 @@ export default function SetPasswordScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, passwordValid, passwordsMatch, password, router, theme, t, toastSuccess, toastError]);
+  }, [
+    submitting,
+    passwordValid,
+    passwordsMatch,
+    password,
+    confirmPassword,
+    router,
+    theme,
+    t,
+    toastSuccess,
+    toastError,
+    scrollToFirstInvalid,
+  ]);
 
   return (
     <SafeAreaView
@@ -172,10 +199,17 @@ export default function SetPasswordScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <ScrollView
+          ref={scrollRef}
           style={styles.flex}
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          onScroll={(e) => {
+            try {
+              scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
+            } catch {}
+          }}
+          scrollEventThrottle={16}
         >
           <Text style={styles.title}>Создайте пароль</Text>
           <Text style={styles.subtitle}>
@@ -255,6 +289,7 @@ export default function SetPasswordScreen() {
             </View>
 
             <TextField
+              ref={confirmPwdRef}
               label="Подтвердите пароль"
               value={confirmPassword}
               onChangeText={setConfirmPassword}

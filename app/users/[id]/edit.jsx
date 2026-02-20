@@ -26,6 +26,7 @@ import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import SecurePasswordInput from '../../../components/SecurePasswordInput';
+import { useToast } from '../../../components/ui/ToastProvider';
 import { useFeedback, ScreenBanner, FieldErrorText, FEEDBACK_CODES, getMessageByCode } from '../../../src/shared/feedback';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
@@ -34,12 +35,14 @@ import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import { AVATAR, STORAGE, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+import { extractKeepPathFromUrl, removeStoragePrefixFiles } from '../../../lib/storageCleanup';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
 import { useMyCompanyIdQuery } from '../../../src/features/profile/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 
 const TABLES = {
   profiles: TBL.PROFILES || 'profiles',
@@ -56,17 +59,14 @@ const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
 // Helper: determine supported mediaTypes option across expo-image-picker versions
 const getImagePickerMediaTypesImages = () => {
   try {
+    // Use modern API only (MediaTypeOptions is deprecated and logs warnings).
     if (ImagePicker.MediaType && ImagePicker.MediaType.Images) return ImagePicker.MediaType.Images;
-    if (ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.Images)
-      return ImagePicker.MediaTypeOptions.Images;
-    // some versions may export lowercase or different fields
+    if (ImagePicker.MediaType && ImagePicker.MediaType.images) return ImagePicker.MediaType.images;
     if (ImagePicker.MediaType && ImagePicker.MediaType.image) return ImagePicker.MediaType.image;
-    if (ImagePicker.MediaTypeOptions && ImagePicker.MediaTypeOptions.image)
-      return ImagePicker.MediaTypeOptions.image;
   } catch {
     // ignore
   }
-  return null;
+  return ['images'];
 };
 
 import { ROLE, EDITABLE_ROLES as ROLES, ROLE_LABELS } from '../../../constants/roles';
@@ -231,8 +231,8 @@ function AvatarSheetModal({
     { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
     ...(hasAvatar
       ? [
-          { id: 'view', label: t('profile_photo_view') || t('profile_photo_preview') || 'Просмотр фото', right: chevron(theme.colors.textSecondary) },
-          { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.destructive || theme.colors.danger) },
+          { id: 'view', label: 'Просмотр фото', right: chevron(theme.colors.textSecondary) },
+          { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
         ]
       : []),
   ];
@@ -260,13 +260,20 @@ function AvatarSheetModal({
 
 function DepartmentSelectModal({ visible, departments = [], departmentId, onSelect, onClose }) {
   const { t } = useTranslation();
-  const mapped = (departments || []).map((d) => ({ id: d.id, label: d.name }));
+  const mapped = [
+    { id: null, label: t('placeholder_department') },
+    ...(departments || []).map((d) => ({ id: d.id, label: d.name })),
+  ];
   return (
     <SelectModal
       visible={visible}
       title={t('user_department_title')}
       items={mapped}
       selectedId={departmentId}
+      isItemSelected={(item, selectedId) =>
+        item?.id == null ? selectedId == null : String(item?.id) === String(selectedId)
+      }
+      searchable={false}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
     />
@@ -294,6 +301,7 @@ function RoleSelectModal({
       title={t('user_role_title')}
       items={items}
       selectedId={role}
+      searchable={false}
       onSelect={(it) => onSelect?.(it.id)}
       onClose={onClose}
     />
@@ -302,6 +310,7 @@ function RoleSelectModal({
 
 // === end wrappers ===
 export default function EditUser() {
+  const toast = useToast();
   const { theme } = useTheme();
   const { t } = useTranslation();
   const _ver = useI18nVersion();
@@ -507,12 +516,26 @@ export default function EditUser() {
     {
       enabled: !!userId,
       placeholderData: (prev) => prev,
-      refetchOnMount: 'stale',
+      refetchOnMount: 'always',
     },
   );
   const meIsAdmin = !!employeeData?.meIsAdmin;
+  const meIsSuperAdmin = !!employeeData?.meIsSuperAdmin;
   const meId = employeeData?.myUid || null;
   const canEdit = !!meId && (meIsAdmin || meId === userId);
+  const isEditingOtherUser = !!(meId && userId && meId !== userId);
+  const isSuperAdminEditingOther = meIsSuperAdmin && isEditingOtherUser;
+  const blockedReason = String(employeeData?.blocked_reason || employeeData?.blockedReason || '').toLowerCase();
+  const isManualAdminBlock = blockedReason === 'manual' || blockedReason === 'admin_block';
+  const isLicenseBlockedRaw = (employeeData?.license_state || employeeData?.licenseState) === 'blocked_by_license';
+  const isLicenseBlocked = isLicenseBlockedRaw && !isManualAdminBlock;
+  const isBlockedByAdmin = !!employeeData?.is_admin_blocked
+    || !!employeeData?.admin_blocked
+    || !!employeeData?.isSuspended
+    || !!employeeData?.is_suspended
+    || !!employeeData?.suspended_at
+    || blockedReason === 'admin_blocked';
+  const isBlocked = !!employeeData?.isBlocked || isBlockedByAdmin || isLicenseBlockedRaw;
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [initialAvatarUrl, setInitialAvatarUrl] = useState(null); // Изначальный аватар из БД
   const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Временный аватар до сохранения
@@ -568,9 +591,11 @@ export default function EditUser() {
   const [birthdate, setBirthdate] = useState(null);
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const settingsCompanyId = employeeData?.companyId || companyId || null;
+  const { useDepartments } = useCompanySettings(settingsCompanyId);
   const { data: departments = [] } = useDepartmentsQuery({
-    companyId,
-    enabled: !!companyId,
+    companyId: settingsCompanyId,
+    enabled: !!settingsCompanyId && useDepartments,
     onlyEnabled: true,
   });
   const [deptModalVisible, setDeptModalVisible] = useState(false);
@@ -711,6 +736,7 @@ export default function EditUser() {
   const [isSuspended, setIsSuspended] = useState(false);
   const [suspendVisible, setSuspendVisible] = useState(false);
   const [unsuspendVisible, setUnsuspendVisible] = useState(false);
+  const [noFreeLicenseVisible, setNoFreeLicenseVisible] = useState(false);
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [totalOrdersCount, setTotalOrdersCount] = useState(0);
@@ -735,6 +761,32 @@ export default function EditUser() {
   const insets = useSafeAreaInsets();
   const scrollYRef = useRef(0);
   const headerHeight = theme?.components?.header?.height ?? 56;
+
+  const syncEmployeeBlockState = useCallback(async () => {
+    if (!userId) return null;
+    const { data: prof, error } = await supabase
+      .from(TABLES.profiles)
+      .select('id, company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!prof) return null;
+
+    const blockedNow = !!prof.is_suspended
+      || !!prof.suspended_at
+      || !!prof.is_admin_blocked
+      || prof.license_state === 'blocked_by_license';
+
+    queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
+      ...(prev || {}),
+      ...prof,
+      companyId: prof.company_id || prev?.companyId || null,
+      isSuspended: !!(prof.is_suspended || prof.suspended_at),
+      isBlocked: blockedNow,
+    }));
+
+    return { prof, blockedNow };
+  }, [queryClient, userId]);
 
   const isDirty = useMemo(() => {
     if (!initialSnap) return false;
@@ -818,23 +870,16 @@ export default function EditUser() {
 
       // Сохраняем изменения аватара в БД только если есть реальные изменения
       // pendingAvatarUrl === null означает "нет изменений", а не "удалить"
-      if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
+      if (!isSuperAdminEditingOther && pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
         try {
+          const avatarPrefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
           if (pendingAvatarUrl === '') {
             // Пользователь явно удалил аватар (через deleteAvatar)
-            const prefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
-            const { data: list, error: listErr } = await supabase.storage
-              .from(STORAGE.AVATARS)
-              .list(prefix);
-            if (!listErr && Array.isArray(list) && list.length) {
-              const paths = list.map((f) => `${prefix}/${f.name}`);
-              // Попытка удалить файлы — ошибка не критична, продолжаем дальше
-              try {
-                await supabase.storage.from(STORAGE.AVATARS).remove(paths);
-              } catch {
-                // Игнорируем ошибку удаления файлов
-              }
-            }
+            await removeStoragePrefixFiles({
+              supabase,
+              bucket: STORAGE.AVATARS,
+              prefix: avatarPrefix,
+            });
             const { error: updErr } = await supabase
               .from(TABLES.profiles)
               .update({ avatar_url: null })
@@ -847,6 +892,15 @@ export default function EditUser() {
               .update({ avatar_url: pendingAvatarUrl })
               .eq('id', userId);
             if (updErr) throw updErr;
+            const keepPath = extractKeepPathFromUrl(pendingAvatarUrl, STORAGE.AVATARS);
+            if (keepPath) {
+              await removeStoragePrefixFiles({
+                supabase,
+                bucket: STORAGE.AVATARS,
+                prefix: avatarPrefix,
+                keepPaths: [keepPath],
+              });
+            }
           }
         } catch (avatarErr) {
           // Если ошибка только в удалении аватара, но профиль обновился — не бросаем ошибку
@@ -871,7 +925,41 @@ export default function EditUser() {
       const computedFullName = buildFullName(firstName, lastName);
       const normalizedFullName = computedFullName || null;
 
-      if (meIsAdmin && meId && userId && meId !== userId) {
+      if (isSuperAdminEditingOther) {
+        const payload = {
+          p_profile_id: userId,
+          p_first_name: firstName.trim() || null,
+          p_last_name: lastName.trim() || null,
+          p_role: role || null,
+          p_company_id: employeeData?.companyId || null,
+          p_phone: String(phone || '').replace(/\D/g, '') || null,
+          p_birthdate: birthdate ? __ymdLocal(birthdate) : null,
+          // RPC applies department update only when parameter is NOT NULL.
+          // Send empty string to explicitly clear department (NULLIF('', '') -> NULL in SQL).
+          p_department_id: departmentId == null ? '' : String(departmentId),
+          p_avatar_url: pendingAvatarUrl === '' ? null : pendingAvatarUrl || avatarUrl || null,
+        };
+
+        const { error: rpcErr } = await supabase.rpc('admin_update_profile_super_full', payload);
+        if (rpcErr) throw rpcErr;
+
+        if (newPassword && newPassword.length) {
+          const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: userId,
+              newPassword: newPassword,
+            }),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`Password update failed: ${text}`);
+          }
+          const result = await res.json();
+          if (!result.success) throw new Error(result.message || 'Password update failed');
+        }
+      } else if (meIsAdmin && meId && userId && meId !== userId) {
         // Админ редактирует другого пользователя
         const profilePatch = {
           first_name: firstName.trim() || null,
@@ -1030,21 +1118,49 @@ export default function EditUser() {
     setSubmittedAttempt(true);
     if (!firstName.trim()) {
       setFieldErrors({ firstName: { message: requiredMsg } });
+      ensureVisibleField({
+        fieldRef: firstNameRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
       firstNameRef.current?.focus?.();
       return;
     }
     if (!lastName.trim()) {
       setFieldErrors({ lastName: { message: requiredMsg } });
+      ensureVisibleField({
+        fieldRef: lastNameRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
       lastNameRef.current?.focus?.();
       return;
     }
     if (!emailValid) {
       setFieldErrors({ email: { message: getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t) } });
+      ensureVisibleField({
+        fieldRef: emailRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
       emailRef.current?.focus?.();
       return;
     }
     if (String(phone || '').trim() && !isValidPhone(String(phone || ''))) {
       setFieldErrors({ phone: { message: t('err_phone') } });
+      ensureVisibleField({
+        fieldRef: phoneRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
       phoneRef.current?.focus?.();
       return;
     }
@@ -1116,7 +1232,10 @@ export default function EditUser() {
     setEmail(employeeData?.email || '');
     setDepartmentId(employeeData?.department_id ?? null);
     setPhone(String(employeeData?.phone || '').replace(/\D/g, ''));
-    setIsSuspended(!!employeeData?.isSuspended);
+    const normalizedSuspended = !!employeeData?.isSuspended
+      || !!employeeData?.is_suspended
+      || !!employeeData?.suspended_at;
+    setIsSuspended(normalizedSuspended);
     setRole(employeeData?.role || ROLE.WORKER);
 
     const parsedBirthdate = __parseLocalYMD(employeeData?.birthdate || null);
@@ -1146,7 +1265,7 @@ export default function EditUser() {
         role: employeeData?.role || ROLE.WORKER,
         newPassword: null,
         departmentId: employeeData?.department_id ?? null,
-        isSuspended: !!employeeData?.isSuspended,
+        isSuspended: normalizedSuspended,
         avatar: employeeData?.avatar_url ? String(employeeData.avatar_url) : null,
       }),
     );
@@ -1190,6 +1309,15 @@ export default function EditUser() {
   };
   const setSuspended = async (uid, value) => {
     try {
+      if (isSuperAdminEditingOther) {
+        const { error: rpcErr } = await supabase.rpc('admin_update_profile_super_full', {
+          p_profile_id: uid,
+          p_is_suspended: !!value,
+        });
+        if (rpcErr) throw rpcErr;
+        return null;
+      }
+
       // Прямое обновление в базе данных через Supabase клиент
       const { error: updErr } = await supabase
         .from(TABLES.profiles)
@@ -1300,7 +1428,21 @@ export default function EditUser() {
 
     try {
       setErr('');
-      showInfoToast(t('toast_loading_info'), { sticky: true });
+
+      const { data: currentProfile, error: profileErr } = await supabase
+        .from(TABLES.profiles)
+        .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profileErr) throw profileErr;
+      const blockedNow = !!currentProfile?.is_suspended
+        || !!currentProfile?.suspended_at
+        || !!currentProfile?.is_admin_blocked
+        || currentProfile?.license_state === 'blocked_by_license';
+      if (blockedNow) {
+        setUnsuspendVisible(true);
+        return;
+      }
 
       // Вызываем RPC функцию для проверки заявок
       const { data, error } = await supabase.rpc('check_employee_orders', {
@@ -1346,7 +1488,7 @@ export default function EditUser() {
       showError('Не удалось загрузить список сотрудников');
     }
   };
-  const onAskUnsuspend = () => {
+  const onAskUnsuspend = async () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
     if (meId && userId === meId) return;
     setUnsuspendVisible(true);
@@ -1367,10 +1509,33 @@ export default function EditUser() {
         const errR = await reassignActiveOrders(userId, successor.id);
         if (errR) throw new Error(errR.message || t('toast_generic_error'));
       }
-      const errS = await setSuspended(userId, true);
-      if (errS) throw new Error(errS.message || t('toast_generic_error'));
+      const { data: currentProfile, error: profileErr } = await supabase
+        .from(TABLES.profiles)
+        .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profileErr) throw profileErr;
+      const blockedNow = !!currentProfile?.is_suspended
+        || !!currentProfile?.suspended_at
+        || !!currentProfile?.is_admin_blocked
+        || currentProfile?.license_state === 'blocked_by_license';
+      if (blockedNow) {
+        setSuspendVisible(false);
+        setUnsuspendVisible(true);
+        return;
+      }
+      const companyIdForSeat = employeeData?.companyId || employeeData?.company_id || currentProfile?.company_id || null;
+      if (!companyIdForSeat) throw new Error(t('billing_unknown_error'));
+      const { error: rpcErr } = await supabase.rpc('revoke_seat', {
+        p_company_id: companyIdForSeat,
+        p_user_id: userId,
+        p_reason: 'manual',
+      });
+      if (rpcErr) throw rpcErr;
+      await syncEmployeeBlockState();
       
       // Инвалидируем кеш и разрешаем выход, затем сразу назад
+      await queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_suspended'));
       setSuspendVisible(false);
@@ -1390,16 +1555,47 @@ export default function EditUser() {
       setSaving(true);
       setErr('');
       showInfoToast(t('toast_saving'), { sticky: true });
-      const errS = await setSuspended(userId, false);
-      if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
+      const { data: currentProfile, error: profileErr } = await supabase
+        .from(TABLES.profiles)
+        .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profileErr) throw profileErr;
+
+      const blockedByAdminNow = !!currentProfile?.is_suspended
+        || !!currentProfile?.suspended_at
+        || !!currentProfile?.is_admin_blocked;
+      if (blockedByAdminNow) {
+        const errS = await setSuspended(userId, false);
+        if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));
+      }
+
+      const blockedByLicenseNow = currentProfile?.license_state === 'blocked_by_license';
+      if (blockedByLicenseNow) {
+        const companyIdForSeat = currentProfile?.company_id || employeeData?.companyId || employeeData?.company_id || null;
+        if (!companyIdForSeat) throw new Error(t('billing_unknown_error'));
+        const { error: rpcErr } = await supabase.rpc('assign_seat', {
+          p_company_id: companyIdForSeat,
+          p_user_id: userId,
+        });
+        if (rpcErr) throw rpcErr;
+      }
+      await syncEmployeeBlockState();
       
       // Инвалидируем кеш и разрешаем выход, затем сразу назад
+      await queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_unsuspended'));
       setUnsuspendVisible(false);
       allowLeaveRef.current = true;
       router.back();
     } catch (e) {
+      const msg = String(e?.message || '');
+      if (/no free paid seats|seat limit exceeded|no free paid seats to unblock member/i.test(msg)) {
+        setUnsuspendVisible(false);
+        setNoFreeLicenseVisible(true);
+        return;
+      }
       setErr(e?.message || t('dlg_generic_warning'));
       showError(e?.message || t('dlg_generic_warning'));
     } finally {
@@ -1413,6 +1609,7 @@ export default function EditUser() {
     try {
       setErr('');
       showInfoToast(t('toast_loading_info'), { sticky: true });
+
 
       // Вызываем RPC функцию для проверки заявок
       console.debug('[onAskDelete] calling check_employee_orders for userId:', userId);
@@ -1553,7 +1750,7 @@ export default function EditUser() {
               style={[
                 styles.card,
                 styles.headerCard,
-                isSuspended ? styles.headerCardSuspended : null,
+                isBlocked ? styles.headerCardSuspended : null,
               ]}
             >
               <View style={styles.headerRow}>
@@ -1592,11 +1789,11 @@ export default function EditUser() {
                         styles.rolePillHeader,
                         {
                           borderColor: withAlpha(
-                            isSuspended ? theme.colors.danger : theme.colors.success,
+                            isBlocked ? theme.colors.danger : theme.colors.success,
                             0.2,
                           ),
                           backgroundColor: withAlpha(
-                            isSuspended ? theme.colors.danger : theme.colors.success,
+                            isBlocked ? theme.colors.danger : theme.colors.success,
                             0.13,
                           ),
                         },
@@ -1605,10 +1802,12 @@ export default function EditUser() {
                       <Text
                         style={[
                           styles.rolePillHeaderText,
-                          { color: isSuspended ? theme.colors.danger : theme.colors.success },
+                          { color: isBlocked ? theme.colors.danger : theme.colors.success },
                         ]}
                       >
-                        {isSuspended ? t('status_suspended') : t('status_active')}
+                        {isBlocked
+                          ? t('status_blocked', t('status_suspended'))
+                          : t('status_active')}
                       </Text>
                     </View>
                     {role === ROLE.ADMIN ? (
@@ -1782,6 +1981,7 @@ export default function EditUser() {
                 label={t('label_birthdate')}
                 value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
                 style={styles.field}
+                multiline={false}
                 pressable
                 onPress={() => setDobModalVisible(true)}
                 rightSlot={
@@ -1798,7 +1998,7 @@ export default function EditUser() {
             {meId && meId === userId && (
               <>
                 <SectionHeader bottomSpacing="xs">
-                  {`Пароль (мин ${MIN_PASSWORD_LENGTH} символов)`}
+                  {t('section_password_template').replace('{n}', String(MIN_PASSWORD_LENGTH))}
                 </SectionHeader>
                 <Card>
                   <SecurePasswordInput
@@ -1821,7 +2021,7 @@ export default function EditUser() {
                       setConfirmPassword(v);
                       setFieldErrors((prev) => ({ ...prev, confirmPassword: undefined }));
                     }}
-                    placeholder={t('register_placeholder_password')}
+                    placeholder={t('placeholder_repeat_password')}
                     inputStyle={styles.field}
                   />
                   <FieldErrorText message={fieldErrors.confirmPassword?.message} />
@@ -1829,17 +2029,19 @@ export default function EditUser() {
               </>
             )}
 
-            {meIsAdmin && (
+            {meIsAdmin && (useDepartments || !isSelfAdmin) ? (
               <>
                 <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
                 <Card>
-                  <TextField
-                    label={t('label_department')}
-                    value={activeDeptName || t('placeholder_department')}
-                    style={styles.field}
-                    pressable
-                    onPress={() => setDeptModalVisible(true)}
-                  />
+                  {useDepartments ? (
+                    <TextField
+                      label={t('label_department')}
+                      value={activeDeptName || t('placeholder_department')}
+                      style={styles.field}
+                      pressable
+                      onPress={() => setDeptModalVisible(true)}
+                    />
+                  ) : null}
 
                   {!isSelfAdmin && (
                     <>
@@ -1854,7 +2056,7 @@ export default function EditUser() {
                   )}
                 </Card>
               </>
-            )}
+            ) : null}
 
             {meIsAdmin && meId !== userId && (
               <UIButton
@@ -1866,18 +2068,18 @@ export default function EditUser() {
               />
             )}
 
-            {meIsAdmin && meId !== userId && !isSuspended && (
+            {meIsAdmin && meId !== userId && !isBlocked && (
               <UIButton
-                title={t('btn_suspend')}
+                title={t('users_edit_block_button')}
                 variant="secondary"
                 onPress={onAskSuspend}
                 style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
               />
             )}
 
-            {meIsAdmin && meId !== userId && isSuspended && (
+            {meIsAdmin && meId !== userId && isBlocked && (
               <UIButton
-                title={t('dlg_unsuspend_confirm')}
+                title={t('users_edit_unblock_button')}
                 variant="primary"
                 onPress={onAskUnsuspend}
                 style={{ alignSelf: 'stretch', marginTop: theme.spacing.sm }}
@@ -1948,11 +2150,34 @@ export default function EditUser() {
               visible={unsuspendVisible}
               onClose={() => setUnsuspendVisible(false)}
               title={t('dlg_unsuspend_title')}
-              message={t('dlg_unsuspend_msg')}
+              message={isLicenseBlocked ? t('dlg_unsuspend_msg_license') : t('dlg_unsuspend_msg')}
               confirmLabel={saving ? t('dlg_unsuspend_apply') : t('dlg_unsuspend_confirm')}
               cancelLabel={t('header_cancel')}
               confirmVariant="primary"
               onConfirm={onConfirmUnsuspend}
+            />
+            <ConfirmModal
+              visible={noFreeLicenseVisible}
+              onClose={() => {
+                try {
+                  toast.hide();
+                } catch {}
+                setSaving(false);
+                setNoFreeLicenseVisible(false);
+              }}
+              title={t('dlg_no_free_license_title')}
+              message={t('dlg_no_free_license_msg')}
+              confirmLabel={t('dlg_no_free_license_reassign')}
+              cancelLabel={t('btn_cancel')}
+              confirmVariant="primary"
+              onConfirm={() => {
+                try {
+                  toast.hide();
+                } catch {}
+                setSaving(false);
+                setNoFreeLicenseVisible(false);
+                router.push('/billing');
+              }}
             />
             <DeleteEmployeeModal
               visible={deleteVisible}
@@ -2054,16 +2279,18 @@ export default function EditUser() {
                 )}
               </View>
             </BaseModal>
-            <DepartmentSelectModal
-              visible={deptModalVisible}
-              departmentId={departmentId}
-              departments={departments}
-              onSelect={(id) => {
-                setDepartmentId(id);
-                setDeptModalVisible(false);
-              }}
-              onClose={() => setDeptModalVisible(false)}
-            />
+            {useDepartments ? (
+              <DepartmentSelectModal
+                visible={deptModalVisible}
+                departmentId={departmentId}
+                departments={departments}
+                onSelect={(id) => {
+                  setDepartmentId(id);
+                  setDeptModalVisible(false);
+                }}
+                onClose={() => setDeptModalVisible(false)}
+              />
+            ) : null}
             {/* removed old department select dialog */}
             <RoleSelectModal
               visible={showRoles}
@@ -2584,6 +2811,10 @@ function DeleteEmployeeModal({
     </BaseModal>
   );
 }
+
+
+
+
 
 
 

@@ -8,6 +8,7 @@ import {
   BackHandler,
   Easing,
   FlatList,
+  InteractionManager,
   Platform,
   Pressable,
   RefreshControl,
@@ -28,6 +29,8 @@ import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
+import { ensureRequestPrefetch } from '../../src/features/requests/queries';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -700,6 +703,23 @@ export default function MyOrdersScreen() {
       return haystack.includes(q);
     });
   }, [orders, searchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
+
+  useEffect(() => {
+    if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
+    const task = InteractionManager.runAfterInteractions(() => {
+      const registry = getPrefetchRegistry();
+      filteredOrders.slice(0, 5).forEach((order) => {
+        registry
+          .run(`request-detail:${order?.id}`, () => ensureRequestPrefetch(queryClient, order?.id))
+          .catch(() => {});
+      });
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, [filteredOrders, isFocused, queryClient]);
   // Рендер элемента списка
   const returnParamsRef = useRef({
     seedFilter: filter,
@@ -712,7 +732,11 @@ export default function MyOrdersScreen() {
     };
   }, [filter, searchQuery]);
   const openOrderDetails = useCallback(
-    (orderId) => {
+    async (orderId) => {
+      const registry = getPrefetchRegistry();
+      await registry
+        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
@@ -721,7 +745,7 @@ export default function MyOrdersScreen() {
         },
       });
     },
-    [router],
+    [queryClient, router],
   );
   const renderItem = useCallback(
     ({ item: order }) => (
@@ -732,6 +756,15 @@ export default function MyOrdersScreen() {
       />
     ),
     [openOrderDetails],
+  );
+
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
+      },
+      [queryClient],
+    ),
   );
 
   // Футер со спиннером при загрузке

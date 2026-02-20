@@ -21,6 +21,7 @@ import RadioGroupField from '../../components/ui/RadioGroupField';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
+import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
@@ -127,6 +128,17 @@ export default function RegisterScreen() {
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
   const pwdRef = useRef(null);
+  const confirmPwdRef = useRef(null);
+  const companyNameRef = useRef(null);
+  const scrollRef = useRef(null);
+  const scrollYRef = useRef(0);
+  const headerHeight = theme?.components?.header?.height ?? 56;
+  const { scrollToFirstInvalid } = useFormAutoScroll({
+    scrollRef,
+    scrollYRef,
+    insetsBottom: insets.bottom ?? 0,
+    headerHeight,
+  });
 
   const emailValid = useMemo(() => isValidEmail(email), [email]);
   const passwordValid = useMemo(() => isValidPassword(password), [password]);
@@ -303,15 +315,14 @@ export default function RegisterScreen() {
         });
         // TODO: add inline consent error under checkbox when ConsentCheckbox supports it
       }
-      if (missingFirst) {
-        firstNameRef.current?.focus?.();
-      } else if (missingLast) {
-        lastNameRef.current?.focus?.();
-      } else if (invalidEmail || emailTaken) {
-        emailRef.current?.focus?.();
-      } else if (invalidPwd) {
-        pwdRef.current?.focus?.();
-      }
+      scrollToFirstInvalid([
+        { invalid: missingFirst, ref: firstNameRef },
+        { invalid: missingLast, ref: lastNameRef },
+        { invalid: invalidEmail || emailTaken, ref: emailRef },
+        { invalid: needsCompanyName, ref: companyNameRef },
+        { invalid: invalidPwd, ref: pwdRef },
+        { invalid: mismatchPwd, ref: confirmPwdRef },
+      ]);
       return;
     }
 
@@ -407,6 +418,7 @@ export default function RegisterScreen() {
     showBanner,
     clearBanner,
     requiredMsg,
+    scrollToFirstInvalid,
     theme.timings.postRegisterNavDelayMs,
   ]);
 
@@ -422,10 +434,17 @@ export default function RegisterScreen() {
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <ScrollView
+            ref={scrollRef}
             style={styles.flex}
             contentContainerStyle={styles.content}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            onScroll={(e) => {
+              try {
+                scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
+              } catch {}
+            }}
+            scrollEventThrottle={16}
           >
             <Text style={styles.title}>{t('register_title')}</Text>
 
@@ -537,6 +556,7 @@ export default function RegisterScreen() {
                   id === 'company' ? (
                     <>
                       <TextField
+                        ref={companyNameRef}
                         label={t('register_company_name')}
                         placeholder={t('register_company_name_placeholder')}
                         style={styles.field}
@@ -610,6 +630,7 @@ export default function RegisterScreen() {
 
               <TextField
                 label={t('label_password_repeat')}
+                ref={confirmPwdRef}
                 value={confirmPassword}
                 onChangeText={(val) => {
                   setConfirmPassword(val);

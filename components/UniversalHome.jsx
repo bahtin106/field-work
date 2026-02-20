@@ -1,7 +1,7 @@
 // components/universalhome.jsx
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
@@ -11,8 +11,11 @@ import { supabase } from '../lib/supabase';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
+import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
+import { useCompanySettings } from '../hooks/useCompanySettings';
 import Button from './ui/Button';
 import Card from './ui/Card';
+import { useToast } from './ui/ToastProvider';
 
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
 
@@ -59,8 +62,8 @@ async function fetchCountsMy(uid) {
   const [feedMy, allMy, newMy, progressMy] = await Promise.all([
     fetchCount((q) => q.is('assigned_to', null)),
     fetchCount((q) => q.eq('assigned_to', uid)),
-    fetchCount((q) => q.eq('assigned_to', uid).or('status.is.null,status.eq.Новый')),
-    fetchCount((q) => q.eq('assigned_to', uid).eq('status', 'В работе')),
+    fetchCount((q) => q.eq('assigned_to', uid).or('status.is.null,status.eq.� ќ� ѕ� ІС‹� №')),
+    fetchCount((q) => q.eq('assigned_to', uid).eq('status', '� ’ СЂ� °� ±� ѕС‚� µ')),
   ]);
   return { feed: feedMy, new: newMy, progress: progressMy, all: allMy };
 }
@@ -75,8 +78,8 @@ async function fetchCountsAll() {
   const [feedAll, allAll, newAll, progressAll] = await Promise.all([
     fetchCount((q) => q.is('assigned_to', null)),
     fetchCount((q) => q),
-    fetchCount((q) => q.or('status.is.null,status.eq.Новый')),
-    fetchCount((q) => q.eq('status', 'В работе')),
+    fetchCount((q) => q.or('status.is.null,status.eq.� ќ� ѕ� ІС‹� №')),
+    fetchCount((q) => q.eq('status', '� ’ СЂ� °� ±� ѕС‚� µ')),
   ]);
   return { feed: feedAll, new: newAll, progress: progressAll, all: allAll };
 }
@@ -88,6 +91,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const { signOut } = useAuthContext();
   const { isSuperAdmin } = useSuperAdminAccess();
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
+  const toast = useToast();
   const qc = useQueryClient();
 
   // Debug: inspect incoming auth/profile props.
@@ -125,32 +129,19 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const uid =
     user?.id && isUuid(user.id) ? user.id : isUuid(session?.user?.id) ? session.user.id : null;
 
-  const shouldFetchProfile = !!uid && (!providedProfile || providedProfile.__source === 'fallback');
-  
-  // Debug: profile fetch decision.
-  useEffect(() => {
-    if (!VERBOSE_HOME_LOGS) return;
-    console.info('[UniversalHome] Profile fetch decision:', {
-      uid,
-      hasProvidedProfile: !!providedProfile,
-      providedProfileSource: providedProfile?.__source,
-      shouldFetchProfile,
-    });
-  }, [uid, providedProfile, shouldFetchProfile]);
-
   const { data: profileData, isLoading: profileLoading } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
-    enabled: shouldFetchProfile,
-    staleTime: 5 * 60 * 1000,
+    enabled: !!uid,
+    initialData: providedProfile || undefined,
+    staleTime: 30 * 1000,
     gcTime: 10 * 60 * 1000,
-    refetchOnMount: 'stale',
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
 
-  const profileFromQuery = profileData ? { ...profileData, __source: 'supabase-query' } : null;
-
-  const currentProfile = profileFromQuery ?? providedProfile ?? null;
+  const currentProfile = profileData || providedProfile || null;
 
   const fullName =
     currentProfile?.full_name ||
@@ -159,19 +150,24 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_url || null;
   const companyId = currentProfile?.company_id || null;
+  const { useDepartments } = useCompanySettings(companyId || null);
+  const subscriptionGuard = useSubscriptionGuard(companyId);
+  const isReadOnlyBySubscription =
+    !subscriptionGuard.isLoading &&
+    String(subscriptionGuard.reason || '').startsWith('subscription_');
   const deptIdFromProfile = currentProfile?.department_id || null;
 
   // Prefer explicit role from props, then profile, then permissions fallback.
   // This keeps UI responsive while permissions are still loading.
   const resolvedRole = role || currentProfile?.role || roleFromPerms || 'worker';
 
-  // РђРґРјРёРЅ Р±РµР· РѕР¶РёРґР°РЅРёСЏ РїРµСЂРјРёС€РµРЅРѕРІ
+  // � � С’� � Т‘� � С� � С‘� � � … � � В±� � Вµ� � В· � � С•� � В¶� � С‘� � Т‘� � В°� � � …� � С‘� Ў� Џ � � С—� � Вµ� Ў� ‚� � С� � С‘� Ўв‚¬� � Вµ� � � …� � С•� � � � 
   const isAdmin = resolvedRole === 'admin';
 
-  // РћР±Р»Р°СЃС‚СЊ РїСЂРѕСЃРјРѕС‚СЂР°
+  // � � С›� � В±� � В»� � В°� Ў� ѓ� ЎвЂљ� Ў� Љ � � С—� Ў� ‚� � С•� Ў� ѓ� � С� � С•� ЎвЂљ� Ў� ‚� � В°
   const canViewAll = isAdmin || (!permsLoading && has?.('canViewAllOrders') === true);
 
-  // в… РќРѕРІРѕРµ: РїСЂР°РІРѕ РЅР° СЃРѕР·РґР°РЅРёРµ Р·Р°СЏРІРѕРє СѓС‡РёС‚С‹РІР°РµС‚ isAdmin Рё Р·Р°РіСЂСѓР·РєСѓ РїРµСЂРјРёС€РµРЅРѕРІ
+  // � ІВвЂ¦ � � Сњ� � С•� � � � � � С•� � Вµ: � � С—� Ў� ‚� � В°� � � � � � С• � � � …� � В° � Ў� ѓ� � С•� � В·� � Т‘� � В°� � � …� � С‘� � Вµ � � В·� � В°� Ў� Џ� � � � � � С•� � С” � ЎС“� ЎвЂЎ� � С‘� ЎвЂљ� ЎвЂ№� � � � � � В°� � Вµ� ЎвЂљ isAdmin � � С‘ � � В·� � В°� � С–� Ў� ‚� ЎС“� � В·� � С”� ЎС“ � � С—� � Вµ� Ў� ‚� � С� � С‘� Ўв‚¬� � Вµ� � � …� � С•� � � � 
   const canCreateOrders = isAdmin || (!permsLoading && has?.('canCreateOrders') === true);
 
   useEffect(() => {
@@ -179,8 +175,8 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   }, [canViewAll, scope]);
 
   // ====== Counters ======
-  // Р“Р°СЂР°РЅС‚РёСЂСѓРµРј, С‡С‚Рѕ СЃС‡С‘С‚С‡РёРєРё Р·Р°РіСЂСѓР¶Р°СЋС‚СЃСЏ РєРѕРіРґР° РµСЃС‚СЊ uid Р СЂРѕР»СЊ РѕРїСЂРµРґРµР»РµРЅР°
-  // profileLoading РќР• Р±Р»РѕРєРёСЂСѓРµС‚ СЃС‡РµС‚С‡РёРєРё - РѕРЅРё РјРѕРіСѓС‚ Р·Р°РіСЂСѓР¶Р°С‚СЊСЃСЏ РїР°СЂР°Р»Р»РµР»СЊРЅРѕ
+  // � � вЂњ� � В°� Ў� ‚� � В°� � � …� ЎвЂљ� � С‘� Ў� ‚� ЎС“� � Вµ� � С, � ЎвЂЎ� ЎвЂљ� � С• � Ў� ѓ� ЎвЂЎ� ЎвЂ� ЎвЂљ� ЎвЂЎ� � С‘� � С”� � С‘ � � В·� � В°� � С–� Ў� ‚� ЎС“� � В¶� � В°� Ў� ‹� ЎвЂљ� Ў� ѓ� Ў� Џ � � С”� � С•� � С–� � Т‘� � В° � � Вµ� Ў� ѓ� ЎвЂљ� Ў� Љ uid � � В � Ў� ‚� � С•� � В»� Ў� Љ � � С•� � С—� Ў� ‚� � Вµ� � Т‘� � Вµ� � В»� � Вµ� � � …� � В°
+  // profileLoading � � Сњ� � вЂў � � В±� � В»� � С•� � С”� � С‘� Ў� ‚� ЎС“� � Вµ� ЎвЂљ � Ў� ѓ� ЎвЂЎ� � Вµ� ЎвЂљ� ЎвЂЎ� � С‘� � С”� � С‘ - � � С•� � � …� � С‘ � � С� � С•� � С–� ЎС“� ЎвЂљ � � В·� � В°� � С–� Ў� ‚� ЎС“� � В¶� � В°� ЎвЂљ� Ў� Љ� Ў� ѓ� Ў� Џ � � С—� � В°� Ў� ‚� � В°� � В»� � В»� � Вµ� � В»� Ў� Љ� � � …� � С•
   const readyForCounts = !!uid && !!resolvedRole;
 
   // Debug: readiness for counts queries.
@@ -214,7 +210,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     placeholderData: (prev) => prev,
   });
 
-  // ====== РќР°РІРёРіР°С†РёСЏ ======
+  // ====== � � Сњ� � В°� � � � � � С‘� � С–� � В°� ЎвЂ� � � С‘� Ў� Џ ======
   const openSelfProfileEdit = () => {
     if (uid) router.push(`/users/${uid}`);
   };
@@ -222,7 +218,16 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const openCompanySettings = useCallback(() => router.push('/company_settings'), [router]);
   const openAdministration = useCallback(() => router.push('/admin'), [router]);
   const openStats = useCallback(() => router.push('/stats'), [router]);
-  const openCreateOrder = () => router.push('/orders/create-order');
+  const openBilling = useCallback(() => router.push('/billing'), [router]);
+  const openCreateOrder = useCallback(() => {
+    if (isReadOnlyBySubscription) {
+      toast.warning(
+        t('subscription_create_unavailable_toast', 'Создание заявки недоступно'),
+      );
+      return;
+    }
+    router.push('/orders/create-order');
+  }, [isReadOnlyBySubscription, router, t, toast]);
   const handleLogout = async () => {
     try {
       await signOut();
@@ -275,6 +280,39 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
+  useEffect(() => {
+    if (!uid) return undefined;
+    const channel = supabase
+      .channel(`home-profile-${uid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` },
+        () => {
+          qc.invalidateQueries({ queryKey: ['profile', uid] });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles', filter: `user_id=eq.${uid}` },
+        () => {
+          qc.invalidateQueries({ queryKey: ['profile', uid] });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc, uid]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!uid) return undefined;
+      qc.invalidateQueries({ queryKey: ['profile', uid] });
+      return undefined;
+    }, [qc, uid]),
+  );
+
   // Fetch company name if companyId is available
   const { data: companyRow } = useQuery({
     queryKey: ['company', companyId],
@@ -299,9 +337,9 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
       const { data } = await supabase.from('departments').select('id, name').eq('id', departmentIdToUse).maybeSingle();
       return data || null;
     },
-    enabled: !!departmentIdToUse,
-    staleTime: 5 * 60 * 1000,
-    refetchOnMount: false,
+    enabled: useDepartments && !!departmentIdToUse,
+    staleTime: 60 * 1000,
+    refetchOnMount: 'always',
   });
 
   const departmentName = departmentRow?.name || null;
@@ -315,10 +353,16 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
       .map((s) => s.slice(0, 1))
       .slice(0, 2)
       .join('');
-    return (a + b || fromFull || '•').toUpperCase();
+    return (a + b || fromFull || 'вЂў').toUpperCase();
   }, [firstName, lastName, fullName]);
 
   const counts = scope === 'all' && canViewAll ? allCounts : myCounts;
+  const roleLabel =
+    resolvedRole === 'admin'
+      ? t('role_admin')
+      : resolvedRole === 'dispatcher'
+        ? t('role_dispatcher')
+        : t('role_worker');
 
   // Render UI immediately even if profile is still loading.
 
@@ -331,7 +375,6 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
           accessibilityRole="button"
           style={({ pressed }) => [
             styles.profileRow,
-            { backgroundColor: withAlpha(theme.colors.primary, 0.06), borderColor: withAlpha(theme.colors.primary, 0.18) },
             pressed && styles.rowPressed,
           ]}
         >
@@ -349,37 +392,74 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
             <Text style={styles.profileName} numberOfLines={1}>
               {profileLoading ? t('common_dash') : fullName || t('common_dash')}
             </Text>
-            <View style={styles.profileMetaRow}>
-              <Text style={styles.rolePill} numberOfLines={1}>
-                {resolvedRole === 'admin'
-                  ? t('role_admin')
-                  : resolvedRole === 'dispatcher'
-                    ? t('role_dispatcher')
-                    : t('role_worker')}
+            <View style={styles.metaRows}>
+              <Text style={styles.companyText} numberOfLines={1}>
+                {companyName || t('common_dash')}
               </Text>
-              {companyName ? (
-                <View style={styles.companyPillWrap}>
-                  <Text style={styles.companyPill} numberOfLines={1}>
-                    {companyName}
+              <View style={styles.roleRow}>
+                <Text style={styles.profileRoleText} numberOfLines={1}>
+                  {roleLabel}
+                </Text>
+              </View>
+              {useDepartments ? (
+                <View style={styles.departmentRow}>
+                  <Text style={styles.departmentText} numberOfLines={1}>
+                    {`${t('users_department')}: ${departmentName || t('common_dash')}`}
                   </Text>
                 </View>
               ) : null}
             </View>
-            {departmentName ? (
-              <View style={styles.departmentRow}>
-                <FeatherIcon name="home" size={14} color={theme.colors.textSecondary} style={{ marginRight: 6 }} />
-                <Text style={styles.departmentText} numberOfLines={1}>{departmentName}</Text>
-              </View>
-            ) : null}
           </View>
 
-          <FeatherIcon
-            name="chevron-right"
-            size={20}
-            color={theme.colors.textSecondary || theme.colors.text}
-          />
+          <View style={styles.profileMenuDotsWrap}>
+            <FeatherIcon
+              name="more-horizontal"
+              size={18}
+              color={theme.colors.textSecondary || theme.colors.text}
+            />
+          </View>
         </Pressable>
       </Card>
+
+      {isReadOnlyBySubscription ? (
+        <Card style={styles.subscriptionWarningCard}>
+          <View style={styles.subscriptionWarningHeader}>
+            <View style={styles.subscriptionWarningBadge}>
+              <FeatherIcon
+                name="alert-triangle"
+                size={14}
+                color={theme.colors.warning || theme.colors.primary}
+              />
+            </View>
+            <View style={styles.subscriptionWarningBody}>
+              <Text style={styles.subscriptionWarningTitle}>
+                {t('home_subscription_expired_title', '� џ� ѕ� ґ� ї� ёСЃ� є� ° � ёСЃС‚� µ� є� »� °')}
+              </Text>
+              <Text style={styles.subscriptionWarningText}>
+                {t(
+                  'home_subscription_expired_body',
+                  '� � � µ� ¶� ё� ј С‡С‚� µ� Ѕ� ёСЏ: � ё� ·� ј� µ� Ѕ� µ� Ѕ� ё� µ � Ѕ� µ� ґ� ѕСЃС‚Сѓ� ї� Ѕ� ѕ � ґ� ѕ � їСЂ� ѕ� ґ� »� µ� Ѕ� ёСЏ � ї� ѕ� ґ� ї� ёСЃ� є� ё.',
+                )}
+              </Text>
+            </View>
+          </View>
+          <Pressable
+            onPress={openBilling}
+            android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+            style={({ pressed }) => [styles.subscriptionWarningLinkRow, pressed && styles.rowPressed]}
+            accessibilityRole="button"
+          >
+            <Text style={styles.subscriptionWarningLinkText}>
+              {t('home_subscription_expired_cta', '� џ� ѕСЃ� ј� ѕС‚СЂ� µС‚СЊ � ї� ѕ� ґ� ї� ёСЃ� єСѓ')}
+            </Text>
+            <FeatherIcon
+              name="chevron-right"
+              size={16}
+              color={theme.colors.textSecondary || theme.colors.text}
+            />
+          </Pressable>
+        </Card>
+      ) : null}
 
       <Card style={[styles.cardRounded, styles.menuCard]} padded={false}>
         {menuItems.map((item, index) => {
@@ -504,7 +584,12 @@ const createStyles = (theme) =>
       alignItems: 'center',
       paddingHorizontal: theme.spacing.lg,
       paddingVertical: theme.spacing.md,
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.colors.border, 0.9),
+      borderRadius: theme.radii.lg,
+      minHeight: 112,
     },
     avatarWrap: {
       width: 56,
@@ -515,6 +600,8 @@ const createStyles = (theme) =>
       borderColor: theme.colors.border,
       backgroundColor: theme.colors.surface,
       marginRight: theme.spacing.md,
+      marginTop: 0,
+      alignSelf: 'center',
     },
     avatarImg: { width: '100%', height: '100%' },
     avatarFallback: {
@@ -527,70 +614,107 @@ const createStyles = (theme) =>
       borderWidth: 1,
       borderColor: theme.colors.border,
       marginRight: theme.spacing.md,
+      marginTop: 0,
+      alignSelf: 'center',
     },
     avatarText: { fontSize: 18, fontWeight: '700', color: theme.colors.primary },
-    profileInfo: { flex: 1, paddingRight: 8 },
+    profileInfo: { flex: 1, paddingRight: theme.spacing.xl * 2 },
     profileName: {
       fontSize: theme.typography.sizes.lg,
       fontWeight: theme.typography.weight.semibold,
       color: theme.colors.text,
+      paddingRight: theme.spacing.md,
     },
-    profileRole: {
-      marginTop: 2,
+    profileRoleText: {
       fontSize: theme.typography.sizes.sm,
       color: theme.colors.textSecondary || theme.colors.text,
     },
-    profileMeta: {
-      marginTop: 2,
-      fontSize: theme.typography.sizes.xs ?? 12,
-      color: theme.colors.textSecondary || theme.colors.text,
-    },
-    profileMetaRow: {
+    metaRows: {
       marginTop: 6,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.sm,
+      marginLeft: 0,
     },
-    rolePill: {
-      paddingHorizontal: theme.spacing.sm,
-      paddingVertical: 6,
-      borderRadius: 999,
+    companyText: {
       fontSize: theme.typography.sizes.sm,
+      color: theme.colors.text,
       fontWeight: theme.typography.weight.semibold,
-      backgroundColor: theme.colors.primary,
-      color: theme.colors.onPrimary || '#fff',
+      paddingLeft: 0,
     },
-    companyPillWrap: {
-      marginLeft: theme.spacing.sm,
-      borderRadius: 999,
-      overflow: 'hidden',
-      alignSelf: 'flex-start',
-    },
-    companyPill: {
-      paddingHorizontal: theme.spacing.sm,
-      paddingVertical: 6,
-      borderRadius: 999,
-      fontSize: theme.typography.sizes.sm,
-      fontWeight: theme.typography.weight.semibold,
-      backgroundColor: withAlpha(theme.colors.primary, 0.12),
-      color: theme.colors.primary,
+    roleRow: {
+      marginTop: 4,
+      marginLeft: 0,
+      paddingLeft: 0,
     },
     departmentRow: {
-      marginTop: 8,
-      flexDirection: 'row',
-      alignItems: 'center',
+      marginTop: 4,
+      marginLeft: 0,
+      paddingLeft: 0,
     },
     departmentText: {
-      fontSize: theme.typography.sizes.xs ?? 12,
+      fontSize: theme.typography.sizes.sm,
       color: theme.colors.textSecondary || theme.colors.text,
     },
-    profileMetaInline: {
-      marginLeft: theme.spacing.sm,
-      fontSize: theme.typography.sizes.xs ?? 12,
-      color: theme.colors.textSecondary || theme.colors.text,
-      flex: 1,
+    profileMenuDotsWrap: {
+      position: 'absolute',
+      top: theme.spacing.sm,
+      right: theme.spacing.sm,
+      width: 24,
+      height: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
     },
     menuCard: {},
+    subscriptionWarningCard: {
+      marginBottom: theme.spacing.lg,
+      borderRadius: theme.radii.xl || theme.radii.lg || 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.colors.warning || theme.colors.primary, 0.2),
+      backgroundColor: theme.colors.surface,
+      paddingHorizontal: theme.spacing.lg,
+      paddingVertical: theme.spacing.md,
+    },
+    subscriptionWarningHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      marginBottom: theme.spacing.xs,
+      gap: theme.spacing.xs,
+    },
+    subscriptionWarningBadge: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.colors.warning || theme.colors.primary, 0.14),
+      marginTop: 1,
+    },
+    subscriptionWarningBody: {
+      flex: 1,
+    },
+    subscriptionWarningTitle: {
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.semibold,
+      color: theme.colors.text,
+    },
+    subscriptionWarningText: {
+      fontSize: theme.typography.sizes.sm,
+      color: theme.colors.textSecondary || theme.colors.text,
+      lineHeight: 19,
+    },
+    subscriptionWarningLinkRow: {
+      marginTop: theme.spacing.sm,
+      paddingTop: theme.spacing.sm,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.colors.border, 0.65),
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    subscriptionWarningLinkText: {
+      fontSize: theme.typography.sizes.sm,
+      color: theme.colors.text,
+      fontWeight: theme.typography.weight.semibold,
+    },
     menuRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -642,6 +766,8 @@ const createStyles = (theme) =>
     summaryLabel: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
     actionWrapper: { marginBottom: theme.spacing.md },
   });
+
+
 
 
 

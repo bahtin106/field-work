@@ -1,100 +1,118 @@
 import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 import { getMyCompanyId } from '../lib/workTypes';
 
-/**
- * ПРОФЕССИОНАЛЬНОЕ РЕШЕНИЕ: Глобальный синглтон для companyId
- *
- * Проблема: При каждом монтировании компонента companyId загружался заново,
- * что приводило к изменению queryKey и повторной загрузке данных.
- *
- * Решение: Кэшируем companyId в памяти приложения (глобальный синглтон).
- * Загружаем его только один раз при первом вызове, все последующие вызовы
- * возвращают закэшированное значение мгновенно.
- */
+const companyIdByUserId = new Map();
+const errorByUserId = new Map();
+const loadingByUserId = new Map();
 
-// Глобальный кэш для companyId (синглтон паттерн)
-let cachedCompanyId = null;
-let cachedError = null;
-let loadingPromise = null;
+async function getCurrentUserId() {
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  if (error) throw error;
+  return user?.id || null;
+}
 
-// Функция загрузки с кэшированием
-const loadCompanyId = async () => {
-  // Если уже загружено, возвращаем кэш
-  if (cachedCompanyId !== null) {
-    return cachedCompanyId;
-  }
+async function loadCompanyIdForUser(userId) {
+  if (!userId) return null;
+  if (companyIdByUserId.has(userId)) return companyIdByUserId.get(userId);
+  if (loadingByUserId.has(userId)) return loadingByUserId.get(userId);
 
-  // Если идет загрузка, ждем её завершения
-  if (loadingPromise !== null) {
-    return loadingPromise;
-  }
-
-  // Начинаем загрузку
-  loadingPromise = getMyCompanyId()
-    .then((id) => {
-      cachedCompanyId = id;
-      cachedError = null;
-      loadingPromise = null;
-      return id;
+  const loadingPromise = getMyCompanyId()
+    .then((companyId) => {
+      companyIdByUserId.set(userId, companyId ?? null);
+      errorByUserId.delete(userId);
+      return companyId ?? null;
     })
-    .catch((e) => {
-      cachedError = e;
-      loadingPromise = null;
-      throw e;
+    .catch((error) => {
+      errorByUserId.set(userId, error);
+      throw error;
+    })
+    .finally(() => {
+      loadingByUserId.delete(userId);
     });
 
+  loadingByUserId.set(userId, loadingPromise);
   return loadingPromise;
-};
+}
 
-/**
- * Хук для получения companyId с глобальным кэшированием
- * Загружает companyId только один раз при первом вызове,
- * все последующие вызовы возвращают закэшированное значение
- */
 export const useMyCompanyId = () => {
-  const [companyId, setCompanyId] = useState(cachedCompanyId);
-  const [loading, setLoading] = useState(cachedCompanyId === null);
-  const [error, setError] = useState(cachedError);
+  const [companyId, setCompanyId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    // Если уже в кэше, не загружаем
-    if (cachedCompanyId !== null) {
-      setCompanyId(cachedCompanyId);
-      setLoading(false);
-      return;
-    }
+    let cancelled = false;
+    let syncToken = 0;
 
-    // Если была ошибка, возвращаем её
-    if (cachedError !== null) {
-      setError(cachedError);
-      setLoading(false);
-      return;
-    }
+    const syncCompany = async () => {
+      const token = ++syncToken;
+      const safeSet = (next) => {
+        if (!cancelled && token === syncToken) {
+          setCompanyId(next.companyId);
+          setLoading(next.loading);
+          setError(next.error);
+        }
+      };
 
-    // Загружаем с кэшированием
-    setLoading(true);
-    loadCompanyId()
-      .then((id) => {
-        setCompanyId(id);
-        setError(null);
-      })
-      .catch((e) => {
-        setError(e);
-        console.error('Failed to fetch company ID:', e);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      safeSet({ companyId: null, loading: true, error: null });
+
+      let userId = null;
+      try {
+        userId = await getCurrentUserId();
+      } catch (nextError) {
+        safeSet({ companyId: null, loading: false, error: nextError });
+        return;
+      }
+
+      if (!userId) {
+        safeSet({ companyId: null, loading: false, error: null });
+        return;
+      }
+
+      if (companyIdByUserId.has(userId)) {
+        safeSet({
+          companyId: companyIdByUserId.get(userId) ?? null,
+          loading: false,
+          error: null,
+        });
+        return;
+      }
+
+      if (errorByUserId.has(userId)) {
+        safeSet({ companyId: null, loading: false, error: errorByUserId.get(userId) });
+        return;
+      }
+
+      try {
+        const nextCompanyId = await loadCompanyIdForUser(userId);
+        safeSet({ companyId: nextCompanyId ?? null, loading: false, error: null });
+      } catch (nextError) {
+        safeSet({ companyId: null, loading: false, error: nextError });
+      }
+    };
+
+    syncCompany();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(() => {
+      syncCompany();
+    });
+
+    return () => {
+      cancelled = true;
+      subscription?.unsubscribe?.();
+    };
   }, []);
 
   return { companyId, loading, error };
 };
 
-/**
- * Функция для очистки кэша (используется при logout)
- */
 export const clearCompanyIdCache = () => {
-  cachedCompanyId = null;
-  cachedError = null;
-  loadingPromise = null;
+  companyIdByUserId.clear();
+  errorByUserId.clear();
+  loadingByUserId.clear();
 };

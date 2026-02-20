@@ -94,8 +94,19 @@ function LoginScreenContent() {
     rippleBorderless: false,
   };
 
-  const { email, setEmail, password, setPassword, error, loading, canSubmit, handleLogin, reset } =
-    useAuthLogin();
+  const {
+    email,
+    setEmail,
+    password,
+    setPassword,
+    error,
+    loading,
+    canSubmit,
+    handleLogin,
+    reset,
+    accessBlock,
+    clearAccessBlock,
+  } = useAuthLogin();
 
   // Очищаем форму при монтировании компонента
   useEffect(() => {
@@ -111,6 +122,16 @@ function LoginScreenContent() {
   const handleSubmit = useCallback(async () => {
     await handleLogin();
   }, [handleLogin]);
+
+  useEffect(() => {
+    if (!accessBlock?.code) return;
+    const params = {
+      code: accessBlock.code,
+      message: accessBlock.message || '',
+    };
+    clearAccessBlock?.();
+    router.replace({ pathname: '/(auth)/blocked', params });
+  }, [accessBlock, clearAccessBlock, router]);
 
   return (
     <Screen background="background">

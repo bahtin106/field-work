@@ -53,6 +53,30 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     if (ft) return String(ft);
     return typeof title === 'string' ? title : String(title ?? '');
   }, [options?.fullTitle, title, routeParams.fullTitle]);
+  const titleStyleOverride = useMemo(
+    () => options?.headerTitleStyle ?? routeParams?.headerTitleStyle ?? {},
+    [options?.headerTitleStyle, routeParams?.headerTitleStyle],
+  );
+  const backFallbackTo = useMemo(
+    () => options?.backFallbackTo ?? routeParams?.backFallbackTo ?? '/orders',
+    [options?.backFallbackTo, routeParams?.backFallbackTo],
+  );
+
+  const safeGoBack = useCallback(() => {
+    try {
+      if (typeof nav?.canGoBack === 'function' && nav.canGoBack()) {
+        nav.goBack();
+        return;
+      }
+      if (backFallbackTo) {
+        router.replace(String(backFallbackTo));
+        return;
+      }
+    } catch {}
+    try {
+      router.replace('/orders');
+    } catch {}
+  }, [backFallbackTo, nav]);
 
   const onBack = useCallback(() => {
     try {
@@ -67,12 +91,12 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
         return;
       }
     } catch {}
-    nav.goBack();
-  }, [onBackPressProp, routeParams, nav]);
+    safeGoBack();
+  }, [onBackPressProp, routeParams, safeGoBack]);
 
   const onClose = useCallback(() => {
-    nav.goBack();
-  }, [nav]);
+    safeGoBack();
+  }, [safeGoBack]);
 
   const {
     onPressIn: onLeftIn,
@@ -162,12 +186,12 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     [headerTheme.edgePadding, theme?.spacing?.md],
   );
   const TITLE_FONT_SIZE = useMemo(
-    () => marqueeTheme.titleFontSize ?? 17,
-    [marqueeTheme.titleFontSize],
+    () => titleStyleOverride?.fontSize ?? marqueeTheme.titleFontSize ?? 17,
+    [marqueeTheme.titleFontSize, titleStyleOverride?.fontSize],
   );
   const TITLE_FONT_WEIGHT = useMemo(
-    () => marqueeTheme.titleFontWeight ?? '600',
-    [marqueeTheme.titleFontWeight],
+    () => titleStyleOverride?.fontWeight ?? marqueeTheme.titleFontWeight ?? '600',
+    [marqueeTheme.titleFontWeight, titleStyleOverride?.fontWeight],
   );
   const MS_PER_PIXEL = useMemo(() => marqueeTheme.msPerPixel ?? 12, [marqueeTheme.msPerPixel]);
   const START_DELAY = useMemo(() => marqueeTheme.startDelay ?? 700, [marqueeTheme.startDelay]);
@@ -316,7 +340,11 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
               headerTitleElement ? (
                 headerTitleElement
               ) : titleText ? (
-                <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+                <Text
+                  numberOfLines={1}
+                  allowFontScaling={false}
+                  style={[s.title, { color: theme.colors.text }, titleStyleOverride]}
+                >
                   {titleText}
                 </Text>
               ) : null
@@ -414,7 +442,11 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
           {headerTitleElement ? (
             headerTitleElement
           ) : titleText ? (
-            <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+            <Text
+              numberOfLines={1}
+              allowFontScaling={false}
+              style={[s.title, { color: theme.colors.text }, titleStyleOverride]}
+            >
               {titleText}
             </Text>
           ) : null}

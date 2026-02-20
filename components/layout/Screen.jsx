@@ -1,6 +1,6 @@
 // components/layout/Screen.jsx
 import { useRoute } from '@react-navigation/native';
-import { useNavigation, usePathname } from 'expo-router';
+import { useNavigation, usePathname, useSegments } from 'expo-router';
 import React from 'react';
 import { Keyboard, Platform, TouchableWithoutFeedback, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
@@ -24,7 +24,9 @@ export default function Screen({
   const nav = useNavigation();
   const route = useRoute();
   const pathname = usePathname() || '';
-  const isAuthScreen = pathname.startsWith('/(auth)') || route?.name === 'login';
+  const segments = useSegments();
+  const inAuthGroup = Array.isArray(segments) && segments[0] === '(auth)';
+  const isAuthScreen = inAuthGroup || pathname.startsWith('/(auth)') || route?.name === 'login';
   const showHeader = !isAuthScreen && headerOptions?.headerShown !== false;
   const insets = useSafeAreaInsets();
   const useScroll = scroll !== false && !isAuthScreen;
@@ -60,6 +62,7 @@ export default function Screen({
       edges={edges}
       style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}
     >
+      {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />}
       {useScroll ? (
         <KeyboardAwareScrollView
           ref={scrollRef}
@@ -74,9 +77,6 @@ export default function Screen({
           onScroll={onScroll}
           scrollEventThrottle={scrollEventThrottle}
         >
-          {showHeader && (
-            <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
-          )}
           {showHeader && <GlobalCurrencyRecalcBanner />}
           <TouchableWithoutFeedback
             accessible={false}
@@ -91,9 +91,6 @@ export default function Screen({
         </KeyboardAwareScrollView>
       ) : (
         <>
-          {showHeader && (
-            <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />
-          )}
           {showHeader && <GlobalCurrencyRecalcBanner />}
           <View style={{ flex: 1 }}>{children}</View>
         </>

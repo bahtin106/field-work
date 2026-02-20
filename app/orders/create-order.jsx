@@ -35,6 +35,8 @@ import { getLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { withAlpha } from '../../theme/colors';
+import { useAuthContext } from '../../providers/SimpleAuthProvider';
+import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: true },
@@ -53,6 +55,8 @@ export default function CreateOrderScreen() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const { profile } = useAuthContext();
+  const subscriptionGuard = useSubscriptionGuard(profile?.company_id || null);
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const formStyles = useEditFormStyles();
   const requiredSuffix = t('common_required_suffix');
@@ -95,7 +99,7 @@ export default function CreateOrderScreen() {
 
   const DRAFT_KEY = 'draft_create_order';
 
-  // Сохранить черновик
+  // Р РЋР С•РЎвЂ¦РЎР‚Р В°Р Р…Р С‘РЎвЂљРЎРЉ РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
   const saveDraft = useCallback(async () => {
     try {
       const draft = {
@@ -114,7 +118,7 @@ export default function CreateOrderScreen() {
     }
   }, [form, description, departureDate, workTypeId, assigneeId, urgent, toFeed]);
 
-  // Загрузить черновик
+  // Р вЂ”Р В°Р С–РЎР‚РЎС“Р В·Р С‘РЎвЂљРЎРЉ РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
   const loadDraft = useCallback(async () => {
     try {
       const json = await AsyncStorage.getItem(DRAFT_KEY);
@@ -127,7 +131,7 @@ export default function CreateOrderScreen() {
     }
   }, []);
 
-  // Удалить черновик
+  // Р Р€Р Т‘Р В°Р В»Р С‘РЎвЂљРЎРЉ РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
   const deleteDraft = useCallback(async () => {
     try {
       await AsyncStorage.removeItem(DRAFT_KEY);
@@ -136,7 +140,7 @@ export default function CreateOrderScreen() {
     }
   }, []);
 
-  // Восстановить данные из черновика
+  // Р вЂ™Р С•РЎРѓРЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р С‘РЎвЂљРЎРЉ Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р С‘Р В· РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”Р В°
   const restoreDraft = useCallback((draft) => {
     if (!draft) return;
     setForm(draft.form || {});
@@ -178,7 +182,7 @@ export default function CreateOrderScreen() {
     [t],
   );
 
-  // Проверяем есть ли непустые данные в форме
+  // Р СџРЎР‚Р С•Р Р†Р ВµРЎР‚РЎРЏР ВµР С Р ВµРЎРѓРЎвЂљРЎРЉ Р В»Р С‘ Р Р…Р ВµР С—РЎС“РЎРѓРЎвЂљРЎвЂ№Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р Р† РЎвЂћР С•РЎР‚Р СР Вµ
   const hasChanges = useCallback(() => {
     return (
       !!(form.title?.trim()) ||
@@ -199,17 +203,17 @@ export default function CreateOrderScreen() {
   }, [form, description, departureDate, workTypeId, assigneeId, urgent, toFeed]);
 
   const handleCancelPress = useCallback(() => {
-    // Показываем модалку только если есть изменения
+    // Р СџР С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµР С Р СР С•Р Т‘Р В°Р В»Р С”РЎС“ РЎвЂљР С•Р В»РЎРЉР С”Р С• Р ВµРЎРѓР В»Р С‘ Р ВµРЎРѓРЎвЂљРЎРЉ Р С‘Р В·Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ
     if (hasChanges()) {
       setCancelVisible(true);
     } else {
-      intentionalExitRef.current = true; // Явный выход - не сохраняем черновик
+      intentionalExitRef.current = true; // Р Р‡Р Р†Р Р…РЎвЂ№Р в„– Р Р†РЎвЂ№РЎвЂ¦Р С•Р Т‘ - Р Р…Р Вµ РЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
       router.back();
     }
   }, [hasChanges]);
 
   const confirmCancel = useCallback(() => {
-    intentionalExitRef.current = true; // Явный выход - не сохраняем черновик
+    intentionalExitRef.current = true; // Р Р‡Р Р†Р Р…РЎвЂ№Р в„– Р Р†РЎвЂ№РЎвЂ¦Р С•Р Т‘ - Р Р…Р Вµ РЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
     setCancelVisible(false);
     router.back();
   }, []);
@@ -331,6 +335,14 @@ export default function CreateOrderScreen() {
   }, [schema, form, departureDate, toFeed, assigneeId, normalizePhone, getFieldLabel, t]);
 
   const handleSubmit = useCallback(async () => {
+    if (!subscriptionGuard.canEdit) {
+      showBanner({
+        type: 'warning',
+        message: t('subscription_create_unavailable_toast', 'Создание заявки недоступно'),
+      });
+      return;
+    }
+
     setSubmittedAttempt(true);
     clearBanner();
     setFieldErrors({});
@@ -410,8 +422,8 @@ export default function CreateOrderScreen() {
       }
       return;
     } else {
-      intentionalExitRef.current = true; // Успешное создание - не сохраняем черновик
-      await deleteDraft(); // Удаляем черновик после успешного создания
+      intentionalExitRef.current = true; // Р Р€РЎРѓР С—Р ВµРЎв‚¬Р Р…Р С•Р Вµ РЎРѓР С•Р В·Р Т‘Р В°Р Р…Р С‘Р Вµ - Р Р…Р Вµ РЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
+      await deleteDraft(); // Р Р€Р Т‘Р В°Р В»РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С” Р С—Р С•РЎРѓР В»Р Вµ РЎС“РЎРѓР С—Р ВµРЎв‚¬Р Р…Р С•Р С–Р С• РЎРѓР С•Р В·Р Т‘Р В°Р Р…Р С‘РЎРЏ
       router.replace('/orders/order-success');
     }
   }, [
@@ -434,6 +446,7 @@ export default function CreateOrderScreen() {
     focusField,
     t,
     deleteDraft,
+    subscriptionGuard.canEdit,
   ]);
 
   useFocusEffect(
@@ -442,7 +455,7 @@ export default function CreateOrderScreen() {
         if (hasChanges()) {
           setCancelVisible(true);
         } else {
-          intentionalExitRef.current = true; // Явный выход - не сохраняем черновик
+          intentionalExitRef.current = true; // Р Р‡Р Р†Р Р…РЎвЂ№Р в„– Р Р†РЎвЂ№РЎвЂ¦Р С•Р Т‘ - Р Р…Р Вµ РЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”
           router.back();
         }
         return true;
@@ -477,7 +490,7 @@ export default function CreateOrderScreen() {
     };
     loadUsers();
 
-    // Проверяем черновик при монтировании
+    // Р СџРЎР‚Р С•Р Р†Р ВµРЎР‚РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С” Р С—РЎР‚Р С‘ Р СР С•Р Р…РЎвЂљР С‘РЎР‚Р С•Р Р†Р В°Р Р…Р С‘Р С‘
     (async () => {
       const draft = await loadDraft();
       if (draft && mounted) {
@@ -491,12 +504,12 @@ export default function CreateOrderScreen() {
     };
   }, [loadDraft]);
 
-  // AppState listener - сохраняем черновик при сворачивании/закрытии приложения
+  // AppState listener - РЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С” Р С—РЎР‚Р С‘ РЎРѓР Р†Р С•РЎР‚Р В°РЎвЂЎР С‘Р Р†Р В°Р Р…Р С‘Р С‘/Р В·Р В°Р С”РЎР‚РЎвЂ№РЎвЂљР С‘Р С‘ Р С—РЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘РЎРЏ
   useEffect(() => {
     const handleAppStateChange = (nextAppState) => {
-      // Если приложение уходит в background или inactive и это НЕ явный выход
+      // Р вЂўРЎРѓР В»Р С‘ Р С—РЎР‚Р С‘Р В»Р С•Р В¶Р ВµР Р…Р С‘Р Вµ РЎС“РЎвЂ¦Р С•Р Т‘Р С‘РЎвЂљ Р Р† background Р С‘Р В»Р С‘ inactive Р С‘ РЎРЊРЎвЂљР С• Р СњР вЂў РЎРЏР Р†Р Р…РЎвЂ№Р в„– Р Р†РЎвЂ№РЎвЂ¦Р С•Р Т‘
       if ((nextAppState === 'background' || nextAppState === 'inactive') && !intentionalExitRef.current) {
-        // Сохраняем черновик только если есть изменения
+        // Р РЋР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎРЏР ВµР С РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С” РЎвЂљР С•Р В»РЎРЉР С”Р С• Р ВµРЎРѓР В»Р С‘ Р ВµРЎРѓРЎвЂљРЎРЉ Р С‘Р В·Р СР ВµР Р…Р ВµР Р…Р С‘РЎРЏ
         if (hasChanges()) {
           saveDraft();
         }
@@ -997,7 +1010,14 @@ export default function CreateOrderScreen() {
           </Card>
 
           <View style={styles.buttonContainer}>
-            <Button title={t('create_order_btn_create')} onPress={handleSubmit} />
+            {!subscriptionGuard.canEdit ? (
+              <Text style={styles.permissionText}>{t('subscription_read_only_notice', 'Р РµР¶РёРј С‡С‚РµРЅРёСЏ: РёР·РјРµРЅРµРЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ РґРѕ РїСЂРѕРґР»РµРЅРёСЏ РїРѕРґРїРёСЃРєРё')}</Text>
+            ) : null}
+            <Button
+              title={t('create_order_btn_create')}
+              onPress={handleSubmit}
+              disabled={!subscriptionGuard.canEdit}
+            />
           </View>
           <View style={styles.buttonSpacer}>
             <Button
@@ -1044,14 +1064,14 @@ export default function CreateOrderScreen() {
 
       <ConfirmModal
         visible={draftRestoreVisible}
-        title="Восстановить черновик?"
+        title="Р вЂ™Р С•РЎРѓРЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р С‘РЎвЂљРЎРЉ РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”?"
         message={
           savedDraft
-            ? `Найден несохранённый черновик от ${new Date(savedDraft.timestamp).toLocaleString('ru-RU')}`
-            : 'Найден несохранённый черновик'
+            ? `Р СњР В°Р в„–Р Т‘Р ВµР Р… Р Р…Р ВµРЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎвЂР Р…Р Р…РЎвЂ№Р в„– РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С” Р С•РЎвЂљ ${new Date(savedDraft.timestamp).toLocaleString('ru-RU')}`
+            : 'Р СњР В°Р в„–Р Т‘Р ВµР Р… Р Р…Р ВµРЎРѓР С•РЎвЂ¦РЎР‚Р В°Р Р…РЎвЂР Р…Р Р…РЎвЂ№Р в„– РЎвЂЎР ВµРЎР‚Р Р…Р С•Р Р†Р С‘Р С”'
         }
-        confirmLabel="Восстановить"
-        cancelLabel="Начать заново"
+        confirmLabel="Р вЂ™Р С•РЎРѓРЎРѓРЎвЂљР В°Р Р…Р С•Р Р†Р С‘РЎвЂљРЎРЉ"
+        cancelLabel="Р СњР В°РЎвЂЎР В°РЎвЂљРЎРЉ Р В·Р В°Р Р…Р С•Р Р†Р С•"
         onConfirm={async () => {
           restoreDraft(savedDraft);
           setDraftRestoreVisible(false);
@@ -1165,4 +1185,7 @@ function createStyles(theme) {
     },
   });
 }
+
+
+
 

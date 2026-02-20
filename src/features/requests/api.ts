@@ -3,6 +3,7 @@ import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../../lib/orderFilters
 import { measureNetwork } from '../../shared/perf/devMetrics';
 
 const DEFAULT_PAGE_SIZE = 20;
+const requestByIdInFlight = new Map<string, Promise<any>>();
 
 function normalizeOrder(row) {
   if (!row) return row;
@@ -45,7 +46,10 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
       const msg = String(rpcFailure?.message || '').toLowerCase();
       const missingRpc =
         msg.includes('function') && (msg.includes('does not exist') || msg.includes('not found'));
-      if (!missingRpc) {
+      const incompatibleRpcTypes =
+        msg.includes('case types uuid and integer cannot be matched') ||
+        (msg.includes('types uuid and integer') && msg.includes('cannot be matched'));
+      if (!missingRpc && !incompatibleRpcTypes) {
         throw rpcFailure;
       }
     }
@@ -118,7 +122,12 @@ export async function listRequests(params = {}) {
 }
 
 export async function getRequestById(id) {
-  return measureNetwork('requests.getById', async () => {
+  const key = String(id || '');
+  if (!key) return null;
+  const existing = requestByIdInFlight.get(key);
+  if (existing) return existing;
+
+  const p = measureNetwork('requests.getById', async () => {
     const { data, error } = await supabase
       .from('orders_secure_v2')
       .select('*')
@@ -126,7 +135,12 @@ export async function getRequestById(id) {
       .maybeSingle();
     if (error) throw error;
     return normalizeOrder(data);
+  }).finally(() => {
+    requestByIdInFlight.delete(key);
   });
+
+  requestByIdInFlight.set(key, p);
+  return p;
 }
 
 export async function updateRequest(id, patch, expectedUpdatedAt = null) {

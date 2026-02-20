@@ -18,9 +18,12 @@ import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
+import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
 import { useTheme } from '../../theme';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 
 // i18n
 import { useI18nVersion } from '../../src/i18n';
@@ -32,8 +35,8 @@ import {
   AUTH_CONSTRAINTS,
   isValidEmail as isValidEmailShared,
 } from '../../lib/authValidation';
-import { FUNCTIONS as APP_FUNCTIONS, AVATAR, STORAGE, TBL } from '../../lib/constants';
-import { supabase, supabaseAdmin, EMAIL_SERVICE_URL } from '../../lib/supabase';
+import { AVATAR, STORAGE, TBL } from '../../lib/constants';
+import { supabase } from '../../lib/supabase';
 import { getDict, t as T } from '../../src/i18n';
 
 // --- locals / env-driven ---
@@ -48,8 +51,7 @@ const __pick = (val, devFallback) => (val != null ? val : __IS_PROD ? null : dev
 const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
 const AVA_MIME = AVATAR.MIME;
 
-const _FN_CREATE_USER =
-  process.env.EXPO_PUBLIC_FN_CREATE_USER || (APP_FUNCTIONS.CREATE_USER ?? 'create_user');
+const _FN_INVITE_USER = process.env.EXPO_PUBLIC_FN_INVITE_USER || 'invite-user';
 
 let ROLE_LABELS_LOCAL = ROLE_LABELS;
 try {
@@ -57,12 +59,16 @@ try {
   if (fromEnv) ROLE_LABELS_LOCAL = { ...ROLE_LABELS_LOCAL, ...JSON.parse(fromEnv) };
 } catch {}
 
-const generateTempPassword = () => {
-  const words = ['pilot', 'eagle', 'tiger', 'wolf', 'bear', 'lion', 'shark', 'hawk', 'fox', 'star'];
-  const word = words[Math.floor(Math.random() * words.length)];
-  const digits = Math.floor(1000 + Math.random() * 9000);
-  return word + digits;
-};
+const IMAGE_MEDIA_TYPES = (() => {
+  try {
+    if (ImagePicker.MediaType && ImagePicker.MediaType.Images) return ImagePicker.MediaType.Images;
+    if (ImagePicker.MediaType && ImagePicker.MediaType.images) return ImagePicker.MediaType.images;
+    if (ImagePicker.MediaType && ImagePicker.MediaType.image) return ImagePicker.MediaType.image;
+  } catch {
+    // ignore and fall back
+  }
+  return ['images'];
+})();
 
 // --- helpers ---
 function withAlpha(color, a) {
@@ -127,9 +133,11 @@ export default function NewUserScreen() {
 
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const { data: entitlements } = useCompanyEntitlements(companyId || null);
+  const { useDepartments } = useCompanySettings(companyId || null);
   const { data: departments = [] } = useDepartmentsQuery({
     companyId,
-    enabled: !!companyId,
+    enabled: !!companyId && useDepartments,
     onlyEnabled: true,
   });
   const [deptModalVisible, setDeptModalVisible] = useState(false);
@@ -141,6 +149,12 @@ export default function NewUserScreen() {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [avatarSheet, setAvatarSheet] = useState(false);
 
+  useEffect(() => {
+    if (!useDepartments && departmentId !== null) {
+      setDepartmentId(null);
+    }
+  }, [departmentId, useDepartments]);
+
   const [showRoles, setShowRoles] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
@@ -148,7 +162,7 @@ export default function NewUserScreen() {
   const [cancelVisible, setCancelVisible] = useState(false);
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
 
-  // Согласие с политикой
+  //   
   const [_consentChecked, _setConsentChecked] = useState(false);
 
   // Validation states
@@ -164,6 +178,13 @@ export default function NewUserScreen() {
   const scrollYRef = useRef(0);
   const allowLeaveRef = useRef(false);
   const emailCheckTimeoutRef = useRef(null);
+  const headerHeight = theme?.components?.header?.height ?? 56;
+  const { scrollToFirstInvalid } = useFormAutoScroll({
+    scrollRef,
+    scrollYRef,
+    insetsBottom: insets.bottom ?? 0,
+    headerHeight,
+  });
 
   const _MEDIA_ASPECT = Array.isArray(theme.media?.aspect) ? theme.media.aspect : [1, 1];
   const MEDIA_QUALITY = typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85;
@@ -263,7 +284,7 @@ export default function NewUserScreen() {
           ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
           : null);
 
-  // Проверка email на существование (debounced)
+  //  email   (debounced)
   const checkEmailAvailability = useCallback(
     async (emailToCheck) => {
       if (!emailToCheck || !isValidEmailShared(emailToCheck)) {
@@ -308,7 +329,7 @@ export default function NewUserScreen() {
       return;
     }
 
-    // Задержка 800ms перед проверкой
+    //  800ms  
     emailCheckTimeoutRef.current = setTimeout(() => {
       checkEmailAvailability(email.trim().toLowerCase());
     }, 800);
@@ -324,11 +345,11 @@ export default function NewUserScreen() {
     clearBanner();
   }, [clearBanner]);
 
-  // Обработчик недопустимых символов в пароле
+  //     
   const _handleInvalidPasswordInput = useCallback(() => {
     setInvalidCharWarning(true);
 
-    // Автоскрытие предупреждения через 3 секунды
+    //    3 
     setTimeout(() => {
       setInvalidCharWarning(false);
     }, 3000);
@@ -360,7 +381,7 @@ export default function NewUserScreen() {
       !String(phone || '').replace(/\D/g, '') &&
       !birthdate &&
       !avatarUrl &&
-      (departmentId == null || departmentId === '')
+      (!useDepartments || departmentId == null || departmentId === '')
     );
   }, [
     firstName,
@@ -370,6 +391,7 @@ export default function NewUserScreen() {
     birthdate,
     avatarUrl,
     departmentId,
+    useDepartments,
   ]);
 
   const isDirty = useMemo(() => {
@@ -457,7 +479,7 @@ export default function NewUserScreen() {
       allowsEditing: true,
       aspect: [1, 1],
       quality: MEDIA_QUALITY,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: IMAGE_MEDIA_TYPES,
     });
     if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
   };
@@ -471,7 +493,7 @@ export default function NewUserScreen() {
       allowsEditing: true,
       aspect: [1, 1],
       quality: MEDIA_QUALITY,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: IMAGE_MEDIA_TYPES,
       selectionLimit: 1,
     });
     if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
@@ -486,7 +508,7 @@ export default function NewUserScreen() {
     Keyboard.dismiss();
     setSubmittedAttempt(true);
 
-    // Проверка обязательных полей (БЕЗ пароля)
+    //    ( )
     const missingFirst = !firstName.trim();
     const missingLast = !lastName.trim();
     const invalidEmail = !emailValid;
@@ -504,18 +526,27 @@ export default function NewUserScreen() {
     }
 
     if (missingFirst || missingLast || invalidEmail) {
-      if (missingFirst) {
-        firstNameRef.current?.focus?.();
-      } else if (missingLast) {
-        lastNameRef.current?.focus?.();
-      } else {
-        emailRef.current?.focus?.();
-      }
-      scrollRef.current?.scrollTo({ y: 0, animated: true });
+      scrollToFirstInvalid([
+        { invalid: missingFirst, ref: firstNameRef, fallbackY: 0 },
+        { invalid: missingLast, ref: lastNameRef, fallbackY: 0 },
+        { invalid: invalidEmail, ref: emailRef, fallbackY: 0 },
+      ]);
       return;
     }
 
-    // Показываем модалку подтверждения вместо прямого создания
+    //      
+    const canEditBySubscription = entitlements?.can_edit !== false;
+    if (!canEditBySubscription) {
+      showBanner({ message: t('err_subscription_read_only'), severity: 'error' });
+      return;
+    }
+
+    const canAddMembers = entitlements?.features?.can_add_members;
+    if (canAddMembers === false) {
+      showBanner({ message: t('err_seat_limit_exceeded_generic'), severity: 'error' });
+      return;
+    }
+
     setInviteEmail(String(email).trim().toLowerCase());
     setInviteModalVisible(true);
   }, [
@@ -526,10 +557,13 @@ export default function NewUserScreen() {
     emailCheckStatus,
     email,
     t,
-    scrollRef,
+    entitlements?.can_edit,
+    entitlements?.features?.can_add_members,
+    showBanner,
+    scrollToFirstInvalid,
   ]);
 
-  // Отправка приглашения по волшебной ссылке
+  //     
   const handleInviteConfirm = useCallback(async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -542,13 +576,10 @@ export default function NewUserScreen() {
       const bdate = birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
 
       if (!__IS_PROD) {
-        console.debug('[handleInviteConfirm] Starting user creation via Admin API');
+        console.debug('[handleInviteConfirm] Starting invite flow');
         console.debug('[handleInviteConfirm] Email:', inviteEmail);
       }
 
-      const tempPassword = generateTempPassword();
-
-      // 1. Проверяем, не существует ли уже пользователь с таким email
       const { data: existingProfile } = await supabase
         .from(TABLES.profiles)
         .select('id, email')
@@ -559,109 +590,44 @@ export default function NewUserScreen() {
         throw new Error(t('error_email_exists'));
       }
 
-      // 2. Создаем пользователя через Admin.inviteUserByEmail
-      // Это более надежный метод, чем createUser или signUp
-      if (!supabaseAdmin) {
-        throw new Error('Admin client not configured');
-      }
-
-      if (!__IS_PROD) {
-        console.debug('[handleInviteConfirm] Creating user via createUser');
-      }
-
-      const { data: userData, error: userError } = await supabaseAdmin.auth.admin.createUser({
+      const payload = {
         email: inviteEmail,
-        password: tempPassword,
-        email_confirm: true,
-        user_metadata: {
-          first_name: firstName.trim() || null,
-          last_name: lastName.trim() || null,
-          full_name: fullName || null,
-        }
-      });
+        first_name: firstName.trim() || null,
+        last_name: lastName.trim() || null,
+        full_name: fullName || null,
+        phone: phoneNormalized,
+        birthdate: bdate,
+        role,
+        department_id: useDepartments ? (departmentId || null) : null,
+      };
 
-      if (userError) {
-        console.error('[handleInviteConfirm] CreateUser error:', userError);
-        const msgStr = String(userError.message || '');
-        if (/already.*registered|email.*exists|email.*taken|duplicate|user.*exists/i.test(msgStr)) {
-          throw new Error(t('error_email_exists'));
-        }
-        throw new Error(userError.message || t('err_invite_failed'));
-      }
+      const { data: inviteData, error: inviteError } = await supabase.functions.invoke(
+        _FN_INVITE_USER,
+        { body: payload },
+      );
 
-      const newUserId = userData?.user?.id;
-      if (!newUserId) {
-        throw new Error('Failed to get user ID');
-      }
-
-      if (!__IS_PROD) {
-        console.debug('[handleInviteConfirm] User created, ID:', newUserId);
-      }
-
-      // 3. Создаем профиль через RPC функцию
-      const { data: rpcData, error: rpcError } = await supabase.rpc('invite_user', {
-        p_email: inviteEmail,
-        p_first_name: firstName.trim() || null,
-        p_last_name: lastName.trim() || null,
-        p_full_name: fullName || null,
-        p_phone: phoneNormalized,
-        p_birthdate: bdate,
-        p_role: role,
-        p_department_id: departmentId,
-        p_temp_password: tempPassword,
-        p_user_id: newUserId,
-      });
-
-      if (!__IS_PROD) console.debug('[handleInviteConfirm] RPC result:', { data: rpcData, error: rpcError });
-
-      if (rpcError) {
-        // Если профиль не создался, удаляем пользователя
-        try {
-          await supabaseAdmin.auth.admin.deleteUser(newUserId);
-          console.error('[handleInviteConfirm] Rolled back user creation');
-        } catch (e) {
-          console.error('[handleInviteConfirm] Failed to rollback:', e);
-        }
-
-        const msgStr = String(rpcError.message || '');
+      if (inviteError) {
+        const msgStr = String(inviteError?.message || '');
         if (/already exists|email.*taken|user.*exists/i.test(msgStr)) {
           throw new Error(t('error_email_exists'));
         }
-        throw new Error(rpcError.message || t('err_invite_failed'));
+        if (/seat limit exceeded/i.test(msgStr)) {
+          throw new Error(t('err_seat_limit_exceeded_generic'));
+        }
+        if (/read-only|subscription expired/i.test(msgStr)) {
+          throw new Error(t('err_subscription_read_only'));
+        }
+        throw new Error(msgStr || t('err_invite_failed'));
       }
 
-      if (!__IS_PROD) console.debug('[handleInviteConfirm] Success!');
-
-      // Отправляем письмо с приглашением
-      try {
-        if (!__IS_PROD) {
-          console.debug('[handleInviteConfirm] Sending invitation email to:', inviteEmail);
+      if (inviteData?.success !== true) {
+        const msgStr = String(inviteData?.message || '');
+        if (/already exists|email.*taken|user.*exists/i.test(msgStr)) {
+          throw new Error(t('error_email_exists'));
         }
-
-        const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'invite',
-            email: inviteEmail,
-            firstName: firstName.trim(),
-            lastName: lastName.trim(),
-            tempPassword: tempPassword,
-          }),
-        });
-
-        if (!emailResponse.ok) {
-          console.warn('[handleInviteConfirm] Email sending failed, but user was created');
-        } else {
-          if (!__IS_PROD) {
-            console.debug('[handleInviteConfirm] Email sent successfully');
-          }
-        }
-      } catch (emailError) {
-        console.warn('[handleInviteConfirm] Email sending error:', emailError);
+        throw new Error(msgStr || t('err_invite_failed'));
       }
 
-      // Успешно создали приглашение и отправили письмо
       setInviteModalVisible(false);
       showSuccessToast(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
@@ -689,6 +655,7 @@ export default function NewUserScreen() {
     birthdate,
     role,
     departmentId,
+    useDepartments,
     inviteEmail,
     router,
     queryClient,
@@ -697,7 +664,6 @@ export default function NewUserScreen() {
     showBanner,
     clearBanner,
   ]);
-
   const roleItems = useMemo(
     () => ROLES.map((r) => ({ id: r, label: ROLE_LABELS_LOCAL[r] || r })),
     [],
@@ -758,7 +724,7 @@ export default function NewUserScreen() {
               {avatarUrl ? (
                 <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
               ) : (
-                <Text style={styles.avatarText}>{initials || '•'}</Text>
+                <Text style={styles.avatarText}>{initials || '*'}</Text>
               )}
               <View style={styles.avatarCamBadge}>
                 <Feather
@@ -882,13 +848,15 @@ export default function NewUserScreen() {
 
         <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
         <Card paddedXOnly>
-          <TextField
-            label={t('label_department')}
-            value={String(activeDeptName || t('placeholder_department'))}
-            style={styles.field}
-            pressable
-            onPress={() => setDeptModalVisible(true)}
-          />
+          {useDepartments ? (
+            <TextField
+              label={t('label_department')}
+              value={String(activeDeptName || t('placeholder_department'))}
+              style={styles.field}
+              pressable
+              onPress={() => setDeptModalVisible(true)}
+            />
+          ) : null}
 
           <TextField
             label={t('label_role')}
@@ -899,7 +867,7 @@ export default function NewUserScreen() {
           />
         </Card>
 
-        {/* Пароль отправляется по волшебной ссылке в письме - полей пароля не нужно */}
+        {/*        -     */}
 
         <ConfirmModal
           visible={cancelVisible}
@@ -953,17 +921,19 @@ export default function NewUserScreen() {
           searchable={false}
         />
 
-        <SelectModal
-          visible={deptModalVisible}
-          onClose={() => setDeptModalVisible(false)}
-          title={t('user_department_title')}
-          items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
-          searchable={false}
-          onSelect={(it) => {
-            setDepartmentId(it.id);
-            setDeptModalVisible(false);
-          }}
-        />
+        {useDepartments ? (
+          <SelectModal
+            visible={deptModalVisible}
+            onClose={() => setDeptModalVisible(false)}
+            title={t('user_department_title')}
+            items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
+            searchable={false}
+            onSelect={(it) => {
+              setDepartmentId(it.id);
+              setDeptModalVisible(false);
+            }}
+          />
+        ) : null}
 
         <SelectModal
           visible={showRoles}
@@ -1182,6 +1152,8 @@ export default function NewUserScreen() {
     </SafeAreaView>
   );
 }
+
+
 
 
 

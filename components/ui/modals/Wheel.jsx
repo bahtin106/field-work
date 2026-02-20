@@ -70,10 +70,13 @@ export default function Wheel({
     syncToNearest(y);
   };
 
-  // NEW: also sync selection when user lifts the finger, even if momentum hasn't started yet.
+  // Keep gentle inertia: only force snap on drag-end when velocity is near zero.
   const onDragEnd = (e) => {
     const y = e.nativeEvent.contentOffset?.y ?? 0;
-    syncToNearest(y);
+    const vy = Math.abs(e.nativeEvent.velocity?.y ?? 0);
+    if (vy < 0.05) {
+      syncToNearest(y);
+    }
   };
 
   return (
@@ -102,7 +105,7 @@ export default function Wheel({
       getItemLayout={(_, i) => ({ length: ITEM_HEIGHT_DP, offset: ITEM_HEIGHT_DP * i, index: i })}
       snapToOffsets={snapOffsets}
       snapToAlignment="center"
-      decelerationRate={Platform.OS === 'ios' ? 0.995 : 0.985}
+      decelerationRate={Platform.OS === 'ios' ? 0.993 : 0.985}
       bounces={false}
       overScrollMode="never"
       onMomentumScrollEnd={onMomentumEnd}

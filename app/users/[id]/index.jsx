@@ -23,9 +23,12 @@ import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone'
 import SectionHeader from '../../../components/ui/SectionHeader';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { pluralizeRu } from '../../../lib/pluralize';
 import { useEmployee, useEmployeesRealtimeSync } from '../../../src/features/employees/queries';
 import { getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { useSubscriptionGuard } from '../../../hooks/useSubscriptionGuard';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { useTheme } from '../../../theme';
 
 function withAlpha(color, a) {
@@ -102,6 +105,25 @@ export default function UserView() {
   const role = userData?.role || 'worker';
   const departmentName = userData?.departmentName || null;
   const isSuspended = userData?.isSuspended || false;
+  const blockReasonCode = String(userData?.blocked_reason || userData?.blockedReason || '').toLowerCase();
+  const isManualAdminBlock = blockReasonCode === 'manual' || blockReasonCode === 'admin_block';
+  const isLicenseBlockedRaw = (userData?.license_state || userData?.licenseState) === 'blocked_by_license';
+  const isLicenseBlocked = isLicenseBlockedRaw && !isManualAdminBlock;
+  const isBlocked = !!userData?.isBlocked || isSuspended || isLicenseBlockedRaw;
+  const blockedReasonLabel = isBlocked
+    ? (isLicenseBlocked
+      ? t('billing_member_status_no_seat', 'billing_member_status_no_seat')
+      : t('billing_member_status_admin_blocked', 'billing_member_status_admin_blocked'))
+    : '';
+  const lastSeenAt = userData?.last_seen_at || null;
+  const companyName = userData?.companyName || null;
+  const companyId = userData?.companyId || null;
+  const { useDepartments } = useCompanySettings(companyId || null);
+  const subscriptionGuard = useSubscriptionGuard(companyId);
+  const isReadOnlyBySubscription =
+    !subscriptionGuard.isLoading &&
+    String(subscriptionGuard.reason || '').startsWith('subscription_');
+  const meIsSuperAdmin = !!userData?.meIsSuperAdmin;
   const err = loadError?.message || '';
   const ROLE_LABELS = React.useMemo(
     () => ({
@@ -119,8 +141,14 @@ export default function UserView() {
   const myUid = userData?.myUid || null;
   const canEdit = meIsAdmin || (myUid && myUid === userId);
   const handleEditPress = React.useCallback(() => {
+    if (isReadOnlyBySubscription) {
+      toast.warning(
+        t('subscription_edit_unavailable_toast', 'Изменение недоступно. Оплатите подписку'),
+      );
+      return;
+    }
     router.push(`/users/${userId}/edit`);
-  }, [router, userId]);
+  }, [isReadOnlyBySubscription, router, t, toast, userId]);
 
   // Copy helpers
   const onCopyEmail = React.useCallback(async () => {
@@ -177,7 +205,97 @@ export default function UserView() {
 
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
-  const statusColor = isSuspended ? theme.colors.danger : theme.colors.success;
+  const statusColor = isBlocked ? theme.colors.danger : theme.colors.success;
+
+  const parsePgTs = React.useCallback((ts) => {
+    if (!ts) return null;
+    if (ts instanceof Date) return isNaN(ts) ? null : ts;
+    if (typeof ts !== 'string') return null;
+
+    try {
+      const d = new Date(ts.includes(' ') && !ts.includes('T') ? ts.replace(' ', 'T') : ts);
+      return isNaN(d) ? null : d;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const isOnlineNow = React.useCallback(
+    (ts) => {
+      const d = parsePgTs(ts);
+      if (!d) return false;
+      const diff = Date.now() - d.getTime();
+      const onlineWindowMs = Number(theme?.timings?.presenceOnlineWindowMs ?? 120000);
+      const futureSkewMs = Number(theme?.timings?.presenceFutureSkewMs ?? 300000);
+      return diff <= onlineWindowMs && diff >= -futureSkewMs;
+    },
+    [parsePgTs, theme?.timings?.presenceFutureSkewMs, theme?.timings?.presenceOnlineWindowMs],
+  );
+
+  const getRelativeTime = React.useCallback(
+    (now, past) => {
+      const diffMs = now - past;
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+      const diffHour = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHour / 24);
+
+      if (diffMin < 1) return t('users_relativeTime_now');
+
+      if (diffMin < 60) {
+        const n = diffMin;
+        const word = pluralizeRu(
+          n,
+          t('users_relativeTime_min_1'),
+          t('users_relativeTime_min_2_4'),
+          t('users_relativeTime_min_5'),
+        );
+        return `${n} ${word} ${t('users_relativeTime_ago')}`;
+      }
+
+      if (diffHour < 24) {
+        const n = diffHour;
+        const word = pluralizeRu(
+          n,
+          t('users_relativeTime_hour_1'),
+          t('users_relativeTime_hour_2_4'),
+          t('users_relativeTime_hour_5'),
+        );
+        return `${n} ${word} ${t('users_relativeTime_ago')}`;
+      }
+
+      if (diffDay <= 3) {
+        const n = diffDay;
+        const word = pluralizeRu(
+          n,
+          t('users_relativeTime_day_1'),
+          t('users_relativeTime_day_2_4'),
+          t('users_relativeTime_day_5'),
+        );
+        return `${n} ${word} ${t('users_relativeTime_ago')}`;
+      }
+
+      return null;
+    },
+    [t],
+  );
+
+  const presenceLabel = React.useMemo(() => {
+    if (isOnlineNow(lastSeenAt)) return t('users_online');
+    const d = parsePgTs(lastSeenAt);
+    if (!d) return t('users_lastLogin_never');
+
+    const relative = getRelativeTime(Date.now(), d.getTime());
+    if (relative) return relative;
+
+    const datePart = new Intl.DateTimeFormat(undefined, {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(d);
+    return datePart;
+  }, [getRelativeTime, isOnlineNow, lastSeenAt, parsePgTs, t]);
+  const isPresenceOnline = isOnlineNow(lastSeenAt);
 
   if (loading) {
     return (
@@ -230,6 +348,18 @@ export default function UserView() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {isReadOnlyBySubscription ? (
+          <>
+            <Card style={{ marginBottom: theme.spacing?.sm ?? 8 }}>
+              <Text style={{ color: theme.colors.warning, fontWeight: '600' }}>
+                {t(
+                  'subscription_read_only_notice',
+                  'Режим чтения: изменение недоступно до продления подписки',
+                )}
+              </Text>
+            </Card>
+          </>
+        ) : null}
         {/* Top avatar on background */}
         <View style={s.avatarContainer}>
           <View style={s.avatarXl}>
@@ -354,13 +484,28 @@ export default function UserView() {
 
         <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader>
         <Card paddedXOnly>
-          <View style={base.row}>
-            <Text style={base.label}>{t('label_department', 'label_department')}</Text>
-            <View style={base.rightWrap}>
-              <Text style={base.value}>{departmentName || t('common_dash', 'common_dash')}</Text>
-            </View>
-          </View>
-          <View style={base.sep} />
+          {meIsSuperAdmin && (
+            <>
+              <View style={base.row}>
+                <Text style={base.label}>{t('admin_users_company')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={base.value}>{companyName || companyId || t('common_dash', 'common_dash')}</Text>
+                </View>
+              </View>
+              <View style={base.sep} />
+            </>
+          )}
+          {useDepartments ? (
+            <>
+              <View style={base.row}>
+                <Text style={base.label}>{t('label_department', 'label_department')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={base.value}>{departmentName || t('common_dash', 'common_dash')}</Text>
+                </View>
+              </View>
+              <View style={base.sep} />
+            </>
+          ) : null}
           <View style={base.row}>
             <Text style={base.label}>{t('label_role', 'label_role')}</Text>
             <View style={base.rightWrap}>
@@ -372,9 +517,29 @@ export default function UserView() {
             <Text style={base.label}>{t('label_status', 'label_status')}</Text>
             <View style={base.rightWrap}>
               <Text style={[base.value, { color: statusColor }]}>
-                {isSuspended
-                  ? t('status_suspended', 'status_suspended')
+                {isBlocked
+                  ? t('status_blocked', t('status_suspended', 'status_suspended'))
                   : t('status_active', 'status_active')}
+              </Text>
+            </View>
+          </View>
+          {isBlocked && blockedReasonLabel ? (
+            <>
+              <View style={base.sep} />
+              <View style={base.row}>
+                <Text style={base.label}>{t('label_block_reason', 'label_block_reason')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={base.value}>{blockedReasonLabel}</Text>
+                </View>
+              </View>
+            </>
+          ) : null}
+          <View style={base.sep} />
+          <View style={base.row}>
+            <Text style={base.label}>{t('users_lastSeen_prefix')}</Text>
+            <View style={base.rightWrap}>
+              <Text style={[base.value, isPresenceOnline ? { color: theme.colors.success } : null]}>
+                {presenceLabel}
               </Text>
             </View>
           </View>

@@ -172,7 +172,9 @@ export default function FiltersPanel({
   // Categories composition
   const assignmentCategories = useMemo(() => {
     if (!isAssignmentMode) return [];
-    const includeUnassigned = assignment?.includeUnassigned !== false;
+    const includeUnassigned =
+      assignment?.includeUnassigned ??
+      (Array.isArray(departments) && departments.length > 0);
     const cats = [];
     if (includeUnassigned) {
       cats.push({
@@ -761,11 +763,12 @@ export default function FiltersPanel({
                 {t('users_showAll')}
               </Text>
             </Pressable>
-            {rolesOptions.map((r) => {
+            {rolesOptions.map((r, idx) => {
               const selected = Array.isArray(draft.roles) ? draft.roles.includes(r.value) : false;
+              const roleKey = String(r?.id ?? r?.value ?? `role-${idx}`);
               return (
                 <Pressable
-                  key={r.id}
+                  key={roleKey}
                   onPress={() => toggleRole(r.value)}
                   style={({ pressed }) => [
                     optionRow,

@@ -19,8 +19,8 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-// NavigationBar: dynamically imported on Android to avoid Expo Go iOS native-module error
 import { Feather } from '@expo/vector-icons';
+import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme';
 
@@ -73,10 +73,12 @@ const BaseModalImpl = (
     title = '',
     children,
     footer = null,
+    feedback = null,
     maxHeightRatio = 0.6,
     showHandle = true,
     disableBackdropClose = false,
     disablePanClose = false,
+    keyboardExtraPadding = 0,
   },
   ref,
 ) => {
@@ -89,7 +91,9 @@ const BaseModalImpl = (
 
   // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
   const [kbInset, setKbInset] = useState(0);
-  const [kbTop, setKbTop] = useState(Dimensions.get('window').height);
+  const [kbTop, setKbTop] = useState(
+    Math.max(Dimensions.get('window').height, Dimensions.get('screen').height),
+  );
 
   useEffect(() => {
     if (!rnVisible) {
@@ -100,7 +104,8 @@ const BaseModalImpl = (
     const hideE = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const subShow = Keyboard.addListener(showE, (e) => {
       try {
-        const screenH = Dimensions.get('window').height;
+        const windowH = Dimensions.get('window').height;
+        const screenH = Math.max(windowH, Dimensions.get('screen').height);
         const isIOS = Platform.OS === 'ios';
         let h = 0;
         let top = screenH;
@@ -109,8 +114,9 @@ const BaseModalImpl = (
           h = Math.max(0, endY < screenH ? screenH - endY : 0);
           top = endY;
         } else {
+          const endY = e.endCoordinates?.screenY;
           h = Math.max(0, e.endCoordinates?.height ?? 0);
-          top = screenH - h;
+          top = Number.isFinite(endY) ? endY : screenH - h;
         }
         setKbInset(h);
         setKbTop(top);
@@ -118,7 +124,7 @@ const BaseModalImpl = (
     });
     const subHide = Keyboard.addListener(hideE, () => {
       setKbInset(0);
-      setKbTop(Dimensions.get('window').height);
+      setKbTop(Math.max(Dimensions.get('window').height, Dimensions.get('screen').height));
     });
     return () => {
       try {
@@ -128,26 +134,67 @@ const BaseModalImpl = (
     };
   }, [rnVisible]);
 
-  const screenH = Dimensions.get('window').height;
-  const sheetMaxH = Math.max(220, Math.min(screenH * maxHeightRatio, screenH - (insets.top + 48)));
+  const windowH = Dimensions.get('window').height;
+  const screenH = Math.max(windowH, Dimensions.get('screen').height);
+  const sheetMaxH = Math.max(220, Math.min(windowH * maxHeightRatio, windowH - (insets.top + 48)));
+  const [cardMeasuredHeight, setCardMeasuredHeight] = useState(sheetMaxH);
   const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
+  const feedbackMessage =
+    typeof feedback === 'string' ? feedback : String(feedback?.message || '').trim();
+  const feedbackType = String(feedback?.type || 'warning');
+  const feedbackTone = useMemo(() => {
+    if (feedbackType === 'error') {
+      return {
+        border: theme.colors.danger,
+        text: theme.colors.danger,
+        bg: withAlpha(theme.colors.danger, 0.08),
+      };
+    }
+    if (feedbackType === 'success') {
+      return {
+        border: theme.colors.success,
+        text: theme.colors.success,
+        bg: withAlpha(theme.colors.success, 0.08),
+      };
+    }
+    if (feedbackType === 'info') {
+      return {
+        border: theme.colors.primary,
+        text: theme.colors.primary,
+        bg: withAlpha(theme.colors.primary, 0.08),
+      };
+    }
+    const warningColor = theme.colors.warning || theme.colors.danger;
+    return {
+      border: warningColor,
+      text: warningColor,
+      bg: withAlpha(warningColor, 0.08),
+    };
+  }, [feedbackType, theme.colors.danger, theme.colors.primary, theme.colors.success, theme.colors.warning]);
   // Only push modal if keyboard overlaps the card's bottom edge.
   const baseBottomPad = theme.spacing.md + (insets?.bottom || 0);
 
   // Clamp to prevent the modal from moving beyond the top safe area.
   const minTopGap = Math.max(12, theme.spacing.sm);
+  const effectiveCardHeight = Math.min(
+    sheetMaxH,
+    Number.isFinite(cardMeasuredHeight) && cardMeasuredHeight > 0 ? cardMeasuredHeight : sheetMaxH,
+  );
   const maxExtraBottom = Math.max(
     0,
-    screenH - sheetMaxH - (insets.top + minTopGap) - baseBottomPad,
+    screenH - effectiveCardHeight - (insets.top + minTopGap) - baseBottomPad,
   );
 
   const extraBottom = useMemo(() => {
     // Baseline bottom edge without extra padding
     const cardBottom = screenH - baseBottomPad;
     const overlap = Math.max(0, cardBottom - kbTop);
-    const need = overlap > 0 ? overlap + 8 : 0;
+    const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
+    const overlapNeed = overlap > 0 ? overlap + 8 + extraPad : 0;
+    const insetNeed = kbInset > 0 ? kbInset + extraPad : 0;
+    const need = Math.max(overlapNeed, insetNeed);
     return Math.min(need, maxExtraBottom);
-  }, [kbTop, screenH, baseBottomPad, maxExtraBottom]);
+  }, [kbInset, kbTop, screenH, baseBottomPad, maxExtraBottom, keyboardExtraPadding]);
 
   const op = useSharedValue(0);
   const ty = useSharedValue(24);
@@ -216,21 +263,25 @@ const BaseModalImpl = (
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
+
     (async () => {
       try {
-        const NavigationBar = await import('expo-navigation-bar');
         if (visible) {
-          await NavigationBar.setBehaviorAsync('overlay-swipe');
-          await NavigationBar.setBackgroundColorAsync('transparent');
-          await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
+          await applyAndroidNavigationBar(theme, {
+            behavior: 'overlay-swipe',
+            backgroundColor: 'transparent',
+          });
         } else {
-          await NavigationBar.setBehaviorAsync('inset-swipe');
-          await NavigationBar.setBackgroundColorAsync('transparent');
-          await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
+          await applyAndroidSystemBars(theme);
         }
       } catch {}
     })();
-  }, [visible, theme.mode]);
+
+    return () => {
+      if (!visible) return;
+      applyAndroidSystemBars(theme).catch(() => {});
+    };
+  }, [visible, theme]);
 
   if (!visible && !rnVisible) return null;
 
@@ -279,6 +330,10 @@ const BaseModalImpl = (
         pointerEvents="box-none"
       >
         <Animated.View
+          onLayout={(event) => {
+            const h = event?.nativeEvent?.layout?.height;
+            if (Number.isFinite(h) && h > 0) setCardMeasuredHeight(h);
+          }}
           style={[
             s.cardWrap,
             aCard,
@@ -321,7 +376,34 @@ const BaseModalImpl = (
           </Pressable>
 
           {/* Content */}
-          <View style={{ paddingHorizontal: theme.spacing.lg }}>{children}</View>
+          <View style={{ paddingHorizontal: theme.spacing.lg, flexShrink: 1, minHeight: 0 }}>
+            {children}
+          </View>
+
+          {feedbackMessage ? (
+            <View
+              style={{
+                marginTop: theme.spacing.xs,
+                marginHorizontal: theme.spacing.lg,
+                borderWidth: 1,
+                borderRadius: theme.radii.md,
+                borderColor: feedbackTone.border,
+                backgroundColor: feedbackTone.bg,
+                paddingHorizontal: theme.spacing.md,
+                paddingVertical: theme.spacing.sm,
+              }}
+            >
+              <Text
+                style={{
+                  color: feedbackTone.text,
+                  fontSize: theme.typography.sizes.sm,
+                  lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.35),
+                }}
+              >
+                {feedbackMessage}
+              </Text>
+            </View>
+          ) : null}
 
           {/* Footer */}
           {footer ? (

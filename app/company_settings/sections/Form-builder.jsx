@@ -514,7 +514,7 @@ export default function FormBuilderScreen() {
   // ===== UI =====
   if (!roleChecked) {
     return (
-      <Screen background="background" edges={['top', 'bottom']}>
+      <Screen background="background" edges={['top', 'bottom']} headerOptions={{ headerShown: false }}>
         <CenteredLoader colors={colors} text="Загрузка…" />
       </Screen>
     );
@@ -522,7 +522,7 @@ export default function FormBuilderScreen() {
 
   if (!isAdmin) {
     return (
-      <Screen background="background" edges={['top', 'bottom']}>
+      <Screen background="background" edges={['top', 'bottom']} headerOptions={{ headerShown: false }}>
         <HeaderLarge title="Конструктор формы" onBack={() => router.back()} colors={colors} />
         <CenteredLoader colors={colors} text="Только для администратора" />
       </Screen>
@@ -530,7 +530,7 @@ export default function FormBuilderScreen() {
   }
 
   return (
-    <Screen background="background" edges={['top', 'bottom']}>
+    <Screen background="background" edges={['top', 'bottom']} headerOptions={{ headerShown: false }}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={8}
