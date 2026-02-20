@@ -44,6 +44,7 @@ import Animated, {
 
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
+import { yandexDiskMedia } from '../../lib/yandexDiskIntegration';
 import { fetchFormSchema } from '../../lib/settings';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { extractStorageObjectPath } from '../../lib/storageObjectPaths';
@@ -51,6 +52,7 @@ import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 
 import * as ImageManipulator from 'expo-image-manipulator';
+import { encode as encodeBase64 } from 'base64-arraybuffer';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
@@ -102,6 +104,7 @@ export default function OrderDetails() {
   const { t } = useTranslation();
   const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'app_storage';
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
@@ -486,6 +489,7 @@ export default function OrderDetails() {
 
   const syncPhotosFromStorage = useCallback(async () => {
     if (!order?.id) return;
+    if (mediaProvider !== 'app_storage') return;
     try {
       const bucket = 'orders-photos';
       const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
@@ -505,9 +509,10 @@ export default function OrderDetails() {
     } catch (e) {
       console.warn('Sync photos error:', e);
     }
-  }, [order]);
+  }, [order, mediaProvider]);
 
   const fetchServerPhotos = useCallback(async (orderId) => {
+    if (mediaProvider !== 'app_storage') return null;
     try {
       const bucket = 'orders-photos';
       const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
@@ -529,7 +534,7 @@ export default function OrderDetails() {
       console.warn('Fetch server photos error:', e);
       return null;
     }
-  }, []);
+  }, [mediaProvider]);
 
   const fetchData = useCallback(async () => {
     if (!id) {
@@ -816,12 +821,47 @@ export default function OrderDetails() {
           { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
         );
 
-        const fileName = `${Date.now()}.jpg`;
-        const path = `orders/${order.id}/${category}/${fileName}`;
-
         const resp = await fetch(manipulated.uri);
         const ab = await resp.arrayBuffer();
         const fileData = new Uint8Array(ab);
+
+        if (mediaProvider === 'yandex_disk') {
+          const data = await yandexDiskMedia('upload', {
+            order_id: order.id,
+            category,
+            file_base64: encodeBase64(ab),
+            mime: 'image/jpeg',
+          });
+          const publicUrl = String(data?.url || '');
+          if (!publicUrl) {
+            showToast(t('order_toast_upload_error'));
+            return;
+          }
+
+          const updated = [...(order[category] || []), publicUrl];
+          let updateError = null;
+          try {
+            await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
+          } catch (e) {
+            updateError = e;
+          }
+
+          if (updateError) {
+            if (updateError?.code === 'CONFLICT' && updateError?.latest) {
+              setOrder(updateError.latest);
+              showToast('Заявка уже обновилась на другом устройстве.');
+              return;
+            }
+            showToast('Ошибка сохранения ссылки');
+            return;
+          }
+
+          setOrder({ ...order, [category]: updated });
+          showToast(t('order_toast_photo_uploaded'));
+          return;
+        }
+        const fileName = `${Date.now()}.jpg`;
+        const path = `orders/${order.id}/${category}/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
           .from('orders-photos')
@@ -869,19 +909,44 @@ export default function OrderDetails() {
 
         setOrder({ ...order, [category]: updated });
         showToast(t('order_toast_photo_uploaded'));
-        await syncPhotosFromStorage();
+        if (mediaProvider === 'app_storage') {
+          await syncPhotosFromStorage();
+        }
       } catch (e) {
         console.warn('Upload error:', e);
         showToast(t('order_toast_upload_error'));
       }
     },
-    [order, showToast, syncPhotosFromStorage, t],
+    [order, showToast, syncPhotosFromStorage, t, mediaProvider],
   );
 
   const removePhoto = useCallback(
     async (category, index) => {
       const updated = [...(order[category] || [])];
       const [removed] = updated.splice(index, 1);
+
+      if (mediaProvider === 'yandex_disk') {
+        await yandexDiskMedia('delete', {
+          order_id: order.id,
+          category,
+          url: removed,
+        });
+
+        let yError = null;
+        try {
+          await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
+        } catch (e) {
+          yError = e;
+        }
+
+        if (!yError) {
+          setOrder({ ...order, [category]: updated });
+          showToast(t('order_toast_photo_deleted'));
+        } else {
+          showToast(t('order_toast_delete_error'));
+        }
+        return;
+      }
 
       const relativePath = extractStorageObjectPath(removed, 'orders-photos');
       if (relativePath) {
@@ -898,12 +963,14 @@ export default function OrderDetails() {
       if (!error) {
         setOrder({ ...order, [category]: updated });
         showToast(t('order_toast_photo_deleted'));
-        await syncPhotosFromStorage();
+        if (mediaProvider === 'app_storage') {
+          await syncPhotosFromStorage();
+        }
       } else {
         showToast(t('order_toast_delete_error'));
       }
     },
-    [order, showToast, syncPhotosFromStorage, t],
+    [order, showToast, syncPhotosFromStorage, t, mediaProvider],
   );
 
   const canFinishOrder = useCallback(() => {
@@ -1218,28 +1285,44 @@ export default function OrderDetails() {
 
   const deleteOrderCompletely = useCallback(async () => {
     try {
-      const bucket = 'orders-photos';
       const categories = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-
-      for (const cat of categories) {
-        const listRes = await supabase.storage.from(bucket).list(`orders/${order.id}/${cat}`);
-        const files = listRes?.data || [];
-        if (files.length) {
-          const paths = files.map((f) => `orders/${order.id}/${cat}/${f.name}`);
-          await supabase.storage.from(bucket).remove(paths);
+      if (mediaProvider === 'yandex_disk') {
+        for (const cat of categories) {
+          const urls = Array.isArray(order?.[cat]) ? order[cat] : [];
+          for (const url of urls) {
+            try {
+              await yandexDiskMedia('delete', {
+                order_id: order.id,
+                category: cat,
+                url,
+              });
+            } catch {
+              // ignore cleanup errors on remote provider during hard delete
+            }
+          }
         }
-      }
+      } else {
+        const bucket = 'orders-photos';
+        for (const cat of categories) {
+          const listRes = await supabase.storage.from(bucket).list(`orders/${order.id}/${cat}`);
+          const files = listRes?.data || [];
+          if (files.length) {
+            const paths = files.map((f) => `orders/${order.id}/${cat}/${f.name}`);
+            await supabase.storage.from(bucket).remove(paths);
+          }
+        }
 
-      const allUrls = []
-        .concat(order?.contract_file || [])
-        .concat(order?.photo_before || [])
-        .concat(order?.photo_after || [])
-        .concat(order?.act_file || []);
-      const relPaths = Array.from(
-        new Set(allUrls.map((u) => extractStorageObjectPath(u, 'orders-photos')).filter(Boolean)),
-      );
-      if (relPaths.length) {
-        await supabase.storage.from(bucket).remove(relPaths);
+        const allUrls = []
+          .concat(order?.contract_file || [])
+          .concat(order?.photo_before || [])
+          .concat(order?.photo_after || [])
+          .concat(order?.act_file || []);
+        const relPaths = Array.from(
+          new Set(allUrls.map((u) => extractStorageObjectPath(u, 'orders-photos')).filter(Boolean)),
+        );
+        if (relPaths.length) {
+          await supabase.storage.from(bucket).remove(relPaths);
+        }
       }
 
       const { data, error: delErr } = await supabase
@@ -1265,7 +1348,7 @@ export default function OrderDetails() {
       console.warn('Delete error:', e);
       showToast(t('order_toast_delete_error'));
     }
-  }, [order, navigation, router, showToast, t]);
+  }, [order, navigation, router, showToast, t, mediaProvider]);
 
   const goBack = useCallback(() => {
     if (editMode) {

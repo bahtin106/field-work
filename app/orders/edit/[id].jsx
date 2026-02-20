@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
+  BackHandler,
   Keyboard,
   Pressable,
   StyleSheet,
@@ -13,7 +14,7 @@ import {
   View,
 } from 'react-native';
 
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { fetchWorkTypes, getMyCompanyId } from '../../../lib/workTypes';
 import {
@@ -29,7 +30,7 @@ import { useDepartments as useDepartmentsHook } from '../../../components/hooks/
 import { useUsers } from '../../../components/hooks/useUsers';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import Card from '../../../components/ui/Card';
-import { DateTimeModal, SelectModal } from '../../../components/ui/modals';
+import { ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
@@ -42,12 +43,13 @@ import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const HEADER_HEIGHT_FALLBACK = 56;
-const TOAST_RESET_DURATION_MS = 2500;
 const BOTTOM_SPACER_FALLBACK = 80;
 const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 
 export default function EditOrderScreen() {
+  const navigation = useNavigation();
+  const router = useRouter();
   const {
     id: rawId,
     companyId: rawCompanyId,
@@ -123,11 +125,12 @@ export default function EditOrderScreen() {
   const [departmentId, setDepartmentId] = useState(null);
   const [assignedEmployeeLabel, setAssignedEmployeeLabel] = useState('');
   const [formHydrated, setFormHydrated] = useState(false);
+  const [cancelVisible, setCancelVisible] = useState(false);
+  const [cancelKey, setCancelKey] = useState(0);
 
   // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹Рµ refs Рё СЃРѕСЃС‚РѕСЏРЅРёСЏ, РєРѕС‚РѕСЂС‹Рµ РёСЃРїРѕР»СЊР·СѓРµС‚ РєРѕРјРїРѕРЅРµРЅС‚ РґР°Р»СЊС€Рµ
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
-  const headerResetRef = useRef(null);
   const insets = useSafeAreaInsets();
   const titleRef = useRef(null);
   const descriptionRef = useRef(null);
@@ -138,7 +141,6 @@ export default function EditOrderScreen() {
   const customerNameRef = useRef(null);
   const [price, setPrice] = useState('');
   const [fuelCost, setFuelCost] = useState('');
-  const [headerLabel, setHeaderLabel] = useState(T('header_save'));
 
   // РјРѕРґР°Р»СЊРЅС‹Рµ СЃРѕСЃС‚РѕСЏРЅРёСЏ (Р±С‹Р»Рё СѓРґР°Р»РµРЅС‹ СЂР°РЅРµРµ вЂ” РІРµСЂРЅСѓС‚СЊ)
   const [showDateModal, setShowDateModal] = useState(false);
@@ -146,6 +148,7 @@ export default function EditOrderScreen() {
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
+  const allowLeaveRef = useRef(false);
   const assignedLabelRequestIdRef = useRef(0);
   const normalizeId = useCallback((value) => {
     if (value === null || value === undefined || value === '') return null;
@@ -391,6 +394,7 @@ export default function EditOrderScreen() {
         price: nextPrice,
         fuelCost: nextFuelCost,
         workTypeId: nextWorkTypeId,
+        status: nextStatus,
       });
       userEditedRef.current = false;
       hydratedOrderIdRef.current = id;
@@ -433,6 +437,7 @@ export default function EditOrderScreen() {
               price: nextPrice,
               fuelCost: nextFuelCost,
               workTypeId: resolvedWorkTypeId,
+              status: nextStatus,
             });
             userEditedRef.current = false;
           })
@@ -471,8 +476,8 @@ export default function EditOrderScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!id || hydratedOrderIdRef.current !== id || !snapshotRef.current) return;
+  const isDirty = useMemo(() => {
+    if (!id || hydratedOrderIdRef.current !== id || !snapshotRef.current) return false;
     const current = buildSnapshot({
       title,
       description,
@@ -490,8 +495,9 @@ export default function EditOrderScreen() {
       price,
       fuelCost,
       workTypeId,
+      status: statusLabel,
     });
-    userEditedRef.current = current !== snapshotRef.current;
+    return current !== snapshotRef.current;
   }, [
     id,
     title,
@@ -515,21 +521,26 @@ export default function EditOrderScreen() {
   ]);
 
   useEffect(() => {
-    if (headerResetRef.current && saving) {
-      clearTimeout(headerResetRef.current);
-      headerResetRef.current = null;
-    }
-    setHeaderLabel(saving ? T('toast_saving') : T('header_save'));
-  }, [saving]);
+    userEditedRef.current = isDirty;
+  }, [isDirty]);
 
-  useEffect(() => {
-    return () => {
-      if (headerResetRef.current) {
-        clearTimeout(headerResetRef.current);
-        headerResetRef.current = null;
-      }
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(
+      () => {
+        const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+          if (allowLeaveRef.current) return false;
+          if (isDirty) {
+            setCancelKey((k) => k + 1);
+            setCancelVisible(true);
+            return true;
+          }
+          return false;
+        });
+        return () => sub.remove();
+      },
+      [isDirty],
+    ),
+  );
 
   useFocusEffect(
     useCallback(
@@ -552,14 +563,6 @@ export default function EditOrderScreen() {
 
   const showToast = (msg, type = 'info', options) => {
     const text = String(msg || '');
-    setHeaderLabel(text);
-    if (headerResetRef.current) clearTimeout(headerResetRef.current);
-    if (!options?.sticky) {
-      headerResetRef.current = setTimeout(() => {
-        if (!saving) setHeaderLabel(T('header_save'));
-        headerResetRef.current = null;
-      }, options?.duration ?? TOAST_RESET_DURATION_MS);
-    }
     try {
       if (type === 'error') {
         toastError?.(text, options);
@@ -576,6 +579,45 @@ export default function EditOrderScreen() {
       }
     }
   };
+
+  const performLeave = useCallback(() => {
+    allowLeaveRef.current = true;
+    if (navigation && typeof navigation.goBack === 'function') {
+      navigation.goBack();
+    } else if (router && typeof router.back === 'function') {
+      router.back();
+    }
+  }, [navigation, router]);
+
+  const confirmCancel = useCallback(() => {
+    setCancelVisible(false);
+    performLeave();
+  }, [performLeave]);
+
+  const handleCancelPress = useCallback(() => {
+    if (isDirty) {
+      setCancelKey((k) => k + 1);
+      setCancelVisible(true);
+      return;
+    }
+    performLeave();
+  }, [isDirty, performLeave]);
+
+  useEffect(() => {
+    const sub = navigation.addListener('beforeRemove', (e) => {
+      if (allowLeaveRef.current || !isDirty) return;
+      e.preventDefault();
+      setCancelKey((k) => k + 1);
+      setCancelVisible(true);
+    });
+    return sub;
+  }, [navigation, isDirty]);
+
+  useEffect(() => {
+    if (isDirty) {
+      allowLeaveRef.current = false;
+    }
+  }, [isDirty]);
 
   const handleAssignmentApply = useCallback(
     (selectedId) => {
@@ -766,6 +808,7 @@ export default function EditOrderScreen() {
         price,
         fuelCost,
         workTypeId,
+        status: statusLabel,
       });
       userEditedRef.current = false;
       showToast(T('toast_success'), 'success');
@@ -846,8 +889,9 @@ export default function EditOrderScreen() {
   return (
     <>
       <EditScreenTemplate
-        rightTextLabel={headerLabel}
+        rightTextLabel={saving ? T('toast_saving') : T('header_save')}
         onRightPress={handleSave}
+        onBack={handleCancelPress}
         headerOptions={{
           headerTitleStyle: {
             fontSize: theme?.typography?.sizes?.md ?? 15,
@@ -1102,6 +1146,17 @@ export default function EditOrderScreen() {
         departments={departments}
         mode="assignment"
         assignment={assignmentPanelConfig}
+      />
+      <ConfirmModal
+        key={`cancel-${cancelKey}`}
+        visible={cancelVisible}
+        onClose={() => setCancelVisible(false)}
+        title={T('dlg_leave_title')}
+        message={T('dlg_leave_msg')}
+        confirmLabel={T('dlg_leave_confirm')}
+        cancelLabel={T('dlg_leave_cancel')}
+        confirmVariant="destructive"
+        onConfirm={confirmCancel}
       />
     </>
   );

@@ -50,6 +50,20 @@ export const SETTINGS_SECTIONS = {
       },
     ],
   },
+  INTEGRATIONS: {
+    title: T('company_settings_sections_integrations_title'),
+    items: [
+      {
+        key: 'crm_systems',
+        label: T('company_settings_sections_integrations_items_crm_systems'),
+      },
+      {
+        key: 'yandex_disk',
+        label: T('company_settings_sections_integrations_items_yandex_disk'),
+        route: '/company_settings/sections/yandex-disk',
+      },
+    ],
+  },
   DEPARTURE: {
     title: T('company_settings_sections_departure_title'),
   },

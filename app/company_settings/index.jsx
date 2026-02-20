@@ -380,6 +380,7 @@ export default function CompanySettings() {
 
   const [useDepartureTime, setUseDepartureTime] = React.useState(false);
   const [phoneMode, setPhoneMode] = React.useState('always');
+  const [mediaProvider, setMediaProvider] = React.useState('app_storage');
   const [phoneModeOpen, setPhoneModeOpen] = React.useState(false);
   const [windowBefore, setWindowBefore] = React.useState('12');
   const [windowAfter, setWindowAfter] = React.useState('6');
@@ -403,6 +404,8 @@ export default function CompanySettings() {
       setUseDepartureTime(companyData.use_departure_time);
     if (typeof companyData.worker_phone_mode === 'string')
       setPhoneMode(companyData.worker_phone_mode);
+    if (typeof companyData.media_provider === 'string')
+      setMediaProvider(companyData.media_provider);
 
     const _b = companyData.worker_phone_window_before_mins ?? null;
     const _a = companyData.worker_phone_window_after_mins ?? null;
@@ -827,6 +830,13 @@ export default function CompanySettings() {
     const map = Object.fromEntries(phoneModeOptions.map((o) => [o.id, o.label]));
     return map[phoneMode] || '';
   }, [phoneMode, phoneModeOptions]);
+  const mediaProviderLabel = React.useMemo(
+    () =>
+      mediaProvider === 'yandex_disk'
+        ? t('company_integrations_storage_provider_yandex')
+        : t('company_integrations_storage_provider_app'),
+    [mediaProvider, t],
+  );
 
   const phoneModeItems = React.useMemo(() => {
     try {
@@ -848,6 +858,7 @@ export default function CompanySettings() {
   const sectionTitles = React.useMemo(
     () => ({
       COMPANY: t('settings_sections_company_title'),
+      INTEGRATIONS: t('settings_sections_integrations_title'),
       MANAGEMENT: t('settings_sections_management_title'),
       DEPARTURE: t('settings_sections_departure_title'),
       PHONE: t('settings_sections_phone_title'),
@@ -946,6 +957,25 @@ export default function CompanySettings() {
           </View>
         </View>
 
+        {/* INTEGRATIONS */}
+        <View style={s.sectionWrap}>
+          <Text style={s.sectionTitle}>{sectionTitles.INTEGRATIONS}</Text>
+          <View style={s.card}>
+            {SETTINGS_SECTIONS.INTEGRATIONS.items.map((it, idx) => (
+              <React.Fragment key={it.key}>
+                {idx > 0 ? <View style={s.sep} /> : null}
+                <SelectField
+                  label={<Text style={s.itemLabel}>{t(`settings_integrations_${it.key}`)}</Text>}
+                  showValue={false}
+                  onPress={it.route ? go(it.route) : undefined}
+                  disabled={!it.route}
+                  onDisabledPress={!it.route ? onSoonPress : undefined}
+                />
+              </React.Fragment>
+            ))}
+          </View>
+        </View>
+
         {/* MANAGEMENT */}
         <View style={s.sectionWrap}>
           <Text style={s.sectionTitle}>{sectionTitles.MANAGEMENT}</Text>
@@ -985,6 +1015,12 @@ export default function CompanySettings() {
               label={<Text style={s.itemLabel}>{t('settings_phone_mode')}</Text>}
               value={phoneModeLabel}
               onPress={() => setPhoneModeOpen(true)}
+            />
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_departure_media_upload')}</Text>}
+              value={mediaProviderLabel}
+              onPress={go('/company_settings/sections/yandex-disk')}
             />
           </View>
         </View>
