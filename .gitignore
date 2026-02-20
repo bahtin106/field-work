@@ -16,3 +16,5 @@ ios/build/
 .easlrc
 .env
 .env.*
+backups/
+node_modules.backup/
