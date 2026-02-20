@@ -7,7 +7,10 @@ export default function OrdersLayout() {
       screenOptions={{
         headerShown: false,
         presentation: 'card',
-        animation: 'none',
+        animation: 'simple_push',
+        animationTypeForReplace: 'push',
+        gestureEnabled: true,
+        fullScreenGestureEnabled: true,
       }}
     >
       <Stack.Screen name="index" options={{ headerShown: false, presentation: 'card' }} />

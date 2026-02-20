@@ -225,6 +225,7 @@ function RootLayoutInner() {
               screenOptions={{
                 headerShown: false,
                 animation: 'simple_push',
+                animationTypeForReplace: 'push',
                 gestureEnabled: true,
                 fullScreenGestureEnabled: true,
                 contentStyle: { backgroundColor: theme.colors.background },
@@ -234,11 +235,11 @@ function RootLayoutInner() {
               <Stack.Screen name="orders" />
               <Stack.Screen
                 name="app_settings/AppSettings"
-                options={{ title: 'Настройки приложения', animation: 'none' }}
+                options={{ title: 'Настройки приложения' }}
               />
               <Stack.Screen
                 name="company_settings/index"
-                options={{ title: 'Настройки компании', animation: 'none' }}
+                options={{ title: 'Настройки компании' }}
               />
               <Stack.Screen name="users/index" options={{ title: 'Users' }} />
               <Stack.Screen name="users/new" options={{ title: 'New User' }} />
