@@ -1,7 +1,8 @@
 // components/ui/TextField.jsx
 import FeatherIcon from '@expo/vector-icons/Feather';
 import React, { forwardRef, useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { deriveNextPasswordValue, maskPasswordValue } from '../../lib/passwordInputMasking';
 import { t as T } from '../../src/i18n';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
@@ -41,6 +42,7 @@ const TextField = forwardRef(function TextField(
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
+  const lastKeyRef = React.useRef(null);
   // Для управления видимостью пароля через toggle кнопку
   const [showPassword, setShowPassword] = useState(false);
   const baseInputHeight =
@@ -100,6 +102,26 @@ const TextField = forwardRef(function TextField(
 
   // Правильное вычисление secureTextEntry: скрываем пароль ТОЛЬКО если это поле пароля И showPassword=false
   const effectiveSecureTextEntry = secureTextEntry ? !showPassword : false;
+  const effectiveValue = value != null ? String(value) : '';
+  const useInstantMasking = Platform.OS === 'android' && secureTextEntry && effectiveSecureTextEntry;
+  const displayedValue = useInstantMasking ? maskPasswordValue(effectiveValue) : effectiveValue;
+  const handleInputChange = React.useCallback(
+    (text) => {
+      if (!useInstantMasking) {
+        handleChangeText(text);
+        return;
+      }
+
+      const derivedValue = deriveNextPasswordValue({
+        currentValue: effectiveValue,
+        inputText: text,
+        lastKey: lastKeyRef.current,
+      });
+      lastKeyRef.current = null;
+      handleChangeText(derivedValue);
+    },
+    [effectiveValue, handleChangeText, useInstantMasking],
+  );
 
   return (
     <View style={style}>
@@ -109,16 +131,22 @@ const TextField = forwardRef(function TextField(
         <View style={s.inputBox}>
           <TextInput
             ref={inputRef}
-            value={value != null ? String(value) : ''}
-            onChangeText={handleChangeText}
+            value={displayedValue}
+            onChangeText={handleInputChange}
             placeholder={placeholder ? String(placeholder) : undefined}
             placeholderTextColor={theme.colors.inputPlaceholder}
-            keyboardType={keyboardType || 'default'}
-            secureTextEntry={effectiveSecureTextEntry}
+            keyboardType={
+              keyboardType ||
+              (secureTextEntry ? (Platform.OS === 'android' ? 'visible-password' : 'default') : 'default')
+            }
+            secureTextEntry={useInstantMasking ? false : effectiveSecureTextEntry}
             autoCorrect={false}
             autoComplete={secureTextEntry ? 'password' : undefined}
             textContentType={secureTextEntry ? 'password' : undefined}
             importantForAutofill={secureTextEntry ? 'yes' : 'auto'}
+            onKeyPress={(e) => {
+              lastKeyRef.current = e?.nativeEvent?.key ?? null;
+            }}
             multiline={effectiveMultiline}
             numberOfLines={numberOfLines}
             underlineColorAndroid="transparent"
@@ -232,16 +260,20 @@ export function SelectField({
   label,
   value,
   onPress,
+  onDisabledPress,
   right, // optional custom right ReactNode
   showValue = true, // when false -> only chevron shown
   disabled = false,
   style,
   dense = false, // NEW: compact row height
   alignValueLeft = false, // NEW: value aligned left
+  valueNumberOfLines = 1,
 }) {
   const { theme } = useTheme();
   const base = listItemStyles(theme);
   const s = selectStyles(theme);
+  const resolvedOnPress = disabled ? onDisabledPress : onPress;
+  const isPressDisabled = typeof resolvedOnPress !== 'function';
   const [rowWidth, setRowWidth] = React.useState(null);
   const chevronSize = theme.components.listItem.chevronSize || 20;
   const computedValueMaxWidth = React.useMemo(() => {
@@ -253,11 +285,11 @@ export function SelectField({
   }, [rowWidth, chevronSize]);
   return (
     <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      android_ripple={disabled ? undefined : { color: theme.colors.ripple, borderless: false }}
+      onPress={resolvedOnPress}
+      disabled={isPressDisabled}
+      android_ripple={isPressDisabled ? undefined : { color: theme.colors.ripple, borderless: false }}
       accessibilityRole="button"
-      accessibilityLabel={String((label || '') + ' — ' + (value || ''))}
+      accessibilityLabel={String((label || '') + ' - ' + (value || ''))}
     >
       <View
         onLayout={(e) => {
@@ -329,7 +361,7 @@ export function SelectField({
                     s.value,
                     computedValueMaxWidth ? { maxWidth: computedValueMaxWidth } : null,
                   ]}
-                  numberOfLines={1}
+                  numberOfLines={valueNumberOfLines}
                   ellipsizeMode="tail"
                   allowFontScaling
                 >

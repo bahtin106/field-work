@@ -18,9 +18,21 @@ export default function SelectModal({
   initialSearch = '',
   maxHeightRatio = 0.75,
   selectedId = null,
+  initialScrollIndex = null,
+  isItemSelected,
+  listBottomInset,
+  listFooter,
+  searchLabel = T('common_search'),
+  searchPlaceholder = T('common_start_typing'),
 }) {
   const { theme } = useTheme();
   const s = useMemo(() => styles(theme), [theme]);
+  const itemHeight = theme.components?.listItem?.height ?? 52;
+  const separatorHeight = theme.spacing.sm;
+  const rowStride = itemHeight + separatorHeight;
+  const listBottomGap = theme.spacing.lg;
+  const bottomInset =
+    typeof listBottomInset === 'number' ? listBottomInset : theme.spacing.xxxl + theme.spacing.md;
 
   const [query, setQuery] = useState(initialSearch);
   React.useEffect(() => {
@@ -41,9 +53,18 @@ export default function SelectModal({
     );
   }, [items, query]);
 
+  const isSelectedItem = React.useCallback(
+    (item) => {
+      if (typeof isItemSelected === 'function') return !!isItemSelected(item, selectedId);
+      if (selectedId == null) return false;
+      return String(item?.id) === String(selectedId);
+    },
+    [isItemSelected, selectedId],
+  );
+
   const renderDefaultItem = ({ item }) => {
     const disabled = !!item.disabled;
-    const isSelected = selectedId && item.id === selectedId;
+    const isSelected = isSelectedItem(item);
     const handlePress = () => {
       if (disabled) return;
       // Если у элемента есть свой onPress, вызываем его
@@ -98,10 +119,10 @@ export default function SelectModal({
       {searchable ? (
         <View style={{ marginBottom: theme.spacing.sm }}>
           <TextField
-            label={T('common_search')}
+            label={searchLabel}
             value={query}
             onChangeText={setQuery}
-            placeholder={T('common_start_typing')}
+            placeholder={searchPlaceholder}
             returnKeyType="search"
           />
         </View>
@@ -111,21 +132,52 @@ export default function SelectModal({
         data={data}
         keyExtractor={(it, i) => String(it.id ?? i)}
         renderItem={renderItem || renderDefaultItem}
+        initialScrollIndex={
+          Number.isInteger(initialScrollIndex) && initialScrollIndex >= 0
+            ? initialScrollIndex
+            : undefined
+        }
+        getItemLayout={(_items, index) => ({
+          length: itemHeight,
+          offset: rowStride * index,
+          index,
+        })}
+        initialNumToRender={Math.max(1, data.length)}
+        maxToRenderPerBatch={Math.max(1, data.length)}
+        windowSize={Math.max(3, data.length)}
+        removeClippedSubviews={false}
         ItemSeparatorComponent={() => <View style={{ height: theme.spacing.sm }} />}
-        contentContainerStyle={{ paddingTop: theme.spacing.sm, paddingBottom: theme.spacing.lg }}
-        style={{ flexGrow: 0 }}
+        contentContainerStyle={{
+          paddingTop: theme.spacing.sm,
+          paddingRight: theme.spacing.xs,
+          paddingBottom: bottomInset,
+        }}
+        style={{ flexGrow: 0, flexShrink: 1, minHeight: 0, paddingRight: theme.spacing.xs }}
+        scrollIndicatorInsets={{
+          top: theme.spacing.sm,
+          bottom: bottomInset,
+          right: 0,
+        }}
+        ListFooterComponent={listFooter || <View style={{ height: bottomInset }} />}
+        onScrollToIndexFailed={() => {}}
         keyboardShouldPersistTaps="handled"
       />
+      <View style={{ height: listBottomGap }} />
 
       {footer ? <View style={{ marginTop: theme.spacing.sm }}>{footer}</View> : null}
     </BaseModal>
   );
 }
 
-const styles = (t) =>
-  StyleSheet.create({
+const styles = (t) => {
+  const radioSize = t.components?.radio?.size ?? t.icons?.md ?? 22;
+  const radioDot =
+    t.components?.radio?.dot ??
+    Math.max(t.components?.radio?.dotMin ?? 6, Math.round(radioSize / 2 - 3));
+  const radioBorder = t.components?.radio?.borderWidth ?? 1.5;
+  return StyleSheet.create({
     item: {
-      minHeight: 52,
+      height: t.components?.listItem?.height ?? 52,
       paddingHorizontal: t.spacing.lg,
       paddingVertical: 10,
       flexDirection: 'row',
@@ -145,24 +197,25 @@ const styles = (t) =>
     itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
     itemTitleSelected: { color: t.colors.text },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
-    itemRight: { marginLeft: 8, alignSelf: 'center' },
+    itemRight: { marginLeft: t.spacing.sm, alignSelf: 'center' },
     radioButton: {
-      width: 22,
-      height: 22,
-      borderRadius: 11,
-      borderWidth: 1.5,
-      borderColor: '#C7C7CC',
+      width: radioSize,
+      height: radioSize,
+      borderRadius: radioSize / 2,
+      borderWidth: radioBorder,
+      borderColor: t.colors.inputBorder,
       alignItems: 'center',
       justifyContent: 'center',
     },
     radioButtonSelected: {
       borderColor: t.colors.primary,
-      borderWidth: 1.5,
+      borderWidth: radioBorder,
     },
     radioDot: {
-      width: 7,
-      height: 7,
-      borderRadius: 3.5,
+      width: radioDot,
+      height: radioDot,
+      borderRadius: radioDot / 2,
       backgroundColor: t.colors.primary,
     },
   });
+};

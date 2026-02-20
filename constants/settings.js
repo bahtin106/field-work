@@ -26,7 +26,7 @@ export const SETTINGS_SECTIONS = {
       {
         key: 'notifications',
         label: T('company_settings_sections_management_items_notifications'),
-        route: '/company_settings/sections/notificationSettings',
+        route: '/company_settings/sections/notifications',
       },
       {
         key: 'access',
@@ -36,17 +36,17 @@ export const SETTINGS_SECTIONS = {
       {
         key: 'form_builder',
         label: T('company_settings_sections_management_items_form_builder'),
-        route: '/company_settings/sections/form-builder',
+        route: '/company_settings/sections/field-editor',
       },
       {
         key: 'work_types',
         label: T('company_settings_sections_management_items_work_types'),
-        route: '/company_settings/sections/workTypesSettings',
+        route: '/company_settings/sections/WorkTypesSettings',
       },
       {
         key: 'departments',
         label: T('company_settings_sections_management_items_departments'),
-        route: '/company_settings/sections/departmentsSettings',
+        route: '/company_settings/sections/DepartmentsSettings',
       },
     ],
   },

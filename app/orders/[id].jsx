@@ -1,6 +1,5 @@
 // removed Feather icons usage from this file per request
 import { useFocusEffect } from '@react-navigation/native';
-import { decode } from 'base64-arraybuffer';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { BlurView } from 'expo-blur';
@@ -28,8 +27,6 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import * as NavigationBar from 'expo-navigation-bar';
-
 import {
   PanGestureHandler,
   PinchGestureHandler,
@@ -46,11 +43,13 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { fetchFormSchema } from '../../lib/settings';
+import { applyAndroidSystemBars } from '../../lib/systemBars';
+import { extractStorageObjectPath } from '../../lib/storageObjectPaths';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 
-import * as FileSystem from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 
 import AppHeader from '../../components/navigation/AppHeader';
@@ -61,12 +60,14 @@ import LabelValueRow from '../../components/ui/LabelValueRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { usePermissions } from '../../lib/permissions';
 import {
+  ensureRequestAssigneeNamePrefetch,
   ensureRequestPrefetch,
   useRequest,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { updateRequestWithVersion } from '../../src/features/requests/api';
 import { queryKeys } from '../../src/shared/query/queryKeys';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -75,6 +76,26 @@ import { useQueryClient } from '@tanstack/react-query';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+const REQUEST_SYNC_FIELDS = [
+  'id',
+  'updated_at',
+  'status',
+  'assigned_to',
+  'time_window_start',
+  'title',
+  'comment',
+  'region',
+  'city',
+  'street',
+  'house',
+  'fio',
+  'phone',
+  'department_id',
+  'work_type_id',
+  'price',
+  'fuel_cost',
+  'urgent',
+];
 
 export default function OrderDetails() {
   const { theme } = useTheme();
@@ -87,19 +108,28 @@ export default function OrderDetails() {
 
   const applyNavBar = useCallback(async () => {
     try {
-      await NavigationBar.setButtonStyleAsync(theme.mode === 'dark' ? 'light' : 'dark');
+      await applyAndroidSystemBars(theme);
     } catch {}
   }, [theme]);
 
   const pathname = usePathname();
+  const __params = useLocalSearchParams();
+  const idParam = __params?.id;
   const id = useMemo(() => {
+    const fromParams = Array.isArray(idParam) ? idParam[0] : idParam;
+    if (fromParams != null && String(fromParams).trim() !== '') {
+      return String(fromParams).trim();
+    }
     const path = String(pathname || '');
     const clean = path.split('?')[0];
     const parts = clean.split('/').filter(Boolean);
-    return parts.length ? parts[parts.length - 1] : null;
-  }, [pathname]);
-
-  const __params = useLocalSearchParams();
+    const last = parts.length ? String(parts[parts.length - 1]).trim() : '';
+    // Ignore known non-id route segments to avoid invalid UUID requests.
+    if (!last || ['orders', 'my-orders', 'all-orders', 'calendar', 'new'].includes(last)) {
+      return null;
+    }
+    return last;
+  }, [idParam, pathname]);
   const returnTo = useMemo(() => {
     try {
       return Reflect.has(__params, 'returnTo') ? String(__params.returnTo) : '/orders/my-orders';
@@ -148,7 +178,12 @@ export default function OrderDetails() {
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
+  const [useDepartments, setUseDepartmentsFlag] = useState(false);
   const [companyId, setCompanyId] = useState(null);
+  const subscriptionGuard = useSubscriptionGuard(companyId);
+  const isReadOnlyBySubscription =
+    !subscriptionGuard.isLoading &&
+    String(subscriptionGuard.reason || '').startsWith('subscription_');
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
@@ -156,11 +191,16 @@ export default function OrderDetails() {
   const [amount, setAmount] = useState('');
   const [gsm, setGsm] = useState('');
   const canEditFinances = role === 'admin' || role === 'dispatcher';
+  const normalizeId = useCallback((value) => {
+    if (value === null || value === undefined || value === '') return null;
+    return String(value);
+  }, []);
   const workTypeName = useMemo(() => {
-    if (!workTypeId) return null;
-    const found = workTypes.find((w) => w.id === workTypeId);
+    const normalized = normalizeId(workTypeId);
+    if (!normalized) return null;
+    const found = workTypes.find((w) => normalizeId(w?.id) === normalized);
     return found?.name || null;
-  }, [workTypeId, workTypes]);
+  }, [normalizeId, workTypeId, workTypes]);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -175,7 +215,7 @@ export default function OrderDetails() {
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
-  const { data: requestData } = useRequest(id, {
+  const { data: requestData, refetch: refetchRequestData } = useRequest(id, {
     enabled: !!id,
     staleTime: 45 * 1000,
     refetchOnMount: false,
@@ -194,18 +234,20 @@ export default function OrderDetails() {
   const tapRef = useRef(null);
   const pinchRef = useRef(null);
 
+  const buildOrderSyncToken = useCallback((entity) => {
+    if (!entity || typeof entity !== 'object') return '';
+    const payload = {};
+    for (const field of REQUEST_SYNC_FIELDS) {
+      payload[field] = entity[field] ?? null;
+    }
+    return JSON.stringify(payload);
+  }, []);
+
   const hasMeaningfulOrderDiff = useCallback((prevOrder, nextOrder) => {
     if (!prevOrder) return true;
     if (!nextOrder) return false;
-    return (
-      prevOrder.id !== nextOrder.id ||
-      (prevOrder.updated_at || null) !== (nextOrder.updated_at || null) ||
-      (prevOrder.status || null) !== (nextOrder.status || null) ||
-      (prevOrder.assigned_to || null) !== (nextOrder.assigned_to || null) ||
-      (prevOrder.time_window_start || null) !== (nextOrder.time_window_start || null) ||
-      (prevOrder.title || null) !== (nextOrder.title || null)
-    );
-  }, []);
+    return buildOrderSyncToken(prevOrder) !== buildOrderSyncToken(nextOrder);
+  }, [buildOrderSyncToken]);
 
   const showToast = useCallback((msg) => {
     if (Platform.OS === 'android') {
@@ -298,6 +340,7 @@ export default function OrderDetails() {
 
   const getField = useCallback(
     (key) => {
+      if (key === 'department_id' && !useDepartments) return null;
       const arr = schemaEdit?.fields || [];
       const found = arr.find((f) => f.field_key === key);
       if (found) return found;
@@ -305,13 +348,13 @@ export default function OrderDetails() {
         key === 'time_window_start' ||
         key === 'assigned_to' ||
         key === 'status' ||
-        key === 'department_id'
+        (key === 'department_id' && useDepartments)
       )
         return { field_key: key };
       if (arr.length === 0) return { field_key: key };
       return null;
     },
-    [schemaEdit],
+    [schemaEdit, useDepartments],
   );
 
   const hasField = useCallback((key) => !!getField(key), [getField]);
@@ -645,20 +688,87 @@ export default function OrderDetails() {
         .order('last_name', { ascending: true });
       setUsers(execList || []);
 
-      const { data: deptList } = await supabase
-        .from('departments')
-        .select('id, name')
-        .order('name', { ascending: true });
-      setDepartments(deptList || []);
+      let nextDepartments = [];
+      try {
+        const orderCompanyId = fetchedOrder?.company_id || null;
+        let useDepartmentsEnabled = false;
+        if (orderCompanyId) {
+          const { data: companyRow } = await supabase
+            .from('companies')
+            .select('use_departments')
+            .eq('id', orderCompanyId)
+            .maybeSingle();
+          useDepartmentsEnabled = companyRow?.use_departments !== false;
+          setUseDepartmentsFlag(useDepartmentsEnabled);
+          if (useDepartmentsEnabled) {
+            const { data: deptList } = await supabase
+              .from('departments')
+              .select('id, name')
+              .eq('is_enabled', true)
+              .eq('company_id', orderCompanyId)
+              .order('name', { ascending: true });
+            nextDepartments = deptList || [];
+          }
+        }
+        if (!orderCompanyId) setUseDepartmentsFlag(false);
+      } catch {}
+      setDepartments(nextDepartments);
     } catch (e) {
       console.warn('Fetch data error:', e);
       setOrderReady(true);
     }
   }, [id, fetchServerPhotos, hasMeaningfulOrderDiff, makeSnapshotFromOrder, queryClient]);
 
-  const canEdit = useCallback(
+  const canEditByRole = useCallback(
     () => has('canEditOrders') && !companySettings?.recalc_in_progress,
     [has, companySettings],
+  );
+  const canEdit = useCallback(
+    () => canEditByRole() && !isReadOnlyBySubscription,
+    [canEditByRole, isReadOnlyBySubscription],
+  );
+
+  const warmEditScreenCache = useCallback(
+    async ({ force = false } = {}) => {
+      if (!id || !canEdit()) return;
+      const registry = getPrefetchRegistry();
+      await registry.run(
+        `order-edit:${id}`,
+        async () => {
+          try {
+            await ensureRequestPrefetch(queryClient, id);
+          } catch {}
+
+          const tasks = [];
+          if (companyId) {
+            tasks.push(fetchWorkTypes(companyId, { includeDisabled: true }));
+          } else {
+            tasks.push(
+              (async () => {
+                try {
+                  const cid = await getMyCompanyId();
+                  if (cid) {
+                    setCompanyId(cid);
+                    await fetchWorkTypes(cid, { includeDisabled: true });
+                  }
+                } catch {}
+              })(),
+            );
+          }
+
+          const assignedId = order?.assigned_to || requestData?.assigned_to || null;
+          if (assignedId) {
+            tasks.push(ensureRequestAssigneeNamePrefetch(queryClient, assignedId));
+          }
+
+          if (tasks.length) {
+            await Promise.allSettled(tasks);
+          }
+        },
+        { force },
+      );
+    },
+    [id, canEdit, queryClient, companyId, order?.assigned_to, requestData?.assigned_to],
   );
 
   const handlePhonePress = useCallback(() => {
@@ -709,20 +819,28 @@ export default function OrderDetails() {
         const fileName = `${Date.now()}.jpg`;
         const path = `orders/${order.id}/${category}/${fileName}`;
 
-        const base64 = await FileSystem.readAsStringAsync(manipulated.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        const arrayBuffer = decode(base64);
+        const resp = await fetch(manipulated.uri);
+        const ab = await resp.arrayBuffer();
+        const fileData = new Uint8Array(ab);
 
         const { error: uploadError } = await supabase.storage
           .from('orders-photos')
-          .upload(path, arrayBuffer, {
+          .upload(path, fileData, {
             cacheControl: '3600',
-            upsert: true,
+            upsert: false,
             contentType: 'image/jpeg',
           });
 
         if (uploadError) {
+          console.warn('[order-photo-upload] storage upload error', {
+            message: uploadError?.message,
+            name: uploadError?.name,
+            statusCode: uploadError?.statusCode,
+            error: uploadError?.error,
+            path,
+            bucket: 'orders-photos',
+            size: fileData?.length,
+          });
           showToast('Ошибка загрузки фото');
           return;
         }
@@ -765,7 +883,7 @@ export default function OrderDetails() {
       const updated = [...(order[category] || [])];
       const [removed] = updated.splice(index, 1);
 
-      const relativePath = removed?.split('/storage/v1/object/public/orders-photos/')[1];
+      const relativePath = extractStorageObjectPath(removed, 'orders-photos');
       if (relativePath) {
         await supabase.storage.from('orders-photos').remove([relativePath]);
       }
@@ -1117,9 +1235,9 @@ export default function OrderDetails() {
         .concat(order?.photo_before || [])
         .concat(order?.photo_after || [])
         .concat(order?.act_file || []);
-      const relPaths = allUrls
-        .map((u) => u?.split('/storage/v1/object/public/orders-photos/')[1])
-        .filter(Boolean);
+      const relPaths = Array.from(
+        new Set(allUrls.map((u) => extractStorageObjectPath(u, 'orders-photos')).filter(Boolean)),
+      );
       if (relPaths.length) {
         await supabase.storage.from(bucket).remove(relPaths);
       }
@@ -1457,13 +1575,7 @@ export default function OrderDetails() {
 
   useEffect(() => {
     if (!requestData || editMode) return;
-    const syncToken = JSON.stringify({
-      id: requestData?.id ?? null,
-      updated_at: requestData?.updated_at ?? null,
-      status: requestData?.status ?? null,
-      assigned_to: requestData?.assigned_to ?? null,
-      time_window_start: requestData?.time_window_start ?? null,
-    });
+    const syncToken = buildOrderSyncToken(requestData);
     if (lastRequestSyncRef.current === syncToken) return;
     lastRequestSyncRef.current = syncToken;
 
@@ -1472,8 +1584,11 @@ export default function OrderDetails() {
       const merged = { ...prev, ...requestData };
       return hasMeaningfulOrderDiff(prev, merged) ? merged : prev;
     });
+    if (Object.prototype.hasOwnProperty.call(requestData, 'work_type_id')) {
+      setWorkTypeId(requestData?.work_type_id ?? null);
+    }
     if (!orderReady) setOrderReady(true);
-  }, [requestData, editMode, hasMeaningfulOrderDiff, orderReady]);
+  }, [requestData, editMode, hasMeaningfulOrderDiff, orderReady, buildOrderSyncToken]);
 
   useEffect(() => {
     if (!order?.id || firstContentTrackedRef.current) return;
@@ -1515,7 +1630,9 @@ export default function OrderDetails() {
         if (!alive) return;
         setCompanyId(cid);
         if (cid) {
-          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid, {
+            includeDisabled: true,
+          });
           if (!alive) return;
           setUseWorkTypesFlag(!!flag);
           setWorkTypes(types || []);
@@ -1614,6 +1731,41 @@ export default function OrderDetails() {
 
   useFocusEffect(
     useCallback(() => {
+      if (id) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
+        refetchRequestData?.();
+      }
+    }, [id, queryClient, refetchRequestData]),
+  );
+
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        if (!id) return;
+        queryClient.cancelQueries({ queryKey: queryKeys.requests.detail(id) });
+      },
+      [id, queryClient],
+    ),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const task = InteractionManager.runAfterInteractions(() => {
+        if (cancelled) return;
+        warmEditScreenCache();
+      });
+      return () => {
+        cancelled = true;
+        try {
+          task?.cancel?.();
+        } catch {}
+      };
+    }, [warmEditScreenCache]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
       const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
         if (editMode) {
           requestCloseEdit();
@@ -1662,10 +1814,33 @@ export default function OrderDetails() {
         options={{
           headerTitleAlign: 'left',
           title: shortTitle,
-          rightTextLabel: canEdit() && !editMode && order?.id ? t('order_details_edit') : undefined,
+          headerTitleStyle: {
+            fontSize: theme?.typography?.sizes?.md ?? 15,
+            fontWeight: theme?.typography?.weight?.semibold ?? '600',
+          },
+          rightTextLabel: canEditByRole() && !editMode && order?.id ? t('order_details_edit') : undefined,
           onRightPress:
-            canEdit() && !editMode && order?.id
-              ? () => router.push(`/orders/edit/${order.id}`)
+            canEditByRole() && !editMode && order?.id
+              ? () => {
+                  if (isReadOnlyBySubscription) {
+                    showToast(
+                      t(
+                        'subscription_edit_unavailable_toast',
+                        'Изменение недоступно. Оплатите подписку',
+                      ),
+                    );
+                    return;
+                  }
+                  warmEditScreenCache({ force: true });
+                  router.push({
+                    pathname: `/orders/edit/${order.id}`,
+                    params: {
+                      ...(companyId ? { companyId } : {}),
+                      ...(order?.work_type_id ? { workTypeId: String(order.work_type_id) } : {}),
+                      ...(workTypeName ? { workTypeName: String(workTypeName) } : {}),
+                    },
+                  });
+                }
               : undefined,
         }}
       />
@@ -1682,7 +1857,21 @@ export default function OrderDetails() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-            <SectionHeader>{t('order_details_general_data')}</SectionHeader>
+            {isReadOnlyBySubscription ? (
+              <>
+                <Card style={{ marginBottom: theme.spacing?.sm ?? 8 }}>
+                  <Text style={{ color: theme.colors.warning, fontWeight: '600' }}>
+                    {t(
+                      'subscription_read_only_notice',
+                      'Режим чтения: изменение недоступно до продления подписки',
+                    )}
+                  </Text>
+                </Card>
+              </>
+            ) : null}
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('order_details_general_data')}
+            </SectionHeader>
             <Card paddedXOnly>
                 <View style={base.row}>
                   <Text style={base.label}>{t('order_details_status')}</Text>
@@ -1889,7 +2078,7 @@ export default function OrderDetails() {
             {!isFree && renderPhotoRow(t('order_details_photo_after'), 'photo_after')}
             {!isFree && renderPhotoRow(t('order_details_act'), 'act_file')}
 
-            {!order.assigned_to && (role === 'worker' || has('canAssignExecutors')) && (
+            {!order.assigned_to && canEdit() && (role === 'worker' || has('canAssignExecutors')) && (
               <Pressable
                 style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
                 onPress={onAcceptOrder}
@@ -1898,7 +2087,7 @@ export default function OrderDetails() {
               </Pressable>
             )}
 
-            {order.status !== 'Завершённая' && !isFree && (
+            {order.status !== 'Завершённая' && !isFree && canEdit() && (
               <Pressable
                 style={({ pressed }) => [
                   styles.finishButton,
@@ -1911,7 +2100,7 @@ export default function OrderDetails() {
               </Pressable>
             )}
 
-            {has('canDeleteOrders') && (
+            {has('canDeleteOrders') && canEdit() && (
               <Pressable
                 onPress={() => setDeleteModalVisible(true)}
                 style={({ pressed }) => [
@@ -1942,10 +2131,12 @@ export default function OrderDetails() {
       >
         <View style={styles.modalContainer}>
           <Text style={styles.modalTitle}>{t('order_modal_work_type_select')}</Text>
-          {workTypes.length === 0 ? (
+          {(workTypes || []).filter((item) => item?.is_enabled !== false).length === 0 ? (
             <Text style={styles.modalText}>{t('order_modal_work_type_empty')}</Text>
           ) : (
-            workTypes.map((t) => (
+            (workTypes || [])
+              .filter((item) => item?.is_enabled !== false)
+              .map((t) => (
               <Pressable
                 key={t.id}
                 onPress={() => {
@@ -2150,44 +2341,46 @@ export default function OrderDetails() {
         </View>
       </Modal>
 
-      <Modal
-        isVisible={departmentModalVisible}
-        onBackdropPress={() => setDepartmentModalVisible(false)}
-        useNativeDriver
-        animationIn="slideInUp"
-        animationOut="slideOutDown"
-        animationInTiming={200}
-        animationOutTiming={200}
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_select_department')}</Text>
-          {departments.length > 0 ? (
-            departments.map((d) => (
-              <Pressable
-                key={d.id}
-                onPress={() => {
-                  setDepartmentId(d.id);
-                  setDepartmentModalVisible(false);
-                }}
-                style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.7 }]}
-              >
-                <Text style={styles.assigneeText}>{d.name}</Text>
-              </Pressable>
-            ))
-          ) : (
-            <Text style={styles.modalText}>{t('order_modal_no_departments')}</Text>
-          )}
-          <View style={[styles.modalActions, { marginTop: theme.spacing?.sm || 8 }]}>
-            <Button
-              title={t('btn_cancel')}
-              onPress={() => setDepartmentModalVisible(false)}
-              variant="secondary"
-            />
+      {useDepartments ? (
+        <Modal
+          isVisible={departmentModalVisible}
+          onBackdropPress={() => setDepartmentModalVisible(false)}
+          useNativeDriver
+          animationIn="slideInUp"
+          animationOut="slideOutDown"
+          animationInTiming={200}
+          animationOutTiming={200}
+          backdropOpacity={0.3}
+          onModalHide={applyNavBar}
+        >
+          <View style={styles.modalContainer}>
+            <Text style={styles.modalTitle}>{t('order_modal_select_department')}</Text>
+            {departments.length > 0 ? (
+              departments.map((d) => (
+                <Pressable
+                  key={d.id}
+                  onPress={() => {
+                    setDepartmentId(d.id);
+                    setDepartmentModalVisible(false);
+                  }}
+                  style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.7 }]}
+                >
+                  <Text style={styles.assigneeText}>{d.name}</Text>
+                </Pressable>
+              ))
+            ) : (
+              <Text style={styles.modalText}>{t('order_modal_no_departments')}</Text>
+            )}
+            <View style={[styles.modalActions, { marginTop: theme.spacing?.sm || 8 }]}>
+              <Button
+                title={t('btn_cancel')}
+                onPress={() => setDepartmentModalVisible(false)}
+                variant="secondary"
+              />
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      ) : null}
 
       <Modal
         isVisible={statusModalVisible}

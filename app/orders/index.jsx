@@ -3,12 +3,12 @@
 // app/orders/index.jsx
 import { useFocusEffect } from '@react-navigation/native';
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 import React from 'react';
 import {
   ActivityIndicator,
   Animated,
   BackHandler,
-  InteractionManager,
   Platform,
   StyleSheet,
   Text,
@@ -17,11 +17,9 @@ import {
 import { useAuth } from '../../components/hooks/useAuth';
 import UniversalHome from '../../components/UniversalHome';
 import appReadyState from '../../lib/appReadyState';
+import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
 import { getUserRole, subscribeAuthRole } from '../../lib/getUserRole';
-import { onSessionEpoch } from '../../lib/sessionEpoch';
 import { supabase } from '../../lib/supabase';
-import { listCalendarRequests, listRequests } from '../../src/features/requests/api';
-import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const VERBOSE_ORDERS_BOOT_LOGS = __DEV__ && globalThis?.__VERBOSE_ORDERS_BOOT_LOGS__ === true;
@@ -133,6 +131,7 @@ async function fetchCanViewAll() {
 export default function IndexScreen() {
   const { theme } = useTheme();
   const qc = useQueryClient();
+  const router = useRouter();
   const { user: authUser, profile: authProfile } = useAuth();
 
   // Параллельно тянем разрешение на просмотр всех заявок (кэш общий через React Query)
@@ -180,6 +179,7 @@ export default function IndexScreen() {
     placeholderData: (prev) => prev,
   });
   const role = hasTrustedProfileRole ? profileRole : roleFromQuery || profileRole || 'worker';
+  const companyId = authProfile?.company_id || null;
   const isRoleLoading = hasTrustedProfileRole ? false : roleQueryLoading;
 
   // КРИТИЧНО: Гарантируем что isLoading сбросится через 8 секунд максимум
@@ -202,70 +202,34 @@ export default function IndexScreen() {
     return () => unsub && unsub();
   }, [qc]);
 
-  // Home prefetch through the shared query layer (deferred to avoid blocking tab navigation).
   React.useEffect(() => {
-    const userId = authUser?.id;
-    if (!userId) return;
-    const roleForCalendar = authProfile?.role || role || 'worker';
+    const effectiveRole = String(authProfile?.role || role || '').toLowerCase();
+    if (effectiveRole !== 'admin') return;
+    try {
+      router?.prefetch?.('/company_settings');
+      router?.prefetch?.('/app_settings');
+    } catch {}
+  }, [router, authProfile?.role, role]);
+
+  React.useEffect(() => {
+    if (!companyId) return;
+    const effectiveRole = String(authProfile?.role || role || '').toLowerCase();
+    if (effectiveRole !== 'admin') return;
 
     const timer = setTimeout(() => {
-      const task = InteractionManager.runAfterInteractions(() => {
-        // Do not prefetch everything in one burst; it can delay first tab switch.
-        qc
-          .prefetchInfiniteQuery({
-            queryKey: queryKeys.requests.my({}),
-            queryFn: ({ pageParam = 1 }) =>
-              listRequests({ scope: 'my', page: pageParam, pageSize: 20 }),
-            initialPageParam: 1,
-            getNextPageParam: (lastPage, allPages) => {
-              if (!Array.isArray(lastPage) || lastPage.length < 20) return undefined;
-              return allPages.length + 1;
-            },
-            staleTime: 20 * 1000,
-          })
-          .catch(() => {});
-
-        setTimeout(() => {
-          qc
-            .prefetchQuery({
-              queryKey: queryKeys.requests.calendar({ userId, role: roleForCalendar }),
-              queryFn: () => listCalendarRequests({ userId, role: roleForCalendar }),
-              staleTime: 20 * 1000,
-            })
-            .catch(() => {});
-        }, 250);
-
-        setTimeout(() => {
-          qc
-            .prefetchInfiniteQuery({
-              queryKey: queryKeys.requests.all({}),
-              queryFn: ({ pageParam = 1 }) =>
-                listRequests({ scope: 'all', page: pageParam, pageSize: 20 }),
-              initialPageParam: 1,
-              getNextPageParam: (lastPage, allPages) => {
-                if (!Array.isArray(lastPage) || lastPage.length < 20) return undefined;
-                return allPages.length + 1;
-              },
-              staleTime: 20 * 1000,
-            })
-            .catch(() => {});
-        }, 650);
-      });
-
-      return () => {
-        try {
-          task?.cancel?.();
-        } catch {}
-      };
-    }, 1200);
+      qc
+        .prefetchQuery({
+          queryKey: [...COMPANY_SETTINGS_QUERY_KEY, companyId],
+          queryFn: () => fetchCompanySettingsByCompanyId(companyId),
+          staleTime: 5 * 60 * 1000,
+        })
+        .catch(() => {});
+    }, 120);
 
     return () => {
       clearTimeout(timer);
-      try {
-        // no-op if task was not created yet
-      } catch {}
     };
-  }, [qc, authUser?.id, authProfile?.role, role]);
+  }, [qc, companyId, authProfile?.role, role]);
 
   // Новая логика bootstrap: независимая от глобального флага, действует на каждую сессию
   // Состояния:
@@ -301,17 +265,6 @@ export default function IndexScreen() {
     if (forceReadyReason) return true;
     return criticalFetching > 0 || isRoleLoading || isPermLoading;
   }, [criticalFetching, isRoleLoading, isPermLoading, forceReadyReason]);
-
-  // Сброс bootstrap при смене session epoch (повторный логин / логаут)
-  React.useEffect(() => {
-    const unsub = onSessionEpoch(() => {
-      // Очищаем весь кэш при смене сессии
-      qc.clear();
-      appReadyState.reset();
-      setBootState('boot');
-    });
-    return unsub;
-  }, [qc]);
 
   // Страховка: при первом монтировании проверяем состояние
   React.useEffect(() => {

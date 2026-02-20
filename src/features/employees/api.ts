@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+const employeeByIdInFlight = new Map<string, Promise<any>>();
 
 function normalizeEmployee(row) {
   const first_name = row?.first_name ?? row?.firstName ?? '';
@@ -8,11 +9,24 @@ function normalizeEmployee(row) {
   const full_name_raw = nameParts || (row?.full_name ?? row?.fullName ?? '').trim() || null;
 
   const avatar_url = row?.avatar_url ?? row?.avatarUrl ?? null;
+  const isSuspended =
+    !!row?.isSuspended ||
+    !!row?.is_suspended ||
+    !!row?.suspended_at;
+  const isAdminBlocked =
+    !!row?.is_admin_blocked ||
+    !!row?.admin_blocked;
+  const licenseState = row?.license_state ?? row?.licenseState ?? 'active';
+  const isLicenseBlocked = licenseState === 'blocked_by_license';
+  const isBlocked = !!row?.isBlocked || isSuspended || isAdminBlocked || isLicenseBlocked;
 
   const normalized = {
     ...row,
     // keep original snake_case fields for existing code
     full_name: full_name_raw,
+    is_suspended: isSuspended,
+    is_admin_blocked: isAdminBlocked,
+    license_state: licenseState,
     display_name: full_name_raw || row?.email || '',
     // add camelCase aliases expected by UI
     firstName: first_name || '',
@@ -20,6 +34,10 @@ function normalizeEmployee(row) {
     fullName: full_name_raw,
     avatarUrl: avatar_url,
     displayName: full_name_raw || row?.email || '',
+    isSuspended,
+    admin_blocked: isAdminBlocked,
+    licenseState,
+    isBlocked,
   };
 
   return normalized;
@@ -29,7 +47,7 @@ export async function listEmployees(filters = {}) {
   return measureNetwork('employees.list', async () => {
     let query = supabase
       .from('profiles')
-      .select('id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at, email, phone, birthdate, avatar_url')
+      .select('id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, email, phone, birthdate, avatar_url')
       .order('full_name', { ascending: true, nullsFirst: false });
 
     if (Array.isArray(filters.departments) && filters.departments.length > 0) {
@@ -42,9 +60,15 @@ export async function listEmployees(filters = {}) {
     }
 
     if (filters.suspended === true) {
-      query = query.or('is_suspended.eq.true,suspended_at.not.is.null');
+      query = query.or(
+        'is_suspended.eq.true,suspended_at.not.is.null,is_admin_blocked.eq.true,license_state.eq.blocked_by_license',
+      );
     } else if (filters.suspended === false) {
-      query = query.eq('is_suspended', false).is('suspended_at', null);
+      query = query
+        .eq('is_suspended', false)
+        .is('suspended_at', null)
+        .eq('is_admin_blocked', false)
+        .neq('license_state', 'blocked_by_license');
     }
 
     const { data, error } = await query;
@@ -54,19 +78,83 @@ export async function listEmployees(filters = {}) {
 }
 
 export async function getEmployeeById(userId) {
-  return measureNetwork('employees.getById', async () => {
-    if (!userId) return null;
+  const key = String(userId || '');
+  if (!key) return null;
+  const existing = employeeByIdInFlight.get(key);
+  if (existing) return existing;
 
+  const p = measureNetwork('employees.getById', async () => {
     const { data: auth } = await supabase.auth.getUser();
     const uid = auth?.user?.id || null;
     const authEmail = auth?.user?.email || '';
 
     let rpcRow = null;
     let iAmAdmin = false;
+    let iAmSuperAdmin = false;
 
     if (uid) {
       const { data: me } = await supabase.from('profiles').select('role').eq('id', uid).single();
       iAmAdmin = me?.role === 'admin';
+
+      try {
+        const { data: superAdminFlag } = await supabase.rpc('is_super_admin');
+        iAmSuperAdmin = superAdminFlag === true;
+      } catch {
+        iAmSuperAdmin = false;
+      }
+
+      if (iAmSuperAdmin) {
+        try {
+          const { data: fullRows, error: fullErr } = await supabase.rpc('admin_get_user_profile_full', {
+            p_profile_id: userId,
+          });
+          if (!fullErr) {
+            const full = Array.isArray(fullRows) ? fullRows[0] : null;
+            if (full) {
+              const { data: profileFlags } = await supabase
+                .from('profiles')
+                .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+                .eq('id', userId)
+                .maybeSingle();
+              const isSuspended = !!(profileFlags?.is_suspended || profileFlags?.suspended_at || full?.is_suspended || full?.suspended_at);
+              const isAdminBlocked = !!(profileFlags?.is_admin_blocked);
+              const licenseState = profileFlags?.license_state || full?.license_state || 'active';
+              const blockedReason = profileFlags?.blocked_reason || full?.blocked_reason || null;
+              const isBlocked = isSuspended || isAdminBlocked || licenseState === 'blocked_by_license';
+              return {
+                ...normalizeEmployee({
+                  id: full.profile_id,
+                  first_name: full.first_name,
+                  last_name: full.last_name,
+                  full_name: full.full_name,
+                  phone: full.phone,
+                  avatar_url: full.avatar_url,
+                  department_id: full.department_id,
+                  birthdate: full.birthdate,
+                  role: full.role,
+                  last_seen_at: full.last_seen_at,
+                  is_suspended: isSuspended,
+                  suspended_at: profileFlags?.suspended_at || full?.suspended_at || null,
+                  is_admin_blocked: isAdminBlocked,
+                  license_state: licenseState,
+                  blocked_reason: blockedReason,
+                }),
+                email: full.email || '',
+                meIsAdmin: true,
+                meIsSuperAdmin: true,
+                myUid: uid,
+                departmentName: full.department_name || null,
+                companyName: full.company_name || null,
+                companyId: profileFlags?.company_id || full.company_id || null,
+                isSuspended,
+                isBlocked,
+              };
+            }
+          }
+        } catch {
+          // fallback to default path below
+        }
+      }
 
       if (iAmAdmin) {
         const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', {
@@ -78,7 +166,7 @@ export async function getEmployeeById(userId) {
 
     const { data: prof, error } = await supabase
       .from('profiles')
-      .select('id, first_name, last_name, full_name, phone, avatar_url, department_id, is_suspended, suspended_at, birthdate, role')
+      .select('id, first_name, last_name, full_name, phone, avatar_url, department_id, company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -105,12 +193,23 @@ export async function getEmployeeById(userId) {
     return {
       ...normalizeEmployee(prof),
       email,
-      meIsAdmin: iAmAdmin,
+      meIsAdmin: iAmAdmin || iAmSuperAdmin,
+      meIsSuperAdmin: iAmSuperAdmin,
       myUid: uid,
       departmentName,
+      companyName: null,
+      companyId: prof?.company_id || null,
       isSuspended: !!(prof?.is_suspended || prof?.suspended_at),
+      isBlocked:
+        !!(prof?.is_suspended || prof?.suspended_at || prof?.is_admin_blocked) ||
+        prof?.license_state === 'blocked_by_license',
     };
+  }).finally(() => {
+    employeeByIdInFlight.delete(key);
   });
+
+  employeeByIdInFlight.set(key, p);
+  return p;
 }
 
 export async function listDepartments({ companyId, onlyEnabled = true } = {}) {

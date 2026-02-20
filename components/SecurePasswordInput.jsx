@@ -1,15 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { deriveNextPasswordValue, maskPasswordValue } from '../lib/passwordInputMasking';
 
-/**
- * Профессиональный компонент для ввода пароля с поддержкой:
- * - Маскировкой на обеих платформах (iOS и Android)
- * - Показом последней введенной символа на доли секунды
- * - AutoFill на iOS (поддержка iCloud Keychain)
- * - Toggle видимости/скрытия пароля
- * - Правильной обработкой при автозаполнении
- */
 const SecurePasswordInput = React.forwardRef(
   (
     {
@@ -32,21 +25,30 @@ const SecurePasswordInput = React.forwardRef(
     ref,
   ) => {
     const [isSecure, setIsSecure] = useState(true);
-    const [displayValue, setDisplayValue] = useState(value);
     const inputRef = useRef(null);
+    const lastKeyRef = useRef(null);
 
-    // Синхронизируем внешнее значение
-    useEffect(() => {
-      setDisplayValue(value);
-    }, [value]);
-      const handleChangeText = (text) => {
-        setDisplayValue(text);
-        if (onChangeText) onChangeText(text);
-      };
+    const effectiveValue = value != null ? String(value) : '';
+    const useInstantMasking = Platform.OS === 'android' && isSecure;
+    const displayValue = useInstantMasking ? maskPasswordValue(effectiveValue) : effectiveValue;
+
+    const handleChangeText = (text) => {
+      if (!useInstantMasking) {
+        onChangeText?.(text);
+        return;
+      }
+
+      const derivedValue = deriveNextPasswordValue({
+        currentValue: effectiveValue,
+        inputText: text,
+        lastKey: lastKeyRef.current,
+      });
+      lastKeyRef.current = null;
+      onChangeText?.(derivedValue);
+    };
 
     const toggleSecure = () => {
-      setIsSecure(!isSecure);
-      // При переключении остаемся в фокусе
+      setIsSecure((prev) => !prev);
       if (inputRef.current) {
         inputRef.current.focus();
       }
@@ -57,30 +59,30 @@ const SecurePasswordInput = React.forwardRef(
         <TextInput
           ref={ref || inputRef}
           style={[styles.input, inputStyle]}
-          value={displayValue != null ? String(displayValue) : ''}
+          value={displayValue}
           onChangeText={handleChangeText}
           placeholder={placeholder}
           placeholderTextColor="#999"
           editable={editable}
-          secureTextEntry={isSecure}
-          // iOS AutoFill поддержка - сообщаем системе, что это поле пароля
-          textContentType={'password'}
+          secureTextEntry={useInstantMasking ? false : isSecure}
+          textContentType="password"
           autoComplete={Platform.OS === 'android' ? 'password' : undefined}
-          // Клавиатура и поведение
+          keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
           returnKeyType={returnKeyType}
           onSubmitEditing={onSubmitEditing}
-          keyboardType="default"
           autoCapitalize="none"
           autoCorrect={false}
           spellCheck={false}
-          // События
+          importantForAutofill="yes"
+          onKeyPress={(e) => {
+            lastKeyRef.current = e?.nativeEvent?.key ?? null;
+          }}
           onEndEditing={onEndEditing}
           onFocus={onFocus}
           onBlur={onBlur}
-          // Доступность
           testID={testID}
-            accessibilityLabel={placeholder}
-            accessibilityHint="Защищенное поле ввода пароля"
+          accessibilityLabel={placeholder}
+          accessibilityHint="Защищенное поле ввода пароля"
         />
 
         {showVisibilityToggle && (
@@ -92,11 +94,7 @@ const SecurePasswordInput = React.forwardRef(
             accessibilityRole="button"
             accessibilityLabel={isSecure ? 'Показать пароль' : 'Скрыть пароль'}
           >
-            <Icon
-              name={isSecure ? 'eye-off' : 'eye'}
-              size={toggleIconSize}
-              color={toggleIconColor}
-            />
+            <Icon name={isSecure ? 'eye-off' : 'eye'} size={toggleIconSize} color={toggleIconColor} />
           </TouchableOpacity>
         )}
       </View>
@@ -120,7 +118,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    paddingRight: 50, // Место для кнопки toggle
+    paddingRight: 50,
     fontSize: 16,
     color: '#333',
     fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',

@@ -29,6 +29,7 @@ export function useAuthLogin() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [accessBlock, setAccessBlock] = useState(null);
 
   // Refs для отмены запросов и управления жизненным циклом
   const abortControllerRef = useRef(null);
@@ -104,6 +105,73 @@ export function useAuthLogin() {
       if (!data?.session?.access_token) {
         logger.warn('Login succeeded but no session token received');
         setError(t(AUTH_ERRORS.UNKNOWN_ERROR, AUTH_ERROR_MESSAGES[AUTH_ERRORS.UNKNOWN_ERROR]));
+        setLoading(false);
+        return false;
+      }
+
+      // Access gate: blocked users must not enter the app for any reason.
+      try {
+        const { data: accessData, error: accessError } = await supabase.rpc('get_my_access_state');
+        if (!accessError) {
+          const accessRow = Array.isArray(accessData) ? accessData[0] : accessData;
+          if (accessRow && accessRow.can_login === false) {
+            const blockCode = String(accessRow.block_code || 'access_blocked');
+            const blockMessage =
+              String(accessRow.block_message || '') ||
+              (blockCode === 'blocked_by_license'
+                ? t('auth_blocked_by_license')
+                : t('auth_access_blocked'));
+            try {
+              await supabase.auth.signOut();
+            } catch {}
+            setAccessBlock({ code: blockCode, message: blockMessage });
+            setError(blockMessage);
+            setLoading(false);
+            return false;
+          }
+        } else {
+          const { data: userRes } = await supabase.auth.getUser();
+          const uid = userRes?.user?.id || null;
+          if (uid) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+              .eq('id', uid)
+              .maybeSingle();
+
+            const blockedReason = String(profile?.blocked_reason || '').toLowerCase();
+            const blockedByAdmin =
+              !!profile?.is_suspended ||
+              !!profile?.suspended_at ||
+              !!profile?.is_admin_blocked ||
+              blockedReason === 'manual' ||
+              blockedReason === 'admin_block' ||
+              blockedReason === 'admin_blocked';
+            const blockedByLicense = String(profile?.license_state || '') === 'blocked_by_license';
+
+            if (blockedByAdmin || blockedByLicense) {
+              const blockCode = blockedByAdmin ? 'admin_blocked' : 'blocked_by_license';
+              const blockMessage = blockedByAdmin
+                ? t('auth_access_blocked')
+                : t('auth_blocked_by_license');
+              try {
+                await supabase.auth.signOut();
+              } catch {}
+              setAccessBlock({ code: blockCode, message: blockMessage });
+              setError(blockMessage);
+              setLoading(false);
+              return false;
+            }
+          }
+        }
+      } catch {
+        // If access checks unexpectedly fail, fail closed.
+        try {
+          await supabase.auth.signOut();
+        } catch {}
+        const blockMessage = t('auth_access_blocked');
+        setAccessBlock({ code: 'access_blocked', message: blockMessage });
+        setError(blockMessage);
         setLoading(false);
         return false;
       }
@@ -188,6 +256,7 @@ export function useAuthLogin() {
       clearTimeout(loginTimeoutRef.current);
       loginTimeoutRef.current = null;
     }
+    setAccessBlock(null);
   }, []);
 
   return {
@@ -209,5 +278,7 @@ export function useAuthLogin() {
     // Методы
     handleLogin,
     reset,
+    accessBlock,
+    clearAccessBlock: () => setAccessBlock(null),
   };
 }

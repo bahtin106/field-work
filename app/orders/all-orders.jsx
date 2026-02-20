@@ -24,6 +24,7 @@ import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
 import { usePermissions } from '../../lib/permissions';
+import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import {
@@ -35,6 +36,8 @@ import {
 } from '../../src/features/requests/queries';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
+import { queryKeys } from '../../src/shared/query/queryKeys';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -406,6 +409,11 @@ export default function AllOrdersScreen() {
   const [tmpExecutor, setTmpExecutor] = useState(executorFilter || null);
   const [executorSearch, setExecutorSearch] = useState('');
 
+  const closeFilterModal = useCallback(() => {
+    setFilterModalVisible(false);
+    applyAndroidSystemBars(theme).catch(() => {});
+  }, [theme]);
+
   const filteredExecutors = useMemo(() => {
     let list = executors || [];
     // constrain by department when selected
@@ -566,7 +574,10 @@ export default function AllOrdersScreen() {
   }, [departmentFilter, executorFilter, searchQuery, statusFilter]);
   const openOrderDetails = useCallback(
     async (orderId) => {
-      await ensureRequestPrefetch(queryClient, orderId).catch(() => {});
+      const registry = getPrefetchRegistry();
+      await registry
+        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
@@ -601,15 +612,28 @@ export default function AllOrdersScreen() {
   const keyExtractor = useCallback((item) => String(item.id), []);
   const onViewableItemsChanged = useMemo(
     () => ({ viewableItems }) => {
+      const registry = getPrefetchRegistry();
       viewableItems
         .map((item) => item?.item?.id)
         .filter(Boolean)
         .slice(0, 6)
         .forEach((id) => {
-          ensureRequestPrefetch(queryClient, id).catch(() => {});
+          registry.run(`request-detail:${id}`, () => ensureRequestPrefetch(queryClient, id)).catch(() => {});
         });
     },
     [queryClient],
+  );
+
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        queryClient.cancelQueries({ queryKey: ['requests', 'all'] });
+        queryClient.cancelQueries({ queryKey: queryKeys.requests.executors() });
+        queryClient.cancelQueries({ queryKey: queryKeys.requests.filterOptions() });
+        queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
+      },
+      [queryClient],
+    ),
   );
 
   // Заголовок списка с фильтрами
@@ -654,7 +678,7 @@ export default function AllOrdersScreen() {
           style={{ marginBottom: 16 }}
           title={
             useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length
-              ? `Виды работ: ${workTypeFilter.length}`
+              ? `${t('order_section_work_type')}: ${workTypeFilter.length}`
               : executorFilter
                 ? 'Сотрудник выбран'
                 : 'Фильтры'
@@ -662,7 +686,7 @@ export default function AllOrdersScreen() {
         />
       </View>
     ),
-    [styles, statusFilter, searchQuery, workTypeFilter, executorFilter, useWorkTypes, router],
+    [styles, statusFilter, searchQuery, workTypeFilter, executorFilter, useWorkTypes, router, t],
   );
 
   return (
@@ -735,7 +759,8 @@ export default function AllOrdersScreen() {
             statusBarTranslucent={true}
             navigationBarTranslucent={true}
             hardwareAccelerated={true}
-            onRequestClose={() => setFilterModalVisible(false)}
+            onRequestClose={closeFilterModal}
+            onDismiss={closeFilterModal}
           >
             <View style={styles.modalOverlay}>
               <View style={styles.modalContent}>
@@ -755,7 +780,7 @@ export default function AllOrdersScreen() {
                           color: theme.colors.text,
                         }}
                       >
-                        Виды работ
+                        {t('work_types_settings_title')}
                       </Text>
                       {Array.isArray(workTypes) && workTypes.length
                         ? workTypes.map((t) => {
@@ -786,7 +811,7 @@ export default function AllOrdersScreen() {
                         style={{ marginTop: 12 }}
                         variant="secondary"
                         onPress={() => setTmpWorkType([])}
-                        title="Сбросить виды работ"
+                        title={t('orders_filters_reset_work_types')}
                       />
 
                       <View style={{ height: 12 }} />
@@ -853,7 +878,7 @@ export default function AllOrdersScreen() {
                     onPress={() => {
                       setWorkTypeFilter(Array.isArray(tmpWorkType) ? tmpWorkType : []);
                       setExecutorFilter(tmpExecutor || null);
-                      setFilterModalVisible(false);
+                      closeFilterModal();
                       // Only pass work_type param when feature enabled
                       router.setParams({
                         ...(useWorkTypes && Array.isArray(tmpWorkType) && tmpWorkType.length

@@ -18,10 +18,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 
 import AppHeader from '../../components/navigation/AppHeader';
+import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useFilters } from '../../components/hooks/useFilters';
 import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
@@ -35,6 +37,11 @@ import {
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { queryKeys } from '../../src/shared/query/queryKeys';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
+import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 
 // Safe alpha helper for both hex/rgb strings and dynamic PlatformColor objects
 function withAlpha(color, a) {
@@ -59,11 +66,14 @@ export default function UsersIndex() {
   useTranslation(); // subscribe to i18n changes without re-plumbing
 
   const router = useRouter();
+  const toast = useToast();
   const queryClient = useQueryClient();
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [sortVisible, setSortVisible] = useState(false);
+  const [sortKey, setSortKey] = useState(EMPLOYEE_SORT.NAME_ASC);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const [useDepartments, setUseDepartments] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Initialize filters with a 5-second TTL as requested by user.
   // When user leaves and returns within 5 seconds, filters persist.
@@ -76,6 +86,8 @@ export default function UsersIndex() {
   });
 
   const { data: companyId, isLoading: companyIdLoading } = useMyCompanyIdQuery();
+  const { useDepartments } = useCompanySettings(companyId || null);
+  const subscriptionGuard = useSubscriptionGuard(companyId);
 
   // ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА: оба хука вызываются одновременно на верхнем уровне компонента
   // Это обеспечивает параллельную загрузку данных
@@ -97,23 +109,17 @@ export default function UsersIndex() {
     refetch: refreshDepartments,
   } = useDepartmentsQuery({
     companyId,
-    enabled: !!companyId,
+    enabled: !!companyId && useDepartments,
     onlyEnabled: true,
   });
   useEmployeesRealtimeSync({ enabled: true });
 
   // Включаем фильтрацию по отделам, когда они загружены
-  useEffect(() => {
-    const hasDepartments = Array.isArray(departments) && departments.length > 0;
-    if (hasDepartments && !useDepartments) setUseDepartments(true);
-  }, [departments, useDepartments]);
-
   // Combined loading state - wait for initial data from both sources
   // Once cached data is available, show it immediately (stale-while-revalidate pattern)
   // КРИТИЧНО: Показываем loader только если ОБА источника грузятся И нет данных
   const hasAnyData = users.length > 0 || departments.length > 0;
   const isLoading = (usersLoading || departmentsLoading) && !hasAnyData;
-  const isRefreshing = usersRefreshing || departmentsRefreshing;
 
   // Pull-to-refresh обновляет оба источника одновременно
   const refreshAll = useCallback(async () => {
@@ -160,7 +166,7 @@ export default function UsersIndex() {
           alignItems: 'center',
           backgroundColor: c.background,
         },
-        header: { paddingHorizontal: sz.lg, paddingTop: sz.xs, paddingBottom: sz.sm },
+        header: { paddingHorizontal: 0, paddingTop: sz.xs, paddingBottom: sz.sm },
         title: {
           fontSize: ty.sizes.xl,
           fontWeight: ty.weight.bold,
@@ -221,7 +227,12 @@ export default function UsersIndex() {
 
   // Pull-to-refresh handler
   const onRefresh = useCallback(async () => {
-    await refreshAll();
+    setRefreshing(true);
+    try {
+      await refreshAll();
+    } finally {
+      setRefreshing(false);
+    }
   }, [refreshAll]);
 
   const onViewableItemsChanged = useMemo(
@@ -232,8 +243,9 @@ export default function UsersIndex() {
         .slice(0, 6);
 
       const task = InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
         ids.forEach((id) => {
-          ensureEmployeePrefetch(queryClient, id).catch(() => {});
+          registry.run(`employee-detail:${id}`, () => ensureEmployeePrefetch(queryClient, id)).catch(() => {});
         });
       });
 
@@ -262,11 +274,58 @@ export default function UsersIndex() {
     });
   }, [debouncedQ, users]);
 
+  // Memoized department map for fast lookup
+  const departmentMap = useMemo(() => {
+    const map = new Map();
+    if (Array.isArray(departments)) {
+      departments.forEach((dept) => {
+        map.set(String(dept.id), dept.name);
+      });
+    }
+    return map;
+  }, [departments]);
+
+  const sortOptions = employeeSortOptions(t);
+
+  const sortedFiltered = useMemo(
+    () =>
+      sortEmployees(filtered, {
+        sortKey,
+        getName: (item) =>
+          (item?.display_name || '').trim() ||
+          `${item?.first_name || ''} ${item?.last_name || ''}`.trim() ||
+          item?.full_name ||
+          '',
+        getDepartmentName: (item) => {
+          if (!useDepartments) return '';
+          const dep = item?.department_id ? departmentMap.get(String(item.department_id)) : null;
+          return dep || t('placeholder_department');
+        },
+        getRoleLabel: (item) => t(`role_${item?.role || ROLE.WORKER}`, item?.role || ROLE.WORKER),
+        getLastSeenAt: (item) => item?.last_seen_at || null,
+      }),
+    [departmentMap, filtered, sortKey, useDepartments],
+  );
+
   const goToUser = useCallback(
-    (id) => {
+    async (id) => {
+      const registry = getPrefetchRegistry();
+      await registry
+        .run(`employee-detail:${id}`, () => ensureEmployeePrefetch(queryClient, id))
+        .catch(() => {});
       router.push(`/users/${id}`);
     },
-    [router],
+    [queryClient, router],
+  );
+
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        queryClient.cancelQueries({ queryKey: ['employees', 'list'] });
+        queryClient.cancelQueries({ queryKey: queryKeys.employees.departments(companyId, true) });
+      },
+      [companyId, queryClient],
+    ),
   );
 
   const rolePillStyle = useCallback((role) => {
@@ -490,17 +549,6 @@ export default function UsersIndex() {
     [isOnlineNow, getRelativeTime],
   );
 
-  // Memoized department map for fast lookup
-  const departmentMap = useMemo(() => {
-    const map = new Map();
-    if (Array.isArray(departments)) {
-      departments.forEach((dept) => {
-        map.set(String(dept.id), dept.name);
-      });
-    }
-    return map;
-  }, [departments]);
-
   const renderItem = useCallback(
     ({ item }) => {
       // Fast department lookup from memoized map
@@ -510,6 +558,7 @@ export default function UsersIndex() {
         <UserCard
           item={item}
           departmentName={deptName}
+          showDepartment={useDepartments}
           onPress={goToUser}
           rolePillStyle={rolePillStyle}
           formatPresence={formatPresence}
@@ -518,7 +567,7 @@ export default function UsersIndex() {
         />
       );
     },
-    [departmentMap, goToUser, rolePillStyle, formatPresence, isOnlineNow],
+    [departmentMap, goToUser, rolePillStyle, formatPresence, isOnlineNow, useDepartments],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
@@ -552,7 +601,21 @@ export default function UsersIndex() {
               headerTitleAlign: 'left',
               title: t('routes_users_index'),
               rightTextLabel: t('btn_create'),
-              onRightPress: () => router.push('/users/new'),
+              onRightPress: () => {
+                if (
+                  !subscriptionGuard.isLoading &&
+                  String(subscriptionGuard.reason || '').startsWith('subscription_')
+                ) {
+                  toast.warning(
+                    t(
+                      'subscription_edit_unavailable_toast',
+                      'Изменение недоступно. Оплатите подписку',
+                    ),
+                  );
+                  return;
+                }
+                router.push('/users/new');
+              },
             }}
           />
 
@@ -563,6 +626,7 @@ export default function UsersIndex() {
               onClear={() => setQ('')}
               placeholder={t('users_search_placeholder')}
               onOpenFilters={openFiltersPanel}
+              onOpenSort={() => setSortVisible(true)}
               filterSummary={filterSummary}
               onResetFilters={async () => {
                 const resetValues = filters.reset();
@@ -570,9 +634,10 @@ export default function UsersIndex() {
               }}
               metaText={
                 debouncedQ
-                  ? `${t('users_found')}: ${filtered.length}`
+                  ? `${t('users_found')}: ${sortedFiltered.length}`
                   : `${t('users_total')}: ${users.length}`
               }
+              metaTextStyle={{ marginLeft: sz.sm }}
             />
 
             {/* Removed error display - errors now handled by hooks */}
@@ -581,14 +646,14 @@ export default function UsersIndex() {
           <FlatList
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={styles.listContent}
-            data={filtered}
+            data={sortedFiltered}
             keyExtractor={keyExtractor}
             renderItem={renderItem}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
             refreshControl={
               <RefreshControl
-                refreshing={isRefreshing}
+                refreshing={refreshing}
                 onRefresh={onRefresh}
                 tintColor={theme.colors.primary}
                 colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
@@ -598,6 +663,16 @@ export default function UsersIndex() {
           />
         </View>
       </TouchableWithoutFeedback>
+
+      <SortSelectModal
+        visible={sortVisible}
+        onClose={() => setSortVisible(false)}
+        options={sortOptions}
+        value={sortKey}
+        onChange={(nextSort) => {
+          if (nextSort) setSortKey(nextSort);
+        }}
+      />
 
       {/* DNS-like full-screen Filters Panel */}
       <FiltersPanel

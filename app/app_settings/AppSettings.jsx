@@ -1,7 +1,5 @@
 // app/app_settings/AppSettings.jsx
-import { Feather } from '@expo/vector-icons';
 import Constants from 'expo-constants';
-import { useNavigation } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -9,13 +7,13 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
+import SectionHeader from '../../components/ui/SectionHeader';
 import { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { listItemStyles } from '../../components/ui/listItemStyles';
@@ -34,7 +32,7 @@ import { useTheme } from '../../theme';
 
 import { PERM_KEYS, TBL } from '../../lib/constants';
 import { saveUserLocale } from '../../lib/userLocale';
-import { availableLocales, getLocale, setLocale, useI18nVersion } from '../../src/i18n';
+import { availableLocales, getLocale, setLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
@@ -47,6 +45,40 @@ const [DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE] = (() => {
   const m = parseInt(match?.[2] ?? '0', 10);
   return [h, m];
 })();
+
+const SETTINGS_SECTIONS = Object.freeze([
+  {
+    key: 'appearance',
+    items: [
+      { key: 'theme', type: 'select' },
+      { key: 'language', type: 'select' },
+    ],
+  },
+  {
+    key: 'notifications',
+    items: [
+      { key: 'allow', switch: true },
+      { key: 'sounds', type: 'select', comingSoon: true },
+      { key: 'events', type: 'select' },
+    ],
+  },
+  {
+    key: 'quiet',
+    items: [
+      { key: 'quiet_start', type: 'select' },
+      { key: 'quiet_end', type: 'select' },
+      { key: 'quiet_reset', type: 'select' },
+    ],
+  },
+  {
+    key: 'privacy',
+    items: [
+      { key: 'geo', type: 'select', comingSoon: true },
+      { key: 'analytics', type: 'select', comingSoon: true },
+      { key: 'private-search', type: 'select', comingSoon: true },
+    ],
+  },
+]);
 
 let installEdgeToEdgeWarnFilter;
 try {
@@ -72,7 +104,6 @@ async function getNotifications() {
 
 async function ensurePushPermission() {
   try {
-    // Web: expo-notifications РЅРµ РїРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ; РЅРµ Р·Р°РїСѓСЃРєР°РµРј С‚РѕРєРµРЅ-С„Р»РѕСѓ
     if (Platform.OS === 'web') {
       try {
         if (Linking?.openSettings) await Linking.openSettings();
@@ -81,6 +112,7 @@ async function ensurePushPermission() {
     }
 
     const isExpoGo = Constants?.appOwnership === 'expo';
+    // Expo Go does not provide a production-grade remote push pipeline.
     if (isExpoGo) {
       try {
         if (Linking?.openSettings) await Linking.openSettings();
@@ -115,7 +147,11 @@ async function ensurePushPermission() {
     let token = null;
     try {
       const projectId =
-        Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+        Constants?.expoConfig?.extra?.eas?.projectId ??
+        Constants?.expoConfig?.extra?.easProjectId ??
+        Constants?.manifest2?.extra?.expoClient?.extra?.eas?.projectId ??
+        Constants?.manifest?.extra?.eas?.projectId ??
+        Constants?.easConfig?.projectId;
       const resp = await Notifications.getExpoPushTokenAsync(projectId ? { projectId } : undefined);
       token = resp?.data || null;
     } catch (e) {
@@ -129,79 +165,21 @@ async function ensurePushPermission() {
   }
 }
 
-// ---- Local wrappers to replace deprecated imports ----
-function SingleSelectModal({ visible, title, options = [], selectedId, onSelect, onClose }) {
-  const { theme } = useTheme();
-  const mapped = (options || []).map((opt) => ({
-    id: opt.id,
-    label: opt.label,
-    right:
-      selectedId === opt.id ? (
-        <Feather name="check" size={18} color={theme.colors.primary} />
-      ) : null,
-  }));
-  return (
-    <SelectModal
-      visible={visible}
-      title={title}
-      items={mapped}
-      onSelect={(it) => onSelect?.(it.id)}
-      onClose={onClose}
-      searchable={false}
-    />
-  );
-}
-
-function SwitchListModal({ visible, title, toggles = [], footer = null, onClose }) {
-  const { theme } = useTheme();
-  return (
-    <BaseModal visible={visible} title={title} onClose={onClose}>
-      <View style={{ gap: theme.spacing.sm }}>
-        {toggles.map((t) => (
-          <SwitchField
-            key={t.id}
-            label={t.label}
-            value={!!t.value}
-            onValueChange={t.onChange}
-            accessibilityRole="switch"
-            accessibilityLabel={t.label}
-          />
-        ))}
-      </View>
-      {footer ? (
-        <View style={{ marginTop: theme.spacing.md, marginBottom: theme.spacing.lg }}>
-          {footer}
-        </View>
-      ) : null}
-    </BaseModal>
-  );
-}
-// ---- end wrappers ----
 export default function AppSettings() {
-  const nav = useNavigation();
-  const ver = useI18nVersion();
   const { t } = useTranslation();
-
-  useEffect(() => {
-    try {
-      nav.setParams({ headerTitle: t('routes.app_settings/AppSettings') });
-    } catch (e) {
-      __devLog('nav.setParams failed:', e?.message || e);
-    }
-  }, [nav, t, ver]);
 
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
   const [themeOpen, setThemeOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const _curLocale = (() => {
+  const currentLocale = (() => {
     try {
       return getLocale();
     } catch {
-      return 'ru';
+      return availableLocales[0] || 'ru';
     }
   })();
-  const _curLangLabel = t(`language_${_curLocale}`);
+  const currentLangLabel = t(`language_${currentLocale}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const futureFeature = useCallback(() => toast.info(t('settings_soon')), [t, toast]);
@@ -213,11 +191,9 @@ export default function AppSettings() {
     quiet_start: null,
     quiet_end: null,
   });
-  const [_loadingPrefs, _setLoadingPrefs] = useState(false);
   const [eventsOpen, setEventsOpen] = useState(false);
   const [timePickerOpen, setTimePickerOpen] = useState(null);
   const [timeValue, setTimeValue] = useState(new Date());
-  const [canCreateOrders, setCanCreateOrders] = useState(false);
 
   // Prevent setState on unmounted component
   const mounted = useRef(false);
@@ -234,7 +210,6 @@ export default function AppSettings() {
     };
   }, []);
 
-  // РљРµС€РёСЂРѕРІР°РЅРёРµ РЅР°СЃС‚СЂРѕРµРє СѓРІРµРґРѕРјР»РµРЅРёР№ СЃ Realtime
   const {
     data: prefsData,
     isLoading: isLoadingPrefs,
@@ -263,18 +238,20 @@ export default function AppSettings() {
         throw prefsErr;
       }
 
-      const qs = data?.quiet_start,
-        qe = data?.quiet_end;
-      const bothEmpty = (!qs || String(qs).trim() === '') && (!qe || String(qe).trim() === '');
-      if (!data || bothEmpty) {
-        const defaultPatch = {
+      if (!data) {
+        return {
           quiet_start: APP_DEFAULTS?.quietStart,
           quiet_end: APP_DEFAULTS?.quietEnd,
         };
-        return { ...(data || {}), ...defaultPatch };
       }
 
-      return data;
+      const qs = data.quiet_start;
+      const qe = data.quiet_end;
+      return {
+        ...data,
+        quiet_start: typeof qs === 'string' ? (qs.trim() || null) : (qs ?? null),
+        quiet_end: typeof qe === 'string' ? (qe.trim() || null) : (qe ?? null),
+      };
     },
     gcTime: 5 * 60 * 1000,
     staleTime: 2 * 60 * 1000,
@@ -323,14 +300,12 @@ export default function AppSettings() {
     };
   }, [refreshPrefs]);
 
-  // РћР±РЅРѕРІР»СЏРµРј local state РєРѕРіРґР° РїСЂРёС…РѕРґСЏС‚ РґР°РЅРЅС‹Рµ РёР· РєРµС€Р°
   useEffect(() => {
     if (prefsData && mounted.current) {
       setPrefs((p) => ({ ...p, ...prefsData }));
     }
   }, [prefsData]);
 
-  // Р—Р°РіСЂСѓР·РєР° СЂР°Р·СЂРµС€РµРЅРёР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃ РєРµС€РµРј
   const { data: permData } = useQuery({
     queryKey: ['appSettings', 'userPerm'],
     queryFn: async () => {
@@ -357,16 +332,17 @@ export default function AppSettings() {
     placeholderData: (prev) => prev ?? false,
   });
 
+  const canCreateOrders = !!permData;
+
+  const currentPrefsRef = useRef(prefs);
   useEffect(() => {
-    if (permData !== undefined && mounted.current) {
-      setCanCreateOrders(permData);
-    }
-  }, [permData]);
+    currentPrefsRef.current = prefs;
+  }, [prefs]);
 
   const savePrefs = useCallback(async (patch) => {
     try {
       const uid = await getUid();
-      const next = { ...prefs, ...patch };
+      const next = { ...currentPrefsRef.current, ...patch };
       const { error } = await supabase
         .from(TBL.NOTIF_PREFS)
         .upsert({ user_id: uid, ...next }, { onConflict: 'user_id', returning: 'minimal' });
@@ -377,7 +353,6 @@ export default function AppSettings() {
         else if (/timeout|network|failed to fetch/i.test(error.message)) msg = t('errors_network');
         return { ok: false, message: msg };
       }
-      // РћР±РЅРѕРІР»СЏРµРј РєРµС€ РїРѕСЃР»Рµ СЃРѕС…СЂР°РЅРµРЅРёСЏ
       await refreshPrefs();
       return { ok: true };
     } catch (e) {
@@ -387,7 +362,7 @@ export default function AppSettings() {
       else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
       return { ok: false, message: msg };
     }
-  }, [prefs, refreshPrefs, t]);
+  }, [refreshPrefs, t]);
 
   function toTimeStr(v) {
     if (!v) return null;
@@ -509,7 +484,9 @@ export default function AppSettings() {
       setPrefs(prevPrefs);
       toast.error(message || t('quiet_saveFail'));
     } else {
-      toast.info(t('quiet_range') + `${toTimeStr(next.quiet_start)}вЂ“${toTimeStr(next.quiet_end)}`);
+      toast.info(
+        `${t('quiet_range')}${toTimeStr(next.quiet_start)} ${t('common_to')} ${toTimeStr(next.quiet_end)}`,
+      );
     }
   };
 
@@ -540,6 +517,32 @@ export default function AppSettings() {
     }
   }, []);
 
+  // Self-heal: if push is enabled but token is missing/stale, try to register again.
+  useEffect(() => {
+    let alive = true;
+    if (isLoadingPrefs) return undefined;
+    if (!prefs?.allow) return undefined;
+    if (Platform.OS === 'web') return undefined;
+    if (Constants?.appOwnership === 'expo') return undefined;
+
+    (async () => {
+      try {
+        const { granted, token } = await ensurePushPermission();
+        if (!alive || !granted || !token) return;
+        const r = await savePushToken(token);
+        if (!r.ok) {
+          __devLog('auto push token sync failed:', r.message || 'unknown');
+        }
+      } catch (e) {
+        __devLog('auto push token sync exception:', e?.message || e);
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [isLoadingPrefs, prefs?.allow, savePushToken]);
+
   const onToggleAllow = useCallback(async (val) => {
     const prev = prefs.allow;
     setPrefs((p) => ({ ...p, allow: val }));
@@ -564,15 +567,18 @@ export default function AppSettings() {
         toast.error(t('push_noPermission'));
         return;
       }
-      if (token) {
+      if (!token) {
+        setPrefs((p) => ({ ...p, allow: prev }));
+        toast.error(t('push_saveTokenFail'));
+        return;
+      }
+      {
         const r = await savePushToken(token);
         if (!r.ok) {
           setPrefs((p) => ({ ...p, allow: prev }));
           toast.error(r.message || t('push_saveTokenFail'));
           return;
         }
-      } else {
-        toast.info(t('push_permissionGranted'));
       }
       const { ok, message } = await savePrefs({ allow: true });
       if (!ok) {
@@ -601,16 +607,19 @@ export default function AppSettings() {
     }
   }, [prefs.allow, removePushToken, savePrefs, savePushToken, t, toast]);
 
-  const onToggleEvent = (key) => async (val) => {
-    const prev = prefs[key];
-    setPrefs((p) => ({ ...p, [key]: val }));
-    const { ok, message } = await savePrefs({ [key]: val });
-    if (!ok) {
-      setPrefs((p) => ({ ...p, [key]: prev }));
-      toast.error(message || t('errors_saveGeneric'));
-      console.warn('notification_prefs save error:', message);
-    }
-  };
+  const onToggleEvent = useCallback(
+    (key) => async (val) => {
+      const prev = prefs[key];
+      setPrefs((p) => ({ ...p, [key]: val }));
+      const { ok, message } = await savePrefs({ [key]: val });
+      if (!ok) {
+        setPrefs((p) => ({ ...p, [key]: prev }));
+        toast.error(message || t('errors_saveGeneric'));
+        __devLog('notification_prefs save error:', message);
+      }
+    },
+    [prefs, savePrefs, t, toast],
+  );
 
   const onResetQuietTimes = useCallback(async () => {
     const prev = { quiet_start: prefs.quiet_start, quiet_end: prefs.quiet_end };
@@ -625,71 +634,62 @@ export default function AppSettings() {
     }
   }, [prefs.quiet_end, prefs.quiet_start, savePrefs, t, toast]);
 
-  // --- UI sections (structure without hardcoded texts; titles/labels come from i18n) ---
-  const sectionBase = useMemo(
-    () =>
-      [
-        {
-          key: 'appearance',
-          items: [
-            { key: 'theme', type: 'select', onPress: () => setThemeOpen(true) },
+  const eventToggles = useMemo(
+    () => [
+      {
+        id: 'new_orders',
+        label: t('settings_events_newOrders'),
+        value: !!prefs.new_orders,
+        onChange: onToggleEvent('new_orders'),
+      },
+      {
+        id: 'feed_orders',
+        label: t('settings_events_feedOrders'),
+        value: !!prefs.feed_orders,
+        onChange: onToggleEvent('feed_orders'),
+      },
+      ...(canCreateOrders
+        ? [
             {
-              key: 'language',
-              type: 'select',
-              value: _curLangLabel,
-              onPress: () => setLangOpen(true),
+              id: 'reminders',
+              label: t('settings_events_reminders'),
+              value: !!prefs.reminders,
+              onChange: onToggleEvent('reminders'),
             },
-            { key: 'bold-text', switch: true, disabled: true, onValueChange: futureFeature },
-          ],
-        },
-        {
-          key: 'notifications',
-          items: [
-            { key: 'allow', switch: true, onValueChange: onToggleAllow },
-            { key: 'sounds', type: 'select', disabled: true, onPress: futureFeature },
-            { key: 'events', type: 'select', onPress: () => setEventsOpen(true) },
-          ],
-        },
-        {
-          key: 'quiet',
-          items: [
-            { key: 'quiet_start', type: 'select', onPress: openTimePicker('start') },
-            { key: 'quiet_end', type: 'select', onPress: openTimePicker('end') },
-            { key: 'quiet_reset', type: 'select', onPress: onResetQuietTimes },
-          ],
-        },
-        {
-          key: 'privacy',
-          items: [
-            { key: 'geo', type: 'select', disabled: true, onPress: futureFeature },
-            { key: 'analytics', type: 'select', disabled: true, onPress: futureFeature },
-            { key: 'private-search', switch: true, disabled: true, onValueChange: futureFeature },
-          ],
-        },
-        {
-          key: 'ai',
-          items: [
-            { key: 'suggestions', type: 'select', disabled: true, onPress: futureFeature },
-            { key: 'avatars', switch: true, disabled: true, onValueChange: futureFeature },
-          ],
-        },
-      ].map((sec) => ({
-        ...sec,
-        title: t(`settings_sections_${sec.key}_title`),
-        items: sec.items.map((it) => ({
-          ...it,
-          label: t(`settings_sections_${sec.key}_items_${it.key}`, it.label),
-        })),
-      })),
-    [
-      _curLangLabel,
-      futureFeature,
-      onResetQuietTimes,
-      onToggleAllow,
-      openTimePicker,
-      t,
+          ]
+        : []),
     ],
+    [canCreateOrders, onToggleEvent, prefs.feed_orders, prefs.new_orders, prefs.reminders, t],
   );
+
+  const sectionBase = useMemo(() => {
+    const resolvePressHandler = (sectionKey, itemKey) => {
+      if (sectionKey === 'appearance' && itemKey === 'theme') return () => setThemeOpen(true);
+      if (sectionKey === 'appearance' && itemKey === 'language') return () => setLangOpen(true);
+      if (sectionKey === 'notifications' && itemKey === 'events') return () => setEventsOpen(true);
+      if (sectionKey === 'quiet' && itemKey === 'quiet_start') return openTimePicker('start');
+      if (sectionKey === 'quiet' && itemKey === 'quiet_end') return openTimePicker('end');
+      if (sectionKey === 'quiet' && itemKey === 'quiet_reset') return onResetQuietTimes;
+      return undefined;
+    };
+
+    const resolveToggleHandler = (sectionKey, itemKey) => {
+      if (sectionKey === 'notifications' && itemKey === 'allow') return onToggleAllow;
+      if (sectionKey === 'notifications') return onToggleEvent(itemKey);
+      return futureFeature;
+    };
+
+    return SETTINGS_SECTIONS.map((section) => ({
+      ...section,
+      title: t(`settings_sections_${section.key}_title`),
+      items: section.items.map((item) => ({
+        ...item,
+        label: t(`settings_sections_${section.key}_items_${item.key}`),
+        onPress: item.switch ? undefined : resolvePressHandler(section.key, item.key),
+        onValueChange: item.switch ? resolveToggleHandler(section.key, item.key) : undefined,
+      })),
+    }));
+  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openTimePicker, t]);
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
   const sections = useMemo(
@@ -700,6 +700,9 @@ export default function AppSettings() {
           if (sec.key === 'notifications' && it.key === 'allow') {
             return { ...it, value: !!prefs.allow, disabled: !!isLoadingPrefs };
           }
+          if (sec.key === 'notifications' && (it.key === 'sounds' || it.key === 'events')) {
+            return { ...it, disabled: !prefs.allow || !!isLoadingPrefs };
+          }
           if (sec.key === 'quiet' && it.key === 'quiet_start') {
             return { ...it, value: toTimeStr(prefs.quiet_start) || t('common_off') };
           }
@@ -707,29 +710,34 @@ export default function AppSettings() {
             return { ...it, value: toTimeStr(prefs.quiet_end) || t('common_off') };
           }
           if (sec.key === 'appearance' && it.key === 'language') {
-            return { ...it, value: _curLangLabel };
+            return { ...it, value: currentLangLabel };
           }
           return it;
         }),
       })),
-    [sectionBase, prefs, isLoadingPrefs, _curLangLabel, t],
+    [sectionBase, prefs, isLoadingPrefs, currentLangLabel, t],
   );
 
   return (
-    <Screen>
+    <Screen
+      scroll={false}
+      headerOptions={{ title: t('routes.app_settings/AppSettings', 'Настройки приложения') }}
+    >
       <ScrollView
         contentContainerStyle={s.contentWrap}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
         {isLoadingPrefs && (
-          <View style={{ paddingVertical: 8 }}>
+          <View style={s.loadingWrap}>
             <ActivityIndicator />
           </View>
         )}
         {sections.map((sec, idx) => (
           <View key={sec.key} style={s.sectionWrap}>
-            <Text style={[base.sectionTitle, idx === 0 && { marginTop: 0 }]}>{sec.title}</Text>
+            <SectionHeader topSpacing={idx === 0 ? 0 : undefined}>
+              {sec.title}
+            </SectionHeader>
             <Card paddedXOnly>
               {sec.items.map((it, idx) => {
                 const last = idx === sec.items.length - 1;
@@ -740,20 +748,18 @@ export default function AppSettings() {
                         label={it.label}
                         value={!!it.value}
                         onValueChange={it.onValueChange}
-                        disabled={!!it.disabled}
-                        accessibilityRole="switch"
+                        disabled={!!it.disabled || !!it.comingSoon}
+                        pressable={!!it.comingSoon}
+                        onPress={it.comingSoon ? futureFeature : undefined}
                         accessibilityLabel={it.label}
                       />
                     ) : (
                       <SelectField
                         label={it.label}
                         value={it.value}
-                        onPress={() => {
-                          if (it.disabled) futureFeature();
-                          else it.onPress && it.onPress();
-                        }}
-                        disabled={!!it.disabled}
-                        accessibilityRole="button"
+                        onPress={it.comingSoon ? futureFeature : it.onPress}
+                        disabled={!!it.disabled || !!it.comingSoon}
+                        onDisabledPress={it.comingSoon ? futureFeature : undefined}
                         accessibilityLabel={it.label}
                       />
                     )}
@@ -778,72 +784,70 @@ export default function AppSettings() {
         />
       ) : null}
 
-      {/* Events */}
-      <SwitchListModal
+      <BaseModal
         visible={eventsOpen}
         title={t('settings_events_title')}
-        toggles={[
-          {
-            id: 'new_orders',
-            label: t('settings_events_newOrders'),
-            value: !!prefs.new_orders,
-            onChange: onToggleEvent('new_orders'),
-          },
-          {
-            id: 'feed_orders',
-            label: t('settings_events_feedOrders'),
-            value: !!prefs.feed_orders,
-            onChange: onToggleEvent('feed_orders'),
-          },
-          ...(canCreateOrders
-            ? [
-                {
-                  id: 'reminders',
-                  label: t('settings_events_reminders'),
-                  value: !!prefs.reminders,
-                  onChange: onToggleEvent('reminders'),
-                },
-              ]
-            : []),
-        ]}
+        onClose={() => setEventsOpen(false)}
         footer={
           <Button variant="secondary" title={t('btn_apply')} onPress={() => setEventsOpen(false)} />
         }
-        onClose={() => setEventsOpen(false)}
-      />
+      >
+        <Card paddedXOnly>
+          {eventToggles.map((item, index) => {
+            const isLast = index === eventToggles.length - 1;
+            return (
+              <React.Fragment key={item.id}>
+                <SwitchField
+                  label={item.label}
+                  value={item.value}
+                  onValueChange={item.onChange}
+                  disabled={!prefs.allow}
+                  accessibilityLabel={item.label}
+                />
+                {!isLast ? <View style={base.sep} /> : null}
+              </React.Fragment>
+            );
+          })}
+        </Card>
+      </BaseModal>
 
-      {/* Theme */}
-      <SingleSelectModal
+      <SelectModal
         visible={themeOpen}
         title={t('settings_theme_title')}
-        options={[
+        items={[
           { id: 'light', label: t('settings_theme_light') },
           { id: 'dark', label: t('settings_theme_dark') },
           { id: 'system', label: t('settings_theme_system') },
         ]}
+        searchable={false}
         selectedId={mode}
-        onSelect={(id) => {
-          setMode(id);
+        onSelect={(item) => {
+          setMode(item?.id);
           setThemeOpen(false);
         }}
         onClose={() => setThemeOpen(false)}
       />
 
-      {/* Language */}
-      <SingleSelectModal
+      <SelectModal
         visible={langOpen}
         title={t('settings_language_title')}
-        options={availableLocales.map((id) => ({ id, label: t(`language_${id}`) }))}
-        selectedId={_curLocale}
-        onSelect={async (id) => {
+        items={availableLocales.map((id) => ({ id, label: t(`language_${id}`) }))}
+        searchable={false}
+        selectedId={currentLocale}
+        onSelect={async (item) => {
+          const selectedLocale = item?.id;
+          if (!selectedLocale) {
+            setLangOpen(false);
+            return;
+          }
           try {
-            await setLocale(id);
+            await setLocale(selectedLocale);
             try {
-              await saveUserLocale(id);
+              await saveUserLocale(selectedLocale);
             } catch (e) {
-              console.warn('saveUserLocale:', e?.message || e);
+              __devLog('saveUserLocale failed:', e?.message || e);
             }
-            toast.info(t('lang_changed') ?? 'Language changed');
+            toast.info(t('lang_changed'));
           } finally {
             setLangOpen(false);
           }
@@ -857,6 +861,7 @@ export default function AppSettings() {
 const styles = (t) =>
   StyleSheet.create({
     contentWrap: { paddingHorizontal: t.spacing.lg, paddingBottom: t.spacing.xl },
-    sectionWrap: { marginBottom: 0 },
+    sectionWrap: { marginBottom: t.spacing.sm },
+    loadingWrap: { paddingVertical: t.spacing.sm },
   });
 

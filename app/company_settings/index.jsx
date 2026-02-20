@@ -1,5 +1,5 @@
 // app/company_settings/index.jsx
-import { useNavigation, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -23,8 +23,10 @@ import { useTheme } from '../../theme/ThemeProvider';
 
 import { Feather } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
+import { useAuthContext } from '../../providers/SimpleAuthProvider';
 
 /* Helpers */
 const getDeviceTimeZone = () => {
@@ -156,7 +158,7 @@ function getAllTimeZones() {
 }
 
 /** RU-friendly city names; fallback в†’ last segment */
-const RU_CITY = {
+const _RU_CITY = {
   'Europe/Moscow': 'РњРѕСЃРєРІР°',
   'Europe/Kaliningrad': 'РљР°Р»РёРЅРёРЅРіСЂР°Рґ',
   'Europe/Samara': 'РЎР°РјР°СЂР°',
@@ -181,6 +183,7 @@ const RU_CITY = {
 };
 
 function getOffsetMinutes(zone) {
+  if (__tzOffsetCache.has(zone)) return __tzOffsetCache.get(zone);
   try {
     const now = new Date();
     const dtf = new Intl.DateTimeFormat('en-US', {
@@ -204,6 +207,7 @@ function getOffsetMinutes(zone) {
       Number(map.second),
     );
     const diffMin = Math.round((asUTC - now.getTime()) / 60000);
+    __tzOffsetCache.set(zone, diffMin);
     return diffMin;
   } catch {
     try {
@@ -211,9 +215,12 @@ function getOffsetMinutes(zone) {
       const utc = new Date(now.toLocaleString('en-US', { timeZone: 'UTC' }));
       const tz = new Date(now.toLocaleString('en-US', { timeZone: zone }));
       if (!isNaN(tz.getTime()) && !isNaN(utc.getTime())) {
-        return Math.round((tz - utc) / 60000);
+        const diffMin = Math.round((tz - utc) / 60000);
+        __tzOffsetCache.set(zone, diffMin);
+        return diffMin;
       }
     } catch {}
+    __tzOffsetCache.set(zone, 0);
     return 0;
   }
 }
@@ -224,36 +231,56 @@ function formatUtcOffset(totalMinutes) {
   const abs = Math.abs(mins);
   const hh = String(Math.floor(abs / 60)).padStart(2, '0');
   const mm = String(abs % 60).padStart(2, '0');
-  return `UTC${sign}${hh}:${mm}`;
+  return `UTC ${sign}${hh}:${mm}`;
 }
 
-/** Build label "Р“РѕСЂРѕРґ вЂ” UTC+03:00" */
-function zoneToItem(zone, deviceZone, t) {
+/** Build simple label while keeping IANA id for DB storage */
+function zoneToItem(zone) {
   const offsetMin = getOffsetMinutes(zone);
-  const offset = formatUtcOffset(offsetMin);
-  const city = RU_CITY[zone] ?? zone.split('/').pop().replace(/_/g, ' ');
-  const isDevice = zone === deviceZone;
-  const label = `${city} вЂ” ${offset}`;
-  const basic = [
-    zone,
-    offset,
-    offset.replace(':00', ''),
-    offset.replace('UTC', '').trim(),
-    offset.replace('UTC', '').replace(':00', '').trim(),
-    `${offsetMin >= 0 ? '+' : ''}${Math.floor(offsetMin / 60)}`,
-  ].join(' ');
-  const subtitle = isDevice ? `${basic} В· ${t('timezone_subtitle_device')}` : basic;
-  return { id: zone, label, subtitle, offsetMin, city };
+  return { id: zone, label: formatUtcOffset(offsetMin), offsetMin };
+}
+
+let __tzItemsCache = null;
+const __tzOffsetCache = new Map();
+function getCachedTimeZoneItems() {
+  if (__tzItemsCache) return __tzItemsCache;
+  const list = getAllTimeZones();
+  const uniqueByOffset = new Map();
+
+  list.forEach((zone) => {
+    const item = zoneToItem(zone);
+    const current = uniqueByOffset.get(item.offsetMin);
+    if (!current || current.id === 'Etc/UTC') {
+      uniqueByOffset.set(item.offsetMin, { ...item, id: zone });
+    }
+  });
+
+  __tzItemsCache = Array.from(uniqueByOffset.values()).sort((a, b) => a.offsetMin - b.offsetMin);
+  return __tzItemsCache;
 }
 
 export default function CompanySettings() {
   const toast = useToast();
   const { theme } = useTheme();
-  const nav = useNavigation();
   const router = useRouter();
+  const { profile, isInitializing } = useAuthContext();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const companyQueryKey = React.useMemo(() => ['companySettings'], []);
+  const companyId = profile?.company_id || null;
+  const companyQueryKey = React.useMemo(
+    () => [...COMPANY_SETTINGS_QUERY_KEY, companyId || 'no-company'],
+    [companyId],
+  );
+  const normalizedProfileRole = String(profile?.role || '').toLowerCase();
+  const canAccessCompanySettings = normalizedProfileRole === 'admin';
+  const isAdmin = normalizedProfileRole === 'admin';
+
+  React.useEffect(() => {
+    if (isInitializing) return;
+    if (!canAccessCompanySettings) {
+      router.replace('/orders');
+    }
+  }, [canAccessCompanySettings, isInitializing, router]);
 
   // Load company settings via shared query cache.
   const {
@@ -262,33 +289,11 @@ export default function CompanySettings() {
     refetch: refreshCompany,
   } = useQuery({
     queryKey: companyQueryKey,
-    queryFn: async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return null;
-
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('company_id, timezone')
-        .eq('id', user.id)
-        .single();
-
-      const companyId = profile?.company_id;
-      if (!companyId) return null;
-
-      const { data: companyRow } = await supabase
-        .from('companies')
-        .select(
-          'name, timezone, use_departure_time, worker_phone_mode, worker_phone_window_before_mins, worker_phone_window_after_mins, currency, currency_rate, currency_rate_updated_at, recalc_in_progress',
-        )
-        .eq('id', companyId)
-        .single();
-
-      return companyRow;
-    },
-    gcTime: 5 * 60 * 1000,
-    staleTime: 2 * 60 * 1000,
+    queryFn: () => fetchCompanySettingsByCompanyId(companyId),
+    enabled: !!companyId,
+    gcTime: 30 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
     placeholderData: (prev) => prev ?? null,
   });
 
@@ -325,16 +330,6 @@ export default function CompanySettings() {
   const updateSettings = React.useCallback(
     async (patch) => {
       if (!supabase) throw new Error(t('errors_noDb'));
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error(t('errors_noAuth'));
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('company_id')
-        .eq('id', user.id)
-        .single();
-      const companyId = profile?.company_id;
       if (!companyId) throw new Error(t('errors_companyNotFound'));
       const { error } = await supabase.from('companies').update(patch).eq('id', companyId);
       if (error) throw error;
@@ -344,7 +339,7 @@ export default function CompanySettings() {
 
       return true;
     },
-    [t, refreshCompany],
+    [companyId, t, refreshCompany],
   );
 
   const s = React.useMemo(() => styles(theme), [theme]);
@@ -360,7 +355,6 @@ export default function CompanySettings() {
   const [_currencyModalKey, _setCurrencyModalKey] = React.useState(0);
   const [fetchingRate, setFetchingRate] = React.useState(false);
   const [rateDisplayDirection, setRateDisplayDirection] = React.useState('old_to_new');
-  const [isAdmin, setIsAdmin] = React.useState(false);
   const [companyName, setCompanyName] = React.useState('');
   const [companyNameInitial, setCompanyNameInitial] = React.useState('');
   const [companyNameOpen, setCompanyNameOpen] = React.useState(false);
@@ -396,15 +390,6 @@ export default function CompanySettings() {
   const [afterUnit, setAfterUnit] = React.useState('min');
   const [tzOpen, setTzOpen] = React.useState(false);
 
-  React.useLayoutEffect(() => {
-    try {
-      const titleKeyPrimary = 'routes.settings/index';
-      const titleKeyFallback = 'routes.settings';
-      const title = t(titleKeyPrimary) || t(titleKeyFallback) || titleKeyFallback;
-      nav.setParams({ headerTitle: title });
-    } catch {}
-  }, [nav, t]);
-
   // РћР±РЅРѕРІР»СЏРµРј state РєРѕРіРґР° РїСЂРёС…РѕРґСЏС‚ РґР°РЅРЅС‹Рµ РёР· РєРµС€Р°
   React.useEffect(() => {
     if (!companyData) return;
@@ -427,42 +412,9 @@ export default function CompanySettings() {
     if (companyData.currency_rate != null) setCurrencyRate(String(companyData.currency_rate));
   }, [companyData]);
 
-  // Get current user's role to determine admin rights
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const { data: { user } = {} } = await supabase.auth.getUser();
-        if (!user) return;
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .maybeSingle();
-        if (!alive) return;
-        setIsAdmin(String(profile?.role || '').toLowerCase() === 'admin');
-      } catch {}
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const updateSetting = React.useCallback(
     async (key, value) => {
       if (!supabase) throw new Error(t('errors_noDb'));
-      const {
-        data: { user },
-        error: authErr,
-      } = await supabase.auth.getUser();
-      if (authErr || !user) throw new Error(t('errors_noAuth'));
-      const { data: profile, error: profErr } = await supabase
-        .from('profiles')
-        .select('company_id')
-        .eq('id', user.id)
-        .single();
-      if (profErr) throw profErr;
-      const companyId = profile?.company_id;
       if (!companyId) throw new Error(t('errors_companyNotFound'));
       const payload = { [key]: value };
       const { error: upErr } = await supabase.from('companies').update(payload).eq('id', companyId);
@@ -472,11 +424,11 @@ export default function CompanySettings() {
       await refreshCompany();
 
       // РРЅРІР°Р»РёРґРёСЂСѓРµРј РєРµС€ РЅР°СЃС‚СЂРѕРµРє РєРѕРјРїР°РЅРёРё РґР»СЏ РЅРµРјРµРґР»РµРЅРЅРѕРіРѕ РѕР±РЅРѕРІР»РµРЅРёСЏ UI
-      await queryClient.invalidateQueries({ queryKey: ['companySettings'] });
+      await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
 
       return true;
     },
-    [t, refreshCompany, queryClient],
+    [companyId, t, refreshCompany, queryClient],
   );
 
   const _onSubmitCompanyName = React.useCallback(() => {
@@ -495,25 +447,37 @@ export default function CompanySettings() {
 
   // Time zones list
   const tzItems = React.useMemo(() => {
-    try {
-      const list = getAllTimeZones();
-      const device = getDeviceTimeZone();
-      const items = list.map((z) => zoneToItem(z, device, t));
-      items.sort((a, b) => a.offsetMin - b.offsetMin || a.city.localeCompare(b.city, 'ru'));
-      return items;
-    } catch {
-      const z = getDeviceTimeZone();
-      return [zoneToItem(z, z, t)];
+    const selectedZone = timeZone || getDeviceTimeZone();
+    if (!tzOpen) {
+      return [zoneToItem(selectedZone)];
     }
-  }, [t]);
 
+    try {
+      const cached = getCachedTimeZoneItems();
+      const selectedItem = zoneToItem(selectedZone);
+      const hasSelected = cached.some((it) => it.id === selectedZone);
+      if (hasSelected) return cached;
+      return [...cached, { ...selectedItem, id: selectedZone }].sort((a, b) => a.offsetMin - b.offsetMin);
+    } catch {
+      return [zoneToItem(selectedZone)];
+    }
+  }, [timeZone, tzOpen]);
   const tzMap = React.useMemo(() => {
     const m = new Map();
     tzItems.forEach((it) => m.set(it.id, it));
     return m;
   }, [tzItems]);
 
-  const timeZoneLabel = tzMap.get(timeZone)?.label || timeZone;
+  const selectedZoneItem = React.useMemo(
+    () => tzMap.get(timeZone) || zoneToItem(timeZone),
+    [tzMap, timeZone],
+  );
+  const timeZoneLabel = selectedZoneItem.label;
+  const selectedTimeZoneOffset = selectedZoneItem.offsetMin;
+  const tzInitialIndex = React.useMemo(
+    () => tzItems.findIndex((item) => item.offsetMin === selectedTimeZoneOffset),
+    [tzItems, selectedTimeZoneOffset],
+  );
 
   // РќРѕСЂРјР°Р»РёР·РѕРІР°РЅРЅС‹Р№ РєСѓСЂСЃ РґР»СЏ РїРµСЂРµРґР°С‡Рё РЅР° СЃРµСЂРІРµСЂ Рё РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ
   const parsedDisplayed = React.useMemo(() => {
@@ -676,18 +640,12 @@ export default function CompanySettings() {
     try {
       // prefer companyData if available to avoid extra DB call
       let base = companyData?.currency;
-      if (!base) {
-        const { data: { user } = {} } = await supabase.auth.getUser();
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('company_id')
-          .eq('id', user.id)
-          .single();
+      if (!base && companyId) {
         base = (
           await supabase
             .from('companies')
             .select('currency')
-            .eq('id', profile.company_id)
+            .eq('id', companyId)
             .maybeSingle()
         ).data?.currency;
       }
@@ -709,7 +667,7 @@ export default function CompanySettings() {
     } finally {
       setFetchingRate(false);
     }
-  }, [pendingCurrency, companyData, fetchRateFromApi, t]);
+  }, [pendingCurrency, companyData, companyId, fetchRateFromApi, t]);
 
   // When confirm modal opens, auto-load rate (if not already set)
   React.useEffect(() => {
@@ -738,16 +696,6 @@ export default function CompanySettings() {
       if (!pendingCurrency) return;
       setConfirmLoading(true);
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) throw new Error(t('errors_noAuth'));
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('company_id')
-          .eq('id', user.id)
-          .single();
-        const companyId = profile?.company_id;
         if (!companyId) throw new Error(t('errors_companyNotFound'));
 
         // normalize displayed rate to 'new per old' (p_currency_rate expects new_per_old)
@@ -772,7 +720,7 @@ export default function CompanySettings() {
 
         // Invalidate companySettings and any orders queries for this company
         try {
-          await queryClient.invalidateQueries({ queryKey: ['companySettings'] });
+          await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
           await queryClient.invalidateQueries({
             predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'orders',
           });
@@ -830,7 +778,7 @@ export default function CompanySettings() {
         setConfirmLoading(false);
       }
     },
-    [pendingCurrency, currencyRate, rateDisplayDirection, t, toast, refreshCompany, queryClient],
+    [companyId, pendingCurrency, currencyRate, rateDisplayDirection, t, toast, refreshCompany, queryClient],
   );
 
   const phoneModeOptions = React.useMemo(() => {
@@ -906,9 +854,34 @@ export default function CompanySettings() {
     }),
     [t],
   );
+  const disabledManagementKeys = React.useMemo(
+    () => new Set(['notifications', 'access', 'form_builder']),
+    [],
+  );
+  const onSoonPress = React.useCallback(() => {
+    toast.info(t('settings_soon'));
+  }, [t, toast]);
+
+  if (isInitializing) {
+    return (
+      <Screen
+        background="background"
+        headerOptions={{ title: t('routes.company_settings', 'Настройки компании') }}
+      >
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="small" color={theme.colors.primary} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (!canAccessCompanySettings) return null;
 
   return (
-    <Screen background="background">
+    <Screen
+      background="background"
+      headerOptions={{ title: t('routes.company_settings', 'Настройки компании') }}
+    >
       <ScrollView
         contentContainerStyle={s.contentWrap}
         showsVerticalScrollIndicator={false}
@@ -942,13 +915,16 @@ export default function CompanySettings() {
               onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'employees').route)}
             />
 
-            <View style={s.sep} />
-
-            <SelectField
-              label={<Text style={s.itemLabel}>{t('settings_company_billing')}</Text>}
-              showValue={false}
-              onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'billing').route)}
-            />
+            {isAdmin ? (
+              <>
+                <View style={s.sep} />
+                <SelectField
+                  label={<Text style={s.itemLabel}>{t('settings_company_billing')}</Text>}
+                  showValue={false}
+                  onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'billing').route)}
+                />
+              </>
+            ) : null}
 
             <View style={s.sep} />
             <SelectField
@@ -983,6 +959,8 @@ export default function CompanySettings() {
                     label={<Text style={s.itemLabel}>{t(`settings_management_${it.key}`)}</Text>}
                     showValue={false}
                     onPress={go(it.route)}
+                    disabled={disabledManagementKeys.has(it.key)}
+                    onDisabledPress={onSoonPress}
                   />
                 </React.Fragment>
               ))}
@@ -1024,6 +1002,7 @@ export default function CompanySettings() {
               value={
                 companyData?.recalc_in_progress ? t('settings_recalc_in_progress') : currencyLabel
               }
+              valueNumberOfLines={3}
               disabled={Boolean(companyData?.recalc_in_progress)}
               onPress={() => {
                 // Only admins can change currency in UI
@@ -1114,7 +1093,6 @@ export default function CompanySettings() {
       >
         <View style={{ marginBottom: theme.spacing.sm }}>
           <TextField
-            label={t('fields_company_name')}
             value={companyNameDraft}
             onChangeText={(txt) => {
               setCompanyNameDraft(txt);
@@ -1189,9 +1167,15 @@ export default function CompanySettings() {
         visible={tzOpen}
         title={t('modal_timezone_title')}
         items={tzItems}
+        selectedId={timeZone}
+        initialScrollIndex={tzInitialIndex >= 0 ? tzInitialIndex : undefined}
+        listBottomInset={theme.spacing.lg}
+        isItemSelected={(item, id) =>
+          String(item?.id) === String(id) || item?.offsetMin === selectedTimeZoneOffset
+        }
         onSelect={onPickTimeZone}
         onClose={() => setTzOpen(false)}
-        searchable={true}
+        searchable={false}
       />
 
       {/* Currency picker */}
@@ -1748,8 +1732,11 @@ const styles = (t) =>
       height: t.components.row.minHeight,
       paddingVertical: t.components.row.py ? t.spacing[t.components.row.py] : 0,
     },
-    rowLabel: { color: t.colors.textSecondary },
-    itemLabel: { color: t.colors.textSecondary, fontWeight: t.typography.weight.regular },
+    rowLabel: { color: t.colors.textStrong ?? t.colors.text },
+    itemLabel: {
+      color: t.colors.textStrong ?? t.colors.text,
+      fontWeight: t.typography.weight.regular,
+    },
     captionWrap: {
       paddingHorizontal: t.spacing[t.components.card.padX || 'md'],
       paddingBottom: t.spacing.md,
@@ -1757,4 +1744,5 @@ const styles = (t) =>
     },
     caption: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm },
   });
+
 

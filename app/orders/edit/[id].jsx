@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Keyboard,
@@ -11,7 +12,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import Modal from 'react-native-modal';
 
 import { useLocalSearchParams } from 'expo-router';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
@@ -29,19 +29,45 @@ import { useDepartments as useDepartmentsHook } from '../../../components/hooks/
 import { useUsers } from '../../../components/hooks/useUsers';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import Card from '../../../components/ui/Card';
-import { DateTimeModal } from '../../../components/ui/modals';
+import { DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import { isValidRu as isValidPhone } from '../../../components/ui/phone';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+import { supabase } from '../../../lib/supabase';
 import { t as T } from '../../../src/i18n';
+import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { useTheme } from '../../../theme/ThemeProvider';
 
+const HEADER_HEIGHT_FALLBACK = 56;
+const TOAST_RESET_DURATION_MS = 2500;
+const BOTTOM_SPACER_FALLBACK = 80;
+const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
+const WORK_TYPE_NONE_OPTION_ID = '__none__';
+
 export default function EditOrderScreen() {
-  const { id: rawId } = useLocalSearchParams();
+  const {
+    id: rawId,
+    companyId: rawCompanyId,
+    workTypeId: rawWorkTypeId,
+    workTypeName: rawWorkTypeName,
+  } = useLocalSearchParams();
   const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  const companyIdFromParams = useMemo(() => {
+    const value = Array.isArray(rawCompanyId) ? rawCompanyId[0] : rawCompanyId;
+    return value ? String(value) : null;
+  }, [rawCompanyId]);
+  const workTypeIdFromParams = useMemo(() => {
+    const value = Array.isArray(rawWorkTypeId) ? rawWorkTypeId[0] : rawWorkTypeId;
+    if (value === null || value === undefined || value === '') return null;
+    return String(value);
+  }, [rawWorkTypeId]);
+  const workTypeNameFromParams = useMemo(() => {
+    const value = Array.isArray(rawWorkTypeName) ? rawWorkTypeName[0] : rawWorkTypeName;
+    return value ? String(value) : '';
+  }, [rawWorkTypeName]);
 
   const updateRequestMutation = useUpdateRequestMutation();
   const queryClient = useQueryClient();
@@ -56,7 +82,8 @@ export default function EditOrderScreen() {
     info: toastInfo,
   } = useToast();
   const [saving, setSaving] = useState(false);
-  const [companyId, setCompanyId] = useState(null);
+  const savingRef = useRef(false);
+  const [companyId, setCompanyId] = useState(companyIdFromParams);
   const { departments } = useDepartmentsHook({
     companyId,
     enabled: !!companyId,
@@ -64,10 +91,10 @@ export default function EditOrderScreen() {
   });
   useRequestRealtimeSync({ enabled: !!id && !!companyId, companyId });
 
-  // moved up: состояние видимости picker должно быть доступно до вызова useUsers
+  // moved up: СЃРѕСЃС‚РѕСЏРЅРёРµ РІРёРґРёРјРѕСЃС‚Рё picker РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РґРѕСЃС‚СѓРїРЅРѕ РґРѕ РІС‹Р·РѕРІР° useUsers
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
 
-  // useUsers теперь читает корректное значение enabled
+  // useUsers С‚РµРїРµСЂСЊ С‡РёС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕРµ Р·РЅР°С‡РµРЅРёРµ enabled
   const { users: employees } = useUsers({
     filters: {},
     enabled: assigneePickerVisible,
@@ -75,6 +102,8 @@ export default function EditOrderScreen() {
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
+  const [workTypeResolved, setWorkTypeResolved] = useState(false);
+  const [workTypeNameFallback, setWorkTypeNameFallback] = useState('');
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -88,10 +117,14 @@ export default function EditOrderScreen() {
   const [assigneeId, setAssigneeId] = useState(null);
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
+  const [statusKey, setStatusKey] = useState(null);
+  const [statusLabel, setStatusLabel] = useState('');
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
   const [assignedEmployeeLabel, setAssignedEmployeeLabel] = useState('');
+  const [formHydrated, setFormHydrated] = useState(false);
 
-  // Восстановленные refs и состояния, которые использует компонент дальше
+  // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹Рµ refs Рё СЃРѕСЃС‚РѕСЏРЅРёСЏ, РєРѕС‚РѕСЂС‹Рµ РёСЃРїРѕР»СЊР·СѓРµС‚ РєРѕРјРїРѕРЅРµРЅС‚ РґР°Р»СЊС€Рµ
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const headerResetRef = useRef(null);
@@ -107,25 +140,53 @@ export default function EditOrderScreen() {
   const [fuelCost, setFuelCost] = useState('');
   const [headerLabel, setHeaderLabel] = useState(T('header_save'));
 
-  // модальные состояния (были удалены ранее — вернуть)
+  // РјРѕРґР°Р»СЊРЅС‹Рµ СЃРѕСЃС‚РѕСЏРЅРёСЏ (Р±С‹Р»Рё СѓРґР°Р»РµРЅС‹ СЂР°РЅРµРµ вЂ” РІРµСЂРЅСѓС‚СЊ)
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
   const assignedLabelRequestIdRef = useRef(0);
+  const normalizeId = useCallback((value) => {
+    if (value === null || value === undefined || value === '') return null;
+    return String(value);
+  }, []);
 
-  // имя выбранного исполнителя (восстановлено)
+  // РёРјСЏ РІС‹Р±СЂР°РЅРЅРѕРіРѕ РёСЃРїРѕР»РЅРёС‚РµР»СЏ (РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ)
   const selectedEmployeeName = useMemo(() => {
     if (selectedEmployee) return selectedEmployee.display_name || selectedEmployee.email || '';
     return assignedEmployeeLabel || T('common_noName');
   }, [selectedEmployee, assignedEmployeeLabel]);
 
   const selectedWorkTypeName = useMemo(() => {
-    if (!workTypeId) return '';
-    const match = workTypes.find((w) => w.id === workTypeId);
-    return match?.name ?? '';
-  }, [workTypeId, workTypes]);
+    const normalizedSelected = normalizeId(workTypeId);
+    if (!normalizedSelected) return workTypeNameFallback || '';
+    const match = workTypes.find((w) => normalizeId(w?.id) === normalizedSelected);
+    return match?.name ?? (workTypeNameFallback || '');
+  }, [normalizeId, workTypeId, workTypeNameFallback, workTypes]);
+
+  const selectedStatusLabel = useMemo(() => {
+    return statusLabel || '';
+  }, [statusLabel]);
+
+  const statusItems = useMemo(() => {
+    return ORDER_STATUS_KEYS.map((k) => ({ id: k, label: T(`order_status_${k}`) }));
+  }, []);
+  const workTypeItems = useMemo(
+    () => [
+      {
+        id: WORK_TYPE_NONE_OPTION_ID,
+        label: T('order_details_work_type_not_selected'),
+      },
+      ...(workTypes || [])
+        .filter((wt) => wt?.is_enabled !== false)
+        .map((wt) => ({
+        id: normalizeId(wt?.id),
+        label: String(wt?.name || ''),
+        })),
+    ],
+    [normalizeId, workTypes],
+  );
 
   const selectedEmployee = useMemo(() => {
     if (!assigneeId || !employees?.length) return null;
@@ -155,11 +216,13 @@ export default function EditOrderScreen() {
     let alive = true;
     (async () => {
       try {
-        const cid = await getMyCompanyId();
+        const cid = companyIdFromParams || (await getMyCompanyId());
         if (!alive) return;
         setCompanyId(cid);
         if (cid) {
-          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid, {
+            includeDisabled: true,
+          });
           if (!alive) return;
           setUseWorkTypesFlag(!!flag);
           setWorkTypes(types || []);
@@ -173,7 +236,11 @@ export default function EditOrderScreen() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [companyIdFromParams]);
+
+  useEffect(() => {
+    setFormHydrated(false);
+  }, [id]);
 
   const {
     data: orderData,
@@ -236,6 +303,7 @@ export default function EditOrderScreen() {
         price: String(draft.price ?? '').trim(),
         fuelCost: String(draft.fuelCost ?? '').trim(),
         workTypeId: draft.workTypeId || null,
+        status: draft.status || null,
       }),
     [normalizeDateOrNull],
   );
@@ -244,88 +312,156 @@ export default function EditOrderScreen() {
     if (!id || !orderData) return;
     const isNewOrderScreenOpen = hydratedOrderIdRef.current !== id;
     if (!isNewOrderScreenOpen && userEditedRef.current) return;
+    let cancelled = false;
 
-    const row = orderData;
-    const nextTitle = row.title || '';
-    const nextDescription = row.comment || '';
-    const nextRegion = row.region || '';
-    const nextCity = row.city || '';
-    const nextStreet = row.street || '';
-    const nextHouse = row.house || '';
-    const nextCustomerName = row.fio || row.customer_name || '';
-    const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
-    const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
-    const nextAssigneeId = row.assigned_to || null;
-    const nextToFeed = !row.assigned_to;
-    const nextUrgent = !!row.urgent;
-    const nextDepartmentId = row.department_id || null;
-    const nextWorkTypeId = row.work_type_id || null;
-    const nextPrice = row.price !== null && row.price !== undefined ? String(row.price) : '';
-    const nextFuelCost =
-      row.fuel_cost !== null && row.fuel_cost !== undefined ? String(row.fuel_cost) : '';
+    (async () => {
+      const row = orderData;
+      const nextTitle = row.title || '';
+      const nextDescription = row.comment || '';
+      const nextRegion = row.region || '';
+      const nextCity = row.city || '';
+      const nextStreet = row.street || '';
+      const nextHouse = row.house || '';
+      const nextCustomerName = row.fio || row.customer_name || '';
+      const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
+      const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
+      const nextAssigneeId = row.assigned_to || null;
+      const nextToFeed = !row.assigned_to;
+      const nextUrgent = !!row.urgent;
+      const nextDepartmentId = row.department_id || null;
+      const nextWorkTypeId = normalizeId(row.work_type_id ?? workTypeIdFromParams);
+      const nextWorkTypeResolved =
+        typeof row.work_type_id !== 'undefined' || workTypeIdFromParams !== null;
+      const nextStatus = row.status || (nextToFeed ? T('order_status_in_feed') : T('order_status_new'));
+      const nextPrice = row.price !== null && row.price !== undefined ? String(row.price) : '';
+      const nextFuelCost =
+        row.fuel_cost !== null && row.fuel_cost !== undefined ? String(row.fuel_cost) : '';
+      const fallbackName =
+        String(row.work_type_name || row.work_type?.name || workTypeNameFromParams || '').trim() || '';
+      let nextAssignedEmployeeLabel = '';
+      if (row.assigned_to && row.assignee_profile) {
+        const data = row.assignee_profile;
+        const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+        const normalizedFullName = (data.full_name || '').trim();
+        nextAssignedEmployeeLabel = nameParts || normalizedFullName || data.email || '';
+      }
 
-    setTitle(nextTitle);
-    setDescription(nextDescription);
-    setRegion(nextRegion);
-    setCity(nextCity);
-    setStreet(nextStreet);
-    setHouse(nextHouse);
-    setCustomerName(nextCustomerName);
-    setPhone(raw);
-    setDepartureDate(nextDepartureDate);
-    setAssigneeId(nextAssigneeId);
+      setTitle(nextTitle);
+      setDescription(nextDescription);
+      setRegion(nextRegion);
+      setCity(nextCity);
+      setStreet(nextStreet);
+      setHouse(nextHouse);
+      setCustomerName(nextCustomerName);
+      setPhone(raw);
+      setDepartureDate(nextDepartureDate);
+      setAssigneeId(nextAssigneeId);
+      setAssignedEmployeeLabel(nextAssignedEmployeeLabel);
+      setWorkTypeNameFallback(fallbackName);
+      setWorkTypeResolved(nextWorkTypeResolved);
 
-    // Если профиль уже пришёл вместе с заказом — используем его сразу, иначе делаем отдельный fetch
-    if (row.assigned_to && row.assignee_profile) {
-      const data = row.assignee_profile;
-      const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
-      const normalizedFullName = (data.full_name || '').trim();
-      const candidate = nameParts || normalizedFullName || data.email || '';
-      setAssignedEmployeeLabel(candidate);
-    } else if (row.assigned_to) {
-      // fallback: если нет профиля в ответе — оставить прежнюю логику (async fetch)
-      refreshAssignedLabel(row.assigned_to);
-    } else {
-      setAssignedEmployeeLabel('');
-    }
+      setToFeed(nextToFeed);
+      setUrgent(nextUrgent);
+      setDepartmentId(nextDepartmentId);
+      setWorkTypeId(nextWorkTypeId);
+      setStatusLabel(nextStatus);
+      try {
+        const found = ORDER_STATUS_KEYS.find((k) => T(`order_status_${k}`) === nextStatus);
+        setStatusKey(found || null);
+      } catch {
+        setStatusKey(null);
+      }
+      setPrice(nextPrice);
+      setFuelCost(nextFuelCost);
 
-    setToFeed(nextToFeed);
-    setUrgent(nextUrgent);
-    setDepartmentId(nextDepartmentId);
-    setWorkTypeId(nextWorkTypeId);
-    setPrice(nextPrice);
-    setFuelCost(nextFuelCost);
+      snapshotRef.current = buildSnapshot({
+        title: nextTitle,
+        description: nextDescription,
+        region: nextRegion,
+        city: nextCity,
+        street: nextStreet,
+        house: nextHouse,
+        customerName: nextCustomerName,
+        phone: raw,
+        departureDate: nextDepartureDate,
+        assigneeId: nextAssigneeId,
+        toFeed: nextToFeed,
+        urgent: nextUrgent,
+        departmentId: nextDepartmentId,
+        price: nextPrice,
+        fuelCost: nextFuelCost,
+        workTypeId: nextWorkTypeId,
+      });
+      userEditedRef.current = false;
+      hydratedOrderIdRef.current = id;
+      setFormHydrated(true);
 
-    snapshotRef.current = buildSnapshot({
-      title: nextTitle,
-      description: nextDescription,
-      region: nextRegion,
-      city: nextCity,
-      street: nextStreet,
-      house: nextHouse,
-      customerName: nextCustomerName,
-      phone: raw,
-      departureDate: nextDepartureDate,
-      assigneeId: nextAssigneeId,
-      toFeed: nextToFeed,
-      urgent: nextUrgent,
-      departmentId: nextDepartmentId,
-      price: nextPrice,
-      fuelCost: nextFuelCost,
-      workTypeId: nextWorkTypeId,
-    });
-    userEditedRef.current = false;
-    hydratedOrderIdRef.current = id;
-  }, [id, orderData, buildSnapshot, refreshAssignedLabel, normalizeDateOrNull]);
+      if (row.assigned_to && !row.assignee_profile) {
+        ensureRequestAssigneeNamePrefetch(queryClient, row.assigned_to)
+          .then((data) => {
+            if (cancelled || userEditedRef.current) return;
+            setAssignedEmployeeLabel(String(data || ''));
+          })
+          .catch(() => {});
+      }
 
-  // Оптимизируем вызов refreshAssignedLabel — не запрашиваем, если label уже установлен
+      if (!nextWorkTypeResolved || nextWorkTypeId == null) {
+        supabase
+          .from('orders')
+          .select('work_type_id')
+          .eq('id', id)
+          .maybeSingle()
+          .then(({ data: wtRow }) => {
+            if (cancelled || userEditedRef.current || !wtRow) return;
+            const resolvedWorkTypeId = normalizeId(wtRow.work_type_id);
+            setWorkTypeId(resolvedWorkTypeId);
+            setWorkTypeResolved(true);
+            snapshotRef.current = buildSnapshot({
+              title: nextTitle,
+              description: nextDescription,
+              region: nextRegion,
+              city: nextCity,
+              street: nextStreet,
+              house: nextHouse,
+              customerName: nextCustomerName,
+              phone: raw,
+              departureDate: nextDepartureDate,
+              assigneeId: nextAssigneeId,
+              toFeed: nextToFeed,
+              urgent: nextUrgent,
+              departmentId: nextDepartmentId,
+              price: nextPrice,
+              fuelCost: nextFuelCost,
+              workTypeId: resolvedWorkTypeId,
+            });
+            userEditedRef.current = false;
+          })
+          .catch(() => {});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    id,
+    orderData,
+    buildSnapshot,
+    normalizeDateOrNull,
+    normalizeId,
+    queryClient,
+    workTypeIdFromParams,
+    workTypeNameFromParams,
+  ]);
+
+  // РћРїС‚РёРјРёР·РёСЂСѓРµРј РІС‹Р·РѕРІ refreshAssignedLabel вЂ” РЅРµ Р·Р°РїСЂР°С€РёРІР°РµРј, РµСЃР»Рё label СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ
   useEffect(() => {
     if (!assigneeId) {
       assignedLabelRequestIdRef.current += 1;
       setAssignedEmployeeLabel('');
       return;
     }
-    if (assignedEmployeeLabel) return; // уже есть имя — пропускаем лишний запрос
+    if (assignedEmployeeLabel) return; // СѓР¶Рµ РµСЃС‚СЊ РёРјСЏ вЂ” РїСЂРѕРїСѓСЃРєР°РµРј Р»РёС€РЅРёР№ Р·Р°РїСЂРѕСЃ
     refreshAssignedLabel(assigneeId);
   }, [assigneeId, refreshAssignedLabel, assignedEmployeeLabel]);
 
@@ -374,6 +510,7 @@ export default function EditOrderScreen() {
     price,
     fuelCost,
     workTypeId,
+    statusLabel,
     buildSnapshot,
   ]);
 
@@ -394,6 +531,16 @@ export default function EditOrderScreen() {
     };
   }, []);
 
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        if (!id) return;
+        queryClient.cancelQueries({ queryKey: queryKeys.requests.detail(id) });
+      },
+      [id, queryClient],
+    ),
+  );
+
   const styles = useMemo(
     () =>
       StyleSheet.create({
@@ -411,7 +558,7 @@ export default function EditOrderScreen() {
       headerResetRef.current = setTimeout(() => {
         if (!saving) setHeaderLabel(T('header_save'));
         headerResetRef.current = null;
-      }, options?.duration ?? 2500);
+      }, options?.duration ?? TOAST_RESET_DURATION_MS);
     }
     try {
       if (type === 'error') {
@@ -435,17 +582,43 @@ export default function EditOrderScreen() {
       const normalized = selectedId ?? null;
       setAssigneeId(normalized);
       setToFeed(!normalized);
+      // Р•СЃР»Рё Р±С‹Р» СЃС‚Р°С‚СѓСЃ "Р’ Р»РµРЅС‚Рµ" вЂ” РїСЂРё РЅР°Р·РЅР°С‡РµРЅРёРё РёСЃРїРѕР»РЅРёС‚РµР»СЏ РїРµСЂРµРІРѕРґРёРј РІ "РќРѕРІС‹Р№"
+      try {
+        if (normalized && statusKey === 'in_feed') {
+          setStatusKey('new');
+          setStatusLabel(T('order_status_new'));
+        }
+      } catch {
+        // ignore
+      }
       setAssigneePickerVisible(false);
     },
-    [setAssigneeId, setAssigneePickerVisible, setToFeed],
+    [setAssigneeId, setAssigneePickerVisible, setToFeed, statusKey, setStatusKey, setStatusLabel],
   );
 
   const handleAssignmentReset = useCallback(() => {
     setAssigneeId(null);
     setToFeed(true);
-  }, [setAssigneeId, setToFeed]);
+    try {
+      setStatusKey('in_feed');
+      setStatusLabel(T('order_status_in_feed'));
+    } catch {
+      // ignore
+    }
+  }, [setAssigneeId, setToFeed, setStatusKey, setStatusLabel]);
 
   const selectExecutorTitle = T('order_modal_select_executor');
+  const focusField = useCallback(
+    (fieldRef) =>
+      ensureVisibleField({
+        fieldRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight: theme?.components?.header?.height ?? HEADER_HEIGHT_FALLBACK,
+      }),
+    [insets.bottom, theme?.components?.header?.height],
+  );
   const assignmentPanelConfig = useMemo(
     () => ({
       employees,
@@ -459,7 +632,7 @@ export default function EditOrderScreen() {
   );
 
   const handleSave = async () => {
-    if (saving) return;
+    if (savingRef.current || saving) return;
     if (!id) {
       showToast(T('order_validation_no_order_id'), 'error');
       return;
@@ -468,10 +641,10 @@ export default function EditOrderScreen() {
       showToast(T('settings_recalc_in_progress'), 'warning');
       return;
     }
-    // Скрываем клавиатуру и снимаем фокус с полей перед валидацией/сохранением
+    // РЎРєСЂС‹РІР°РµРј РєР»Р°РІРёР°С‚СѓСЂСѓ Рё СЃРЅРёРјР°РµРј С„РѕРєСѓСЃ СЃ РїРѕР»РµР№ РїРµСЂРµРґ РІР°Р»РёРґР°С†РёРµР№/СЃРѕС…СЂР°РЅРµРЅРёРµРј
     try {
       Keyboard.dismiss();
-      // Попробуем размыть все поля, если у них есть метод blur
+      // РџРѕРїСЂРѕР±СѓРµРј СЂР°Р·РјС‹С‚СЊ РІСЃРµ РїРѕР»СЏ, РµСЃР»Рё Сѓ РЅРёС… РµСЃС‚СЊ РјРµС‚РѕРґ blur
       [titleRef, descriptionRef, regionRef, cityRef, streetRef, houseRef, customerNameRef].forEach(
         (r) => {
           try {
@@ -518,7 +691,8 @@ export default function EditOrderScreen() {
 
   const proceedSave = async () => {
     try {
-      if (saving) return;
+      if (savingRef.current || saving) return;
+      savingRef.current = true;
       setSaving(true);
       showToast(T('toast_saving'), 'info', { sticky: true });
 
@@ -562,7 +736,12 @@ export default function EditOrderScreen() {
         department_id: departmentId || null,
         price: parsedPrice,
         fuel_cost: parsedFuelCost,
-        ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
+        ...(useWorkTypes && workTypeResolved
+          ? {
+              work_type_id: normalizeId(workTypeId),
+            }
+          : {}),
+        ...(statusLabel ? { status: statusLabel } : {}),
       };
 
       await updateRequestMutation.mutateAsync({
@@ -596,7 +775,7 @@ export default function EditOrderScreen() {
       }
       if (err?.code === 'CONFLICT') {
         showToast(
-          'Заявка уже была изменена на другом устройстве. Открыта актуальная версия, проверьте поля.',
+          'Р—Р°СЏРІРєР° СѓР¶Рµ Р±С‹Р»Р° РёР·РјРµРЅРµРЅР° РЅР° РґСЂСѓРіРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ. РћС‚РєСЂС‹С‚Р° Р°РєС‚СѓР°Р»СЊРЅР°СЏ РІРµСЂСЃРёСЏ, РїСЂРѕРІРµСЂСЊС‚Рµ РїРѕР»СЏ.',
           'warning',
         );
         await refetchOrder();
@@ -605,10 +784,13 @@ export default function EditOrderScreen() {
       }
     } finally {
       setSaving(false);
+      savingRef.current = false;
     }
   };
 
-  if (orderLoading && !orderData) {
+  const isScreenReady = !!orderData && formHydrated;
+
+  if ((orderLoading && !orderData) || (!!orderData && !isScreenReady)) {
     return (
       <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -664,15 +846,21 @@ export default function EditOrderScreen() {
   return (
     <>
       <EditScreenTemplate
-      rightTextLabel={headerLabel}
-      onRightPress={handleSave}
-      scrollRef={scrollRef}
-      onScroll={(e) => {
-        try {
-          scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
-        } catch {}
-      }}
-    >
+        rightTextLabel={headerLabel}
+        onRightPress={handleSave}
+        headerOptions={{
+          headerTitleStyle: {
+            fontSize: theme?.typography?.sizes?.md ?? 15,
+            fontWeight: theme?.typography?.weight?.semibold ?? '600',
+          },
+        }}
+        scrollRef={scrollRef}
+        onScroll={(e) => {
+          try {
+            scrollYRef.current = e.nativeEvent.contentOffset.y || 0;
+          } catch {}
+        }}
+      >
       <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             <TextField
@@ -682,15 +870,7 @@ export default function EditOrderScreen() {
               value={title}
               onChangeText={setTitle}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: titleRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(titleRef)}
               required
             />
 
@@ -703,15 +883,7 @@ export default function EditOrderScreen() {
               multiline
               minLines={3}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: descriptionRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(descriptionRef)}
             />
 
             <TextField
@@ -721,6 +893,15 @@ export default function EditOrderScreen() {
               pressable
               style={styles.field}
               onPress={() => setAssigneePickerVisible(true)}
+            />
+
+            <TextField
+              label={T('orders_filter_status')}
+              value={selectedStatusLabel}
+              placeholder={T('orders_filter_status')}
+              pressable
+              style={styles.field}
+              onPress={() => setStatusModalVisible(true)}
             />
 
             {useWorkTypes && (
@@ -763,15 +944,7 @@ export default function EditOrderScreen() {
               value={region}
               onChangeText={setRegion}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: regionRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(regionRef)}
             />
             <TextField
               ref={cityRef}
@@ -779,15 +952,7 @@ export default function EditOrderScreen() {
               value={city}
               onChangeText={setCity}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: cityRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(cityRef)}
             />
             <TextField
               ref={streetRef}
@@ -795,15 +960,7 @@ export default function EditOrderScreen() {
               value={street}
               onChangeText={setStreet}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: streetRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(streetRef)}
             />
             <TextField
               ref={houseRef}
@@ -811,15 +968,7 @@ export default function EditOrderScreen() {
               value={house}
               onChangeText={setHouse}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: houseRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(houseRef)}
             />
           </Card>
 
@@ -831,15 +980,7 @@ export default function EditOrderScreen() {
               value={customerName}
               onChangeText={setCustomerName}
               style={styles.field}
-              onFocus={() =>
-                ensureVisibleField({
-                  fieldRef: customerNameRef,
-                  scrollRef,
-                  scrollYRef,
-                  insetsBottom: insets.bottom ?? 0,
-                  headerHeight: theme?.components?.header?.height ?? 56,
-                })
-              }
+              onFocus={() => focusField(customerNameRef)}
             />
             <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
           </Card>
@@ -883,38 +1024,50 @@ export default function EditOrderScreen() {
             )}
           </Card>
 
-          <View style={{ height: theme.spacing?.xxl ?? 80 }} />
+          <View style={{ height: theme.spacing?.xxl ?? BOTTOM_SPACER_FALLBACK }} />
       </EditScreenTemplate>
 
-      <Modal
-        isVisible={workTypeModalVisible}
-        onBackdropPress={() => setWorkTypeModalVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-      >
-        <View style={{ backgroundColor: theme.colors.surface, borderRadius: 12, padding: 20 }}>
-          <Text
-            style={{ fontSize: 18, fontWeight: '600', color: theme.colors.text, marginBottom: 12 }}
-          >
-            {T('order_modal_work_type_select')}
-          </Text>
-          {workTypes.map((t) => (
-            <Pressable
-              key={t.id}
-              onPress={() => {
-                setWorkTypeId(t.id);
-                setWorkTypeModalVisible(false);
-              }}
-              style={({ pressed }) => [
-                { paddingVertical: theme.spacing?.sm ?? 10 },
-                pressed && { opacity: 0.8 },
-              ]}
-            >
-              <Text style={{ fontSize: 16, color: theme.colors.text }}>{t.name}</Text>
-            </Pressable>
-          ))}
-        </View>
-      </Modal>
+      <SelectModal
+        visible={workTypeModalVisible}
+        title={T('order_modal_work_type_select')}
+        items={workTypeItems}
+        searchable={false}
+        selectedId={normalizeId(workTypeId) ?? WORK_TYPE_NONE_OPTION_ID}
+        onSelect={(item) => {
+          const isNoneOption = item?.id === WORK_TYPE_NONE_OPTION_ID;
+          setWorkTypeId(isNoneOption ? null : normalizeId(item?.id));
+          setWorkTypeNameFallback(isNoneOption ? '' : String(item?.label || ''));
+          setWorkTypeResolved(true);
+          setWorkTypeModalVisible(false);
+        }}
+        onClose={() => setWorkTypeModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={statusModalVisible}
+        title={T('orders_filter_status')}
+        items={statusItems}
+        searchable={false}
+        selectedId={statusKey}
+        onSelect={(item) => {
+          try {
+            setStatusKey(item?.id ?? null);
+            setStatusLabel(item?.label ?? '');
+            // РµСЃР»Рё РІС‹Р±СЂР°РЅР° Р»РµРЅС‚Р° вЂ” СЃРЅРёРјР°РµРј РёСЃРїРѕР»РЅРёС‚РµР»СЏ
+            if (item?.id === 'in_feed') {
+              setAssigneeId(null);
+              setToFeed(true);
+            } else {
+              setToFeed(false);
+            }
+          } catch {
+            // ignore
+          } finally {
+            setStatusModalVisible(false);
+          }
+        }}
+        onClose={() => setStatusModalVisible(false)}
+      />
 
       <DateTimeModal
         visible={showDateModal}

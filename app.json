@@ -5,16 +5,25 @@
     "version": "1.0.1",
     "scheme": "workorders",
     "platforms": [
-      "android"
+      "android",
+      "ios"
     ],
     "jsEngine": "hermes",
     "assetBundlePatterns": [
       "**/*"
     ],
+    "androidStatusBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#F2F2F7",
+      "translucent": false
+    },
+    "androidNavigationBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#FFFFFF"
+    },
     "extra": {
       "supabaseUrl": "https://supabase.monitorapp.ru",
       "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzcwMTI0NjE4LCJleHAiOjIwODU0ODQ2MTh9.AHQIpGhGL9NH8i6v6oNs7counMqIjmbpjFNZ0BHXc4w",
-      "supabaseServiceKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3NzAxMjQ2MTksImV4cCI6MjA4NTQ4NDYxOX0.82TaDhX4A1J8xuExtPJUINQD2CNEmkioYNTDq9TEhl4",
       "emailServiceUrl": "https://api.monitorapp.ru",
       "eas": {
         "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
@@ -22,7 +31,15 @@
     },
     "owner": "bahtin106",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0A84FF",
+          "defaultChannel": "app-notify"
+        }
+      ]
     ]
   }
 }

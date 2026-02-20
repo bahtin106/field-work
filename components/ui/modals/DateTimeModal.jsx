@@ -18,6 +18,7 @@ export default function DateTimeModal({
   omitYearDefault = true,
   omitYearLabel = T('datetime_omit_year'),
   allowFutureDates = false,
+  allowPastDates = true,
 }) {
   const modalRef = React.useRef(null);
   const { theme } = useTheme();
@@ -48,9 +49,9 @@ export default function DateTimeModal({
       if (typeof v === 'string') {
         const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
         if (m) {
-          const y = Number(m[1]),
-            mo = Number(m[2]),
-            d = Number(m[3]);
+          const y = Number(m[1]);
+          const mo = Number(m[2]);
+          const d = Number(m[3]);
           return new Date(y, mo - 1, d, 12, 0, 0, 0);
         }
       }
@@ -66,132 +67,116 @@ export default function DateTimeModal({
   };
   const baseDate = parseInitial(initial);
 
-  // Build month labels directly via i18n keys.
-  // If a locale file doesn't contain these keys, t(...) will return the key itself
-  // which helps to visually spot missing translations (no automatic Intl fallback).
   const _dict = React.useMemo(() => getDict?.() || {}, []);
   const _srcShort = Array.from({ length: 12 }, (_, i) => T(`months_short_${i}`));
   const _srcGen = Array.from({ length: 12 }, (_, i) => T(`months_genitive_${i}`));
-
-  // Read label offset from dict if present (keeps existing behaviour).
   const _offset = Number(_dict.month_label_offset ?? 0) || 0;
   const rotate = (arr, off) => Array.from({ length: 12 }, (_, i) => arr[(i + off + 12) % 12]);
   const MONTHS_ABBR = rotate(_srcShort, _offset);
   const MONTHS_GEN = rotate(_srcGen, _offset);
 
-  // Debug: log runtime months/offset when modal opens (dev only)
-  React.useEffect(() => {
-    try {
-      if (!visible) return;
-      // Only log in development to avoid noisy production logs
-      if (typeof globalThis !== 'undefined' && globalThis.__DEV__) {
-        // eslint-disable-next-line no-console
-        console.log('[DateTimeModal] months debug', {
-          offset: _offset,
-          MONTHS_ABBR,
-          MONTHS_GEN,
-          dict: _dict && Object.keys(_dict || {}).length ? 'loaded' : 'none',
-        });
-      }
-    } catch {}
-  }, [visible, MONTHS_ABBR, MONTHS_GEN, _dict, _offset]);
+  const daysInMonth = React.useCallback(
+    (m, yNullable) => {
+      const y = yNullable ?? baseDate.getFullYear();
+      return new Date(y, m + 1, 0).getDate();
+    },
+    [baseDate],
+  );
 
-  const daysInMonth = React.useCallback((m, yNullable) => {
-    // m is zero-based month index (0 = January). If year not provided, use baseDate's year.
-    const y = yNullable ?? baseDate.getFullYear();
-    return new Date(y, m + 1, 0).getDate();
-  }, [baseDate]);
-  const years = React.useMemo(() => {
-    const y = new Date().getFullYear();
-    const maxYear = allowFutureDates ? y + 10 : y; // Добавляем 10 лет в будущее для заявок
-    return range(1900, maxYear);
-  }, [allowFutureDates]);
-  const [dYearIdx, setDYearIdx] = React.useState(0);
-  const [dMonthIdx, setDMonthIdx] = React.useState(0);
-  const [dDayIdx, setDDayIdx] = React.useState(0);
-
-  const [withYear, setWithYear] = React.useState(omitYearDefault);
-
-  // Получаем текущие дату для ограничения выбора
   const today = React.useMemo(() => new Date(), []);
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth();
   const currentDay = today.getDate();
 
-  // Ограничиваем месяцы, если выбран текущий год
+  const years = React.useMemo(() => {
+    const y = currentYear;
+    const minYear = allowPastDates ? 1900 : y;
+    const maxYear = allowFutureDates ? y + 10 : y;
+    return range(minYear, maxYear);
+  }, [allowFutureDates, allowPastDates, currentYear]);
+
+  const [dYearIdx, setDYearIdx] = React.useState(0);
+  const [dMonthIdx, setDMonthIdx] = React.useState(0);
+  const [dDayIdx, setDDayIdx] = React.useState(0);
+  const [withYear, setWithYear] = React.useState(omitYearDefault);
+
+  const clampMonthForYear = React.useCallback(
+    (month, year) => {
+      const currentYearSelected = year === currentYear;
+      const minMonth = !allowPastDates && currentYearSelected ? currentMonth : 0;
+      const maxMonth = !allowFutureDates && currentYearSelected ? currentMonth : 11;
+      return Math.max(minMonth, Math.min(month, maxMonth));
+    },
+    [allowPastDates, allowFutureDates, currentYear, currentMonth],
+  );
+
+  const clampDayForYearMonth = React.useCallback(
+    (day, month, year) => {
+      const maxDayInMonth = daysInMonth(month, year);
+      const currentYearMonth = year === currentYear && month === currentMonth;
+      const minDay = !allowPastDates && currentYearMonth ? currentDay : 1;
+      const maxDay = !allowFutureDates && currentYearMonth ? Math.min(maxDayInMonth, currentDay) : maxDayInMonth;
+      return Math.max(minDay, Math.min(day, maxDay));
+    },
+    [allowPastDates, allowFutureDates, currentYear, currentMonth, currentDay, daysInMonth],
+  );
+
+  const getDayRange = React.useCallback(
+    (year, month) => {
+      const maxDay = daysInMonth(month, year);
+      const minDay = !allowPastDates && year === currentYear && month === currentMonth ? currentDay : 1;
+      const maxAllowed =
+        !allowFutureDates && year === currentYear && month === currentMonth
+          ? Math.min(maxDay, currentDay)
+          : maxDay;
+      return range(minDay, maxAllowed);
+    },
+    [allowPastDates, allowFutureDates, currentYear, currentMonth, currentDay, daysInMonth],
+  );
+
   const availableMonths = React.useMemo(() => {
-    const selectedYear = years[dYearIdx];
-    if (!allowFutureDates && withYear && selectedYear === currentYear) {
-      // Если выбран текущий год, доступны только месяцы до текущего включительно
-      return range(0, currentMonth);
-    }
-    return range(0, 11);
-  }, [dYearIdx, years, withYear, currentYear, currentMonth, allowFutureDates]);
+    const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : baseDate.getFullYear();
+    const minMonth = !allowPastDates && year === currentYear ? currentMonth : 0;
+    const maxMonth = !allowFutureDates && year === currentYear ? currentMonth : 11;
+    return range(minMonth, maxMonth);
+  }, [dYearIdx, years, withYear, baseDate, allowPastDates, allowFutureDates, currentYear, currentMonth]);
 
   const days = React.useMemo(() => {
-    const selectedYear = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
-    const maxDay = daysInMonth(dMonthIdx, selectedYear);
-
-    // Если выбран текущий год и текущий месяц, ограничиваем дни
-    if (
-      !allowFutureDates &&
-      withYear &&
-      years[dYearIdx] === currentYear &&
-      dMonthIdx === currentMonth
-    ) {
-      return range(1, Math.min(maxDay, currentDay));
-    }
-
-    return range(1, maxDay);
+    const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : baseDate.getFullYear();
+    const month = clampMonthForYear(dMonthIdx, year);
+    return getDayRange(year, month);
   }, [
     dMonthIdx,
     dYearIdx,
     years,
     withYear,
     baseDate,
-    daysInMonth,
-    currentYear,
-    currentMonth,
-    currentDay,
-    allowFutureDates,
+    clampMonthForYear,
+    getDayRange,
   ]);
 
   const minutesData = React.useMemo(() => range(0, 59).filter((m) => m % step === 0), [step]);
   const [tHourIdx, setTHourIdx] = React.useState(0);
   const [tMinuteIdx, setTMinuteIdx] = React.useState(0);
-
   const [tab, setTab] = React.useState('date');
 
   React.useEffect(() => {
     if (!visible) return;
+
     const y = years.indexOf(baseDate.getFullYear());
     const yearIdx = y >= 0 ? y : 0;
+    const year = years[yearIdx] || currentYear;
+
     setDYearIdx(yearIdx);
     setWithYear(allowOmitYear ? omitYearDefault : true);
 
-    const selectedYear = years[yearIdx];
-    const initMonth = baseDate.getMonth();
-    const initDay = baseDate.getDate();
+    const month = clampMonthForYear(baseDate.getMonth(), year);
+    const day = clampDayForYearMonth(baseDate.getDate(), month, year);
+    const initDays = getDayRange(year, month);
+    const initDayIdx = Math.max(0, initDays.indexOf(day));
 
-    // Если это текущий год, проверяем ограничения
-    if (
-      !allowFutureDates &&
-      (allowOmitYear ? omitYearDefault : true) &&
-      selectedYear === currentYear
-    ) {
-      // Ограничиваем месяц
-      const month = Math.min(initMonth, currentMonth);
-      setDMonthIdx(month);
-
-      // Ограничиваем день
-      const maxD = daysInMonth(month, selectedYear);
-      const maxAllowedDay = month === currentMonth ? currentDay : maxD;
-      setDDayIdx(Math.max(0, Math.min(initDay - 1, maxAllowedDay - 1)));
-    } else {
-      setDMonthIdx(initMonth);
-      const maxD = daysInMonth(initMonth, baseDate.getFullYear());
-      setDDayIdx(Math.max(0, Math.min(initDay - 1, maxD - 1)));
-    }
+    setDMonthIdx(month);
+    setDDayIdx(initDayIdx);
 
     setTHourIdx(baseDate.getHours());
     const mi = Math.round(baseDate.getMinutes() / step);
@@ -202,16 +187,20 @@ export default function DateTimeModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
 
+  React.useEffect(() => {
+    setDDayIdx((idx) => Math.max(0, Math.min(idx, Math.max(0, days.length - 1))));
+  }, [days]);
+
   const header = React.useMemo(() => {
-    const d = dDayIdx + 1,
-      mName = MONTHS_GEN[dMonthIdx] || '',
-      y = years[dYearIdx] || baseDate.getFullYear();
-    const hh = pad2(tHourIdx),
-      mm = pad2(minutesData[tMinuteIdx] ?? 0);
+    const d = days[dDayIdx] ?? days[0] ?? 1;
+    const mName = MONTHS_GEN[dMonthIdx] || '';
+    const y = years[dYearIdx] || baseDate.getFullYear();
+    const hh = pad2(tHourIdx);
+    const mm = pad2(minutesData[tMinuteIdx] ?? 0);
     if (mode === 'date') return withYear ? `${d} ${mName} ${y}` : `${d} ${mName}`;
     if (mode === 'time') return `${hh}:${mm}`;
     return withYear ? `${d} ${mName} ${y}, ${hh}:${mm}` : `${d} ${mName}, ${hh}:${mm}`;
-  }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData, MONTHS_GEN, baseDate, withYear]);
+  }, [mode, dDayIdx, dMonthIdx, dYearIdx, years, tHourIdx, tMinuteIdx, minutesData, MONTHS_GEN, baseDate, withYear, days]);
 
   const innerGap = theme.components?.datetimeModal?.innerGap ?? theme.spacing?.sm ?? 8;
   const minWheelWidth = theme.components?.datetimeModal?.wheelMinWidth ?? 64;
@@ -221,7 +210,7 @@ export default function DateTimeModal({
   const handleApply = () => {
     const year = years[dYearIdx] || baseDate.getFullYear();
     const month = dMonthIdx;
-    const day = dDayIdx + 1;
+    const day = days[dDayIdx] ?? days[0] ?? 1;
     const hour = tHourIdx;
     const min = minutesData[tMinuteIdx] ?? 0;
     let out;
@@ -235,9 +224,7 @@ export default function DateTimeModal({
     onApply?.(out, {
       withYear,
       day,
-      // monthOneBased: человекочитаемый месяц (1–12)
       monthOneBased: month + 1,
-      // monthIndex: нулевой индекс месяца (0–11)
       monthIndex: month,
       year: withYear ? years[dYearIdx] || baseDate.getFullYear() : null,
     });
@@ -262,9 +249,7 @@ export default function DateTimeModal({
           pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
         ]}
       >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>
-          {T('btn_cancel')}
-        </Text>
+        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{T('btn_cancel')}</Text>
       </Pressable>
       <UIButton variant="primary" size="md" onPress={handleApply} title={T('btn_ok')} />
     </View>
@@ -292,9 +277,7 @@ export default function DateTimeModal({
                 flex: 1,
                 paddingVertical: 8,
                 alignItems: 'center',
-                backgroundColor: active
-                  ? withAlpha(theme.colors.primary, 0.12)
-                  : theme.colors.surface,
+                backgroundColor: active ? withAlpha(theme.colors.primary, 0.12) : theme.colors.surface,
               },
               pressed && { opacity: 0.85 },
             ]}
@@ -340,7 +323,7 @@ export default function DateTimeModal({
                   data={days.map(String)}
                   activeColor={theme.colors.primary}
                   inactiveColor={theme.colors.textSecondary}
-                  index={dDayIdx}
+                  index={Math.max(0, Math.min(dDayIdx, days.length - 1))}
                   onIndexChange={setDDayIdx}
                   width={W3}
                 />
@@ -348,17 +331,17 @@ export default function DateTimeModal({
                   data={availableMonths.map((m) => MONTHS_ABBR[m])}
                   activeColor={theme.colors.primary}
                   inactiveColor={theme.colors.textSecondary}
-                  index={availableMonths.indexOf(dMonthIdx)}
+                  index={Math.max(0, availableMonths.indexOf(dMonthIdx))}
                   onIndexChange={(i) => {
                     const newMonth = availableMonths[i];
                     setDMonthIdx(newMonth);
-                    // Корректируем день, если он выходит за пределы месяца
                     setDDayIdx((d) => {
-                      const maxDayInNewMonth = daysInMonth(
-                        newMonth,
-                        withYear ? years[dYearIdx] || baseDate.getFullYear() : null,
-                      );
-                      return Math.min(d, maxDayInNewMonth - 1);
+                      const prevDay = days[d] ?? days[0] ?? 1;
+                      const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : baseDate.getFullYear();
+                      const clampedDay = clampDayForYearMonth(prevDay, newMonth, year);
+                      const nextDays = getDayRange(year, newMonth);
+                      const nextIdx = nextDays.indexOf(clampedDay);
+                      return Math.max(0, nextIdx);
                     });
                   }}
                   width={W3}
@@ -370,18 +353,16 @@ export default function DateTimeModal({
                   index={dYearIdx}
                   onIndexChange={(i) => {
                     setDYearIdx(i);
-                    // При смене года корректируем месяц и день
-                    const newYear = years[i];
-                    if (!allowFutureDates && withYear && newYear === currentYear) {
-                      // Если выбран текущий год, проверяем месяц
-                      if (dMonthIdx > currentMonth) {
-                        setDMonthIdx(currentMonth);
-                      }
-                      // Проверяем день
-                      if (dMonthIdx === currentMonth && dDayIdx >= currentDay) {
-                        setDDayIdx(currentDay - 1);
-                      }
-                    }
+                    const newYear = years[i] || currentYear;
+                    const safeMonth = clampMonthForYear(dMonthIdx, newYear);
+                    if (safeMonth !== dMonthIdx) setDMonthIdx(safeMonth);
+                    setDDayIdx((d) => {
+                      const prevDay = days[d] ?? days[0] ?? 1;
+                      const clampedDay = clampDayForYearMonth(prevDay, safeMonth, newYear);
+                      const nextDays = getDayRange(newYear, safeMonth);
+                      const nextIdx = nextDays.indexOf(clampedDay);
+                      return Math.max(0, nextIdx);
+                    });
                   }}
                   width={W3}
                   enabled={withYear}
@@ -415,9 +396,7 @@ export default function DateTimeModal({
                   paddingVertical: 6,
                 }}
               >
-                <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }}>
-                  {omitYearLabel}
-                </Text>
+                <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }}>{omitYearLabel}</Text>
                 <View style={{ width: 12 }} />
                 <Switch value={withYear} onValueChange={setWithYear} />
               </View>

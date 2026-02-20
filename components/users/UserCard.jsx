@@ -10,6 +10,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 function UserCardContent({
   item,
   departmentName,
+  showDepartment = true,
   onPress,
   rolePillStyle,
   formatPresence,
@@ -22,6 +23,9 @@ function UserCardContent({
   const ty = theme.typography;
 
   const rad = theme.radii;
+  const badgeNudge = Number(theme.spacing?.xxs ?? theme.spacing?.xs ?? 0);
+  const roleBadgeTop = Math.max(0, Number(sz.md ?? 0) - badgeNudge);
+  const blockedBadgeBottom = Math.max(0, Number(sz.md ?? 0) - badgeNudge);
 
   // Получаем тени из темы для текущей платформы
   const cardShadows = useMemo(
@@ -83,14 +87,14 @@ function UserCardContent({
         },
         rolePillTopRight: {
           position: 'absolute',
-          top: sz.md,
+          top: roleBadgeTop,
           right: sz.md,
           zIndex: 2,
         },
         suspendedPill: {
           position: 'absolute',
           right: sz.md,
-          bottom: sz.md,
+          bottom: blockedBadgeBottom,
           zIndex: 2,
           paddingHorizontal: sz.sm,
           paddingVertical: 6,
@@ -115,6 +119,8 @@ function UserCardContent({
       c.textSecondary,
       rad.lg,
       rad.md,
+      roleBadgeTop,
+      blockedBadgeBottom,
       sz.md,
       sz.sm,
       sz.xl,
@@ -131,9 +137,16 @@ function UserCardContent({
     item.full_name ||
     '';
 
-  const departmentText = departmentName
-    ? `${translate('users_department')}: ${departmentName}`
-    : '';
+  const isAdminBlocked =
+    item?.is_suspended === true ||
+    !!item?.suspended_at ||
+    item?.is_admin_blocked === true;
+  const isLicenseBlocked = item?.license_state === 'blocked_by_license';
+  const isBlocked = isAdminBlocked || isLicenseBlocked;
+
+  const blockedLabel = translate('status_blocked', translate('status_suspended'));
+
+  const departmentText = `${translate('users_department')}: ${departmentName || translate('placeholder_department')}`;
 
   const stylesPill = rolePillStyle(item.role);
 
@@ -143,7 +156,7 @@ function UserCardContent({
       onPress={() => onPress(item.id)}
       style={[
         styles.card,
-        item?.is_suspended === true || !!item?.suspended_at ? styles.cardSuspended : null,
+        isBlocked ? styles.cardSuspended : null,
       ]}
       accessibilityRole="button"
       accessibilityLabel={`${translate('users_openUser')} ${fullName || translate('common_noName')}`}
@@ -153,7 +166,7 @@ function UserCardContent({
           <Text numberOfLines={1} style={styles.cardTitle}>
             {fullName || translate('common_noName')}
           </Text>
-          {departmentText ? (
+          {showDepartment ? (
             <Text numberOfLines={1} style={styles.metaText}>
               {departmentText}
             </Text>
@@ -179,9 +192,9 @@ function UserCardContent({
         <Text style={stylesPill.text}>{translate(`role_${item.role}`)}</Text>
       </View>
 
-      {item?.is_suspended === true || !!item?.suspended_at ? (
+      {isBlocked ? (
         <View style={styles.suspendedPill}>
-          <Text style={styles.suspendedPillText}>{translate('status_suspended')}</Text>
+          <Text style={styles.suspendedPillText}>{blockedLabel}</Text>
         </View>
       ) : null}
     </Pressable>
@@ -203,7 +216,10 @@ export const UserCard = React.memo(UserCardContent, (prevProps, nextProps) => {
     prevProps.item?.last_seen_at === nextProps.item?.last_seen_at &&
     prevProps.item?.is_suspended === nextProps.item?.is_suspended &&
     prevProps.item?.suspended_at === nextProps.item?.suspended_at &&
-    prevProps.departmentName === nextProps.departmentName
+    prevProps.item?.is_admin_blocked === nextProps.item?.is_admin_blocked &&
+    prevProps.item?.license_state === nextProps.item?.license_state &&
+    prevProps.departmentName === nextProps.departmentName &&
+    prevProps.showDepartment === nextProps.showDepartment
   );
 });
 

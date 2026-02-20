@@ -50,6 +50,7 @@ DECLARE
     'DROP POLICY IF EXISTS crews_select_any ON public.crews; CREATE POLICY crews_select_any ON public.crews FOR SELECT TO authenticated USING ((company_id = user_company_id()) AND is_admin_or_dispatcher());',
     'DROP POLICY IF EXISTS crews_update_any ON public.crews; CREATE POLICY crews_update_any ON public.crews FOR UPDATE TO authenticated USING (((company_id = user_company_id()) AND is_admin_or_dispatcher())) WITH CHECK ((company_id = user_company_id()));',
     'DROP POLICY IF EXISTS departments_delete_admin_dispatcher ON public.departments; CREATE POLICY departments_delete_admin_dispatcher ON public.departments FOR DELETE TO authenticated USING (((company_id = user_company_id()) AND is_admin_or_dispatcher()));',
+    'DROP POLICY IF EXISTS departments_insert_admin_dispatcher ON public.departments; CREATE POLICY departments_insert_admin_dispatcher ON public.departments FOR INSERT TO authenticated WITH CHECK (((company_id = user_company_id()) AND is_admin_or_dispatcher()));',
     'DROP POLICY IF EXISTS departments_select_company ON public.departments; CREATE POLICY departments_select_company ON public.departments FOR SELECT TO authenticated USING ((company_id = user_company_id()));',
     'DROP POLICY IF EXISTS departments_update_admin_dispatcher ON public.departments; CREATE POLICY departments_update_admin_dispatcher ON public.departments FOR UPDATE TO authenticated USING (((company_id = user_company_id()) AND is_admin_or_dispatcher())) WITH CHECK (((company_id = user_company_id()) AND is_admin_or_dispatcher()));',
     'DROP POLICY IF EXISTS error_logs_insert_any ON public.error_logs; CREATE POLICY error_logs_insert_any ON public.error_logs FOR INSERT TO authenticated WITH CHECK ((user_id = app_uid()));',
@@ -73,7 +74,10 @@ DECLARE
     'DROP POLICY IF EXISTS push_tokens_delete_own ON public.push_tokens; CREATE POLICY push_tokens_delete_own ON public.push_tokens FOR DELETE TO authenticated USING (is_self(user_id));',
     'DROP POLICY IF EXISTS push_tokens_insert_own ON public.push_tokens; CREATE POLICY push_tokens_insert_own ON public.push_tokens FOR INSERT TO authenticated WITH CHECK ((user_id = app_uid()));',
     'DROP POLICY IF EXISTS push_tokens_select_own ON public.push_tokens; CREATE POLICY push_tokens_select_own ON public.push_tokens FOR SELECT TO authenticated USING (is_self(user_id));',
-    'DROP POLICY IF EXISTS work_types_select_admins ON public.work_types; CREATE POLICY work_types_select_admins ON public.work_types FOR SELECT TO authenticated USING ((company_id = user_company_id()) AND is_admin_or_dispatcher());'
+    'DROP POLICY IF EXISTS work_types_select_admins ON public.work_types; CREATE POLICY work_types_select_admins ON public.work_types FOR SELECT TO authenticated USING ((company_id = user_company_id()) AND is_admin_or_dispatcher());',
+    'DROP POLICY IF EXISTS work_types_insert_admins ON public.work_types; CREATE POLICY work_types_insert_admins ON public.work_types FOR INSERT TO authenticated WITH CHECK ((company_id = user_company_id()) AND is_admin_or_dispatcher());',
+    'DROP POLICY IF EXISTS work_types_update_admins ON public.work_types; CREATE POLICY work_types_update_admins ON public.work_types FOR UPDATE TO authenticated USING ((company_id = user_company_id()) AND is_admin_or_dispatcher()) WITH CHECK ((company_id = user_company_id()) AND is_admin_or_dispatcher());',
+    'DROP POLICY IF EXISTS work_types_delete_admins ON public.work_types; CREATE POLICY work_types_delete_admins ON public.work_types FOR DELETE TO authenticated USING ((company_id = user_company_id()) AND is_admin_or_dispatcher());'
   ];
   s text;
 BEGIN
