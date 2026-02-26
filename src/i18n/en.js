@@ -96,4 +96,11 @@ export default {
   order_toast_accept_taken: 'This request was already accepted by another worker',
   order_toast_accept_error: 'Could not accept request',
   order_photo_unavailable: 'Photo unavailable',
+  order_photo_issue_deleted_remote: 'File was deleted from Yandex Disk. Link removed.',
+  order_photo_issue_missing_mapping: 'Link is missing in database. Link removed.',
+  order_photo_issue_disk_unavailable: 'Yandex Disk is unavailable right now. Try again later.',
+  order_photo_issue_disk_auth: 'Yandex Disk authorization expired. Reconnect disk.',
+  order_photo_issue_disk_locked: 'File is temporarily locked on Yandex Disk side.',
+  order_photo_issue_temporary: 'Temporary loading issue. Try again later.',
+  order_photo_issue_client_network: 'Network issue on device or unstable connection.',
 };

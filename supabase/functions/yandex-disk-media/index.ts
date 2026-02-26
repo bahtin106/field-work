@@ -557,6 +557,27 @@ async function getPathDownloadUrl(accessToken: string, path: string) {
   return String(dl.href);
 }
 
+async function inspectYandexPathStatus(accessToken: string, path: string) {
+  const res = await fetch(
+    `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(path)}&fields=path,type,name`,
+    { headers: { Authorization: `OAuth ${accessToken}` } },
+  );
+  const text = await res.text();
+  if (res.ok) {
+    return { state: 'ok' as const };
+  }
+  if (res.status === 404 || String(text || '').toLowerCase().includes('diskpathdoesntexistserror')) {
+    return { state: 'missing' as const };
+  }
+  if (res.status === 401 || res.status === 403) {
+    return { state: 'auth' as const };
+  }
+  if (res.status === 423 || String(text || '').toLowerCase().includes('resource is locked')) {
+    return { state: 'locked' as const };
+  }
+  return { state: 'error' as const, details: text };
+}
+
 export async function handleYandexDiskMediaRequest(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { success: false, message: 'POST only' });
@@ -749,6 +770,196 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       }
 
       return json(200, { success: true, resolved_urls: resolved });
+    }
+
+    if (action === 'inspect_urls') {
+      const category = String(body.category || '').trim();
+      if (!ALLOWED_CATEGORIES.has(category)) {
+        return json(400, { success: false, message: 'Invalid category' });
+      }
+      const urls = Array.isArray(body.urls)
+        ? body.urls.map((u) => String(u || '').trim()).filter(Boolean)
+        : [];
+      if (!urls.length) {
+        return json(200, {
+          success: true,
+          resolved_urls: {},
+          issues: {},
+          cleaned_urls: [],
+          media_urls: [],
+          order_updated_at: null,
+        });
+      }
+
+      const directInternalPaths = new Map<string, string>();
+      const dbUrls: string[] = [];
+      for (const sourceUrl of urls) {
+        const directPath = pathFromInternalUrl(sourceUrl);
+        if (directPath) {
+          directInternalPaths.set(sourceUrl, directPath);
+        } else {
+          dbUrls.push(sourceUrl);
+        }
+      }
+
+      let rows: Array<{ id: number; source_url: string; external_path: string }> = [];
+      if (dbUrls.length) {
+        const { data, error } = await admin
+          .from('order_media_external_map')
+          .select('id, source_url, external_path')
+          .eq('company_id', ctx.companyId)
+          .eq('order_id', ctx.order.id)
+          .eq('category', category)
+          .eq('provider', 'yandex_disk')
+          .in('source_url', dbUrls);
+        if (error) throw error;
+        rows = data || [];
+      }
+      let categoryCandidates: Array<{ id: number; source_url: string; external_path: string }> = [];
+      if (accessToken) {
+        const { data: candidates, error: candidatesErr } = await admin
+          .from('order_media_external_map')
+          .select('id, source_url, external_path')
+          .eq('company_id', ctx.companyId)
+          .eq('order_id', ctx.order.id)
+          .eq('category', category)
+          .eq('provider', 'yandex_disk');
+        if (candidatesErr) throw candidatesErr;
+        categoryCandidates = candidates || [];
+      }
+
+      const rowBySource = new Map<string, { id: number; source_url: string; external_path: string }>();
+      for (const row of rows || []) {
+        if (row?.source_url) rowBySource.set(String(row.source_url), row as any);
+      }
+      const candidateDownloadCanonical = new Map<number, string>();
+
+      const resolved: Record<string, string> = {};
+      const issues: Record<string, { code: string; message: string }> = {};
+      const cleaned = new Set<string>();
+      let lastAtomicResult: { media_urls: string[] | null; updated_at: string | null } | null = null;
+
+      for (const sourceUrl of urls) {
+        const directPath = directInternalPaths.get(sourceUrl);
+        let mapRow = rowBySource.get(sourceUrl) || null;
+        let externalPath = String(mapRow?.external_path || directPath || '').trim();
+        const resolvedFallback = toYandexDisplayCandidate(sourceUrl);
+
+        if (!externalPath) {
+          const needle = canonicalUrl(sourceUrl);
+          if (needle && accessToken) {
+            mapRow =
+              categoryCandidates.find((row) => canonicalUrl(String(row.source_url || '')) === needle) || null;
+            if (!mapRow) {
+              for (const candidate of categoryCandidates) {
+                const candidateId = Number(candidate.id);
+                const extPath = String(candidate.external_path || '').trim();
+                if (!extPath) continue;
+                try {
+                  let can = candidateDownloadCanonical.get(candidateId);
+                  if (!can) {
+                    const dl = await getPathDownloadUrl(accessToken, extPath);
+                    can = canonicalUrl(dl);
+                    candidateDownloadCanonical.set(candidateId, can);
+                  }
+                  if (can && can === needle) {
+                    mapRow = candidate;
+                    break;
+                  }
+                } catch {}
+              }
+            }
+            externalPath = String(mapRow?.external_path || '').trim();
+          }
+        }
+
+        if (!externalPath) {
+          // Keep legacy/public links as-is if we cannot reliably prove deletion.
+          // This is important for mixed providers or old records without map rows.
+          resolved[sourceUrl] = sourceUrl;
+          continue;
+        }
+
+        if (!accessToken) {
+          resolved[sourceUrl] = resolvedFallback;
+          issues[sourceUrl] = {
+            code: 'disk_unavailable',
+            message: 'Yandex Disk is temporarily unavailable. Link preserved',
+          };
+          continue;
+        }
+
+        const pathState = await inspectYandexPathStatus(accessToken, externalPath);
+        if (pathState.state === 'missing') {
+          lastAtomicResult = await removeOrderMediaUrlAtomic(
+            admin,
+            ctx.order.id,
+            ctx.companyId,
+            category,
+            sourceUrl,
+          );
+          cleaned.add(sourceUrl);
+          if (mapRow?.id != null) {
+            await admin.from('order_media_external_map').delete().eq('id', Number(mapRow.id));
+          }
+          issues[sourceUrl] = {
+            code: 'deleted_remote',
+            message: 'File deleted from Yandex Disk. Media URL removed from request',
+          };
+          continue;
+        }
+        if (pathState.state === 'auth') {
+          resolved[sourceUrl] = resolvedFallback;
+          issues[sourceUrl] = {
+            code: 'disk_auth',
+            message: 'Yandex authorization expired. Reconnect disk',
+          };
+          continue;
+        }
+        if (pathState.state === 'locked') {
+          resolved[sourceUrl] = resolvedFallback;
+          issues[sourceUrl] = {
+            code: 'disk_locked',
+            message: 'Yandex file is temporarily locked',
+          };
+          continue;
+        }
+        if (pathState.state === 'error') {
+          resolved[sourceUrl] = resolvedFallback;
+          issues[sourceUrl] = {
+            code: 'disk_error',
+            message: 'Temporary Yandex Disk issue. Try again later',
+          };
+          continue;
+        }
+
+        try {
+          resolved[sourceUrl] = await getPathDownloadUrl(accessToken, externalPath);
+        } catch (e) {
+          const msg = toErrorMessage(e).toLowerCase();
+          resolved[sourceUrl] = resolvedFallback;
+          issues[sourceUrl] = {
+            code: msg.includes('unauthorized') ? 'disk_auth' : 'download_error',
+            message: msg.includes('unauthorized')
+              ? 'Yandex authorization expired. Reconnect disk'
+              : 'Temporary download link error. Try again later',
+          };
+        }
+      }
+
+      const cleanedUrls = Array.from(cleaned);
+      const currentMedia = Array.isArray(lastAtomicResult?.media_urls)
+        ? lastAtomicResult?.media_urls || []
+        : urls.filter((u) => !cleaned.has(u));
+
+      return json(200, {
+        success: true,
+        resolved_urls: resolved,
+        issues,
+        cleaned_urls: cleanedUrls,
+        media_urls: currentMedia,
+        order_updated_at: lastAtomicResult?.updated_at ?? null,
+      });
     }
 
     if (action === 'delete') {

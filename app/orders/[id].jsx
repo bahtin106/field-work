@@ -99,6 +99,7 @@ const REQUEST_SYNC_FIELDS = [
   'fuel_cost',
   'urgent',
 ];
+const MEDIA_CATEGORIES = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
 
 export default function OrderDetails() {
   const { theme } = useTheme();
@@ -157,6 +158,8 @@ export default function OrderDetails() {
   const queryClient = useQueryClient();
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
+  const orderForInspectRef = useRef(null);
+  const mediaProbeInFlightRef = useRef(new Set());
 
   const [order, setOrder] = useState(null);
   const [orderReady, setOrderReady] = useState(false);
@@ -217,6 +220,9 @@ export default function OrderDetails() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const [resolvedMediaUrls, setResolvedMediaUrls] = useState({});
+  const [mediaIssues, setMediaIssues] = useState({});
+  const [photoLoadingMap, setPhotoLoadingMap] = useState({});
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const { data: requestData, refetch: refetchRequestData } = useRequest(id, {
     enabled: !!id,
@@ -515,6 +521,136 @@ export default function OrderDetails() {
     }
   }, [mediaProvider]);
 
+  const getPhotoDisplayUrl = useCallback(
+    (sourceUrl) => {
+      if (!sourceUrl) return '';
+      return resolvedMediaUrls[sourceUrl] || sourceUrl;
+    },
+    [resolvedMediaUrls],
+  );
+
+  const getMediaIssueMessage = useCallback(
+    (sourceUrl) => {
+      const issue = mediaIssues[sourceUrl];
+      if (!issue) return '';
+      const code = String(issue.code || '').trim();
+      if (code === 'deleted_remote') return t('order_photo_issue_deleted_remote');
+      if (code === 'missing_mapping') return t('order_photo_issue_missing_mapping');
+      if (code === 'disk_unavailable') return t('order_photo_issue_disk_unavailable');
+      if (code === 'disk_auth') return t('order_photo_issue_disk_auth');
+      if (code === 'disk_locked') return t('order_photo_issue_disk_locked');
+      if (code === 'disk_error' || code === 'download_error')
+        return t('order_photo_issue_temporary');
+      if (code === 'client_network') return t('order_photo_issue_client_network');
+      if (issue.message) return issue.message;
+      return t('order_photo_issue_temporary');
+    },
+    [mediaIssues, t],
+  );
+
+  const setPhotoLoading = useCallback((url, value) => {
+    const key = String(url || '').trim();
+    if (!key) return;
+    setPhotoLoadingMap((prev) => {
+      if ((prev[key] || false) === value) return prev;
+      return { ...prev, [key]: value };
+    });
+  }, []);
+
+  const isLikelyYandexLink = useCallback((url) => {
+    const raw = String(url || '').toLowerCase();
+    return raw.startsWith('yadisk://') || raw.includes('yadi.sk') || raw.includes('disk.yandex');
+  }, []);
+
+  const inspectSingleMedia = useCallback(
+    async (category, sourceUrl) => {
+      const key = `${category}:${sourceUrl}`;
+      if (!order?.id || mediaProvider !== 'yandex_disk') return false;
+      if (mediaProbeInFlightRef.current.has(key)) return false;
+      mediaProbeInFlightRef.current.add(key);
+      try {
+        const data = await yandexDiskMedia('inspect_urls', {
+          order_id: order.id,
+          category,
+          urls: [sourceUrl],
+        });
+        const resolved = data?.resolved_urls && typeof data.resolved_urls === 'object'
+          ? data.resolved_urls
+          : {};
+        const issues = data?.issues && typeof data.issues === 'object' ? data.issues : {};
+        const mediaUrls = Array.isArray(data?.media_urls) ? data.media_urls : null;
+
+        if (Object.keys(resolved).length) {
+          setResolvedMediaUrls((prev) => ({ ...prev, ...resolved }));
+        }
+        if (Object.keys(issues).length) {
+          setMediaIssues((prev) => ({ ...prev, ...issues }));
+        }
+        if (Array.isArray(mediaUrls)) {
+          setOrder((prev) => {
+            if (!prev) return prev;
+            return { ...prev, [category]: mediaUrls };
+          });
+        }
+        return !!issues[sourceUrl];
+      } catch {
+        return false;
+      } finally {
+        mediaProbeInFlightRef.current.delete(key);
+      }
+    },
+    [mediaProvider, order?.id],
+  );
+
+  const inspectYandexMedia = useCallback(
+    async (baseOrder) => {
+      if (mediaProvider !== 'yandex_disk' || !baseOrder?.id) {
+        setResolvedMediaUrls({});
+        setMediaIssues({});
+        return baseOrder;
+      }
+
+      const nextResolved = {};
+      const nextIssues = {};
+      let nextOrder = { ...baseOrder };
+
+      for (const category of MEDIA_CATEGORIES) {
+        const urls = Array.isArray(nextOrder?.[category]) ? nextOrder[category].filter(Boolean) : [];
+        if (!urls.length) continue;
+        try {
+          const data = await yandexDiskMedia('inspect_urls', {
+            order_id: nextOrder.id,
+            category,
+            urls,
+          });
+
+          const resolved = data?.resolved_urls && typeof data.resolved_urls === 'object'
+            ? data.resolved_urls
+            : {};
+          const issues = data?.issues && typeof data.issues === 'object' ? data.issues : {};
+          const mediaUrls = Array.isArray(data?.media_urls) ? data.media_urls : urls;
+
+          Object.assign(nextResolved, resolved);
+          Object.assign(nextIssues, issues);
+
+          if (Array.isArray(mediaUrls)) {
+            nextOrder[category] = mediaUrls;
+          }
+        } catch (e) {
+          const message = String(e?.message || '').trim() || t('order_photo_issue_temporary');
+          for (const url of urls) {
+            nextIssues[url] = { code: 'disk_error', message };
+          }
+        }
+      }
+
+      setResolvedMediaUrls(nextResolved);
+      setMediaIssues(nextIssues);
+      return nextOrder;
+    },
+    [mediaProvider, t],
+  );
+
   const fetchData = useCallback(async () => {
     if (!id) {
       setOrderReady(true);
@@ -535,7 +671,21 @@ export default function OrderDetails() {
         setRole(profile?.role || null);
       }
 
-      const fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
+      // Use freshest detail from server first; fallback to cache only if needed.
+      const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
+      let fetchedOrderRaw = null;
+      try {
+        const refetched = await refetchRequestData();
+        fetchedOrderRaw = refetched?.data || null;
+      } catch {
+        // fallback below
+      }
+      if (!fetchedOrderRaw) {
+        fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
+      }
+      if (!fetchedOrderRaw && cachedOrderRaw) {
+        fetchedOrderRaw = cachedOrderRaw;
+      }
       if (!fetchedOrderRaw) throw new Error('Order not found');
 
       const fetchedOrder = fetchedOrderRaw
@@ -572,6 +722,7 @@ export default function OrderDetails() {
       }
 
       // ПЕРЕДЕЛАНО: сохраняем статус "В работе" в БД и перезагружаем заявку
+      let effectiveOrder = fetchedOrder;
       if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
         try {
           await updateRequestWithVersion(
@@ -583,24 +734,21 @@ export default function OrderDetails() {
           await queryClient.invalidateQueries({ queryKey: ['requests'] });
           await queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
           const refreshed = await ensureRequestPrefetch(queryClient, id);
-          const nextOrder = refreshed || { ...fetchedOrder, status: 'В работе' };
-          setOrder((prev) => (hasMeaningfulOrderDiff(prev, nextOrder) ? nextOrder : prev));
-          setWorkTypeId(nextOrder.work_type_id ?? null);
+          effectiveOrder = refreshed || { ...fetchedOrder, status: 'В работе' };
         } catch (e) {
           console.warn('Persist status error:', e);
-          setOrder((prev) => (hasMeaningfulOrderDiff(prev, fetchedOrder) ? fetchedOrder : prev));
-          setWorkTypeId(fetchedOrder.work_type_id ?? null);
+          effectiveOrder = fetchedOrder;
         }
-      } else {
-        setOrder((prev) => (hasMeaningfulOrderDiff(prev, fetchedOrder) ? fetchedOrder : prev));
-        setWorkTypeId(fetchedOrder.work_type_id ?? null);
       }
 
+      const inspectedOrder = await inspectYandexMedia(effectiveOrder);
+      setOrder(inspectedOrder);
+      setWorkTypeId(inspectedOrder.work_type_id ?? null);
       setOrderReady(true);
 
       InteractionManager.runAfterInteractions(async () => {
         try {
-          const fresh = await fetchServerPhotos(fetchedOrder.id);
+          const fresh = await fetchServerPhotos(inspectedOrder.id);
           if (fresh) {
             setOrder((prev) => ({
               ...prev,
@@ -611,50 +759,50 @@ export default function OrderDetails() {
             }));
           }
 
-          initialFormSnapshotRef.current = makeSnapshotFromOrder(fetchedOrder);
+          initialFormSnapshotRef.current = makeSnapshotFromOrder(inspectedOrder);
           const rawDigits = (
-            (fetchedOrder.phone ??
-              fetchedOrder.customer_phone_visible ??
-              fetchedOrder.phone_visible) ||
+            (inspectedOrder.phone ??
+              inspectedOrder.customer_phone_visible ??
+              inspectedOrder.phone_visible) ||
             ''
           ).replace(/\D/g, '');
 
-          setTitle(fetchedOrder.title || '');
-          setDescription(fetchedOrder.comment || '');
-          setRegion(fetchedOrder.region || '');
-          setCity(fetchedOrder.city || '');
-          setStreet(fetchedOrder.street || '');
-          setHouse(fetchedOrder.house || '');
-          setCustomerName(fetchedOrder.fio || fetchedOrder.customer_name || '');
+          setTitle(inspectedOrder.title || '');
+          setDescription(inspectedOrder.comment || '');
+          setRegion(inspectedOrder.region || '');
+          setCity(inspectedOrder.city || '');
+          setStreet(inspectedOrder.street || '');
+          setHouse(inspectedOrder.house || '');
+          setCustomerName(inspectedOrder.fio || inspectedOrder.customer_name || '');
           setPhone(rawDigits || '');
           setDepartureDate(
-            fetchedOrder.time_window_start ? new Date(fetchedOrder.time_window_start) : null,
+            inspectedOrder.time_window_start ? new Date(inspectedOrder.time_window_start) : null,
           );
-          setAssigneeId(fetchedOrder.assigned_to || null);
-          setToFeed(!fetchedOrder.assigned_to);
-          setUrgent(!!fetchedOrder.urgent);
-          setDepartmentId(fetchedOrder.department_id || null);
+          setAssigneeId(inspectedOrder.assigned_to || null);
+          setToFeed(!inspectedOrder.assigned_to);
+          setUrgent(!!inspectedOrder.urgent);
+          setDepartmentId(inspectedOrder.department_id || null);
           setAmount(
-            fetchedOrder.price !== null && fetchedOrder.price !== undefined
-              ? String(fetchedOrder.price)
+            inspectedOrder.price !== null && inspectedOrder.price !== undefined
+              ? String(inspectedOrder.price)
               : '',
           );
           setGsm(
-            fetchedOrder.fuel_cost !== null && fetchedOrder.fuel_cost !== undefined
-              ? String(fetchedOrder.fuel_cost)
+            inspectedOrder.fuel_cost !== null && inspectedOrder.fuel_cost !== undefined
+              ? String(inspectedOrder.fuel_cost)
               : '',
           );
 
-          if (fetchedOrder.assigned_to) {
+          if (inspectedOrder.assigned_to) {
             const { data: executorProfile } = await supabase
               .from('profiles')
               .select('first_name, last_name')
-              .eq('id', fetchedOrder.assigned_to)
+              .eq('id', inspectedOrder.assigned_to)
               .single();
             if (executorProfile) {
               const full =
                 `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
-              EXECUTOR_NAME_CACHE.set(fetchedOrder.assigned_to, full);
+              EXECUTOR_NAME_CACHE.set(inspectedOrder.assigned_to, full);
               setExecutorName(full);
             } else {
               setExecutorName(null);
@@ -701,7 +849,14 @@ export default function OrderDetails() {
       console.warn('Fetch data error:', e);
       setOrderReady(true);
     }
-  }, [id, fetchServerPhotos, hasMeaningfulOrderDiff, makeSnapshotFromOrder, queryClient]);
+  }, [
+    id,
+    fetchServerPhotos,
+    inspectYandexMedia,
+    makeSnapshotFromOrder,
+    queryClient,
+    refetchRequestData,
+  ]);
 
   const canEditByRole = useCallback(
     () => has('canEditOrders') && !companySettings?.recalc_in_progress,
@@ -836,6 +991,15 @@ export default function OrderDetails() {
           }
 
           setOrder({ ...order, [category]: updated });
+          if (data?.display_url) {
+            setResolvedMediaUrls((prev) => ({ ...prev, [publicUrl]: String(data.display_url) }));
+          }
+          setMediaIssues((prev) => {
+            if (!Object.prototype.hasOwnProperty.call(prev, publicUrl)) return prev;
+            const next = { ...prev };
+            delete next[publicUrl];
+            return next;
+          });
           showToast(t('order_toast_photo_uploaded'));
           return;
         }
@@ -920,6 +1084,18 @@ export default function OrderDetails() {
 
         if (!yError) {
           setOrder({ ...order, [category]: updated });
+          setResolvedMediaUrls((prev) => {
+            if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
+            const next = { ...prev };
+            delete next[removed];
+            return next;
+          });
+          setMediaIssues((prev) => {
+            if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
+            const next = { ...prev };
+            delete next[removed];
+            return next;
+          });
           showToast(t('order_toast_photo_deleted'));
         } else {
           showToast(t('order_toast_delete_error'));
@@ -941,6 +1117,18 @@ export default function OrderDetails() {
 
       if (!error) {
         setOrder({ ...order, [category]: updated });
+        setResolvedMediaUrls((prev) => {
+          if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
+          const next = { ...prev };
+          delete next[removed];
+          return next;
+        });
+        setMediaIssues((prev) => {
+          if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
+          const next = { ...prev };
+          delete next[removed];
+          return next;
+        });
         showToast(t('order_toast_photo_deleted'));
         if (mediaProvider === 'app_storage') {
           await syncPhotosFromStorage();
@@ -1430,7 +1618,8 @@ export default function OrderDetails() {
 
   const openViewer = useCallback(
     (photos, index) => {
-      setViewerPhotos(photos);
+      const prepared = Array.isArray(photos) ? photos.map((u) => getPhotoDisplayUrl(u)).filter(Boolean) : [];
+      setViewerPhotos(prepared);
       setViewerIndex(index);
       setViewerVisible(true);
       scale.value = 1;
@@ -1438,7 +1627,7 @@ export default function OrderDetails() {
       translateY.value = 0;
       bgOpacity.value = 1;
     },
-    [scale, translateX, translateY, bgOpacity],
+    [bgOpacity, getPhotoDisplayUrl, scale, translateX, translateY],
   );
 
   const onPinchGestureEvent = useCallback(
@@ -1577,6 +1766,10 @@ export default function OrderDetails() {
                   key={index}
                   style={{ position: 'relative', marginRight: theme.spacing?.md || 10 }}
                 >
+                  {(() => {
+                    const displayUrl = getPhotoDisplayUrl(url);
+                    const issueMessage = getMediaIssueMessage(url);
+                    return (
                   <Pressable
                     style={({ pressed }) => [
                       {
@@ -1588,13 +1781,51 @@ export default function OrderDetails() {
                       },
                       pressed && { transform: [{ scale: 0.98 }] },
                     ]}
-                    onPress={() => openViewer(photos, index)}
+                    onPress={() => {
+                      if (!issueMessage) openViewer(photos, index);
+                    }}
                   >
-                    <Image
-                      source={{ uri: url }}
-                      style={{ width: 116, height: 116, borderRadius: theme.radii?.lg || 12 }}
-                    />
+                    {issueMessage ? (
+                      <View style={styles.photoUnavailableTile}>
+                        <Text style={styles.photoUnavailableTitle}>{t('order_photo_unavailable')}</Text>
+                        <Text style={styles.photoUnavailableReason}>{issueMessage}</Text>
+                      </View>
+                    ) : (
+                      <View style={styles.photoTileFrame}>
+                        <Image
+                          source={{ uri: displayUrl }}
+                          style={{ width: 116, height: 116, borderRadius: theme.radii?.lg || 12 }}
+                          onLoadStart={() => setPhotoLoading(url, true)}
+                          onLoadEnd={() => setPhotoLoading(url, false)}
+                          onError={() => {
+                            setPhotoLoading(url, false);
+                            (async () => {
+                              let handled = false;
+                              if (mediaProvider === 'yandex_disk' && isLikelyYandexLink(url)) {
+                                handled = await inspectSingleMedia(category, url);
+                              }
+                              if (!handled) {
+                                setMediaIssues((prev) => ({
+                                  ...prev,
+                                  [url]: {
+                                    code: 'client_network',
+                                    message: t('order_photo_issue_client_network'),
+                                  },
+                                }));
+                              }
+                            })();
+                          }}
+                        />
+                        {photoLoadingMap[url] ? (
+                          <View style={styles.photoLoadingOverlay}>
+                            <ActivityIndicator color={theme.colors.primary} size="small" />
+                          </View>
+                        ) : null}
+                      </View>
+                    )}
                   </Pressable>
+                    );
+                  })()}
                   <Pressable
                     style={{
                       position: 'absolute',
@@ -1628,7 +1859,22 @@ export default function OrderDetails() {
         </View>
       );
     },
-    [order, compressAndUpload, openViewer, removePhoto, t, theme],
+    [
+      order,
+      compressAndUpload,
+      getMediaIssueMessage,
+      getPhotoDisplayUrl,
+      inspectSingleMedia,
+      isLikelyYandexLink,
+      mediaProvider,
+      openViewer,
+      photoLoadingMap,
+      removePhoto,
+      setPhotoLoading,
+      styles,
+      t,
+      theme,
+    ],
   );
 
   useEffect(() => {
@@ -1646,6 +1892,10 @@ export default function OrderDetails() {
       const merged = { ...prev, ...requestData };
       return hasMeaningfulOrderDiff(prev, merged) ? merged : prev;
     });
+    const nextAssignee = requestData?.assigned_to || null;
+    setAssigneeId(nextAssignee);
+    setToFeed(!nextAssignee);
+    if (!nextAssignee) setExecutorName(null);
     if (Object.prototype.hasOwnProperty.call(requestData, 'work_type_id')) {
       setWorkTypeId(requestData?.work_type_id ?? null);
     }
@@ -1682,6 +1932,26 @@ export default function OrderDetails() {
   useEffect(() => {
     fetchData();
   }, [id, fetchData]);
+
+  useEffect(() => {
+    orderForInspectRef.current = order || null;
+  }, [order]);
+
+  useEffect(() => {
+    const snapshot = orderForInspectRef.current;
+    if (mediaProvider === 'yandex_disk' && snapshot?.id) {
+      inspectYandexMedia(snapshot)
+        .then((next) => {
+          if (next) {
+            setOrder(next);
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    setResolvedMediaUrls({});
+    setMediaIssues({});
+  }, [inspectYandexMedia, mediaProvider, order?.id, order?.updated_at]);
 
   useEffect(() => {
     let alive = true;
@@ -2667,6 +2937,42 @@ function createStyles(theme) {
       borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    photoUnavailableTile: {
+      width: 116,
+      height: 116,
+      borderRadius: rad.lg || 12,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: sp.sm || 8,
+    },
+    photoUnavailableTitle: {
+      color: theme.colors.text,
+      fontSize: typo.sizes?.xs || 12,
+      fontWeight: typo.weight?.semibold || '600',
+      textAlign: 'center',
+    },
+    photoUnavailableReason: {
+      color: theme.colors.textSecondary,
+      fontSize: typo.sizes?.xxs || 11,
+      textAlign: 'center',
+      marginTop: sp.xs || 4,
+      lineHeight: (typo.sizes?.xxs || 11) + 4,
+    },
+    photoTileFrame: {
+      width: 116,
+      height: 116,
+      borderRadius: rad.lg || 12,
+      overflow: 'hidden',
+    },
+    photoLoadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.25)',
     },
   });
 }
