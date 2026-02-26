@@ -213,7 +213,6 @@ export default function OrderDetails() {
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteCountdown, setDeleteCountdown] = useState(5);
   const [deleteEnabled, setDeleteEnabled] = useState(false);
-  const [descExpanded, setDescExpanded] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -340,27 +339,6 @@ export default function OrderDetails() {
       departmentId,
     ],
   );
-
-  const getField = useCallback(
-    (key) => {
-      if (key === 'department_id' && !useDepartments) return null;
-      const arr = schemaEdit?.fields || [];
-      const found = arr.find((f) => f.field_key === key);
-      if (found) return found;
-      if (
-        key === 'time_window_start' ||
-        key === 'assigned_to' ||
-        key === 'status' ||
-        (key === 'department_id' && useDepartments)
-      )
-        return { field_key: key };
-      if (arr.length === 0) return { field_key: key };
-      return null;
-    },
-    [schemaEdit, useDepartments],
-  );
-
-  const hasField = useCallback((key) => !!getField(key), [getField]);
 
   const validateRequiredBySchemaEdit = useCallback(() => {
     try {
@@ -2123,38 +2101,6 @@ export default function OrderDetails() {
                   </View>
                 </View>
               </Card>
-
-            {hasField('comment') && (
-              <>
-                <SectionHeader>{t('order_details_description')}</SectionHeader>
-                <Card>
-                  <Text
-                    style={[base.value, { lineHeight: 22 }]}
-                    numberOfLines={descExpanded ? undefined : 4}
-                  >
-                    {order.comment?.trim() ? order.comment : t('order_details_description_empty')}
-                  </Text>
-                  {order.comment && order.comment.length > 120 && (
-                    <Pressable
-                      onPress={() => setDescExpanded((v) => !v)}
-                      hitSlop={theme.components?.interactive?.hitSlop || 8}
-                    >
-                      <Text
-                        style={[
-                          styles.link,
-                          {
-                            marginTop: theme.spacing?.sm || 8,
-                            fontWeight: theme.typography?.weight?.semibold || '600',
-                          },
-                        ]}
-                      >
-                        {descExpanded ? t('order_details_collapse') : t('order_details_show_full')}
-                      </Text>
-                    </Pressable>
-                  )}
-                </Card>
-              </>
-            )}
 
             {!isFree && renderPhotoRow(t('order_details_contract_photo'), 'contract_file')}
             {!isFree && renderPhotoRow(t('order_details_photo_before'), 'photo_before')}
