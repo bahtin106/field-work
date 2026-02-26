@@ -8,7 +8,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
@@ -16,6 +15,7 @@ import Screen from '../../components/layout/Screen';
 import UIButton from '../../components/ui/Button';
 import { BaseModal, SelectModal } from '../../components/ui/modals';
 import TextField, { SelectField } from '../../components/ui/TextField';
+import ThemedSwitch from '../../components/ui/ThemedSwitch';
 import { useToast } from '../../components/ui/ToastProvider';
 import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -1003,11 +1003,9 @@ export default function CompanySettings() {
           <View style={s.card}>
             <View style={s.row}>
               <Text style={s.rowLabel}>{t('settings_departure_useDepartureTime')}</Text>
-              <Switch
+              <ThemedSwitch
                 value={useDepartureTime}
                 onValueChange={onToggleDepartureTime}
-                trackColor={{ true: theme.colors.primary, false: theme.colors.inputBorder }}
-                thumbColor={Platform.OS === 'android' ? theme.colors.surface : undefined}
               />
             </View>
             <View style={s.sep} />
@@ -1020,7 +1018,8 @@ export default function CompanySettings() {
             <SelectField
               label={<Text style={s.itemLabel}>{t('settings_departure_media_upload')}</Text>}
               value={mediaProviderLabel}
-              onPress={go('/company_settings/sections/yandex-disk')}
+              disabled
+              onDisabledPress={onSoonPress}
             />
           </View>
         </View>

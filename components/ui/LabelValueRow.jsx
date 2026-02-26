@@ -63,7 +63,7 @@ export default function LabelValueRow({
       </View>
 
       {/* Spacer: fills available space between label and value */}
-      <View style={{ flex: 1, minWidth: 8 }} />
+      <View style={base.middleSpacer} />
 
       {/* Right side: value + optional actions */}
       <View style={[base.rightWrap, { paddingRight: 0 }]}>

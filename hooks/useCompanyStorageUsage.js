@@ -29,7 +29,7 @@ export function useCompanyStorageUsage(companyId) {
     gcTime: 5 * 60 * 1000,
     refetchInterval: companyId ? STORAGE_USAGE_STALE_MS : false,
     refetchIntervalInBackground: false,
-    refetchOnMount: 'always',
+    refetchOnMount: 'stale',
     retry: 1,
   });
 

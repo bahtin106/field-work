@@ -1,4 +1,4 @@
-package com.bahtin106.workordersapp
+package com.monitorapp.monitor
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

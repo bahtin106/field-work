@@ -98,8 +98,7 @@ export default function UsersIndex() {
     refetch: refreshUsers,
   } = useEmployees(filters.values, {
     enabled: !companyIdLoading,
-    refetchInterval: 20 * 1000,
-    refetchIntervalInBackground: false,
+    refetchInterval: false,
   });
 
   const {
@@ -112,7 +111,7 @@ export default function UsersIndex() {
     enabled: !!companyId && useDepartments,
     onlyEnabled: true,
   });
-  useEmployeesRealtimeSync({ enabled: true });
+  useEmployeesRealtimeSync({ enabled: true, companyId });
 
   // Включаем фильтрацию по отделам, когда они загружены
   // Combined loading state - wait for initial data from both sources
@@ -609,7 +608,7 @@ export default function UsersIndex() {
                   toast.warning(
                     t(
                       'subscription_edit_unavailable_toast',
-                      'Изменение недоступно. Оплатите подписку',
+                      'Изменение недоступно. Продлите подписку',
                     ),
                   );
                   return;

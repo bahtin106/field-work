@@ -44,10 +44,10 @@ export function useCompanyAccessState(companyId) {
     queryKey: ['companyAccessState', companyId],
     enabled: !!companyId,
     queryFn: () => fetchCompanyAccessState(companyId),
-    staleTime: 0,
-    refetchInterval: companyId ? 5 * 1000 : false,
+    staleTime: 30 * 1000,
+    refetchInterval: companyId ? 30 * 1000 : false,
     refetchIntervalInBackground: false,
-    refetchOnMount: 'always',
+    refetchOnMount: 'stale',
     refetchOnReconnect: true,
   });
 

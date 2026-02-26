@@ -96,7 +96,18 @@ const light = {
         errorAlpha: 0.28,
       },
     },
-    listItem: { height: 48, dividerWidth: 1, disabledOpacity: 0.5, chevronSize: 20 },
+    listItem: {
+      height: 48,
+      dividerWidth: 1,
+      disabledOpacity: 0.5,
+      chevronSize: 20,
+      chevronGap: 8,
+      labelValueGap: 8,
+    },
+    switch: {
+      scale: 1,
+      iosBackgroundColor: '#E5E7EB',
+    },
     activityIndicator: { size: 'large' },
     scrollView: {
       paddingBottom: 24, // Стандартный нижний отступ для скроллов
@@ -190,6 +201,13 @@ const dark = {
         shadowOffset: { width: 0, height: 14 },
       },
       android: { elevation: 6 },
+    },
+  },
+  components: {
+    ...light.components,
+    switch: {
+      ...(light.components?.switch || {}),
+      iosBackgroundColor: '#262A34',
     },
   },
 

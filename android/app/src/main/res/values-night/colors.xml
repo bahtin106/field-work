@@ -1,1 +1,9 @@
-<resources/>
+<resources>
+  <color name="app_background">#0B0B0F</color>
+  <color name="navigation_bar_background">#121218</color>
+  <color name="splashscreen_background">#0B0B0F</color>
+  <color name="iconBackground">#8FD2F7</color>
+  <color name="colorPrimary">#2F6FFF</color>
+  <color name="colorPrimaryDark">#0B0B0F</color>
+  <color name="notification_icon_color">#4DA3FF</color>
+</resources>

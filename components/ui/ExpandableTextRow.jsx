@@ -42,11 +42,12 @@ function ExpandableTextRowComponent({ label, value, initiallyExpanded = false })
         accessibilityState={{ expanded }}
       >
         <Text style={base.label}>{label}</Text>
-        <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
-          <Text style={[base.value, styles.collapsedValue]} numberOfLines={1} ellipsizeMode="tail">
-            {normalizedValue}
-          </Text>
+          {!expanded ? (
+            <Text style={[base.value, styles.collapsedValue]} numberOfLines={1} ellipsizeMode="tail">
+              {normalizedValue}
+            </Text>
+          ) : null}
           <Animated.View style={[styles.chevronWrap, chevronStyle]}>
             <Feather
               name="chevron-down"
@@ -78,6 +79,7 @@ function createStyles(theme) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
+      marginLeft: theme.components?.listItem?.labelValueGap ?? theme.spacing.lg,
       paddingRight: theme.spacing.xs,
     },
     collapsedValue: {

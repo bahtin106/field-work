@@ -26,6 +26,138 @@ transporter.verify((error, success) => {
   }
 });
 
+const SUBSCRIPTION_EMAIL_TEXT = Object.freeze({
+  ru: {
+    subjects: {
+      warning_7d: 'Подписка MonitorApp скоро закончится',
+      warning_1d: 'Подписка MonitorApp заканчивается завтра',
+      expired: 'Подписка MonitorApp закончилась',
+    },
+    greeting: 'Здравствуйте',
+    closing: 'С уважением, команда MonitorApp',
+    warning_intro: 'Срок подписки вашей компании скоро заканчивается.',
+    warning_days_left: 'До окончания подписки осталось: {days} дн.',
+    warning_period_end: 'Дата окончания подписки: {date}',
+    warning_impact_title: 'Что произойдет после окончания подписки:',
+    warning_impact_1: 'Приложение перейдет в режим только чтения.',
+    warning_impact_2: 'Полный доступ останется только у администратора компании.',
+    warning_impact_3: 'Остальные сотрудники будут заблокированы до оплаты.',
+    warning_pay_note: 'Пожалуйста, продлите подписку заранее, чтобы избежать блокировок.',
+    expired_intro: 'Срок подписки вашей компании закончился.',
+    expired_mode: 'Сейчас приложение доступно только в режиме чтения и только для администратора.',
+    expired_blocked: 'Остальные сотрудники заблокированы до оплаты подписки.',
+    expired_recovery: 'После оплаты доступ сотрудников будет восстановлен автоматически.',
+    company_label: 'Компания',
+  },
+  en: {
+    subjects: {
+      warning_7d: 'Your MonitorApp subscription is ending soon',
+      warning_1d: 'Your MonitorApp subscription ends tomorrow',
+      expired: 'Your MonitorApp subscription has expired',
+    },
+    greeting: 'Hello',
+    closing: 'Best regards, MonitorApp team',
+    warning_intro: 'Your company subscription is about to expire.',
+    warning_days_left: 'Days left until expiration: {days}.',
+    warning_period_end: 'Subscription end date: {date}',
+    warning_impact_title: 'What will happen after expiration:',
+    warning_impact_1: 'The app will switch to read-only mode.',
+    warning_impact_2: 'Full access will remain only for company admin users.',
+    warning_impact_3: 'Other employees will be blocked until payment.',
+    warning_pay_note: 'Please renew in advance to avoid access disruption.',
+    expired_intro: 'Your company subscription has expired.',
+    expired_mode: 'The app is now available in read-only mode and only for the admin.',
+    expired_blocked: 'Other employees are blocked until payment.',
+    expired_recovery: 'After payment, employee access will be restored automatically.',
+    company_label: 'Company',
+  },
+});
+
+function pickLang(lang) {
+  const code = String(lang || 'ru').toLowerCase();
+  return code.startsWith('en') ? 'en' : 'ru';
+}
+
+function formatDateByLang(iso, lang) {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso || '');
+    return new Intl.DateTimeFormat(lang === 'en' ? 'en-US' : 'ru-RU', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }).format(d);
+  } catch {
+    return String(iso || '');
+  }
+}
+
+function buildSubscriptionReminderEmail(payload = {}) {
+  const lang = pickLang(payload.lang);
+  const dict = SUBSCRIPTION_EMAIL_TEXT[lang];
+  const fullName = `${payload.firstName || ''} ${payload.lastName || ''}`.trim();
+  const helloName = fullName || 'Admin';
+  const companyName = String(payload.companyName || '').trim();
+  const eventKeyRaw = String(payload.subscriptionEvent || '').trim().toLowerCase();
+  const isExpired = eventKeyRaw === 'expired' || eventKeyRaw === 'expired_0d';
+  const normalizedEvent = isExpired
+    ? 'expired'
+    : eventKeyRaw === 'warning_1d'
+      ? 'warning_1d'
+      : 'warning_7d';
+  const periodEndText = formatDateByLang(payload.periodEndIso, lang);
+  const daysLeft = Number.isFinite(Number(payload.daysLeft)) ? Math.max(0, Number(payload.daysLeft)) : null;
+
+  const subject = dict.subjects[normalizedEvent];
+  const intro = isExpired ? dict.expired_intro : dict.warning_intro;
+  const lines = [];
+  if (!isExpired && daysLeft != null) {
+    lines.push(dict.warning_days_left.replace('{days}', String(daysLeft)));
+  }
+  if (periodEndText) {
+    lines.push(dict.warning_period_end.replace('{date}', periodEndText));
+  }
+  const companyLine = companyName ? `${dict.company_label}: ${companyName}` : '';
+
+  const impacts = isExpired
+    ? [dict.expired_mode, dict.expired_blocked, dict.expired_recovery]
+    : [dict.warning_impact_1, dict.warning_impact_2, dict.warning_impact_3, dict.warning_pay_note];
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">
+      <h2>${subject}</h2>
+      <p>${dict.greeting}, ${helloName}.</p>
+      <p>${intro}</p>
+      ${companyLine ? `<p><strong>${companyLine}</strong></p>` : ''}
+      ${lines.map((line) => `<p>${line}</p>`).join('')}
+      <p style="margin-top: 20px;"><strong>${dict.warning_impact_title}</strong></p>
+      <ul style="padding-left: 20px;">
+        ${impacts.map((line) => `<li style="margin-bottom: 8px;">${line}</li>`).join('')}
+      </ul>
+      <p style="margin-top: 24px; color: #666;">${dict.closing}</p>
+    </div>
+  `;
+
+  const text = [
+    subject,
+    '',
+    `${dict.greeting}, ${helloName}.`,
+    intro,
+    companyLine,
+    ...lines,
+    '',
+    dict.warning_impact_title,
+    ...impacts.map((line) => `- ${line}`),
+    '',
+    dict.closing,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  return { subject, html, text };
+}
+
 /**
  * POST /send-email
  * Отправляет email письмо
@@ -114,6 +246,11 @@ app.post('/send-email', async (req, res) => {
       } else {
         return res.status(400).json({ error: 'Missing resetLink or tempPassword' });
       }
+    } else if (type === 'subscription-reminder') {
+      const built = buildSubscriptionReminderEmail(req.body || {});
+      subject = built.subject;
+      html = built.html;
+      text = built.text;
     } else {
       return res.status(400).json({ error: 'Invalid email type' });
     }

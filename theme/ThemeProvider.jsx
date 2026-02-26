@@ -1,7 +1,7 @@
 // theme/ThemeProvider.jsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Appearance, FlatList, Platform, ScrollView, SectionList, Text } from 'react-native';
+import { Appearance, FlatList, Platform, ScrollView, SectionList, Text, useColorScheme } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { tokens } from './tokens';
 
@@ -31,8 +31,8 @@ function mixHexColors(baseHex, topHex, ratio = 0.08) {
   }
 }
 
-function buildTheme(mode) {
-  const effective = mode === 'system' ? Appearance.getColorScheme?.() || 'light' : mode;
+function buildTheme(mode, systemScheme = null) {
+  const effective = mode === 'system' ? systemScheme || Appearance.getColorScheme?.() || 'light' : mode;
   const base = effective === 'dark' ? tokens.dark : tokens.light;
 
   const colors = {
@@ -144,6 +144,10 @@ function buildTheme(mode) {
       disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
       chevronSize: base.components?.listItem?.chevronSize ?? 20,
     },
+    switch: {
+      scale: base.components?.switch?.scale ?? 1,
+      iosBackgroundColor: base.components?.switch?.iosBackgroundColor ?? base.colors?.inputBorder ?? '#E5E7EB',
+    },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
       // Левый отступ заголовка секции
@@ -245,9 +249,9 @@ const ThemeContext = createContext({
 });
 
 export const ThemeProvider = ({ children }) => {
-  const [mode, setMode] = useState('light');
+  const systemScheme = useColorScheme();
+  const [mode, setMode] = useState('system');
   const [_hydrated, setHydrated] = useState(false);
-  const [, force] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -270,15 +274,7 @@ export const ThemeProvider = ({ children }) => {
     AsyncStorage.setItem(STORAGE_KEY, mode).catch(() => {});
   }, [mode]);
 
-  useEffect(() => {
-    if (mode !== 'system') return;
-    const sub = Appearance.addChangeListener(() => {
-      force((n) => n + 1);
-    });
-    return () => sub?.remove?.();
-  }, [mode]);
-
-  const theme = useMemo(() => buildTheme(mode), [mode]);
+  const theme = useMemo(() => buildTheme(mode, systemScheme), [mode, systemScheme]);
 
   const toggle = useCallback(() => {
     setMode((m) => (m === 'light' ? 'dark' : 'light'));

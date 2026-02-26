@@ -1,0 +1,1 @@
+\dt supabase_functions.*

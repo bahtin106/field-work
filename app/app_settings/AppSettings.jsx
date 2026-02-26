@@ -1,5 +1,6 @@
 // app/app_settings/AppSettings.jsx
 import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -9,34 +10,63 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Screen from '../../components/layout/Screen';
-import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import SectionHeader from '../../components/ui/SectionHeader';
 import { SelectField, SwitchField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { listItemStyles } from '../../components/ui/listItemStyles';
-import { BaseModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import { DateTimeModal, SelectModal } from '../../components/ui/modals';
 import { ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME, APP_DEFAULTS } from '../../config/notifications';
 import { supabase } from '../../lib/supabase';
 import {
   deletePushToken as deletePushTokenHelper,
   getUid,
-  readProfile,
-  readRolePerm,
+  setNotificationAllow as setNotificationAllowHelper,
   savePushToken as savePushTokenHelper,
 } from '../../lib/supabaseHelpers';
 import { devWarn as __devLog } from '../../src/utils/dev';
 import { useTheme } from '../../theme';
 
-import { PERM_KEYS, TBL } from '../../lib/constants';
+import { TBL } from '../../lib/constants';
 import { saveUserLocale } from '../../lib/userLocale';
 import { availableLocales, getLocale, setLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
 const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
+const DEFAULT_REMINDER_DELAY_MINUTES = 20;
+
+function parseMissingNotifPrefsColumn(error) {
+  const message = String(error?.message || '').toLowerCase();
+  if (!message.includes('notification_prefs')) return null;
+
+  const quotedMatch = message.match(/column\s+"?([a-z_][a-z0-9_]*)"?\s+of relation\s+"?notification_prefs"?\s+does not exist/i);
+  if (quotedMatch?.[1]) return quotedMatch[1];
+
+  const dottedMatch = message.match(/column\s+(?:public\.)?notification_prefs\.([a-z_][a-z0-9_]*)\s+does not exist/i);
+  if (dottedMatch?.[1]) return dottedMatch[1];
+
+  const schemaCacheMatch = message.match(/could not find the\s+'([a-z_][a-z0-9_]*)'\s+column of\s+'notification_prefs'/i);
+  if (schemaCacheMatch?.[1]) return schemaCacheMatch[1];
+
+  return null;
+}
+
+function isTransientPushSyncError(message) {
+  const normalized = String(message || '').toLowerCase();
+  return (
+    normalized.includes('no_auth') ||
+    normalized.includes('нет авторизации') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('jwt') ||
+    normalized.includes('no session') ||
+    normalized.includes('failed to fetch') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('network')
+  );
+}
 
 // Defaults for quiet hours (robust parsing with sane fallback)
 const [DEFAULT_QUIET_HOUR, DEFAULT_QUIET_MINUTE] = (() => {
@@ -102,36 +132,45 @@ async function getNotifications() {
   return __NotificationsMod;
 }
 
-async function ensurePushPermission() {
+async function getSystemPushPermission() {
   try {
     if (Platform.OS === 'web') {
-      try {
-        if (Linking?.openSettings) await Linking.openSettings();
-      } catch {}
-      return { granted: false, token: null };
+      return { granted: false, canAskAgain: false, reason: 'web_no_push_token' };
     }
 
     const isExpoGo = Constants?.appOwnership === 'expo';
-    // Expo Go does not provide a production-grade remote push pipeline.
     if (isExpoGo) {
-      try {
-        if (Linking?.openSettings) await Linking.openSettings();
-      } catch (e) {
-        __devLog('openSettings failed:', e?.message || e);
-      }
-      return { granted: false, token: null };
+      return { granted: false, canAskAgain: false, reason: 'expo_go_no_push_token' };
     }
 
     const Notifications = await getNotifications();
-    const { status: existing } = await Notifications.getPermissionsAsync();
-    let finalStatus = existing;
-    if (existing !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
+    const current = await Notifications.getPermissionsAsync();
+    return {
+      granted: current?.status === 'granted',
+      canAskAgain: current?.canAskAgain !== false,
+      reason: null,
+    };
+  } catch (e) {
+    __devLog('getSystemPushPermission failed:', e?.message || e);
+    return {
+      granted: false,
+      canAskAgain: false,
+      reason: String(e?.message || e || 'push_permission_check_failed'),
+    };
+  }
+}
+
+async function getPushTokenIfGranted() {
+  try {
+    if (Platform.OS === 'web') {
+      return { token: null, reason: 'web_no_push_token' };
+    }
+    const isExpoGo = Constants?.appOwnership === 'expo';
+    if (isExpoGo) {
+      return { token: null, reason: 'expo_go_no_push_token' };
     }
 
-    const granted = finalStatus === 'granted';
-
+    const Notifications = await getNotifications();
     if (Platform.OS === 'android') {
       try {
         await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
@@ -145,6 +184,7 @@ async function ensurePushPermission() {
     }
 
     let token = null;
+    let reason = null;
     try {
       const projectId =
         Constants?.expoConfig?.extra?.eas?.projectId ??
@@ -156,17 +196,55 @@ async function ensurePushPermission() {
       token = resp?.data || null;
     } catch (e) {
       __devLog('getExpoPushTokenAsync failed:', e?.message || e);
+      reason = String(e?.message || e || 'push_token_fetch_failed');
     }
 
-    return { granted, token };
+    if (!token && !reason) reason = 'push_token_not_returned';
+    return { token, reason };
+  } catch (e) {
+    __devLog('getPushTokenIfGranted failed:', e?.message || e);
+    return { token: null, reason: String(e?.message || e || 'push_token_fetch_failed') };
+  }
+}
+
+async function ensurePushPermission() {
+  try {
+    const permission = await getSystemPushPermission();
+    if (!permission.granted) {
+      let canAskAgain = permission.canAskAgain;
+      if (canAskAgain) {
+        const Notifications = await getNotifications();
+        const requested = await Notifications.requestPermissionsAsync();
+        const grantedAfterRequest = requested?.status === 'granted';
+        canAskAgain = requested?.canAskAgain !== false;
+        if (!grantedAfterRequest) {
+          return { granted: false, token: null, canAskAgain, reason: 'push_permission_denied' };
+        }
+      } else {
+        return { granted: false, token: null, canAskAgain: false, reason: 'push_permission_denied' };
+      }
+    }
+
+    const { token, reason } = await getPushTokenIfGranted();
+    if (!token) {
+      return { granted: true, token: null, canAskAgain: true, reason: reason || 'push_token_not_returned' };
+    }
+    return { granted: true, token, canAskAgain: true, reason: null };
   } catch (e) {
     __devLog('ensurePushPermission failed:', e?.message || e);
-    return { granted: false, token: null };
+    return {
+      granted: false,
+      token: null,
+      canAskAgain: false,
+      reason: String(e?.message || e || 'push_permission_failed'),
+    };
   }
 }
 
 export default function AppSettings() {
   const { t } = useTranslation();
+  const router = useRouter();
+  const queryClient = useQueryClient();
 
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
@@ -180,6 +258,7 @@ export default function AppSettings() {
     }
   })();
   const currentLangLabel = t(`language_${currentLocale}`);
+  const currentThemeLabel = t(`settings_theme_${mode || 'system'}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const futureFeature = useCallback(() => toast.info(t('settings_soon')), [t, toast]);
@@ -188,16 +267,19 @@ export default function AppSettings() {
     new_orders: true,
     feed_orders: true,
     reminders: true,
+    reminder_delay_minutes: 20,
     quiet_start: null,
     quiet_end: null,
   });
-  const [eventsOpen, setEventsOpen] = useState(false);
   const [timePickerOpen, setTimePickerOpen] = useState(null);
   const [timeValue, setTimeValue] = useState(new Date());
 
   // Prevent setState on unmounted component
   const mounted = useRef(false);
   const reopenTimer = useRef(null);
+  const quietPickerAppliedRef = useRef(false);
+  const unsupportedColsRef = useRef(new Set());
+  const lastPrefsErrorMessageRef = useRef(null);
   useEffect(() => {
     mounted.current = true;
 
@@ -229,7 +311,7 @@ export default function AppSettings() {
 
       const { data, error: prefsErr } = await supabase
         .from(TBL.NOTIF_PREFS)
-        .select('allow, new_orders, feed_orders, reminders, quiet_start, quiet_end')
+        .select('*')
         .eq('user_id', uid)
         .maybeSingle();
 
@@ -240,6 +322,11 @@ export default function AppSettings() {
 
       if (!data) {
         return {
+          allow: true,
+          new_orders: true,
+          feed_orders: true,
+          reminders: true,
+          reminder_delay_minutes: DEFAULT_REMINDER_DELAY_MINUTES,
           quiet_start: APP_DEFAULTS?.quietStart,
           quiet_end: APP_DEFAULTS?.quietEnd,
         };
@@ -248,18 +335,26 @@ export default function AppSettings() {
       const qs = data.quiet_start;
       const qe = data.quiet_end;
       return {
-        ...data,
+        allow: data.allow !== false,
+        new_orders: data.new_orders !== false,
+        feed_orders: data.feed_orders !== false,
+        reminders: data.reminders !== false,
+        reminder_delay_minutes: Number.isFinite(data.reminder_delay_minutes)
+          ? data.reminder_delay_minutes
+          : DEFAULT_REMINDER_DELAY_MINUTES,
         quiet_start: typeof qs === 'string' ? (qs.trim() || null) : (qs ?? null),
         quiet_end: typeof qe === 'string' ? (qe.trim() || null) : (qe ?? null),
       };
     },
     gcTime: 5 * 60 * 1000,
     staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev ?? null,
   });
 
   useEffect(() => {
     if (!prefsError) return;
+    const message = String(prefsError?.message || prefsError || '');
+    if (lastPrefsErrorMessageRef.current === message) return;
+    lastPrefsErrorMessageRef.current = message;
     __devLog('loadPrefs error:', prefsError?.message || prefsError);
     toast.error(t('errors_loadSettings'));
   }, [prefsError, t, toast]);
@@ -306,34 +401,6 @@ export default function AppSettings() {
     }
   }, [prefsData]);
 
-  const { data: permData } = useQuery({
-    queryKey: ['appSettings', 'userPerm'],
-    queryFn: async () => {
-      try {
-        const uid = await getUid();
-        const prof = await readProfile(uid);
-        if (prof?.company_id && prof?.role) {
-          const permValue = await readRolePerm(
-            prof.company_id,
-            prof.role,
-            PERM_KEYS.CAN_CREATE_ORDERS,
-          );
-          const v = (permValue ?? '').toString().trim().toLowerCase();
-          return v in { 1: 1, true: 1, t: 1, yes: 1, y: 1 };
-        }
-        return false;
-      } catch (e) {
-        __devLog('readRolePerm failed:', e?.message || e);
-        return false;
-      }
-    },
-    gcTime: 5 * 60 * 1000,
-    staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev ?? false,
-  });
-
-  const canCreateOrders = !!permData;
-
   const currentPrefsRef = useRef(prefs);
   useEffect(() => {
     currentPrefsRef.current = prefs;
@@ -342,10 +409,24 @@ export default function AppSettings() {
   const savePrefs = useCallback(async (patch) => {
     try {
       const uid = await getUid();
-      const next = { ...currentPrefsRef.current, ...patch };
-      const { error } = await supabase
-        .from(TBL.NOTIF_PREFS)
-        .upsert({ user_id: uid, ...next }, { onConflict: 'user_id', returning: 'minimal' });
+      let error = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const payload = { ...patch };
+        unsupportedColsRef.current.forEach((col) => {
+          delete payload[col];
+        });
+
+        const result = await supabase
+          .from(TBL.NOTIF_PREFS)
+          .upsert({ user_id: uid, ...payload }, { onConflict: 'user_id', returning: 'minimal' });
+        error = result.error || null;
+        if (!error) break;
+
+        const missingCol = parseMissingNotifPrefsColumn(error);
+        if (!missingCol) break;
+        unsupportedColsRef.current.add(missingCol);
+      }
+
       if (error) {
         let msg = t('errors_saveGeneric');
         if (/permission denied/i.test(error.message)) msg = t('errors_noSettingsAccess');
@@ -415,6 +496,16 @@ export default function AppSettings() {
   }
 
   const bothQuietSet = (obj) => !!toTimeStr(obj.quiet_start) && !!toTimeStr(obj.quiet_end);
+  const resetIncompleteQuietLocal = useCallback(() => {
+    const snapshot = currentPrefsRef.current;
+    const isPartial =
+      (toTimeStr(snapshot.quiet_start) && !toTimeStr(snapshot.quiet_end)) ||
+      (!toTimeStr(snapshot.quiet_start) && toTimeStr(snapshot.quiet_end));
+    if (!isPartial) return;
+    const resetPatch = { quiet_start: null, quiet_end: null };
+    setPrefs((p) => ({ ...p, ...resetPatch }));
+    currentPrefsRef.current = { ...snapshot, ...resetPatch };
+  }, []);
 
   const openTimePicker = useCallback(
     (which) => () => {
@@ -434,6 +525,7 @@ export default function AppSettings() {
   const onTimePicked = async (_ev, dateOrUndefined) => {
     if (!timePickerOpen) return;
     if (!dateOrUndefined) {
+      resetIncompleteQuietLocal();
       setTimePickerOpen(null);
       return;
     }
@@ -444,7 +536,9 @@ export default function AppSettings() {
     const prevPrefs = prefs;
     const next = { ...prefs, ...patch };
 
+    quietPickerAppliedRef.current = true;
     setPrefs(next);
+    currentPrefsRef.current = next;
     setTimePickerOpen(null);
 
     if (!bothQuietSet(next)) {
@@ -490,19 +584,37 @@ export default function AppSettings() {
     }
   };
 
+  const closeTimePicker = useCallback(() => {
+    // DateTimeModal calls onClose right after onApply.
+    // In this path we must not reset partially-selected values nor cancel auto-open timer.
+    if (quietPickerAppliedRef.current) {
+      quietPickerAppliedRef.current = false;
+      setTimePickerOpen(null);
+      return;
+    }
+
+    if (reopenTimer.current) {
+      clearTimeout(reopenTimer.current);
+      reopenTimer.current = null;
+    }
+    resetIncompleteQuietLocal();
+    setTimePickerOpen(null);
+  }, [resetIncompleteQuietLocal]);
+
   const savePushToken = useCallback(async (token) => {
     try {
       const uid = await getUid();
       if (!token) throw new Error('NO_TOKEN');
       const platform = Platform.OS === 'ios' ? 'ios' : 'android';
       await savePushTokenHelper(uid, token, platform);
-      return { ok: true };
+      return { ok: true, rawMessage: null };
     } catch (e) {
       let msg = t('push_saveTokenFail');
-      const m = String(e?.message || e).toLowerCase();
+      const rawMessage = String(e?.message || e || '');
+      const m = rawMessage.toLowerCase();
       if (m.includes('no_auth')) msg = t('errors_noAuthShort');
       if (m.includes('permission denied') || m.includes('rls')) msg = t('errors_rls');
-      return { ok: false, message: msg };
+      return { ok: false, message: msg, rawMessage };
     }
   }, [t]);
 
@@ -517,31 +629,56 @@ export default function AppSettings() {
     }
   }, []);
 
-  // Self-heal: if push is enabled but token is missing/stale, try to register again.
+  const setNotificationAllow = useCallback(async (allow) => {
+    try {
+      const uid = await getUid();
+      await setNotificationAllowHelper(uid, !!allow);
+      return { ok: true };
+    } catch (e) {
+      let msg = t('errors_saveGeneric');
+      const m = String(e?.message || e).toLowerCase();
+      if (m.includes('no_auth')) msg = t('errors_noAuth');
+      else if (m.includes('permission denied') || m.includes('rls')) msg = t('errors_rls');
+      else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
+      __devLog('setNotificationAllow failed', m, e);
+      return { ok: false, message: msg };
+    }
+  }, [t]);
+
+  // Self-heal: re-register token only when server prefs explicitly allow notifications.
   useEffect(() => {
     let alive = true;
     if (isLoadingPrefs) return undefined;
-    if (!prefs?.allow) return undefined;
+    if (prefsData?.allow !== true) return undefined;
     if (Platform.OS === 'web') return undefined;
     if (Constants?.appOwnership === 'expo') return undefined;
 
     (async () => {
       try {
-        const { granted, token } = await ensurePushPermission();
-        if (!alive || !granted || !token) return;
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (!alive || !session?.access_token) return;
+
+        const permission = await getSystemPushPermission();
+        if (!alive || !permission.granted) return;
+        const { token } = await getPushTokenIfGranted();
+        if (!alive || !token) return;
         const r = await savePushToken(token);
-        if (!r.ok) {
-          __devLog('auto push token sync failed:', r.message || 'unknown');
+        if (!r.ok && !isTransientPushSyncError(r.rawMessage || r.message)) {
+          __devLog('auto push token sync failed:', r.rawMessage || r.message || 'unknown');
         }
       } catch (e) {
-        __devLog('auto push token sync exception:', e?.message || e);
+        if (!isTransientPushSyncError(e?.message || e)) {
+          __devLog('auto push token sync exception:', e?.message || e);
+        }
       }
     })();
 
     return () => {
       alive = false;
     };
-  }, [isLoadingPrefs, prefs?.allow, savePushToken]);
+  }, [isLoadingPrefs, prefsData?.allow, savePushToken]);
 
   const onToggleAllow = useCallback(async (val) => {
     const prev = prefs.allow;
@@ -549,7 +686,7 @@ export default function AppSettings() {
 
     const isExpoGo = Constants?.appOwnership === 'expo';
     if (isExpoGo) {
-      const { ok, message } = await savePrefs({ allow: val });
+      const { ok, message } = await setNotificationAllow(val);
       if (!ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
         toast.error(message || t('errors_saveGeneric'));
@@ -561,15 +698,23 @@ export default function AppSettings() {
 
     if (val) {
       // Enabling: request permission, save token, then save prefs
-      const { granted, token } = await ensurePushPermission();
+      const { granted, token, reason, canAskAgain } = await ensurePushPermission();
       if (!granted) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(t('push_noPermission'));
+        toast.error(t(canAskAgain ? 'push_noPermission' : 'push_noPermissionSettings'));
+        if (!canAskAgain) {
+          try {
+            if (Linking?.openSettings) await Linking.openSettings();
+          } catch (e) {
+            __devLog('openSettings failed:', e?.message || e);
+          }
+        }
         return;
       }
       if (!token) {
         setPrefs((p) => ({ ...p, allow: prev }));
-        toast.error(t('push_saveTokenFail'));
+        const details = reason ? ` (${reason})` : '';
+        toast.error(`${t('push_saveTokenFail')}${details}`);
         return;
       }
       {
@@ -580,24 +725,26 @@ export default function AppSettings() {
           return;
         }
       }
-      const { ok, message } = await savePrefs({ allow: true });
+      const { ok, message } = await setNotificationAllow(true);
       if (!ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
         toast.error(message || t('errors_saveGeneric'));
         __devLog('notification_prefs save error:', message);
       } else {
+        queryClient.invalidateQueries({ queryKey: ['appSettings', 'notifPrefs'] }).catch(() => {});
         toast.info(t('push_on'));
       }
       return;
     } else {
       // Disabling: save prefs first, then remove token if save succeeded
-      const { ok, message } = await savePrefs({ allow: false });
+      const { ok, message } = await setNotificationAllow(false);
       if (!ok) {
         setPrefs((p) => ({ ...p, allow: prev }));
         toast.error(message || t('errors_saveGeneric'));
         __devLog('notification_prefs save error (disable):', message);
         return;
       }
+      queryClient.invalidateQueries({ queryKey: ['appSettings', 'notifPrefs'] }).catch(() => {});
       const r = await removePushToken();
       if (!r.ok) {
         __devLog('removePushToken after disable returned not ok');
@@ -605,7 +752,7 @@ export default function AppSettings() {
       toast.info(t('push_off'));
       return;
     }
-  }, [prefs.allow, removePushToken, savePrefs, savePushToken, t, toast]);
+  }, [prefs.allow, queryClient, removePushToken, savePushToken, setNotificationAllow, t, toast]);
 
   const onToggleEvent = useCallback(
     (key) => async (val) => {
@@ -634,39 +781,11 @@ export default function AppSettings() {
     }
   }, [prefs.quiet_end, prefs.quiet_start, savePrefs, t, toast]);
 
-  const eventToggles = useMemo(
-    () => [
-      {
-        id: 'new_orders',
-        label: t('settings_events_newOrders'),
-        value: !!prefs.new_orders,
-        onChange: onToggleEvent('new_orders'),
-      },
-      {
-        id: 'feed_orders',
-        label: t('settings_events_feedOrders'),
-        value: !!prefs.feed_orders,
-        onChange: onToggleEvent('feed_orders'),
-      },
-      ...(canCreateOrders
-        ? [
-            {
-              id: 'reminders',
-              label: t('settings_events_reminders'),
-              value: !!prefs.reminders,
-              onChange: onToggleEvent('reminders'),
-            },
-          ]
-        : []),
-    ],
-    [canCreateOrders, onToggleEvent, prefs.feed_orders, prefs.new_orders, prefs.reminders, t],
-  );
-
   const sectionBase = useMemo(() => {
     const resolvePressHandler = (sectionKey, itemKey) => {
       if (sectionKey === 'appearance' && itemKey === 'theme') return () => setThemeOpen(true);
       if (sectionKey === 'appearance' && itemKey === 'language') return () => setLangOpen(true);
-      if (sectionKey === 'notifications' && itemKey === 'events') return () => setEventsOpen(true);
+      if (sectionKey === 'notifications' && itemKey === 'events') return () => router.push('/app_settings/sections/events');
       if (sectionKey === 'quiet' && itemKey === 'quiet_start') return openTimePicker('start');
       if (sectionKey === 'quiet' && itemKey === 'quiet_end') return openTimePicker('end');
       if (sectionKey === 'quiet' && itemKey === 'quiet_reset') return onResetQuietTimes;
@@ -689,7 +808,7 @@ export default function AppSettings() {
         onValueChange: item.switch ? resolveToggleHandler(section.key, item.key) : undefined,
       })),
     }));
-  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openTimePicker, t]);
+  }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openTimePicker, router, t]);
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
   const sections = useMemo(
@@ -712,10 +831,13 @@ export default function AppSettings() {
           if (sec.key === 'appearance' && it.key === 'language') {
             return { ...it, value: currentLangLabel };
           }
+          if (sec.key === 'appearance' && it.key === 'theme') {
+            return { ...it, value: currentThemeLabel };
+          }
           return it;
         }),
       })),
-    [sectionBase, prefs, isLoadingPrefs, currentLangLabel, t],
+    [sectionBase, prefs, isLoadingPrefs, currentLangLabel, currentThemeLabel, t],
   );
 
   return (
@@ -780,36 +902,9 @@ export default function AppSettings() {
           initial={timeValue}
           minuteStep={TIME_PICKER_MINUTE_STEP}
           onApply={(d) => onTimePicked(null, d)}
-          onClose={() => setTimePickerOpen(null)}
+          onClose={closeTimePicker}
         />
       ) : null}
-
-      <BaseModal
-        visible={eventsOpen}
-        title={t('settings_events_title')}
-        onClose={() => setEventsOpen(false)}
-        footer={
-          <Button variant="secondary" title={t('btn_apply')} onPress={() => setEventsOpen(false)} />
-        }
-      >
-        <Card paddedXOnly>
-          {eventToggles.map((item, index) => {
-            const isLast = index === eventToggles.length - 1;
-            return (
-              <React.Fragment key={item.id}>
-                <SwitchField
-                  label={item.label}
-                  value={item.value}
-                  onValueChange={item.onChange}
-                  disabled={!prefs.allow}
-                  accessibilityLabel={item.label}
-                />
-                {!isLast ? <View style={base.sep} /> : null}
-              </React.Fragment>
-            );
-          })}
-        </Card>
-      </BaseModal>
 
       <SelectModal
         visible={themeOpen}

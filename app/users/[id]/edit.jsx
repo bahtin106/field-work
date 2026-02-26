@@ -32,8 +32,8 @@ import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
-import { isValidRu as isValidPhone } from '../../../components/ui/phone';
-import { AVATAR, STORAGE, TBL } from '../../../lib/constants';
+import { isValidRu as isValidPhone, normalizeRu as normalizeRuPhone } from '../../../components/ui/phone';
+import { AVATAR, FUNCTIONS, STORAGE, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { extractKeepPathFromUrl, removeStoragePrefixFiles } from '../../../lib/storageCleanup';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
@@ -83,29 +83,53 @@ const __ymdLocal = (d) => {
 // --- end helper ---
 
 // Robust local-date helpers to avoid UTC shifts and month off-by-one
-const __parseLocalYMD = (val) => {
-  try {
-    if (!val) return null;
-    if (val instanceof Date && !isNaN(val)) {
-      // Normalize to local date (strip time)
-      return new Date(val.getFullYear(), val.getMonth(), val.getDate());
-    }
-    const s = String(val);
-    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) {
-      const y = Number(m[1]),
-        mo = Number(m[2]),
-        d = Number(m[3]);
-      return new Date(y, mo - 1, d);
-    }
-    // Fallback: try Date(...) and normalize
-    const d = new Date(val);
-    return isNaN(d) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  } catch {
-    return null;
-  }
+const __mdLocal = (d) => {
+  if (!(d instanceof Date) || isNaN(d)) return null;
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const da = String(d.getDate()).padStart(2, '0');
+  return `${m}-${da}`;
+};
+const __serializeBirthForSave = (d, withYearFlag) => {
+  if (!(d instanceof Date) || isNaN(d)) return null;
+  if (withYearFlag) return __ymdLocal(d);
+  // use sentinel year 1900 (not shown in UI) to preserve Feb 29 handling
+  const safe = new Date(1900, d.getMonth(), d.getDate());
+  return __ymdLocal(safe);
 };
 
+
+const __parseLocalYMD = (val) => {
+  try {
+    if (!val) return { date: null, hasYear: false };
+    if (val instanceof Date && !isNaN(val)) {
+      return { date: new Date(val.getFullYear(), val.getMonth(), val.getDate()), hasYear: true };
+    }
+    const s = String(val).trim();
+    // YYYY-MM-DD
+    let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+      // Treat sentinel year 1900 as 'no year' stored
+      if (y === 1900) {
+        return { date: new Date(new Date().getFullYear(), mo - 1, d), hasYear: false };
+      }
+      return { date: new Date(y, mo - 1, d), hasYear: true };
+    }
+    // MM-DD (no year stored)
+    m = s.match(/^(\d{2})-(\d{2})$/);
+    if (m) {
+      const mo = Number(m[1]), d = Number(m[2]);
+      // use current year for internal Date but mark hasYear=false
+      return { date: new Date(new Date().getFullYear(), mo - 1, d), hasYear: false };
+    }
+    // Fallback: try Date(...) and normalize (assume has year)
+    const d = new Date(val);
+    if (isNaN(d)) return { date: null, hasYear: false };
+    return { date: new Date(d.getFullYear(), d.getMonth(), d.getDate()), hasYear: true };
+  } catch {
+    return { date: null, hasYear: false };
+  }
+};
 const __coercePickerDate = (v) => {
   try {
     if (!v) return null;
@@ -205,6 +229,50 @@ function isValidEmailStrict(raw) {
   const tld = labels[labels.length - 1];
   if (tld.length < 2 || tld.length > 24) return false;
   return true;
+}
+
+function normalizeOptionalPhoneForSave(raw) {
+  const normalized = normalizeRuPhone(String(raw || ''));
+  if (!normalized || normalized.length <= 1) return null;
+  return normalized;
+}
+
+function hasPhoneValue(raw) {
+  return !!normalizeOptionalPhoneForSave(raw);
+}
+
+function mapSaveErrorToMessage(error, t) {
+  const raw = String(error?.message || error || '');
+  const normalized = raw.toLowerCase();
+
+  if (
+    normalized.includes('new password should be different from the old password') ||
+    normalized.includes('should be different from the old password')
+  ) {
+    return t('error_new_password_same_as_old');
+  }
+  if (normalized.includes('password-update-timeout')) {
+    return t('errors_network');
+  }
+  if (normalized.includes('profile-update-timeout')) {
+    return t('errors_network');
+  }
+
+  return raw || t('error_save_failed');
+}
+
+async function withTimeout(promise, ms, timeoutMessage = 'timeout') {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 // === Lightweight wrappers for split modals (local to this screen) ===
@@ -585,7 +653,7 @@ export default function EditUser() {
         : null));
   const phoneError =
     fieldErrors.phone?.message ||
-    (shouldShowError('phone') && !isValidPhone(String(phone || ''))
+    (shouldShowError('phone') && hasPhoneValue(phone) && !isValidPhone(String(phone || ''))
       ? t('err_phone')
       : null);
   const [birthdate, setBirthdate] = useState(null);
@@ -795,8 +863,8 @@ export default function EditUser() {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
-      phone: String(phone).replace(/\D/g, '') || '',
-      birthdate: birthdate ? __ymdLocal(birthdate) : null,
+      phone: normalizeOptionalPhoneForSave(phone) || '',
+      birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
       role,
       newPassword: newPassword || null,
       departmentId: departmentId || null,
@@ -866,7 +934,7 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
-      showInfoToast(t('toast_saving'), { sticky: true });
+      showInfoToast(t('toast_saving'));
 
       // Сохраняем изменения аватара в БД только если есть реальные изменения
       // pendingAvatarUrl === null означает "нет изменений", а не "удалить"
@@ -932,8 +1000,8 @@ export default function EditUser() {
           p_last_name: lastName.trim() || null,
           p_role: role || null,
           p_company_id: employeeData?.companyId || null,
-          p_phone: String(phone || '').replace(/\D/g, '') || null,
-          p_birthdate: birthdate ? __ymdLocal(birthdate) : null,
+          p_phone: normalizeOptionalPhoneForSave(phone),
+          p_birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
           // RPC applies department update only when parameter is NOT NULL.
           // Send empty string to explicitly clear department (NULLIF('', '') -> NULL in SQL).
           p_department_id: departmentId == null ? '' : String(departmentId),
@@ -965,17 +1033,18 @@ export default function EditUser() {
           first_name: firstName.trim() || null,
           last_name: lastName.trim() || null,
           full_name: normalizedFullName,
-          phone: String(phone || '').replace(/\D/g, '') || null,
-          birthdate: birthdate ? __ymdLocal(birthdate) : null,
+          phone: normalizeOptionalPhoneForSave(phone),
+          birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
           department_id: departmentId || null,
           role,
         };
         Object.keys(profilePatch).forEach((k) => profilePatch[k] === undefined && delete profilePatch[k]);
 
-        const { data: profData, error: profErr } = await supabase
-          .from(TABLES.profiles)
-          .update(profilePatch)
-          .eq('id', userId);
+        const { data: profData, error: profErr } = await withTimeout(
+          supabase.from(TABLES.profiles).update(profilePatch).eq('id', userId),
+          15000,
+          'profile-update-timeout',
+        );
         console.debug('[proceedSave] profiles.update (admin)', { profErr, profData, profilePatch, userId });
 
         if (profErr) throw profErr;
@@ -1018,8 +1087,8 @@ export default function EditUser() {
           first_name: firstName.trim() || null,
           last_name: lastName.trim() || null,
           full_name: normalizedFullName,
-          phone: String(phone || '').replace(/\D/g, '') || null,
-          birthdate: birthdate ? __ymdLocal(birthdate) : null,
+          phone: normalizeOptionalPhoneForSave(phone),
+          birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
         };
         if (meIsAdmin) {
           profilePatch.department_id = departmentId || null;
@@ -1036,39 +1105,18 @@ export default function EditUser() {
 
         // Если нужно обновить пароль — используем email-server API
         if (newPassword && newPassword.length) {
-          console.debug('[proceedSave] [Self Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
-
-          const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              userId: userId,
-              newPassword: newPassword,
-            }),
-          });
-
-          console.debug('[proceedSave] Password update response status:', res.status);
-
-          if (!res.ok) {
-            const text = await res.text();
-            console.error('[proceedSave] Password update failed:', text);
-            throw new Error(`Password update failed: ${text}`);
-          }
-
-          const result = await res.json();
-          console.debug('[proceedSave] Password update result:', result);
-
-          if (!result.success) {
-            throw new Error(result.message || 'Password update failed');
-          }
-
-          console.debug('[proceedSave] Password updated successfully');
+          const { error: updatePwdErr } = await withTimeout(
+            supabase.auth.updateUser({ password: newPassword }),
+            15000,
+            'password-update-timeout',
+          );
+          if (updatePwdErr) throw updatePwdErr;
+          console.debug('[proceedSave] [Self Edit] Password updated via supabase.auth.updateUser');
         }
       }
 
       setNewPassword('');
+      setConfirmPassword('');
       setConfirmPwdVisible(false);
       setPendingSave(false);
       setInitialSnap(
@@ -1076,8 +1124,8 @@ export default function EditUser() {
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           email: String(email || '').trim(),
-          phone: String(phone || '').replace(/\D/g, '') || '',
-          birthdate: birthdate ? __ymdLocal(birthdate) : null,
+          phone: normalizeOptionalPhoneForSave(phone) || '',
+          birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
           role,
           newPassword: null,
           departmentId: departmentId || null,
@@ -1091,8 +1139,8 @@ export default function EditUser() {
         last_name: lastName.trim() || null,
         full_name: buildFullName(firstName, lastName) || null,
         email: String(email || '').trim(),
-        phone: String(phone || '').replace(/\D/g, '') || null,
-        birthdate: birthdate ? __ymdLocal(birthdate) : null,
+        phone: normalizeOptionalPhoneForSave(phone),
+        birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
         role,
         department_id: departmentId || null,
         avatar_url: avatarUrl || null,
@@ -1103,8 +1151,9 @@ export default function EditUser() {
       allowLeaveRef.current = true;
       showSuccessToast(t('toast_success'));
     } catch (e) {
-      setErr(e?.message || t('error_save_failed'));
-      showError(e?.message || t('error_save_failed'));
+      const msg = mapSaveErrorToMessage(e, t);
+      setErr(msg);
+      showError(msg);
     } finally {
       setSaving(false);
     }
@@ -1152,7 +1201,7 @@ export default function EditUser() {
       emailRef.current?.focus?.();
       return;
     }
-    if (String(phone || '').trim() && !isValidPhone(String(phone || ''))) {
+    if (hasPhoneValue(phone) && !isValidPhone(String(phone || ''))) {
       setFieldErrors({ phone: { message: t('err_phone') } });
       ensureVisibleField({
         fieldRef: phoneRef,
@@ -1238,9 +1287,9 @@ export default function EditUser() {
     setIsSuspended(normalizedSuspended);
     setRole(employeeData?.role || ROLE.WORKER);
 
-    const parsedBirthdate = __parseLocalYMD(employeeData?.birthdate || null);
-    setBirthdate(parsedBirthdate);
-    setWithYear(!!parsedBirthdate);
+    const parsedBirthdateObj = __parseLocalYMD(employeeData?.birthdate || null);
+    setBirthdate(parsedBirthdateObj.date);
+    setWithYear(!!parsedBirthdateObj.hasYear);
 
     if (timeSinceLastSave >= AVATAR_SAVE_PROTECTION_MS) {
       setPendingAvatarUrl((current) => {
@@ -1658,20 +1707,22 @@ export default function EditUser() {
       showInfoToast(t('toast_deleting_employee'), { sticky: true });
 
       // Вызываем RPC функцию для деактивации
-      console.debug('[onConfirmDelete] calling deactivate_employee:', { userId, successorId: successor?.id });
+      console.debug('[onConfirmDelete] invoking delete_user:', { userId, successorId: successor?.id });
 
-      const { data, error } = await supabase.rpc('deactivate_employee', {
-        employee_id: userId,
-        reassign_to: successor?.id || null,
+      const { data, error } = await supabase.functions.invoke(FUNCTIONS.DELETE_USER, {
+        body: {
+          user_id: userId,
+          reassign_to: successor?.id || null,
+        },
       });
 
-      console.debug('[onConfirmDelete] result:', { data, error });
+      console.debug('[onConfirmDelete] delete_user result:', { data, error });
 
       if (error) {
         throw new Error(error.message || t('err_delete_failed'));
       }
 
-      if (data && data.success === false) {
+      if (data && data.ok === false) {
         throw new Error(data.message || t('err_delete_failed'));
       }
 

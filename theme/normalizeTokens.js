@@ -108,6 +108,10 @@ export function buildTheme(mode) {
       disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
       chevronSize: base.components?.listItem?.chevronSize ?? 20,
     },
+    switch: {
+      scale: base.components?.switch?.scale ?? 1,
+      iosBackgroundColor: base.components?.switch?.iosBackgroundColor ?? base.colors?.inputBorder ?? '#E5E7EB',
+    },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
       mb: base.components?.sectionTitle?.mb ?? 'sm', // spacing key

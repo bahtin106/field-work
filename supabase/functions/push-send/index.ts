@@ -1,12 +1,11 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import Expo from 'https://esm.sh/expo-server-sdk@3.11.0';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-
-const expo = new Expo({ useFcmV1: true });
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const PUSH_WORKER_KEY = Deno.env.get('PUSH_WORKER_KEY') || '';
+const PUSH_ANDROID_CHANNEL_ID = Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify';
+const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
@@ -20,6 +19,24 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-worker-key',
+};
+
+const PUSH_MESSAGE_KEYS = {
+  title_new: 'push_title_new',
+  title_reminder: 'push_title_reminder',
+  body_feed: 'push_body_feed',
+  body_assigned: 'push_body_assigned',
+  body_reminder: 'push_body_reminder',
+  fallback_untitled: 'push_order_untitled',
+} as const;
+
+const RU_MESSAGES: Record<(typeof PUSH_MESSAGE_KEYS)[keyof typeof PUSH_MESSAGE_KEYS], string> = {
+  push_title_new: 'Новая заявка',
+  push_title_reminder: 'Напоминание по заявке',
+  push_body_feed: 'В ленте появилась заявка: {order}',
+  push_body_assigned: 'Вам назначена заявка: {order}',
+  push_body_reminder: 'Заявка {order} больше {minutes} мин в ленте',
+  push_order_untitled: 'без названия',
 };
 
 type EventType = 'feed_new_order' | 'assigned_new_order' | 'feed_stale_reminder';
@@ -40,6 +57,7 @@ type NotificationPrefs = {
   new_orders: boolean;
   feed_orders: boolean;
   reminders: boolean;
+  reminder_delay_minutes: number;
   quiet_start: string | null;
   quiet_end: string | null;
 };
@@ -51,19 +69,25 @@ type PushTokenRow = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function withRetry<T>(fn: () => Promise<T>, tries = 3, baseDelayMs = 500): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 0; i < tries; i++) {
-    try {
-      return await fn();
-    } catch (e: any) {
-      lastErr = e;
-      const retriable = e?.statusCode === 429 || e?.statusCode >= 500;
-      if (!retriable || i === tries - 1) throw e;
-      await sleep(baseDelayMs * 2 ** i);
-    }
+function tr(key: (typeof PUSH_MESSAGE_KEYS)[keyof typeof PUSH_MESSAGE_KEYS], params?: Record<string, string>) {
+  let template = RU_MESSAGES[key] || key;
+  if (!params) return template;
+  for (const [k, v] of Object.entries(params)) {
+    template = template.replace(new RegExp(`\\{${k}\\}`, 'g'), v);
   }
-  throw lastErr as Error;
+  return template;
+}
+
+function normalizeOrderTitle(value: unknown): string {
+  const raw = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  const fallback = tr(PUSH_MESSAGE_KEYS.fallback_untitled);
+  if (!raw) return fallback;
+  if (raw.length <= 56) return raw;
+  return `${raw.slice(0, 55).trimEnd()}...`;
+}
+
+function isExpoPushToken(token: string) {
+  return /^ExponentPushToken\[[A-Za-z0-9._-]+\]$/.test(token);
 }
 
 function parseTimeToMinutes(value: string | null): number | null {
@@ -86,17 +110,6 @@ function isInQuietHours(nowUtc: Date, quietStart: string | null, quietEnd: strin
   if (start === end) return false;
   if (start < end) return nowMinutes >= start && nowMinutes < end;
   return nowMinutes >= start || nowMinutes < end;
-}
-
-function getEventTitle(event: NotificationEvent): string {
-  if (event.event_type === 'feed_stale_reminder') return 'Request reminder';
-  return 'New request';
-}
-
-function getEventBody(event: NotificationEvent): string {
-  if (event.event_type === 'feed_new_order') return `Request #${event.order_id} is now in feed`;
-  if (event.event_type === 'assigned_new_order') return `Request #${event.order_id} was assigned to you`;
-  return `Request #${event.order_id} is still in feed for over 30 minutes`;
 }
 
 function getEventPrefKey(
@@ -143,7 +156,7 @@ async function finishEvent(
 
 async function enqueueReminders() {
   const { error } = await sb.rpc('enqueue_stale_feed_reminders', {
-    p_delay: '30 minutes',
+    p_delay: '20 minutes',
   });
   if (error) {
     console.error('enqueue_stale_feed_reminders failed:', error.message);
@@ -152,24 +165,18 @@ async function enqueueReminders() {
 
 async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
   if (event.recipient_user_id) return [event.recipient_user_id];
-
   if (event.event_type !== 'feed_new_order') return [];
 
   const { data, error } = await sb.rpc('get_company_notification_recipients', {
     p_company_id: event.company_id,
   });
-
   if (error) throw new Error(`profiles recipients fetch failed: ${error.message}`);
   return (data ?? []).map((r: any) => r.user_id).filter(Boolean);
 }
 
 async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventType): Promise<string[]> {
   if (!recipientIds.length) return [];
-
-  const { data, error } = await sb.rpc('get_notification_prefs_bulk', {
-    p_user_ids: recipientIds,
-  });
-
+  const { data, error } = await sb.rpc('get_notification_prefs_bulk', { p_user_ids: recipientIds });
   if (error) throw new Error(`notification_prefs fetch failed: ${error.message}`);
 
   const prefByUser = new Map<string, NotificationPrefs>();
@@ -192,86 +199,135 @@ async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventT
     if (isInQuietHours(nowUtc, prefs.quiet_start, prefs.quiet_end)) continue;
     eligible.push(userId);
   }
-
   return eligible;
 }
 
 async function fetchTokensForUsers(userIds: string[]): Promise<PushTokenRow[]> {
   if (!userIds.length) return [];
-  const { data, error } = await sb.rpc('get_push_tokens_bulk', {
-    p_user_ids: userIds,
-  });
+  const { data, error } = await sb.rpc('get_push_tokens_bulk', { p_user_ids: userIds });
   if (error) throw new Error(`push_tokens fetch failed: ${error.message}`);
   return (data ?? []) as PushTokenRow[];
 }
 
-async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]) {
-  const invalidTokens = tokenRows.map((t) => t.token).filter((token) => !Expo.isExpoPushToken(token));
-
-  if (invalidTokens.length) {
-    await invalidateTokens(invalidTokens, 'NotExpoToken');
+async function resolveOrderTitle(event: NotificationEvent): Promise<string> {
+  const payloadTitle = event.payload?.order_title;
+  if (typeof payloadTitle === 'string' && payloadTitle.trim()) {
+    return normalizeOrderTitle(payloadTitle);
   }
 
-  const validTokenRows = tokenRows.filter((row) => Expo.isExpoPushToken(row.token));
-  if (!validTokenRows.length) return { sentUsers: 0 };
+  const { data, error } = await sb
+    .from('orders')
+    .select('title')
+    .eq('id', event.order_id)
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('resolveOrderTitle error:', error.message);
+    return normalizeOrderTitle(null);
+  }
+  return normalizeOrderTitle(data?.title);
+}
 
-  const messages = validTokenRows.map((row) => ({
+async function getEventText(event: NotificationEvent): Promise<{ title: string; body: string; orderLabel: string }> {
+  const orderLabel = await resolveOrderTitle(event);
+
+  if (event.event_type === 'feed_stale_reminder') {
+    const rawDelay = Number((event.payload as any)?.delay_minutes);
+    const delayMinutes = Number.isFinite(rawDelay) && rawDelay > 0 ? Math.floor(rawDelay) : 20;
+    return {
+      title: tr(PUSH_MESSAGE_KEYS.title_reminder),
+      body: tr(PUSH_MESSAGE_KEYS.body_reminder, { order: orderLabel, minutes: String(delayMinutes) }),
+      orderLabel,
+    };
+  }
+  if (event.event_type === 'assigned_new_order') {
+    return {
+      title: tr(PUSH_MESSAGE_KEYS.title_new),
+      body: tr(PUSH_MESSAGE_KEYS.body_assigned, { order: orderLabel }),
+      orderLabel,
+    };
+  }
+  return {
+    title: tr(PUSH_MESSAGE_KEYS.title_new),
+    body: tr(PUSH_MESSAGE_KEYS.body_feed, { order: orderLabel }),
+    orderLabel,
+  };
+}
+
+async function sendChunk(messages: unknown[]) {
+  const res = await fetch(EXPO_PUSH_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Accept-Encoding': 'gzip, deflate',
+    },
+    body: JSON.stringify(messages),
+  });
+  if (!res.ok) throw new Error(`Expo push responded ${res.status}`);
+  const data = (await res.json()) as { data?: unknown[] };
+  return Array.isArray(data.data) ? data.data : [];
+}
+
+async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]) {
+  const invalidTokens: string[] = [];
+  const valid = tokenRows.filter((t) => {
+    const ok = isExpoPushToken(t.token);
+    if (!ok) invalidTokens.push(t.token);
+    return ok;
+  });
+  if (invalidTokens.length) await invalidateTokens(invalidTokens, 'NotExpoToken');
+  if (!valid.length) return { sentUsers: 0, firstError: null as string | null };
+
+  const text = await getEventText(event);
+  const messages = valid.map((row) => ({
     to: row.token,
-    title: getEventTitle(event),
-    body: getEventBody(event),
+    title: text.title,
+    body: text.body,
     data: {
       order_id: event.order_id,
+      order_title: text.orderLabel,
       event_type: event.event_type,
+      route: `/orders/${event.order_id}`,
+      params: { id: event.order_id, returnTo: '/orders/my-orders' },
+      entity_type: 'order',
+      entity_id: event.order_id,
       ...(event.payload || {}),
     },
     sound: 'default' as const,
+    channelId: PUSH_ANDROID_CHANNEL_ID,
     priority: 'high' as const,
+    ttl: 60,
+    expiration: Math.floor(Date.now() / 1000) + 60,
   }));
 
   const sentUserIds = new Set<string>();
-  const tokenByTicketId = new Map<string, { token: string; userId: string }>();
-  const chunks = expo.chunkPushNotifications(messages);
+  const errors: string[] = [];
+  const chunkSize = 99;
 
-  let offset = 0;
-  for (const chunk of chunks) {
-    const tickets = await withRetry(() => expo.sendPushNotificationsAsync(chunk));
-    tickets.forEach((ticket: any, i: number) => {
-      const source = validTokenRows[offset + i];
-      if (!source) return;
+  for (let i = 0; i < messages.length; i += chunkSize) {
+    const chunk = messages.slice(i, i + chunkSize);
+    const tickets = await sendChunk(chunk);
+    for (let j = 0; j < tickets.length; j++) {
+      const ticket: any = tickets[j];
+      const source = valid[i + j];
+      if (!source) continue;
 
       if (ticket?.status === 'ok') {
         sentUserIds.add(source.user_id);
-      } else if (ticket?.details?.error === 'DeviceNotRegistered') {
-        void invalidateTokens([source.token], 'DeviceNotRegistered');
-      }
-
-      if (ticket?.id) {
-        tokenByTicketId.set(ticket.id, { token: source.token, userId: source.user_id });
-      }
-    });
-    offset += chunk.length;
-  }
-
-  const receiptIds = Array.from(tokenByTicketId.keys());
-  const receiptChunks = expo.chunkPushNotificationReceiptIds(receiptIds);
-  for (const receiptChunk of receiptChunks) {
-    const receipts = await withRetry(() => expo.getPushNotificationReceiptsAsync(receiptChunk));
-    for (const [receiptId, receipt] of Object.entries(receipts)) {
-      const meta = tokenByTicketId.get(receiptId);
-      if (!meta) continue;
-      const r: any = receipt;
-      if (r?.status === 'ok') {
-        sentUserIds.add(meta.userId);
-        continue;
-      }
-      const errCode = r?.details?.error || r?.message || r?.status;
-      if (errCode === 'DeviceNotRegistered') {
-        await invalidateTokens([meta.token], 'DeviceNotRegistered');
+      } else {
+        const ticketError = String(ticket?.details?.error || ticket?.message || 'unknown').trim();
+        errors.push(ticketError);
+        if (ticket?.details?.error === 'DeviceNotRegistered') {
+          invalidTokens.push(source.token);
+        }
       }
     }
+    await sleep(120);
   }
 
-  return { sentUsers: sentUserIds.size };
+  if (invalidTokens.length) await invalidateTokens(invalidTokens, 'DeviceNotRegistered');
+  return { sentUsers: sentUserIds.size, firstError: errors[0] ?? null };
 }
 
 async function processEvents(limit: number) {
@@ -283,7 +339,6 @@ async function processEvents(limit: number) {
     try {
       const recipients = await resolveRecipients(event);
       const recipientsWithPrefs = await filterRecipientsByPrefs(recipients, event.event_type);
-
       if (!recipientsWithPrefs.length) {
         await finishEvent(event.id, true, null, 1);
         stats.skipped += 1;
@@ -303,7 +358,7 @@ async function processEvents(limit: number) {
         stats.sent += 1;
       } else {
         const retryDelay = Math.min(60, 2 ** Math.max(1, event.attempt_count || 1));
-        await finishEvent(event.id, false, 'No devices accepted notification', retryDelay);
+        await finishEvent(event.id, false, result.firstError || 'No devices accepted notification', retryDelay);
         stats.failed += 1;
       }
     } catch (error: any) {
@@ -313,17 +368,12 @@ async function processEvents(limit: number) {
       console.error('Event processing failed:', event.id, error?.message || error);
     }
   }
-
   return stats;
 }
 
 export async function handlePushSendRequest(req: Request): Promise<Response> {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-  if (req.method !== 'POST') {
-    return new Response('POST only', { status: 405, headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (req.method !== 'POST') return new Response('POST only', { status: 405, headers: corsHeaders });
 
   if (PUSH_WORKER_KEY) {
     const incoming = req.headers.get('x-worker-key') || '';
@@ -334,9 +384,8 @@ export async function handlePushSendRequest(req: Request): Promise<Response> {
 
   try {
     const payload = await req.json().catch(() => ({}));
-    const limitRaw = Number(payload?.limit ?? 50);
+    const limitRaw = Number((payload as any)?.limit ?? 50);
     const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 50;
-
     const stats = await processEvents(limit);
     return Response.json({ ok: true, stats }, { headers: corsHeaders });
   } catch (e: any) {

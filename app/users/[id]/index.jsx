@@ -143,7 +143,7 @@ export default function UserView() {
   const handleEditPress = React.useCallback(() => {
     if (isReadOnlyBySubscription) {
       toast.warning(
-        t('subscription_edit_unavailable_toast', 'Изменение недоступно. Оплатите подписку'),
+        t('subscription_edit_unavailable_toast', 'Изменение недоступно. Продлите подписку'),
       );
       return;
     }
@@ -392,11 +392,15 @@ export default function UserView() {
                   onPress={async () => {
                     const url = `mailto:${email}`;
                     try {
-                      const ok = await Linking.canOpenURL(url);
-                      if (ok) await Linking.openURL(url);
-                      else toast.error(t('errors_openMail', 'errors_openMail'));
+                      await Linking.openURL(url);
                     } catch {
-                      toast.error(t('errors_openMail', 'errors_openMail'));
+                      try {
+                        const ok = await Linking.canOpenURL(url);
+                        if (ok) await Linking.openURL(url);
+                        else toast.error(t('errors_openMail', 'errors_openMail'));
+                      } catch {
+                        toast.error(t('errors_openMail', 'errors_openMail'));
+                      }
                     }
                   }}
                 >
@@ -428,11 +432,15 @@ export default function UserView() {
                   onPress={async () => {
                     const url = `tel:${toE164(phone) || '+' + normalizeRu(phone)}`;
                     try {
-                      const ok = await Linking.canOpenURL(url);
-                      if (ok) await Linking.openURL(url);
-                      else toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                      await Linking.openURL(url);
                     } catch {
-                      toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                      try {
+                        const ok = await Linking.canOpenURL(url);
+                        if (ok) await Linking.openURL(url);
+                        else toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                      } catch {
+                        toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                      }
                     }
                   }}
                 >
@@ -474,6 +482,8 @@ export default function UserView() {
                 const monthName = t(`months_genitive_${keyIdx}`, `months_genitive_${keyIdx}`);
                 const day = dateObj.getDate();
                 const year = dateObj.getFullYear();
+                // sentinel year 1900 means 'no year' — do not display year
+                if (year === 1900) return `${day} ${monthName}`;
                 return `${day} ${monthName} ${year}`;
               } catch {
                 return t('common_dash', 'common_dash');

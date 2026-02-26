@@ -3,6 +3,11 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || Deno.env.get('PROJECT_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY =
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || '';
+const EMAIL_SERVICE_URL = String(
+  Deno.env.get('EMAIL_SERVICE_URL') ||
+    Deno.env.get('EXPO_PUBLIC_EMAIL_SERVICE_URL') ||
+    'http://email-server:3000',
+).replace(/\/+$/, '');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,6 +35,56 @@ type InviteBody = {
 
 function err(message: string, status = 400): Response {
   return Response.json({ success: false, message }, { status, headers: corsHeaders });
+}
+
+function generateTempPassword(): string {
+  const words = [
+    'blue', 'green', 'river', 'stone', 'apple', 'cloud', 'ocean', 'field', 'light', 'power',
+    'north', 'south', 'eagle', 'tiger', 'wolf', 'spark', 'sunny', 'magic', 'pilot', 'amber',
+  ];
+  const rng = new Uint32Array(8);
+  crypto.getRandomValues(rng);
+
+  const word = words[rng[0] % words.length];
+  const digitsNeeded = Math.max(2, 8 - word.length);
+  const digits: string[] = [];
+  for (let i = 0; i < digitsNeeded; i += 1) {
+    digits.push(String(rng[i + 1] % 10));
+  }
+  return `${word}${digits.join('')}`;
+}
+
+async function cleanupOrphanIdentitiesByEmail(email: string): Promise<number> {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) return 0;
+
+  const { data, error } = await sb.rpc('cleanup_auth_identity_orphans', {
+    p_email: normalized,
+    p_user_id: null,
+  });
+  if (error) return 0;
+  const deleted = Number((data as any)?.deleted ?? 0);
+  return Number.isFinite(deleted) ? deleted : 0;
+}
+
+async function reconcileEmailBeforeInvite(email: string): Promise<{
+  status: 'ok' | 'exists';
+  deletedUsers: number;
+}> {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!normalized) return { status: 'ok', deletedUsers: 0 };
+
+  const { data, error } = await sb.rpc('reconcile_email_before_invite', {
+    p_email: normalized,
+  });
+  if (error) {
+    return { status: 'ok', deletedUsers: 0 };
+  }
+
+  const payload = (data || {}) as { status?: string; deleted_users?: number };
+  const status = String(payload.status || 'ok').toLowerCase() === 'exists' ? 'exists' : 'ok';
+  const deletedUsers = Number(payload.deleted_users || 0) || 0;
+  return { status, deletedUsers };
 }
 
 export async function handleInviteUserRequest(req: Request): Promise<Response> {
@@ -73,26 +128,57 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
       .select('id')
       .ilike('email', email)
       .maybeSingle();
-    if (existingProfile) return err('User with this email already exists', 400);
+    if (existingProfile) {
+      // If profile exists but auth user is already gone, clean up stale profile and continue invite.
+      const { data: existingAuth, error: existingAuthErr } = await sb.auth.admin.getUserById(existingProfile.id);
+      if (existingAuthErr || !existingAuth?.user) {
+        const { error: staleDeleteErr } = await sb.from('profiles').delete().eq('id', existingProfile.id);
+        if (staleDeleteErr) {
+          return err(`Failed to cleanup stale profile: ${staleDeleteErr.message}`, 400);
+        }
+      } else {
+        return err('User with this email already exists', 400);
+      }
+    }
 
-    const { data: invited, error: inviteErr } = await sb.auth.admin.inviteUserByEmail(email, {
-      redirectTo: 'workorders://auth/verify-email',
-      data: {
+    const reconciliation = await reconcileEmailBeforeInvite(email);
+    if (reconciliation.status === 'exists') {
+      return err('User with this email already exists', 400);
+    }
+
+    const tempPassword = generateTempPassword();
+    const createPayload = {
+      email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: {
         first_name: body.first_name || null,
         last_name: body.last_name || null,
         full_name: body.full_name || null,
         invited_by: user.id,
       },
-    });
-    if (inviteErr) {
-      const msg = String(inviteErr.message || 'Invite failed');
-      if (/already.*exists|already.*registered|duplicate|email/i.test(msg)) {
+    };
+    let { data: created, error: createErr } = await sb.auth.admin.createUser(createPayload);
+    if (createErr) {
+      const msg = String(createErr.message || 'Create user failed');
+      const isIdentityCorruption =
+        /database error checking email|database error finding user|unable to find user from email identity/i.test(msg);
+      if (isIdentityCorruption) {
+        await cleanupOrphanIdentitiesByEmail(email);
+        const retry = await sb.auth.admin.createUser(createPayload);
+        created = retry.data;
+        createErr = retry.error;
+      }
+    }
+    if (createErr) {
+      const msg = String(createErr.message || 'Create user failed');
+      if (/already.*(exists|registered)|duplicate|email.*(exists|taken|already)/i.test(msg)) {
         return err('User with this email already exists', 400);
       }
       return err(msg, 400);
     }
 
-    const invitedUserId = invited?.user?.id;
+    const invitedUserId = created?.user?.id;
     if (!invitedUserId) return err('Failed to create invited user', 400);
 
     const fullName = String(body.full_name || '').trim() ||
@@ -114,10 +200,34 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
     };
 
     const { error: upsertErr } = await sb.from('profiles').upsert(upsertPayload, { onConflict: 'id' });
-    if (upsertErr) return err(`Profile save failed: ${upsertErr.message}`, 400);
+    if (upsertErr) {
+      await sb.auth.admin.deleteUser(invitedUserId).catch(() => null);
+      return err(`Profile save failed: ${upsertErr.message}`, 400);
+    }
+
+    const emailRes = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'invite',
+        email,
+        firstName: body.first_name || null,
+        lastName: body.last_name || null,
+        tempPassword,
+      }),
+    }).catch((fetchErr) => {
+      return { ok: false, status: 0, text: async () => String(fetchErr?.message || 'fetch failed') } as Response;
+    });
+
+    if (!emailRes.ok) {
+      const details = await emailRes.text().catch(() => '');
+      await sb.from('profiles').delete().eq('id', invitedUserId).catch(() => null);
+      await sb.auth.admin.deleteUser(invitedUserId).catch(() => null);
+      return err(`Email send failed${details ? `: ${details}` : ''}`, 502);
+    }
 
     return Response.json(
-      { success: true, user_id: invitedUserId, email, message: 'Invitation sent' },
+      { success: true, user_id: invitedUserId, email, email_sent: true, message: 'Invitation sent' },
       { headers: corsHeaders },
     );
   } catch (e: any) {
