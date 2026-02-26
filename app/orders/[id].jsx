@@ -59,6 +59,7 @@ import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import SectionHeader from '../../components/ui/SectionHeader';
 import LabelValueRow from '../../components/ui/LabelValueRow';
+import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { usePermissions } from '../../lib/permissions';
 import {
@@ -1850,6 +1851,7 @@ export default function OrderDetails() {
     const max = 36;
     return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
   }, [fullTitle]);
+  const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
 
   if (permsLoading || loading || !order) {
     return (
@@ -2085,6 +2087,16 @@ export default function OrderDetails() {
                   }
                 />
                 <View style={base.sep} />
+
+                {descriptionValue ? (
+                  <>
+                    <ExpandableTextRow
+                      label={t('order_details_description')}
+                      value={descriptionValue}
+                    />
+                    <View style={base.sep} />
+                  </>
+                ) : null}
 
                 <LabelValueRow
                   label={t('order_details_amount')}
