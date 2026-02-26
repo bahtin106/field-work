@@ -1,4 +1,4 @@
-import { router as globalRouter, Stack, useRouter, useSegments } from 'expo-router';
+import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef } from 'react';
 import { ActivityIndicator, AppState, Image, LogBox, Platform, Text, View } from 'react-native';
@@ -89,6 +89,7 @@ function RootLayoutInner() {
   const { theme } = useTheme();
   const router = useRouter();
   const segments = useSegments();
+  const pathname = usePathname();
   const splashHiddenRef = useRef(false);
   const segmentsRef = useRef(segments);
   const accessCheckInFlightRef = useRef(false);
@@ -96,6 +97,7 @@ function RootLayoutInner() {
   const pushSyncDoneForUserRef = useRef(null);
   const notificationOpenInFlightRef = useRef(false);
   const lastHandledNotificationKeyRef = useRef('');
+  const presentedCleanupInFlightRef = useRef(false);
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const isBlockedScreen = inAuthGroup && authScreen === 'blocked';
@@ -318,6 +320,153 @@ function RootLayoutInner() {
     return null;
   }, []);
 
+  const extractOrderIdFromNotificationContent = useCallback((notification) => {
+    const rawData = notification?.request?.content?.data;
+    let data = rawData;
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        data = {};
+      }
+    }
+    if (!data || typeof data !== 'object') return null;
+
+    const directId =
+      data.order_id ??
+      data.orderId ??
+      (data.entity_type === 'order' ? data.entity_id : null) ??
+      data.request_id ??
+      null;
+    if (directId != null && String(directId).trim() !== '') {
+      return String(directId).trim();
+    }
+
+    const params = data.params;
+    if (params && typeof params === 'object' && params.id != null && String(params.id).trim() !== '') {
+      return String(params.id).trim();
+    }
+
+    const route = String(data.route || data.path || '').trim();
+    if (route) {
+      const match = route.match(/\/orders\/([^/?#]+)/i);
+      if (match?.[1]) return String(match[1]).trim();
+    }
+
+    return null;
+  }, []);
+
+  const extractEventTypeFromNotificationContent = useCallback((notification) => {
+    const rawData = notification?.request?.content?.data;
+    let data = rawData;
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+      } catch {
+        data = {};
+      }
+    }
+    if (!data || typeof data !== 'object') return '';
+    return String(data.event_type || '').trim();
+  }, []);
+
+  const dismissPresentedNotificationsForOrder = useCallback(
+    async (orderId, Notifications) => {
+      const normalized = String(orderId || '').trim();
+      if (!normalized) return;
+
+      const moduleRef = Notifications || (await import('expo-notifications'));
+      const list = await moduleRef.getPresentedNotificationsAsync?.();
+      if (!Array.isArray(list) || !list.length) return;
+
+      const toDismiss = [];
+      for (const item of list) {
+        const itemOrderId = extractOrderIdFromNotificationContent(item);
+        if (itemOrderId && itemOrderId === normalized) {
+          const identifier = String(item?.request?.identifier || '').trim();
+          if (identifier) toDismiss.push(identifier);
+        }
+      }
+
+      for (const id of toDismiss) {
+        try {
+          await moduleRef.dismissNotificationAsync?.(id);
+        } catch {}
+      }
+    },
+    [extractOrderIdFromNotificationContent],
+  );
+
+  const cleanupStalePresentedNotifications = useCallback(async () => {
+    if (presentedCleanupInFlightRef.current) return;
+    if (Platform.OS === 'web' || !user?.id) return;
+
+    presentedCleanupInFlightRef.current = true;
+    try {
+      const Notifications = await import('expo-notifications');
+      const presented = await Notifications.getPresentedNotificationsAsync?.();
+      if (!Array.isArray(presented) || presented.length === 0) return;
+
+      const entries = [];
+      const orderIds = new Set();
+      for (const item of presented) {
+        const orderId = extractOrderIdFromNotificationContent(item);
+        if (!orderId) continue;
+        const eventType = extractEventTypeFromNotificationContent(item);
+        const identifier = String(item?.request?.identifier || '').trim();
+        if (!identifier) continue;
+        entries.push({ identifier, orderId, eventType });
+        orderIds.add(orderId);
+      }
+      if (!entries.length || !orderIds.size) return;
+
+      const { data: rows, error } = await supabase
+        .from('orders_secure_v2')
+        .select('id, assigned_to')
+        .in('id', Array.from(orderIds));
+      if (error) return;
+
+      const byId = new Map((rows || []).map((row) => [String(row.id), row]));
+      const dismissIds = new Set();
+
+      for (const item of entries) {
+        const row = byId.get(item.orderId);
+        if (!row) {
+          dismissIds.add(item.identifier);
+          continue;
+        }
+
+        if (item.eventType === 'feed_new_order' || item.eventType === 'feed_stale_reminder') {
+          if (row.assigned_to != null) dismissIds.add(item.identifier);
+          continue;
+        }
+
+        if (item.eventType === 'assigned_new_order') {
+          if (!row.assigned_to || String(row.assigned_to) !== String(user.id)) {
+            dismissIds.add(item.identifier);
+          }
+        }
+      }
+
+      for (const id of dismissIds) {
+        try {
+          await Notifications.dismissNotificationAsync?.(id);
+        } catch {}
+      }
+    } catch {
+      // noop
+    } finally {
+      presentedCleanupInFlightRef.current = false;
+    }
+  }, [extractEventTypeFromNotificationContent, extractOrderIdFromNotificationContent, user?.id]);
+
+  const getActiveOrderIdFromPathname = useCallback((currentPathname) => {
+    const normalized = String(currentPathname || '').trim();
+    const match = normalized.match(/^\/orders\/([^/?#]+)$/i);
+    if (!match?.[1]) return null;
+    return String(match[1]).trim();
+  }, []);
+
   const getNotificationResponseKey = useCallback(
     (response) => {
       const requestId = String(response?.notification?.request?.identifier || '').trim();
@@ -347,6 +496,9 @@ function RootLayoutInner() {
             returnParams: JSON.stringify({ fromNotification: true }),
           },
         });
+
+        // Mark all currently shown notifications for this order as consumed.
+        dismissPresentedNotificationsForOrder(order.id).catch(() => {});
       } catch {
         toast.error(t('push_open_generic_error'));
         router.replace('/orders');
@@ -354,7 +506,7 @@ function RootLayoutInner() {
         notificationOpenInFlightRef.current = false;
       }
     },
-    [router, t, toast],
+    [dismissPresentedNotificationsForOrder, router, t, toast],
   );
 
   useEffect(() => {
@@ -409,6 +561,34 @@ function RootLayoutInner() {
     isBlockedScreen,
     isInitializing,
     openOrderFromNotification,
+  ]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen || !user?.id) {
+      return undefined;
+    }
+
+    cleanupStalePresentedNotifications().catch(() => {});
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        cleanupStalePresentedNotifications().catch(() => {});
+      }
+    });
+    return () => appStateSub?.remove?.();
+  }, [cleanupStalePresentedNotifications, isAuthenticated, isBlockedScreen, isInitializing, user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return;
+    const orderId = getActiveOrderIdFromPathname(pathname);
+    if (!orderId) return;
+    dismissPresentedNotificationsForOrder(orderId).catch(() => {});
+  }, [
+    dismissPresentedNotificationsForOrder,
+    getActiveOrderIdFromPathname,
+    isAuthenticated,
+    isBlockedScreen,
+    isInitializing,
+    pathname,
   ]);
 
   if (isInitializing) {
