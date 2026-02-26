@@ -20,6 +20,8 @@ const json = (status: number, body: Record<string, Json>) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
+const DEFAULT_YANDEX_ROOT = '/Монитор';
+
 function toErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === 'string' && error.trim()) return error.trim();
@@ -41,9 +43,26 @@ function toErrorMessage(error: unknown) {
 
 function normalizeFolderPath(input: string | null | undefined) {
   const raw = String(input || '').trim();
-  if (!raw) return '/apps/field-work';
+  if (!raw) return DEFAULT_YANDEX_ROOT;
   if (!raw.startsWith('/')) return `/${raw}`;
   return raw;
+}
+
+async function ensureFolderTree(accessToken: string, fullPath: string) {
+  const normalized = normalizeFolderPath(fullPath);
+  const parts = normalized.split('/').filter(Boolean);
+  let current = '';
+  for (const part of parts) {
+    current = `${current}/${part}`;
+    const res = await fetch(
+      `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(current)}`,
+      { method: 'PUT', headers: { Authorization: `OAuth ${accessToken}` } },
+    );
+    if (![201, 409].includes(res.status)) {
+      const text = await res.text();
+      throw new Error(`Cannot access folder ${current}: ${text}`);
+    }
+  }
 }
 
 async function getCallerContext(admin: ReturnType<typeof createClient>, token: string) {
@@ -193,6 +212,21 @@ async function ensureValidYandexToken(admin: ReturnType<typeof createClient>, co
   return refreshed.access_token;
 }
 
+async function getYandexDiskStorageInfo(accessToken: string) {
+  const res = await fetch('https://cloud-api.yandex.net/v1/disk?fields=total_space,used_space', {
+    headers: { Authorization: `OAuth ${accessToken}` },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Yandex disk info failed: ${text}`);
+  }
+  const payload = (await res.json()) as { total_space?: number; used_space?: number };
+  const total = Number(payload?.total_space || 0);
+  const used = Number(payload?.used_space || 0);
+  const free = Math.max(0, total - used);
+  return { totalBytes: total, usedBytes: used, freeBytes: free };
+}
+
 export async function handleYandexDiskIntegrationRequest(req: Request) {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -238,15 +272,58 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
         .eq('company_id', caller.companyId)
         .maybeSingle();
 
+      let health:
+        | 'ok'
+        | 'reconnect_required'
+        | 'quota_exceeded'
+        | 'error'
+        | 'unknown'
+        | 'not_connected' = conn
+        ? 'unknown'
+        : 'not_connected';
+      let storage:
+        | {
+            free_bytes: number;
+            used_bytes: number;
+            total_bytes: number;
+          }
+        | null = null;
+
+      if (conn) {
+        try {
+          const accessToken = await ensureValidYandexToken(admin, caller.companyId);
+          const info = await getYandexDiskStorageInfo(accessToken);
+          storage = {
+            free_bytes: info.freeBytes,
+            used_bytes: info.usedBytes,
+            total_bytes: info.totalBytes,
+          };
+          health = info.freeBytes <= 0 ? 'quota_exceeded' : 'ok';
+        } catch (e) {
+          const err = toErrorMessage(e).toLowerCase();
+          if (
+            err.includes('invalid_grant') ||
+            err.includes('unauthorized') ||
+            err.includes('token refresh failed')
+          ) {
+            health = 'reconnect_required';
+          } else {
+            health = 'error';
+          }
+        }
+      }
+
       return json(200, {
         success: true,
         connected: !!conn,
+        health,
         media_provider: (company?.media_provider as string) || 'app_storage',
+        storage,
         account: conn
           ? {
               login: conn.yandex_login || '',
               display_name: conn.yandex_display_name || '',
-              folder_path: conn.folder_path || '/apps/field-work',
+              folder_path: conn.folder_path || DEFAULT_YANDEX_ROOT,
               connected_at: conn.connected_at || null,
             }
           : null,
@@ -310,6 +387,12 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
       const tokenData = await exchangeCodeForTokens(code);
       const profile = await getYandexUserInfo(tokenData.access_token);
       const expiresAt = new Date(Date.now() + Math.max(60, Number(tokenData.expires_in || 3600)) * 1000).toISOString();
+      const { data: prevConn } = await admin
+        .from('company_yandex_disk_connections')
+        .select('folder_path')
+        .eq('company_id', caller.companyId)
+        .maybeSingle();
+      const folderPath = normalizeFolderPath(prevConn?.folder_path || DEFAULT_YANDEX_ROOT);
 
       const { error: upErr } = await admin.from('company_yandex_disk_connections').upsert(
         {
@@ -320,7 +403,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
           access_token: tokenData.access_token,
           refresh_token: tokenData.refresh_token,
           token_expires_at: expiresAt,
-          folder_path: '/apps/field-work',
+          folder_path: folderPath,
           connected_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           created_by: caller.userId,
@@ -362,15 +445,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
     if (action === 'set_folder') {
       const folderPath = normalizeFolderPath(body.folder_path);
       const accessToken = await ensureValidYandexToken(admin, caller.companyId);
-
-      const ensureFolderRes = await fetch(
-        `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(folderPath)}`,
-        { method: 'PUT', headers: { Authorization: `OAuth ${accessToken}` } },
-      );
-      if (![201, 409].includes(ensureFolderRes.status)) {
-        const text = await ensureFolderRes.text();
-        return json(400, { success: false, message: `Cannot access folder: ${text}` });
-      }
+      await ensureFolderTree(accessToken, folderPath);
 
       const { error: upErr } = await admin
         .from('company_yandex_disk_connections')
@@ -392,6 +467,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
           .eq('company_id', caller.companyId)
           .maybeSingle();
         if (!conn) return json(400, { success: false, message: 'Yandex Disk not connected' });
+        await ensureValidYandexToken(admin, caller.companyId);
       }
       const { error: upErr } = await admin
         .from('companies')

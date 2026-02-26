@@ -4,10 +4,25 @@
     "slug": "work-orders-app",
     "version": "1.0.1",
     "scheme": "workorders",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash/splashscreen_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F2F2F7"
+    },
     "platforms": [
       "android",
       "ios"
     ],
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "package": "com.monitorapp.monitor",
+      "googleServicesFile": "./android/app/google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#8FD2F7"
+      }
+    },
     "jsEngine": "hermes",
     "assetBundlePatterns": [
       "**/*"
@@ -33,9 +48,22 @@
     "plugins": [
       "expo-router",
       [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash/splashscreen_logo.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2F2F7",
+          "dark": {
+            "image": "./assets/splash/splashscreen_logo.png",
+            "backgroundColor": "#0B0B0F"
+          }
+        }
+      ],
+      [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/notifications/notification-icon.png",
           "color": "#0A84FF",
           "defaultChannel": "app-notify"
         }

@@ -1,12 +1,14 @@
 // components/ui/TextField.jsx
 import FeatherIcon from '@expo/vector-icons/Feather';
-import React, { forwardRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { deriveNextPasswordValue, maskPasswordValue } from '../../lib/passwordInputMasking';
 import { t as T } from '../../src/i18n';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
+import { focusNextInput, registerInput, unregisterInput } from './inputFocusRegistry';
 import { CHEVRON_GAP, listItemStyles } from './listItemStyles';
+import ThemedSwitch from './ThemedSwitch';
 
 const TextField = forwardRef(function TextField(
   {
@@ -42,7 +44,9 @@ const TextField = forwardRef(function TextField(
   const { theme } = useTheme();
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
-  const lastKeyRef = React.useRef(null);
+  const lastKeyRef = useRef(null);
+  const fieldIdRef = useRef(Symbol('text-field'));
+  const mountOrderRef = useRef(Date.now() + Math.random());
   // Для управления видимостью пароля через toggle кнопку
   const [showPassword, setShowPassword] = useState(false);
   const baseInputHeight =
@@ -55,7 +59,7 @@ const TextField = forwardRef(function TextField(
   const autoGrowEnabled = autoGrow ?? theme.components?.input?.autoGrow !== false;
 
   // Используем multiline для ВСЕх полей кроме паролей (можем переопределить через пропсы)
-  const effectiveMultiline = multiline ?? !secureTextEntry;
+  const effectiveMultiline = !!multiline;
 
   const maxRows = theme.components?.input?.autoGrowMaxRows ?? 5;
   const fontSize = theme.typography?.sizes?.md ?? 15;
@@ -70,7 +74,7 @@ const TextField = forwardRef(function TextField(
   const requiredEmpty = isRequired && (touched || forceValidation) && !String(value || '').trim();
   const isErr = (touched || forceValidation) && (!!error || requiredEmpty);
   const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
-  const inputRef = React.useRef(null);
+  const inputRef = useRef(null);
 
   React.useImperativeHandle(ref, () => ({
     ...inputRef.current,
@@ -123,6 +127,38 @@ const TextField = forwardRef(function TextField(
     [effectiveValue, handleChangeText, useInstantMasking],
   );
 
+  const effectiveReturnKeyType = useMemo(() => {
+    if (returnKeyType) return returnKeyType;
+    if (effectiveMultiline) return 'default';
+    return onSubmitEditing ? 'done' : 'next';
+  }, [effectiveMultiline, onSubmitEditing, returnKeyType]);
+
+  const handleSubmitEditing = React.useCallback(
+    (e) => {
+      onSubmitEditing?.(e);
+
+      if (effectiveMultiline || onSubmitEditing) return;
+      const moved = focusNextInput(fieldIdRef.current);
+      if (!moved) Keyboard.dismiss();
+    },
+    [effectiveMultiline, onSubmitEditing],
+  );
+
+  useEffect(() => {
+    if (effectiveMultiline || pressable) return undefined;
+
+    const id = fieldIdRef.current;
+    registerInput({
+      id,
+      order: mountOrderRef.current,
+      getInput: () => inputRef.current,
+    });
+
+    return () => {
+      unregisterInput(id);
+    };
+  }, [effectiveMultiline, pressable]);
+
   return (
     <View style={style}>
       {label && <Text style={s.topLabel}>{String(label)}</Text>}
@@ -162,8 +198,9 @@ const TextField = forwardRef(function TextField(
             }}
             maxLength={maxLength}
             autoCapitalize={autoCapitalize}
-            returnKeyType={returnKeyType}
-            onSubmitEditing={onSubmitEditing}
+            blurOnSubmit={false}
+            returnKeyType={effectiveReturnKeyType}
+            onSubmitEditing={handleSubmitEditing}
             style={[
               s.input,
               effectiveMultiline && {
@@ -274,8 +311,34 @@ export function SelectField({
   const s = selectStyles(theme);
   const resolvedOnPress = disabled ? onDisabledPress : onPress;
   const isPressDisabled = typeof resolvedOnPress !== 'function';
+  const [isPressed, setIsPressed] = React.useState(false);
+  const pressAnim = React.useRef(new Animated.Value(0)).current;
+  React.useEffect(() => {
+    Animated.timing(pressAnim, {
+      toValue: isPressed ? 1 : 0,
+      duration: isPressed ? 110 : 160,
+      easing: isPressed ? Easing.out(Easing.quad) : Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [isPressed, pressAnim]);
   const [rowWidth, setRowWidth] = React.useState(null);
   const chevronSize = theme.components.listItem.chevronSize || 20;
+  const animatedScaleStyle = React.useMemo(
+    () => ({
+      transform: [
+        {
+          scale: pressAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 0.985],
+          }),
+        },
+      ],
+    }),
+    [pressAnim],
+  );
+  const labelColor = isPressed ? theme.colors.textSecondary : (theme.colors.textStrong ?? theme.colors.text);
+  const valueColor = isPressed ? theme.colors.textSecondary : theme.colors.text;
+  const chevronColor = isPressed ? theme.colors.textSecondary : theme.colors.textSecondary;
   const computedValueMaxWidth = React.useMemo(() => {
     if (!rowWidth) return undefined;
     // Reserve space for chevron + paddings; use ~45% for value max width as adaptive fallback
@@ -287,11 +350,13 @@ export function SelectField({
     <Pressable
       onPress={resolvedOnPress}
       disabled={isPressDisabled}
-      android_ripple={isPressDisabled ? undefined : { color: theme.colors.ripple, borderless: false }}
+      android_ripple={undefined}
+      onPressIn={() => setIsPressed(true)}
+      onPressOut={() => setIsPressed(false)}
       accessibilityRole="button"
       accessibilityLabel={String((label || '') + ' - ' + (value || ''))}
     >
-      <View
+      <Animated.View
         onLayout={(e) => {
           try {
             const w = e?.nativeEvent?.layout?.width;
@@ -299,6 +364,7 @@ export function SelectField({
           } catch {}
         }}
         style={[
+          animatedScaleStyle,
           base.row,
           disabled && s.disabled,
           dense && { height: Math.max(36, theme.components?.input?.height ?? 36) },
@@ -310,7 +376,7 @@ export function SelectField({
             <View style={{ flexDirection: 'column', alignItems: 'flex-start', flex: 1 }}>
               {label ? (
                 <Text
-                  style={[base.label, s.label, { paddingRight: 0 }]}
+                  style={[base.label, s.label, { paddingRight: 0, color: labelColor }]}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                   allowFontScaling
@@ -323,7 +389,7 @@ export function SelectField({
                   style={[
                     base.value,
                     s.value,
-                    { textAlign: 'left', marginTop: 2, marginRight: 8 },
+                    { textAlign: 'left', marginTop: 2, marginRight: 8, color: valueColor },
                     computedValueMaxWidth ? { maxWidth: computedValueMaxWidth } : null,
                   ]}
                   numberOfLines={1}
@@ -337,14 +403,14 @@ export function SelectField({
             <FeatherIcon
               name="chevron-right"
               size={theme.components.listItem.chevronSize}
-              color={theme.colors.textSecondary}
+              color={chevronColor}
               style={s.chevron}
             />
           </>
         ) : (
           <>
             <Text
-              style={[base.label, s.label]}
+              style={[base.label, s.label, { color: labelColor }]}
               numberOfLines={1}
               ellipsizeMode="tail"
               allowFontScaling
@@ -359,6 +425,7 @@ export function SelectField({
                   style={[
                     base.value,
                     s.value,
+                    { color: valueColor },
                     computedValueMaxWidth ? { maxWidth: computedValueMaxWidth } : null,
                   ]}
                   numberOfLines={valueNumberOfLines}
@@ -371,13 +438,13 @@ export function SelectField({
               <FeatherIcon
                 name="chevron-right"
                 size={theme.components.listItem.chevronSize}
-                color={theme.colors.textSecondary}
+                color={chevronColor}
                 style={s.chevron}
               />
             </View>
           </>
         )}
-      </View>
+      </Animated.View>
     </Pressable>
   );
 }
@@ -404,11 +471,10 @@ export function SwitchField({
       <Text style={base.label}>{label}</Text>
       <View style={base.rightWrap}>
         <View style={base.switchWrap}>
-          <Switch
+          <ThemedSwitch
             value={!!value}
             onValueChange={onValueChange}
             disabled={!!disabled}
-            trackColor={{ true: theme.colors.primary }}
           />
           {pressable ? (
             <Pressable

@@ -81,8 +81,8 @@ export function useCalendarRequests({ userId, role, isScreenActive = true, enabl
     queryKey: queryKeys.requests.calendar({ userId, role }),
     queryFn: () => listCalendarRequests({ userId, role }),
     enabled: enabled && !!userId,
-    staleTime: 20 * 1000,
-    refetchInterval: isScreenActive ? 20 * 1000 : false,
+    staleTime: 60 * 1000,
+    refetchInterval: isScreenActive ? 60 * 1000 : false,
     refetchIntervalInBackground: false,
   });
 }

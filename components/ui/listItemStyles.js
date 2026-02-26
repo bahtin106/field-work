@@ -51,6 +51,11 @@ export const listItemStyles = (t) =>
       minWidth: 0,
     },
 
+    middleSpacer: {
+      flex: 1,
+      minWidth: t.components?.listItem?.labelValueGap ?? t.spacing.lg,
+    },
+
     // контейнер Switch — микро-зазор слева от текста/значения
     switchWrap: {
       marginLeft: CHEVRON_GAP,

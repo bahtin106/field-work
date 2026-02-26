@@ -6,7 +6,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -19,6 +18,7 @@ import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import BaseModal from '../../../components/ui/modals/BaseModal';
+import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
 import {
   createDepartment,
@@ -475,10 +475,9 @@ export default function DepartmentsSettings() {
         <Card padded={false} style={formStyles.card}>
           <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>
             <Text style={s.headerTitle}>{t('departments_settings_title')}</Text>
-            <Switch
+            <ThemedSwitch
               value={useDepartments}
               onValueChange={onMasterSwitchChange}
-              trackColor={{ true: theme.colors.primary }}
             />
           </View>
           <View style={s.separator} />
@@ -528,10 +527,9 @@ export default function DepartmentsSettings() {
                                 color={theme.colors.primary}
                               />
                             ) : (
-                              <Switch
+                              <ThemedSwitch
                                 value={isEnabled}
                                 onValueChange={(next) => onToggleDepartment(item, next)}
-                                trackColor={{ true: theme.colors.primary }}
                               />
                             )}
                             <Pressable

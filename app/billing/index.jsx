@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Dimensions, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useNavigation } from 'expo-router';
+import { useNavigation, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
   Easing,
@@ -89,6 +89,7 @@ function formatStorage(valueBytes) {
 
 export default function BillingScreen() {
   const nav = useNavigation();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const { theme } = useTheme();
   const toast = useToast();
@@ -115,6 +116,7 @@ export default function BillingScreen() {
     },
     staleTime: BILLING_PROFILE_FALLBACK_STALE_MS,
   });
+  const profileFallbackRole = String(profileFallback?.role || '').toLowerCase();
 
   const companyId = profileCompanyId || profileFallback?.company_id || null;
   const authUserId = profileFallback?.id || null;
@@ -128,7 +130,10 @@ export default function BillingScreen() {
     error: storageError,
     refresh: refreshStorageUsage,
   } = useCompanyStorageUsage(companyId);
-  const isOwner = entitlements?.is_owner === true || profileRole === 'admin' || String(profileFallback?.role || '').toLowerCase() === 'admin';
+  const resolvedRole = profileRole || profileFallbackRole;
+  const isRoleResolved = Boolean(resolvedRole);
+  const isAdmin = resolvedRole === 'admin';
+  const isOwner = entitlements?.is_owner === true || isAdmin;
 
   const accessState = useCompanyAccessState(isOwner ? companyId : null);
   const access = accessState.data || null;
@@ -238,6 +243,12 @@ export default function BillingScreen() {
     rows.sort((x, y) => String(x.name || '').localeCompare(String(y.name || ''), 'ru'));
     return rows;
   }, [employees, members]);
+
+  React.useEffect(() => {
+    if (!isRoleResolved) return;
+    if (isAdmin) return;
+    router.replace('/orders');
+  }, [isAdmin, isRoleResolved, router]);
 
   React.useEffect(() => {
     if (!manageVisible) {
@@ -710,6 +721,10 @@ export default function BillingScreen() {
     if (manageFilters.values.suspended === false) parts.push(t('status_active'));
     return parts.join(t('common_bullet'));
   }, [manageFilters.values.departments, manageFilters.values.roles, manageFilters.values.suspended, t, useDepartments]);
+
+  if (isRoleResolved && !isAdmin) {
+    return null;
+  }
 
   return (
     <Screen

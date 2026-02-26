@@ -23,7 +23,7 @@ export function useAdminStorageOverview(enabled = true) {
     gcTime: 20 * 60 * 1000,
     refetchInterval: enabled ? ADMIN_STORAGE_STALE_MS : false,
     refetchIntervalInBackground: false,
-    refetchOnMount: 'always',
+    refetchOnMount: 'stale',
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     retry: 1,

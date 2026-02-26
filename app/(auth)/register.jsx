@@ -218,9 +218,9 @@ export default function RegisterScreen() {
       const { data, error } = await supabase
         .from('profiles')
         .select('id')
-        .eq('email', emailToCheck.trim().toLowerCase())
+        .ilike('email', emailToCheck.trim().toLowerCase())
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
         console.warn('Email check error:', error);

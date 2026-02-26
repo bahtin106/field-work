@@ -1,4 +1,4 @@
-package com.bahtin106.workordersapp
+package com.monitorapp.monitor
 
 import android.app.Application
 import android.content.res.Configuration

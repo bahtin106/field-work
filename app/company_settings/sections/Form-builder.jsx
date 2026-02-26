@@ -9,13 +9,13 @@ import {
   Modal,
   Platform,
   ScrollView,
-  Switch,
   Text,
   View,
 } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import TextField from '../../../components/ui/TextField';
+import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 // If you have ThemeProvider — we use it. Otherwise, we fall back to system scheme.
@@ -973,21 +973,23 @@ function FieldEditorModal({ visible, onClose, onSave, field, colors, onSavePhone
 
           <Row style={{ marginTop: 8 }}>
             <Text style={{ color: colors.text, fontSize: 16 }}>Обязательное поле</Text>
-            <Switch
+            <ThemedSwitch
               value={!!state.required}
               onValueChange={(v) => setValue('required', v)}
-              trackColor={{ true: colors.tint }}
-              thumbColor={undefined}
+              trueColor={colors.tint}
+              falseColor={colors.border}
+              thumbColor={colors.surface}
             />
           </Row>
 
           <Row style={{ marginTop: 8 }}>
             <Text style={{ color: colors.text, fontSize: 16 }}>Активное поле</Text>
-            <Switch
+            <ThemedSwitch
               value={!!state.is_active}
               onValueChange={(v) => setValue('is_active', v)}
-              trackColor={{ true: colors.tint }}
-              thumbColor={undefined}
+              trueColor={colors.tint}
+              falseColor={colors.border}
+              thumbColor={colors.surface}
             />
           </Row>
 

@@ -1,1 +1,99 @@
-export default {};
+export default {
+  btn_ok: 'OK',
+  routes: {
+    'app_settings/sections/events': 'Notification events',
+  },
+  settings_events_title: 'Enabled events',
+  settings_events_group_orders_title: 'Orders',
+  settings_events_newOrders: 'New orders',
+  settings_events_feedOrders: 'Feed orders',
+  settings_events_reminders: 'Remind about unclaimed',
+  settings_events_reminder_delay_value_label: 'After',
+  settings_events_reminder_delay_unit_label: 'Unit',
+  settings_events_reminder_delay_value: 'Reminder: in {value} {unit}',
+  settings_events_reminder_value_modal_title: 'Reminder timing',
+  settings_events_reminder_unit_modal_title: 'Select unit',
+  settings_events_reminder_value_item: '{value}',
+  settings_events_reminder_unit_minutes: 'minutes',
+  settings_events_reminder_unit_hours: 'hours',
+  settings_events_reminder_unit_days: 'days',
+  dlg_confirm_pwd_title: 'Change password?',
+  error_new_password_same_as_old: 'New password should be different from the old password.',
+  push_open_issue_title: 'Notification',
+  push_open_order_unavailable:
+    'The request is no longer available. It may already be taken, deleted, or your access has changed.',
+  push_open_generic_error:
+    'Could not open the request from notification. The requests list has been opened instead.',
+  settings_sections_integrations_title: 'Integrations',
+  settings_integrations_yandex_disk: 'Cloud storages',
+  settings_integrations_google_disk: 'Google drive',
+  company_integrations_connect: 'Connect Yandex Disk',
+  company_integrations_disconnect: 'Disconnect Yandex Disk',
+  company_integrations_yandex_status_connected: 'Authorized Yandex account: {name}',
+  company_integrations_yandex_status_not_connected: 'Yandex Disk is not connected',
+  company_integrations_yandex_account_unknown: 'Yandex account',
+  company_integrations_yandex_connected: 'Yandex Disk connected',
+  company_integrations_yandex_disconnected: 'Yandex Disk disconnected',
+  company_integrations_yandex_folder: 'Media folder',
+  company_integrations_yandex_folder_hint:
+    'We recommend keeping the root folder "/Монитор" to preserve a clear file structure.',
+  company_integrations_yandex_health_prefix: 'Connection status',
+  company_integrations_yandex_health_ok: 'Ready',
+  company_integrations_yandex_health_not_connected: 'Not connected',
+  company_integrations_yandex_health_unknown: 'Unknown',
+  company_integrations_yandex_health_reconnect_required: 'Reauthorization required',
+  company_integrations_yandex_health_quota_exceeded: 'Not enough disk space',
+  company_integrations_yandex_health_error: 'Connection issue',
+  company_integrations_yandex_space_prefix: 'Available space',
+  company_integrations_yandex_used_space_prefix: 'Used space',
+  company_integrations_yandex_space_unknown: 'No data',
+  company_integrations_yandex_unit_mb: 'MB',
+  company_integrations_yandex_unit_gb: 'GB',
+  company_integrations_yandex_connect_first: 'Connect Yandex Disk first',
+  company_integrations_yandex_disconnect_info:
+    'New files will be uploaded to app storage. Existing links in requests remain unchanged.',
+  company_integrations_yandex_expo_go_hint:
+    'In Expo Go OAuth callback flow is not fully supported. Use a dev build or APK.',
+  company_integrations_yandex_expo_go_warning:
+    'Yandex Disk connection is unavailable in Expo Go. Use a dev build or APK.',
+  company_integrations_yandex_error_missing_client_id:
+    'Yandex OAuth Client ID is not configured on server.',
+  company_integrations_yandex_error_missing_credentials:
+    'Yandex OAuth credentials are missing on server.',
+  company_integrations_yandex_error_not_connected: 'Yandex Disk is not connected.',
+  company_integrations_yandex_error_access_denied:
+    'You do not have enough permissions for this integration.',
+  company_integrations_yandex_error_oauth_expired:
+    'Connection session expired. Start connection again.',
+  company_integrations_yandex_error_quota_exceeded:
+    'Yandex Disk is out of space. Free up space or switch to app storage.',
+  company_integrations_yandex_error_reconnect_required:
+    'Yandex Disk access expired or revoked. Reconnect required.',
+  company_integrations_yandex_rules_title: 'How integration works',
+  company_integrations_yandex_rule_disconnect:
+    'If Yandex Disk is disconnected, new media files are saved to app storage.',
+  company_integrations_yandex_rule_quota:
+    'If Yandex Disk has no free space, new uploads are rejected with a clear error.',
+  company_integrations_yandex_rule_deleted_remote:
+    'If a file is deleted directly from Yandex Disk, its link in request becomes unavailable until re-upload.',
+  company_integrations_storage_provider_title: 'Where to upload media',
+  company_integrations_storage_provider_modal_title: 'Choose media storage',
+  company_integrations_media_orders_label: 'Request photos and videos',
+  company_integrations_storage_provider_app: 'App storage',
+  company_integrations_storage_provider_yandex: 'Yandex Disk',
+  company_integrations_yandex_account_label: 'Authorized account',
+  company_integrations_google_coming_soon: 'Will be added in the future',
+  company_integrations_yandex_section_title: 'Yandex Disk',
+  company_integrations_google_section_title: 'Google drive',
+  company_integrations_google_connect: 'Connect Google drive',
+  company_integrations_google_disabled_toast: 'Google drive integration will be added in the future',
+  company_integrations_google_account_label: 'Authorized account',
+  company_integrations_google_account_unknown: 'Google account',
+  company_integrations_google_health_label: 'Connection status',
+  company_integrations_google_health_unknown: 'Unavailable',
+  order_details_request_section: 'Request',
+  order_toast_accept_success: 'Request accepted',
+  order_toast_accept_taken: 'This request was already accepted by another worker',
+  order_toast_accept_error: 'Could not accept request',
+  order_photo_unavailable: 'Photo unavailable',
+};

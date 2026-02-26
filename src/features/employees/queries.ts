@@ -32,21 +32,26 @@ export function useDepartmentsQuery({ companyId, onlyEnabled = true, enabled = t
   });
 }
 
-export function useEmployeesRealtimeSync({ enabled = true } = {}) {
+export function useEmployeesRealtimeSync({ enabled = true, companyId = null } = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!enabled) return;
+    const filter = companyId ? `company_id=eq.${companyId}` : undefined;
 
     const channel = supabase
       .channel('employees:realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, (payload) => {
-        const rowId = payload?.new?.id || payload?.old?.id;
-        if (rowId) {
-          queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
-        }
-        queryClient.invalidateQueries({ queryKey: ['employees'] });
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles', ...(filter ? { filter } : {}) },
+        (payload) => {
+          const rowId = payload?.new?.id || payload?.old?.id;
+          if (rowId) {
+            queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(rowId) });
+          }
+          queryClient.invalidateQueries({ queryKey: ['employees'] });
+        },
+      )
       .subscribe();
 
     return () => {
@@ -54,7 +59,7 @@ export function useEmployeesRealtimeSync({ enabled = true } = {}) {
         supabase.removeChannel(channel);
       } catch {}
     };
-  }, [enabled, queryClient]);
+  }, [companyId, enabled, queryClient]);
 }
 
 export function useUpdateEmployeeMutation() {

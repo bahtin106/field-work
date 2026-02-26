@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
+import { readCurrentPushToken } from '../lib/pushAutoSetup';
 import { supabase } from '../lib/supabase';
+import { deletePushToken } from '../lib/supabaseHelpers';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS = 'id, first_name, last_name, full_name, role, avatar_url, company_id';
@@ -374,7 +376,16 @@ export function SimpleAuthProvider({ children }) {
   }, [clearProfileRecovery, handleAuthChange, setSignedOutState]);
 
   const signOut = useCallback(async () => {
+    const currentUserId = state.user?.id || null;
     try {
+      if (currentUserId) {
+        try {
+          const { token } = await readCurrentPushToken();
+          if (token) {
+            await deletePushToken(currentUserId, { pushToken: token, disableNotifications: false });
+          }
+        } catch {}
+      }
       await supabase.auth.signOut();
     } catch (error) {
       console.error('SimpleAuth: signOut error', error);
@@ -382,7 +393,7 @@ export function SimpleAuthProvider({ children }) {
       setSignedOutState();
       await cleanupSessionRuntime('sign-out');
     }
-  }, [setSignedOutState]);
+  }, [setSignedOutState, state.user?.id]);
 
   const value = {
     ...state,

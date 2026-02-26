@@ -114,6 +114,16 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     () => options?.rightTextLabel ?? route?.params?.rightTextLabel,
     [options?.rightTextLabel, route?.params?.rightTextLabel],
   );
+  const hasRightAction = useMemo(
+    () =>
+      Boolean(
+        rightLabel ||
+          options?.headerRight ||
+          (route?.params?.onRightPress && route?.params?.rightActionLabel) ||
+          (route?.params?.headerButtonLabel && route?.params?.headerButtonTo),
+      ),
+    [options?.headerRight, rightLabel, route?.params],
+  );
 
   const rightPress = useCallback(() => {
     if (typeof options?.onRightPress === 'function') return options.onRightPress();
@@ -362,7 +372,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             top: 0,
             bottom: 0,
             left: leftWidth + EDGE_PADDING,
-            right: rightWidth + EDGE_PADDING,
+            right: rightWidth + (hasRightAction ? EDGE_PADDING : 0),
             justifyContent: 'center',
             overflow: 'hidden',
           }}
@@ -455,7 +465,13 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
 
       {/* Правая зона для кастомных кнопок */}
       <View
-        style={[s.right, { paddingLeft: EDGE_PADDING }]}
+        style={[
+          s.right,
+          {
+            paddingLeft: hasRightAction ? EDGE_PADDING : 0,
+            minWidth: hasRightAction ? undefined : 0,
+          },
+        ]}
         ref={rightRef}
         onLayout={(e) => setRightWidth(e.nativeEvent.layout.width || 0)}
       >

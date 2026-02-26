@@ -450,7 +450,7 @@ export default function AllOrdersScreen() {
     allRequestsParams,
     {
       enabled: effectiveAllowed === true,
-      refetchInterval: isFocused ? 20 * 1000 : false,
+      refetchInterval: isFocused ? 60 * 1000 : false,
       refetchIntervalInBackground: false,
     },
   );

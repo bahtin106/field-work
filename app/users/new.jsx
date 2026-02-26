@@ -102,6 +102,59 @@ function formatDateRU(date, withYear = true) {
   }
 }
 
+function pickMessageFromPayload(payload) {
+  if (!payload) return '';
+  if (typeof payload === 'string') return payload;
+  return String(payload.message || payload.error || payload.details || payload.hint || '').trim();
+}
+
+function mapInviteErrorToUiMessage(rawMessage, statusCode, t) {
+  const msg = String(rawMessage || '').trim();
+
+  if (/already exists|email.*taken|user.*exists|duplicate|email.*exists/i.test(msg)) {
+    return t('error_email_exists');
+  }
+  if (/seat limit exceeded/i.test(msg)) {
+    return t('err_seat_limit_exceeded_generic');
+  }
+  if (/read-only|subscription expired/i.test(msg)) {
+    return t('err_subscription_read_only');
+  }
+  if (statusCode === 401 || /unauthorized/i.test(msg)) {
+    return t('err_invite_failed');
+  }
+  if (statusCode === 403 || /forbidden/i.test(msg)) {
+    return t('error_no_access');
+  }
+  if (!msg || /edge function returned a non-2xx status code/i.test(msg)) {
+    return t('err_invite_failed');
+  }
+  return msg;
+}
+
+async function resolveInviteInvokeErrorMessage(inviteError, t) {
+  const statusCode =
+    Number(inviteError?.context?.status || inviteError?.status || inviteError?.code || 0) || 0;
+
+  let payloadMessage = '';
+  const context = inviteError?.context;
+  if (context && typeof context.clone === 'function') {
+    try {
+      const bodyText = await context.clone().text();
+      if (bodyText) {
+        try {
+          payloadMessage = pickMessageFromPayload(JSON.parse(bodyText));
+        } catch {
+          payloadMessage = bodyText.trim();
+        }
+      }
+    } catch {}
+  }
+
+  const rawMessage = payloadMessage || String(inviteError?.message || '');
+  return mapInviteErrorToUiMessage(rawMessage, statusCode, t);
+}
+
 export default function NewUserScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -298,9 +351,9 @@ export default function NewUserScreen() {
         const { data, error } = await supabase
           .from(TABLES.profiles)
           .select('id')
-          .eq('email', emailToCheck.trim().toLowerCase())
+          .ilike('email', emailToCheck.trim().toLowerCase())
           .limit(1)
-          .single();
+          .maybeSingle();
 
         if (error && error.code !== 'PGRST116') {
           // PGRST116 = no rows returned (email available)
@@ -401,7 +454,11 @@ export default function NewUserScreen() {
       email: email.trim(),
       phone: String(phone || '').replace(/\D/g, ''),
       role,
-      birthdate: birthdate ? new Date(birthdate).toISOString().slice(0, 10) : null,
+      birthdate: birthdate
+        ? withYear
+          ? new Date(birthdate).toISOString().slice(0, 10)
+          : `${new Date(1900, birthdate.getMonth(), birthdate.getDate()).toISOString().slice(0, 10)}`
+        : null,
       avatar: !!avatarUrl,
     });
     return snap !== initialSnapRef.current;
@@ -573,7 +630,11 @@ export default function NewUserScreen() {
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
       const phoneNormalized = String(phone || '').replace(/\D/g, '') || null;
-      const bdate = birthdate instanceof Date ? new Date(birthdate).toISOString().slice(0, 10) : null;
+      const bdate = birthdate instanceof Date
+        ? withYear
+          ? new Date(birthdate).toISOString().slice(0, 10)
+          : `${new Date(1900, birthdate.getMonth(), birthdate.getDate()).toISOString().slice(0, 10)}`
+        : null;
 
       if (!__IS_PROD) {
         console.debug('[handleInviteConfirm] Starting invite flow');
@@ -607,25 +668,13 @@ export default function NewUserScreen() {
       );
 
       if (inviteError) {
-        const msgStr = String(inviteError?.message || '');
-        if (/already exists|email.*taken|user.*exists/i.test(msgStr)) {
-          throw new Error(t('error_email_exists'));
-        }
-        if (/seat limit exceeded/i.test(msgStr)) {
-          throw new Error(t('err_seat_limit_exceeded_generic'));
-        }
-        if (/read-only|subscription expired/i.test(msgStr)) {
-          throw new Error(t('err_subscription_read_only'));
-        }
-        throw new Error(msgStr || t('err_invite_failed'));
+        const messageForUi = await resolveInviteInvokeErrorMessage(inviteError, t);
+        throw new Error(messageForUi || t('err_invite_failed'));
       }
 
       if (inviteData?.success !== true) {
-        const msgStr = String(inviteData?.message || '');
-        if (/already exists|email.*taken|user.*exists/i.test(msgStr)) {
-          throw new Error(t('error_email_exists'));
-        }
-        throw new Error(msgStr || t('err_invite_failed'));
+        const msgStr = String(pickMessageFromPayload(inviteData) || '');
+        throw new Error(mapInviteErrorToUiMessage(msgStr, 0, t) || t('err_invite_failed'));
       }
 
       setInviteModalVisible(false);

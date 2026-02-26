@@ -18,7 +18,7 @@ export function useCompanySettings(companyIdOverride = null) {
     enabled: !!companyId,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: true,
     placeholderData: (prev) => prev,
   });
 

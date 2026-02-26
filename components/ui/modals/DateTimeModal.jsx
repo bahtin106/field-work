@@ -1,9 +1,10 @@
 // components/ui/modals/DateTimeModal.jsx
 import React from 'react';
-import { Platform, Pressable, Switch, Text, View } from 'react-native';
+import { Platform, Pressable, Text, View } from 'react-native';
 import { t as T, getDict } from '../../../src/i18n';
 import { useTheme } from '../../../theme';
 import UIButton from '../Button';
+import ThemedSwitch from '../ThemedSwitch';
 import BaseModal, { withAlpha } from './BaseModal';
 import Wheel, { ITEM_HEIGHT_DP, VISIBLE_COUNT_DP } from './Wheel';
 
@@ -77,6 +78,8 @@ export default function DateTimeModal({
 
   const daysInMonth = React.useCallback(
     (m, yNullable) => {
+      // when year is omitted (yNullable == null) allow february 29
+      if (yNullable == null) return m === 1 ? 29 : new Date(baseDate.getFullYear(), m + 1, 0).getDate();
       const y = yNullable ?? baseDate.getFullYear();
       return new Date(y, m + 1, 0).getDate();
     },
@@ -102,6 +105,8 @@ export default function DateTimeModal({
 
   const clampMonthForYear = React.useCallback(
     (month, year) => {
+      // when year is omitted (null) do not constrain months
+      if (year == null) return Math.max(0, Math.min(month, 11));
       const currentYearSelected = year === currentYear;
       const minMonth = !allowPastDates && currentYearSelected ? currentMonth : 0;
       const maxMonth = !allowFutureDates && currentYearSelected ? currentMonth : 11;
@@ -112,8 +117,9 @@ export default function DateTimeModal({
 
   const clampDayForYearMonth = React.useCallback(
     (day, month, year) => {
-      const maxDayInMonth = daysInMonth(month, year);
-      const currentYearMonth = year === currentYear && month === currentMonth;
+      const maxDayInMonth = daysInMonth(month, year == null ? null : year);
+      // when year is omitted, do not constrain by current date
+      const currentYearMonth = year != null && year === currentYear && month === currentMonth;
       const minDay = !allowPastDates && currentYearMonth ? currentDay : 1;
       const maxDay = !allowFutureDates && currentYearMonth ? Math.min(maxDayInMonth, currentDay) : maxDayInMonth;
       return Math.max(minDay, Math.min(day, maxDay));
@@ -123,10 +129,10 @@ export default function DateTimeModal({
 
   const getDayRange = React.useCallback(
     (year, month) => {
-      const maxDay = daysInMonth(month, year);
-      const minDay = !allowPastDates && year === currentYear && month === currentMonth ? currentDay : 1;
+      const maxDay = daysInMonth(month, year == null ? null : year);
+      const minDay = !allowPastDates && year != null && year === currentYear && month === currentMonth ? currentDay : 1;
       const maxAllowed =
-        !allowFutureDates && year === currentYear && month === currentMonth
+        !allowFutureDates && year != null && year === currentYear && month === currentMonth
           ? Math.min(maxDay, currentDay)
           : maxDay;
       return range(minDay, maxAllowed);
@@ -135,14 +141,15 @@ export default function DateTimeModal({
   );
 
   const availableMonths = React.useMemo(() => {
-    const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : baseDate.getFullYear();
+    const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
+    if (year == null) return range(0, 11);
     const minMonth = !allowPastDates && year === currentYear ? currentMonth : 0;
     const maxMonth = !allowFutureDates && year === currentYear ? currentMonth : 11;
     return range(minMonth, maxMonth);
   }, [dYearIdx, years, withYear, baseDate, allowPastDates, allowFutureDates, currentYear, currentMonth]);
 
   const days = React.useMemo(() => {
-    const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : baseDate.getFullYear();
+    const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
     const month = clampMonthForYear(dMonthIdx, year);
     return getDayRange(year, month);
   }, [
@@ -208,24 +215,25 @@ export default function DateTimeModal({
   const W2 = Math.max(minWheelWidth, contentW > 0 ? (contentW - innerGap) / 2 : 0);
 
   const handleApply = () => {
-    const year = years[dYearIdx] || baseDate.getFullYear();
-    const month = dMonthIdx;
-    const day = days[dDayIdx] ?? days[0] ?? 1;
+    const selectedMonth = dMonthIdx;
+    const selectedDay = days[dDayIdx] ?? days[0] ?? 1;
     const hour = tHourIdx;
     const min = minutesData[tMinuteIdx] ?? 0;
+    // When year is omitted, construct Date using a safe leap-year to preserve Feb 29
+    const dateYearForObject = withYear ? years[dYearIdx] || baseDate.getFullYear() : 1900;
     let out;
-    if (mode === 'date') out = new Date(year, month, day, 12, 0, 0, 0);
+    if (mode === 'date') out = new Date(dateYearForObject, selectedMonth, selectedDay, 12, 0, 0, 0);
     else if (mode === 'time') {
       const now = new Date();
       out = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, min, 0, 0);
     } else {
-      out = new Date(year, month, day, hour, min, 0, 0);
+      out = new Date(dateYearForObject, selectedMonth, selectedDay, hour, min, 0, 0);
     }
     onApply?.(out, {
       withYear,
-      day,
-      monthOneBased: month + 1,
-      monthIndex: month,
+      day: selectedDay,
+      monthOneBased: selectedMonth + 1,
+      monthIndex: selectedMonth,
       year: withYear ? years[dYearIdx] || baseDate.getFullYear() : null,
     });
     onClose?.();
@@ -398,7 +406,7 @@ export default function DateTimeModal({
               >
                 <Text style={{ color: theme.colors.text, fontSize: 15, fontWeight: '600' }}>{omitYearLabel}</Text>
                 <View style={{ width: 12 }} />
-                <Switch value={withYear} onValueChange={setWithYear} />
+                <ThemedSwitch value={withYear} onValueChange={setWithYear} />
               </View>
             ) : null}
           </>
