@@ -1,7 +1,7 @@
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -30,6 +30,7 @@ import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
 import { ensureRequestPrefetch } from '../../src/features/requests/queries';
+import { startFpsProbe, trackRender } from '../../src/shared/perf/devMetrics';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -38,6 +39,7 @@ export default function MyOrdersScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  trackRender('MyOrders', 30);
 
   const mutedColor =
     theme?.text?.muted?.color ??
@@ -312,6 +314,7 @@ export default function MyOrdersScreen() {
     return listCacheMy[cacheKey] ? false : true;
   });
   const [searchQuery, setSearchQuery] = useState('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const hydratedRef = useRef(false);
 
   // Пагинация (как в Instagram/Telegram)
@@ -329,6 +332,12 @@ export default function MyOrdersScreen() {
   );
   const [feedHasAny, setFeedHasAny] = useState(() => Boolean(globalThis.__MYORDERS_FEED_HAS_ANY));
   const feedPulse = useRef(new Animated.Value(0)).current;
+  const detailNavLockRef = useRef({ id: '', ts: 0 });
+  const listPrefetchRef = useRef({ key: '', ts: 0 });
+
+  useEffect(() => {
+    return startFpsProbe('MyOrders', 3500);
+  }, []);
 
   // Load persisted feed seen state (keeps "seen/new" across app restarts)
   useEffect(() => {
@@ -674,7 +683,7 @@ export default function MyOrdersScreen() {
   }, [loadingMore, hasMore, loading, page, filter]);
 
   const filteredOrders = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     const timeFrom = parseTimeToMinutes(filters.values.departureTimeFrom);
     const timeTo = parseTimeToMinutes(filters.values.departureTimeTo);
     return (orders || []).filter((o) => {
@@ -702,10 +711,17 @@ export default function MyOrdersScreen() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [orders, searchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
+  }, [orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
 
   useEffect(() => {
     if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
+    const idsKey = filteredOrders
+      .slice(0, 5)
+      .map((o) => String(o?.id || ''))
+      .join('|');
+    const now = Date.now();
+    if (listPrefetchRef.current.key === idsKey && now - listPrefetchRef.current.ts < 4000) return;
+    listPrefetchRef.current = { key: idsKey, ts: now };
     const task = InteractionManager.runAfterInteractions(() => {
       const registry = getPrefetchRegistry();
       filteredOrders.slice(0, 5).forEach((order) => {
@@ -732,9 +748,15 @@ export default function MyOrdersScreen() {
     };
   }, [filter, searchQuery]);
   const openOrderDetails = useCallback(
-    async (orderId) => {
+    (orderIdRaw) => {
+      const orderId = String(orderIdRaw || '').trim();
+      if (!orderId) return;
+      const now = Date.now();
+      const prev = detailNavLockRef.current;
+      if (prev.id === orderId && now - prev.ts < 1200) return;
+      detailNavLockRef.current = { id: orderId, ts: now };
       const registry = getPrefetchRegistry();
-      await registry
+      registry
         .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
         .catch(() => {});
       router.push({
@@ -752,7 +774,7 @@ export default function MyOrdersScreen() {
       <DynamicOrderCard
         order={order}
         context="my_orders"
-        onPress={() => openOrderDetails(order.id)}
+        onPress={openOrderDetails}
       />
     ),
     [openOrderDetails],
@@ -975,6 +997,11 @@ export default function MyOrdersScreen() {
         data={filteredOrders}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        updateCellsBatchingPeriod={34}
+        windowSize={9}
+        removeClippedSubviews={Platform.OS === 'android'}
         ListHeaderComponent={listHeader}
         ListFooterComponent={renderFooter}
         ListEmptyComponent={ListEmptyComponent}
@@ -992,18 +1019,20 @@ export default function MyOrdersScreen() {
           />
         }
       />
-      <OrdersFiltersPanel
-        visible={filters.visible}
-        onClose={filters.close}
-        values={filters.values}
-        setValue={filters.setValue}
-        defaults={ORDER_FILTER_DEFAULTS}
-        workTypes={workTypeOptions}
-        useWorkTypes={useWorkTypesFlag}
-        statusOptions={orderStatusOptions}
-        onReset={() => filters.reset()}
-        onApply={() => filters.apply()}
-      />
+      {filters.visible ? (
+        <OrdersFiltersPanel
+          visible={filters.visible}
+          onClose={filters.close}
+          values={filters.values}
+          setValue={filters.setValue}
+          defaults={ORDER_FILTER_DEFAULTS}
+          workTypes={workTypeOptions}
+          useWorkTypes={useWorkTypesFlag}
+          statusOptions={orderStatusOptions}
+          onReset={() => filters.reset()}
+          onApply={() => filters.apply()}
+        />
+      ) : null}
     </Screen>
   );
 }

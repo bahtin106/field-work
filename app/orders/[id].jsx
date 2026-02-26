@@ -1197,20 +1197,79 @@ export default function OrderDetails() {
         showToast('Не удалось принять заявку');
         return;
       }
-      if (data === true) {
+      const asBool = (v) => v === true || v === 'true' || v === 1 || v === '1' || v === 't';
+      const readAccepted = (payload) => {
+        if (asBool(payload)) return true;
+        if (Array.isArray(payload) && payload.length > 0) return readAccepted(payload[0]);
+        if (payload && typeof payload === 'object') {
+          return asBool(payload.accepted) || asBool(payload.success) || asBool(payload.result);
+        }
+        return false;
+      };
+
+      let accepted = readAccepted(data);
+      let latestOrder = null;
+      if (!accepted) {
+        try {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(order.id) });
+          latestOrder = await ensureRequestPrefetch(queryClient, order.id);
+          accepted =
+            !!latestOrder?.assigned_to &&
+            !!userId &&
+            String(latestOrder.assigned_to) === String(userId);
+        } catch {}
+      }
+
+      if (!accepted && latestOrder && !latestOrder.assigned_to && userId) {
+        const latestStatus = String(latestOrder.status || '');
+        const isInFeed = latestStatus === t('order_status_in_feed') || latestStatus === 'В ленте';
+        if (isInFeed) {
+          try {
+            const fallbackOrder = await updateRequestWithVersion(
+              order.id,
+              { assigned_to: userId, status: t('order_status_in_progress') },
+              latestOrder?.updated_at || order?.updated_at || null,
+            );
+            latestOrder = fallbackOrder || latestOrder;
+            accepted =
+              !!latestOrder?.assigned_to &&
+              String(latestOrder.assigned_to) === String(userId);
+          } catch (e) {
+            if (e?.code === 'CONFLICT' && e?.latest) {
+              latestOrder = e.latest;
+              accepted =
+                !!latestOrder?.assigned_to &&
+                String(latestOrder.assigned_to) === String(userId);
+            }
+          }
+        }
+      }
+
+      if (accepted) {
         const me = (users || []).find((u) => u.id === userId);
-        setOrder((prev) => ({ ...(prev || {}), assigned_to: userId, status: 'В работе' }));
+        setOrder((prev) => ({
+          ...(prev || {}),
+          assigned_to: userId,
+          status: latestOrder?.status || t('order_status_in_progress'),
+        }));
         setExecutorName(me ? `${me.first_name || ''} ${me.last_name || ''}`.trim() : null);
         setAssigneeId(userId);
         setToFeed(false);
         showToast('Заявка принята');
       } else {
-        showToast('Упс, заявку уже принял кто-то другой');
+        const assignedToOther =
+          !!latestOrder?.assigned_to &&
+          (!userId || String(latestOrder.assigned_to) !== String(userId));
+        if (assignedToOther) {
+          showToast('Упс, заявку уже принял кто-то другой');
+        } else {
+          showToast('Не удалось принять заявку');
+        }
       }
     } catch {
       showToast(t('order_toast_network_error'));
     }
-  }, [order, users, userId, showToast, t]);
+  }, [order, users, userId, showToast, t, queryClient]);
 
   const _handleSubmitEdit = useCallback(async () => {
     const reqCheck = validateRequiredBySchemaEdit();
@@ -2134,6 +2193,12 @@ export default function OrderDetails() {
   const statusMeta = getStatusMeta(order.status);
   const _selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
+  const isInFeedStatus = order.status === 'В ленте' || order.status === t('order_status_in_feed');
+  const canAcceptOrder =
+    isInFeedStatus &&
+    isFree &&
+    !isReadOnlyBySubscription &&
+    (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
   const canChangeStatus = canEdit() && order.status !== 'В ленте';
 
   return (
@@ -2206,190 +2271,186 @@ export default function OrderDetails() {
               {t('order_details_general_data')}
             </SectionHeader>
             <Card paddedXOnly>
-                <View style={base.row}>
-                  <Text style={base.label}>{t('order_details_status')}</Text>
-                  <View
-                    style={[
-                      base.rightWrap,
-                      { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
-                    ]}
-                  >
-                    {order.urgent && (
-                      <View style={styles.urgentPill}>
-                        <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
-                      </View>
-                    )}
-                    {canChangeStatus ? (
-                      <Pressable
-                        onPress={() => setStatusModalVisible(true)}
-                        style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
-                      >
-                        <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
-                          {order.status}
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <View
-                        style={[
-                          styles.statusChip,
-                          { backgroundColor: statusMeta.bg, opacity: 0.6 },
-                        ]}
-                      >
-                        <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
-                          {order.status}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-                <View style={base.sep} />
-
-                <View style={base.row}>
-                  <Text style={base.label}>{t('order_details_executor')}</Text>
-                  <View style={base.rightWrap}>
-                    {deriveExecutorNameInstant(order) || executorName ? (
-                      <Text style={base.value}>
-                        {deriveExecutorNameInstant(order) || executorName}
-                      </Text>
-                    ) : (
-                      <Text style={[base.value, { color: theme.colors.textSecondary }]}>
-                        {t('order_details_not_assigned')}
-                      </Text>
-                    )}
-                  </View>
-                </View>
-                <View style={base.sep} />
-
-                <View style={base.row}>
-                  <Text style={base.label}>{t('order_details_customer')}</Text>
-                  <View style={base.rightWrap}>
-                    <Text style={base.value}>
-                      {order.fio || order.customer_name || t('common_dash')}
-                    </Text>
-                  </View>
-                </View>
-                <View style={base.sep} />
-
-                <Pressable onPress={openInYandex}>
-                  <LabelValueRow
-                    label={t('order_details_address')}
-                    valueComponent={
-                      <Text style={[base.value, styles.link]} numberOfLines={2}>
-                        {[order.address, order.region, order.city, order.street, order.house]
-                          .filter(Boolean)
-                          .join(', ') || t('order_details_address_not_specified')}
-                      </Text>
-                    }
-                  />
-                </Pressable>
-                <View style={base.sep} />
-
-                {useWorkTypes && (
-                  <>
-                    <View style={base.row}>
-                      <Text style={base.label}>{t('order_details_work_type')}</Text>
-                      <View style={base.rightWrap}>
-                        <Text style={base.value}>
-                          {workTypeName || t('order_details_work_type_not_selected')}
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={base.sep} />
-                  </>
-                )}
-
-                <Pressable
-                  style={base.row}
-                  onPress={() => {
-                    const dateStr = order.time_window_start
-                      ? new Date(order.time_window_start).toISOString().slice(0, 10)
-                      : undefined;
-                    const assignee = order.assigned_to || undefined;
-                    router.push({
-                      pathname: '/orders/calendar',
-                      params: {
-                        selectedDate: dateStr,
-                        selectedUserId: assignee,
-                        returnTo: `/order-details/${order.id}`,
-                        returnParams: JSON.stringify({}),
-                      },
-                    });
-                  }}
+              <View style={base.row}>
+                <Text style={base.label}>{t('order_details_status')}</Text>
+                <View
+                  style={[
+                    base.rightWrap,
+                    { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
+                  ]}
                 >
-                  <Text style={base.label}>{t('order_details_departure_date')}</Text>
-                  <View style={base.rightWrap}>
-                    <Text style={[base.value, styles.link]}>
-                      {order.time_window_start
-                        ? format(
-                            new Date(order.time_window_start),
-                            useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
-                            { locale: ru },
-                          )
-                        : t('order_details_departure_not_specified')}
-                    </Text>
-                  </View>
-                </Pressable>
-                <View style={base.sep} />
+                  {order.urgent && (
+                    <View style={styles.urgentPill}>
+                      <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
+                    </View>
+                  )}
+                  {canChangeStatus ? (
+                    <Pressable
+                      onPress={() => setStatusModalVisible(true)}
+                      style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
+                    >
+                      <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                        {order.status}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <View
+                      style={[
+                        styles.statusChip,
+                        { backgroundColor: statusMeta.bg, opacity: 0.6 },
+                      ]}
+                    >
+                      <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                        {order.status}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+              <View style={base.sep} />
 
-                <LabelValueRow
-                  label={t('order_details_phone')}
-                  valueComponent={
-                    (() => {
-                      const isAdmin = role === 'admin' || role === 'dispatcher';
-                      const visiblePhone =
-                        order?.customer_phone_visible || (isAdmin ? order?.phone : null);
-                      const masked = order?.customer_phone_masked;
-                      if (visiblePhone) {
-                        return (
-                          <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
-                            <Text style={[base.value, styles.link]}>
-                              {formatPhoneDisplay(visiblePhone)}
-                            </Text>
-                          </Pressable>
-                        );
-                      }
+              <View style={base.row}>
+                <Text style={base.label}>{t('order_details_executor')}</Text>
+                <View style={base.rightWrap}>
+                  {deriveExecutorNameInstant(order) || executorName ? (
+                    <Text style={base.value}>{deriveExecutorNameInstant(order) || executorName}</Text>
+                  ) : (
+                    <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                      {t('order_details_not_assigned')}
+                    </Text>
+                  )}
+                </View>
+              </View>
+              <View style={base.sep} />
+
+              <View style={base.row}>
+                <Text style={base.label}>{t('order_details_work_type')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={base.value}>
+                    {workTypeName || t('order_details_work_type_not_selected')}
+                  </Text>
+                </View>
+              </View>
+              <View style={base.sep} />
+
+              <Pressable
+                style={base.row}
+                onPress={() => {
+                  const dateStr = order.time_window_start
+                    ? new Date(order.time_window_start).toISOString().slice(0, 10)
+                    : undefined;
+                  const assignee = order.assigned_to || undefined;
+                  router.push({
+                    pathname: '/orders/calendar',
+                    params: {
+                      selectedDate: dateStr,
+                      selectedUserId: assignee,
+                      returnTo: `/order-details/${order.id}`,
+                      returnParams: JSON.stringify({}),
+                    },
+                  });
+                }}
+              >
+                <Text style={base.label}>{t('order_details_departure_date')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={[base.value, styles.link]}>
+                    {order.time_window_start
+                      ? format(
+                          new Date(order.time_window_start),
+                          useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
+                          { locale: ru },
+                        )
+                      : t('order_details_departure_not_specified')}
+                  </Text>
+                </View>
+              </Pressable>
+              <View style={base.sep} />
+
+              <ExpandableTextRow
+                label={t('order_details_description')}
+                value={descriptionValue || t('order_details_description_empty')}
+              />
+            </Card>
+
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('order_details_object_data')}
+            </SectionHeader>
+            <Card paddedXOnly>
+              <View style={base.row}>
+                <Text style={base.label}>{t('order_details_customer')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={base.value}>{order.fio || order.customer_name || t('common_dash')}</Text>
+                </View>
+              </View>
+              <View style={base.sep} />
+
+              <LabelValueRow
+                label={t('order_details_phone')}
+                valueComponent={
+                  (() => {
+                    const isAdmin = role === 'admin' || role === 'dispatcher';
+                    const visiblePhone =
+                      order?.customer_phone_visible || (isAdmin ? order?.phone : null);
+                    const masked = order?.customer_phone_masked;
+                    if (visiblePhone) {
                       return (
-                        <Text style={[base.value, { color: theme.colors.textSecondary }]}> 
-                          {masked || t('order_details_phone_hidden')}
-                        </Text>
+                        <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
+                          <Text style={[base.value, styles.link]}>
+                            {formatPhoneDisplay(visiblePhone)}
+                          </Text>
+                        </Pressable>
                       );
-                    })()
+                    }
+                    return (
+                      <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                        {masked || t('order_details_phone_hidden')}
+                      </Text>
+                    );
+                  })()
+                }
+              />
+              <View style={base.sep} />
+
+              <Pressable onPress={openInYandex}>
+                <LabelValueRow
+                  label={t('order_details_address')}
+                  valueComponent={
+                    <Text style={[base.value, styles.link]} numberOfLines={2}>
+                      {[order.address, order.region, order.city, order.street, order.house]
+                        .filter(Boolean)
+                        .join(', ') || t('order_details_address_not_specified')}
+                    </Text>
                   }
                 />
-                <View style={base.sep} />
+              </Pressable>
+            </Card>
 
-                {descriptionValue ? (
-                  <>
-                    <ExpandableTextRow
-                      label={t('order_details_description')}
-                      value={descriptionValue}
-                    />
-                    <View style={base.sep} />
-                  </>
-                ) : null}
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('order_details_finance_data')}
+            </SectionHeader>
+            <Card paddedXOnly>
+              <LabelValueRow
+                label={t('order_details_amount')}
+                value={formatMoney(order.price, order?.currency || companySettings?.currency)}
+              />
+              <View style={base.sep} />
 
-                <LabelValueRow
-                  label={t('order_details_amount')}
-                  value={formatMoney(order.price, order?.currency || companySettings?.currency)}
-                />
-                <View style={base.sep} />
-
-                <View style={base.row}>
-                  <Text style={base.label}>{t('order_details_fuel')}</Text>
-                  <View style={base.rightWrap}>
-                    <Text style={base.value}>
-                      {formatMoney(order.fuel_cost, order?.currency || companySettings?.currency)}
-                    </Text>
-                  </View>
+              <View style={base.row}>
+                <Text style={base.label}>{t('order_details_fuel')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={base.value}>
+                    {formatMoney(order.fuel_cost, order?.currency || companySettings?.currency)}
+                  </Text>
                 </View>
-              </Card>
+              </View>
+            </Card>
 
             {!isFree && renderPhotoRow(t('order_details_contract_photo'), 'contract_file')}
             {!isFree && renderPhotoRow(t('order_details_photo_before'), 'photo_before')}
             {!isFree && renderPhotoRow(t('order_details_photo_after'), 'photo_after')}
             {!isFree && renderPhotoRow(t('order_details_act'), 'act_file')}
 
-            {!order.assigned_to && canEdit() && (role === 'worker' || has('canAssignExecutors')) && (
+            {canAcceptOrder && (
               <Pressable
                 style={({ pressed }) => [styles.finishButton, pressed && { opacity: 0.9 }]}
                 onPress={onAcceptOrder}

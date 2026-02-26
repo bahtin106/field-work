@@ -1349,6 +1349,8 @@ export default function CalendarScreen() {
   );
   const [displayDateKey, setDisplayDateKey] = useState(effectiveSelectedDate);
   const [displayTitleDateKey, setDisplayTitleDateKey] = useState(effectiveSelectedDate);
+  const detailNavLockRef = useRef({ id: '', ts: 0 });
+  const calendarPrefetchRef = useRef({ key: '', ts: 0 });
   const displayedOrders = useMemo(
     () => (displayDateKey ? (calendarIndex.byDate[displayDateKey] ?? []) : []),
     [calendarIndex.byDate, displayDateKey],
@@ -1372,21 +1374,31 @@ export default function CalendarScreen() {
     (item) => String(item?.id ?? item?.order_id ?? item?.uuid),
     [],
   );
+  const openOrderDetails = useCallback(
+    (orderIdRaw) => {
+      const orderId = String(orderIdRaw || '').trim();
+      if (!orderId) return;
+      const now = Date.now();
+      const prev = detailNavLockRef.current;
+      if (prev.id === orderId && now - prev.ts < 1200) return;
+      detailNavLockRef.current = { id: orderId, ts: now };
+      const registry = getPrefetchRegistry();
+      registry
+        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+        .catch(() => {});
+      router.push(`/orders/${orderId}`);
+    },
+    [queryClient, router],
+  );
   const renderOrderItem = useCallback(
     ({ item }) => (
       <DynamicOrderCard
         order={item}
         context="calendar"
-        onPress={async () => {
-          const registry = getPrefetchRegistry();
-          await registry
-            .run(`request-detail:${item?.id}`, () => ensureRequestPrefetch(queryClient, item?.id))
-            .catch(() => {});
-          router.push(`/orders/${item.id}`);
-        }}
+        onPress={openOrderDetails}
       />
     ),
-    [queryClient, router],
+    [openOrderDetails],
   );
   const ordersEmptyComponent = useMemo(
     () => (isOrdersSwapping ? null : <Text style={styles.noOrders}>Нет заявок</Text>),
@@ -1429,6 +1441,15 @@ export default function CalendarScreen() {
 
   useEffect(() => {
     if (!Array.isArray(displayedOrders) || displayedOrders.length === 0) return;
+    const idsKey = displayedOrders
+      .slice(0, 5)
+      .map((o) => String(o?.id || ''))
+      .join('|');
+    const now = Date.now();
+    if (calendarPrefetchRef.current.key === idsKey && now - calendarPrefetchRef.current.ts < 4000) {
+      return;
+    }
+    calendarPrefetchRef.current = { key: idsKey, ts: now };
 
     const task = InteractionManager.runAfterInteractions(() => {
       const registry = getPrefetchRegistry();

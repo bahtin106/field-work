@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useCallback, useMemo, useRef } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { useCompanySettings } from '../hooks/useCompanySettings';
@@ -164,6 +164,15 @@ function DynamicOrderCard({
   const { presetsByContext, getFieldByKey } = settings;
   const { theme } = useTheme();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const lastPressAtRef = useRef(0);
+  const handlePress = useCallback(() => {
+    const now = Date.now();
+    if (now - lastPressAtRef.current < 500) return;
+    lastPressAtRef.current = now;
+    if (typeof onPress === 'function') {
+      onPress(order?.id, order);
+    }
+  }, [onPress, order]);
 
   // Presets with safe defaults: exclude time_window_start from middle block
   const preset = useMemo(() => {
@@ -444,7 +453,7 @@ function DynamicOrderCard({
   return (
     <TouchableOpacity
       activeOpacity={0.7}
-      onPress={onPress}
+      onPress={handlePress}
       style={{
         backgroundColor: theme.colors.card,
         borderRadius: 14,

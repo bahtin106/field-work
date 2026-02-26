@@ -3,7 +3,7 @@
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -35,7 +35,12 @@ import {
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
-import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
+import {
+  markFirstContent,
+  markScreenMount,
+  startFpsProbe,
+  trackRender,
+} from '../../src/shared/perf/devMetrics';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -74,6 +79,7 @@ async function checkCanViewAll() {
 }
 
 export default function AllOrdersScreen() {
+  trackRender('AllRequests', 30);
   // local, definitive permission flag
   const [allowed, setAllowed] = useState(() => {
     const rec = PERM_CACHE.canViewAll;
@@ -348,6 +354,10 @@ export default function AllOrdersScreen() {
   const [executorFilter, setExecutorFilter] = useState(executor || null);
   const [_hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const detailNavLockRef = useRef({ id: '', ts: 0 });
+  const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
+
+  useEffect(() => startFpsProbe('AllRequests', 3500), []);
 
   const [departmentFilter, setDepartmentFilter] = useState(null);
   const [departmentFilterInit] = useState(department ? Number(department) : null);
@@ -372,6 +382,7 @@ export default function AllOrdersScreen() {
       : [],
   );
   const [searchQuery, setSearchQuery] = useState(String(search || '').trim());
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // Work types bootstrap
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
@@ -532,7 +543,7 @@ export default function AllOrdersScreen() {
   };
   // Поиск: используем phone_visible вместо phone
   const filteredOrders = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
+    const q = deferredSearchQuery.trim().toLowerCase();
     return (orders || []).filter((o) => {
       if (!q) return true;
       const haystack = [
@@ -550,7 +561,7 @@ export default function AllOrdersScreen() {
         .toLowerCase();
       return haystack.includes(q);
     });
-  }, [orders, searchQuery]);
+  }, [orders, deferredSearchQuery]);
   // Ленивая загрузка при скролле (как в Instagram/Telegram)
   const loadMore = useCallback(async () => {
     if (isFetchingNextPage || !hasNextPage || loading) return;
@@ -573,9 +584,15 @@ export default function AllOrdersScreen() {
     };
   }, [departmentFilter, executorFilter, searchQuery, statusFilter]);
   const openOrderDetails = useCallback(
-    async (orderId) => {
+    (orderIdRaw) => {
+      const orderId = String(orderIdRaw || '').trim();
+      if (!orderId) return;
+      const now = Date.now();
+      const prev = detailNavLockRef.current;
+      if (prev.id === orderId && now - prev.ts < 1200) return;
+      detailNavLockRef.current = { id: orderId, ts: now };
       const registry = getPrefetchRegistry();
-      await registry
+      registry
         .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
         .catch(() => {});
       router.push({
@@ -593,7 +610,7 @@ export default function AllOrdersScreen() {
       <DynamicOrderCard
         order={order}
         context="all_orders"
-        onPress={() => openOrderDetails(order.id)}
+        onPress={openOrderDetails}
       />
     ),
     [openOrderDetails],
@@ -612,13 +629,26 @@ export default function AllOrdersScreen() {
   const keyExtractor = useCallback((item) => String(item.id), []);
   const onViewableItemsChanged = useMemo(
     () => ({ viewableItems }) => {
-      const registry = getPrefetchRegistry();
-      viewableItems
+      const ids = viewableItems
         .map((item) => item?.item?.id)
         .filter(Boolean)
         .slice(0, 6)
-        .forEach((id) => {
-          registry.run(`request-detail:${id}`, () => ensureRequestPrefetch(queryClient, id)).catch(() => {});
+        .map(String);
+      if (!ids.length) return;
+      const key = ids.join('|');
+      const now = Date.now();
+      if (
+        viewabilityPrefetchRef.current.key === key &&
+        now - viewabilityPrefetchRef.current.ts < 2500
+      ) {
+        return;
+      }
+      viewabilityPrefetchRef.current = { key, ts: now };
+      const registry = getPrefetchRegistry();
+      ids.forEach((id) => {
+          registry
+            .run(`request-detail:${id}`, () => ensureRequestPrefetch(queryClient, id))
+            .catch(() => {});
         });
     },
     [queryClient],
@@ -721,6 +751,11 @@ export default function AllOrdersScreen() {
             data={filteredOrders}
             renderItem={renderItem}
             keyExtractor={keyExtractor}
+            initialNumToRender={8}
+            maxToRenderPerBatch={6}
+            updateCellsBatchingPeriod={34}
+            windowSize={9}
+            removeClippedSubviews={Platform.OS === 'android'}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
             ListHeaderComponent={ListHeaderComponent}
@@ -751,24 +786,25 @@ export default function AllOrdersScreen() {
             }
           />
 
-          <Modal
-            visible={filterModalVisible}
-            animationType="slide"
-            transparent={true}
-            presentationStyle="overFullScreen"
-            statusBarTranslucent={true}
-            navigationBarTranslucent={true}
-            hardwareAccelerated={true}
-            onRequestClose={closeFilterModal}
-            onDismiss={closeFilterModal}
-          >
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <ScrollView
-                  keyboardShouldPersistTaps="handled"
-                  nestedScrollEnabled={true}
-                  contentContainerStyle={{ paddingBottom: 12 }}
-                >
+          {filterModalVisible ? (
+            <Modal
+              visible={filterModalVisible}
+              animationType="slide"
+              transparent={true}
+              presentationStyle="overFullScreen"
+              statusBarTranslucent={true}
+              navigationBarTranslucent={true}
+              hardwareAccelerated={true}
+              onRequestClose={closeFilterModal}
+              onDismiss={closeFilterModal}
+            >
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                  <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled={true}
+                    contentContainerStyle={{ paddingBottom: 12 }}
+                  >
                   {/* Work types block is shown only if feature enabled */}
                   {useWorkTypes && (
                     <View>
@@ -889,10 +925,11 @@ export default function AllOrdersScreen() {
                     }}
                     title="Применить"
                   />
-                </ScrollView>
+                  </ScrollView>
+                </View>
               </View>
-            </View>
-          </Modal>
+            </Modal>
+          ) : null}
         </>
       )}
     </Screen>
