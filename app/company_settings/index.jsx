@@ -866,7 +866,7 @@ export default function CompanySettings() {
     [t],
   );
   const disabledManagementKeys = React.useMemo(
-    () => new Set(['notifications', 'access', 'form_builder']),
+    () => new Set(['notifications', 'form_builder']),
     [],
   );
   const onSoonPress = React.useCallback(() => {

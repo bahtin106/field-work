@@ -37,6 +37,7 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import { t as T } from '../../../src/i18n';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
@@ -75,6 +76,7 @@ export default function EditOrderScreen() {
   const queryClient = useQueryClient();
 
   const { theme } = useTheme();
+  const { has: hasPermission, loading: permissionsLoading } = usePermissions();
   const formStyles = useEditFormStyles();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const {
@@ -674,6 +676,11 @@ export default function EditOrderScreen() {
   );
 
   const handleSave = async () => {
+    if (permissionsLoading) return;
+    if (!hasPermission('canEditOrders')) {
+      showToast(T('order_edit_no_permission'), 'warning');
+      return;
+    }
     if (savingRef.current || saving) return;
     if (!id) {
       showToast(T('order_validation_no_order_id'), 'error');
@@ -838,6 +845,28 @@ export default function EditOrderScreen() {
       <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size={theme.components?.activityIndicator?.size ?? 'large'} />
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
+  if (permissionsLoading) {
+    return (
+      <EditScreenTemplate scrollEnabled={false}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size={theme.components?.activityIndicator?.size ?? 'large'} />
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
+  if (!hasPermission('canEditOrders')) {
+    return (
+      <EditScreenTemplate scrollEnabled={false}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+            {T('order_edit_no_permission')}
+          </Text>
         </View>
       </EditScreenTemplate>
     );
