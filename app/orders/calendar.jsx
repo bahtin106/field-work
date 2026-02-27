@@ -156,8 +156,8 @@ export default function CalendarScreen() {
 
   const calendarQueryRange = useMemo(() => {
     const base = calendarQueryAnchorMonth;
-    const start = new Date(base.getFullYear(), base.getMonth() - 1, 1);
-    const end = new Date(base.getFullYear(), base.getMonth() + 2, 0, 23, 59, 59, 999);
+    const start = new Date(base.getFullYear(), 0, 1);
+    const end = new Date(base.getFullYear(), 11, 31, 23, 59, 59, 999);
     return {
       startDate: start.toISOString(),
       endDate: end.toISOString(),
@@ -165,10 +165,8 @@ export default function CalendarScreen() {
   }, [calendarQueryAnchorMonth]);
 
   useEffect(() => {
-    const monthsDelta =
-      (currentMonth.getFullYear() - calendarQueryAnchorMonth.getFullYear()) * 12 +
-      (currentMonth.getMonth() - calendarQueryAnchorMonth.getMonth());
-    if (Math.abs(monthsDelta) <= 1) return;
+    const yearsDelta = currentMonth.getFullYear() - calendarQueryAnchorMonth.getFullYear();
+    if (yearsDelta === 0) return;
     setCalendarQueryAnchorMonth(startOfMonth(currentMonth));
   }, [calendarQueryAnchorMonth, currentMonth]);
 
@@ -1199,6 +1197,13 @@ export default function CalendarScreen() {
   }, [filteredOrders, theme.colors.primary]);
 
   const committedMonthKey = format(currentMonth, 'yyyy-MM');
+  const visibleMonthOrderDateKeys = useMemo(
+    () =>
+      Object.keys(calendarIndex.byDate)
+        .filter((dateKey) => dateKey.startsWith(`${committedMonthKey}-`))
+        .sort(),
+    [calendarIndex.byDate, committedMonthKey],
+  );
   const selectedMonthKey = selectedDate ? selectedDate.slice(0, 7) : 'none';
   const targetMonthKey = committedMonthKey;
   const effectiveSelectedDate = useMemo(
@@ -1302,6 +1307,36 @@ export default function CalendarScreen() {
     setDisplayDateKey(effectiveSelectedDate);
     setDisplayTitleDateKey(effectiveSelectedDate);
   }, [displayDateKey, effectiveSelectedDate]);
+
+  useEffect(() => {
+    if (!visibleMonthOrderDateKeys.length) return;
+    const selectedKeyInMonth =
+      effectiveSelectedDate && effectiveSelectedDate.startsWith(`${committedMonthKey}-`)
+        ? effectiveSelectedDate
+        : null;
+    const hasOrdersOnSelectedDay = !!(selectedKeyInMonth && calendarIndex.byDate[selectedKeyInMonth]?.length);
+    if (hasOrdersOnSelectedDay) return;
+
+    const fallbackDateKey = visibleMonthOrderDateKeys[0];
+    if (!fallbackDateKey) return;
+    if (selectedDate !== fallbackDateKey) {
+      setSelectedDate(fallbackDateKey);
+    }
+    if (displayDateKey !== fallbackDateKey) {
+      setDisplayDateKey(fallbackDateKey);
+    }
+    if (displayTitleDateKey !== fallbackDateKey) {
+      setDisplayTitleDateKey(fallbackDateKey);
+    }
+  }, [
+    calendarIndex.byDate,
+    committedMonthKey,
+    displayDateKey,
+    displayTitleDateKey,
+    effectiveSelectedDate,
+    selectedDate,
+    visibleMonthOrderDateKeys,
+  ]);
 
   useFocusEffect(
     useCallback(
