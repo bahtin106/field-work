@@ -1097,15 +1097,19 @@ export default function CalendarScreen() {
         const targetIndex = pendingScrollTargetIndexRef.current;
         pendingScrollTargetIndexRef.current = null;
         if (typeof targetIndex !== 'number') return;
+        const nextMonth = dynamicMonths[targetIndex];
+        if (!nextMonth) return;
         visibleMonthIndexRef.current = targetIndex;
         visibleMonthIndex.value = targetIndex;
         setVisibleMonthRenderIndex(targetIndex);
+        setCurrentMonth(nextMonth);
+        setSelectedDate(format(startOfMonth(nextMonth), 'yyyy-MM-dd'));
         try {
           monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: false });
         } catch {}
       });
     },
-    [dynamicMonths.length, monthPagerRef, visibleMonthIndex],
+    [dynamicMonths, monthPagerRef, visibleMonthIndex],
   );
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
