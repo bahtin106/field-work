@@ -872,7 +872,7 @@ export default function EditUser() {
       avatar: avatarCurrent,
     });
     return current !== initialSnap;
-  }, [firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId, pendingAvatarUrl, avatarUrl, initialSnap]);
+  }, [firstName, lastName, email, phone, birthdate, withYear, role, newPassword, isSuspended, departmentId, pendingAvatarUrl, avatarUrl, initialSnap]);
   const isDirtyRef = useRef(false);
   useEffect(() => {
     isDirtyRef.current = isDirty;
