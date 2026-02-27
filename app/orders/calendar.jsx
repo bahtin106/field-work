@@ -52,7 +52,6 @@ import {
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
-import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
@@ -178,7 +177,7 @@ export default function CalendarScreen() {
   const [isOrdersSwapping, setIsOrdersSwapping] = useState(false);
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
-  const { data: companyId } = useMyCompanyIdQuery({ enabled: isAuthenticated && !isInitializing });
+  const companyId = profile?.company_id || null;
 
   useEffect(() => {
     markScreenMount('Calendar');
@@ -197,6 +196,7 @@ export default function CalendarScreen() {
 
   useRequestRealtimeSync({ enabled: isFocused && !!profile?.id });
   const { data: executors = [] } = useRequestExecutors({
+    companyId,
     enabled: isAuthenticated && !isInitializing && !!profile?.id && canViewAllOrders,
     placeholderData: (prev) => prev ?? [],
   });

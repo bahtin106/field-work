@@ -4,6 +4,52 @@ import { measureNetwork } from '../../shared/perf/devMetrics';
 
 const DEFAULT_PAGE_SIZE = 20;
 const requestByIdInFlight = new Map<string, Promise<any>>();
+const CALENDAR_SELECT_COLUMNS = [
+  'id',
+  'title',
+  'customer_name',
+  'address',
+  'city',
+  'town',
+  'settlement',
+  'street',
+  'snt',
+  'house',
+  'plot',
+  'building',
+  'status',
+  'status_v2',
+  'state',
+  'order_status',
+  'time_window_start',
+  'time_window_end',
+  'date',
+  'start_at',
+  'urgent',
+  'price',
+  'total_price',
+  'amount',
+  'currency',
+  'assigned_to',
+  'assigned_to_name',
+  'assigned_to_fullname',
+  'assignee_name',
+  'executor_name',
+  'worker_name',
+  'assigned_to_first_name',
+  'assigned_to_last_name',
+  'executor_first_name',
+  'executor_last_name',
+  'assignee_first_name',
+  'assignee_last_name',
+  'customer_phone_visible',
+  'phone_is_visible',
+  'phone',
+  'customer_phone_masked',
+  'created_at',
+  'updated_at',
+  'custom',
+].join(', ');
 const EXTRA_ORDER_FIELDS = [
   'country',
   'postal_code',
@@ -218,12 +264,16 @@ export async function updateRequest(id, patch, expectedUpdatedAt = null) {
   return updateRequestWithVersion(id, patch, expectedUpdatedAt);
 }
 
-export async function listRequestExecutors() {
+export async function listRequestExecutors({ companyId = null } = {}) {
   return measureNetwork('requests.executors', async () => {
-    const { data, error } = await supabase
+    let query = supabase
       .from('profiles')
       .select('id, first_name, last_name, full_name, email, role, department_id')
       .neq('role', 'client');
+    if (companyId) {
+      query = query.eq('company_id', companyId);
+    }
+    const { data, error } = await query;
 
     if (error) throw error;
     return Array.isArray(data) ? data : [];
@@ -264,7 +314,7 @@ export async function listCalendarRequests({ userId, role, scope = 'my' } = {}) 
 
     let query = supabase
       .from('orders_secure_v2')
-      .select('*')
+      .select(CALENDAR_SELECT_COLUMNS)
       .order('time_window_start', { ascending: false, nullsFirst: false });
 
     if (normalizedScope === 'my') {

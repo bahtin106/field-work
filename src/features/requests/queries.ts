@@ -58,10 +58,10 @@ export function useRequest(id, options = {}) {
   });
 }
 
-export function useRequestExecutors(options = {}) {
+export function useRequestExecutors({ companyId = null, ...options } = {}) {
   return useQuery({
-    queryKey: queryKeys.requests.executors(),
-    queryFn: listRequestExecutors,
+    queryKey: queryKeys.requests.executors(companyId),
+    queryFn: () => listRequestExecutors({ companyId }),
     staleTime: 60 * 1000,
     ...options,
   });

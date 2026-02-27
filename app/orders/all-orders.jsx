@@ -665,7 +665,7 @@ export default function AllOrdersScreen() {
     useCallback(
       () => () => {
         queryClient.cancelQueries({ queryKey: ['requests', 'all'] });
-        queryClient.cancelQueries({ queryKey: queryKeys.requests.executors() });
+        queryClient.cancelQueries({ queryKey: ['requests', 'executors'] });
         queryClient.cancelQueries({ queryKey: queryKeys.requests.filterOptions() });
         queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
       },
