@@ -104,6 +104,12 @@ const DAY_KEYS = [
 ];
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
 
+function nowMs() {
+  const perf = globalThis?.performance;
+  if (perf && typeof perf.now === 'function') return perf.now();
+  return Date.now();
+}
+
 function resolveSnapTarget(progress, velocityY, totalDistance) {
   'worklet';
   const threshold = CALENDAR_GESTURE.SNAP_VELOCITY_Y;
@@ -259,11 +265,31 @@ export default function CalendarScreen() {
   );
 
   const firstContentMarkedRef = useRef(false);
+  const perfMountStartedRef = useRef(false);
+  const perfMountStartMsRef = useRef(0);
+  const perfFirstContentLoggedRef = useRef(false);
+  const perfGridLoggedRef = useRef(false);
+
+  useEffect(() => {
+    if (perfMountStartedRef.current) return;
+    perfMountStartedRef.current = true;
+    perfMountStartMsRef.current = nowMs();
+    console.time('calendar-mount');
+  }, []);
+
   useEffect(() => {
     if (firstContentMarkedRef.current) return;
     if (isCalendarLoading) return;
     firstContentMarkedRef.current = true;
     markFirstContent('Calendar');
+    if (!perfFirstContentLoggedRef.current) {
+      perfFirstContentLoggedRef.current = true;
+      const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
+      console.log(`[perf] calendar.first-content.now: ${Math.round(elapsedMs)}ms`);
+      try {
+        console.timeEnd('calendar-mount');
+      } catch {}
+    }
   }, [isCalendarLoading]);
 
   useEffect(() => {
@@ -636,6 +662,11 @@ export default function CalendarScreen() {
       setMeasuredWeekRowHeight((prev) =>
         Math.abs(prev - nextHeight) <= CALENDAR_LAYOUT.MEASURE_DELTA_EPSILON ? prev : nextHeight,
       );
+      if (!perfGridLoggedRef.current) {
+        perfGridLoggedRef.current = true;
+        const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
+        console.log(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
+      }
     },
     [setMeasuredWeekRowHeight],
   );
