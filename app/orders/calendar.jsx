@@ -1444,7 +1444,7 @@ export default function CalendarScreen() {
                             >
                               {itemMonthWeeks.map((week, weekIdx) => (
                                 <CalendarWeekRow
-                                  key={`w-${monthDate.getTime()}-${weekIdx}-${selectedDate}`}
+                                  key={`w-${monthDate.getTime()}-${weekIdx}`}
                                   week={week}
                                   monthDate={monthDate}
                                   weekIdx={weekIdx}
