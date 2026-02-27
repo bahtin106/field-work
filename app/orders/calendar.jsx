@@ -18,7 +18,7 @@ import {
   View,
 } from 'react-native';
 import { LocaleConfig } from 'react-native-calendars';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture } from 'react-native-gesture-handler';
 import Animated, {
   Extrapolate,
   cancelAnimation,
@@ -30,7 +30,6 @@ import Animated, {
   useDerivedValue,
   useSharedValue,
   withSpring,
-  withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -172,8 +171,6 @@ export default function CalendarScreen() {
   const [executorFilterIds, setExecutorFilterIds] = useState([]);
   const [executorModalVisible, setExecutorModalVisible] = useState(false);
   const hasEmployeeFilter = Array.isArray(executorFilterIds) && executorFilterIds.length > 0;
-  const ordersSwapOverlayOpacity = useSharedValue(0);
-  const [isOrdersSwapping, setIsOrdersSwapping] = useState(false);
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
   const companyId = profile?.company_id || null;
@@ -445,32 +442,18 @@ export default function CalendarScreen() {
   const requestMonthCommit = useCallback(
     (nextIndex) => {
       const nextDateKey = resolveMonthDateKeyByIndex(nextIndex);
+      commitVisibleMonthIndex(nextIndex);
       if (nextDateKey && nextDateKey !== displayDateKey) {
-        setIsOrdersSwapping(true);
-        setDisplayDateKey(null);
-        setDisplayTitleDateKey(null);
-        cancelAnimation(ordersSwapOverlayOpacity);
-        ordersSwapOverlayOpacity.value = 1;
-        commitVisibleMonthIndex(nextIndex);
         setDisplayDateKey(nextDateKey);
         setDisplayTitleDateKey(nextDateKey);
         try {
           ordersListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
         } catch {}
-        ordersSwapOverlayOpacity.value = withTiming(0, {
-          duration: CALENDAR_GESTURE.MONTH_TRANSITION_SHOW_DURATION,
-        }, (finished) => {
-          if (!finished) return;
-          runOnJS(setIsOrdersSwapping)(false);
-        });
-        return;
       }
-      commitVisibleMonthIndex(nextIndex);
     },
     [
       commitVisibleMonthIndex,
       displayDateKey,
-      ordersSwapOverlayOpacity,
       resolveMonthDateKeyByIndex,
     ],
   );
@@ -845,6 +828,22 @@ export default function CalendarScreen() {
           justifyContent: 'flex-start',
           gap: theme.spacing.xs,
         },
+        collapseToggleRow: {
+          width: '100%',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingTop: theme.spacing.xs * 0.25,
+          paddingBottom: theme.spacing.xs * 0.75,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
+        },
+        collapseToggleButton: {
+          width: 30,
+          height: 22,
+          borderRadius: 11,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
         scopeSwitch: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -1129,7 +1128,7 @@ export default function CalendarScreen() {
         visibleMonthIndex.value = targetIndex;
         setVisibleMonthRenderIndex(targetIndex);
         try {
-          monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: true });
+          monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: false });
         } catch {}
       });
     },
@@ -1156,7 +1155,7 @@ export default function CalendarScreen() {
       if (nextIndex === baseIndex) return;
 
       try {
-        monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
+        monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: false });
       } catch {}
       requestMonthCommit(nextIndex);
     },
@@ -1325,13 +1324,13 @@ export default function CalendarScreen() {
   );
 
   // Единая вертикальная логика для верхней и нижней области.
-  const calendarGesture = useMemo(
+  const _calendarGesture = useMemo(
     () => createVerticalCollapseGesture(calendarGestureLock),
     [calendarGestureLock, createVerticalCollapseGesture],
   );
 
   const ordersListNativeGesture = useMemo(() => Gesture.Native(), []);
-  const ordersCombinedGesture = useMemo(
+  const _ordersCombinedGesture = useMemo(
     () =>
       Gesture.Pan()
         .enabled(true)
@@ -1567,8 +1566,8 @@ export default function CalendarScreen() {
     [openOrderDetails],
   );
   const ordersEmptyComponent = useMemo(
-    () => (isOrdersSwapping ? null : <Text style={styles.noOrders}>Нет заявок</Text>),
-    [isOrdersSwapping, styles.noOrders],
+    () => <Text style={styles.noOrders}>Нет заявок</Text>,
+    [styles.noOrders],
   );
 
   const markedDates = useMemo(
@@ -1595,16 +1594,24 @@ export default function CalendarScreen() {
     setExecutorFilterIds([]);
     setExecutorModalVisible(false);
   }, []);
+  const onToggleCollapsed = useCallback(() => {
+    const next = !isCollapsed;
+    setIsCollapsed(next);
+    isCollapsedShared.value = next;
+    collapseTranslate.value = next ? stageOneDistanceSafe : 0;
+    if (!next) {
+      scrollY.value = 0;
+    }
+  }, [collapseTranslate, isCollapsed, isCollapsedShared, scrollY, stageOneDistanceSafe]);
 
   useEffect(() => {
-    if (isOrdersSwapping) return;
     if (!effectiveSelectedDate || !displayDateKey) return;
     if (effectiveSelectedDate === displayDateKey) return;
     if (effectiveSelectedDate.slice(0, 7) === displayDateKey.slice(0, 7)) {
       setDisplayDateKey(effectiveSelectedDate);
       setDisplayTitleDateKey(effectiveSelectedDate);
     }
-  }, [displayDateKey, effectiveSelectedDate, isOrdersSwapping]);
+  }, [displayDateKey, effectiveSelectedDate]);
 
   useEffect(() => {
     if (!Array.isArray(displayedOrders) || displayedOrders.length === 0) return;
@@ -1642,18 +1649,7 @@ export default function CalendarScreen() {
     ),
   );
 
-  const ordersSwapOverlayStyle = useAnimatedStyle(() => ({
-    opacity: ordersSwapOverlayOpacity.value,
-  }));
-  const ordersSwipeFadeStyle = useAnimatedStyle(() => {
-    if (monthSwipeInteraction.value < 0.5) {
-      return { opacity: 1 };
-    }
-    const pageWidth = Math.max(layoutMetrics.cardWidth, 1);
-    const distance = Math.abs(monthScrollX.value - settledMonthOffsetX.value);
-    const progress = Math.min(distance / (pageWidth * 0.6), 1);
-    return { opacity: 1 - progress };
-  });
+  const ordersSwipeFadeStyle = useAnimatedStyle(() => ({ opacity: 1 }));
 
   return (
     <Screen
@@ -1711,8 +1707,7 @@ export default function CalendarScreen() {
         </Animated.View>
         {viewMode === 'month' ? (
           <>
-            <GestureDetector gesture={calendarGesture}>
-              <Animated.View style={[calendarContentStyle]}>
+            <Animated.View style={[calendarContentStyle]}>
                 <View style={[styles.calendarContent]}>
                   <CalendarMonthHeader
                     monthDate={activeVisibleMonth}
@@ -1737,7 +1732,7 @@ export default function CalendarScreen() {
                     horizontal
                     pagingEnabled
                     initialNumToRender={5}
-                    scrollEnabled={!isCollapsed}
+                    scrollEnabled={false}
                     showsHorizontalScrollIndicator={false}
                     keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
                     getItemLayout={getItemLayout}
@@ -1840,8 +1835,6 @@ export default function CalendarScreen() {
                   />
                 </View>
               </Animated.View>
-            </GestureDetector>
-            <GestureDetector gesture={ordersCombinedGesture}>
               <View style={{ flex: 1, width: '100%' }}>
                 <View
                   style={{
@@ -1907,48 +1900,51 @@ export default function CalendarScreen() {
                         ) : null}
                       </View>
                     </View>
-                    <GestureDetector gesture={ordersListNativeGesture}>
-                      <View style={{ flex: 1 }}>
-                        <FlatList
-                          ref={ordersListRef}
-                          data={displayedOrders}
-                          extraData={ordersListExtraData}
-                          initialNumToRender={6}
-                          maxToRenderPerBatch={8}
-                          updateCellsBatchingPeriod={40}
-                          removeClippedSubviews={Platform.OS === 'android'}
-                          keyExtractor={orderKeyExtractor}
-                          contentContainerStyle={ordersListContentContainerStyle}
-                          style={{ flex: 1 }}
-                          scrollEnabled={isCollapsed && !isSnapping && !isOrdersSwapping}
-                          bounces={false}
-                          scrollEventThrottle={16}
-                          onScroll={(event) => {
-                            scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                          }}
-                          onScrollBeginDrag={() => {
-                            if (!isCollapsed) scrollY.value = 0;
-                          }}
-                          onMomentumScrollEnd={(event) => {
-                            scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                          }}
-                          ListEmptyComponent={ordersEmptyComponent}
-                          renderItem={renderOrderItem}
+                    <View style={styles.collapseToggleRow}>
+                      <Pressable
+                        onPress={onToggleCollapsed}
+                        style={({ pressed }) => [styles.collapseToggleButton, pressed && { opacity: 0.8 }]}
+                        android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                        accessibilityRole="button"
+                      >
+                        <Feather
+                          name={isCollapsed ? 'chevron-down' : 'chevron-up'}
+                          size={16}
+                          color={theme.colors.textSecondary}
                         />
-                      </View>
-                    </GestureDetector>
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        StyleSheet.absoluteFillObject,
-                        { backgroundColor: theme.colors.background },
-                        ordersSwapOverlayStyle,
-                      ]}
-                    />
+                      </Pressable>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <FlatList
+                        ref={ordersListRef}
+                        data={displayedOrders}
+                        extraData={ordersListExtraData}
+                        initialNumToRender={6}
+                        maxToRenderPerBatch={8}
+                        updateCellsBatchingPeriod={40}
+                        removeClippedSubviews={Platform.OS === 'android'}
+                        keyExtractor={orderKeyExtractor}
+                        contentContainerStyle={ordersListContentContainerStyle}
+                        style={{ flex: 1 }}
+                        scrollEnabled={isCollapsed && !isSnapping}
+                        bounces={false}
+                        scrollEventThrottle={16}
+                        onScroll={(event) => {
+                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
+                        }}
+                        onScrollBeginDrag={() => {
+                          if (!isCollapsed) scrollY.value = 0;
+                        }}
+                        onMomentumScrollEnd={(event) => {
+                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
+                        }}
+                        ListEmptyComponent={ordersEmptyComponent}
+                        renderItem={renderOrderItem}
+                      />
+                    </View>
                   </Animated.View>
                 </View>
               </View>
-            </GestureDetector>
           </>
         ) : (
           <View style={[styles.calendarContent, { flex: 1 }]}>
