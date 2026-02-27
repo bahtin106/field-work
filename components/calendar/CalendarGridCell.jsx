@@ -7,6 +7,7 @@ const OUTSIDE_MONTH_TEXT_OPACITY = 0.45;
 const OUTSIDE_MONTH_META_TEXT_OPACITY = 0.55;
 const OUTSIDE_MONTH_META_DOT_OPACITY = 0.45;
 const EVENT_META_MIN_WIDTH_RATIO = 0.5;
+const EVENT_META_HORIZONTAL_INSET = 4;
 
 function CalendarGridCellComponent({
   cell,
@@ -74,6 +75,8 @@ function CalendarGridCellComponent({
             <View
               style={{
                 minWidth: dayCellSize * EVENT_META_MIN_WIDTH_RATIO,
+                maxWidth: Math.max(0, dayCellSize - EVENT_META_HORIZONTAL_INSET * 2),
+                paddingHorizontal: EVENT_META_HORIZONTAL_INSET,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
