@@ -43,7 +43,7 @@ function CalendarWeekRowComponent({
 
         return (
           <CalendarGridCell
-            key={`${monthDate.getTime()}-${dayKey}`}
+            key={`${monthDate.getTime()}-${dayKey}-${selectedDate}`}
             cell={cell}
             dayKey={dayKey}
             eventCount={eventCount}
