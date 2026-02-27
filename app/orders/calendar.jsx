@@ -1199,8 +1199,6 @@ export default function CalendarScreen() {
   const lockDistance = Math.max(8, directionLockDistance);
   const lockRatio = Math.max(1.3, directionLockRatio);
   const lockVelocity = 320;
-  const verticalSwipeDistanceThreshold = Math.max(20, theme.spacing.md * 1.8);
-  const verticalSwipeVelocityThreshold = Math.max(380, CALENDAR_GESTURE.SNAP_VELOCITY_Y * 0.8);
   const activeOffsetX = Math.max(6, gestureActiveOffsetX);
   const activeOffsetY = Math.max(6, gestureActiveOffsetY);
   const verticalFailOffsetX = gestureFailOffsetX + 12;
@@ -1286,32 +1284,20 @@ export default function CalendarScreen() {
           if (ty < 0 && isFullyCollapsed) return;
           if (ty > 0 && isFullyExpanded) return;
           if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
-          if (Math.abs(ty) >= 4) {
-            panHasDrivenCollapse.value = true;
-          }
+          const next = gestureStart.value - ty;
+          const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
+          collapseTranslate.value = clamp(next, 0, safeMax);
+          panHasDrivenCollapse.value = true;
         })
         .onEnd((event) => {
           'worklet';
-          const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
+          if (!panHasDrivenCollapse.value) {
+            const atEdge =
+              collapseTranslate.value <= 0 ||
+              collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+            if (atEdge) return;
+          }
           const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-          if (Math.abs(ty) < 8 && Math.abs(velocityY) < 150) return;
-          const progress = collapseTranslate.value / Math.max(stageOneDistanceSafe, 1);
-          const wantsCollapse =
-            ty < -verticalSwipeDistanceThreshold || velocityY < -verticalSwipeVelocityThreshold;
-          const wantsExpand =
-            ty > verticalSwipeDistanceThreshold || velocityY > verticalSwipeVelocityThreshold;
-          if (wantsCollapse) {
-            snapCollapseToNearest(-Math.abs(CALENDAR_GESTURE.SNAP_VELOCITY_Y));
-            return;
-          }
-          if (wantsExpand) {
-            snapCollapseToNearest(Math.abs(CALENDAR_GESTURE.SNAP_VELOCITY_Y));
-            return;
-          }
-          if (progress >= 0.5) {
-            snapCollapseToNearest(-Math.abs(CALENDAR_GESTURE.SNAP_VELOCITY_Y) * 0.5);
-            return;
-          }
           snapCollapseToNearest(velocityY);
         })
         .onFinalize(() => {
@@ -1334,8 +1320,6 @@ export default function CalendarScreen() {
       setSnappingState,
       snapCollapseToNearest,
       stageOneDistanceSafe,
-      verticalSwipeDistanceThreshold,
-      verticalSwipeVelocityThreshold,
       verticalFailOffsetX,
     ],
   );
@@ -1404,9 +1388,11 @@ export default function CalendarScreen() {
           if (ty < 0 && isFullyCollapsed) return;
           if (ty > 0 && isFullyExpanded) return;
           if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
-          if (Math.abs(ty) >= 4) {
-            panHasDrivenCollapse.value = true;
-          }
+
+          const next = gestureStart.value - ty;
+          const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
+          collapseTranslate.value = clamp(next, 0, safeMax);
+          panHasDrivenCollapse.value = true;
         })
         .onEnd((event) => {
           'worklet';
@@ -1420,31 +1406,15 @@ export default function CalendarScreen() {
             return;
           }
 
-          const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
-          const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
-          const isVerticalLike =
-            ordersGestureLock.value === 2 || Math.abs(ty) >= Math.abs(tx) * 0.8;
-          if (!isVerticalLike) return;
+          if (ordersGestureLock.value !== 2) return;
           monthSwipeInteraction.value = 0;
+          if (!panHasDrivenCollapse.value) {
+            const atEdge =
+              collapseTranslate.value <= 0 ||
+              collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+            if (atEdge) return;
+          }
           const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-          if (Math.abs(ty) < 8 && Math.abs(velocityY) < 150) return;
-          const progress = collapseTranslate.value / Math.max(stageOneDistanceSafe, 1);
-          const wantsCollapse =
-            ty < -verticalSwipeDistanceThreshold || velocityY < -verticalSwipeVelocityThreshold;
-          const wantsExpand =
-            ty > verticalSwipeDistanceThreshold || velocityY > verticalSwipeVelocityThreshold;
-          if (wantsCollapse) {
-            snapCollapseToNearest(-Math.abs(CALENDAR_GESTURE.SNAP_VELOCITY_Y));
-            return;
-          }
-          if (wantsExpand) {
-            snapCollapseToNearest(Math.abs(CALENDAR_GESTURE.SNAP_VELOCITY_Y));
-            return;
-          }
-          if (progress >= 0.5) {
-            snapCollapseToNearest(-Math.abs(CALENDAR_GESTURE.SNAP_VELOCITY_Y) * 0.5);
-            return;
-          }
           snapCollapseToNearest(velocityY);
         })
         .onFinalize(() => {
@@ -1473,8 +1443,6 @@ export default function CalendarScreen() {
       setSnappingState,
       snapCollapseToNearest,
       stageOneDistanceSafe,
-      verticalSwipeDistanceThreshold,
-      verticalSwipeVelocityThreshold,
     ],
   );
 
