@@ -76,10 +76,18 @@ export function useRequestFilterOptions(options = {}) {
   });
 }
 
-export function useCalendarRequests({ userId, role, scope = 'my', isScreenActive = true, enabled = true } = {}) {
+export function useCalendarRequests({
+  userId,
+  role,
+  scope = 'my',
+  startDate = null,
+  endDate = null,
+  isScreenActive = true,
+  enabled = true,
+} = {}) {
   return useQuery({
-    queryKey: queryKeys.requests.calendar({ userId, role, scope }),
-    queryFn: () => listCalendarRequests({ userId, role, scope }),
+    queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
+    queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
     enabled: enabled && !!userId,
     staleTime: 60 * 1000,
     refetchInterval: isScreenActive ? 60 * 1000 : false,
@@ -189,5 +197,17 @@ export async function ensureRequestAssigneeNamePrefetch(queryClient, userId) {
     queryKey: queryKeys.requests.assigneeName(userId),
     queryFn: () => getAssigneeDisplayNameById(userId),
     staleTime: 2 * 60 * 1000,
+  });
+}
+
+export async function ensureCalendarRequestsPrefetch(
+  queryClient,
+  { userId, role, scope = 'my', startDate = null, endDate = null } = {},
+) {
+  if (!userId) return [];
+  return queryClient.ensureQueryData({
+    queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
+    queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
+    staleTime: 60 * 1000,
   });
 }

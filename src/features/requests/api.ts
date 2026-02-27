@@ -307,7 +307,13 @@ export async function getAssigneeDisplayNameById(userId) {
   });
 }
 
-export async function listCalendarRequests({ userId, role, scope = 'my' } = {}) {
+export async function listCalendarRequests({
+  userId,
+  role,
+  scope = 'my',
+  startDate = null,
+  endDate = null,
+} = {}) {
   return measureNetwork('requests.calendar', async () => {
     if (!userId) return [];
     const normalizedScope = scope === 'all' ? 'all' : 'my';
@@ -319,6 +325,12 @@ export async function listCalendarRequests({ userId, role, scope = 'my' } = {}) 
 
     if (normalizedScope === 'my') {
       query = query.eq('assigned_to', userId);
+    }
+    if (startDate) {
+      query = query.gte('time_window_start', startDate);
+    }
+    if (endDate) {
+      query = query.lte('time_window_start', endDate);
     }
 
     const { data, error } = await query;

@@ -44,6 +44,7 @@ import AppHeader from '../../components/navigation/AppHeader';
 import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
 import { usePermissions } from '../../lib/permissions';
 import {
+  ensureCalendarRequestsPrefetch,
   ensureRequestPrefetch,
   useCalendarRequests,
   useRequestExecutors,
@@ -186,6 +187,15 @@ export default function CalendarScreen() {
     markScreenMount('Calendar');
   }, []);
 
+  const calendarQueryRange = useMemo(() => {
+    const start = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+    const end = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 2, 0, 23, 59, 59, 999);
+    return {
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+    };
+  }, [currentMonth]);
+
   const {
     data: orders = [],
     isLoading: isCalendarLoading,
@@ -193,6 +203,8 @@ export default function CalendarScreen() {
     userId: profile?.id,
     role: profile?.role,
     scope: canViewAllOrders ? (hasEmployeeFilter ? 'all' : scope) : 'my',
+    startDate: calendarQueryRange.startDate,
+    endDate: calendarQueryRange.endDate,
     enabled: isAuthenticated && !isInitializing && !!profile?.id && !!profile?.role,
     isScreenActive: isFocused,
   });
@@ -1691,6 +1703,44 @@ export default function CalendarScreen() {
       } catch {}
     };
   }, [displayedOrders, queryClient]);
+
+  useEffect(() => {
+    if (!profile?.id || !profile?.role) return;
+    const baseScope = canViewAllOrders ? (hasEmployeeFilter ? 'all' : scope) : 'my';
+    const prevStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 2, 1).toISOString();
+    const prevEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+    const nextStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).toISOString();
+    const nextEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 3, 0, 23, 59, 59, 999).toISOString();
+    const task = InteractionManager.runAfterInteractions(() => {
+      ensureCalendarRequestsPrefetch(queryClient, {
+        userId: profile.id,
+        role: profile.role,
+        scope: baseScope,
+        startDate: prevStart,
+        endDate: prevEnd,
+      }).catch(() => {});
+      ensureCalendarRequestsPrefetch(queryClient, {
+        userId: profile.id,
+        role: profile.role,
+        scope: baseScope,
+        startDate: nextStart,
+        endDate: nextEnd,
+      }).catch(() => {});
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, [
+    canViewAllOrders,
+    currentMonth,
+    hasEmployeeFilter,
+    profile?.id,
+    profile?.role,
+    queryClient,
+    scope,
+  ]);
 
   useFocusEffect(
     useCallback(
