@@ -34,12 +34,12 @@ function CalendarWeekRowComponent({
 
         const dayKey = formatDateKey(cell.date);
         const eventCount = eventCountsByDate?.[dayKey] || 0;
-        const isSelectedDay = dayKey === selectedDate;
+        const isCurrentMonth = cell?.isCurrentMonth !== false;
+        const isSelectedDay = isCurrentMonth && dayKey === selectedDate;
         const isToday = dayKey === todayKey;
         const isTodaySelected = isSelectedDay && isToday;
         const showOutline = isSelectedDay && !isToday;
         const highlightTodayWhenNotSelected = isToday && selectedDate !== todayKey;
-        const isCurrentMonth = cell?.isCurrentMonth !== false;
 
         return (
           <CalendarGridCell

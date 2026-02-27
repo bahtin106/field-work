@@ -1218,6 +1218,16 @@ export default function CalendarScreen() {
     () => ({ selectedDate: displayDateKey, count: displayedOrders.length }),
     [displayDateKey, displayedOrders.length],
   );
+  const monthPagerExtraData = useMemo(
+    () => ({
+      selectedDate,
+      todayKey,
+      isCollapsed,
+      visibleMonthRenderIndex,
+      countsKey: Object.keys(calendarIndex.countByDate).join('|'),
+    }),
+    [calendarIndex.countByDate, isCollapsed, selectedDate, todayKey, visibleMonthRenderIndex],
+  );
   const ordersTitleDateLabel = useMemo(
     () => (displayTitleDateKey ? format(new Date(displayTitleDateKey), 'd MMMM', { locale: dfnsRu }) : ''),
     [displayTitleDateKey],
@@ -1394,6 +1404,7 @@ export default function CalendarScreen() {
                   <AnimatedFlatList
                     ref={monthPagerRef}
                     data={dynamicMonths}
+                    extraData={monthPagerExtraData}
                     horizontal
                     pagingEnabled
                     initialNumToRender={1}
