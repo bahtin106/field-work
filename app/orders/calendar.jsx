@@ -733,6 +733,7 @@ export default function CalendarScreen() {
           width: layoutMetrics.dayCellSize,
           height: layoutMetrics.dayCellSize,
           borderRadius: layoutMetrics.dayCellSize / 2,
+          overflow: 'hidden',
         },
         dayCellSelectedOutline: {
           borderWidth: 2,
@@ -742,6 +743,9 @@ export default function CalendarScreen() {
           backgroundColor: theme.colors.primary,
         },
         dayContent: {
+          width: '100%',
+          height: '100%',
+          position: 'relative',
           alignItems: 'center',
           justifyContent: 'center',
         },
@@ -749,8 +753,10 @@ export default function CalendarScreen() {
           fontFamily: theme.typography.fontFamily,
           fontWeight: theme.typography.weight.regular,
           fontSize: theme.typography.sizes.md,
+          lineHeight: theme.typography.sizes.md * 1.05,
           color: theme.colors.text,
           textAlign: 'center',
+          includeFontPadding: false,
         },
         dayNumberToday: {
           color: theme.colors.onPrimary,
@@ -764,15 +770,20 @@ export default function CalendarScreen() {
           color: theme.colors.textSecondary,
         },
         dayIndicatorSlot: {
+          position: 'absolute',
+          left: 2,
+          right: 2,
+          bottom: Math.max(1, theme.spacing.xs * 0.35),
+          minHeight: indicatorSlotBaseHeight,
           alignItems: 'center',
           justifyContent: 'center',
         },
         eventCount: {
-          marginTop: theme.spacing.xs * 0.05,
           fontSize: theme.typography.sizes.xs * 0.9,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.primary,
           textAlign: 'center',
+          includeFontPadding: false,
         },
         eventDot: {
           marginTop: theme.spacing.xs * 0.5,
