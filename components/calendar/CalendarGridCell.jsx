@@ -97,23 +97,4 @@ function CalendarGridCellComponent({
   );
 }
 
-function areEqual(prev, next) {
-  return (
-    prev.dayKey === next.dayKey &&
-    prev.cell?.day === next.cell?.day &&
-    prev.eventCount === next.eventCount &&
-    prev.isTodaySelected === next.isTodaySelected &&
-    prev.showOutline === next.showOutline &&
-    prev.highlightTodayWhenNotSelected === next.highlightTodayWhenNotSelected &&
-    prev.isCurrentMonth === next.isCurrentMonth &&
-    prev.dayCellSize === next.dayCellSize &&
-    prev.styles === next.styles &&
-    prev.theme === next.theme &&
-    prev.onDatePress === next.onDatePress &&
-    prev.indicatorSlotAnimatedStyle === next.indicatorSlotAnimatedStyle &&
-    prev.eventCountAnimatedStyle === next.eventCountAnimatedStyle &&
-    prev.eventDotAnimatedStyle === next.eventDotAnimatedStyle
-  );
-}
-
-export const CalendarGridCell = memo(CalendarGridCellComponent, areEqual);
+export const CalendarGridCell = memo(CalendarGridCellComponent);
