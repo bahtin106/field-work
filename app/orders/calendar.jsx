@@ -1292,7 +1292,6 @@ export default function CalendarScreen() {
         })
         .onEnd((event) => {
           'worklet';
-          if (lockShared.value !== 2) return;
           if (!panHasDrivenCollapse.value) {
             const atEdge =
               collapseTranslate.value <= 0 ||
@@ -1426,7 +1425,11 @@ export default function CalendarScreen() {
             return;
           }
 
-          if (ordersGestureLock.value !== 2) return;
+          const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
+          const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
+          const isVerticalLike =
+            ordersGestureLock.value === 2 || Math.abs(ty) >= Math.abs(tx) * 0.8;
+          if (!isVerticalLike) return;
           monthSwipeInteraction.value = 0;
           if (!panHasDrivenCollapse.value) {
             const atEdge =
@@ -1434,7 +1437,6 @@ export default function CalendarScreen() {
               collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
             if (atEdge) return;
           }
-          const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
           const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
           const progress = collapseTranslate.value / Math.max(stageOneDistanceSafe, 1);
           const wantsCollapse =
