@@ -1223,16 +1223,14 @@ export default function CalendarScreen() {
     () => (selectedMonthKey === targetMonthKey ? selectedDate : `${targetMonthKey}-01`),
     [selectedDate, selectedMonthKey, targetMonthKey],
   );
-  const [displayDateKey, setDisplayDateKey] = useState(effectiveSelectedDate);
-  const [displayTitleDateKey, setDisplayTitleDateKey] = useState(effectiveSelectedDate);
   const detailNavLockRef = useRef({ id: '', ts: 0 });
   const displayedOrders = useMemo(
-    () => (displayDateKey ? (calendarIndex.byDate[displayDateKey] ?? []) : []),
-    [calendarIndex.byDate, displayDateKey],
+    () => (effectiveSelectedDate ? (calendarIndex.byDate[effectiveSelectedDate] ?? []) : []),
+    [calendarIndex.byDate, effectiveSelectedDate],
   );
   const ordersListExtraData = useMemo(
-    () => ({ selectedDate: displayDateKey, count: displayedOrders.length }),
-    [displayDateKey, displayedOrders.length],
+    () => ({ selectedDate: effectiveSelectedDate, count: displayedOrders.length }),
+    [displayedOrders.length, effectiveSelectedDate],
   );
   const monthPagerExtraData = useMemo(
     () => ({
@@ -1245,8 +1243,8 @@ export default function CalendarScreen() {
     [calendarIndex.countByDate, isCollapsed, selectedDate, todayKey, visibleMonthRenderIndex],
   );
   const ordersTitleDateLabel = useMemo(
-    () => (displayTitleDateKey ? format(new Date(displayTitleDateKey), 'd MMMM', { locale: dfnsRu }) : ''),
-    [displayTitleDateKey],
+    () => (effectiveSelectedDate ? format(new Date(effectiveSelectedDate), 'd MMMM', { locale: dfnsRu }) : ''),
+    [effectiveSelectedDate],
   );
   const ordersListContentContainerStyle = useMemo(
     () => ({
@@ -1323,13 +1321,6 @@ export default function CalendarScreen() {
       scrollY.value = 0;
     }
   }, [collapseTranslate, isCollapsed, isCollapsedShared, scrollY, stageOneDistanceSafe]);
-
-  useEffect(() => {
-    if (!effectiveSelectedDate || !displayDateKey) return;
-    if (effectiveSelectedDate === displayDateKey) return;
-    setDisplayDateKey(effectiveSelectedDate);
-    setDisplayTitleDateKey(effectiveSelectedDate);
-  }, [displayDateKey, effectiveSelectedDate]);
 
   useFocusEffect(
     useCallback(
@@ -1453,7 +1444,7 @@ export default function CalendarScreen() {
                             >
                               {itemMonthWeeks.map((week, weekIdx) => (
                                 <CalendarWeekRow
-                                  key={`w-${monthDate.getTime()}-${weekIdx}`}
+                                  key={`w-${monthDate.getTime()}-${weekIdx}-${selectedDate}`}
                                   week={week}
                                   monthDate={monthDate}
                                   weekIdx={weekIdx}
