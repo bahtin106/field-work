@@ -1197,13 +1197,6 @@ export default function CalendarScreen() {
   }, [filteredOrders, theme.colors.primary]);
 
   const committedMonthKey = format(currentMonth, 'yyyy-MM');
-  const visibleMonthOrderDateKeys = useMemo(
-    () =>
-      Object.keys(calendarIndex.byDate)
-        .filter((dateKey) => dateKey.startsWith(`${committedMonthKey}-`))
-        .sort(),
-    [calendarIndex.byDate, committedMonthKey],
-  );
   const selectedMonthKey = selectedDate ? selectedDate.slice(0, 7) : 'none';
   const targetMonthKey = committedMonthKey;
   const effectiveSelectedDate = useMemo(
@@ -1307,36 +1300,6 @@ export default function CalendarScreen() {
     setDisplayDateKey(effectiveSelectedDate);
     setDisplayTitleDateKey(effectiveSelectedDate);
   }, [displayDateKey, effectiveSelectedDate]);
-
-  useEffect(() => {
-    if (!visibleMonthOrderDateKeys.length) return;
-    const selectedKeyInMonth =
-      effectiveSelectedDate && effectiveSelectedDate.startsWith(`${committedMonthKey}-`)
-        ? effectiveSelectedDate
-        : null;
-    const hasOrdersOnSelectedDay = !!(selectedKeyInMonth && calendarIndex.byDate[selectedKeyInMonth]?.length);
-    if (hasOrdersOnSelectedDay) return;
-
-    const fallbackDateKey = visibleMonthOrderDateKeys[0];
-    if (!fallbackDateKey) return;
-    if (selectedDate !== fallbackDateKey) {
-      setSelectedDate(fallbackDateKey);
-    }
-    if (displayDateKey !== fallbackDateKey) {
-      setDisplayDateKey(fallbackDateKey);
-    }
-    if (displayTitleDateKey !== fallbackDateKey) {
-      setDisplayTitleDateKey(fallbackDateKey);
-    }
-  }, [
-    calendarIndex.byDate,
-    committedMonthKey,
-    displayDateKey,
-    displayTitleDateKey,
-    effectiveSelectedDate,
-    selectedDate,
-    visibleMonthOrderDateKeys,
-  ]);
 
   useFocusEffect(
     useCallback(
