@@ -24,7 +24,6 @@ import Animated, {
   cancelAnimation,
   interpolate,
   runOnJS,
-  scrollTo,
   useAnimatedRef,
   useAnimatedScrollHandler,
   useAnimatedStyle,
@@ -1139,20 +1138,30 @@ export default function CalendarScreen() {
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
   const goToNextMonth = useCallback(() => scrollToMonthByOffset(1), [scrollToMonthByOffset]);
-  const ordersSwipeStartOffset = useSharedValue(0);
-  const ordersSwipeLiveOffset = useSharedValue(0);
-  const finishOrdersSwipe = useCallback(() => {
-    const nextIndex = resolvePageIndex(ordersSwipeLiveOffset.value);
-    try {
-      monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
-    } catch {}
-    requestMonthCommit(nextIndex);
-  }, [
-    monthPagerRef,
-    ordersSwipeLiveOffset,
-    requestMonthCommit,
-    resolvePageIndex,
-  ]);
+  const commitOrdersHorizontalSwipe = useCallback(
+    (translationX, velocityX) => {
+      const pageWidth = Math.max(layoutMetrics.cardWidth, 1);
+      const distanceThreshold = Math.max(
+        12,
+        pageWidth * CALENDAR_GESTURE.MONTH_SWIPE_DISTANCE_RATIO,
+      );
+      const velocityThreshold = CALENDAR_GESTURE.MONTH_SWIPE_VELOCITY_X;
+
+      let offset = 0;
+      if (translationX <= -distanceThreshold || velocityX <= -velocityThreshold) offset = 1;
+      else if (translationX >= distanceThreshold || velocityX >= velocityThreshold) offset = -1;
+
+      const baseIndex = visibleMonthIndexRef.current;
+      const nextIndex = clamp(baseIndex + offset, 0, Math.max(0, dynamicMonths.length - 1));
+      if (nextIndex === baseIndex) return;
+
+      try {
+        monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
+      } catch {}
+      requestMonthCommit(nextIndex);
+    },
+    [dynamicMonths.length, layoutMetrics.cardWidth, monthPagerRef, requestMonthCommit],
+  );
   const scrollYearByOffset = useCallback(
     (offset) => {
       const baseIndex = visibleYearIndexRef.current;
@@ -1195,7 +1204,7 @@ export default function CalendarScreen() {
   const verticalFailOffsetX = gestureFailOffsetX + 12;
   const calendarGestureLock = useSharedValue(0); // 0 unknown, 1 horizontal, 2 vertical
   const ordersGestureLock = useSharedValue(0); // 0 unknown, 1 horizontal, 2 vertical
-  const snapCollapseToNearest = (velocityY) => {
+  const snapCollapseToNearest = useCallback((velocityY) => {
     'worklet';
     const total = stageOneDistanceSafe || 1;
     const progress = collapseTranslate.value / total;
@@ -1224,181 +1233,218 @@ export default function CalendarScreen() {
         runOnJS(setIsCollapsed)(target > 0);
       },
     );
-  };
+  }, [collapseTranslate, isSnappingShared, setSnappingState, stageOneDistanceSafe]);
 
-  const createVerticalCollapseGesture = (lockShared) =>
-    Gesture.Pan()
-      .enabled(true)
-      .hitSlop(gestureHitSlop)
-      .activeOffsetY([-activeOffsetY, activeOffsetY])
-      .failOffsetX([-verticalFailOffsetX, verticalFailOffsetX])
-      .onBegin(() => {
-        'worklet';
-        lockShared.value = 0;
-      })
-      .onStart(() => {
-        'worklet';
-        cancelAnimation(collapseTranslate);
-        panHasDrivenCollapse.value = false;
-        if (isSnappingShared.value) {
-          isSnappingShared.value = false;
-          runOnJS(setSnappingState)(false);
-        }
-        gestureStart.value = collapseTranslate.value;
-      })
-      .onUpdate((event) => {
-        'worklet';
-        const ty = event?.translationY;
-        if (!Number.isFinite(ty)) return;
-        const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
-        const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
-        const vy = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-        if (lockShared.value === 0) {
-          lockShared.value = resolveGestureIntent(
-            tx,
-            ty,
-            vx,
-            vy,
-            lockDistance,
-            lockRatio,
-            lockVelocity,
-          );
-        }
-        if (lockShared.value === 1) return;
-        const isFullyCollapsed =
-          collapseTranslate.value >=
-          stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-        const isFullyExpanded = collapseTranslate.value <= 0;
-        const listIsAwayFromTop = scrollY.value > listScrollTopThreshold;
-        if (isSnappingShared.value) return;
-        if (ty < 0 && isFullyCollapsed) return;
-        if (ty > 0 && isFullyExpanded) return;
-        if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
-        const next = gestureStart.value - ty;
-        const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
-        collapseTranslate.value = clamp(next, 0, safeMax);
-        panHasDrivenCollapse.value = true;
-      })
-      .onEnd((event) => {
-        'worklet';
-        if (!panHasDrivenCollapse.value) {
-          const atEdge =
-            collapseTranslate.value <= 0 ||
-            collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-          if (atEdge) return;
-        }
-        const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-        snapCollapseToNearest(velocityY);
-      })
-      .onFinalize(() => {
-        'worklet';
-        lockShared.value = 0;
-      });
+  const createVerticalCollapseGesture = useCallback(
+    (lockShared) =>
+      Gesture.Pan()
+        .enabled(true)
+        .hitSlop(gestureHitSlop)
+        .activeOffsetY([-activeOffsetY, activeOffsetY])
+        .failOffsetX([-verticalFailOffsetX, verticalFailOffsetX])
+        .onBegin(() => {
+          'worklet';
+          lockShared.value = 0;
+        })
+        .onStart(() => {
+          'worklet';
+          cancelAnimation(collapseTranslate);
+          panHasDrivenCollapse.value = false;
+          if (isSnappingShared.value) {
+            isSnappingShared.value = false;
+            runOnJS(setSnappingState)(false);
+          }
+          gestureStart.value = collapseTranslate.value;
+        })
+        .onUpdate((event) => {
+          'worklet';
+          const ty = event?.translationY;
+          if (!Number.isFinite(ty)) return;
+          const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
+          const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
+          const vy = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+          if (lockShared.value === 0) {
+            lockShared.value = resolveGestureIntent(
+              tx,
+              ty,
+              vx,
+              vy,
+              lockDistance,
+              lockRatio,
+              lockVelocity,
+            );
+          }
+          if (lockShared.value === 1) return;
+          const isFullyCollapsed =
+            collapseTranslate.value >=
+            stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+          const isFullyExpanded = collapseTranslate.value <= 0;
+          const listIsAwayFromTop = scrollY.value > listScrollTopThreshold;
+          if (isSnappingShared.value) return;
+          if (ty < 0 && isFullyCollapsed) return;
+          if (ty > 0 && isFullyExpanded) return;
+          if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
+          const next = gestureStart.value - ty;
+          const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
+          collapseTranslate.value = clamp(next, 0, safeMax);
+          panHasDrivenCollapse.value = true;
+        })
+        .onEnd((event) => {
+          'worklet';
+          if (!panHasDrivenCollapse.value) {
+            const atEdge =
+              collapseTranslate.value <= 0 ||
+              collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+            if (atEdge) return;
+          }
+          const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+          snapCollapseToNearest(velocityY);
+        })
+        .onFinalize(() => {
+          'worklet';
+          lockShared.value = 0;
+        }),
+    [
+      activeOffsetY,
+      collapseTranslate,
+      downwardUnlockDistance,
+      gestureHitSlop,
+      gestureStart,
+      isSnappingShared,
+      listScrollTopThreshold,
+      lockDistance,
+      lockRatio,
+      lockVelocity,
+      panHasDrivenCollapse,
+      scrollY,
+      setSnappingState,
+      snapCollapseToNearest,
+      stageOneDistanceSafe,
+      verticalFailOffsetX,
+    ],
+  );
 
   // Единая вертикальная логика для верхней и нижней области.
-  const calendarGesture = createVerticalCollapseGesture(calendarGestureLock);
+  const calendarGesture = useMemo(
+    () => createVerticalCollapseGesture(calendarGestureLock),
+    [calendarGestureLock, createVerticalCollapseGesture],
+  );
 
   const ordersListNativeGesture = useMemo(() => Gesture.Native(), []);
-  const ordersCombinedGesture = Gesture.Pan()
-    .enabled(true)
-    .hitSlop(gestureHitSlop)
-    .activeOffsetX([-activeOffsetX, activeOffsetX])
-    .activeOffsetY([-activeOffsetY, activeOffsetY])
-    .simultaneousWithExternalGesture(ordersListNativeGesture)
-    .onBegin(() => {
-      'worklet';
-      ordersGestureLock.value = 0;
-    })
-    .onStart(() => {
-      'worklet';
-      cancelAnimation(collapseTranslate);
-      panHasDrivenCollapse.value = false;
-      if (isSnappingShared.value) {
-        isSnappingShared.value = false;
-        runOnJS(setSnappingState)(false);
-      }
-      gestureStart.value = collapseTranslate.value;
+  const ordersCombinedGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(true)
+        .hitSlop(gestureHitSlop)
+        .activeOffsetX([-activeOffsetX, activeOffsetX])
+        .activeOffsetY([-activeOffsetY, activeOffsetY])
+        .simultaneousWithExternalGesture(ordersListNativeGesture)
+        .onBegin(() => {
+          'worklet';
+          ordersGestureLock.value = 0;
+        })
+        .onStart(() => {
+          'worklet';
+          cancelAnimation(collapseTranslate);
+          panHasDrivenCollapse.value = false;
+          if (isSnappingShared.value) {
+            isSnappingShared.value = false;
+            runOnJS(setSnappingState)(false);
+          }
+          gestureStart.value = collapseTranslate.value;
+        })
+        .onUpdate((event) => {
+          'worklet';
+          const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
+          const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
+          const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
+          const vy = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+          if (ordersGestureLock.value === 0) {
+            ordersGestureLock.value = resolveGestureIntent(
+              tx,
+              ty,
+              vx,
+              vy,
+              lockDistance,
+              lockRatio,
+              lockVelocity,
+            );
+          }
 
-      const pageWidth = layoutMetrics.cardWidth;
-      const baseOffset = visibleMonthIndex.value * pageWidth;
-      ordersSwipeStartOffset.value = baseOffset;
-      ordersSwipeLiveOffset.value = baseOffset;
-      monthScrollX.value = baseOffset;
-      scrollTo(monthPagerRef, baseOffset, 0, false);
-    })
-    .onUpdate((event) => {
-      'worklet';
-      const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
-      const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
-      const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
-      const vy = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-      if (ordersGestureLock.value === 0) {
-        ordersGestureLock.value = resolveGestureIntent(
-          tx,
-          ty,
-          vx,
-          vy,
-          lockDistance,
-          lockRatio,
-          lockVelocity,
-        );
-      }
+          if (ordersGestureLock.value === 1) {
+            monthSwipeInteraction.value = 1;
+            return;
+          }
 
-      if (ordersGestureLock.value === 1) {
-        monthSwipeInteraction.value = 1;
-        const pageWidth = layoutMetrics.cardWidth;
-        const maxOffset = Math.max(0, (dynamicMonths.length - 1) * pageWidth);
-        const nextOffset = clamp(ordersSwipeStartOffset.value - tx, 0, maxOffset);
-        ordersSwipeLiveOffset.value = nextOffset;
-        monthScrollX.value = nextOffset;
-        scrollTo(monthPagerRef, nextOffset, 0, false);
-        return;
-      }
+          if (ordersGestureLock.value !== 2) return;
 
-      if (ordersGestureLock.value !== 2) return;
+          const isFullyCollapsed =
+            collapseTranslate.value >=
+            stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+          const isFullyExpanded = collapseTranslate.value <= 0;
+          const listIsAwayFromTop = scrollY.value > listScrollTopThreshold;
 
-      const isFullyCollapsed =
-        collapseTranslate.value >=
-        stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-      const isFullyExpanded = collapseTranslate.value <= 0;
-      const listIsAwayFromTop = scrollY.value > listScrollTopThreshold;
+          if (isSnappingShared.value) return;
+          if (ty < 0 && isFullyCollapsed) return;
+          if (ty > 0 && isFullyExpanded) return;
+          if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
 
-      if (isSnappingShared.value) return;
-      if (ty < 0 && isFullyCollapsed) return;
-      if (ty > 0 && isFullyExpanded) return;
-      if (ty > 0 && listIsAwayFromTop && Math.abs(ty) < downwardUnlockDistance) return;
+          const next = gestureStart.value - ty;
+          const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
+          collapseTranslate.value = clamp(next, 0, safeMax);
+          panHasDrivenCollapse.value = true;
+        })
+        .onEnd((event) => {
+          'worklet';
+          if (isSnappingShared.value) return;
 
-      const next = gestureStart.value - ty;
-      const safeMax = Number.isFinite(stageOneDistanceSafe) ? stageOneDistanceSafe : 0;
-      collapseTranslate.value = clamp(next, 0, safeMax);
-      panHasDrivenCollapse.value = true;
-    })
-    .onEnd((event) => {
-      'worklet';
-      if (isSnappingShared.value) return;
+          if (ordersGestureLock.value === 1) {
+            monthSwipeInteraction.value = 0;
+            const tx = Number.isFinite(event?.translationX) ? event.translationX : 0;
+            const vx = Number.isFinite(event?.velocityX) ? event.velocityX : 0;
+            runOnJS(commitOrdersHorizontalSwipe)(tx, vx);
+            return;
+          }
 
-      if (ordersGestureLock.value === 1) {
-        monthSwipeInteraction.value = 0;
-        runOnJS(finishOrdersSwipe)();
-        return;
-      }
-
-      if (ordersGestureLock.value !== 2) return;
-      monthSwipeInteraction.value = 0;
-      if (!panHasDrivenCollapse.value) {
-        const atEdge =
-          collapseTranslate.value <= 0 ||
-          collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-        if (atEdge) return;
-      }
-      const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
-      snapCollapseToNearest(velocityY);
-    })
-    .onFinalize(() => {
-      'worklet';
-      monthSwipeInteraction.value = 0;
-      ordersGestureLock.value = 0;
-    });
+          if (ordersGestureLock.value !== 2) return;
+          monthSwipeInteraction.value = 0;
+          if (!panHasDrivenCollapse.value) {
+            const atEdge =
+              collapseTranslate.value <= 0 ||
+              collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
+            if (atEdge) return;
+          }
+          const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+          snapCollapseToNearest(velocityY);
+        })
+        .onFinalize(() => {
+          'worklet';
+          monthSwipeInteraction.value = 0;
+          ordersGestureLock.value = 0;
+        }),
+    [
+      activeOffsetX,
+      activeOffsetY,
+      collapseTranslate,
+      commitOrdersHorizontalSwipe,
+      downwardUnlockDistance,
+      gestureHitSlop,
+      gestureStart,
+      isSnappingShared,
+      listScrollTopThreshold,
+      lockDistance,
+      lockRatio,
+      lockVelocity,
+      monthSwipeInteraction,
+      ordersGestureLock,
+      ordersListNativeGesture,
+      panHasDrivenCollapse,
+      scrollY,
+      setSnappingState,
+      snapCollapseToNearest,
+      stageOneDistanceSafe,
+    ],
+  );
 
   useFocusEffect(
     useCallback(() => {
