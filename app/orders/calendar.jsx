@@ -1292,14 +1292,9 @@ export default function CalendarScreen() {
         })
         .onEnd((event) => {
           'worklet';
-          if (!panHasDrivenCollapse.value) {
-            const atEdge =
-              collapseTranslate.value <= 0 ||
-              collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-            if (atEdge) return;
-          }
           const ty = Number.isFinite(event?.translationY) ? event.translationY : 0;
           const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+          if (Math.abs(ty) < 8 && Math.abs(velocityY) < 150) return;
           const progress = collapseTranslate.value / Math.max(stageOneDistanceSafe, 1);
           const wantsCollapse =
             ty < -verticalSwipeDistanceThreshold || velocityY < -verticalSwipeVelocityThreshold;
@@ -1431,13 +1426,8 @@ export default function CalendarScreen() {
             ordersGestureLock.value === 2 || Math.abs(ty) >= Math.abs(tx) * 0.8;
           if (!isVerticalLike) return;
           monthSwipeInteraction.value = 0;
-          if (!panHasDrivenCollapse.value) {
-            const atEdge =
-              collapseTranslate.value <= 0 ||
-              collapseTranslate.value >= stageOneDistanceSafe * CALENDAR_GESTURE.COLLAPSED_PROGRESS_THRESHOLD;
-            if (atEdge) return;
-          }
           const velocityY = Number.isFinite(event?.velocityY) ? event.velocityY : 0;
+          if (Math.abs(ty) < 8 && Math.abs(velocityY) < 150) return;
           const progress = collapseTranslate.value / Math.max(stageOneDistanceSafe, 1);
           const wantsCollapse =
             ty < -verticalSwipeDistanceThreshold || velocityY < -verticalSwipeVelocityThreshold;
