@@ -48,21 +48,6 @@ const DEFAULT_FIELDS = [
   { field_key: 'city', label: null, type: 'text', position: 50 },
   { field_key: 'street', label: null, type: 'text', position: 60 },
   { field_key: 'house', label: null, type: 'text', position: 70 },
-  { field_key: 'country', label: null, type: 'text', position: 80 },
-  { field_key: 'postal_code', label: null, type: 'text', position: 90 },
-  { field_key: 'building', label: null, type: 'text', position: 100 },
-  { field_key: 'floor', label: null, type: 'text', position: 104 },
-  { field_key: 'entrance', label: null, type: 'text', position: 106 },
-  { field_key: 'apartment', label: null, type: 'text', position: 108 },
-  { field_key: 'intercom', label: null, type: 'text', position: 109 },
-  { field_key: 'secondary_phone', label: null, type: 'phone', position: 112 },
-  { field_key: 'contact_email', label: null, type: 'text', position: 114 },
-  { field_key: 'contact_pref', label: null, type: 'text', position: 116 },
-  { field_key: 'entrance_info', label: null, type: 'text', position: 118 },
-  { field_key: 'parking_notes', label: null, type: 'text', position: 120 },
-  { field_key: 'geo_lat', label: null, type: 'number', position: 122 },
-  { field_key: 'geo_lng', label: null, type: 'number', position: 124 },
-  { field_key: 'datetime', label: null, type: 'text', position: 126 },
 ];
 
 const SCROLL_ANIMATION_DELAY = 200;
@@ -91,8 +76,6 @@ export default function CreateOrderScreen() {
   const [form, setForm] = useState({});
   const [description, setDescription] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
-  const [departureEndDate, setDepartureEndDate] = useState(null);
-  const [isDepartureRange, setIsDepartureRange] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [assigneeId, setAssigneeId] = useState(null);
@@ -132,8 +115,6 @@ export default function CreateOrderScreen() {
         form,
         description,
         departureDate: departureDate?.toISOString(),
-        departureEndDate: departureEndDate?.toISOString(),
-        isDepartureRange,
         workTypeId,
         assigneeId,
         selectedClientId,
@@ -145,7 +126,7 @@ export default function CreateOrderScreen() {
     } catch (e) {
       console.warn('[CreateOrder] Save draft failed:', e);
     }
-  }, [form, description, departureDate, departureEndDate, isDepartureRange, workTypeId, assigneeId, selectedClientId, urgent, toFeed]);
+  }, [form, description, departureDate, workTypeId, assigneeId, selectedClientId, urgent, toFeed]);
 
   // Ğ Â Ğ²Ğ‚â€Ğ Â Ğ’Â°Ğ Â Ğ¡â€“Ğ ĞĞ â€šĞ ĞĞ¡â€œĞ Â Ğ’Â·Ğ Â Ğ¡â€˜Ğ ĞĞ²Ğ‚Ñ™Ğ ĞĞ Ğ‰ Ğ ĞĞ²Ğ‚ĞĞ Â Ğ’ÂµĞ ĞĞ â€šĞ Â Ğ â€¦Ğ Â Ğ¡â€¢Ğ Â Ğ â€ Ğ Â Ğ¡â€˜Ğ Â Ğ¡â€
   const loadDraft = useCallback(async () => {
@@ -175,8 +156,6 @@ export default function CreateOrderScreen() {
     setForm(draft.form || {});
     setDescription(draft.description || '');
     setDepartureDate(draft.departureDate ? new Date(draft.departureDate) : null);
-    setDepartureEndDate(draft.departureEndDate ? new Date(draft.departureEndDate) : null);
-    setIsDepartureRange(!!draft.isDepartureRange);
     setWorkTypeId(draft.workTypeId || null);
     setAssigneeId(draft.assigneeId || null);
     setSelectedClientId(draft.selectedClientId || null);
@@ -222,35 +201,18 @@ export default function CreateOrderScreen() {
       !!(form.city?.trim()) ||
       !!(form.street?.trim()) ||
       !!(form.house?.trim()) ||
-      !!(form.country?.trim()) ||
-      !!(form.postal_code?.trim()) ||
-      !!(form.building?.trim()) ||
-      !!(form.floor?.trim()) ||
-      !!(form.entrance?.trim()) ||
-      !!(form.apartment?.trim()) ||
-      !!(form.intercom?.trim()) ||
-      !!(form.secondary_phone?.trim()) ||
-      !!(form.contact_email?.trim()) ||
-      !!(form.contact_pref?.trim()) ||
-      !!(form.entrance_info?.trim()) ||
-      !!(form.parking_notes?.trim()) ||
-      !!(form.geo_lat?.trim()) ||
-      !!(form.geo_lng?.trim()) ||
-      !!(form.datetime?.trim()) ||
       !!(form.fio?.trim()) ||
       !!(form.phone?.trim()) ||
       !!(form.customer_name?.trim()) ||
       !!description?.trim() ||
       !!departureDate ||
-      !!departureEndDate ||
-      !!isDepartureRange ||
       !!workTypeId ||
       !!assigneeId ||
       !!selectedClientId ||
       !!urgent ||
       !!toFeed
     );
-  }, [form, description, departureDate, departureEndDate, isDepartureRange, workTypeId, assigneeId, selectedClientId, urgent, toFeed]);
+  }, [form, description, departureDate, workTypeId, assigneeId, selectedClientId, urgent, toFeed]);
 
   const handleCancelPress = useCallback(() => {
     // Ğ Â Ğ¡ÑŸĞ Â Ğ¡â€¢Ğ Â Ğ¡â€Ğ Â Ğ’Â°Ğ Â Ğ’Â·Ğ ĞĞ²Ğ‚â„–Ğ Â Ğ â€ Ğ Â Ğ’Â°Ğ Â Ğ’ÂµĞ Â Ğ¡Â˜ Ğ Â Ğ¡Â˜Ğ Â Ğ¡â€¢Ğ Â Ğ¢â€˜Ğ Â Ğ’Â°Ğ Â Ğ’Â»Ğ Â Ğ¡â€Ğ ĞĞ¡â€œ Ğ ĞĞ²Ğ‚Ñ™Ğ Â Ğ¡â€¢Ğ Â Ğ’Â»Ğ ĞĞ Ğ‰Ğ Â Ğ¡â€Ğ Â Ğ¡â€¢ Ğ Â Ğ’ÂµĞ ĞĞ Ñ“Ğ Â Ğ’Â»Ğ Â Ğ¡â€˜ Ğ Â Ğ’ÂµĞ ĞĞ Ñ“Ğ ĞĞ²Ğ‚Ñ™Ğ ĞĞ Ğ‰ Ğ Â Ğ¡â€˜Ğ Â Ğ’Â·Ğ Â Ğ¡Â˜Ğ Â Ğ’ÂµĞ Â Ğ â€¦Ğ Â Ğ’ÂµĞ Â Ğ â€¦Ğ Â Ğ¡â€˜Ğ ĞĞ Ğ
@@ -328,21 +290,6 @@ export default function CreateOrderScreen() {
         city: t('order_field_city'),
         street: t('order_field_street'),
         house: t('order_field_house'),
-        country: t('order_field_country'),
-        postal_code: t('order_field_postal_code'),
-        building: t('order_field_building'),
-        floor: t('order_field_floor'),
-        entrance: t('order_field_entrance'),
-        apartment: t('order_field_apartment'),
-        intercom: t('order_field_intercom'),
-        secondary_phone: t('order_field_secondary_phone'),
-        contact_email: t('order_field_contact_email'),
-        contact_pref: t('order_field_contact_pref'),
-        entrance_info: t('order_field_entrance_info'),
-        parking_notes: t('order_field_parking_notes'),
-        geo_lat: t('order_field_geo_lat'),
-        geo_lng: t('order_field_geo_lng'),
-        datetime: t('order_field_datetime'),
         time_window_start: t('create_order_label_date'),
         assigned_to: t('create_order_label_executor'),
       };
@@ -434,9 +381,6 @@ export default function CreateOrderScreen() {
     if (!departureDate) {
       nextErrors.time_window_start = { message: t('order_validation_date_required') };
     }
-    if (isDepartureRange && (!departureEndDate || departureEndDate < departureDate)) {
-      nextErrors.time_window_start = { message: t('order_validation_date_range_invalid') };
-    }
     if (!toFeed && !assigneeId) {
       nextErrors.assigned_to = { message: t('order_validation_executor_required') };
     }
@@ -469,45 +413,18 @@ export default function CreateOrderScreen() {
       city: form.city || '',
       street: form.street || '',
       house: form.house || '',
-      country: form.country || '',
-      postal_code: form.postal_code || '',
-      building: form.building || '',
-      floor: form.floor || '',
-      entrance: form.entrance || '',
-      apartment: form.apartment || '',
-      intercom: form.intercom || '',
-      secondary_phone: normalizePhone(form.secondary_phone),
-      contact_email: form.contact_email || '',
-      contact_pref: String(form.contact_pref || '').trim() || null,
-      entrance_info: form.entrance_info || '',
-      parking_notes: form.parking_notes || '',
-      geo_lat: form.geo_lat || '',
-      geo_lng: form.geo_lng || '',
-      datetime: form.datetime || '',
       fio: form.customer_name || form.fio || '',
       phone: phoneFormatted,
       client_id: selectedClientId || null,
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: departureDate ? departureDate.toISOString() : null,
-      time_window_end: isDepartureRange && departureEndDate ? departureEndDate.toISOString() : null,
       status: toFeed ? t('order_status_in_feed') : t('order_status_new'),
       urgent,
       currency: companySettings?.currency ?? null,
       custom,
     };
 
-    let { error } = await supabase.from('orders').insert(payload);
-    if (error) {
-      const message = String(error?.message || '').toLowerCase();
-      const isContactPrefEnumError =
-        message.includes('contact_pref_enum') ||
-        message.includes('invalid input value for enum');
-      if (isContactPrefEnumError) {
-        const retryPayload = { ...payload, contact_pref: null };
-        const retryResult = await supabase.from('orders').insert(retryPayload);
-        error = retryResult?.error || null;
-      }
-    }
+    const { error } = await supabase.from('orders').insert(payload);
     if (error) {
       const normalized = normalizeError(error, { t });
       if (normalized.screenError) {
@@ -528,8 +445,6 @@ export default function CreateOrderScreen() {
     useWorkTypes,
     workTypeId,
     departureDate,
-    departureEndDate,
-    isDepartureRange,
     toFeed,
     assigneeId,
     selectedClientId,
@@ -815,15 +730,6 @@ export default function CreateOrderScreen() {
     });
   }, []);
 
-  const departureDateDisplayLabel = useMemo(() => {
-    const startLabel = formatDate(departureDate);
-    if (!startLabel) return null;
-    if (!isDepartureRange) return startLabel;
-    const endLabel = formatDate(departureEndDate);
-    if (!endLabel) return startLabel;
-    return `${startLabel} ? ${endLabel}`;
-  }, [departureDate, departureEndDate, isDepartureRange, formatDate]);
-
   const workTypeItems = useMemo(() => {
     if (!workTypes.length) {
       return [
@@ -979,78 +885,6 @@ export default function CreateOrderScreen() {
               onChangeText: (text) => setField('house', text),
               required: getField('house')?.required,
             })}
-            {renderTextField({
-              label: getFieldLabel('country'),
-              placeholder: t('create_order_placeholder_country'),
-              value: form.country || '',
-              onChangeText: (text) => setField('country', text),
-              required: getField('country')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('postal_code'),
-              placeholder: t('create_order_placeholder_postal_code'),
-              value: form.postal_code || '',
-              onChangeText: (text) => setField('postal_code', text),
-              required: getField('postal_code')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('building'),
-              placeholder: t('create_order_placeholder_building'),
-              value: form.building || '',
-              onChangeText: (text) => setField('building', text),
-              required: getField('building')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('floor'),
-              placeholder: t('create_order_placeholder_floor'),
-              value: form.floor || '',
-              onChangeText: (text) => setField('floor', text),
-              required: getField('floor')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('entrance'),
-              placeholder: t('create_order_placeholder_entrance'),
-              value: form.entrance || '',
-              onChangeText: (text) => setField('entrance', text),
-              required: getField('entrance')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('apartment'),
-              placeholder: t('create_order_placeholder_apartment'),
-              value: form.apartment || '',
-              onChangeText: (text) => setField('apartment', text),
-              required: getField('apartment')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('intercom'),
-              placeholder: t('create_order_placeholder_intercom'),
-              value: form.intercom || '',
-              onChangeText: (text) => setField('intercom', text),
-              required: getField('intercom')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('parking_notes'),
-              placeholder: t('create_order_placeholder_parking_notes'),
-              value: form.parking_notes || '',
-              onChangeText: (text) => setField('parking_notes', text),
-              required: getField('parking_notes')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('geo_lat'),
-              placeholder: t('create_order_placeholder_geo_lat'),
-              value: form.geo_lat || '',
-              onChangeText: (text) => setField('geo_lat', text),
-              keyboardType: 'decimal-pad',
-              required: getField('geo_lat')?.required,
-            })}
-            {renderTextField({
-              label: getFieldLabel('geo_lng'),
-              placeholder: t('create_order_placeholder_geo_lng'),
-              value: form.geo_lng || '',
-              onChangeText: (text) => setField('geo_lng', text),
-              keyboardType: 'decimal-pad',
-              required: getField('geo_lng')?.required,
-            })}
           </Card>
 
           <SectionHeader>{t('create_order_section_customer')}</SectionHeader>
@@ -1080,32 +914,6 @@ export default function CreateOrderScreen() {
               required: getField('fio')?.required,
             })}
             {renderPhoneInput('phone')}
-            {renderPhoneInput('secondary_phone')}
-            {renderTextField({
-              fieldKey: 'contact_email',
-              label: getFieldLabel('contact_email'),
-              placeholder: t('create_order_placeholder_contact_email'),
-              value: form.contact_email || '',
-              onChangeText: (text) => setField('contact_email', text),
-              keyboardType: 'email-address',
-              required: getField('contact_email')?.required,
-            })}
-            {renderTextField({
-              fieldKey: 'contact_pref',
-              label: getFieldLabel('contact_pref'),
-              placeholder: t('create_order_placeholder_contact_pref'),
-              value: form.contact_pref || '',
-              onChangeText: (text) => setField('contact_pref', text),
-              required: getField('contact_pref')?.required,
-            })}
-            {renderTextField({
-              fieldKey: 'entrance_info',
-              label: getFieldLabel('entrance_info'),
-              placeholder: t('create_order_placeholder_entrance_info'),
-              value: form.entrance_info || '',
-              onChangeText: (text) => setField('entrance_info', text),
-              required: getField('entrance_info')?.required,
-            })}
           </Card>
 
           <SectionHeader>{t('create_order_section_planning')}</SectionHeader>
@@ -1117,7 +925,7 @@ export default function CreateOrderScreen() {
                 getFieldLabel('time_window_start', t('create_order_label_date')),
                 true,
               )}
-              value={departureDateDisplayLabel || t('create_order_placeholder_date')}
+              value={formatDate(departureDate) || t('create_order_placeholder_date')}
               pressable
               style={formStyles.field}
               ref={dateFieldRef}
@@ -1129,7 +937,7 @@ export default function CreateOrderScreen() {
               rightSlot={
                 departureDate ? (
                   <ClearButton
-                    onPress={() => { setDepartureDate(null); setDepartureEndDate(null); setIsDepartureRange(false); }}
+                    onPress={() => setDepartureDate(null)}
                     accessibilityLabel={t('common_clear')}
                   />
                 ) : null
@@ -1147,36 +955,25 @@ export default function CreateOrderScreen() {
               }
             />
 
-            {renderTextField({
-              fieldKey: 'datetime',
-              label: getFieldLabel('datetime'),
-              placeholder: t('create_order_placeholder_datetime'),
-              value: form.datetime || '',
-              onChangeText: (text) => setField('datetime', text),
-              required: getField('datetime')?.required,
-            })}
-
             <DateTimeModal
               visible={showDatePicker}
               initial={departureDate || new Date()}
               mode="date"
               allowFutureDates
               onApply={(selected) => {
-                const nextStart = selected ? new Date(selected) : null;
-                setIsDepartureRange(false);
                 setDepartureDate((prev) => {
-                  if (!nextStart) return null;
-                  if (!prev) return nextStart;
-                  const d = new Date(nextStart);
-                  d.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
-                  return d;
+                  if (prev) {
+                    const d = new Date(selected);
+                    d.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+                    return d;
+                  }
+                  return selected;
                 });
-                setDepartureEndDate(null);
               }}
               onClose={() => setShowDatePicker(false)}
             />
 
-            {useDepartureTime && !isDepartureRange && (
+            {useDepartureTime && (
               <>
                 <TextField
                   label={t('create_order_label_time')}

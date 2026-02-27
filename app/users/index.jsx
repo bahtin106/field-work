@@ -1,7 +1,7 @@
 // app/users/index.jsx
 
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -61,6 +61,8 @@ function withAlpha(color, a) {
   return color;
 }
 
+const USER_OPEN_GUARD_MS = 900;
+
 export default function UsersIndex() {
   const { theme } = useTheme();
   useTranslation(); // subscribe to i18n changes without re-plumbing
@@ -74,6 +76,7 @@ export default function UsersIndex() {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const openUserNavGuardRef = useRef({ userId: null, startedAt: 0, inFlight: false });
 
   // Initialize filters with a 5-second TTL as requested by user.
   // When user leaves and returns within 5 seconds, filters persist.
@@ -308,11 +311,31 @@ export default function UsersIndex() {
 
   const goToUser = useCallback(
     async (id) => {
+      const normalizedId = String(id || '');
+      if (!normalizedId) return;
+
+      const now = Date.now();
+      const last = openUserNavGuardRef.current;
+      const sameUserRapidTap =
+        last.userId === normalizedId && now - last.startedAt < USER_OPEN_GUARD_MS;
+      const sameUserInFlight = last.userId === normalizedId && last.inFlight;
+      if (sameUserRapidTap || sameUserInFlight) return;
+
+      openUserNavGuardRef.current = {
+        userId: normalizedId,
+        startedAt: now,
+        inFlight: true,
+      };
       const registry = getPrefetchRegistry();
-      await registry
-        .run(`employee-detail:${id}`, () => ensureEmployeePrefetch(queryClient, id))
-        .catch(() => {});
-      router.push(`/users/${id}`);
+      try {
+        await registry
+          .run(`employee-detail:${normalizedId}`, () => ensureEmployeePrefetch(queryClient, normalizedId))
+          .catch(() => {});
+        router.push(`/users/${normalizedId}`);
+      } finally {
+        const prev = openUserNavGuardRef.current;
+        openUserNavGuardRef.current = { ...prev, inFlight: false };
+      }
     },
     [queryClient, router],
   );

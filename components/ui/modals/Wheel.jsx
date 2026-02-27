@@ -112,8 +112,9 @@ export default function Wheel({
       onScrollEndDrag={onDragEnd}
       initialNumToRender={VISIBLE_COUNT_DP + 2}
       scrollEventThrottle={16}
-      style={{ width }}
+      style={{ width, height: ITEM_HEIGHT_DP * VISIBLE_COUNT_DP }}
       contentContainerStyle={{ paddingVertical: (ITEM_HEIGHT_DP * (VISIBLE_COUNT_DP - 1)) / 2 }}
+      removeClippedSubviews={Platform.OS === 'android'}
       scrollEnabled={enabled}
       initialScrollIndex={Math.max(0, Math.min(data.length - 1, selIndex))}
       onScrollToIndexFailed={(info) => {

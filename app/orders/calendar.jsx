@@ -7,7 +7,6 @@ import { ru as dfnsRu } from 'date-fns/locale';
 import { useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   BackHandler,
   Dimensions,
   FlatList,
@@ -39,15 +38,20 @@ import { CalendarMonthHeader } from '../../components/calendar/CalendarMonthHead
 import { CalendarWeekRow } from '../../components/calendar/CalendarWeekRow';
 import YearView from '../../components/calendar/YearView';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
+import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useAuth } from '../../components/hooks/useAuth';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
+import { usePermissions } from '../../lib/permissions';
 import {
   ensureRequestPrefetch,
   useCalendarRequests,
+  useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { useDepartmentsQuery } from '../../src/features/employees/queries';
+import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
@@ -101,19 +105,6 @@ const DAY_KEYS = [
   'day_short_su',
 ];
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
-
-function capitalizeLabel(value) {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function formatDayLabel(dateKey) {
-  try {
-    return capitalizeLabel(format(new Date(dateKey), 'd MMMM', { locale: dfnsRu }));
-  } catch {
-    return dateKey;
-  }
-}
 
 function resolveSnapTarget(progress, velocityY, totalDistance) {
   'worklet';
@@ -175,12 +166,18 @@ export default function CalendarScreen() {
   }, [screenWidth, theme]);
 
   const todayKey = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []);
-  const [refreshing, setRefreshing] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [viewMode, setViewMode] = useState('month');
+  const [scope, setScope] = useState('my');
+  const [executorFilterIds, setExecutorFilterIds] = useState([]);
+  const [executorModalVisible, setExecutorModalVisible] = useState(false);
+  const hasEmployeeFilter = Array.isArray(executorFilterIds) && executorFilterIds.length > 0;
   const ordersSwapOverlayOpacity = useSharedValue(0);
   const [isOrdersSwapping, setIsOrdersSwapping] = useState(false);
+  const { has, loading: permissionsLoading } = usePermissions();
+  const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
+  const { data: companyId } = useMyCompanyIdQuery({ enabled: isAuthenticated && !isInitializing });
 
   useEffect(() => {
     markScreenMount('Calendar');
@@ -189,15 +186,80 @@ export default function CalendarScreen() {
   const {
     data: orders = [],
     isLoading: isCalendarLoading,
-    refetch: refetchCalendar,
   } = useCalendarRequests({
     userId: profile?.id,
     role: profile?.role,
+    scope: canViewAllOrders ? (hasEmployeeFilter ? 'all' : scope) : 'my',
     enabled: isAuthenticated && !isInitializing && !!profile?.id && !!profile?.role,
     isScreenActive: isFocused,
   });
 
   useRequestRealtimeSync({ enabled: isFocused && !!profile?.id });
+  const { data: executors = [] } = useRequestExecutors({
+    enabled: isAuthenticated && !isInitializing && !!profile?.id && canViewAllOrders,
+    placeholderData: (prev) => prev ?? [],
+  });
+  const { data: departments = [] } = useDepartmentsQuery({
+    companyId,
+    enabled: !!companyId && canViewAllOrders,
+    onlyEnabled: true,
+  });
+
+  const executorFilterItems = useMemo(
+    () =>
+      (Array.isArray(executors) ? executors : [])
+        .map((row) => {
+          const id = String(row?.id || '').trim();
+          if (!id) return null;
+          const fullName = `${String(row?.first_name || '').trim()} ${String(row?.last_name || '').trim()}`.trim();
+          return {
+            id,
+            label: fullName || String(row?.full_name || row?.email || '').trim() || id,
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru')),
+    [executors],
+  );
+  const executorFilterSet = useMemo(
+    () => new Set((executorFilterIds || []).map((id) => String(id))),
+    [executorFilterIds],
+  );
+  const assignmentEmployees = useMemo(
+    () =>
+      executorFilterItems.map((item) => {
+        const source = (Array.isArray(executors) ? executors : []).find(
+          (row) => String(row?.id || '') === String(item.id),
+        );
+        return {
+          id: item.id,
+          display_name: item.label,
+          role: String(source?.role || '').toLowerCase() || undefined,
+          email: source?.email || '',
+          department_id: source?.department_id ?? null,
+        };
+      }),
+    [executorFilterItems, executors],
+  );
+  const assignmentPanelConfig = useMemo(
+    () => ({
+      title: t('placeholder_pick_employee'),
+      employees: assignmentEmployees,
+      multiple: true,
+      selectedIds: executorFilterIds,
+      defaults: { selectedIds: [] },
+      includeUnassigned: false,
+      onApply: (selection) => {
+        const next = Array.isArray(selection)
+          ? selection.map((id) => String(id)).filter(Boolean)
+          : [];
+        setExecutorFilterIds(next);
+        if (next.length > 0) setScope('all');
+      },
+      onReset: () => setExecutorFilterIds([]),
+    }),
+    [assignmentEmployees, executorFilterIds, t],
+  );
 
   const firstContentMarkedRef = useRef(false);
   useEffect(() => {
@@ -206,6 +268,22 @@ export default function CalendarScreen() {
     firstContentMarkedRef.current = true;
     markFirstContent('Calendar');
   }, [isCalendarLoading]);
+
+  useEffect(() => {
+    if (canViewAllOrders) return;
+    if (scope !== 'my') setScope('my');
+    if (executorFilterIds.length) setExecutorFilterIds([]);
+    if (executorModalVisible) setExecutorModalVisible(false);
+  }, [canViewAllOrders, executorFilterIds, executorModalVisible, scope]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!canViewAllOrders) return undefined;
+      setScope('my');
+      setExecutorFilterIds([]);
+      return undefined;
+    }, [canViewAllOrders]),
+  );
 
   const MONTH_LIST_MIDDLE_INDEX = CALENDAR_LAYOUT.MONTH_WINDOW_RADIUS;
 
@@ -770,19 +848,75 @@ export default function CalendarScreen() {
           paddingVertical: theme.spacing.sm,
           borderBottomWidth: 1,
           borderBottomColor: theme.colors.border,
+          gap: theme.spacing.xs,
         },
         ordersTitle: {
           fontSize: theme.typography.sizes.md,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.text,
+          flexShrink: 1,
+          marginRight: theme.spacing.sm,
         },
         ordersHeaderActions: {
           flexDirection: 'row',
           alignItems: 'center',
+          flexWrap: 'nowrap',
+          justifyContent: 'flex-start',
+          gap: theme.spacing.xs,
         },
-        refreshButton: {
-          padding: theme.spacing.xs,
-          borderRadius: theme.radii.sm,
+        scopeSwitch: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          borderRadius: 999,
+          padding: 2,
+          height: 28,
+          backgroundColor: theme.colors.surface,
+        },
+        scopePill: {
+          minWidth: 49,
+          height: 24,
+          paddingHorizontal: 9,
+          borderRadius: 999,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: 'transparent',
+        },
+        scopePillActive: {
+          backgroundColor: theme.colors.primary,
+        },
+        scopeText: {
+          fontSize: 12,
+          color: theme.colors.textSecondary || theme.colors.text,
+        },
+        scopeTextActive: {
+          color: theme.colors.onPrimary || '#fff',
+          fontWeight: '600',
+        },
+        filterButton: {
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.surface,
+        },
+        filterButtonActive: {
+          borderColor: theme.colors.primary,
+          backgroundColor: `${theme.colors.primary}14`,
+        },
+        resetFilterButton: {
+          width: 28,
+          height: 28,
+          borderRadius: 14,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
         },
         noOrders: {
           fontSize: theme.typography.sizes.sm,
@@ -1316,11 +1450,18 @@ export default function CalendarScreen() {
     }, [navigation, router]),
   );
 
+  const filteredOrders = useMemo(() => {
+    const base = Array.isArray(orders) ? orders : [];
+    if (!base.length) return [];
+    if (!hasEmployeeFilter) return base;
+    return base.filter((order) => executorFilterSet.has(String(order?.assigned_to || '')));
+  }, [executorFilterSet, hasEmployeeFilter, orders]);
+
   const calendarIndex = useMemo(() => {
     const byDate = {};
     const countByDate = {};
 
-    for (const order of orders) {
+    for (const order of filteredOrders) {
       const dateField = order?.time_window_start;
       if (!dateField) continue;
       const key = formatDateKey(new Date(dateField));
@@ -1338,7 +1479,7 @@ export default function CalendarScreen() {
     });
 
     return { byDate, marksBase, countByDate };
-  }, [orders, theme.colors.primary]);
+  }, [filteredOrders, theme.colors.primary]);
 
   const committedMonthKey = format(currentMonth, 'yyyy-MM');
   const selectedMonthKey = selectedDate ? selectedDate.slice(0, 7) : 'none';
@@ -1360,7 +1501,7 @@ export default function CalendarScreen() {
     [displayDateKey, displayedOrders.length],
   );
   const ordersTitleDateLabel = useMemo(
-    () => (displayTitleDateKey ? formatDayLabel(displayTitleDateKey) : ''),
+    () => (displayTitleDateKey ? format(new Date(displayTitleDateKey), 'd MMMM', { locale: dfnsRu }) : ''),
     [displayTitleDateKey],
   );
   const ordersListContentContainerStyle = useMemo(
@@ -1417,17 +1558,18 @@ export default function CalendarScreen() {
     [calendarIndex, effectiveSelectedDate, theme.colors.primary],
   );
 
-  const onRefresh = useCallback(async () => {
-    if (!isAuthenticated || isInitializing || !profile) return;
-    setRefreshing(true);
-    try {
-      await refetchCalendar();
-    } catch {
-      console.error('Failed to refresh orders');
-    } finally {
-      setRefreshing(false);
-    }
-  }, [isAuthenticated, isInitializing, profile, refetchCalendar]);
+  const onScopeChange = useCallback((nextScope) => {
+    const safeNext = nextScope === 'all' ? 'all' : 'my';
+    setExecutorFilterIds([]);
+    setScope(safeNext);
+  }, []);
+
+  const activeScope = hasEmployeeFilter ? null : scope;
+
+  const onResetCalendarFilters = useCallback(() => {
+    setExecutorFilterIds([]);
+    setExecutorModalVisible(false);
+  }, []);
 
   useEffect(() => {
     if (isOrdersSwapping) return;
@@ -1690,21 +1832,54 @@ export default function CalendarScreen() {
                   >
                     <View style={styles.ordersHeader}>
                       <Text style={styles.ordersTitle}>
-                        Заявки на {ordersTitleDateLabel}
+                        {ordersTitleDateLabel}
                       </Text>
                       <View style={styles.ordersHeaderActions}>
-                        <Pressable
-                          onPress={onRefresh}
-                          android_ripple={{ color: theme.colors.overlayNavBar }}
-                          style={styles.refreshButton}
-                          disabled={refreshing}
-                        >
-                          {refreshing ? (
-                            <ActivityIndicator size="small" color={theme.colors.primary} />
-                          ) : (
-                            <Feather name="refresh-cw" size={16} color={theme.colors.textSecondary} />
-                          )}
-                        </Pressable>
+                        {canViewAllOrders ? (
+                          <View style={styles.scopeSwitch}>
+                            {['my', 'all'].map((s) => {
+                              const active = activeScope === s;
+                              return (
+                                <Pressable
+                                  key={s}
+                                  onPress={() => onScopeChange(s)}
+                                  android_ripple={{ color: theme.colors.border }}
+                                  style={({ pressed }) => [
+                                    styles.scopePill,
+                                    active && styles.scopePillActive,
+                                    pressed && { opacity: 0.92 },
+                                  ]}
+                                  accessibilityRole="button"
+                                >
+                                  <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
+                                    {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
+                                  </Text>
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        ) : null}
+                        {canViewAllOrders ? (
+                          <Pressable
+                            onPress={() => setExecutorModalVisible(true)}
+                            android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                            style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common_filter')}
+                          >
+                            <Feather name="sliders" size={18} color={theme.colors.text} />
+                          </Pressable>
+                        ) : null}
+                        {canViewAllOrders && hasEmployeeFilter ? (
+                          <Pressable
+                            onPress={onResetCalendarFilters}
+                            android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                            style={styles.resetFilterButton}
+                            accessibilityRole="button"
+                          >
+                            <Feather name="x" size={16} color={theme.colors.textSecondary} />
+                          </Pressable>
+                        ) : null}
                       </View>
                     </View>
                     <GestureDetector gesture={ordersListNativeGesture}>
@@ -1803,6 +1978,15 @@ export default function CalendarScreen() {
           </View>
         )}
       </View>
+      {canViewAllOrders ? (
+        <FiltersPanel
+          visible={executorModalVisible}
+          onClose={() => setExecutorModalVisible(false)}
+          departments={departments}
+          mode="assignment"
+          assignment={assignmentPanelConfig}
+        />
+      ) : null}
     </Screen>
   );
 }
