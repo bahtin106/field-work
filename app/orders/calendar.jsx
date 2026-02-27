@@ -11,6 +11,7 @@ import {
   Dimensions,
   FlatList,
   InteractionManager,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -301,7 +302,6 @@ export default function CalendarScreen() {
   const scrollY = useSharedValue(0);
   const monthScrollX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
-  const previewMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
   const isCollapsedShared = useSharedValue(false);
   const isSnappingShared = useSharedValue(false);
   const panHasDrivenCollapse = useSharedValue(false);
@@ -396,13 +396,9 @@ export default function CalendarScreen() {
       if (!nextMonth) return;
       setCurrentMonth(nextMonth);
       setSelectedDate(format(startOfMonth(nextMonth), 'yyyy-MM-dd'));
-      setVisibleMonthRenderIndex(pageIndex);
     },
     [dynamicMonths],
   );
-  const previewVisibleMonthIndex = useCallback((pageIndex) => {
-    setVisibleMonthRenderIndex((prev) => (prev === pageIndex ? prev : pageIndex));
-  }, []);
 
   const resolvePageIndex = useCallback(
     (offsetX) => {
@@ -507,20 +503,8 @@ export default function CalendarScreen() {
       const rawIndex = clamp(event.contentOffset.x / pageWidth, 0, maxIndex);
       const committedIndex = clamp(Math.round(rawIndex), 0, maxIndex);
       visibleMonthIndex.value = committedIndex;
-
-      // Hysteresis prevents 1-frame flips old<->new around page boundaries.
-      const currentPreview = previewMonthIndex.value;
-      let nextPreview = currentPreview;
-      const delta = rawIndex - currentPreview;
-      if (delta > 0.5 && currentPreview < maxIndex) nextPreview = currentPreview + 1;
-      else if (delta < -0.5 && currentPreview > 0) nextPreview = currentPreview - 1;
-
-      if (nextPreview !== currentPreview) {
-        previewMonthIndex.value = nextPreview;
-        runOnJS(previewVisibleMonthIndex)(nextPreview);
-      }
     },
-  }, [dynamicMonths.length, layoutMetrics.cardWidth, previewMonthIndex, previewVisibleMonthIndex]);
+  }, [dynamicMonths.length, layoutMetrics.cardWidth]);
 
   useEffect(() => {
     monthScrollX.value = layoutMetrics.cardWidth * visibleMonthIndex.value;
@@ -559,7 +543,6 @@ export default function CalendarScreen() {
     lastHandledPageIndex.current = targetIndex;
     visibleMonthIndexRef.current = targetIndex;
     visibleMonthIndex.value = targetIndex;
-    previewMonthIndex.value = targetIndex;
     setVisibleMonthRenderIndex(targetIndex);
     monthScrollX.value = layoutMetrics.cardWidth * targetIndex;
     settledMonthOffsetX.value = layoutMetrics.cardWidth * targetIndex;
@@ -575,7 +558,6 @@ export default function CalendarScreen() {
     layoutMetrics.cardWidth,
     monthPagerRef,
     monthScrollX,
-    previewMonthIndex,
     settledMonthOffsetX,
     visibleMonthIndex,
   ]);
@@ -1105,7 +1087,6 @@ export default function CalendarScreen() {
       lastHandledPageIndex.current = MONTH_LIST_MIDDLE_INDEX;
       visibleMonthIndexRef.current = MONTH_LIST_MIDDLE_INDEX;
       visibleMonthIndex.value = MONTH_LIST_MIDDLE_INDEX;
-      previewMonthIndex.value = MONTH_LIST_MIDDLE_INDEX;
       setVisibleMonthRenderIndex(MONTH_LIST_MIDDLE_INDEX);
       monthScrollX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
       settledMonthOffsetX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
@@ -1121,7 +1102,6 @@ export default function CalendarScreen() {
     layoutMetrics.cardWidth,
     monthPagerRef,
     monthScrollX,
-    previewMonthIndex,
     settledMonthOffsetX,
     visibleMonthIndex,
     MONTH_LIST_MIDDLE_INDEX,
@@ -1148,14 +1128,13 @@ export default function CalendarScreen() {
         if (typeof targetIndex !== 'number') return;
         visibleMonthIndexRef.current = targetIndex;
         visibleMonthIndex.value = targetIndex;
-        previewMonthIndex.value = targetIndex;
         setVisibleMonthRenderIndex(targetIndex);
         try {
           monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: true });
         } catch {}
       });
     },
-    [dynamicMonths.length, monthPagerRef, previewMonthIndex, visibleMonthIndex],
+    [dynamicMonths.length, monthPagerRef, visibleMonthIndex],
   );
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
@@ -1717,10 +1696,10 @@ export default function CalendarScreen() {
                     keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
                     getItemLayout={getItemLayout}
                     initialScrollIndex={MONTH_LIST_MIDDLE_INDEX}
-                    windowSize={5}
-                    maxToRenderPerBatch={5}
+                    windowSize={3}
+                    maxToRenderPerBatch={3}
                     updateCellsBatchingPeriod={16}
-                    removeClippedSubviews={false}
+                    removeClippedSubviews={Platform.OS === 'android'}
                     scrollEventThrottle={16}
                     onScroll={monthScrollHandler}
                     onScrollBeginDrag={() => {
@@ -1891,7 +1870,7 @@ export default function CalendarScreen() {
                           initialNumToRender={6}
                           maxToRenderPerBatch={8}
                           updateCellsBatchingPeriod={40}
-                          removeClippedSubviews={false}
+                          removeClippedSubviews={Platform.OS === 'android'}
                           keyExtractor={orderKeyExtractor}
                           contentContainerStyle={ordersListContentContainerStyle}
                           style={{ flex: 1 }}
