@@ -83,14 +83,16 @@ export function useCalendarRequests({
   startDate = null,
   endDate = null,
   isScreenActive = true,
+  refetchIntervalMs = false,
   enabled = true,
 } = {}) {
   return useQuery({
     queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
     queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
     enabled: enabled && !!userId,
-    staleTime: 60 * 1000,
-    refetchInterval: isScreenActive ? 60 * 1000 : false,
+    staleTime: 5 * 60 * 1000,
+    refetchOnMount: false,
+    refetchInterval: isScreenActive ? refetchIntervalMs : false,
     refetchIntervalInBackground: false,
   });
 }
