@@ -3,6 +3,16 @@ import { measureNetwork } from '../../shared/perf/devMetrics';
 
 const clientByIdInFlight = new Map<string, Promise<any>>();
 
+export function formatClientNameForOrder(client: any) {
+  if (!client || typeof client !== 'object') return '';
+
+  const firstName = String(client.first_name ?? client.firstName ?? '').trim();
+  const middleName = String(client.middle_name ?? client.middleName ?? '').trim();
+  const lastName = String(client.last_name ?? client.lastName ?? '').trim();
+
+  return [firstName, middleName, lastName].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+}
+
 function normalizeClient(row: any) {
   if (!row) return null;
   const firstName = String(row.first_name || '').trim();

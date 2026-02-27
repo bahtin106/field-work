@@ -53,26 +53,33 @@ const EMPTY_ARRAY = [];
 // ===== HARD PERMISSION GUARD (independent from usePermissions) =====
 async function checkCanViewAll() {
   try {
-    // 1) get current user's role from profiles
+    const { data: userRes } = await supabase.auth.getUser();
+    const uid = userRes?.user?.id;
+    if (!uid) return false;
+    // 1) get current user's role + company from profiles
     const { data: me, error: e1 } = await supabase
       .from('profiles')
-      .select('role')
-      .eq(
-        'id',
-        (await supabase.auth.getUser()).data?.user?.id || '00000000-0000-0000-0000-000000000000',
-      )
-      .single();
-    if (e1 || !me?.role) return false;
+      .select('role, company_id')
+      .eq('id', uid)
+      .maybeSingle();
+    if (e1 || !me?.role || !me?.company_id) return false;
     // 2) check role permission
     const { data: perm, error: e2 } = await supabase
       .from('app_role_permissions')
       .select('value')
+      .eq('company_id', me.company_id)
       .eq('role', me.role)
       .eq('key', 'canViewAllOrders')
-      .eq('value', true)
       .maybeSingle();
     if (e2) return false;
-    return !!perm?.value === true;
+    // default allow when explicit row is absent (same behavior as orders/index)
+    if (perm?.value === null || perm?.value === undefined) return true;
+    if (typeof perm.value === 'boolean') return perm.value;
+    if (typeof perm.value === 'number') return perm.value === 1;
+    if (typeof perm.value === 'string') {
+      return ['1', 'true', 't', 'yes', 'y'].includes(perm.value.trim().toLowerCase());
+    }
+    return false;
   } catch {
     return false;
   }

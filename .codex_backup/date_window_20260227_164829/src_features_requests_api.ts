@@ -20,7 +20,6 @@ const EXTRA_ORDER_FIELDS = [
   'geo_lat',
   'geo_lng',
   'datetime',
-  'time_window_end',
 ];
 
 function normalizeOrder(row) {
@@ -85,34 +84,28 @@ function isContactPrefEnumError(error) {
 export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
   return measureNetwork('requests.update.withVersion', async () => {
     if (!id) throw new Error('Order id is required');
-    const hasTimeWindowEndPatch = Object.prototype.hasOwnProperty.call(
-      patch ?? {},
-      'time_window_end',
-    );
 
     // Preferred path: DB-side atomic RPC.
-    if (!hasTimeWindowEndPatch) {
-      try {
-        const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
-          p_order_id: String(id),
-          p_expected_updated_at: expectedUpdatedAt,
-          p_patch: patch ?? {},
-        });
-        if (rpcError) throw rpcError;
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
+        p_order_id: String(id),
+        p_expected_updated_at: expectedUpdatedAt,
+        p_patch: patch ?? {},
+      });
+      if (rpcError) throw rpcError;
 
-        if (!rpcData) {
-          if (!expectedUpdatedAt) {
-            throw new Error('Order not found');
-          }
-          const latest = await getRequestById(id);
-          throw buildConcurrencyError('Order was modified concurrently', latest || null);
+      if (!rpcData) {
+        if (!expectedUpdatedAt) {
+          throw new Error('Order not found');
         }
+        const latest = await getRequestById(id);
+        throw buildConcurrencyError('Order was modified concurrently', latest || null);
+      }
 
-        return getRequestById(id);
-      } catch (rpcFailure) {
-        if (!shouldFallbackFromRpcFailure(rpcFailure)) {
-          throw rpcFailure;
-        }
+      return getRequestById(id);
+    } catch (rpcFailure) {
+      if (!shouldFallbackFromRpcFailure(rpcFailure)) {
+        throw rpcFailure;
       }
     }
 
@@ -222,7 +215,7 @@ export async function listRequestExecutors() {
   return measureNetwork('requests.executors', async () => {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, first_name, last_name, full_name, email, role, department_id')
+      .select('id, first_name, last_name, department_id')
       .neq('role', 'client');
 
     if (error) throw error;
@@ -257,17 +250,16 @@ export async function getAssigneeDisplayNameById(userId) {
   });
 }
 
-export async function listCalendarRequests({ userId, role, scope = 'my' } = {}) {
+export async function listCalendarRequests({ userId, role } = {}) {
   return measureNetwork('requests.calendar', async () => {
     if (!userId) return [];
-    const normalizedScope = scope === 'all' ? 'all' : 'my';
 
     let query = supabase
       .from('orders_secure_v2')
       .select('*')
       .order('time_window_start', { ascending: false, nullsFirst: false });
 
-    if (normalizedScope === 'my') {
+    if (role === 'worker') {
       query = query.eq('assigned_to', userId);
     }
 
@@ -275,7 +267,9 @@ export async function listCalendarRequests({ userId, role, scope = 'my' } = {}) 
     if (error) throw error;
 
     const rows = Array.isArray(data) ? data.map(normalizeOrder) : [];
-    if (normalizedScope === 'my' && userId) return rows.filter((row) => row.assigned_to === userId);
+    if (role === 'worker' && userId) {
+      return rows.filter((row) => row.assigned_to === userId || row.assigned_to == null);
+    }
 
     return rows;
   });

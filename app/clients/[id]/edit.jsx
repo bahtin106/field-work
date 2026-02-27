@@ -372,7 +372,11 @@ export default function EditClientScreen() {
 
       toast.success(t('clients_saved_success'));
       allowLeaveRef.current = true;
-      router.replace(`/clients/${clientId}`);
+      if (navigation && typeof navigation.canGoBack === 'function' && navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        router.replace(`/clients/${clientId}`);
+      }
       return true;
     } catch (error) {
       toast.error(error?.message || t('clients_save_failed'));
@@ -388,6 +392,7 @@ export default function EditClientScreen() {
     firstName,
     lastName,
     middleName,
+    navigation,
     objectAddress,
     phone,
     router,

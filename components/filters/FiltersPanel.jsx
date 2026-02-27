@@ -40,6 +40,12 @@ function withAlpha(color, a) {
   return `rgba(0,0,0,${a})`;
 }
 
+const normalizeSelectionId = (id) =>
+  id !== null && id !== undefined ? String(id) : null;
+
+const normalizeSelectionIds = (ids) =>
+  Array.isArray(ids) ? ids.map((id) => normalizeSelectionId(id)).filter(Boolean) : [];
+
 /**
  * Props:
  *  - visible, onClose
@@ -65,8 +71,7 @@ export default function FiltersPanel({
   useTranslation();
 
   const isAssignmentMode = mode === 'assignment' && assignment;
-  const normalizeSelectionId = (id) =>
-    id !== null && id !== undefined ? String(id) : null;
+  const isAssignmentMulti = isAssignmentMode && assignment?.multiple === true;
   const assignmentEmployees = useMemo(
     () =>
       isAssignmentMode
@@ -76,7 +81,19 @@ export default function FiltersPanel({
         : [],
     [assignment?.employees, isAssignmentMode],
   );
-  const assignmentDefaultId = normalizeSelectionId(assignment?.defaults?.selectedId ?? null);
+  const assignmentDefaultSelection = useMemo(() => {
+    if (!isAssignmentMode) return [];
+    if (isAssignmentMulti) {
+      const fromDefaults = normalizeSelectionIds(assignment?.defaults?.selectedIds);
+      if (fromDefaults.length) return fromDefaults;
+      const fromSelected = normalizeSelectionIds(assignment?.selectedIds);
+      if (fromSelected.length) return fromSelected;
+      return [];
+    }
+    return normalizeSelectionId(assignment?.defaults?.selectedId ?? null)
+      ? [normalizeSelectionId(assignment?.defaults?.selectedId ?? null)]
+      : [];
+  }, [assignment?.defaults?.selectedId, assignment?.defaults?.selectedIds, assignment?.selectedIds, isAssignmentMode, isAssignmentMulti]);
   const searchList = !isAssignmentMode && Array.isArray(searchItems) ? searchItems : assignmentEmployees;
 
   const c = theme.colors;
@@ -112,11 +129,15 @@ export default function FiltersPanel({
     roles: Array.isArray(values.roles) ? values.roles : [],
     suspended: values.suspended ?? null,
   });
-  const [assignmentDraftId, setAssignmentDraftId] = useState(
-    normalizeSelectionId(assignment?.selectedId ?? null),
+  const [assignmentDraftSelection, setAssignmentDraftSelection] = useState(
+    isAssignmentMulti
+      ? normalizeSelectionIds(assignment?.selectedIds)
+      : (normalizeSelectionId(assignment?.selectedId ?? null) ? [normalizeSelectionId(assignment?.selectedId ?? null)] : []),
   );
-  const [assignmentBaselineId, setAssignmentBaselineId] = useState(
-    normalizeSelectionId(assignment?.selectedId ?? null),
+  const [assignmentBaselineSelection, setAssignmentBaselineSelection] = useState(
+    isAssignmentMulti
+      ? normalizeSelectionIds(assignment?.selectedIds)
+      : (normalizeSelectionId(assignment?.selectedId ?? null) ? [normalizeSelectionId(assignment?.selectedId ?? null)] : []),
   );
 
   // Re-init draft and baseline every time panel opens
@@ -237,9 +258,9 @@ export default function FiltersPanel({
 
     if (isAssignmentMode) {
       const getPreferredCategory = () => {
-        const selectedId = normalizeSelectionId(assignment?.selectedId);
+        const selectedId = assignmentDraftSelection?.[0] || normalizeSelectionId(assignment?.selectedId);
         if (selectedId) {
-          const selectedUser = assignmentEmployees.find((emp) => String(emp.id) === selectedId);
+          const selectedUser = assignmentEmployees.find((emp) => String(emp.id) === String(selectedId));
           if (selectedUser) {
             const deptId = selectedUser.department_id ?? null;
             const key = `dept:${deptId === null ? 'null' : deptId}`;
@@ -298,6 +319,7 @@ export default function FiltersPanel({
     CATEGORY_TTL,
     isAssignmentMode,
     assignment?.selectedId,
+    assignmentDraftSelection,
     assignmentEmployees,
   ]);
 
@@ -324,10 +346,12 @@ export default function FiltersPanel({
 
   useEffect(() => {
     if (!isAssignmentMode || !visible) return;
-    const initialSelection = normalizeSelectionId(assignment?.selectedId ?? null);
-    setAssignmentDraftId(initialSelection);
-    setAssignmentBaselineId(initialSelection);
-  }, [assignment?.selectedId, isAssignmentMode, visible]);
+    const initialSelection = isAssignmentMulti
+      ? normalizeSelectionIds(assignment?.selectedIds)
+      : (normalizeSelectionId(assignment?.selectedId ?? null) ? [normalizeSelectionId(assignment?.selectedId ?? null)] : []);
+    setAssignmentDraftSelection(initialSelection);
+    setAssignmentBaselineSelection(initialSelection);
+  }, [assignment?.selectedId, assignment?.selectedIds, isAssignmentMode, isAssignmentMulti, visible]);
 
   // Shallow set compares
   const eqArrays = (a = [], b = []) => {
@@ -341,7 +365,7 @@ export default function FiltersPanel({
 
   const hasChanges = useMemo(() => {
     if (isAssignmentMode) {
-      return assignmentDraftId !== assignmentBaselineId;
+      return !eqArrays(assignmentDraftSelection || [], assignmentBaselineSelection || []);
     }
     if (!eqArrays(draft.departments || [], baseline.departments || [])) return true;
     if (!eqArrays(draft.roles || [], baseline.roles || [])) return true;
@@ -350,15 +374,15 @@ export default function FiltersPanel({
   }, [
     draft,
     baseline,
-    assignmentBaselineId,
-    assignmentDraftId,
+    assignmentBaselineSelection,
+    assignmentDraftSelection,
     isAssignmentMode,
   ]);
 
   // Check if any filters are active (different from defaults)
   const hasActiveFilters = useMemo(() => {
     if (isAssignmentMode) {
-      return assignmentDraftId !== assignmentDefaultId;
+      return !eqArrays(assignmentDraftSelection || [], assignmentDefaultSelection || []);
     }
     const defaultDeps = Array.isArray(defaults.departments)
       ? defaults.departments.map(String)
@@ -370,14 +394,14 @@ export default function FiltersPanel({
     if (!eqArrays(draft.roles || [], defaultRoles)) return true;
     if ((draft.suspended ?? null) !== defaultSuspended) return true;
     return false;
-  }, [assignmentDefaultId, assignmentDraftId, defaults, draft, isAssignmentMode]);
+  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode]);
 
   const handleAssignmentReset = () => {
-    const defaultId = assignmentDefaultId;
-    setAssignmentDraftId(defaultId);
-    setAssignmentBaselineId(defaultId);
+    const defaultSelection = [...assignmentDefaultSelection];
+    setAssignmentDraftSelection(defaultSelection);
+    setAssignmentBaselineSelection(defaultSelection);
     if (typeof assignment?.onReset === 'function') {
-      assignment.onReset(defaultId);
+      assignment.onReset(isAssignmentMulti ? defaultSelection : (defaultSelection[0] ?? null));
     }
   };
 
@@ -591,13 +615,23 @@ export default function FiltersPanel({
 
   const renderAssignmentRow = (emp, idx) => {
     const empId = normalizeSelectionId(emp.id);
-    const selected = empId ? assignmentDraftId === empId : false;
+    const selected = empId ? (assignmentDraftSelection || []).includes(empId) : false;
     const name = emp.display_name || emp.email || t('common_noName');
     return (
       <Pressable
         key={empId || `emp-${idx}`}
         onPress={() => {
-          if (empId) setAssignmentDraftId(empId);
+          if (!empId) return;
+          if (isAssignmentMulti) {
+            setAssignmentDraftSelection((prev) => {
+              const current = Array.isArray(prev) ? prev : [];
+              return current.includes(empId)
+                ? current.filter((id) => id !== empId)
+                : [...current, empId];
+            });
+            return;
+          }
+          setAssignmentDraftSelection([empId]);
         }}
         style={({ pressed }) => [
           optionRow,
@@ -838,7 +872,7 @@ export default function FiltersPanel({
             onPress={() => {
               // Discard any changes by restoring baseline values
               if (isAssignmentMode) {
-                setAssignmentDraftId(assignmentBaselineId);
+                setAssignmentDraftSelection([...(assignmentBaselineSelection || [])]);
               } else {
                 setDraft(baseline);
               }
@@ -946,12 +980,12 @@ export default function FiltersPanel({
               title={t('btn_apply')}
               onPress={() => {
                 if (isAssignmentMode) {
-                  const selection = assignmentDraftId;
+                  const selection = [...(assignmentDraftSelection || [])];
                   if (typeof assignment?.onApply === 'function') {
-                    assignment.onApply(selection);
+                    assignment.onApply(isAssignmentMulti ? selection : (selection[0] ?? null));
                   }
-                  setAssignmentBaselineId(selection);
-                  setAssignmentDraftId(selection);
+                  setAssignmentBaselineSelection(selection);
+                  setAssignmentDraftSelection(selection);
                   if (onClose) onClose();
                   return;
                 }

@@ -76,10 +76,10 @@ export function useRequestFilterOptions(options = {}) {
   });
 }
 
-export function useCalendarRequests({ userId, role, isScreenActive = true, enabled = true } = {}) {
+export function useCalendarRequests({ userId, role, scope = 'my', isScreenActive = true, enabled = true } = {}) {
   return useQuery({
-    queryKey: queryKeys.requests.calendar({ userId, role }),
-    queryFn: () => listCalendarRequests({ userId, role }),
+    queryKey: queryKeys.requests.calendar({ userId, role, scope }),
+    queryFn: () => listCalendarRequests({ userId, role, scope }),
     enabled: enabled && !!userId,
     staleTime: 60 * 1000,
     refetchInterval: isScreenActive ? 60 * 1000 : false,

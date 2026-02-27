@@ -131,8 +131,6 @@ export default function EditOrderScreen() {
   const [contactPref, setContactPref] = useState('');
   const [entranceInfo, setEntranceInfo] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
-  const [departureEndDate, setDepartureEndDate] = useState(null);
-  const [isDepartureRange, setIsDepartureRange] = useState(false);
   const [assigneeId, setAssigneeId] = useState(null);
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
@@ -341,10 +339,6 @@ export default function EditOrderScreen() {
     () => normalizeDateOrNull(departureDate),
     [departureDate, normalizeDateOrNull],
   );
-  const displayDepartureEndDate = useMemo(
-    () => normalizeDateOrNull(departureEndDate),
-    [departureEndDate, normalizeDateOrNull],
-  );
 
   const buildSnapshot = useCallback(
     (draft) =>
@@ -374,8 +368,6 @@ export default function EditOrderScreen() {
         geoLng: String(draft.geoLng || '').trim(),
         datetime: String(draft.datetime || '').trim(),
         departureDateIso: normalizeDateOrNull(draft.departureDate)?.toISOString() || null,
-        departureEndDateIso: normalizeDateOrNull(draft.departureEndDate)?.toISOString() || null,
-        isDepartureRange: !!draft.isDepartureRange,
         assigneeId: draft.assigneeId || null,
         toFeed: !!draft.toFeed,
         urgent: !!draft.urgent,
@@ -421,8 +413,6 @@ export default function EditOrderScreen() {
       const nextGeoLng = row.geo_lng ?? '';
       const nextDateTime = row.datetime ?? '';
       const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
-      const nextDepartureEndDate = normalizeDateOrNull(row.time_window_end);
-      const nextIsDepartureRange = !!nextDepartureEndDate;
       const nextAssigneeId = row.assigned_to || null;
       const nextToFeed = !row.assigned_to;
       const nextUrgent = !!row.urgent;
@@ -469,8 +459,6 @@ export default function EditOrderScreen() {
       setGeoLng(String(nextGeoLng || ''));
       setDateTimeValue(String(nextDateTime || ''));
       setDepartureDate(nextDepartureDate);
-      setDepartureEndDate(nextDepartureEndDate);
-      setIsDepartureRange(nextIsDepartureRange);
       setAssigneeId(nextAssigneeId);
       setAssignedEmployeeLabel(nextAssignedEmployeeLabel);
       setWorkTypeNameFallback(fallbackName);
@@ -516,8 +504,6 @@ export default function EditOrderScreen() {
         geoLng: nextGeoLng,
         datetime: nextDateTime,
         departureDate: nextDepartureDate,
-        departureEndDate: nextDepartureEndDate,
-        isDepartureRange: nextIsDepartureRange,
         assigneeId: nextAssigneeId,
         toFeed: nextToFeed,
         urgent: nextUrgent,
@@ -543,7 +529,7 @@ export default function EditOrderScreen() {
       if (!nextWorkTypeResolved || nextWorkTypeId == null) {
         supabase
           .from('orders')
-          .select('work_type_id, client_id, secondary_phone, contact_email, contact_pref, entrance_info, parking_notes, geo_lat, geo_lng, datetime, time_window_end')
+          .select('work_type_id, client_id, secondary_phone, contact_email, contact_pref, entrance_info, parking_notes, geo_lat, geo_lng, datetime')
           .eq('id', id)
           .maybeSingle()
           .then(({ data: wtRow }) => {
@@ -558,7 +544,6 @@ export default function EditOrderScreen() {
             const resolvedGeoLat = String(wtRow.geo_lat || '');
             const resolvedGeoLng = String(wtRow.geo_lng || '');
             const resolvedDateTime = String(wtRow.datetime || '');
-            const resolvedDepartureEndDate = normalizeDateOrNull(wtRow.time_window_end);
             setWorkTypeId(resolvedWorkTypeId);
             setSelectedClientId(resolvedClientId);
             setSecondaryPhone((prev) => prev || resolvedSecondaryPhone);
@@ -569,8 +554,6 @@ export default function EditOrderScreen() {
             setGeoLat((prev) => prev || resolvedGeoLat);
             setGeoLng((prev) => prev || resolvedGeoLng);
             setDateTimeValue((prev) => prev || resolvedDateTime);
-            setDepartureEndDate((prev) => prev || resolvedDepartureEndDate);
-            setIsDepartureRange((prev) => prev || !!resolvedDepartureEndDate);
             setWorkTypeResolved(true);
             snapshotRef.current = buildSnapshot({
               title: nextTitle,
@@ -598,8 +581,6 @@ export default function EditOrderScreen() {
               geoLng: nextGeoLng || resolvedGeoLng,
               datetime: nextDateTime || resolvedDateTime,
               departureDate: nextDepartureDate,
-              departureEndDate: nextDepartureEndDate || resolvedDepartureEndDate,
-              isDepartureRange: nextIsDepartureRange || !!resolvedDepartureEndDate,
               assigneeId: nextAssigneeId,
               toFeed: nextToFeed,
               urgent: nextUrgent,
@@ -681,8 +662,6 @@ export default function EditOrderScreen() {
       geoLng,
       datetime: dateTimeValue,
       departureDate,
-      departureEndDate,
-      isDepartureRange,
       assigneeId,
       toFeed,
       urgent,
@@ -720,8 +699,6 @@ export default function EditOrderScreen() {
     geoLng,
     dateTimeValue,
     departureDate,
-    departureEndDate,
-    isDepartureRange,
     assigneeId,
     toFeed,
     urgent,
@@ -984,19 +961,6 @@ export default function EditOrderScreen() {
         showToast(T('order_validation_date_required'), 'error');
         return;
       }
-      const normalizedDepartureEndDate = normalizeDateOrNull(departureEndDate);
-      if (isDepartureRange && !normalizedDepartureEndDate) {
-        showToast(T('order_validation_date_required'), 'error');
-        return;
-      }
-      if (
-        isDepartureRange &&
-        normalizedDepartureEndDate &&
-        normalizedDepartureEndDate.getTime() < normalizedDepartureDate.getTime()
-      ) {
-        showToast(T('order_validation_date_range_invalid'), 'error');
-        return;
-      }
 
       const normalizedPhone = normalizeRuPhoneForDb(phone);
       const parsedPrice = parseDecimalOrNull(price);
@@ -1044,10 +1008,6 @@ export default function EditOrderScreen() {
         datetime: String(dateTimeValue || '').trim() || null,
         assigned_to: toFeed ? null : assigneeId,
         time_window_start: normalizedDepartureDate.toISOString(),
-        time_window_end:
-          isDepartureRange && normalizedDepartureEndDate
-            ? normalizedDepartureEndDate.toISOString()
-            : null,
         urgent,
         department_id: departmentId || null,
         price: parsedPrice,
@@ -1091,8 +1051,6 @@ export default function EditOrderScreen() {
         geoLng,
         datetime: dateTimeValue,
         departureDate,
-        departureEndDate,
-        isDepartureRange,
         assigneeId,
         toFeed,
         urgent,
@@ -1475,12 +1433,7 @@ export default function EditOrderScreen() {
               label={T('order_field_departure_date')}
               value={
                 displayDepartureDate
-                  ? (() => {
-                      const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
-                      if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
-                      const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
-                      return `${startLabel} — ${endLabel}`;
-                    })()
+                  ? format(displayDepartureDate, 'd MMMM yyyy', { locale: ru })
                   : T('order_placeholder_departure_date')
               }
               pressable
@@ -1488,7 +1441,7 @@ export default function EditOrderScreen() {
               onPress={() => setShowDateModal(true)}
             />
 
-            {useDepartureTime && !isDepartureRange && (
+            {useDepartureTime && (
               <>
                 <TextField
                   label={T('order_field_departure_time')}
@@ -1584,15 +1537,7 @@ export default function EditOrderScreen() {
         initial={departureDate}
         allowFutureDates={true}
         onApply={(date) => {
-          setDepartureDate((prev) => {
-            if (!date) return null;
-            if (!prev) return date;
-            const next = new Date(date);
-            next.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
-            return next;
-          });
-          setDepartureEndDate(null);
-          setIsDepartureRange(false);
+          setDepartureDate(date);
           setShowDateModal(false);
         }}
         onClose={() => setShowDateModal(false)}

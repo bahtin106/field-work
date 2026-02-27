@@ -78,6 +78,7 @@ export function SimpleAuthProvider({ children }) {
   const authRequestIdRef = useRef(0);
   const profileRef = useRef(null);
   const currentUserIdRef = useRef(null);
+  const initialSessionHandledRef = useRef(false);
   const recoveryTimerRef = useRef(null);
   const recoveryJobIdRef = useRef(0);
 
@@ -203,6 +204,7 @@ export function SimpleAuthProvider({ children }) {
     clearProfileRecovery();
     authRequestIdRef.current += 1;
     currentUserIdRef.current = null;
+    initialSessionHandledRef.current = false;
     profileRef.current = null;
     setState({
       isInitializing: false,
@@ -329,7 +331,10 @@ export function SimpleAuthProvider({ children }) {
             continue;
           }
 
-          await handleAuthChange('INITIAL_SESSION', session);
+          if (!initialSessionHandledRef.current) {
+            initialSessionHandledRef.current = true;
+            await handleAuthChange('INITIAL_SESSION', session);
+          }
           return;
         } catch (error) {
           console.warn(
@@ -362,6 +367,10 @@ export function SimpleAuthProvider({ children }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION') {
+        if (initialSessionHandledRef.current) return;
+        initialSessionHandledRef.current = true;
+      }
       handleAuthChange(event, session).catch((error) => {
         console.error('[SimpleAuth] onAuthStateChange handler failed:', error);
       });

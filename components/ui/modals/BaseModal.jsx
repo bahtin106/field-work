@@ -46,6 +46,8 @@ const baseSheetStyles = (t) =>
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'flex-end',
       alignItems: 'center',
+      zIndex: 1,
+      elevation: 11,
     },
     cardWrap: {
       width: '100%',
@@ -79,6 +81,7 @@ const BaseModalImpl = (
     disableBackdropClose = false,
     disablePanClose = false,
     keyboardExtraPadding = 0,
+    disableContentShrink = false,
   },
   ref,
 ) => {
@@ -302,9 +305,10 @@ const BaseModalImpl = (
         } catch {}
       }}
     >
-      {/* Backdrop: if keyboard visible, dismiss it first; otherwise close modal */}
+      {/* Backdrop - handles taps outside card */}
       <Pressable
-        style={s.backdrop}
+        style={[StyleSheet.absoluteFill, { zIndex: 0, elevation: 0 }]}
+        pointerEvents={rnVisible ? 'box-only' : 'none'}
         onPress={() => {
           if (kbInset > 0) {
             try {
@@ -314,14 +318,14 @@ const BaseModalImpl = (
           }
           if (!disableBackdropClose) close();
         }}
-        pointerEvents={rnVisible ? 'auto' : 'none'}
       >
         <Animated.View
+          pointerEvents="none"
           style={[StyleSheet.absoluteFill, aBackdrop, { backgroundColor: overlayColor }]}
         />
       </Pressable>
 
-      {/* Bottom container */}
+      {/* Bottom container - above backdrop */}
       <View
         style={[
           s.bottomWrap,
@@ -342,83 +346,81 @@ const BaseModalImpl = (
               maxHeight: sheetMaxH,
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
+              elevation: 10,
             },
           ]}
         >
           {/* Drag handle */}
-          {showHandle ? (
-            <View style={s.handleHit} {...(disablePanClose ? {} : pan.panHandlers)}>
-              <View style={[s.handle, { backgroundColor: theme.colors.inputBorder }]} />
+            {showHandle ? (
+              <View style={s.handleHit} {...(disablePanClose ? {} : pan.panHandlers)}>
+                <View style={[s.handle, { backgroundColor: theme.colors.inputBorder }]} />
+              </View>
+            ) : null}
+
+            {/* Header */}
+            <View style={s.header}>
+              <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
+                {title}
+              </Text>
+              <Pressable
+                hitSlop={10}
+                onPress={close}
+                style={s.closeBtn}
+                accessibilityLabel={T('btn_close')}
+              >
+                <Feather name="x" size={20} color={theme.colors.textSecondary} />
+              </Pressable>
             </View>
-          ) : null}
 
-          {/* Header: tap on header will dismiss keyboard (if open) */}
-          <Pressable
-            accessible={false}
-            style={s.header}
-            onPress={() => {
-              try {
-                if (kbInset > 0) Keyboard.dismiss();
-              } catch {}
-            }}
-          >
-            <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
-              {title}
-            </Text>
-            <Pressable
-              hitSlop={10}
-              onPress={close}
-              style={s.closeBtn}
-              accessibilityLabel={T('btn_close')}
-            >
-              <Feather name="x" size={20} color={theme.colors.textSecondary} />
-            </Pressable>
-          </Pressable>
-
-          {/* Content */}
-          <View style={{ paddingHorizontal: theme.spacing.lg, flexShrink: 1, minHeight: 0 }}>
-            {children}
-          </View>
-
-          {feedbackMessage ? (
+            {/* Content */}
             <View
-              style={{
-                marginTop: theme.spacing.xs,
-                marginHorizontal: theme.spacing.lg,
-                borderWidth: 1,
-                borderRadius: theme.radii.md,
-                borderColor: feedbackTone.border,
-                backgroundColor: feedbackTone.bg,
-                paddingHorizontal: theme.spacing.md,
-                paddingVertical: theme.spacing.sm,
-              }}
+              style={[
+                { paddingHorizontal: theme.spacing.lg },
+                disableContentShrink ? null : { flexShrink: 1, minHeight: 0 },
+              ]}
             >
-              <Text
+              {children}
+            </View>
+
+            {feedbackMessage ? (
+              <View
                 style={{
-                  color: feedbackTone.text,
-                  fontSize: theme.typography.sizes.sm,
-                  lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.35),
+                  marginTop: theme.spacing.xs,
+                  marginHorizontal: theme.spacing.lg,
+                  borderWidth: 1,
+                  borderRadius: theme.radii.md,
+                  borderColor: feedbackTone.border,
+                  backgroundColor: feedbackTone.bg,
+                  paddingHorizontal: theme.spacing.md,
+                  paddingVertical: theme.spacing.sm,
                 }}
               >
-                {feedbackMessage}
-              </Text>
-            </View>
-          ) : null}
+                <Text
+                  style={{
+                    color: feedbackTone.text,
+                    fontSize: theme.typography.sizes.sm,
+                    lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.35),
+                  }}
+                >
+                  {feedbackMessage}
+                </Text>
+              </View>
+            ) : null}
 
-          {/* Footer */}
-          {footer ? (
-            <View
-              style={{
-                paddingHorizontal: theme.spacing.lg,
-                marginTop: theme.spacing.sm,
-                marginBottom: theme.spacing.md,
-              }}
-            >
-              {footer}
-            </View>
-          ) : null}
-        </Animated.View>
-      </View>
+            {/* Footer */}
+            {footer ? (
+              <View
+                style={{
+                  paddingHorizontal: theme.spacing.lg,
+                  marginTop: theme.spacing.sm,
+                  marginBottom: theme.spacing.md,
+                }}
+              >
+                {footer}
+              </View>
+            ) : null}
+          </Animated.View>
+        </View>
     </Modal>
   );
 };

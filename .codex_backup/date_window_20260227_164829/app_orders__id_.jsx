@@ -98,7 +98,6 @@ const REQUEST_SYNC_FIELDS = [
   'status',
   'assigned_to',
   'time_window_start',
-  'time_window_end',
   'title',
   'comment',
   'region',
@@ -227,6 +226,7 @@ export default function OrderDetails() {
   const [warningMessage, setWarningMessage] = useState('');
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [departmentModalVisible, setDepartmentModalVisible] = useState(false);
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteCountdown, setDeleteCountdown] = useState(5);
   const [deleteEnabled, setDeleteEnabled] = useState(false);
@@ -1532,6 +1532,68 @@ export default function OrderDetails() {
     t,
   ]);
 
+  const updateStatus = useCallback(
+    async (next) => {
+      if (!canEdit()) return;
+      try {
+        if (next === t('order_status_in_feed')) {
+          let error = null;
+          try {
+            await updateRequestWithVersion(
+              order.id,
+              { status: t('order_status_in_feed'), assigned_to: null },
+              order?.updated_at || null,
+            );
+          } catch (e) {
+            error = e;
+          }
+          if (error) {
+            if (error?.code === 'CONFLICT' && error?.latest) {
+              setOrder(error.latest);
+              showToast('Статус уже изменен с другого устройства.');
+              return;
+            }
+            showToast(t('order_toast_status_updated'));
+            return;
+          }
+          setOrder((prev) => ({
+            ...(prev || {}),
+            status: t('order_status_in_feed'),
+            assigned_to: null,
+          }));
+          setAssigneeId(null);
+          setExecutorName(null);
+          setToFeed(true);
+          setStatusModalVisible(false);
+          showToast('Статус: В ленте');
+          return;
+        }
+
+        let error = null;
+        try {
+          await updateRequestWithVersion(order.id, { status: next }, order?.updated_at || null);
+        } catch (e) {
+          error = e;
+        }
+        if (error) {
+          if (error?.code === 'CONFLICT' && error?.latest) {
+            setOrder(error.latest);
+            showToast('Статус уже изменен с другого устройства.');
+            return;
+          }
+          showToast('Не удалось сменить статус');
+          return;
+        }
+        setOrder((prev) => ({ ...(prev || {}), status: next }));
+        setStatusModalVisible(false);
+        showToast(t('order_toast_status_updated'));
+      } catch {
+        showToast(t('order_toast_network_error'));
+      }
+    },
+    [canEdit, order, showToast, t],
+  );
+
   const confirmCancel = useCallback(() => {
     setEditMode(false);
     setCancelVisible(false);
@@ -2326,6 +2388,7 @@ export default function OrderDetails() {
     isFree &&
     !isReadOnlyBySubscription &&
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
+  const canChangeStatus = canEdit() && order.status !== 'В ленте';
   const canAddCameraPhotos = has('canAddCameraPhotos');
   const canAddGalleryPhotos = has('canAddGalleryPhotos');
   const canViewOrderPhotos = has('canViewOrderPhotos');
@@ -2427,11 +2490,27 @@ export default function OrderDetails() {
                       <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
                     </View>
                   )}
-                  <View style={[styles.statusChip, { backgroundColor: statusMeta.bg, opacity: 0.6 }]}>
-                    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
-                      {order.status}
-                    </Text>
-                  </View>
+                  {canChangeStatus ? (
+                    <Pressable
+                      onPress={() => setStatusModalVisible(true)}
+                      style={[styles.statusChip, { backgroundColor: statusMeta.bg }]}
+                    >
+                      <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                        {order.status}
+                      </Text>
+                    </Pressable>
+                  ) : (
+                    <View
+                      style={[
+                        styles.statusChip,
+                        { backgroundColor: statusMeta.bg, opacity: 0.6 },
+                      ]}
+                    >
+                      <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
+                        {order.status}
+                      </Text>
+                    </View>
+                  )}
                 </View>
               </View>
               <View style={base.sep} />
@@ -2481,20 +2560,13 @@ export default function OrderDetails() {
                 <Text style={base.label}>{t('order_details_departure_date')}</Text>
                 <View style={base.rightWrap}>
                   <Text style={[base.value, styles.link]}>
-                    {(() => {
-                      if (!order.time_window_start) return t('order_details_departure_not_specified');
-                      const startDate = new Date(order.time_window_start);
-                      const hasRangeEnd = !!order.time_window_end;
-                      if (!hasRangeEnd) {
-                        return format(
-                          startDate,
+                    {order.time_window_start
+                      ? format(
+                          new Date(order.time_window_start),
                           useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
                           { locale: ru },
-                        );
-                      }
-                      const endDate = new Date(order.time_window_end);
-                      return `${format(startDate, 'd MMMM yyyy', { locale: ru })} — ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
-                    })()}
+                        )
+                      : t('order_details_departure_not_specified')}
                   </Text>
                 </View>
               </Pressable>
@@ -2976,6 +3048,45 @@ export default function OrderDetails() {
           </View>
         </Modal>
       ) : null}
+
+      <Modal
+        isVisible={statusModalVisible}
+        onBackdropPress={() => setStatusModalVisible(false)}
+        style={{ margin: 0 }}
+        useNativeDriver
+        backdropOpacity={0.3}
+        onModalHide={applyNavBar}
+      >
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>{t('order_modal_change_status')}</Text>
+          {[
+            t('order_status_in_feed'),
+            t('order_status_new'),
+            t('order_status_in_progress'),
+            t('order_status_completed'),
+          ].map((s) => (
+            <Pressable
+              key={s}
+              onPress={() => updateStatus(s)}
+              style={({ pressed }) => [
+                styles.assigneeOption,
+                pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
+              ]}
+            >
+              <Text style={styles.assigneeText}>
+                {s} {order.status === s ? '✓' : ''}
+              </Text>
+            </Pressable>
+          ))}
+          <View style={[styles.modalActions, { marginTop: theme.spacing?.sm || 8 }]}>
+            <Button
+              title={t('btn_cancel')}
+              onPress={() => setStatusModalVisible(false)}
+              variant="secondary"
+            />
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         isVisible={amountEditModalVisible}
