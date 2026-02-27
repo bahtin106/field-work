@@ -832,14 +832,12 @@ export default function CalendarScreen() {
           width: '100%',
           alignItems: 'center',
           justifyContent: 'center',
-          paddingTop: theme.spacing.xs * 0.25,
-          paddingBottom: theme.spacing.xs * 0.75,
-          borderBottomWidth: 1,
-          borderBottomColor: theme.colors.border,
+          paddingTop: theme.spacing.xs * 0.5,
+          paddingBottom: theme.spacing.xs,
         },
         collapseToggleButton: {
-          width: 30,
-          height: 22,
+          width: '100%',
+          height: 30,
           borderRadius: 11,
           alignItems: 'center',
           justifyContent: 'center',
@@ -1607,10 +1605,8 @@ export default function CalendarScreen() {
   useEffect(() => {
     if (!effectiveSelectedDate || !displayDateKey) return;
     if (effectiveSelectedDate === displayDateKey) return;
-    if (effectiveSelectedDate.slice(0, 7) === displayDateKey.slice(0, 7)) {
-      setDisplayDateKey(effectiveSelectedDate);
-      setDisplayTitleDateKey(effectiveSelectedDate);
-    }
+    setDisplayDateKey(effectiveSelectedDate);
+    setDisplayTitleDateKey(effectiveSelectedDate);
   }, [displayDateKey, effectiveSelectedDate]);
 
   useEffect(() => {
@@ -1905,6 +1901,7 @@ export default function CalendarScreen() {
                         onPress={onToggleCollapsed}
                         style={({ pressed }) => [styles.collapseToggleButton, pressed && { opacity: 0.8 }]}
                         android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                        hitSlop={8}
                         accessibilityRole="button"
                       >
                         <Feather
