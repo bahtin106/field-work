@@ -926,6 +926,13 @@ export default function CompanySettings() {
               onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'employees').route)}
             />
 
+            <View style={s.sep} />
+            <SelectField
+              label={<Text style={s.itemLabel}>{t('settings_company_clients')}</Text>}
+              showValue={false}
+              onPress={go(SETTINGS_SECTIONS.COMPANY.items.find((i) => i.key === 'clients').route)}
+            />
+
             {isAdmin ? (
               <>
                 <View style={s.sep} />

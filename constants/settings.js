@@ -13,6 +13,12 @@ export const SETTINGS_SECTIONS = {
         showValue: false,
       },
       {
+        key: 'clients',
+        label: T('company_settings_sections_company_items_clients'),
+        route: '/clients',
+        showValue: false,
+      },
+      {
         key: 'billing',
         label: T('company_settings_sections_company_items_billing'),
         route: '/billing',

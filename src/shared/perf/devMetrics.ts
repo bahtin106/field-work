@@ -1,4 +1,5 @@
 const marks = new Map();
+const renderCounters = new Map<string, { count: number; startedAt: number }>();
 
 const isDev = () => {
   try {
@@ -32,4 +33,39 @@ export async function measureNetwork(label, fn) {
       console.log(`[perf] ${label} fetch: ${Date.now() - startedAt}ms`);
     }
   }
+}
+
+export function trackRender(screenName, logEvery = 20) {
+  if (!isDev() || !screenName) return;
+  const key = `render:${screenName}`;
+  const prev = renderCounters.get(key) || { count: 0, startedAt: Date.now() };
+  const next = { count: prev.count + 1, startedAt: prev.startedAt };
+  renderCounters.set(key, next);
+  if (next.count % Math.max(1, logEvery) === 0) {
+    const elapsed = Date.now() - next.startedAt;
+    const rps = elapsed > 0 ? ((next.count / elapsed) * 1000).toFixed(1) : '0.0';
+    console.log(`[perf] ${screenName} renders: ${next.count} (${rps}/s)`); 
+  }
+}
+
+export function startFpsProbe(screenName, durationMs = 3000) {
+  if (!isDev() || !screenName || durationMs <= 0) return () => {};
+  let rafId = 0;
+  let frames = 0;
+  const startedAt = Date.now();
+  const tick = () => {
+    frames += 1;
+    if (Date.now() - startedAt < durationMs) {
+      rafId = requestAnimationFrame(tick);
+      return;
+    }
+    const fps = (frames / (durationMs / 1000)).toFixed(1);
+    console.log(`[perf] ${screenName} fps-probe(${durationMs}ms): ${fps} fps`);
+  };
+  rafId = requestAnimationFrame(tick);
+  return () => {
+    try {
+      cancelAnimationFrame(rafId);
+    } catch {}
+  };
 }

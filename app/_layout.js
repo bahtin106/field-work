@@ -639,6 +639,10 @@ function RootLayoutInner() {
               <Stack.Screen name="users/new" options={{ title: 'New User' }} />
               <Stack.Screen name="users/[id]/index" options={{ title: 'User' }} />
               <Stack.Screen name="users/[id]/edit" options={{ title: 'Edit User' }} />
+              <Stack.Screen name="clients/index" options={{ title: 'Clients' }} />
+              <Stack.Screen name="clients/new" options={{ title: 'New Client' }} />
+              <Stack.Screen name="clients/[id]/index" options={{ title: 'Client' }} />
+              <Stack.Screen name="clients/[id]/edit" options={{ title: 'Edit Client' }} />
               <Stack.Screen name="billing/index" options={{ title: 'Subscription & Licenses' }} />
               <Stack.Screen name="admin/index" />
               <Stack.Screen name="admin/users/index" />

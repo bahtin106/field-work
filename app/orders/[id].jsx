@@ -58,10 +58,13 @@ import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import SectionHeader from '../../components/ui/SectionHeader';
+import { SelectModal } from '../../components/ui/modals';
+import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { usePermissions } from '../../lib/permissions';
+import { getClientByOrderId } from '../../src/features/clients/api';
 import {
   ensureRequestAssigneeNamePrefetch,
   ensureRequestPrefetch,
@@ -77,6 +80,15 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { useQueryClient } from '@tanstack/react-query';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+const PHOTO_PICKER_SOURCE = {
+  CAMERA: 'camera',
+  GALLERY: 'gallery',
+};
+const PHOTO_MAX_WIDTH = 1280;
+const PHOTO_COMPRESS_QUALITY = 0.8;
+const PHOTO_PICKER_QUALITY = 1;
+const PHOTO_FILE_EXTENSION = 'jpg';
+const PHOTO_MIME_TYPE = 'image/jpeg';
 
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 const REQUEST_SYNC_FIELDS = [
@@ -217,6 +229,12 @@ export default function OrderDetails() {
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteCountdown, setDeleteCountdown] = useState(5);
   const [deleteEnabled, setDeleteEnabled] = useState(false);
+  const [photoSourceModal, setPhotoSourceModal] = useState({ visible: false, category: null });
+  const [amountEditModalVisible, setAmountEditModalVisible] = useState(false);
+  const [fuelEditModalVisible, setFuelEditModalVisible] = useState(false);
+  const [amountDraft, setAmountDraft] = useState('');
+  const [fuelDraft, setFuelDraft] = useState('');
+  const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
@@ -224,6 +242,7 @@ export default function OrderDetails() {
   const [mediaIssues, setMediaIssues] = useState({});
   const [photoLoadingMap, setPhotoLoadingMap] = useState({});
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+  const [resolvedClientId, setResolvedClientId] = useState(null);
   const { data: requestData, refetch: refetchRequestData } = useRequest(id, {
     enabled: !!id,
     staleTime: 45 * 1000,
@@ -402,6 +421,43 @@ export default function OrderDetails() {
       }
     },
     [companySettings],
+  );
+
+  const saveInlineFinanceField = useCallback(
+    async ({ field, rawValue, onDone }) => {
+      if (!order?.id) return;
+      const parsed = parseMoney(rawValue);
+      if (parsed === null) {
+        showWarning(
+          field === 'price' ? t('order_validation_amount_format') : t('order_validation_fuel_format'),
+        );
+        return;
+      }
+
+      setFinanceSaving(true);
+      try {
+        const updatedOrder = await updateRequestWithVersion(
+          order.id,
+          { [field]: parsed },
+          order?.updated_at || null,
+        );
+        setOrder(updatedOrder || order);
+        if (field === 'price') setAmount(String(parsed));
+        if (field === 'fuel_cost') setGsm(String(parsed));
+        onDone?.();
+        showToast(t('order_toast_saved'));
+      } catch (e) {
+        if (e?.code === 'CONFLICT' && e?.latest) {
+          setOrder(e.latest);
+          showToast(t('order_toast_status_updated'));
+        } else {
+          showToast(e?.message || t('order_save_error'));
+        }
+      } finally {
+        setFinanceSaving(false);
+      }
+    },
+    [order, parseMoney, showToast, showWarning, t],
   );
 
   const makeSnapshotFromOrder = useCallback((o) => {
@@ -938,21 +994,30 @@ export default function OrderDetails() {
   }, [order]);
 
   const compressAndUpload = useCallback(
-    async (category) => {
+    async (category, source) => {
       try {
-        const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
-        if (!permissionResult.granted) {
-          showToast(t('order_no_camera_permission'));
-          return;
+        let result = null;
+        if (source === PHOTO_PICKER_SOURCE.CAMERA) {
+          const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+          if (!permissionResult.granted) {
+            showToast(t('order_no_camera_permission'));
+            return;
+          }
+          result = await ImagePicker.launchCameraAsync({ quality: PHOTO_PICKER_QUALITY });
+        } else {
+          const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!permissionResult.granted) {
+            showToast(t('order_no_gallery_permission'));
+            return;
+          }
+          result = await ImagePicker.launchImageLibraryAsync({ quality: PHOTO_PICKER_QUALITY });
         }
-
-        const result = await ImagePicker.launchCameraAsync({ quality: 1 });
-        if (result.canceled) return;
+        if (!result || result.canceled) return;
 
         const manipulated = await ImageManipulator.manipulateAsync(
           result.assets[0].uri,
-          [{ resize: { width: 1280 } }],
-          { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG },
+          [{ resize: { width: PHOTO_MAX_WIDTH } }],
+          { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
         );
 
         const resp = await fetch(manipulated.uri);
@@ -964,7 +1029,7 @@ export default function OrderDetails() {
             order_id: order.id,
             category,
             file_base64: encodeBase64(ab),
-            mime: 'image/jpeg',
+            mime: PHOTO_MIME_TYPE,
           });
           const publicUrl = String(data?.url || '');
           if (!publicUrl) {
@@ -1003,7 +1068,7 @@ export default function OrderDetails() {
           showToast(t('order_toast_photo_uploaded'));
           return;
         }
-        const fileName = `${Date.now()}.jpg`;
+        const fileName = `${Date.now()}.${PHOTO_FILE_EXTENSION}`;
         const path = `orders/${order.id}/${category}/${fileName}`;
 
         const { error: uploadError } = await supabase.storage
@@ -1011,7 +1076,7 @@ export default function OrderDetails() {
           .upload(path, fileData, {
             cacheControl: '3600',
             upsert: false,
-            contentType: 'image/jpeg',
+            contentType: PHOTO_MIME_TYPE,
           });
 
         if (uploadError) {
@@ -1789,7 +1854,8 @@ export default function OrderDetails() {
         <View>
           <SectionHeader topSpacing="lg">{titleText}</SectionHeader>
           <Card>
-            <Pressable
+            {canAddAnyPhotos ? (
+              <Pressable
               style={({ pressed }) => [
                 {
                   backgroundColor:
@@ -1802,7 +1868,17 @@ export default function OrderDetails() {
                 },
                 pressed && { opacity: 0.8 },
               ]}
-              onPress={() => compressAndUpload(category)}
+              onPress={() => {
+                if (!canAddAnyPhotos) {
+                  showToast(t('order_photo_add_not_allowed'));
+                  return;
+                }
+                if (photoSourceItems.length === 1) {
+                  compressAndUpload(category, photoSourceItems[0].id);
+                  return;
+                }
+                setPhotoSourceModal({ visible: true, category });
+              }}
             >
               <Text
                 style={{
@@ -1813,13 +1889,19 @@ export default function OrderDetails() {
               >
                 {t('order_details_add_photo')}
               </Text>
-            </Pressable>
+              </Pressable>
+            ) : null}
 
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: theme.spacing?.sm || 8 }}
-            >
+            {!canViewOrderPhotos ? (
+              <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                {t('order_photo_view_not_allowed')}
+              </Text>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: theme.spacing?.sm || 8 }}
+              >
               {photos.map((url, index) => (
                 <View
                   key={index}
@@ -1885,6 +1967,7 @@ export default function OrderDetails() {
                   </Pressable>
                     );
                   })()}
+                  {canAddAnyPhotos ? (
                   <Pressable
                     style={{
                       position: 'absolute',
@@ -1911,15 +1994,20 @@ export default function OrderDetails() {
                       ×
                     </Text>
                   </Pressable>
+                  ) : null}
                 </View>
               ))}
-            </ScrollView>
+              </ScrollView>
+            )}
           </Card>
         </View>
       );
     },
     [
       order,
+      base.value,
+      canAddAnyPhotos,
+      canViewOrderPhotos,
       compressAndUpload,
       getMediaIssueMessage,
       getPhotoDisplayUrl,
@@ -1927,9 +2015,11 @@ export default function OrderDetails() {
       isLikelyYandexLink,
       mediaProvider,
       openViewer,
+      photoSourceItems,
       photoLoadingMap,
       removePhoto,
       setPhotoLoading,
+      showToast,
       styles,
       t,
       theme,
@@ -2181,6 +2271,44 @@ export default function OrderDetails() {
     return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
   }, [fullTitle]);
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
+  const canViewClients = has('canViewClients');
+  const linkedClientId = order?.client_id ? String(order.client_id) : resolvedClientId;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!order?.id || !canViewClients) {
+      setResolvedClientId(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (order?.client_id) {
+      setResolvedClientId(String(order.client_id));
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    getClientByOrderId(String(order.id))
+      .then((client) => {
+        if (cancelled) return;
+        setResolvedClientId(client?.id ? String(client.id) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedClientId(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canViewClients, order?.client_id, order?.id]);
+
+  const onOpenClient = useCallback(() => {
+    if (!linkedClientId || !canViewClients) return;
+    router.push(`/clients/${linkedClientId}`);
+  }, [canViewClients, linkedClientId, router]);
 
   if (permsLoading || loading || !order) {
     return (
@@ -2200,6 +2328,23 @@ export default function OrderDetails() {
     !isReadOnlyBySubscription &&
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
   const canChangeStatus = canEdit() && order.status !== 'В ленте';
+  const canAddCameraPhotos = has('canAddCameraPhotos');
+  const canAddGalleryPhotos = has('canAddGalleryPhotos');
+  const canViewOrderPhotos = has('canViewOrderPhotos');
+  const canViewOrderAmount = has('canViewOrderAmount');
+  const canEditOrderAmount = canViewOrderAmount && has('canEditOrderAmount');
+  const canViewOrderFuelCost = has('canViewOrderFuelCost');
+  const canEditOrderFuelCost = canViewOrderFuelCost && has('canEditOrderFuelCost');
+  const canViewFinanceSection = canViewOrderAmount || canViewOrderFuelCost;
+  const canAddAnyPhotos = canAddCameraPhotos || canAddGalleryPhotos;
+  const photoSourceItems = [
+    canAddCameraPhotos
+      ? { id: PHOTO_PICKER_SOURCE.CAMERA, label: t('order_photo_source_camera') }
+      : null,
+    canAddGalleryPhotos
+      ? { id: PHOTO_PICKER_SOURCE.GALLERY, label: t('order_photo_source_gallery') }
+      : null,
+  ].filter(Boolean);
 
   return (
     <>
@@ -2376,12 +2521,14 @@ export default function OrderDetails() {
               {t('order_details_object_data')}
             </SectionHeader>
             <Card paddedXOnly>
-              <View style={base.row}>
+              <Pressable style={base.row} onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
                 <Text style={base.label}>{t('order_details_customer')}</Text>
                 <View style={base.rightWrap}>
-                  <Text style={base.value}>{order.fio || order.customer_name || t('common_dash')}</Text>
+                  <Text style={[base.value, linkedClientId && canViewClients ? styles.link : null]}>
+                    {order.fio || order.customer_name || t('common_dash')}
+                  </Text>
                 </View>
-              </View>
+              </Pressable>
               <View style={base.sep} />
 
               <LabelValueRow
@@ -2425,25 +2572,72 @@ export default function OrderDetails() {
               </Pressable>
             </Card>
 
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
-              {t('order_details_finance_data')}
-            </SectionHeader>
-            <Card paddedXOnly>
-              <LabelValueRow
-                label={t('order_details_amount')}
-                value={formatMoney(order.price, order?.currency || companySettings?.currency)}
-              />
-              <View style={base.sep} />
+            {canViewFinanceSection ? (
+              <>
+                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                  {t('order_details_finance_data')}
+                </SectionHeader>
+                <Card paddedXOnly>
+                  {canViewOrderAmount ? (
+                    <>
+                      <LabelValueRow
+                        label={t('order_details_amount')}
+                        value={formatMoney(order.price, order?.currency || companySettings?.currency)}
+                      />
+                      {canEditOrderAmount ? (
+                        <>
+                          <View style={base.sep} />
+                          <Pressable
+                            style={base.row}
+                            onPress={() => {
+                              setAmountDraft(String(order?.price ?? ''));
+                              setAmountEditModalVisible(true);
+                            }}
+                          >
+                            <Text style={base.label}>{t('order_details_edit_amount_action')}</Text>
+                            <View style={base.rightWrap}>
+                              <Text style={[base.value, styles.link]}>{t('btn_edit')}</Text>
+                            </View>
+                          </Pressable>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
 
-              <View style={base.row}>
-                <Text style={base.label}>{t('order_details_fuel')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={base.value}>
-                    {formatMoney(order.fuel_cost, order?.currency || companySettings?.currency)}
-                  </Text>
-                </View>
-              </View>
-            </Card>
+                  {canViewOrderAmount && canViewOrderFuelCost ? <View style={base.sep} /> : null}
+
+                  {canViewOrderFuelCost ? (
+                    <>
+                      <View style={base.row}>
+                        <Text style={base.label}>{t('order_details_fuel')}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={base.value}>
+                            {formatMoney(order.fuel_cost, order?.currency || companySettings?.currency)}
+                          </Text>
+                        </View>
+                      </View>
+                      {canEditOrderFuelCost ? (
+                        <>
+                          <View style={base.sep} />
+                          <Pressable
+                            style={base.row}
+                            onPress={() => {
+                              setFuelDraft(String(order?.fuel_cost ?? ''));
+                              setFuelEditModalVisible(true);
+                            }}
+                          >
+                            <Text style={base.label}>{t('order_details_edit_fuel_action')}</Text>
+                            <View style={base.rightWrap}>
+                              <Text style={[base.value, styles.link]}>{t('btn_edit')}</Text>
+                            </View>
+                          </Pressable>
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                </Card>
+              </>
+            ) : null}
 
             {!isFree && renderPhotoRow(t('order_details_contract_photo'), 'contract_file')}
             {!isFree && renderPhotoRow(t('order_details_photo_before'), 'photo_before')}
@@ -2494,6 +2688,21 @@ export default function OrderDetails() {
         </View>
       )}
     </SafeAreaView>
+
+      <SelectModal
+        visible={photoSourceModal.visible}
+        title={t('order_photo_source_title')}
+        items={photoSourceItems}
+        searchable={false}
+        onClose={() => setPhotoSourceModal({ visible: false, category: null })}
+        onSelect={(item) => {
+          const source = item?.id;
+          const category = photoSourceModal.category;
+          setPhotoSourceModal({ visible: false, category: null });
+          if (!source || !category) return;
+          compressAndUpload(category, source);
+        }}
+      />
 
       <Modal
         isVisible={workTypeModalVisible}
@@ -2788,6 +2997,80 @@ export default function OrderDetails() {
               title={t('btn_cancel')}
               onPress={() => setStatusModalVisible(false)}
               variant="secondary"
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        isVisible={amountEditModalVisible}
+        onBackdropPress={() => setAmountEditModalVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+        onModalHide={applyNavBar}
+      >
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>{t('order_modal_edit_amount_title')}</Text>
+          <TextField
+            label={t('order_modal_edit_amount_label')}
+            value={amountDraft}
+            onChangeText={setAmountDraft}
+            keyboardType="decimal-pad"
+            placeholder={t('order_placeholder_amount')}
+          />
+          <View style={styles.modalActions}>
+            <Button
+              title={t('btn_cancel')}
+              onPress={() => setAmountEditModalVisible(false)}
+              variant="secondary"
+            />
+            <Button
+              title={t('order_modal_edit_save')}
+              loading={financeSaving}
+              onPress={() =>
+                saveInlineFinanceField({
+                  field: 'price',
+                  rawValue: amountDraft,
+                  onDone: () => setAmountEditModalVisible(false),
+                })
+              }
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        isVisible={fuelEditModalVisible}
+        onBackdropPress={() => setFuelEditModalVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+        onModalHide={applyNavBar}
+      >
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>{t('order_modal_edit_fuel_title')}</Text>
+          <TextField
+            label={t('order_modal_edit_fuel_label')}
+            value={fuelDraft}
+            onChangeText={setFuelDraft}
+            keyboardType="decimal-pad"
+            placeholder={t('order_placeholder_amount')}
+          />
+          <View style={styles.modalActions}>
+            <Button
+              title={t('btn_cancel')}
+              onPress={() => setFuelEditModalVisible(false)}
+              variant="secondary"
+            />
+            <Button
+              title={t('order_modal_edit_save')}
+              loading={financeSaving}
+              onPress={() =>
+                saveInlineFinanceField({
+                  field: 'fuel_cost',
+                  rawValue: fuelDraft,
+                  onDone: () => setFuelEditModalVisible(false),
+                })
+              }
             />
           </View>
         </View>

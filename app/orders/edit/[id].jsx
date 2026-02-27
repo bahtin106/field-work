@@ -23,6 +23,7 @@ import {
   useRequestRealtimeSync,
   useUpdateRequestMutation,
 } from '../../../src/features/requests/queries';
+import { useClients } from '../../../src/features/clients/queries';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FiltersPanel from '../../../components/filters/FiltersPanel';
@@ -116,6 +117,7 @@ export default function EditOrderScreen() {
   const [street, setStreet] = useState('');
   const [house, setHouse] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [selectedClientId, setSelectedClientId] = useState(null);
   const [phone, setPhone] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
   const [assigneeId, setAssigneeId] = useState(null);
@@ -124,6 +126,7 @@ export default function EditOrderScreen() {
   const [statusKey, setStatusKey] = useState(null);
   const [statusLabel, setStatusLabel] = useState('');
   const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [clientModalVisible, setClientModalVisible] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
   const [assignedEmployeeLabel, setAssignedEmployeeLabel] = useState('');
   const [formHydrated, setFormHydrated] = useState(false);
@@ -143,6 +146,10 @@ export default function EditOrderScreen() {
   const customerNameRef = useRef(null);
   const [price, setPrice] = useState('');
   const [fuelCost, setFuelCost] = useState('');
+  const { data: clients = [] } = useClients(
+    { companyId, search: '' },
+    { enabled: !!companyId && hasPermission('canViewClients') },
+  );
 
   // РјРѕРґР°Р»СЊРЅС‹Рµ СЃРѕСЃС‚РѕСЏРЅРёСЏ (Р±С‹Р»Рё СѓРґР°Р»РµРЅС‹ СЂР°РЅРµРµ вЂ” РІРµСЂРЅСѓС‚СЊ)
   const [showDateModal, setShowDateModal] = useState(false);
@@ -162,6 +169,11 @@ export default function EditOrderScreen() {
     if (selectedEmployee) return selectedEmployee.display_name || selectedEmployee.email || '';
     return assignedEmployeeLabel || T('common_noName');
   }, [selectedEmployee, assignedEmployeeLabel]);
+  const selectedClientName = useMemo(() => {
+    if (!selectedClientId) return '';
+    const client = clients.find((item) => String(item.id) === String(selectedClientId));
+    return client?.fullName || '';
+  }, [clients, selectedClientId]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -192,6 +204,15 @@ export default function EditOrderScreen() {
     ],
     [normalizeId, workTypes],
   );
+  const clientItems = useMemo(() => {
+    if (!Array.isArray(clients) || clients.length === 0) {
+      return [{ id: 'empty', label: T('empty_noData'), disabled: true }];
+    }
+    return clients.map((client) => ({
+      id: client.id,
+      label: client.fullName || T('common_noName'),
+    }));
+  }, [clients]);
 
   const selectedEmployee = useMemo(() => {
     if (!assigneeId || !employees?.length) return null;
@@ -299,6 +320,7 @@ export default function EditOrderScreen() {
         street: String(draft.street || '').trim(),
         house: String(draft.house || '').trim(),
         customerName: String(draft.customerName || '').trim(),
+        selectedClientId: draft.selectedClientId || null,
         phone: String(draft.phone || '').replace(/\D/g, ''),
         departureDateIso: normalizeDateOrNull(draft.departureDate)?.toISOString() || null,
         assigneeId: draft.assigneeId || null,
@@ -328,6 +350,7 @@ export default function EditOrderScreen() {
       const nextStreet = row.street || '';
       const nextHouse = row.house || '';
       const nextCustomerName = row.fio || row.customer_name || '';
+      const nextClientId = normalizeId(row.client_id);
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
       const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
       const nextAssigneeId = row.assigned_to || null;
@@ -358,6 +381,7 @@ export default function EditOrderScreen() {
       setStreet(nextStreet);
       setHouse(nextHouse);
       setCustomerName(nextCustomerName);
+      setSelectedClientId(nextClientId);
       setPhone(raw);
       setDepartureDate(nextDepartureDate);
       setAssigneeId(nextAssigneeId);
@@ -387,6 +411,7 @@ export default function EditOrderScreen() {
         street: nextStreet,
         house: nextHouse,
         customerName: nextCustomerName,
+        selectedClientId: nextClientId,
         phone: raw,
         departureDate: nextDepartureDate,
         assigneeId: nextAssigneeId,
@@ -414,13 +439,15 @@ export default function EditOrderScreen() {
       if (!nextWorkTypeResolved || nextWorkTypeId == null) {
         supabase
           .from('orders')
-          .select('work_type_id')
+          .select('work_type_id, client_id')
           .eq('id', id)
           .maybeSingle()
           .then(({ data: wtRow }) => {
             if (cancelled || userEditedRef.current || !wtRow) return;
             const resolvedWorkTypeId = normalizeId(wtRow.work_type_id);
+            const resolvedClientId = normalizeId(wtRow.client_id) || nextClientId;
             setWorkTypeId(resolvedWorkTypeId);
+            setSelectedClientId(resolvedClientId);
             setWorkTypeResolved(true);
             snapshotRef.current = buildSnapshot({
               title: nextTitle,
@@ -430,6 +457,7 @@ export default function EditOrderScreen() {
               street: nextStreet,
               house: nextHouse,
               customerName: nextCustomerName,
+              selectedClientId: resolvedClientId,
               phone: raw,
               departureDate: nextDepartureDate,
               assigneeId: nextAssigneeId,
@@ -488,6 +516,7 @@ export default function EditOrderScreen() {
       street,
       house,
       customerName,
+      selectedClientId,
       phone,
       departureDate,
       assigneeId,
@@ -509,6 +538,7 @@ export default function EditOrderScreen() {
     street,
     house,
     customerName,
+    selectedClientId,
     phone,
     departureDate,
     assigneeId,
@@ -778,6 +808,7 @@ export default function EditOrderScreen() {
         street,
         house,
         fio: customerName,
+        client_id: normalizeId(selectedClientId),
         phone: normalizedPhone,
         assigned_to: toFeed ? null : assigneeId,
         time_window_start: normalizedDepartureDate.toISOString(),
@@ -806,6 +837,7 @@ export default function EditOrderScreen() {
         street,
         house,
         customerName,
+        selectedClientId,
         phone,
         departureDate,
         assigneeId,
@@ -1047,6 +1079,15 @@ export default function EditOrderScreen() {
 
           <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
           <Card padded={false} style={styles.card}>
+            {hasPermission('canViewClients') ? (
+              <TextField
+                label={T('routes_clients_client')}
+                value={selectedClientName || T('common_select')}
+                pressable
+                style={styles.field}
+                onPress={() => setClientModalVisible(true)}
+              />
+            ) : null}
             <TextField
               ref={customerNameRef}
               label={T('order_field_customer_name')}
@@ -1140,6 +1181,20 @@ export default function EditOrderScreen() {
           }
         }}
         onClose={() => setStatusModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={clientModalVisible}
+        title={T('routes_clients_client')}
+        items={clientItems}
+        searchable
+        selectedId={selectedClientId}
+        onSelect={(item) => {
+          if (item?.disabled) return;
+          setSelectedClientId(item?.id || null);
+          setClientModalVisible(false);
+        }}
+        onClose={() => setClientModalVisible(false)}
       />
 
       <DateTimeModal

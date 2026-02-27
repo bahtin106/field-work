@@ -462,7 +462,7 @@ export default function NewUserScreen() {
       avatar: !!avatarUrl,
     });
     return snap !== initialSnapRef.current;
-  }, [firstName, lastName, email, phone, role, birthdate, avatarUrl]);
+  }, [firstName, lastName, email, phone, role, birthdate, withYear, avatarUrl]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -702,6 +702,7 @@ export default function NewUserScreen() {
     lastName,
     phone,
     birthdate,
+    withYear,
     role,
     departmentId,
     useDepartments,

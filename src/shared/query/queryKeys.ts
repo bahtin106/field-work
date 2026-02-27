@@ -13,6 +13,11 @@ export const queryKeys = {
     detail: (id) => ['employees', 'detail', String(id || '')],
     departments: (companyId, onlyEnabled = true) => ['employees', 'departments', String(companyId || ''), !!onlyEnabled],
   },
+  clients: {
+    list: (params = {}) => ['clients', 'list', params],
+    detail: (id) => ['clients', 'detail', String(id || '')],
+    orderCount: (id) => ['clients', 'order-count', String(id || '')],
+  },
   profile: {
     me: () => ['profile', 'me'],
     role: () => ['profile', 'role'],
