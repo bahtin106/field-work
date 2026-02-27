@@ -19,13 +19,12 @@ import {
 } from 'react-native';
 import { LocaleConfig } from 'react-native-calendars';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import PagerView from 'react-native-pager-view';
 import Animated, {
   Extrapolate,
   cancelAnimation,
   interpolate,
   runOnJS,
-  useAnimatedRef,
-  useAnimatedScrollHandler,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
@@ -103,8 +102,6 @@ const DAY_KEYS = [
   'day_short_sa',
   'day_short_su',
 ];
-const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
-
 function resolveSnapTarget(progress, velocityY, totalDistance) {
   'worklet';
   const threshold = CALENDAR_GESTURE.SNAP_VELOCITY_Y;
@@ -299,21 +296,15 @@ export default function CalendarScreen() {
   const collapseTranslate = useSharedValue(0);
   const gestureStart = useSharedValue(0);
   const scrollY = useSharedValue(0);
-  const monthScrollX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
   const isCollapsedShared = useSharedValue(false);
   const isSnappingShared = useSharedValue(false);
   const panHasDrivenCollapse = useSharedValue(false);
-  const monthPagerRef = useAnimatedRef();
+  const monthPagerRef = useRef(null);
   const ordersListRef = useRef(null);
   const lastHandledPageIndex = useRef(MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndexRef = useRef(MONTH_LIST_MIDDLE_INDEX);
-  const monthMomentumStartedRef = useRef(false);
-  const monthScrollRafRef = useRef(null);
-  const pendingDragEndCommitRafRef = useRef(null);
-  const pendingScrollTargetIndexRef = useRef(null);
   const [visibleMonthRenderIndex, setVisibleMonthRenderIndex] = useState(MONTH_LIST_MIDDLE_INDEX);
-  const settledMonthOffsetX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const monthSwipeInteraction = useSharedValue(0);
   const deferInitialMeasureRef = useRef(true);
   const [monthWindowAnchor, setMonthWindowAnchor] = useState(startOfMonth(new Date()));
@@ -399,15 +390,6 @@ export default function CalendarScreen() {
     [dynamicMonths],
   );
 
-  const resolvePageIndex = useCallback(
-    (offsetX) => {
-      const pageWidth = layoutMetrics.cardWidth;
-      if (!pageWidth) return 0;
-      const maxIndex = Math.max(0, dynamicMonths.length - 1);
-      return clamp(Math.round(offsetX / pageWidth), 0, maxIndex);
-    },
-    [dynamicMonths.length, layoutMetrics.cardWidth],
-  );
   const resolveYearPageIndex = useCallback(
     (offsetX) => {
       const pageWidth = layoutMetrics.cardWidth;
@@ -421,18 +403,10 @@ export default function CalendarScreen() {
   const commitVisibleMonthIndex = useCallback(
     (pageIndex) => {
       visibleMonthIndex.value = pageIndex;
-      settledMonthOffsetX.value = layoutMetrics.cardWidth * pageIndex;
       monthSwipeInteraction.value = 0;
       handlePageChange(pageIndex);
-      pendingScrollTargetIndexRef.current = null;
-      if (monthScrollRafRef.current != null) {
-        try {
-          cancelAnimationFrame(monthScrollRafRef.current);
-        } catch {}
-        monthScrollRafRef.current = null;
-      }
     },
-    [handlePageChange, layoutMetrics.cardWidth, monthSwipeInteraction, settledMonthOffsetX, visibleMonthIndex],
+    [handlePageChange, monthSwipeInteraction, visibleMonthIndex],
   );
   const resolveMonthDateKeyByIndex = useCallback(
     (pageIndex) => {
@@ -493,37 +467,6 @@ export default function CalendarScreen() {
     [dynamicYears],
   );
 
-  const monthScrollHandler = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      monthScrollX.value = event.contentOffset.x;
-      const pageWidth = layoutMetrics.cardWidth;
-      if (!pageWidth) return;
-      const maxIndex = Math.max(0, dynamicMonths.length - 1);
-      const rawIndex = clamp(event.contentOffset.x / pageWidth, 0, maxIndex);
-      const committedIndex = clamp(Math.round(rawIndex), 0, maxIndex);
-      visibleMonthIndex.value = committedIndex;
-    },
-  }, [dynamicMonths.length, layoutMetrics.cardWidth]);
-
-  useEffect(() => {
-    monthScrollX.value = layoutMetrics.cardWidth * visibleMonthIndex.value;
-  }, [layoutMetrics.cardWidth, monthScrollX, visibleMonthIndex]);
-
-  useEffect(() => {
-    return () => {
-      if (monthScrollRafRef.current != null) {
-        try {
-          cancelAnimationFrame(monthScrollRafRef.current);
-        } catch {}
-      }
-      if (pendingDragEndCommitRafRef.current != null) {
-        try {
-          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
-        } catch {}
-      }
-    };
-  }, []);
-
   useEffect(() => {
     const timer = setTimeout(() => {
       deferInitialMeasureRef.current = false;
@@ -543,11 +486,9 @@ export default function CalendarScreen() {
     visibleMonthIndexRef.current = targetIndex;
     visibleMonthIndex.value = targetIndex;
     setVisibleMonthRenderIndex(targetIndex);
-    monthScrollX.value = layoutMetrics.cardWidth * targetIndex;
-    settledMonthOffsetX.value = layoutMetrics.cardWidth * targetIndex;
     if (monthPagerRef.current && !isCollapsed) {
       try {
-        monthPagerRef.current.scrollToIndex({ index: targetIndex, animated: false });
+        monthPagerRef.current.setPageWithoutAnimation(targetIndex);
       } catch {}
     }
   }, [
@@ -556,8 +497,6 @@ export default function CalendarScreen() {
     isCollapsed,
     layoutMetrics.cardWidth,
     monthPagerRef,
-    monthScrollX,
-    settledMonthOffsetX,
     visibleMonthIndex,
   ]);
   useEffect(() => {
@@ -1087,57 +1026,61 @@ export default function CalendarScreen() {
       visibleMonthIndexRef.current = MONTH_LIST_MIDDLE_INDEX;
       visibleMonthIndex.value = MONTH_LIST_MIDDLE_INDEX;
       setVisibleMonthRenderIndex(MONTH_LIST_MIDDLE_INDEX);
-      monthScrollX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
-      settledMonthOffsetX.value = layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX;
       requestAnimationFrame(() => {
         try {
-          monthPagerRef.current?.scrollToIndex?.({ index: MONTH_LIST_MIDDLE_INDEX, animated: false });
+          monthPagerRef.current?.setPageWithoutAnimation?.(MONTH_LIST_MIDDLE_INDEX);
         } catch {}
       });
     }
     setViewMode(nextMode);
   }, [
     currentMonth,
-    layoutMetrics.cardWidth,
     monthPagerRef,
-    monthScrollX,
-    settledMonthOffsetX,
     visibleMonthIndex,
     MONTH_LIST_MIDDLE_INDEX,
   ]);
 
   const scrollToMonthByOffset = useCallback(
     (offset) => {
-      const baseIndex =
-        typeof pendingScrollTargetIndexRef.current === 'number'
-          ? pendingScrollTargetIndexRef.current
-          : visibleMonthIndexRef.current;
+      const baseIndex = visibleMonthIndexRef.current;
       const nextIndex = clamp(
         baseIndex + offset,
         0,
         Math.max(0, dynamicMonths.length - 1),
       );
       if (nextIndex === baseIndex) return;
-      pendingScrollTargetIndexRef.current = nextIndex;
-      if (monthScrollRafRef.current != null) return;
-      monthScrollRafRef.current = requestAnimationFrame(() => {
-        monthScrollRafRef.current = null;
-        const targetIndex = pendingScrollTargetIndexRef.current;
-        pendingScrollTargetIndexRef.current = null;
-        if (typeof targetIndex !== 'number') return;
-        visibleMonthIndexRef.current = targetIndex;
-        visibleMonthIndex.value = targetIndex;
-        setVisibleMonthRenderIndex(targetIndex);
-        try {
-          monthPagerRef.current?.scrollToIndex?.({ index: targetIndex, animated: true });
-        } catch {}
-      });
+      visibleMonthIndexRef.current = nextIndex;
+      visibleMonthIndex.value = nextIndex;
+      setVisibleMonthRenderIndex(nextIndex);
+      try {
+        monthPagerRef.current?.setPage?.(nextIndex);
+      } catch {}
     },
     [dynamicMonths.length, monthPagerRef, visibleMonthIndex],
   );
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
   const goToNextMonth = useCallback(() => scrollToMonthByOffset(1), [scrollToMonthByOffset]);
+  const onMonthPageSelected = useCallback(
+    (event) => {
+      const nextIndex = Number(event?.nativeEvent?.position);
+      if (!Number.isFinite(nextIndex)) return;
+      visibleMonthIndexRef.current = nextIndex;
+      visibleMonthIndex.value = nextIndex;
+      setVisibleMonthRenderIndex(nextIndex);
+      requestMonthCommit(nextIndex);
+      monthSwipeInteraction.value = 0;
+    },
+    [monthSwipeInteraction, requestMonthCommit, visibleMonthIndex],
+  );
+  const onMonthPageScrollStateChanged = useCallback((event) => {
+    const state = String(event?.nativeEvent?.pageScrollState || '');
+    if (state === 'dragging' || state === 'settling') {
+      monthSwipeInteraction.value = 1;
+      return;
+    }
+    monthSwipeInteraction.value = 0;
+  }, [monthSwipeInteraction]);
   const commitOrdersHorizontalSwipe = useCallback(
     (translationX, velocityX) => {
       const pageWidth = Math.max(layoutMetrics.cardWidth, 1);
@@ -1156,11 +1099,10 @@ export default function CalendarScreen() {
       if (nextIndex === baseIndex) return;
 
       try {
-        monthPagerRef.current?.scrollToIndex?.({ index: nextIndex, animated: true });
+        monthPagerRef.current?.setPage?.(nextIndex);
       } catch {}
-      requestMonthCommit(nextIndex);
     },
-    [dynamicMonths.length, layoutMetrics.cardWidth, monthPagerRef, requestMonthCommit],
+    [dynamicMonths.length, layoutMetrics.cardWidth, monthPagerRef],
   );
   const scrollYearByOffset = useCallback(
     (offset) => {
@@ -1645,15 +1587,7 @@ export default function CalendarScreen() {
   const ordersSwapOverlayStyle = useAnimatedStyle(() => ({
     opacity: ordersSwapOverlayOpacity.value,
   }));
-  const ordersSwipeFadeStyle = useAnimatedStyle(() => {
-    if (monthSwipeInteraction.value < 0.5) {
-      return { opacity: 1 };
-    }
-    const pageWidth = Math.max(layoutMetrics.cardWidth, 1);
-    const distance = Math.abs(monthScrollX.value - settledMonthOffsetX.value);
-    const progress = Math.min(distance / (pageWidth * 0.6), 1);
-    return { opacity: 1 - progress };
-  });
+  const ordersSwipeFadeStyle = useAnimatedStyle(() => ({ opacity: 1 }));
 
   return (
     <Screen
@@ -1731,74 +1665,19 @@ export default function CalendarScreen() {
                       </Text>
                     ))}
                   </View>
-                  <AnimatedFlatList
+                  <PagerView
                     ref={monthPagerRef}
-                    data={dynamicMonths}
-                    horizontal
-                    pagingEnabled
-                    initialNumToRender={5}
+                    initialPage={MONTH_LIST_MIDDLE_INDEX}
+                    style={{ width: layoutMetrics.cardWidth, height: measuredWeekRowHeight * actualWeekRows }}
                     scrollEnabled={!isCollapsed}
-                    showsHorizontalScrollIndicator={false}
-                    keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
-                    getItemLayout={getItemLayout}
-                    initialScrollIndex={MONTH_LIST_MIDDLE_INDEX}
-                    windowSize={3}
-                    maxToRenderPerBatch={3}
-                    updateCellsBatchingPeriod={16}
-                    removeClippedSubviews={Platform.OS === 'android'}
-                    scrollEventThrottle={16}
-                    onScroll={monthScrollHandler}
-                    onScrollBeginDrag={() => {
-                      if (pendingDragEndCommitRafRef.current != null) {
-                        try {
-                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
-                        } catch {}
-                        pendingDragEndCommitRafRef.current = null;
-                      }
-                      monthMomentumStartedRef.current = false;
-                      monthSwipeInteraction.value = 1;
-                    }}
-                    onMomentumScrollBegin={() => {
-                      if (pendingDragEndCommitRafRef.current != null) {
-                        try {
-                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
-                        } catch {}
-                        pendingDragEndCommitRafRef.current = null;
-                      }
-                      monthMomentumStartedRef.current = true;
-                      monthSwipeInteraction.value = 1;
-                    }}
-                    onScrollEndDrag={(event) => {
-                      if (pendingDragEndCommitRafRef.current != null) {
-                        try {
-                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
-                        } catch {}
-                        pendingDragEndCommitRafRef.current = null;
-                      }
-                      pendingDragEndCommitRafRef.current = requestAnimationFrame(() => {
-                        pendingDragEndCommitRafRef.current = null;
-                        const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
-                        const nextIndex = resolvePageIndex(offsetX);
-                        if (monthMomentumStartedRef.current) return;
-                        requestMonthCommit(nextIndex);
-                      });
-                    }}
-                    onMomentumScrollEnd={(event) => {
-                      if (pendingDragEndCommitRafRef.current != null) {
-                        try {
-                          cancelAnimationFrame(pendingDragEndCommitRafRef.current);
-                        } catch {}
-                        pendingDragEndCommitRafRef.current = null;
-                      }
-                      monthMomentumStartedRef.current = false;
-                      const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
-                      const nextIndex = resolvePageIndex(offsetX);
-                      requestMonthCommit(nextIndex);
-                    }}
-                    renderItem={({ item: monthDate, index }) => {
+                    offscreenPageLimit={1}
+                    onPageSelected={onMonthPageSelected}
+                    onPageScrollStateChanged={onMonthPageScrollStateChanged}
+                  >
+                    {dynamicMonths.map((monthDate, index) => {
                       const itemMonthWeeks = monthWeeksByIndex[index] ?? [];
                       return (
-                        <View style={[styles.monthPage]}>
+                        <View key={`month-${monthDate.getTime()}-${index}`} style={styles.monthPage}>
                           <Animated.View
                             style={[
                               {
@@ -1836,8 +1715,8 @@ export default function CalendarScreen() {
                           </Animated.View>
                         </View>
                       );
-                    }}
-                  />
+                    })}
+                  </PagerView>
                 </View>
               </Animated.View>
             </GestureDetector>
