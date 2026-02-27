@@ -147,7 +147,7 @@ export default function CalendarScreen() {
   const [scope, setScope] = useState('my');
   const [executorFilterIds, setExecutorFilterIds] = useState([]);
   const [executorModalVisible, setExecutorModalVisible] = useState(false);
-  const [isPostMountSettled, setIsPostMountSettled] = useState(false);
+  const [calendarQueryAnchorMonth, setCalendarQueryAnchorMonth] = useState(startOfMonth(new Date()));
   const hasEmployeeFilter = Array.isArray(executorFilterIds) && executorFilterIds.length > 0;
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
@@ -158,13 +158,22 @@ export default function CalendarScreen() {
   }, []);
 
   const calendarQueryRange = useMemo(() => {
-    const start = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
-    const end = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 2, 0, 23, 59, 59, 999);
+    const base = calendarQueryAnchorMonth;
+    const start = new Date(base.getFullYear(), base.getMonth() - 1, 1);
+    const end = new Date(base.getFullYear(), base.getMonth() + 2, 0, 23, 59, 59, 999);
     return {
       startDate: start.toISOString(),
       endDate: end.toISOString(),
     };
-  }, [currentMonth]);
+  }, [calendarQueryAnchorMonth]);
+
+  useEffect(() => {
+    const monthsDelta =
+      (currentMonth.getFullYear() - calendarQueryAnchorMonth.getFullYear()) * 12 +
+      (currentMonth.getMonth() - calendarQueryAnchorMonth.getMonth());
+    if (Math.abs(monthsDelta) <= 1) return;
+    setCalendarQueryAnchorMonth(startOfMonth(currentMonth));
+  }, [calendarQueryAnchorMonth, currentMonth]);
 
   const {
     data: orders = [],
@@ -175,22 +184,12 @@ export default function CalendarScreen() {
     scope: canViewAllOrders ? (hasEmployeeFilter ? 'all' : scope) : 'my',
     startDate: calendarQueryRange.startDate,
     endDate: calendarQueryRange.endDate,
+    refetchIntervalMs: false,
     enabled: isAuthenticated && !isInitializing && !!profile?.id && !!profile?.role,
     isScreenActive: isFocused,
   });
 
-  useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      setIsPostMountSettled(true);
-    });
-    return () => {
-      try {
-        task.cancel?.();
-      } catch {}
-    };
-  }, []);
-
-  useRequestRealtimeSync({ enabled: isPostMountSettled && isFocused && !!profile?.id });
+  useRequestRealtimeSync({ enabled: false });
   const { data: executors = [] } = useRequestExecutors({
     companyId,
     enabled:
