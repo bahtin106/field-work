@@ -39,7 +39,7 @@ function CalendarWeekRowComponent({
         const isToday = dayKey === todayKey;
         const isTodaySelected = isSelectedDay && isToday;
         const showOutline = isSelectedDay && !isToday;
-        const highlightTodayWhenNotSelected = isToday && selectedDate !== todayKey;
+        const highlightTodayWhenNotSelected = false;
 
         return (
           <CalendarGridCell
@@ -65,23 +65,4 @@ function CalendarWeekRowComponent({
   );
 }
 
-function areEqual(prev, next) {
-  return (
-    prev.week === next.week &&
-    prev.monthDate?.getTime?.() === next.monthDate?.getTime?.() &&
-    prev.weekIdx === next.weekIdx &&
-    prev.selectedDate === next.selectedDate &&
-    prev.todayKey === next.todayKey &&
-    prev.eventCountsByDate === next.eventCountsByDate &&
-    prev.dayCellSize === next.dayCellSize &&
-    prev.onDatePress === next.onDatePress &&
-    prev.styles === next.styles &&
-    prev.theme === next.theme &&
-    prev.indicatorSlotAnimatedStyle === next.indicatorSlotAnimatedStyle &&
-    prev.eventCountAnimatedStyle === next.eventCountAnimatedStyle &&
-    prev.eventDotAnimatedStyle === next.eventDotAnimatedStyle &&
-    prev.onRowLayout === next.onRowLayout
-  );
-}
-
-export const CalendarWeekRow = memo(CalendarWeekRowComponent, areEqual);
+export const CalendarWeekRow = memo(CalendarWeekRowComponent);

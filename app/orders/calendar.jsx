@@ -749,14 +749,19 @@ export default function CalendarScreen() {
           alignItems: 'center',
           justifyContent: 'center',
         },
+        dayNumberLayer: {
+          ...StyleSheet.absoluteFillObject,
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1,
+        },
         dayNumber: {
           fontFamily: theme.typography.fontFamily,
           fontWeight: theme.typography.weight.regular,
           fontSize: theme.typography.sizes.md,
-          lineHeight: theme.typography.sizes.md * 1.05,
+          lineHeight: theme.typography.sizes.md * 1.15,
           color: theme.colors.text,
           textAlign: 'center',
-          includeFontPadding: false,
         },
         dayNumberToday: {
           color: theme.colors.onPrimary,
@@ -777,13 +782,13 @@ export default function CalendarScreen() {
           minHeight: indicatorSlotBaseHeight,
           alignItems: 'center',
           justifyContent: 'center',
+          zIndex: 0,
         },
         eventCount: {
           fontSize: theme.typography.sizes.xs * 0.9,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.primary,
           textAlign: 'center',
-          includeFontPadding: false,
         },
         eventDot: {
           marginTop: theme.spacing.xs * 0.5,
