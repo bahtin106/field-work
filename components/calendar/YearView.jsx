@@ -1,7 +1,6 @@
 // components/calendar/YearView.jsx
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { formatDateKey, getMonthDays, isToday } from '../../lib/calendarUtils';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -31,6 +30,8 @@ const DAY_KEYS = [
   'day_short_sa',
   'day_short_su',
 ];
+const MONTH_ROWS = [0, 1, 2, 3].map((row) => MONTH_KEYS.slice(row * 3, row * 3 + 3));
+const MONTH_MATRIX_CACHE = new Map();
 
 function capitalizeLabel(value) {
   if (!value) return value;
@@ -38,6 +39,8 @@ function capitalizeLabel(value) {
 }
 
 function getMonthMatrix(year) {
+  const cached = MONTH_MATRIX_CACHE.get(year);
+  if (cached) return cached;
   const months = [];
   for (let m = 0; m < 12; m++) {
     const days = getMonthDays(year, m, 1);
@@ -52,16 +55,17 @@ function getMonthMatrix(year) {
     }
     months.push({ monthIndex: m, weeks });
   }
+  MONTH_MATRIX_CACHE.set(year, months);
   return months;
 }
 
-export default function YearView({
+function YearView({
   year,
   onMonthPress,
   markedDates,
   style,
   currentMonthIndex,
-  transitionDirection = 0,
+  transitionDirection: _transitionDirection = 0,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -71,10 +75,7 @@ export default function YearView({
     typeof currentMonthIndex === 'number' ? currentMonthIndex : new Date().getMonth();
 
   const monthsMatrix = useMemo(() => getMonthMatrix(year), [year]);
-  const monthRows = useMemo(
-    () => [0, 1, 2, 3].map((row) => MONTH_KEYS.slice(row * 3, row * 3 + 3)),
-    [],
-  );
+  const monthRows = MONTH_ROWS;
 
   const spacing = {
     xs: theme.spacing?.xs ?? 4,
@@ -261,22 +262,6 @@ export default function YearView({
     ],
   );
 
-  const transitionX = useSharedValue(0);
-  const transitionOpacity = useSharedValue(1);
-
-  useEffect(() => {
-    const startOffset = transitionDirection > 0 ? 24 : transitionDirection < 0 ? -24 : 0;
-    transitionX.value = startOffset;
-    transitionOpacity.value = startOffset === 0 ? 1 : 0.82;
-    transitionX.value = withTiming(0, { duration: 240 });
-    transitionOpacity.value = withTiming(1, { duration: 240 });
-  }, [transitionDirection, transitionOpacity, transitionX, year]);
-
-  const transitionStyle = useAnimatedStyle(() => ({
-    opacity: transitionOpacity.value,
-    transform: [{ translateX: transitionX.value }],
-  }));
-
   const onRootLayout = (event) => {
     const { width, height } = event.nativeEvent.layout;
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
@@ -337,7 +322,7 @@ export default function YearView({
   };
 
   return (
-    <Animated.View style={[{ flex: 1, width: '100%' }, transitionStyle]} onLayout={onRootLayout}>
+    <View style={{ flex: 1, width: '100%' }} onLayout={onRootLayout}>
       <View style={[styles.container, style]}>
         <View style={styles.content}>
         {monthRows.map((row, rowIdx) => (
@@ -350,6 +335,8 @@ export default function YearView({
         ))}
         </View>
       </View>
-    </Animated.View>
+    </View>
   );
 }
+
+export default memo(YearView);

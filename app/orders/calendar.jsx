@@ -10,7 +10,6 @@ import {
   BackHandler,
   Dimensions,
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -265,6 +264,9 @@ export default function CalendarScreen() {
   const perfMountStartMsRef = useRef(0);
   const perfFirstContentLoggedRef = useRef(false);
   const perfGridLoggedRef = useRef(false);
+  const perfYearMountStartedRef = useRef(false);
+  const perfYearMountStartMsRef = useRef(0);
+  const perfYearFirstContentLoggedRef = useRef(false);
 
   useEffect(() => {
     if (perfMountStartedRef.current) return;
@@ -328,7 +330,7 @@ export default function CalendarScreen() {
   const [visibleMonthRenderIndex, setVisibleMonthRenderIndex] = useState(MONTH_LIST_MIDDLE_INDEX);
   const settledMonthOffsetX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const monthSwipeInteraction = useSharedValue(0);
-  const deferInitialMeasureRef = useRef(true);
+  const deferInitialMeasureRef = useRef(false);
   const [monthWindowAnchor, setMonthWindowAnchor] = useState(startOfMonth(new Date()));
   const YEAR_LIST_RADIUS = 120;
   const YEAR_LIST_MIDDLE_INDEX = YEAR_LIST_RADIUS;
@@ -461,6 +463,10 @@ export default function CalendarScreen() {
       setVisibleYearRenderIndex(pageIndex);
       const nextYear = dynamicYears[pageIndex];
       if (!Number.isFinite(nextYear)) return;
+      if (perfYearMountStartedRef.current) {
+        const elapsedMs = Math.max(0, nowMs() - perfYearMountStartMsRef.current);
+        console.log(`[perf] calendar.year.page-change.now: ${Math.round(elapsedMs)}ms`);
+      }
       setCurrentMonth((prev) => startOfMonth(new Date(nextYear, prev.getMonth(), 1)));
     },
     [dynamicYears],
@@ -477,11 +483,16 @@ export default function CalendarScreen() {
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      deferInitialMeasureRef.current = false;
-    }, 700);
-    return () => clearTimeout(timer);
-  }, []);
+    if (viewMode !== 'year') {
+      perfYearMountStartedRef.current = false;
+      perfYearFirstContentLoggedRef.current = false;
+      return;
+    }
+    if (perfYearMountStartedRef.current) return;
+    perfYearMountStartedRef.current = true;
+    perfYearMountStartMsRef.current = nowMs();
+    console.time('calendar-year-mount');
+  }, [viewMode]);
 
   useEffect(() => {
     if (!layoutMetrics.cardWidth) return;
@@ -1197,7 +1208,6 @@ export default function CalendarScreen() {
   const [displayDateKey, setDisplayDateKey] = useState(effectiveSelectedDate);
   const [displayTitleDateKey, setDisplayTitleDateKey] = useState(effectiveSelectedDate);
   const detailNavLockRef = useRef({ id: '', ts: 0 });
-  const calendarPrefetchRef = useRef({ key: '', ts: 0 });
   const displayedOrders = useMemo(
     () => (displayDateKey ? (calendarIndex.byDate[displayDateKey] ?? []) : []),
     [calendarIndex.byDate, displayDateKey],
@@ -1293,32 +1303,6 @@ export default function CalendarScreen() {
     setDisplayTitleDateKey(effectiveSelectedDate);
   }, [displayDateKey, effectiveSelectedDate]);
 
-  useEffect(() => {
-    if (!Array.isArray(displayedOrders) || displayedOrders.length === 0) return;
-    const idsKey = displayedOrders
-      .slice(0, 5)
-      .map((o) => String(o?.id || ''))
-      .join('|');
-    const now = Date.now();
-    if (calendarPrefetchRef.current.key === idsKey && now - calendarPrefetchRef.current.ts < 4000) {
-      return;
-    }
-    calendarPrefetchRef.current = { key: idsKey, ts: now };
-
-    const task = InteractionManager.runAfterInteractions(() => {
-      const registry = getPrefetchRegistry();
-      displayedOrders.slice(0, 5).forEach((order) => {
-        registry.run(`request-detail:${order?.id}`, () => ensureRequestPrefetch(queryClient, order?.id)).catch(() => {});
-      });
-    });
-
-    return () => {
-      try {
-        task.cancel?.();
-      } catch {}
-    };
-  }, [displayedOrders, queryClient]);
-
   useFocusEffect(
     useCallback(
       () => () => {
@@ -1410,14 +1394,14 @@ export default function CalendarScreen() {
                     data={dynamicMonths}
                     horizontal
                     pagingEnabled
-                    initialNumToRender={5}
+                    initialNumToRender={1}
                     scrollEnabled={false}
                     showsHorizontalScrollIndicator={false}
                     keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
                     getItemLayout={getItemLayout}
                     initialScrollIndex={MONTH_LIST_MIDDLE_INDEX}
-                    windowSize={3}
-                    maxToRenderPerBatch={3}
+                    windowSize={2}
+                    maxToRenderPerBatch={1}
                     updateCellsBatchingPeriod={16}
                     removeClippedSubviews={Platform.OS === 'android'}
                     scrollEventThrottle={16}
@@ -1551,9 +1535,9 @@ export default function CalendarScreen() {
                         ref={ordersListRef}
                         data={displayedOrders}
                         extraData={ordersListExtraData}
-                        initialNumToRender={6}
-                        maxToRenderPerBatch={8}
-                        updateCellsBatchingPeriod={40}
+                        initialNumToRender={2}
+                        maxToRenderPerBatch={4}
+                        updateCellsBatchingPeriod={16}
                         removeClippedSubviews={Platform.OS === 'android'}
                         keyExtractor={orderKeyExtractor}
                         contentContainerStyle={ordersListContentContainerStyle}
@@ -1592,17 +1576,26 @@ export default function CalendarScreen() {
             <FlatList
               ref={yearFlatListRef}
               style={styles.yearPager}
+              onLayout={() => {
+                if (!perfYearMountStartedRef.current || perfYearFirstContentLoggedRef.current) return;
+                perfYearFirstContentLoggedRef.current = true;
+                const elapsedMs = Math.max(0, nowMs() - perfYearMountStartMsRef.current);
+                console.log(`[perf] calendar.year.first-content.now: ${Math.round(elapsedMs)}ms`);
+                try {
+                  console.timeEnd('calendar-year-mount');
+                } catch {}
+              }}
               data={dynamicYears}
               horizontal
               pagingEnabled
-              initialNumToRender={3}
+              initialNumToRender={1}
               showsHorizontalScrollIndicator={false}
               keyExtractor={(item, index) => `year-${item}-${index}`}
               getItemLayout={getItemLayout}
               initialScrollIndex={YEAR_LIST_MIDDLE_INDEX}
-              windowSize={3}
-              maxToRenderPerBatch={3}
-              updateCellsBatchingPeriod={40}
+              windowSize={2}
+              maxToRenderPerBatch={1}
+              updateCellsBatchingPeriod={16}
               removeClippedSubviews={true}
               onScrollEndDrag={(event) => {
                 const vx = Math.abs(Number(event?.nativeEvent?.velocity?.x) || 0);
