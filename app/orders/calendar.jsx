@@ -176,6 +176,7 @@ export default function CalendarScreen() {
   const [scope, setScope] = useState('my');
   const [executorFilterIds, setExecutorFilterIds] = useState([]);
   const [executorModalVisible, setExecutorModalVisible] = useState(false);
+  const [isPostMountSettled, setIsPostMountSettled] = useState(false);
   const hasEmployeeFilter = Array.isArray(executorFilterIds) && executorFilterIds.length > 0;
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
@@ -196,15 +197,31 @@ export default function CalendarScreen() {
     isScreenActive: isFocused,
   });
 
-  useRequestRealtimeSync({ enabled: isFocused && !!profile?.id });
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      setIsPostMountSettled(true);
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, []);
+
+  useRequestRealtimeSync({ enabled: isPostMountSettled && isFocused && !!profile?.id });
   const { data: executors = [] } = useRequestExecutors({
     companyId,
-    enabled: isAuthenticated && !isInitializing && !!profile?.id && canViewAllOrders,
+    enabled:
+      isAuthenticated &&
+      !isInitializing &&
+      !!profile?.id &&
+      canViewAllOrders &&
+      (executorModalVisible || hasEmployeeFilter),
     placeholderData: (prev) => prev ?? [],
   });
   const { data: departments = [] } = useDepartmentsQuery({
     companyId,
-    enabled: !!companyId && canViewAllOrders,
+    enabled: !!companyId && canViewAllOrders && (executorModalVisible || hasEmployeeFilter),
     onlyEnabled: true,
   });
 
@@ -368,10 +385,19 @@ export default function CalendarScreen() {
     }
     return years;
   }, []);
-  const monthWeeksByIndex = useMemo(
-    () => dynamicMonths.map((monthDate) => getMonthWeeks(monthDate.getFullYear(), monthDate.getMonth())),
-    [dynamicMonths],
-  );
+  const monthWeeksCacheRef = useRef(new Map());
+  const getWeeksForMonth = useCallback((monthDate) => {
+    const key = monthDate?.getTime?.();
+    if (!Number.isFinite(key)) return [];
+    const cached = monthWeeksCacheRef.current.get(key);
+    if (cached) return cached;
+    const weeks = getMonthWeeks(monthDate.getFullYear(), monthDate.getMonth());
+    monthWeeksCacheRef.current.set(key, weeks);
+    return weeks;
+  }, []);
+  useEffect(() => {
+    monthWeeksCacheRef.current.clear();
+  }, [monthWindowAnchor]);
   const activeVisibleMonth = useMemo(
     () => dynamicMonths[visibleMonthRenderIndex] ?? currentMonth,
     [currentMonth, dynamicMonths, visibleMonthRenderIndex],
@@ -955,15 +981,15 @@ export default function CalendarScreen() {
   const settledWeeksHeight = useSharedValue(measuredWeekRowHeight * actualWeekRows);
 
   useEffect(() => {
-    const targetRows = monthWeeksByIndex[visibleMonthRenderIndex]?.length ?? actualWeekRows;
+    const targetRows = getWeeksForMonth(activeVisibleMonth)?.length ?? actualWeekRows;
     const targetHeight = measuredWeekRowHeight * targetRows;
     settledWeeksHeight.value = targetHeight;
   }, [
+    activeVisibleMonth,
     actualWeekRows,
+    getWeeksForMonth,
     measuredWeekRowHeight,
-    monthWeeksByIndex,
     settledWeeksHeight,
-    visibleMonthRenderIndex,
   ]);
 
   useDerivedValue(() => {
@@ -1817,8 +1843,8 @@ export default function CalendarScreen() {
                       const nextIndex = resolvePageIndex(offsetX);
                       requestMonthCommit(nextIndex);
                     }}
-                    renderItem={({ item: monthDate, index }) => {
-                      const itemMonthWeeks = monthWeeksByIndex[index] ?? [];
+                    renderItem={({ item: monthDate }) => {
+                      const itemMonthWeeks = getWeeksForMonth(monthDate);
                       return (
                         <View style={[styles.monthPage]}>
                           <Animated.View
