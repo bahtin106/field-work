@@ -59,17 +59,19 @@ function CalendarGridCellComponent({
       ]}
     >
       <View style={styles.dayContent}>
-        <Text
-          style={[
-            styles.dayNumber,
-            isTodaySelected && styles.dayNumberToday,
-            highlightTodayWhenNotSelected && styles.dayNumberSelected,
-            !isCurrentMonth && styles.dayNumberMuted,
-            outsideMonthTextStyle,
-          ]}
-        >
-          {cell.day}
-        </Text>
+        <View style={styles.dayNumberLayer} pointerEvents="none">
+          <Text
+            style={[
+              styles.dayNumber,
+              isTodaySelected && styles.dayNumberToday,
+              highlightTodayWhenNotSelected && styles.dayNumberSelected,
+              !isCurrentMonth && styles.dayNumberMuted,
+              outsideMonthTextStyle,
+            ]}
+          >
+            {cell.day}
+          </Text>
+        </View>
         <Animated.View style={[styles.dayIndicatorSlot, indicatorSlotAnimatedStyle]}>
           {eventCount > 0 ? (
             <View
