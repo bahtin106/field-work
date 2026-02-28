@@ -1,4 +1,4 @@
-import { AntDesign } from '@expo/vector-icons';
+import { AntDesign, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React from 'react';
@@ -18,6 +18,7 @@ import {
   useDeleteClientMutation,
   useUpdateClientMutation,
 } from '../../../src/features/clients/queries';
+import { useClientObjects } from '../../../src/features/objects/queries';
 import { uploadClientAvatar } from '../../../src/features/clients/avatar';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -33,44 +34,19 @@ const getImagePickerMediaTypesImages = () => {
   return ['images'];
 };
 
-function withAlpha(color, alpha) {
+function withAlpha(color, a) {
   if (typeof color === 'string') {
     const hex = color.match(/^#([0-9a-fA-F]{6})$/);
     if (hex) {
-      const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
         .toString(16)
         .padStart(2, '0');
-      return color + a;
+      return color + alpha;
     }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
   }
-  return `rgba(0,0,0,${alpha})`;
-}
-
-function buildHeaderName(firstName, lastName, middleName, fallback) {
-  const full = `${lastName || ''} ${firstName || ''} ${middleName || ''}`
-    .replace(/\s+/g, ' ')
-    .trim();
-  return full || fallback;
-}
-
-function snapshotClientForm({
-  firstName,
-  lastName,
-  middleName,
-  email,
-  phone,
-  objectAddress,
-  avatarUrl,
-}) {
-  return JSON.stringify({
-    firstName: String(firstName || '').trim(),
-    lastName: String(lastName || '').trim(),
-    middleName: String(middleName || '').trim(),
-    email: String(email || '').trim().toLowerCase(),
-    phone: String(phone || '').trim(),
-    objectAddress: String(objectAddress || '').trim(),
-    avatarUrl: avatarUrl || null,
-  });
+  return `rgba(0,0,0,${a})`;
 }
 
 function AvatarSheetModal({
@@ -84,13 +60,20 @@ function AvatarSheetModal({
 }) {
   const { t } = useTranslation();
 
+  const { theme } = useTheme();
+  const ICON_SM = theme.icons?.sm ?? 18;
+
+  const chevron = (color) => (
+    <Feather name="chevron-right" size={ICON_SM} color={color} />
+  );
+
   const items = [
-    { id: 'camera', label: t('profile_photo_take') },
-    { id: 'library', label: t('profile_photo_choose') },
+    { id: 'camera', label: t('profile_photo_take'), right: chevron(theme.colors.textSecondary) },
+    { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
     ...(hasAvatar
       ? [
-          { id: 'view', label: t('profile_photo_title') },
-          { id: 'delete', label: t('profile_photo_delete') },
+          { id: 'view', label: t('profile_photo_title'), right: chevron(theme.colors.textSecondary) },
+          { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
         ]
       : []),
   ];
@@ -116,6 +99,19 @@ function AvatarSheetModal({
   );
 }
 
+function snapshotClientForm(obj = {}) {
+  return JSON.stringify({
+    firstName: String(obj.firstName || '').trim(),
+    lastName: String(obj.lastName || '').trim(),
+    middleName: String(obj.middleName || '').trim(),
+    email: String(obj.email || '').trim().toLowerCase() || '',
+    phone: String(obj.phone || '').trim() || '',
+    secondaryPhone: String(obj.secondaryPhone || '').trim() || '',
+    contactPref: String(obj.contactPref || '').trim() || '',
+    avatarUrl: String(obj.avatarUrl || '') || '',
+  });
+}
+
 export default function EditClientScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -131,6 +127,7 @@ export default function EditClientScreen() {
   const clientId = Array.isArray(id) ? id[0] : id;
 
   const { data: client } = useClient(clientId, { enabled: !!clientId });
+  const { data: clientObjects = [] } = useClientObjects(clientId, { enabled: !!clientId });
   const updateMutation = useUpdateClientMutation();
   const deleteMutation = useDeleteClientMutation();
 
@@ -139,7 +136,8 @@ export default function EditClientScreen() {
   const [middleName, setMiddleName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [phone, setPhone] = React.useState('');
-  const [objectAddress, setObjectAddress] = React.useState('');
+  const [secondaryPhone, setSecondaryPhone] = React.useState('');
+  const [contactPref, setContactPref] = React.useState('');
   const [avatarUrl, setAvatarUrl] = React.useState('');
 
   const [avatarSheetVisible, setAvatarSheetVisible] = React.useState(false);
@@ -165,6 +163,14 @@ export default function EditClientScreen() {
 
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
+  const stripRequiredStar = React.useCallback((label) => {
+    try {
+      return String(label || '').replace(/\s*\*\s*$/, '');
+    } catch {
+      return String(label || '');
+    }
+  }, []);
+
   React.useEffect(() => {
     if (!client) return;
     const next = {
@@ -173,7 +179,8 @@ export default function EditClientScreen() {
       middleName: client.middleName || '',
       email: client.email || '',
       phone: client.phone || '',
-      objectAddress: client.objectAddress || '',
+      secondaryPhone: client.secondaryPhone || '',
+      contactPref: client.contactPref || '',
       avatarUrl: client.avatarUrl || '',
     };
 
@@ -182,15 +189,27 @@ export default function EditClientScreen() {
     setMiddleName(next.middleName);
     setEmail(next.email);
     setPhone(next.phone);
-    setObjectAddress(next.objectAddress);
+    setSecondaryPhone(next.secondaryPhone);
+    setContactPref(next.contactPref);
     setAvatarUrl(next.avatarUrl);
     setInitialSnap(snapshotClientForm(next));
   }, [client]);
 
-  const headerName = React.useMemo(
-    () => buildHeaderName(firstName, lastName, middleName, t('placeholder_no_name')),
-    [firstName, lastName, middleName, t],
+  const sortedObjects = React.useMemo(
+    () =>
+      [...clientObjects].sort((left, right) => {
+        if (!!left?.is_primary !== !!right?.is_primary) return left?.is_primary ? -1 : 1;
+        return String(left?.name || '').localeCompare(String(right?.name || ''), 'ru');
+      }),
+    [clientObjects],
   );
+
+  const headerName = React.useMemo(() => {
+    const name = `${lastName || ''} ${firstName || ''} ${middleName || ''}`
+      .replace(/\s+/g, ' ')
+      .trim();
+    return name || t('placeholder_no_name');
+  }, [firstName, lastName, middleName, t]);
 
   const initials = React.useMemo(
     () => `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
@@ -206,11 +225,12 @@ export default function EditClientScreen() {
         middleName,
         email,
         phone,
-        objectAddress,
+        secondaryPhone,
+        contactPref,
         avatarUrl,
       }) !== initialSnap
     );
-  }, [avatarUrl, email, firstName, initialSnap, lastName, middleName, objectAddress, phone]);
+  }, [avatarUrl, contactPref, email, firstName, initialSnap, lastName, middleName, phone, secondaryPhone]);
 
   const goBack = React.useCallback(() => {
     allowLeaveRef.current = true;
@@ -346,7 +366,8 @@ export default function EditClientScreen() {
         middle_name: cleanMiddleName || null,
         email: String(email || '').trim().toLowerCase() || null,
         phone: String(phone || '').trim() || null,
-        object_address: String(objectAddress || '').trim() || null,
+        secondary_phone: String(secondaryPhone || '').trim() || null,
+        contact_pref: String(contactPref || '').trim() || null,
       };
 
       if (!avatarUrl) {
@@ -393,8 +414,9 @@ export default function EditClientScreen() {
     lastName,
     middleName,
     navigation,
-    objectAddress,
     phone,
+    secondaryPhone,
+    contactPref,
     router,
     saving,
     t,
@@ -450,19 +472,19 @@ export default function EditClientScreen() {
         <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
         <Card paddedXOnly>
           <TextField
-            label={t('label_first_name')}
-            value={firstName}
-            onChangeText={setFirstName}
-            style={styles.field}
-          />
-          <TextField
-            label={t('label_last_name')}
+            label={stripRequiredStar(t('label_last_name'))}
             value={lastName}
             onChangeText={setLastName}
             style={styles.field}
           />
           <TextField
-            label={t('label_middle_name')}
+            label={stripRequiredStar(t('label_first_name'))}
+            value={firstName}
+            onChangeText={setFirstName}
+            style={styles.field}
+          />
+          <TextField
+            label={stripRequiredStar(t('label_middle_name'))}
             value={middleName}
             onChangeText={setMiddleName}
             style={styles.field}
@@ -476,13 +498,42 @@ export default function EditClientScreen() {
             style={styles.field}
           />
           <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
-          <TextField
-            label={t('clients_object_address')}
-            value={objectAddress}
-            onChangeText={setObjectAddress}
+          <PhoneInput
+            label={t('order_field_secondary_phone')}
+            value={secondaryPhone}
+            onChangeText={setSecondaryPhone}
             style={styles.field}
-            multiline
-            minLines={2}
+          />
+          <TextField
+            label={t('order_field_contact_pref')}
+            value={contactPref}
+            onChangeText={setContactPref}
+            style={styles.field}
+          />
+        </Card>
+
+        <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
+        <Card paddedXOnly>
+          {sortedObjects.length ? (
+            sortedObjects.map((objectItem) => {
+              return (
+                <TextField
+                  key={objectItem.id}
+                  label={t('routes_objects_object')}
+                  value={objectItem.name || t('objects_unnamed')}
+                  pressable
+                  style={styles.field}
+                  onPress={() => router.push(`/objects/${objectItem.id}`)}
+                />
+              );
+            })
+          ) : (
+            <Text style={styles.emptyText}>{t('objects_empty')}</Text>
+          )}
+          <UIButton
+            title={t('objects_add')}
+            variant="secondary"
+            onPress={() => router.push(`/clients/${clientId}/objects/new`)}
           />
         </Card>
 
@@ -496,38 +547,17 @@ export default function EditClientScreen() {
         ) : null}
       </EditScreenTemplate>
 
-      <BaseModal
+      <ConfirmModal
         key={`cancel-${cancelKey}`}
         visible={cancelVisible}
         onClose={() => setCancelVisible(false)}
         title={t('dlg_leave_title')}
-        maxHeightRatio={0.5}
-        footer={(
-          <View style={styles.leaveFooter}>
-            <UIButton
-              title={t('dlg_leave_confirm')}
-              variant="secondary"
-              onPress={handleLeaveWithoutSaving}
-              style={styles.leaveBtn}
-            />
-            <UIButton
-              title={saving ? t('toast_saving') : t('header_save')}
-              variant="primary"
-              onPress={async () => {
-                const ok = await saveClient();
-                if (!ok) {
-                  setCancelVisible(true);
-                }
-              }}
-              style={styles.leaveBtn}
-            />
-          </View>
-        )}
-      >
-        <View style={styles.leaveBody}>
-          <Text style={styles.leaveText}>{t('dlg_leave_msg')}</Text>
-        </View>
-      </BaseModal>
+        message={t('dlg_leave_msg')}
+        confirmLabel={t('dlg_leave_confirm')}
+        cancelLabel={t('dlg_leave_cancel')}
+        confirmVariant="destructive"
+        onConfirm={handleLeaveWithoutSaving}
+      />
 
       <ConfirmModal
         visible={deleteVisible}
@@ -652,6 +682,11 @@ function createStyles(theme) {
     field: {
       marginVertical: theme.spacing.xs,
     },
+    emptyText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      marginBottom: theme.spacing.sm,
+    },
     deleteBtn: {
       alignSelf: 'stretch',
       marginTop: theme.spacing.sm,
@@ -669,7 +704,7 @@ function createStyles(theme) {
       gap: theme.spacing.md,
     },
     leaveBtn: {
-      flex: 1,
+      // do not force flex:1 here — allow buttons to size naturally
     },
 
     avatarPreviewWrap: {

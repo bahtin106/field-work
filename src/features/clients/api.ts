@@ -1,5 +1,9 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import {
+  buildClientObjectAddressSummary,
+  normalizeClientObject,
+} from '../objects/addressing';
 
 const clientByIdInFlight = new Map<string, Promise<any>>();
 
@@ -22,14 +26,24 @@ function normalizeClient(row: any) {
     String(row.full_name || '').trim() ||
     [lastName, firstName, middleName].filter(Boolean).join(' ').trim();
 
+  const objects = Array.isArray(row.client_objects)
+    ? row.client_objects.map(normalizeClientObject).filter(Boolean)
+    : [];
+  const primaryObject =
+    objects.find((objectItem) => objectItem?.is_primary) || objects[0] || null;
+
   return {
     ...row,
     firstName,
     lastName,
     middleName: middleName || null,
     fullName: fullName || '',
+    secondaryPhone: row.secondary_phone || null,
+    contactPref: row.contact_pref || null,
     avatarUrl: row.avatar_url || null,
-    objectAddress: row.object_address || null,
+    objects,
+    primaryObject,
+    primaryObjectSummary: buildClientObjectAddressSummary(primaryObject) || null,
   };
 }
 
@@ -37,7 +51,7 @@ export async function listClients({ companyId = null, search = '' } = {}) {
   return measureNetwork('clients.list', async () => {
     let query = supabase
       .from('clients')
-      .select('id, company_id, first_name, last_name, middle_name, full_name, email, phone, avatar_url, object_address, created_at, updated_at')
+      .select('id, company_id, first_name, last_name, middle_name, full_name, email, phone, secondary_phone, contact_pref, avatar_url, created_at, updated_at, client_objects(id, client_id, company_id, name, is_primary, summary, country, region, city, street, house)')
       .order('full_name', { ascending: true, nullsFirst: false });
 
     if (companyId) {
@@ -54,7 +68,7 @@ export async function listClients({ companyId = null, search = '' } = {}) {
           `middle_name.ilike.%${normalizedSearch}%`,
           `email.ilike.%${normalizedSearch}%`,
           `phone.ilike.%${normalizedSearch}%`,
-          `object_address.ilike.%${normalizedSearch}%`,
+          `secondary_phone.ilike.%${normalizedSearch}%`,
         ].join(','),
       );
     }
@@ -74,14 +88,25 @@ export async function getClientById(clientId: string) {
   if (existing) return existing;
 
   const p = measureNetwork('clients.getById', async () => {
-    const { data, error } = await supabase
-      .from('clients')
-      .select('id, company_id, first_name, last_name, middle_name, full_name, email, phone, avatar_url, object_address, created_at, updated_at')
-      .eq('id', key)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, company_id, first_name, last_name, middle_name, full_name, email, phone, secondary_phone, contact_pref, avatar_url, created_at, updated_at, client_objects(*)')
+        .eq('id', key)
+        .maybeSingle();
 
-    if (error) throw error;
-    return normalizeClient(data);
+      if (error) throw error;
+      return normalizeClient(data);
+    } catch {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, company_id, first_name, last_name, middle_name, full_name, email, phone, secondary_phone, contact_pref, avatar_url, created_at, updated_at')
+        .eq('id', key)
+        .maybeSingle();
+
+      if (error) throw error;
+      return normalizeClient(data);
+    }
   }).finally(() => {
     clientByIdInFlight.delete(key);
   });

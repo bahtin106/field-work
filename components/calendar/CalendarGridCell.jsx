@@ -1,5 +1,5 @@
 // components/calendar/CalendarGridCell.jsx
-import { memo, useCallback } from 'react';
+import { useCallback } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
@@ -8,14 +8,14 @@ const OUTSIDE_MONTH_META_TEXT_OPACITY = 0.55;
 const OUTSIDE_MONTH_META_DOT_OPACITY = 0.45;
 const EVENT_META_MIN_WIDTH_RATIO = 0.5;
 const EVENT_META_HORIZONTAL_INSET = 4;
+const EVENT_META_BOTTOM_INSET_RATIO = 0.12;
 
 function CalendarGridCellComponent({
   cell,
   dayKey,
   eventCount,
-  isTodaySelected,
-  showOutline,
-  highlightTodayWhenNotSelected,
+  isSelectedDay,
+  isToday,
   isCurrentMonth,
   dayCellSize,
   onDatePress,
@@ -34,13 +34,18 @@ function CalendarGridCellComponent({
   }
 
   const isOutsideMonth = !isCurrentMonth;
-  const outsideMonthTextStyle = isOutsideMonth
+  const showOutsideMonthDeemphasis = isOutsideMonth && !isSelectedDay;
+  const isTodaySelected = isSelectedDay && isToday;
+  const showOutline = isSelectedDay && !isToday;
+  const highlightTodayWhenNotSelected = isToday && !isSelectedDay;
+
+  const outsideMonthTextStyle = showOutsideMonthDeemphasis
     ? { color: theme.colors.textSecondary, opacity: OUTSIDE_MONTH_TEXT_OPACITY }
     : null;
-  const outsideMonthMetaTextStyle = isOutsideMonth
+  const outsideMonthMetaTextStyle = showOutsideMonthDeemphasis
     ? { color: theme.colors.textSecondary, opacity: OUTSIDE_MONTH_META_TEXT_OPACITY }
     : null;
-  const outsideMonthMetaDotStyle = isOutsideMonth
+  const outsideMonthMetaDotStyle = showOutsideMonthDeemphasis
     ? { backgroundColor: theme.colors.textSecondary, opacity: OUTSIDE_MONTH_META_DOT_OPACITY }
     : null;
 
@@ -58,26 +63,45 @@ function CalendarGridCellComponent({
         showOutline && styles.dayCellSelectedOutline,
       ]}
     >
-      <View style={styles.dayContent}>
-        <View style={styles.dayNumberLayer} pointerEvents="none">
-          <Text
-            style={[
-              styles.dayNumber,
-              isTodaySelected && styles.dayNumberToday,
-              highlightTodayWhenNotSelected && styles.dayNumberSelected,
-              !isCurrentMonth && styles.dayNumberMuted,
-              outsideMonthTextStyle,
-            ]}
-          >
-            {cell.day}
-          </Text>
-        </View>
-        <Animated.View style={[styles.dayIndicatorSlot, indicatorSlotAnimatedStyle]}>
+      <View
+        style={[
+          styles.dayContent,
+          {
+            borderRadius: dayCellSize / 2,
+            overflow: 'hidden',
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.dayNumber,
+            outsideMonthTextStyle,
+            showOutline && styles.dayNumberSelected,
+            isTodaySelected && styles.dayNumberToday,
+            highlightTodayWhenNotSelected && styles.dayNumberSelected,
+            showOutsideMonthDeemphasis && styles.dayNumberMuted,
+          ]}
+        >
+          {cell.day}
+        </Text>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.dayIndicatorSlot,
+            {
+              position: 'absolute',
+              left: EVENT_META_HORIZONTAL_INSET,
+              right: EVENT_META_HORIZONTAL_INSET,
+              bottom: Math.max(1, dayCellSize * EVENT_META_BOTTOM_INSET_RATIO),
+            },
+            indicatorSlotAnimatedStyle,
+          ]}
+        >
           {eventCount > 0 ? (
             <View
               style={{
                 minWidth: dayCellSize * EVENT_META_MIN_WIDTH_RATIO,
-                maxWidth: Math.max(0, dayCellSize - EVENT_META_HORIZONTAL_INSET * 2),
+                maxWidth: Math.max(0, dayCellSize - EVENT_META_HORIZONTAL_INSET * 4),
                 paddingHorizontal: EVENT_META_HORIZONTAL_INSET,
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -99,4 +123,4 @@ function CalendarGridCellComponent({
   );
 }
 
-export const CalendarGridCell = memo(CalendarGridCellComponent);
+export const CalendarGridCell = CalendarGridCellComponent;

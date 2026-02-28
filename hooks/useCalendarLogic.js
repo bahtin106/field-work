@@ -253,10 +253,8 @@ function orderDateKey(o) {
     'when',
     'created_at',
   ];
-  const isCustomObj = o?.custom && typeof o.custom === 'object' && !Array.isArray(o.custom);
-  const customFields = isCustomObj ? o.custom : null;
   for (const key of ORDER_DATE_FIELDS) {
-    const candidate = o?.[key] ?? (customFields ? customFields[key] : undefined);
+    const candidate = o?.[key];
     if (candidate) {
       try {
         const parsed = new Date(candidate);

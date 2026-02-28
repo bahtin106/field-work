@@ -61,6 +61,24 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}
           if (rowId) {
             queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(rowId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.clients.orderCount(rowId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(rowId) });
+          }
+          queryClient.invalidateQueries({ queryKey: ['clients'] });
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'client_objects',
+          filter: `company_id=eq.${companyId}`,
+        },
+        (payload) => {
+          const clientId = payload?.new?.client_id || payload?.old?.client_id;
+          if (clientId) {
+            queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
+            queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
           }
           queryClient.invalidateQueries({ queryKey: ['clients'] });
         },

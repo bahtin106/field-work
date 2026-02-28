@@ -24,6 +24,11 @@ function ExpandableTextRowComponent({
   expandedValueStyle = null,
   expandedLabelBold = false,
   expandedKeyValueItems = null,
+  // new optional props
+  chevronName = 'chevron-down',
+  onChevronPress = null,
+  // show row even if value is empty
+  forceShow = false,
 }) {
   const { theme } = useTheme();
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -37,8 +42,9 @@ function ExpandableTextRowComponent({
   const panelToggleMs =
     theme._raw?.timings?.panelToggleMs ?? theme.timings?.panelToggleMs ?? theme.components?.listItem?.height;
   const progress = useSharedValue(initiallyExpanded ? 1 : 0);
+  const rotateDeg = chevronName === 'chevron-down' ? 180 : chevronName === 'chevron-right' ? 90 : 0;
   const chevronStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${progress.value * 180}deg` }],
+    transform: [{ rotate: `${progress.value * rotateDeg}deg` }],
   }));
   const chevronHitSlop = useMemo(
     () => ({
@@ -56,7 +62,7 @@ function ExpandableTextRowComponent({
   const hasExpandedItems = Array.isArray(expandedKeyValueItems) && expandedKeyValueItems.length > 0;
   const showExpandedAction = expanded && !!normalizedExpandedActionText && typeof onValuePress === 'function';
   const showCollapsedValue = !expanded;
-  if (!normalizedValue && !hasExpandedItems) return null;
+  if (!forceShow && !normalizedValue && !hasExpandedItems) return null;
 
   const toggleExpanded = () => {
     const next = !expanded;
@@ -106,7 +112,10 @@ function ExpandableTextRowComponent({
             </Text>
           ) : null}
           <Pressable
-            onPress={toggleExpanded}
+            onPress={() => {
+              if (typeof onChevronPress === 'function') return onChevronPress();
+              return toggleExpanded();
+            }}
             hitSlop={chevronHitSlop}
             style={styles.chevronPressable}
             accessibilityRole="button"
@@ -114,7 +123,7 @@ function ExpandableTextRowComponent({
           >
             <Animated.View style={[styles.chevronWrap, chevronStyle]}>
               <Feather
-                name="chevron-down"
+                name={chevronName}
                 size={theme.components?.listItem?.chevronSize ?? theme.icons?.md}
                 color={theme.colors.textSecondary}
               />

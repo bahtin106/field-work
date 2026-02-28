@@ -44,11 +44,6 @@ const TYPE_PRESETS = [
   'time_window_start',
   'select',
   'multiselect',
-  'address_region',
-  'address_city',
-  'address_street',
-  'address_building',
-  'custom',
 ];
 
 const CORE_KEYS = new Set([
@@ -56,10 +51,6 @@ const CORE_KEYS = new Set([
   'customer_name',
   'phone',
   'time_window_start',
-  'address_region',
-  'address_city',
-  'address_street',
-  'address_building',
 ]);
 
 function sanitizeKey(s) {
