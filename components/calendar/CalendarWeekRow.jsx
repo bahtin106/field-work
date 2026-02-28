@@ -1,5 +1,4 @@
 // components/calendar/CalendarWeekRow.jsx
-import { memo } from 'react';
 import { View } from 'react-native';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { CalendarGridCell } from './CalendarGridCell';
@@ -35,11 +34,8 @@ function CalendarWeekRowComponent({
         const dayKey = formatDateKey(cell.date);
         const eventCount = eventCountsByDate?.[dayKey] || 0;
         const isCurrentMonth = cell?.isCurrentMonth !== false;
-        const isSelectedDay = isCurrentMonth && dayKey === selectedDate;
+        const isSelectedDay = dayKey === selectedDate;
         const isToday = dayKey === todayKey;
-        const isTodaySelected = isSelectedDay && isToday;
-        const showOutline = isSelectedDay && !isToday;
-        const highlightTodayWhenNotSelected = false;
 
         return (
           <CalendarGridCell
@@ -47,9 +43,8 @@ function CalendarWeekRowComponent({
             cell={cell}
             dayKey={dayKey}
             eventCount={eventCount}
-            isTodaySelected={isTodaySelected}
-            showOutline={showOutline}
-            highlightTodayWhenNotSelected={highlightTodayWhenNotSelected}
+            isSelectedDay={isSelectedDay}
+            isToday={isToday}
             isCurrentMonth={isCurrentMonth}
             dayCellSize={dayCellSize}
             onDatePress={onDatePress}
@@ -65,4 +60,4 @@ function CalendarWeekRowComponent({
   );
 }
 
-export const CalendarWeekRow = memo(CalendarWeekRowComponent);
+export const CalendarWeekRow = CalendarWeekRowComponent;

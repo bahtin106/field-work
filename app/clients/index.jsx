@@ -5,11 +5,11 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import Card from '../../components/ui/Card';
@@ -123,7 +123,8 @@ export default function ClientsIndexScreen() {
                       {item.phone || item.email || t('common_dash')}
                     </Text>
                     <Text style={styles.metaText} numberOfLines={2}>
-                      {item.objectAddress || t('common_dash')}
+                      {item.primaryObjectSummary ||
+                        t('clients_objects_count_label').replace('{count}', String(item.objects?.length || 0))}
                     </Text>
                   </View>
                 </Card>

@@ -674,7 +674,7 @@ export default function AllOrdersScreen() {
   );
 
   // Заголовок списка с фильтрами
-  const ListHeaderComponent = useCallback(
+  const listHeader = useMemo(
     () => (
       <View style={{ padding: 16 }}>
         <Text style={styles.header}>Все заявки</Text>
@@ -765,7 +765,7 @@ export default function AllOrdersScreen() {
             removeClippedSubviews={Platform.OS === 'android'}
             onViewableItemsChanged={onViewableItemsChanged}
             viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
-            ListHeaderComponent={ListHeaderComponent}
+            ListHeaderComponent={listHeader}
             ListFooterComponent={renderFooter}
             ListEmptyComponent={
               loading ? (

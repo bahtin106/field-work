@@ -23,7 +23,8 @@ import {
   useRequestRealtimeSync,
   useUpdateRequestMutation,
 } from '../../../src/features/requests/queries';
-import { useClients } from '../../../src/features/clients/queries';
+import { useClient, useClients, useUpdateClientMutation } from '../../../src/features/clients/queries';
+import { buildClientObjectAddressSummary } from '../../../src/features/objects/addressing';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FiltersPanel from '../../../components/filters/FiltersPanel';
@@ -125,6 +126,7 @@ export default function EditOrderScreen() {
   const [intercom, setIntercom] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [selectedClientId, setSelectedClientId] = useState(null);
+  const [selectedObjectId, setSelectedObjectId] = useState(null);
   const [phone, setPhone] = useState('');
   const [secondaryPhone, setSecondaryPhone] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -140,11 +142,11 @@ export default function EditOrderScreen() {
   const [statusLabel, setStatusLabel] = useState('');
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [clientModalVisible, setClientModalVisible] = useState(false);
+  const [objectModalVisible, setObjectModalVisible] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
   const [parkingNotes, setParkingNotes] = useState('');
   const [geoLat, setGeoLat] = useState('');
   const [geoLng, setGeoLng] = useState('');
-  const [dateTimeValue, setDateTimeValue] = useState('');
   const [assignedEmployeeLabel, setAssignedEmployeeLabel] = useState('');
   const [formHydrated, setFormHydrated] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
@@ -175,13 +177,16 @@ export default function EditOrderScreen() {
   const parkingNotesRef = useRef(null);
   const geoLatRef = useRef(null);
   const geoLngRef = useRef(null);
-  const datetimeRef = useRef(null);
   const [price, setPrice] = useState('');
   const [fuelCost, setFuelCost] = useState('');
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
     { enabled: !!companyId && hasPermission('canViewClients') },
   );
+  const { data: selectedClient } = useClient(selectedClientId, {
+    enabled: !!selectedClientId && hasPermission('canViewClients'),
+  });
+  const updateClientMutation = useUpdateClientMutation();
 
   // РјРѕРґР°Р»СЊРЅС‹Рµ СЃРѕСЃС‚РѕСЏРЅРёСЏ (Р±С‹Р»Рё СѓРґР°Р»РµРЅС‹ СЂР°РЅРµРµ вЂ” РІРµСЂРЅСѓС‚СЊ)
   const [showDateModal, setShowDateModal] = useState(false);
@@ -206,6 +211,14 @@ export default function EditOrderScreen() {
     const client = clients.find((item) => String(item.id) === String(selectedClientId));
     return client?.fullName || '';
   }, [clients, selectedClientId]);
+  const clientObjects = useMemo(
+    () => (Array.isArray(selectedClient?.objects) ? selectedClient.objects : []),
+    [selectedClient],
+  );
+  const selectedObjectSummary = useMemo(() => {
+    const objectItem = clientObjects.find((item) => String(item.id) === String(selectedObjectId));
+    return [objectItem?.name, buildClientObjectAddressSummary(objectItem)].filter(Boolean).join(' - ');
+  }, [clientObjects, selectedObjectId]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -243,8 +256,32 @@ export default function EditOrderScreen() {
     return clients.map((client) => ({
       id: client.id,
       label: client.fullName || T('common_noName'),
+      onPress: () => {
+        setSelectedClientId(client.id);
+        setSelectedObjectId(null);
+        setPhone(String(client.phone || ''));
+        setSecondaryPhone(String(client.secondaryPhone || ''));
+        setContactEmail(String(client.email || ''));
+        setContactPref(String(client.contactPref || ''));
+        setClientModalVisible(false);
+      },
     }));
   }, [clients]);
+  const objectItems = useMemo(() => {
+    if (!clientObjects.length) {
+      return [{ id: 'empty', label: T('objects_empty'), disabled: true }];
+    }
+    return clientObjects.map((objectItem) => ({
+      id: objectItem.id,
+      label: objectItem.is_primary
+        ? [objectItem.name, T('objects_primary')].filter(Boolean).join(' - ')
+        : objectItem.name,
+      onPress: () => {
+        setSelectedObjectId(objectItem.id);
+        setObjectModalVisible(false);
+      },
+    }));
+  }, [clientObjects]);
 
   const selectedEmployee = useMemo(() => {
     if (!assigneeId || !employees?.length) return null;
@@ -364,6 +401,7 @@ export default function EditOrderScreen() {
         intercom: String(draft.intercom || '').trim(),
         customerName: String(draft.customerName || '').trim(),
         selectedClientId: draft.selectedClientId || null,
+        selectedObjectId: draft.selectedObjectId || null,
         phone: String(draft.phone || '').replace(/\D/g, ''),
         secondaryPhone: String(draft.secondaryPhone || '').replace(/\D/g, ''),
         contactEmail: String(draft.contactEmail || '').trim(),
@@ -372,7 +410,6 @@ export default function EditOrderScreen() {
         parkingNotes: String(draft.parkingNotes || '').trim(),
         geoLat: String(draft.geoLat || '').trim(),
         geoLng: String(draft.geoLng || '').trim(),
-        datetime: String(draft.datetime || '').trim(),
         departureDateIso: normalizeDateOrNull(draft.departureDate)?.toISOString() || null,
         departureEndDateIso: normalizeDateOrNull(draft.departureEndDate)?.toISOString() || null,
         isDepartureRange: !!draft.isDepartureRange,
@@ -411,6 +448,7 @@ export default function EditOrderScreen() {
       const nextIntercom = row.intercom ?? intercom ?? '';
       const nextCustomerName = row.fio || row.customer_name || '';
       const nextClientId = normalizeId(row.client_id);
+      const nextObjectId = normalizeId(row.object_id);
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
       const nextSecondaryPhone = String(row.secondary_phone || '').replace(/\D/g, '');
       const nextContactEmail = row.contact_email ?? '';
@@ -419,7 +457,6 @@ export default function EditOrderScreen() {
       const nextParkingNotes = row.parking_notes ?? '';
       const nextGeoLat = row.geo_lat ?? '';
       const nextGeoLng = row.geo_lng ?? '';
-      const nextDateTime = row.datetime ?? '';
       const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
       const nextDepartureEndDate = normalizeDateOrNull(row.time_window_end);
       const nextIsDepartureRange = !!nextDepartureEndDate;
@@ -459,6 +496,7 @@ export default function EditOrderScreen() {
       setIntercom(nextIntercom);
       setCustomerName(nextCustomerName);
       setSelectedClientId(nextClientId);
+      setSelectedObjectId(nextObjectId);
       setPhone(raw);
       setSecondaryPhone(nextSecondaryPhone);
       setContactEmail(String(nextContactEmail || ''));
@@ -467,7 +505,6 @@ export default function EditOrderScreen() {
       setParkingNotes(String(nextParkingNotes || ''));
       setGeoLat(String(nextGeoLat || ''));
       setGeoLng(String(nextGeoLng || ''));
-      setDateTimeValue(String(nextDateTime || ''));
       setDepartureDate(nextDepartureDate);
       setDepartureEndDate(nextDepartureEndDate);
       setIsDepartureRange(nextIsDepartureRange);
@@ -506,6 +543,7 @@ export default function EditOrderScreen() {
         intercom: nextIntercom,
         customerName: nextCustomerName,
         selectedClientId: nextClientId,
+        selectedObjectId: nextObjectId,
         phone: raw,
         secondaryPhone: nextSecondaryPhone,
         contactEmail: nextContactEmail,
@@ -514,7 +552,6 @@ export default function EditOrderScreen() {
         parkingNotes: nextParkingNotes,
         geoLat: nextGeoLat,
         geoLng: nextGeoLng,
-        datetime: nextDateTime,
         departureDate: nextDepartureDate,
         departureEndDate: nextDepartureEndDate,
         isDepartureRange: nextIsDepartureRange,
@@ -543,7 +580,7 @@ export default function EditOrderScreen() {
       if (!nextWorkTypeResolved || nextWorkTypeId == null) {
         supabase
           .from('orders')
-          .select('work_type_id, client_id, secondary_phone, contact_email, contact_pref, entrance_info, parking_notes, geo_lat, geo_lng, datetime, time_window_end')
+          .select('work_type_id, client_id, secondary_phone, contact_email, contact_pref, time_window_end')
           .eq('id', id)
           .maybeSingle()
           .then(({ data: wtRow }) => {
@@ -553,22 +590,13 @@ export default function EditOrderScreen() {
             const resolvedSecondaryPhone = String(wtRow.secondary_phone || '').replace(/\D/g, '');
             const resolvedContactEmail = String(wtRow.contact_email || '');
             const resolvedContactPref = String(wtRow.contact_pref || '');
-            const resolvedEntranceInfo = String(wtRow.entrance_info || '');
-            const resolvedParkingNotes = String(wtRow.parking_notes || '');
-            const resolvedGeoLat = String(wtRow.geo_lat || '');
-            const resolvedGeoLng = String(wtRow.geo_lng || '');
-            const resolvedDateTime = String(wtRow.datetime || '');
             const resolvedDepartureEndDate = normalizeDateOrNull(wtRow.time_window_end);
             setWorkTypeId(resolvedWorkTypeId);
             setSelectedClientId(resolvedClientId);
+            setSelectedObjectId(nextObjectId);
             setSecondaryPhone((prev) => prev || resolvedSecondaryPhone);
             setContactEmail((prev) => prev || resolvedContactEmail);
             setContactPref((prev) => prev || resolvedContactPref);
-            setEntranceInfo((prev) => prev || resolvedEntranceInfo);
-            setParkingNotes((prev) => prev || resolvedParkingNotes);
-            setGeoLat((prev) => prev || resolvedGeoLat);
-            setGeoLng((prev) => prev || resolvedGeoLng);
-            setDateTimeValue((prev) => prev || resolvedDateTime);
             setDepartureEndDate((prev) => prev || resolvedDepartureEndDate);
             setIsDepartureRange((prev) => prev || !!resolvedDepartureEndDate);
             setWorkTypeResolved(true);
@@ -588,15 +616,11 @@ export default function EditOrderScreen() {
               intercom: nextIntercom,
               customerName: nextCustomerName,
               selectedClientId: resolvedClientId,
+              selectedObjectId: nextObjectId,
               phone: raw,
               secondaryPhone: nextSecondaryPhone || resolvedSecondaryPhone,
               contactEmail: nextContactEmail || resolvedContactEmail,
               contactPref: nextContactPref || resolvedContactPref,
-              entranceInfo: nextEntranceInfo || resolvedEntranceInfo,
-              parkingNotes: nextParkingNotes || resolvedParkingNotes,
-              geoLat: nextGeoLat || resolvedGeoLat,
-              geoLng: nextGeoLng || resolvedGeoLng,
-              datetime: nextDateTime || resolvedDateTime,
               departureDate: nextDepartureDate,
               departureEndDate: nextDepartureEndDate || resolvedDepartureEndDate,
               isDepartureRange: nextIsDepartureRange || !!resolvedDepartureEndDate,
@@ -671,6 +695,7 @@ export default function EditOrderScreen() {
       intercom,
       customerName,
       selectedClientId,
+      selectedObjectId,
       phone,
       secondaryPhone,
       contactEmail,
@@ -679,7 +704,6 @@ export default function EditOrderScreen() {
       parkingNotes,
       geoLat,
       geoLng,
-      datetime: dateTimeValue,
       departureDate,
       departureEndDate,
       isDepartureRange,
@@ -710,6 +734,7 @@ export default function EditOrderScreen() {
     intercom,
     customerName,
     selectedClientId,
+    selectedObjectId,
     phone,
     secondaryPhone,
     contactEmail,
@@ -718,7 +743,6 @@ export default function EditOrderScreen() {
     parkingNotes,
     geoLat,
     geoLng,
-    dateTimeValue,
     departureDate,
     departureEndDate,
     isDepartureRange,
@@ -927,7 +951,6 @@ export default function EditOrderScreen() {
         parkingNotesRef,
         geoLatRef,
         geoLngRef,
-        datetimeRef,
       ].forEach(
         (r) => {
           try {
@@ -1017,31 +1040,37 @@ export default function EditOrderScreen() {
         showToast(T('order_validation_fuel_format'), 'error');
         return;
       }
+      if (selectedClientId && !selectedObjectId) {
+        showToast(T('objects_select_required_for_order'), 'error');
+        return;
+      }
+      const normalizedSecondaryPhone = normalizeRuPhoneForDb(secondaryPhone);
+      const normalizedContactEmail = String(contactEmail || '').trim().toLowerCase() || null;
+      const normalizedContactPref = String(contactPref || '').trim() || null;
+      if (
+        !selectedClientId &&
+        (normalizedPhone || normalizedSecondaryPhone || normalizedContactEmail || normalizedContactPref)
+      ) {
+        showToast(T('order_validation_client_required_for_contact_details'), 'error');
+        return;
+      }
+      if (selectedClientId) {
+        await updateClientMutation.mutateAsync({
+          id: String(selectedClientId),
+          patch: {
+            phone: normalizedPhone,
+            email: normalizedContactEmail,
+            secondary_phone: normalizedSecondaryPhone,
+            contact_pref: normalizedContactPref,
+          },
+        });
+      }
       const payload = {
         title,
         comment: description,
-        region,
-        city,
-        street,
-        house,
-        country,
-        postal_code: postalCode,
-        building,
-        floor,
-        entrance,
-        apartment,
-        intercom,
         fio: customerName,
         client_id: normalizeId(selectedClientId),
-        phone: normalizedPhone,
-        secondary_phone: normalizeRuPhoneForDb(secondaryPhone),
-        contact_email: String(contactEmail || '').trim() || null,
-        contact_pref: String(contactPref || '').trim() || null,
-        entrance_info: String(entranceInfo || '').trim() || null,
-        parking_notes: String(parkingNotes || '').trim() || null,
-        geo_lat: String(geoLat || '').trim() || null,
-        geo_lng: String(geoLng || '').trim() || null,
-        datetime: String(dateTimeValue || '').trim() || null,
+        object_id: normalizeId(selectedObjectId),
         assigned_to: toFeed ? null : assigneeId,
         time_window_start: normalizedDepartureDate.toISOString(),
         time_window_end:
@@ -1081,15 +1110,11 @@ export default function EditOrderScreen() {
         intercom,
         customerName,
         selectedClientId,
+        selectedObjectId,
         phone,
         secondaryPhone,
         contactEmail,
         contactPref,
-        entranceInfo,
-        parkingNotes,
-        geoLat,
-        geoLng,
-        datetime: dateTimeValue,
         departureDate,
         departureEndDate,
         isDepartureRange,
@@ -1294,124 +1319,6 @@ export default function EditOrderScreen() {
             />
           </Card>
 
-          <SectionHeader bottomSpacing="xs">{T('order_section_address')}</SectionHeader>
-          <Card padded={false} style={styles.card}>
-            <TextField
-              ref={regionRef}
-              label={T('order_field_region')}
-              value={region}
-              onChangeText={setRegion}
-              style={styles.field}
-              onFocus={() => focusField(regionRef)}
-            />
-            <TextField
-              ref={cityRef}
-              label={T('order_field_city')}
-              value={city}
-              onChangeText={setCity}
-              style={styles.field}
-              onFocus={() => focusField(cityRef)}
-            />
-            <TextField
-              ref={streetRef}
-              label={T('order_field_street')}
-              value={street}
-              onChangeText={setStreet}
-              style={styles.field}
-              onFocus={() => focusField(streetRef)}
-            />
-            <TextField
-              ref={houseRef}
-              label={T('order_field_house')}
-              value={house}
-              onChangeText={setHouse}
-              style={styles.field}
-              onFocus={() => focusField(houseRef)}
-            />
-            <TextField
-              ref={countryRef}
-              label={T('order_field_country')}
-              value={country}
-              onChangeText={setCountry}
-              style={styles.field}
-              onFocus={() => focusField(countryRef)}
-            />
-            <TextField
-              ref={postalCodeRef}
-              label={T('order_field_postal_code')}
-              value={postalCode}
-              onChangeText={setPostalCode}
-              style={styles.field}
-              onFocus={() => focusField(postalCodeRef)}
-            />
-            <TextField
-              ref={buildingRef}
-              label={T('order_field_building')}
-              value={building}
-              onChangeText={setBuilding}
-              style={styles.field}
-              onFocus={() => focusField(buildingRef)}
-            />
-            <TextField
-              ref={floorRef}
-              label={T('order_field_floor')}
-              value={floor}
-              onChangeText={setFloor}
-              style={styles.field}
-              onFocus={() => focusField(floorRef)}
-            />
-            <TextField
-              ref={entranceRef}
-              label={T('order_field_entrance')}
-              value={entrance}
-              onChangeText={setEntrance}
-              style={styles.field}
-              onFocus={() => focusField(entranceRef)}
-            />
-            <TextField
-              ref={apartmentRef}
-              label={T('order_field_apartment')}
-              value={apartment}
-              onChangeText={setApartment}
-              style={styles.field}
-              onFocus={() => focusField(apartmentRef)}
-            />
-            <TextField
-              ref={intercomRef}
-              label={T('order_field_intercom')}
-              value={intercom}
-              onChangeText={setIntercom}
-              style={styles.field}
-              onFocus={() => focusField(intercomRef)}
-            />
-            <TextField
-              ref={parkingNotesRef}
-              label={T('order_field_parking_notes')}
-              value={parkingNotes}
-              onChangeText={setParkingNotes}
-              style={styles.field}
-              onFocus={() => focusField(parkingNotesRef)}
-            />
-            <TextField
-              ref={geoLatRef}
-              label={T('order_field_geo_lat')}
-              value={geoLat}
-              onChangeText={setGeoLat}
-              keyboardType="decimal-pad"
-              style={styles.field}
-              onFocus={() => focusField(geoLatRef)}
-            />
-            <TextField
-              ref={geoLngRef}
-              label={T('order_field_geo_lng')}
-              value={geoLng}
-              onChangeText={setGeoLng}
-              keyboardType="decimal-pad"
-              style={styles.field}
-              onFocus={() => focusField(geoLngRef)}
-            />
-          </Card>
-
           <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {hasPermission('canViewClients') ? (
@@ -1423,6 +1330,15 @@ export default function EditOrderScreen() {
                 onPress={() => setClientModalVisible(true)}
               />
             ) : null}
+            {selectedClientId ? (
+              <TextField
+                label={T('create_order_client_object_label')}
+                value={selectedObjectSummary || T('create_order_client_object_placeholder')}
+                pressable
+                style={styles.field}
+                onPress={() => setObjectModalVisible(true)}
+              />
+            ) : null}
             <TextField
               ref={customerNameRef}
               label={T('order_field_customer_name')}
@@ -1432,39 +1348,35 @@ export default function EditOrderScreen() {
               onFocus={() => focusField(customerNameRef)}
             />
             <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
-            <PhoneInput
-              ref={secondaryPhoneRef}
-              label={T('order_field_secondary_phone')}
-              value={secondaryPhone}
-              onChangeText={setSecondaryPhone}
-              style={styles.field}
-            />
-            <TextField
-              ref={contactEmailRef}
-              label={T('order_field_contact_email')}
-              value={contactEmail}
-              onChangeText={setContactEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={styles.field}
-              onFocus={() => focusField(contactEmailRef)}
-            />
-            <TextField
-              ref={contactPrefRef}
-              label={T('order_field_contact_pref')}
-              value={contactPref}
-              onChangeText={setContactPref}
-              style={styles.field}
-              onFocus={() => focusField(contactPrefRef)}
-            />
-            <TextField
-              ref={entranceInfoRef}
-              label={T('order_field_entrance_info')}
-              value={entranceInfo}
-              onChangeText={setEntranceInfo}
-              style={styles.field}
-              onFocus={() => focusField(entranceInfoRef)}
-            />
+            {selectedClientId ? (
+              <>
+                <PhoneInput
+                  ref={secondaryPhoneRef}
+                  label={T('order_field_secondary_phone')}
+                  value={secondaryPhone}
+                  onChangeText={setSecondaryPhone}
+                  style={styles.field}
+                />
+                <TextField
+                  ref={contactEmailRef}
+                  label={T('order_field_contact_email')}
+                  value={contactEmail}
+                  onChangeText={setContactEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  style={styles.field}
+                  onFocus={() => focusField(contactEmailRef)}
+                />
+                <TextField
+                  ref={contactPrefRef}
+                  label={T('order_field_contact_pref')}
+                  value={contactPref}
+                  onChangeText={setContactPref}
+                  style={styles.field}
+                  onFocus={() => focusField(contactPrefRef)}
+                />
+              </>
+            ) : null}
           </Card>
 
           <SectionHeader bottomSpacing="xs">
@@ -1509,14 +1421,6 @@ export default function EditOrderScreen() {
                 />
               </>
             )}
-            <TextField
-              ref={datetimeRef}
-              label={T('order_field_datetime')}
-              value={dateTimeValue}
-              onChangeText={setDateTimeValue}
-              style={styles.field}
-              onFocus={() => focusField(datetimeRef)}
-            />
           </Card>
 
           <View style={{ height: theme.spacing?.xxl ?? BOTTOM_SPACER_FALLBACK }} />
@@ -1570,12 +1474,18 @@ export default function EditOrderScreen() {
         items={clientItems}
         searchable
         selectedId={selectedClientId}
-        onSelect={(item) => {
-          if (item?.disabled) return;
-          setSelectedClientId(item?.id || null);
-          setClientModalVisible(false);
-        }}
+        onSelect={(item) => item?.onPress?.()}
         onClose={() => setClientModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={objectModalVisible}
+        title={T('objects_select')}
+        items={objectItems}
+        searchable={false}
+        selectedId={selectedObjectId}
+        onSelect={(item) => item?.onPress?.()}
+        onClose={() => setObjectModalVisible(false)}
       />
 
       <DateTimeModal

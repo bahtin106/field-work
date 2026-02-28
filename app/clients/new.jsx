@@ -2,6 +2,7 @@ import React from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import ClientObjectEditorModal from '../../components/objects/ClientObjectEditorModal';
 import EditScreenTemplate from '../../components/layout/EditScreenTemplate';
 import Card from '../../components/ui/Card';
 import PhoneInput from '../../components/ui/PhoneInput';
@@ -11,7 +12,14 @@ import { SelectModal } from '../../components/ui/modals';
 import { useToast } from '../../components/ui/ToastProvider';
 import { usePermissions } from '../../lib/permissions';
 import { useCreateClientMutation, useUpdateClientMutation } from '../../src/features/clients/queries';
+import { useCreateClientObjectMutation } from '../../src/features/objects/queries';
 import { uploadClientAvatar } from '../../src/features/clients/avatar';
+import {
+  buildClientObjectAddressSummary,
+  createEmptyClientObjectDraft,
+  hasClientObjectAddressContent,
+  sanitizeClientObjectPayload,
+} from '../../src/features/objects/addressing';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
@@ -33,6 +41,7 @@ export default function NewClientScreen() {
   const canCreateClients = has('canCreateClients');
 
   const createMutation = useCreateClientMutation();
+  const createObjectMutation = useCreateClientObjectMutation();
   const updateMutation = useUpdateClientMutation();
 
   const [firstName, setFirstName] = React.useState('');
@@ -40,8 +49,11 @@ export default function NewClientScreen() {
   const [middleName, setMiddleName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [phone, setPhone] = React.useState('');
-  const [objectAddress, setObjectAddress] = React.useState('');
+  const [secondaryPhone, setSecondaryPhone] = React.useState('');
+  const [contactPref, setContactPref] = React.useState('');
   const [avatarUrl, setAvatarUrl] = React.useState('');
+  const [primaryObjectDraft, setPrimaryObjectDraft] = React.useState(createEmptyClientObjectDraft());
+  const [objectModalVisible, setObjectModalVisible] = React.useState(false);
   const [avatarSheetVisible, setAvatarSheetVisible] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
 
@@ -108,7 +120,8 @@ export default function NewClientScreen() {
         middle_name: cleanMiddleName || null,
         email: String(email || '').trim().toLowerCase() || null,
         phone: String(phone || '').trim() || null,
-        object_address: String(objectAddress || '').trim() || null,
+        secondary_phone: String(secondaryPhone || '').trim() || null,
+        contact_pref: String(contactPref || '').trim() || null,
       });
 
       if (!created?.id) {
@@ -125,6 +138,14 @@ export default function NewClientScreen() {
         }
       }
 
+      if (hasClientObjectAddressContent(primaryObjectDraft)) {
+        await createObjectMutation.mutateAsync({
+          client_id: created.id,
+          is_primary: true,
+          ...sanitizeClientObjectPayload(primaryObjectDraft),
+        });
+      }
+
       toast.success(t('clients_created_success'));
       router.replace(`/clients/${created.id}`);
     } catch (error) {
@@ -135,14 +156,17 @@ export default function NewClientScreen() {
   }, [
     canCreateClients,
     createMutation,
+    createObjectMutation,
     updateMutation,
     email,
     firstName,
     lastName,
     middleName,
-    objectAddress,
+    primaryObjectDraft,
     avatarUrl,
     phone,
+    secondaryPhone,
+    contactPref,
     router,
     saving,
     t,
@@ -207,14 +231,28 @@ export default function NewClientScreen() {
             style={styles.field}
           />
           <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
-          <TextField
-            label={t('clients_object_address')}
-            value={objectAddress}
-            onChangeText={setObjectAddress}
+          <PhoneInput
+            label={t('order_field_secondary_phone')}
+            value={secondaryPhone}
+            onChangeText={setSecondaryPhone}
             style={styles.field}
-            multiline
-            minLines={2}
           />
+          <TextField
+            label={t('order_field_contact_pref')}
+            value={contactPref}
+            onChangeText={setContactPref}
+            style={styles.field}
+          />
+        </Card>
+
+        <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
+        <Card paddedXOnly>
+          <Pressable onPress={() => setObjectModalVisible(true)} style={styles.addressCard}>
+            <Text style={styles.addressTitle}>{t('objects_primary')}</Text>
+            <Text style={styles.addressSummary}>
+              {buildClientObjectAddressSummary(primaryObjectDraft) || t('objects_empty')}
+            </Text>
+          </Pressable>
         </Card>
       </EditScreenTemplate>
 
@@ -248,6 +286,17 @@ export default function NewClientScreen() {
             : []),
         ]}
         onSelect={(item) => item?.onPress?.()}
+      />
+
+      <ClientObjectEditorModal
+        visible={objectModalVisible}
+        title={t('objects_primary')}
+        draft={primaryObjectDraft}
+        onChange={(field, value) => {
+          setPrimaryObjectDraft((prev) => ({ ...prev, [field]: value }));
+        }}
+        onSave={() => setObjectModalVisible(false)}
+        onClose={() => setObjectModalVisible(false)}
       />
     </>
   );
@@ -290,6 +339,19 @@ function createStyles(theme) {
     },
     field: {
       marginVertical: theme.spacing.xs,
+    },
+    addressCard: {
+      paddingVertical: theme.spacing.sm,
+    },
+    addressTitle: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.semibold,
+      marginBottom: theme.spacing.xs,
+    },
+    addressSummary: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
     },
   });
 }

@@ -180,17 +180,16 @@ function formatMonthBucket(dateIso: string | null | undefined) {
 function buildOrderLabel(order: {
   id: string;
   title?: string | null;
-  city?: string | null;
-  street?: string | null;
-  house?: string | null;
+  object_name?: string | null;
+  object_summary?: string | null;
 }) {
   const shortId = String(order.id || '').slice(0, 8) || 'order';
   const titleCandidate = String(order.title || '').trim();
-  const addrCandidate = [order.city, order.street, order.house]
+  const objectCandidate = [order.object_name, order.object_summary]
     .map((x) => String(x || '').trim())
     .filter(Boolean)
     .join('_');
-  const base = titleCandidate || addrCandidate || `\u0437\u0430\u044f\u0432\u043a\u0430_${shortId}`;
+  const base = titleCandidate || objectCandidate || `\u0437\u0430\u044f\u0432\u043a\u0430_${shortId}`;
   const safeBase = sanitizePathSegment(base, `\u0437\u0430\u044f\u0432\u043a\u0430_${shortId}`);
   return `${safeBase}_${shortId}`;
 }
@@ -201,9 +200,8 @@ function buildOrderMediaFolder(
   order: {
     id: string;
     title?: string | null;
-    city?: string | null;
-    street?: string | null;
-    house?: string | null;
+    object_name?: string | null;
+    object_summary?: string | null;
     time_window_start?: string | null;
     created_at?: string | null;
   },
@@ -223,9 +221,8 @@ function buildOrderFolderPath(
   order: {
     id: string;
     title?: string | null;
-    city?: string | null;
-    street?: string | null;
-    house?: string | null;
+    object_name?: string | null;
+    object_summary?: string | null;
     time_window_start?: string | null;
     created_at?: string | null;
   },
@@ -345,7 +342,7 @@ async function getCallerAndOrderContext(
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, company_id, title, city, street, house, time_window_start, created_at')
+    .select('id, company_id, title, object_id, time_window_start, created_at, object:client_objects(id, name, summary)')
     .eq('id', orderId)
     .maybeSingle();
   if (orderErr || !order) throw new Error('Order not found');
@@ -366,9 +363,8 @@ async function getCallerAndOrderContext(
     order: {
       id: String(order.id),
       title: order.title || null,
-      city: order.city || null,
-      street: order.street || null,
-      house: order.house || null,
+      object_name: order.object?.name || null,
+      object_summary: order.object?.summary || null,
       time_window_start: order.time_window_start || null,
       created_at: order.created_at || null,
     },

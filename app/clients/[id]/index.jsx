@@ -1,14 +1,21 @@
 import React from 'react';
-import { Image, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import { Linking, Pressable, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../../components/navigation/AppHeader';
 import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
+import IconButton from '../../../components/ui/IconButton';
+import { listItemStyles } from '../../../components/ui/listItemStyles';
+import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { useClient, useClientOrderCount } from '../../../src/features/clients/queries';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 
 export default function ClientViewScreen() {
   const { theme } = useTheme();
@@ -22,10 +29,44 @@ export default function ClientViewScreen() {
   const canEditClients = has('canEditClients');
 
   const { data: client } = useClient(clientId, { enabled: !!clientId && canViewClients });
-  const { data: orderCount = 0 } = useClientOrderCount(clientId, {
+  useClientOrderCount(clientId, {
     enabled: !!clientId && canViewClients,
   });
   const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const toast = useToast();
+  const base = React.useMemo(() => listItemStyles(theme), [theme]);
+
+  const onCopyEmail = React.useCallback(async () => {
+    const email = client?.email || '';
+    if (!email) return false;
+    const text = String(email);
+    try {
+      await Clipboard.setStringAsync(text);
+      toast.success(t('toast_email_copied'));
+      return true;
+    } catch {
+      try {
+        toast.error(t('toast_copy_email_fail'));
+      } catch {}
+      return false;
+    }
+  }, [client?.email, t, toast]);
+
+  const onCopyPhone = React.useCallback(async () => {
+    const phone = client?.phone || '';
+    if (!phone) return false;
+    const text = toE164(phone) || '+' + normalizeRu(phone);
+    try {
+      await Clipboard.setStringAsync(text);
+      toast.success(t('toast_phone_copied'));
+      return true;
+    } catch {
+      try {
+        toast.error(t('toast_copy_phone_fail'));
+      } catch {}
+      return false;
+    }
+  }, [client?.phone, t, toast]);
 
   if (!canViewClients) {
     return (
@@ -37,8 +78,7 @@ export default function ClientViewScreen() {
       </SafeAreaView>
     );
   }
-
-  const fullName = client?.fullName || t('common_dash');
+  const objects = Array.isArray(client?.objects) ? client.objects : [];
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -62,18 +102,122 @@ export default function ClientViewScreen() {
           </View>
         </View>
 
-        <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
-        <Card paddedXOnly>
-          <LabelValueRow label={t('view_label_name')} value={fullName} />
-          <LabelValueRow label={t('view_label_email')} value={client?.email || t('common_dash')} />
-          <LabelValueRow label={t('view_label_phone')} value={client?.phone || t('common_dash')} />
-          <LabelValueRow label={t('clients_object_address')} value={client?.objectAddress || t('common_dash')} />
-        </Card>
+        <>
+          <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
+          <Card paddedXOnly>
+            <LabelValueRow label={t('label_last_name')} value={client?.lastName || t('common_dash')} />
+            <View style={base.sep} />
+            <LabelValueRow label={t('label_first_name')} value={client?.firstName || t('common_dash')} />
+            <View style={base.sep} />
+            <LabelValueRow label={t('label_middle_name')} value={client?.middleName || t('common_dash')} />
+            <View style={base.sep} />
+            <LabelValueRow
+              label={t('view_label_email')}
+              valueComponent={
+                client?.email ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    onPress={async () => {
+                      const url = `mailto:${client.email}`;
+                      try {
+                        await Linking.openURL(url);
+                      } catch {
+                        try {
+                          const ok = await Linking.canOpenURL(url);
+                          if (ok) await Linking.openURL(url);
+                          else toast.error(t('errors_openMail'));
+                        } catch {
+                          toast.error(t('errors_openMail'));
+                        }
+                      }
+                    }}
+                  >
+                    <Text style={[base.value, styles.link]}>{client.email}</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={base.value}>{t('common_dash')}</Text>
+                )
+              }
+              rightActions={
+                client?.email ? (
+                  <IconButton onPress={onCopyEmail} accessibilityLabel={t('a11y_copy_email')}>
+                    <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                  </IconButton>
+                ) : null
+              }
+            />
+            <View style={base.sep} />
+            <LabelValueRow
+              label={t('view_label_phone')}
+              valueComponent={
+                client?.phone ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    onPress={async () => {
+                      const url = `tel:${toE164(client.phone) || '+' + normalizeRu(client.phone)}`;
+                      try {
+                        await Linking.openURL(url);
+                      } catch {
+                        try {
+                          const ok = await Linking.canOpenURL(url);
+                          if (ok) await Linking.openURL(url);
+                          else toast.error(t('errors_callsUnavailable'));
+                        } catch {
+                          toast.error(t('errors_callsUnavailable'));
+                        }
+                      }
+                    }}
+                  >
+                    <Text style={[base.value, styles.link]}>{formatRuMask(client.phone)}</Text>
+                  </Pressable>
+                ) : (
+                  <Text style={base.value}>{t('common_dash')}</Text>
+                )
+              }
+              rightActions={
+                client?.phone ? (
+                  <IconButton onPress={onCopyPhone} accessibilityLabel={t('a11y_copy_phone')}>
+                    <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                  </IconButton>
+                ) : null
+              }
+            />
+            <View style={base.sep} />
+            <LabelValueRow
+              label={t('order_field_secondary_phone')}
+              value={client?.secondaryPhone ? formatRuMask(client.secondaryPhone) : t('common_dash')}
+            />
+            <View style={base.sep} />
+            <LabelValueRow
+              label={t('order_field_contact_pref')}
+              value={client?.contactPref || t('common_dash')}
+            />
+          </Card>
 
-        <SectionHeader topSpacing="xs">{t('clients_requests_section')}</SectionHeader>
-        <Card paddedXOnly>
-          <LabelValueRow label={t('clients_requests_count')} value={String(orderCount)} />
-        </Card>
+          <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
+          <Card paddedXOnly>
+            {objects.length ? (
+              objects.map((objectItem) => {
+                return (
+                  <Pressable
+                    key={objectItem.id}
+                    style={base.row}
+                    onPress={() => router.push(`/objects/${objectItem.id}`)}
+                  >
+                    <Text style={base.label}>{t('routes_objects_object')}</Text>
+                    <View style={base.rightWrap}>
+                      <Text style={[base.value, styles.link]}>
+                        {objectItem.name || t('objects_unnamed')}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })
+            ) : (
+              <LabelValueRow label={t('clients_objects_section')} value={t('objects_empty')} />
+            )}
+          </Card>
+        </>
 
       </ScrollView>
     </SafeAreaView>
@@ -105,6 +249,32 @@ function createStyles(theme) {
       alignItems: 'center',
       marginBottom: theme.spacing.md,
     },
+    tabs: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      marginBottom: theme.spacing.md,
+    },
+    tab: {
+      flex: 1,
+      borderRadius: theme.radii.lg,
+      paddingVertical: theme.spacing.sm,
+      alignItems: 'center',
+      backgroundColor: theme.colors.surface,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: theme.colors.border,
+    },
+    tabActive: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primary,
+    },
+    tabText: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+    },
+    tabTextActive: {
+      color: theme.colors.primaryTextOn,
+    },
     avatarBox: {
       width: theme.components?.avatar?.xl ?? 96,
       height: theme.components?.avatar?.xl ?? 96,
@@ -124,6 +294,9 @@ function createStyles(theme) {
       color: theme.colors.primary,
       fontSize: theme.typography.sizes.lg,
       fontWeight: theme.typography.weight.bold,
+    },
+    link: {
+      color: theme.colors.primary,
     },
     mutedText: {
       color: theme.colors.textSecondary,

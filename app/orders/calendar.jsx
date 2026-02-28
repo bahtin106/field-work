@@ -4,7 +4,7 @@ import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { format, startOfMonth } from 'date-fns';
 import { ru as dfnsRu } from 'date-fns/locale';
-import { useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
@@ -97,8 +97,6 @@ const DAY_KEYS = [
   'day_short_sa',
   'day_short_su',
 ];
-const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
-
 function nowMs() {
   const perf = globalThis?.performance;
   if (perf && typeof perf.now === 'function') return perf.now();
@@ -111,9 +109,42 @@ export default function CalendarScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const navigation = useNavigation();
+  const params = useLocalSearchParams();
   const isFocused = useIsFocused();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+
+  const returnTo = useMemo(() => {
+    try {
+      return Reflect.has(params, 'returnTo') ? String(params.returnTo) : '';
+    } catch {
+      return '';
+    }
+  }, [params]);
+  const returnParams = useMemo(() => {
+    try {
+      return Reflect.has(params, 'returnParams') ? JSON.parse(String(params.returnParams)) : {};
+    } catch {
+      return {};
+    }
+  }, [params]);
+  const initialSelectedDate = useMemo(() => {
+    try {
+      if (!Reflect.has(params, 'selectedDate')) return '';
+      return String(params.selectedDate || '').trim();
+    } catch {
+      return '';
+    }
+  }, [params]);
+  const initialSelectedUserId = useMemo(() => {
+    try {
+      if (!Reflect.has(params, 'selectedUserId')) return '';
+      return String(params.selectedUserId || '').trim();
+    } catch {
+      return '';
+    }
+  }, [params]);
+  const openedFromOrder = useMemo(() => returnTo.startsWith('/orders/'), [returnTo]);
 
   const screenWidth = Dimensions.get('window').width;
   const layoutMetrics = useMemo(() => {
@@ -149,6 +180,7 @@ export default function CalendarScreen() {
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
   const companyId = profile?.company_id || null;
+  const navigationPresetRef = useRef('');
 
   useEffect(() => {
     markScreenMount('Calendar');
@@ -297,12 +329,63 @@ export default function CalendarScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!canViewAllOrders) return undefined;
+      if (!canViewAllOrders || openedFromOrder) return undefined;
       setScope('my');
       setExecutorFilterIds([]);
       return undefined;
-    }, [canViewAllOrders]),
+    }, [canViewAllOrders, openedFromOrder]),
   );
+
+  useEffect(() => {
+    if (!openedFromOrder) return;
+
+    const presetKey = JSON.stringify({
+      selectedDate: initialSelectedDate || '',
+      selectedUserId: initialSelectedUserId || '',
+      profileId: profile?.id || '',
+      canViewAllOrders,
+    });
+    if (navigationPresetRef.current === presetKey) return;
+
+    if (initialSelectedDate) {
+      const parsedDate = new Date(initialSelectedDate);
+      if (!Number.isNaN(parsedDate.getTime())) {
+        const monthStart = startOfMonth(parsedDate);
+        setSelectedDate(format(parsedDate, 'yyyy-MM-dd'));
+        setCurrentMonth(monthStart);
+        setCalendarQueryAnchorMonth(monthStart);
+      }
+    }
+
+    const myProfileId = String(profile?.id || '').trim();
+    if (!initialSelectedUserId) {
+      if (canViewAllOrders) {
+        setExecutorFilterIds([]);
+        setScope('all');
+      } else {
+        setExecutorFilterIds([]);
+        setScope('my');
+      }
+      navigationPresetRef.current = presetKey;
+      return;
+    }
+
+    if (myProfileId && initialSelectedUserId === myProfileId) {
+      setExecutorFilterIds([]);
+      setScope('my');
+      navigationPresetRef.current = presetKey;
+      return;
+    }
+
+    if (canViewAllOrders) {
+      setExecutorFilterIds([initialSelectedUserId]);
+      setScope('all');
+    } else {
+      setExecutorFilterIds([]);
+      setScope('my');
+    }
+    navigationPresetRef.current = presetKey;
+  }, [canViewAllOrders, initialSelectedDate, initialSelectedUserId, openedFromOrder, profile?.id]);
 
   const MONTH_LIST_MIDDLE_INDEX = CALENDAR_LAYOUT.MONTH_WINDOW_RADIUS;
 
@@ -733,7 +816,6 @@ export default function CalendarScreen() {
           width: layoutMetrics.dayCellSize,
           height: layoutMetrics.dayCellSize,
           borderRadius: layoutMetrics.dayCellSize / 2,
-          overflow: 'hidden',
         },
         dayCellSelectedOutline: {
           borderWidth: 2,
@@ -745,15 +827,8 @@ export default function CalendarScreen() {
         dayContent: {
           width: '100%',
           height: '100%',
-          position: 'relative',
           alignItems: 'center',
           justifyContent: 'center',
-        },
-        dayNumberLayer: {
-          ...StyleSheet.absoluteFillObject,
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 1,
         },
         dayNumber: {
           fontFamily: theme.typography.fontFamily,
@@ -775,14 +850,10 @@ export default function CalendarScreen() {
           color: theme.colors.textSecondary,
         },
         dayIndicatorSlot: {
-          position: 'absolute',
-          left: 2,
-          right: 2,
-          bottom: Math.max(1, theme.spacing.xs * 0.35),
+          marginTop: Math.max(1, theme.spacing.xs * 0.15),
           minHeight: indicatorSlotBaseHeight,
           alignItems: 'center',
           justifyContent: 'center',
-          zIndex: 0,
         },
         eventCount: {
           fontSize: theme.typography.sizes.xs * 0.9,
@@ -1159,11 +1230,15 @@ export default function CalendarScreen() {
   useFocusEffect(
     useCallback(() => {
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        router.replace('/orders');
+        if (returnTo) {
+          router.replace({ pathname: returnTo, params: returnParams });
+        } else {
+          router.replace('/orders');
+        }
         return true;
       });
       return () => sub.remove();
-    }, [router]),
+    }, [returnParams, returnTo, router]),
   );
 
   useFocusEffect(
@@ -1179,10 +1254,14 @@ export default function CalendarScreen() {
           return;
         }
         e.preventDefault();
-        router.replace('/orders');
+        if (returnTo) {
+          router.replace({ pathname: returnTo, params: returnParams });
+        } else {
+          router.replace('/orders');
+        }
       });
       return removeSub;
-    }, [navigation, router]),
+    }, [navigation, returnParams, returnTo, router]),
   );
 
   const filteredOrders = useMemo(() => {
@@ -1231,16 +1310,6 @@ export default function CalendarScreen() {
   const ordersListExtraData = useMemo(
     () => ({ selectedDate: effectiveSelectedDate, count: displayedOrders.length }),
     [displayedOrders.length, effectiveSelectedDate],
-  );
-  const monthPagerExtraData = useMemo(
-    () => ({
-      selectedDate,
-      todayKey,
-      isCollapsed,
-      visibleMonthRenderIndex,
-      countsKey: Object.keys(calendarIndex.countByDate).join('|'),
-    }),
-    [calendarIndex.countByDate, isCollapsed, selectedDate, todayKey, visibleMonthRenderIndex],
   );
   const ordersTitleDateLabel = useMemo(
     () => (effectiveSelectedDate ? format(new Date(effectiveSelectedDate), 'd MMMM', { locale: dfnsRu }) : ''),
@@ -1340,7 +1409,13 @@ export default function CalendarScreen() {
     >
       <AppHeader
         back
-        onBackPress={() => router.replace('/orders')}
+        onBackPress={() => {
+          if (returnTo) {
+            router.replace({ pathname: returnTo, params: returnParams });
+          } else {
+            router.replace('/orders');
+          }
+        }}
         options={{
           headerTitleAlign: 'left',
           title: t('routes.orders/calendar'),
@@ -1392,7 +1467,7 @@ export default function CalendarScreen() {
             <Animated.View style={[calendarContentStyle]}>
                 <View style={[styles.calendarContent]}>
                   <CalendarMonthHeader
-                    monthDate={activeVisibleMonth}
+                    monthDate={currentMonth}
                     onPreviousMonth={goToPreviousMonth}
                     onNextMonth={goToNextMonth}
                     arrowHitSlop={arrowHitSlop}
@@ -1408,66 +1483,41 @@ export default function CalendarScreen() {
                       </Text>
                     ))}
                   </View>
-                  <AnimatedFlatList
-                    ref={monthPagerRef}
-                    data={dynamicMonths}
-                    extraData={monthPagerExtraData}
-                    horizontal
-                    pagingEnabled
-                    initialNumToRender={1}
-                    scrollEnabled={false}
-                    showsHorizontalScrollIndicator={false}
-                    keyExtractor={(item, index) => `month-${item.getTime()}-${index}`}
-                    getItemLayout={getItemLayout}
-                    initialScrollIndex={MONTH_LIST_MIDDLE_INDEX}
-                    windowSize={2}
-                    maxToRenderPerBatch={1}
-                    updateCellsBatchingPeriod={16}
-                    removeClippedSubviews={Platform.OS === 'android'}
-                    scrollEventThrottle={16}
-                    renderItem={({ item: monthDate }) => {
-                      const itemMonthWeeks = getWeeksForMonth(monthDate);
-                      return (
-                        <View style={[styles.monthPage]}>
-                          <Animated.View
-                            style={[
-                              {
-                                overflow: 'hidden',
-                                width: layoutMetrics.cardWidth,
-                                alignSelf: 'center',
-                              },
-                              weeksClipStyle,
-                            ]}
-                          >
-                            <Animated.View
-                              style={[{ flexDirection: 'column' }, weeksTranslateStyle]}
-                            >
-                              {itemMonthWeeks.map((week, weekIdx) => (
-                                <CalendarWeekRow
-                                  key={`w-${monthDate.getTime()}-${weekIdx}`}
-                                  week={week}
-                                  monthDate={monthDate}
-                                  weekIdx={weekIdx}
-                                  selectedDate={selectedDate}
-                                  todayKey={todayKey}
-                                  eventCountsByDate={calendarIndex.countByDate}
-                                  isCollapsed={isCollapsed}
-                                  dayCellSize={layoutMetrics.dayCellSize}
-                                  onDatePress={setSelectedDate}
-                                  styles={styles}
-                                  theme={theme}
-                                  indicatorSlotAnimatedStyle={indicatorSlotAnimatedStyle}
-                                  eventCountAnimatedStyle={eventCountAnimatedStyle}
-                                  eventDotAnimatedStyle={eventDotAnimatedStyle}
-                                  onRowLayout={weekIdx === 0 ? onWeekRowLayout : undefined}
-                                />
-                              ))}
-                            </Animated.View>
-                          </Animated.View>
-                        </View>
-                      );
-                    }}
-                  />
+                  <View style={[styles.monthPage]}>
+                    <Animated.View
+                      style={[
+                        {
+                          overflow: 'hidden',
+                          width: layoutMetrics.cardWidth,
+                          alignSelf: 'center',
+                        },
+                        weeksClipStyle,
+                      ]}
+                    >
+                      <Animated.View style={[{ flexDirection: 'column' }, weeksTranslateStyle]}>
+                        {monthWeeks.map((week, weekIdx) => (
+                          <CalendarWeekRow
+                            key={`w-${currentMonth.getTime()}-${weekIdx}-${selectedDate}`}
+                            week={week}
+                            monthDate={currentMonth}
+                            weekIdx={weekIdx}
+                            selectedDate={selectedDate}
+                            todayKey={todayKey}
+                            eventCountsByDate={calendarIndex.countByDate}
+                            isCollapsed={isCollapsed}
+                            dayCellSize={layoutMetrics.dayCellSize}
+                            onDatePress={setSelectedDate}
+                            styles={styles}
+                            theme={theme}
+                            indicatorSlotAnimatedStyle={indicatorSlotAnimatedStyle}
+                            eventCountAnimatedStyle={eventCountAnimatedStyle}
+                            eventDotAnimatedStyle={eventDotAnimatedStyle}
+                            onRowLayout={weekIdx === 0 ? onWeekRowLayout : undefined}
+                          />
+                        ))}
+                      </Animated.View>
+                    </Animated.View>
+                  </View>
                 </View>
               </Animated.View>
               <View style={{ flex: 1, width: '100%' }}>

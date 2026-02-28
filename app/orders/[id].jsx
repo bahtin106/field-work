@@ -3,7 +3,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { BlurView } from 'expo-blur';
-import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -14,7 +13,6 @@ import {
   findNodeHandle,
   Image,
   InteractionManager,
-  Linking,
   Platform,
   Pressable,
   Animated as RNAnimated,
@@ -41,7 +39,6 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { yandexDiskMedia } from '../../lib/yandexDiskIntegration';
@@ -65,7 +62,7 @@ import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { usePermissions } from '../../lib/permissions';
 import { formatClientNameForOrder, getClientByOrderId } from '../../src/features/clients/api';
-import { useClient } from '../../src/features/clients/queries';
+import { useClient, useUpdateClientMutation } from '../../src/features/clients/queries';
 import {
   ensureRequestAssigneeNamePrefetch,
   ensureRequestPrefetch,
@@ -90,6 +87,23 @@ const PHOTO_COMPRESS_QUALITY = 0.8;
 const PHOTO_PICKER_QUALITY = 1;
 const PHOTO_FILE_EXTENSION = 'jpg';
 const PHOTO_MIME_TYPE = 'image/jpeg';
+const REMOVED_ORDER_OBJECT_FIELDS = new Set([
+  'country',
+  'region',
+  'city',
+  'street',
+  'house',
+  'postal_code',
+  'building',
+  'floor',
+  'entrance',
+  'apartment',
+  'intercom',
+  'entrance_info',
+  'parking_notes',
+  'geo_lat',
+  'geo_lng',
+]);
 
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 const REQUEST_SYNC_FIELDS = [
@@ -97,14 +111,12 @@ const REQUEST_SYNC_FIELDS = [
   'updated_at',
   'status',
   'assigned_to',
+  'client_id',
+  'object_id',
   'time_window_start',
   'time_window_end',
   'title',
   'comment',
-  'region',
-  'city',
-  'street',
-  'house',
   'fio',
   'phone',
   'department_id',
@@ -170,6 +182,7 @@ export default function OrderDetails() {
   const navigation = useNavigation();
   const isNavigatingRef = useRef(false);
   const queryClient = useQueryClient();
+  const updateClientMutation = useUpdateClientMutation();
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
   const orderForInspectRef = useRef(null);
@@ -218,10 +231,18 @@ export default function OrderDetails() {
   }, []);
   const workTypeName = useMemo(() => {
     const normalized = normalizeId(workTypeId);
-    if (!normalized) return null;
+    const fallbackName =
+      String(
+        order?.work_type_name ||
+          order?.work_type?.name ||
+          requestData?.work_type_name ||
+          requestData?.work_type?.name ||
+          '',
+      ).trim() || null;
+    if (!normalized) return fallbackName;
     const found = workTypes.find((w) => normalizeId(w?.id) === normalized);
-    return found?.name || null;
-  }, [normalizeId, workTypeId, workTypes]);
+    return found?.name || fallbackName;
+  }, [normalizeId, order?.work_type, order?.work_type_name, requestData?.work_type, requestData?.work_type_name, workTypeId, workTypes]);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -967,85 +988,6 @@ export default function OrderDetails() {
     [id, canEdit, queryClient, companyId, order?.assigned_to, requestData?.assigned_to],
   );
 
-  const handlePhonePress = useCallback(() => {
-    const p = order?.customer_phone_visible;
-    if (p) Linking.openURL(`tel:${formatPhoneE164(p)}`);
-  }, [order, formatPhoneE164]);
-
-  const handlePhoneLongPress = useCallback(async () => {
-    const p = order?.customer_phone_visible;
-    if (!p) return;
-    try {
-      await Clipboard.setStringAsync(p);
-      showToast(t('order_toast_phone_copied'));
-    } catch {}
-  }, [order, showToast, t]);
-
-  const addressCollapsedText = useMemo(() => {
-    const value = [order?.city, order?.street, order?.house].filter(Boolean).join(', ').trim();
-    return value || t('order_details_address_not_specified');
-  }, [order?.city, order?.house, order?.street, t]);
-
-  const addressExpandedItems = useMemo(
-    () =>
-      [
-      [t('order_field_country'), order?.country],
-      [t('order_field_region'), order?.region],
-      [t('order_field_city'), order?.city],
-      [t('order_field_street'), order?.street],
-      [t('order_field_house'), order?.house],
-      [t('order_field_building'), order?.building],
-      [t('order_field_floor'), order?.floor],
-      [t('order_field_entrance'), order?.entrance],
-      [t('order_field_apartment'), order?.apartment],
-      [t('order_field_intercom'), order?.intercom],
-      [t('order_field_postal_code'), order?.postal_code],
-      ]
-      .filter(([, value]) => String(value || '').trim().length > 0)
-      .map(([label, value]) => ({ label, value: String(value || '').trim() })),
-    [
-      order?.building,
-      order?.city,
-      order?.country,
-      order?.entrance,
-      order?.floor,
-      order?.house,
-      order?.intercom,
-      order?.postal_code,
-      order?.region,
-      order?.street,
-      order?.apartment,
-      t,
-    ],
-  );
-  const addressExpandedText = useMemo(
-    () => (addressExpandedItems.length ? '' : t('order_details_address_not_specified')),
-    [addressExpandedItems, t],
-  );
-
-  const addressForNavigator = useMemo(
-    () =>
-      [order?.country, order?.region, order?.city, order?.street, order?.house, order?.building]
-        .filter(Boolean)
-        .join(', '),
-    [order?.building, order?.city, order?.country, order?.house, order?.region, order?.street],
-  );
-
-  const openInYandex = useCallback(() => {
-    const fullAddress = String(addressForNavigator || '').trim();
-    if (!fullAddress) return;
-
-    const url = `yandexnavi://map_search?text=${encodeURIComponent(fullAddress)}`;
-    Linking.openURL(url).catch(() => {
-      const fallback = `https://yandex.ru/maps/?text=${encodeURIComponent(fullAddress)}`;
-      Linking.openURL(fallback);
-    });
-  }, [addressForNavigator]);
-  const canOpenAddressInNavigator = useMemo(
-    () => String(addressForNavigator || '').trim().length > 0,
-    [addressForNavigator],
-  );
-
   const compressAndUpload = useCallback(
     async (category, source) => {
       try {
@@ -1398,8 +1340,6 @@ export default function OrderDetails() {
     if (!canEdit()) return;
 
     if (!title.trim()) return showWarning(t('order_validation_title_required'));
-    if (!region && !city && !street && !house)
-      return showWarning(t('order_validation_address_required'));
     if (!customerName.trim()) return showWarning(t('order_validation_customer_required'));
     if (!phone.trim()) return showWarning(t('order_validation_phone_required'));
     if (!departureDate) return showWarning(t('order_validation_date_required'));
@@ -1416,15 +1356,15 @@ export default function OrderDetails() {
         ? t('order_status_in_progress')
         : order.status;
 
+    const clientIdForContacts = order?.client_id ? String(order.client_id) : resolvedClientId;
+    if (!clientIdForContacts) {
+      return showWarning(t('order_validation_client_required_for_contact_details'));
+    }
+
     const payload = {
       title,
       comment: description,
-      region,
-      city,
-      street,
-      house,
       fio: customerName,
-      phone: `+7${rawPhone.slice(1)}`,
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: departureDate.toISOString(),
       status: nextStatus,
@@ -1443,6 +1383,12 @@ export default function OrderDetails() {
     let data = null;
     let error = null;
     try {
+      await updateClientMutation.mutateAsync({
+        id: clientIdForContacts,
+        patch: {
+          phone: `+7${rawPhone.slice(1)}`,
+        },
+      });
       data = await updateRequestWithVersion(targetId, payload, order?.updated_at || null);
     } catch (e) {
       error = e;
@@ -1460,7 +1406,7 @@ export default function OrderDetails() {
       showToast(error.message || t('order_save_error'));
     } else {
       setOrder(data);
-      const rawDigitsSaved = (data.phone || '').replace(/\D/g, '');
+      const rawDigitsSaved = ((data.customer_phone_visible || data.phone_visible) || '').replace(/\D/g, '');
       setTitle(data.title || '');
       setDescription(data.comment || '');
       setRegion(data.region || '');
@@ -1505,10 +1451,6 @@ export default function OrderDetails() {
     validateRequiredBySchemaEdit,
     canEdit,
     title,
-    region,
-    city,
-    street,
-    house,
     customerName,
     description,
     phone,
@@ -1530,6 +1472,8 @@ export default function OrderDetails() {
     showToast,
     showWarning,
     t,
+    resolvedClientId,
+    updateClientMutation,
   ]);
 
   const confirmCancel = useCallback(() => {
@@ -1779,25 +1723,6 @@ export default function OrderDetails() {
   const animatedBackdropStyle = useAnimatedStyle(() => ({
     opacity: bgOpacity.value,
   }));
-
-  const formatPhoneE164 = useCallback((phone) => {
-    const digits = (phone || '').replace(/\D/g, '');
-    if (digits.length === 11 && digits.startsWith('7')) {
-      return `+7${digits.slice(1)}`;
-    }
-    if (digits.length === 11 && digits.startsWith('8')) {
-      return `+7${digits.slice(1)}`;
-    }
-    return (phone || '').replace(/\s+/g, '');
-  }, []);
-
-  const formatPhoneDisplay = useCallback((phone) => {
-    const digitsRaw = (phone || '').replace(/\D/g, '');
-    const digits =
-      digitsRaw.length === 11 && digitsRaw[0] === '8' ? '7' + digitsRaw.slice(1) : digitsRaw;
-    if (digits.length !== 11 || !digits.startsWith('7')) return phone || '';
-    return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
-  }, []);
 
   const getStatusMeta = useCallback(
     (status) => {
@@ -2059,7 +1984,14 @@ export default function OrderDetails() {
     (async () => {
       try {
         const data = await fetchFormSchema('edit');
-        if (mounted && data && Array.isArray(data.fields)) setSchemaEdit(data);
+        if (mounted && data && Array.isArray(data.fields)) {
+          setSchemaEdit({
+            ...data,
+            fields: data.fields.filter(
+              (field) => !REMOVED_ORDER_OBJECT_FIELDS.has(String(field?.field_key || '')),
+            ),
+          });
+        }
       } catch {
         // silent fallback
       }
@@ -2264,6 +2196,7 @@ export default function OrderDetails() {
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
   const canViewClients = has('canViewClients');
   const linkedClientId = order?.client_id ? String(order.client_id) : resolvedClientId;
+  const linkedObjectId = order?.object_id ? String(order.object_id) : null;
   const { data: linkedClient } = useClient(linkedClientId, {
     enabled: !!linkedClientId && canViewClients,
   });
@@ -2308,6 +2241,10 @@ export default function OrderDetails() {
     if (!linkedClientId || !canViewClients) return;
     router.push(`/clients/${linkedClientId}`);
   }, [canViewClients, linkedClientId, router]);
+  const onOpenObject = useCallback(() => {
+    if (!linkedObjectId || !canViewClients) return;
+    router.push(`/objects/${linkedObjectId}`);
+  }, [canViewClients, linkedObjectId, router]);
 
   if (permsLoading || loading || !order) {
     return (
@@ -2472,7 +2409,7 @@ export default function OrderDetails() {
                     params: {
                       selectedDate: dateStr,
                       selectedUserId: assignee,
-                      returnTo: `/order-details/${order.id}`,
+                      returnTo: `/orders/${order.id}`,
                       returnParams: JSON.stringify({}),
                     },
                   });
@@ -2523,44 +2460,15 @@ export default function OrderDetails() {
               </Pressable>
               <View style={base.sep} />
 
-              <LabelValueRow
-                label={t('order_details_phone')}
-                valueComponent={
-                  (() => {
-                    const isAdmin = role === 'admin' || role === 'dispatcher';
-                    const visiblePhone =
-                      order?.customer_phone_visible || (isAdmin ? order?.phone : null);
-                    const masked = order?.customer_phone_masked;
-                    if (visiblePhone) {
-                      return (
-                        <Pressable onPress={handlePhonePress} onLongPress={handlePhoneLongPress}>
-                          <Text style={[base.value, styles.link]}>
-                            {formatPhoneDisplay(visiblePhone)}
-                          </Text>
-                        </Pressable>
-                      );
-                    }
-                    return (
-                      <Text style={[base.value, { color: theme.colors.textSecondary }]}>
-                        {masked || t('order_details_phone_hidden')}
-                      </Text>
-                    );
-                  })()
-                }
-              />
-              <View style={base.sep} />
-
-              <ExpandableTextRow
-                label={t('order_details_address')}
-                value={addressExpandedText}
-                collapsedValue={addressCollapsedText}
-                toggleOnChevronOnly
-                onValuePress={canOpenAddressInNavigator ? openInYandex : null}
-                expandedActionText={canOpenAddressInNavigator ? t('order_details_map') : null}
-                collapsedValueStyle={styles.link}
-                expandedLabelBold
-                expandedKeyValueItems={addressExpandedItems}
-              />
+              <Pressable style={base.row} onPress={onOpenObject} disabled={!linkedObjectId || !canViewClients}>
+                <Text style={base.label}>{t('routes_objects_object')}</Text>
+                <View style={base.rightWrap}>
+                  <Text style={[base.value, linkedObjectId && canViewClients ? styles.link : null]}>
+                    {[order?.object_name, order?.object_summary].filter(Boolean).join(' - ') ||
+                      t('common_dash')}
+                  </Text>
+                </View>
+              </Pressable>
               <View style={base.sep} />
               <LabelValueRow
                 label={t('order_field_secondary_phone')}
@@ -2570,20 +2478,6 @@ export default function OrderDetails() {
               <LabelValueRow label={t('order_field_contact_email')} value={order?.contact_email} />
               <View style={base.sep} />
               <LabelValueRow label={t('order_field_contact_pref')} value={order?.contact_pref} />
-              <View style={base.sep} />
-              <LabelValueRow
-                label={t('order_field_entrance_info')}
-                value={order?.entrance_info}
-              />
-              <View style={base.sep} />
-              <LabelValueRow
-                label={t('order_field_parking_notes')}
-                value={order?.parking_notes}
-              />
-              <View style={base.sep} />
-              <LabelValueRow label={t('order_field_geo_lat')} value={order?.geo_lat} />
-              <View style={base.sep} />
-              <LabelValueRow label={t('order_field_geo_lng')} value={order?.geo_lng} />
             </Card>
 
             {canViewFinanceSection ? (

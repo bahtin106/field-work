@@ -18,6 +18,10 @@ export const queryKeys = {
     detail: (id) => ['clients', 'detail', String(id || '')],
     orderCount: (id) => ['clients', 'order-count', String(id || '')],
   },
+  objects: {
+    byClient: (clientId) => ['objects', 'by-client', String(clientId || '')],
+    detail: (id) => ['objects', 'detail', String(id || '')],
+  },
   profile: {
     me: () => ['profile', 'me'],
     role: () => ['profile', 'role'],
