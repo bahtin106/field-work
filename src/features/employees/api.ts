@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import { inspectProfileMedia } from '../profileMedia/api';
 const employeeByIdInFlight = new Map<string, Promise<any>>();
 
 function normalizeEmployee(row) {
@@ -33,6 +34,7 @@ function normalizeEmployee(row) {
     lastName: last_name || '',
     fullName: full_name_raw,
     avatarUrl: avatar_url,
+    avatarDisplayUrl: row?.avatar_display_url ?? row?.avatarDisplayUrl ?? avatar_url,
     displayName: full_name_raw || row?.email || '',
     isSuspended,
     admin_blocked: isAdminBlocked,
@@ -73,7 +75,18 @@ export async function listEmployees(filters = {}) {
 
     const { data, error } = await query;
     if (error) throw error;
-    return Array.isArray(data) ? data.map(normalizeEmployee) : [];
+    const rows = Array.isArray(data) ? data : [];
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      rows.map((row) => String(row?.avatar_url || '').trim()).filter(Boolean),
+    );
+    const cleanedSet = new Set(cleanedUrls);
+    return rows.map((row) =>
+      normalizeEmployee({
+        ...row,
+        avatar_url: cleanedSet.has(String(row?.avatar_url || '').trim()) ? null : row?.avatar_url,
+        avatar_display_url: resolvedUrls[String(row?.avatar_url || '').trim()] || row?.avatar_url || null,
+      }),
+    );
   });
 }
 
@@ -121,6 +134,10 @@ export async function getEmployeeById(userId) {
               const licenseState = profileFlags?.license_state || full?.license_state || 'active';
               const blockedReason = profileFlags?.blocked_reason || full?.blocked_reason || null;
               const isBlocked = isSuspended || isAdminBlocked || licenseState === 'blocked_by_license';
+              const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+                [String(full?.avatar_url || '').trim()].filter(Boolean),
+              );
+              const cleanedSet = new Set(cleanedUrls);
               return {
                 ...normalizeEmployee({
                   id: full.profile_id,
@@ -128,7 +145,9 @@ export async function getEmployeeById(userId) {
                   last_name: full.last_name,
                   full_name: full.full_name,
                   phone: full.phone,
-                  avatar_url: full.avatar_url,
+                  avatar_url: cleanedSet.has(String(full?.avatar_url || '').trim()) ? null : full.avatar_url,
+                  avatar_display_url:
+                    resolvedUrls[String(full?.avatar_url || '').trim()] || full?.avatar_url || null,
                   department_id: full.department_id,
                   birthdate: full.birthdate,
                   role: full.role,
@@ -172,6 +191,15 @@ export async function getEmployeeById(userId) {
 
     if (error) throw error;
     if (!prof) return null;
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      [String(prof?.avatar_url || '').trim()].filter(Boolean),
+    );
+    const cleanedSet = new Set(cleanedUrls);
+    const safeProf = {
+      ...prof,
+      avatar_url: cleanedSet.has(String(prof?.avatar_url || '').trim()) ? null : prof?.avatar_url,
+      avatar_display_url: resolvedUrls[String(prof?.avatar_url || '').trim()] || prof?.avatar_url || null,
+    };
 
     let departmentName = null;
     if (prof.department_id) {
@@ -191,18 +219,18 @@ export async function getEmployeeById(userId) {
     }
 
     return {
-      ...normalizeEmployee(prof),
+      ...normalizeEmployee(safeProf),
       email,
       meIsAdmin: iAmAdmin || iAmSuperAdmin,
       meIsSuperAdmin: iAmSuperAdmin,
       myUid: uid,
       departmentName,
       companyName: null,
-      companyId: prof?.company_id || null,
-      isSuspended: !!(prof?.is_suspended || prof?.suspended_at),
+      companyId: safeProf?.company_id || null,
+      isSuspended: !!(safeProf?.is_suspended || safeProf?.suspended_at),
       isBlocked:
-        !!(prof?.is_suspended || prof?.suspended_at || prof?.is_admin_blocked) ||
-        prof?.license_state === 'blocked_by_license',
+        !!(safeProf?.is_suspended || safeProf?.suspended_at || safeProf?.is_admin_blocked) ||
+        safeProf?.license_state === 'blocked_by_license',
     };
   }).finally(() => {
     employeeByIdInFlight.delete(key);

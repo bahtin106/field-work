@@ -263,7 +263,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
     if (action === 'status') {
       const { data: company } = await admin
         .from('companies')
-        .select('media_provider')
+        .select('media_provider, profile_media_provider')
         .eq('id', caller.companyId)
         .maybeSingle();
       const { data: conn } = await admin
@@ -318,6 +318,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
         connected: !!conn,
         health,
         media_provider: (company?.media_provider as string) || 'app_storage',
+        profile_media_provider: (company?.profile_media_provider as string) || 'app_storage',
         storage,
         account: conn
           ? {
@@ -435,7 +436,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
 
       const { error: upErr } = await admin
         .from('companies')
-        .update({ media_provider: 'app_storage' })
+        .update({ media_provider: 'app_storage', profile_media_provider: 'app_storage' })
         .eq('id', caller.companyId);
       if (upErr) throw upErr;
 
@@ -475,6 +476,28 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
         .eq('id', caller.companyId);
       if (upErr) throw upErr;
       return json(200, { success: true, media_provider: provider });
+    }
+
+    if (action === 'set_profile_provider') {
+      const provider = String(body.provider || '').trim();
+      if (!['app_storage', 'yandex_disk'].includes(provider)) {
+        return json(400, { success: false, message: 'Unsupported provider' });
+      }
+      if (provider === 'yandex_disk') {
+        const { data: conn } = await admin
+          .from('company_yandex_disk_connections')
+          .select('company_id')
+          .eq('company_id', caller.companyId)
+          .maybeSingle();
+        if (!conn) return json(400, { success: false, message: 'Yandex Disk not connected' });
+        await ensureValidYandexToken(admin, caller.companyId);
+      }
+      const { error: upErr } = await admin
+        .from('companies')
+        .update({ profile_media_provider: provider })
+        .eq('id', caller.companyId);
+      if (upErr) throw upErr;
+      return json(200, { success: true, profile_media_provider: provider });
     }
 
     return json(400, { success: false, message: 'Unknown action' });

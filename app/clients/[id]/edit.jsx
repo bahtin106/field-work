@@ -1,8 +1,9 @@
 import { AntDesign, Feather } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React from 'react';
-import { BackHandler, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import EditScreenTemplate from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
@@ -20,6 +21,7 @@ import {
 } from '../../../src/features/clients/queries';
 import { useClientObjects } from '../../../src/features/objects/queries';
 import { uploadClientAvatar } from '../../../src/features/clients/avatar';
+import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -139,6 +141,10 @@ export default function EditClientScreen() {
   const [secondaryPhone, setSecondaryPhone] = React.useState('');
   const [contactPref, setContactPref] = React.useState('');
   const [avatarUrl, setAvatarUrl] = React.useState('');
+  const avatarDisplayUrl = React.useMemo(
+    () => (String(avatarUrl || '').startsWith('http') ? client?.avatarDisplayUrl || avatarUrl : avatarUrl),
+    [avatarUrl, client?.avatarDisplayUrl],
+  );
 
   const [avatarSheetVisible, setAvatarSheetVisible] = React.useState(false);
   const [cropVisible, setCropVisible] = React.useState(false);
@@ -371,6 +377,9 @@ export default function EditClientScreen() {
       };
 
       if (!avatarUrl) {
+        if (client?.avatarUrl) {
+          await cleanupProfileMediaEntity('client', String(clientId));
+        }
         patch.avatar_url = null;
       } else if (String(avatarUrl).startsWith('http')) {
         patch.avatar_url = avatarUrl;
@@ -409,6 +418,7 @@ export default function EditClientScreen() {
     avatarUrl,
     canEditClients,
     clientId,
+    client?.avatarUrl,
     email,
     firstName,
     lastName,
@@ -454,8 +464,13 @@ export default function EditClientScreen() {
               accessibilityLabel={t('a11y_change_avatar')}
               accessibilityHint={t('a11y_change_avatar_hint')}
             >
-              {avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+              {avatarDisplayUrl ? (
+                <ExpoImage
+                  source={{ uri: avatarDisplayUrl }}
+                  style={styles.avatarImg}
+                  contentFit="cover"
+                  cachePolicy="none"
+                />
               ) : (
                 <Text style={styles.avatarText}>{initials || '*'}</Text>
               )}
@@ -569,6 +584,10 @@ export default function EditClientScreen() {
         confirmVariant="destructive"
         onConfirm={async () => {
           try {
+            await cleanupProfileMediaEntity('client', String(clientId || ''));
+            for (const objectItem of clientObjects || []) {
+              await cleanupProfileMediaEntity('object', String(objectItem?.id || ''));
+            }
             await deleteMutation.mutateAsync(String(clientId || ''));
             toast.success(t('clients_deleted_success'));
             allowLeaveRef.current = true;
@@ -604,11 +623,12 @@ export default function EditClientScreen() {
         maxHeightRatio={0.9}
       >
         <View style={styles.avatarPreviewWrap}>
-          {avatarUrl ? (
-            <Image
-              source={{ uri: avatarUrl }}
+          {avatarDisplayUrl ? (
+            <ExpoImage
+              source={{ uri: avatarDisplayUrl }}
               style={styles.avatarPreviewImg}
-              resizeMode="contain"
+              contentFit="contain"
+              cachePolicy="none"
             />
           ) : (
             <Text style={styles.avatarPreviewEmpty}>{t('placeholder_no_photo')}</Text>

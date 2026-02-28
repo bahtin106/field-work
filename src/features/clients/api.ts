@@ -4,6 +4,7 @@ import {
   buildClientObjectAddressSummary,
   normalizeClientObject,
 } from '../objects/addressing';
+import { inspectProfileMedia } from '../profileMedia/api';
 
 const clientByIdInFlight = new Map<string, Promise<any>>();
 
@@ -41,10 +42,26 @@ function normalizeClient(row: any) {
     secondaryPhone: row.secondary_phone || null,
     contactPref: row.contact_pref || null,
     avatarUrl: row.avatar_url || null,
+    avatarDisplayUrl: row.avatar_display_url || row.avatar_url || null,
     objects,
     primaryObject,
     primaryObjectSummary: buildClientObjectAddressSummary(primaryObject) || null,
   };
+}
+
+function applyClientMediaCleanup(row: any, cleanedSet: Set<string>) {
+  if (!row || !cleanedSet.size) return row;
+  const nextRow = {
+    ...row,
+    avatar_url: cleanedSet.has(String(row.avatar_url || '').trim()) ? null : row.avatar_url,
+  };
+  if (Array.isArray(row.client_objects)) {
+    nextRow.client_objects = row.client_objects.map((objectItem: any) => ({
+      ...objectItem,
+      photo_url: cleanedSet.has(String(objectItem?.photo_url || '').trim()) ? null : objectItem?.photo_url,
+    }));
+  }
+  return nextRow;
 }
 
 export async function listClients({ companyId = null, search = '' } = {}) {
@@ -75,8 +92,28 @@ export async function listClients({ companyId = null, search = '' } = {}) {
 
     const { data, error } = await query;
     if (error) throw error;
-
-    return Array.isArray(data) ? data.map(normalizeClient) : [];
+    const rows = Array.isArray(data) ? data : [];
+    const urls = rows.flatMap((row) => [
+      String(row?.avatar_url || '').trim(),
+      ...(Array.isArray(row?.client_objects)
+        ? row.client_objects.map((objectItem: any) => String(objectItem?.photo_url || '').trim())
+        : []),
+    ]).filter(Boolean);
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls);
+    const cleanedSet = new Set(cleanedUrls);
+    return rows.map((row) =>
+      normalizeClient({
+        ...applyClientMediaCleanup(row, cleanedSet),
+        avatar_display_url: resolvedUrls[String(row?.avatar_url || '').trim()] || row?.avatar_url || null,
+        client_objects: Array.isArray(row?.client_objects)
+          ? row.client_objects.map((objectItem: any) => ({
+              ...objectItem,
+              photo_display_url:
+                resolvedUrls[String(objectItem?.photo_url || '').trim()] || objectItem?.photo_url || null,
+            }))
+          : row?.client_objects,
+      }),
+    );
   });
 }
 
@@ -96,7 +133,24 @@ export async function getClientById(clientId: string) {
         .maybeSingle();
 
       if (error) throw error;
-      return normalizeClient(data);
+      const { cleanedUrls, resolvedUrls } = await inspectProfileMedia([
+          String(data?.avatar_url || '').trim(),
+          ...(Array.isArray(data?.client_objects)
+            ? data.client_objects.map((objectItem: any) => String(objectItem?.photo_url || '').trim())
+            : []),
+        ].filter(Boolean));
+      const cleanedSet = new Set(cleanedUrls);
+      return normalizeClient({
+        ...applyClientMediaCleanup(data, cleanedSet),
+        avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
+        client_objects: Array.isArray(data?.client_objects)
+          ? data.client_objects.map((objectItem: any) => ({
+              ...objectItem,
+              photo_display_url:
+                resolvedUrls[String(objectItem?.photo_url || '').trim()] || objectItem?.photo_url || null,
+            }))
+          : data?.client_objects,
+      });
     } catch {
       const { data, error } = await supabase
         .from('clients')
@@ -105,7 +159,14 @@ export async function getClientById(clientId: string) {
         .maybeSingle();
 
       if (error) throw error;
-      return normalizeClient(data);
+      const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+        [String(data?.avatar_url || '').trim()].filter(Boolean),
+      );
+      const cleanedSet = new Set(cleanedUrls);
+      return normalizeClient({
+        ...applyClientMediaCleanup(data, cleanedSet),
+        avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
+      });
     }
   }).finally(() => {
     clientByIdInFlight.delete(key);

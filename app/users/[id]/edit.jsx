@@ -1,6 +1,7 @@
-// app/users/[id]/edit.jsx
+﻿// app/users/[id]/edit.jsx
 
 import { AntDesign, Feather } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
@@ -8,7 +9,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
-  Image,
   Keyboard,
   Platform,
   Pressable,
@@ -33,12 +33,12 @@ import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import { isValidRu as isValidPhone, normalizeRu as normalizeRuPhone } from '../../../components/ui/phone';
-import { AVATAR, FUNCTIONS, STORAGE, TBL } from '../../../lib/constants';
+import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
-import { extractKeepPathFromUrl, removeStoragePrefixFiles } from '../../../lib/storageCleanup';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
+import { cleanupProfileMediaEntity, uploadProfileMedia } from '../../../src/features/profileMedia/api';
 import { useMyCompanyIdQuery } from '../../../src/features/profile/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -51,9 +51,6 @@ const TABLES = {
 };
 
 const MIN_PASSWORD_LENGTH = Number(process.env.EXPO_PUBLIC_MIN_PASSWORD_LENGTH) || 8;
-const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
-const AVA_MIME = AVATAR.MIME;
-
 const RT_PREFIX = process.env.EXPO_PUBLIC_RT_USER_PREFIX || 'rt-user-';
 
 // Helper: determine supported mediaTypes option across expo-image-picker versions
@@ -137,7 +134,7 @@ const __coercePickerDate = (v) => {
       return new Date(v.getFullYear(), v.getMonth(), v.getDate());
     }
     if (typeof v === 'object' && v.year && v.month && v.day) {
-      // month comes 1..12 from pickers — convert to JS 0..11
+      // month comes 1..12 from pickers вЂ” convert to JS 0..11
       return new Date(Number(v.year), Number(v.month) - 1, Number(v.day));
     }
     if (typeof v === 'string') {
@@ -299,7 +296,7 @@ function AvatarSheetModal({
     { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
     ...(hasAvatar
       ? [
-          { id: 'view', label: 'Просмотр фото', right: chevron(theme.colors.textSecondary) },
+          { id: 'view', label: 'РџСЂРѕСЃРјРѕС‚СЂ С„РѕС‚Рѕ', right: chevron(theme.colors.textSecondary) },
           { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
         ]
       : []),
@@ -483,7 +480,7 @@ export default function EditUser() {
       },
       badgeOutlineText: { color: theme.colors.text, fontSize: theme.typography.sizes.xs },
       badgeText: { fontSize: theme.typography.sizes.xs, fontWeight: '600' },
-      // section: используем base.sectionTitle из listItemStyles
+      // section: РёСЃРїРѕР»СЊР·СѓРµРј base.sectionTitle РёР· listItemStyles
       label: {
         fontWeight: '500',
         marginBottom: theme.spacing.xs,
@@ -605,9 +602,16 @@ export default function EditUser() {
     || blockedReason === 'admin_blocked';
   const isBlocked = !!employeeData?.isBlocked || isBlockedByAdmin || isLicenseBlockedRaw;
   const [avatarUrl, setAvatarUrl] = useState(null);
-  const [initialAvatarUrl, setInitialAvatarUrl] = useState(null); // Изначальный аватар из БД
-  const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Временный аватар до сохранения
-  const avatarSaveTimestampRef = useRef(0); // Timestamp последнего сохранения аватара
+  const [initialAvatarUrl, setInitialAvatarUrl] = useState(null); // РР·РЅР°С‡Р°Р»СЊРЅС‹Р№ Р°РІР°С‚Р°СЂ РёР· Р‘Р”
+  const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // Р’СЂРµРјРµРЅРЅС‹Р№ Р°РІР°С‚Р°СЂ РґРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ
+  const avatarSaveTimestampRef = useRef(0); // Timestamp РїРѕСЃР»РµРґРЅРµРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ Р°РІР°С‚Р°СЂР°
+  const avatarDisplayUrl = useMemo(
+    () =>
+      /^https?:\/\//i.test(String(avatarUrl || ''))
+        ? employeeData?.avatarDisplayUrl || avatarUrl
+        : avatarUrl,
+    [avatarUrl, employeeData?.avatarDisplayUrl],
+  );
   const [avatarSheet, setAvatarSheet] = useState(false);
   const [cropVisible, setCropVisible] = useState(false);
   const [cropSrc, setCropSrc] = useState(null);
@@ -701,36 +705,8 @@ export default function EditUser() {
   };
   const uploadAvatar = async (uri) => {
     try {
-      const resp = await fetch(uri);
-      const ab = await resp.arrayBuffer();
-      const fileData = new Uint8Array(ab);
-      const filename = `${AVA_PREFIX}${Date.now()}.jpg`;
-      const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
-      console.debug('[uploadAvatar] uploading to storage', { bucket: STORAGE.AVATARS, path, size: fileData?.length });
-      const uploadResp = await supabase.storage.from(STORAGE.AVATARS).upload(path, fileData, {
-        contentType: AVA_MIME,
-        upsert: false,
-      });
-      console.debug('[uploadAvatar] uploadResp', uploadResp);
-      if (uploadResp.error) throw uploadResp.error;
-      // Try to get public URL; if bucket is private, fallback to signed URL
-      const pubResp = supabase.storage.from(STORAGE.AVATARS).getPublicUrl(path);
-      console.debug('[uploadAvatar] getPublicUrl resp', pubResp);
-      const publicUrl = pubResp?.data?.publicUrl || null;
-      let finalUrl = publicUrl;
-      if (!finalUrl) {
-        try {
-          const signed = await supabase.storage.from(STORAGE.AVATARS).createSignedUrl(path, 60);
-          console.debug('[uploadAvatar] createSignedUrl resp', signed);
-          finalUrl = signed?.data?.signedUrl || null;
-        } catch (e) {
-          console.debug('[uploadAvatar] createSignedUrl failed', e?.message || e);
-        }
-      }
-      // Не обновляем БД сразу, только сохраняем временный URL
-      setPendingAvatarUrl(finalUrl);
-      setAvatarUrl(finalUrl);
-      // avatar change will be captured by isDirty and confirmed on exit
+      setPendingAvatarUrl(uri);
+      setAvatarUrl(uri);
     } catch (e) {
       setErr(e?.message || t('toast_generic_error'));
     }
@@ -738,8 +714,8 @@ export default function EditUser() {
   const deleteAvatar = async () => {
     try {
       setErr('');
-      // Устанавливаем пустую строку для явного указания на удаление
-      // null означает "нет изменений", '' означает "удалить"
+      // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСѓСЃС‚СѓСЋ СЃС‚СЂРѕРєСѓ РґР»СЏ СЏРІРЅРѕРіРѕ СѓРєР°Р·Р°РЅРёСЏ РЅР° СѓРґР°Р»РµРЅРёРµ
+      // null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", '' РѕР·РЅР°С‡Р°РµС‚ "СѓРґР°Р»РёС‚СЊ"
       setPendingAvatarUrl('');
       setAvatarUrl(null);
       // avatar change will be captured by isDirty and confirmed on exit
@@ -906,7 +882,7 @@ export default function EditUser() {
   }, [showBanner, t]);
   const confirmCancel = () => {
     setCancelVisible(false);
-    // Восстанавливаем изначальный аватар при отмене
+    // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РёР·РЅР°С‡Р°Р»СЊРЅС‹Р№ Р°РІР°С‚Р°СЂ РїСЂРё РѕС‚РјРµРЅРµ
     setAvatarUrl(initialAvatarUrl);
     setPendingAvatarUrl(null);
     allowLeaveRef.current = true;
@@ -935,61 +911,32 @@ export default function EditUser() {
       setSaving(true);
       setErr('');
       showInfoToast(t('toast_saving'));
+      let savedAvatarUrl = avatarUrl || null;
 
-      // Сохраняем изменения аватара в БД только если есть реальные изменения
-      // pendingAvatarUrl === null означает "нет изменений", а не "удалить"
+      // РЎРѕС…СЂР°РЅСЏРµРј РёР·РјРµРЅРµРЅРёСЏ Р°РІР°С‚Р°СЂР° РІ Р‘Р” С‚РѕР»СЊРєРѕ РµСЃР»Рё РµСЃС‚СЊ СЂРµР°Р»СЊРЅС‹Рµ РёР·РјРµРЅРµРЅРёСЏ
+      // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", Р° РЅРµ "СѓРґР°Р»РёС‚СЊ"
       if (!isSuperAdminEditingOther && pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
-        try {
-          const avatarPrefix = `${STORAGE.AVATAR_PREFIX}/${userId}`;
-          if (pendingAvatarUrl === '') {
-            // Пользователь явно удалил аватар (через deleteAvatar)
-            await removeStoragePrefixFiles({
-              supabase,
-              bucket: STORAGE.AVATARS,
-              prefix: avatarPrefix,
-            });
-            const { error: updErr } = await supabase
-              .from(TABLES.profiles)
-              .update({ avatar_url: null })
-              .eq('id', userId);
-            if (updErr) throw updErr;
-          } else {
-            // Обновляем аватар в БД
-            const { error: updErr } = await supabase
-              .from(TABLES.profiles)
-              .update({ avatar_url: pendingAvatarUrl })
-              .eq('id', userId);
-            if (updErr) throw updErr;
-            const keepPath = extractKeepPathFromUrl(pendingAvatarUrl, STORAGE.AVATARS);
-            if (keepPath) {
-              await removeStoragePrefixFiles({
-                supabase,
-                bucket: STORAGE.AVATARS,
-                prefix: avatarPrefix,
-                keepPaths: [keepPath],
-              });
-            }
-          }
-        } catch (avatarErr) {
-          // Если ошибка только в удалении аватара, но профиль обновился — не бросаем ошибку
-          // иначе бросаем
-          const msg = avatarErr?.message || String(avatarErr);
-          if (!msg.includes('avatar') && !msg.includes('storage')) {
-            throw avatarErr;
-          }
-          // Ошибка аватара не критична, продолжаем
+        if (pendingAvatarUrl === '') {
+          await cleanupProfileMediaEntity('employee', String(userId));
+          savedAvatarUrl = null;
+        } else if (!String(pendingAvatarUrl).startsWith('http')) {
+          savedAvatarUrl = await uploadProfileMedia('employee', String(userId), pendingAvatarUrl);
+        } else {
+          savedAvatarUrl = pendingAvatarUrl;
+          const { error: updErr } = await supabase
+            .from(TABLES.profiles)
+            .update({ avatar_url: savedAvatarUrl })
+            .eq('id', userId);
+          if (updErr) throw updErr;
         }
-        // Обновляем все состояния аватара после успешного сохранения
-        // Если удалили (pendingAvatarUrl === ''), сохраняем null как финальное значение
-        const finalAvatarUrl = pendingAvatarUrl === '' ? null : pendingAvatarUrl;
-        setAvatarUrl(finalAvatarUrl);
-        setInitialAvatarUrl(finalAvatarUrl);
+
+        setAvatarUrl(savedAvatarUrl);
+        setInitialAvatarUrl(savedAvatarUrl);
         setPendingAvatarUrl(null);
-        // Запоминаем время сохранения для защиты от race condition
         avatarSaveTimestampRef.current = Date.now();
       }
 
-      // Если админ редактирует другого пользователя — используем edge-функцию для всего
+      // Р•СЃР»Рё Р°РґРјРёРЅ СЂРµРґР°РєС‚РёСЂСѓРµС‚ РґСЂСѓРіРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј edge-С„СѓРЅРєС†РёСЋ РґР»СЏ РІСЃРµРіРѕ
       const computedFullName = buildFullName(firstName, lastName);
       const normalizedFullName = computedFullName || null;
 
@@ -1005,7 +952,7 @@ export default function EditUser() {
           // RPC applies department update only when parameter is NOT NULL.
           // Send empty string to explicitly clear department (NULLIF('', '') -> NULL in SQL).
           p_department_id: departmentId == null ? '' : String(departmentId),
-          p_avatar_url: pendingAvatarUrl === '' ? null : pendingAvatarUrl || avatarUrl || null,
+          p_avatar_url: savedAvatarUrl,
         };
 
         const { error: rpcErr } = await supabase.rpc('admin_update_profile_super_full', payload);
@@ -1028,7 +975,7 @@ export default function EditUser() {
           if (!result.success) throw new Error(result.message || 'Password update failed');
         }
       } else if (meIsAdmin && meId && userId && meId !== userId) {
-        // Админ редактирует другого пользователя
+        // РђРґРјРёРЅ СЂРµРґР°РєС‚РёСЂСѓРµС‚ РґСЂСѓРіРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
         const profilePatch = {
           first_name: firstName.trim() || null,
           last_name: lastName.trim() || null,
@@ -1049,7 +996,7 @@ export default function EditUser() {
 
         if (profErr) throw profErr;
 
-        // Если нужно обновить пароль — используем email-server API
+        // Р•СЃР»Рё РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј email-server API
         if (newPassword && newPassword.length) {
           console.debug('[proceedSave] [Admin Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
 
@@ -1082,7 +1029,7 @@ export default function EditUser() {
           console.debug('[proceedSave] Password updated successfully');
         }
       } else {
-        // Пользователь редактирует себя
+        // РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЂРµРґР°РєС‚РёСЂСѓРµС‚ СЃРµР±СЏ
         const profilePatch = {
           first_name: firstName.trim() || null,
           last_name: lastName.trim() || null,
@@ -1103,7 +1050,7 @@ export default function EditUser() {
 
         if (profErr) throw profErr;
 
-        // Если нужно обновить пароль — используем email-server API
+        // Р•СЃР»Рё РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј email-server API
         if (newPassword && newPassword.length) {
           const { error: updatePwdErr } = await withTimeout(
             supabase.auth.updateUser({ password: newPassword }),
@@ -1130,7 +1077,7 @@ export default function EditUser() {
           newPassword: null,
           departmentId: departmentId || null,
           isSuspended,
-          avatar: avatarUrl || null,
+          avatar: savedAvatarUrl,
         }),
       );
       queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
@@ -1143,7 +1090,7 @@ export default function EditUser() {
         birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
         role,
         department_id: departmentId || null,
-        avatar_url: avatarUrl || null,
+        avatar_url: savedAvatarUrl,
         isSuspended: !!isSuspended,
         meIsAdmin,
         myUid: meId,
@@ -1160,7 +1107,7 @@ export default function EditUser() {
   };
 
   const handleSave = async () => {
-    Keyboard.dismiss(); // ��������� ���������� ��� ����������
+    Keyboard.dismiss(); // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
     setErr('');
     clearBanner();
     setFieldErrors({});
@@ -1213,17 +1160,17 @@ export default function EditUser() {
       phoneRef.current?.focus?.();
       return;
     }
-    // Если редактируем собственный профиль и задан новый пароль — проверяем его
+    // Р•СЃР»Рё СЂРµРґР°РєС‚РёСЂСѓРµРј СЃРѕР±СЃС‚РІРµРЅРЅС‹Р№ РїСЂРѕС„РёР»СЊ Рё Р·Р°РґР°РЅ РЅРѕРІС‹Р№ РїР°СЂРѕР»СЊ вЂ” РїСЂРѕРІРµСЂСЏРµРј РµРіРѕ
     if (meId && meId === userId && newPassword && newPassword.length) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
-        setFieldErrors({ newPassword: { message: t('error_password_too_short') || `Минимум ${MIN_PASSWORD_LENGTH}` } });
+        setFieldErrors({ newPassword: { message: t('error_password_too_short') || `РњРёРЅРёРјСѓРј ${MIN_PASSWORD_LENGTH}` } });
         return;
       }
       if (confirmPassword !== newPassword) {
-        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'Пароли не совпадают' } });
+        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'РџР°СЂРѕР»Рё РЅРµ СЃРѕРІРїР°РґР°СЋС‚' } });
         return;
       }
-      // Подтверждаем действие (покажем модал подтверждения)
+      // РџРѕРґС‚РІРµСЂР¶РґР°РµРј РґРµР№СЃС‚РІРёРµ (РїРѕРєР°Р¶РµРј РјРѕРґР°Р» РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ)
       setConfirmPwdVisible(true);
       return;
     }
@@ -1342,7 +1289,7 @@ export default function EditUser() {
     };
   }, [userId, refetchEmployee]);
   const reassignActiveOrders = async (fromUserId, toUserId) => {
-    // Переназначаем ВСЕ заявки, независимо от статуса
+    // РџРµСЂРµРЅР°Р·РЅР°С‡Р°РµРј Р’РЎР• Р·Р°СЏРІРєРё, РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ СЃС‚Р°С‚СѓСЃР°
     const { error } = await supabase
       .from(TABLES.orders)
       .update({ assigned_to: toUserId })
@@ -1367,7 +1314,7 @@ export default function EditUser() {
         return null;
       }
 
-      // Прямое обновление в базе данных через Supabase клиент
+      // РџСЂСЏРјРѕРµ РѕР±РЅРѕРІР»РµРЅРёРµ РІ Р±Р°Р·Рµ РґР°РЅРЅС‹С… С‡РµСЂРµР· Supabase РєР»РёРµРЅС‚
       const { error: updErr } = await supabase
         .from(TABLES.profiles)
         .update({ 
@@ -1409,7 +1356,7 @@ export default function EditUser() {
 
       const tempPassword = generateTempPassword();
       
-      // 1. Обновляем пароль через email-server API
+      // 1. РћР±РЅРѕРІР»СЏРµРј РїР°СЂРѕР»СЊ С‡РµСЂРµР· email-server API
       console.debug('[Edit] [Password Reset] Updating password via email-server at:', EMAIL_SERVICE_URL);
       
       const updateResponse = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
@@ -1438,7 +1385,7 @@ export default function EditUser() {
 
       console.debug('[Edit] [Password Reset] Password updated successfully');
 
-      // 2. Отправляем пароль по email
+      // 2. РћС‚РїСЂР°РІР»СЏРµРј РїР°СЂРѕР»СЊ РїРѕ email
       console.debug('[Edit] [Password Reset] Sending email to:', email);
       
       const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
@@ -1458,7 +1405,7 @@ export default function EditUser() {
       if (!emailResponse.ok) {
         const emailError = await emailResponse.text();
         console.warn('[Edit] [Password Reset] Email send failed:', emailError);
-        // Пароль уже обновлен, показываем успех даже если email не отправился
+        // РџР°СЂРѕР»СЊ СѓР¶Рµ РѕР±РЅРѕРІР»РµРЅ, РїРѕРєР°Р·С‹РІР°РµРј СѓСЃРїРµС… РґР°Р¶Рµ РµСЃР»Рё email РЅРµ РѕС‚РїСЂР°РІРёР»СЃСЏ
         showSuccessToast(t('toast_reset_password_sent'));
       } else {
         showSuccessToast(t('toast_reset_password_sent'));
@@ -1473,7 +1420,7 @@ export default function EditUser() {
   };
   const onAskSuspend = async () => {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
-    if (meId && userId === meId) return; // не для себя
+    if (meId && userId === meId) return; // РЅРµ РґР»СЏ СЃРµР±СЏ
 
     try {
       setErr('');
@@ -1493,18 +1440,18 @@ export default function EditUser() {
         return;
       }
 
-      // Вызываем RPC функцию для проверки заявок
+      // Р’С‹Р·С‹РІР°РµРј RPC С„СѓРЅРєС†РёСЋ РґР»СЏ РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє
       const { data, error } = await supabase.rpc('check_employee_orders', {
         employee_id: userId
       });
 
       if (error) {
-        throw new Error(error.message || 'Ошибка проверки заявок');
+        throw new Error(error.message || 'РћС€РёР±РєР° РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє');
       }
 
       const { activeOrdersCount, availableEmployees } = data || {};
 
-      // Сохраняем количество заявок и список доступных сотрудников
+      // РЎРѕС…СЂР°РЅСЏРµРј РєРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°СЏРІРѕРє Рё СЃРїРёСЃРѕРє РґРѕСЃС‚СѓРїРЅС‹С… СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ
       setActiveOrdersCount(activeOrdersCount || 0);
       setPickerItems(availableEmployees || []);
       setOrdersAction('keep');
@@ -1512,7 +1459,7 @@ export default function EditUser() {
       setSuccessorError('');
       setSuspendVisible(true);
     } catch (e) {
-      console.error('Ошибка при проверке заявок:', e);
+      console.error('РћС€РёР±РєР° РїСЂРё РїСЂРѕРІРµСЂРєРµ Р·Р°СЏРІРѕРє:', e);
       setErr(e?.message || t('err_check_orders_failed'));
       showError(e?.message || t('err_check_orders_failed'));
     }
@@ -1520,12 +1467,12 @@ export default function EditUser() {
   
   const loadAvailableEmployees = async () => {
     try {
-      // Загружаем список активных сотрудников для выбора преемника
+      // Р—Р°РіСЂСѓР¶Р°РµРј СЃРїРёСЃРѕРє Р°РєС‚РёРІРЅС‹С… СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ РґР»СЏ РІС‹Р±РѕСЂР° РїСЂРµРµРјРЅРёРєР°
       const { data, error } = await supabase
         .from(TABLES.profiles)
         .select('id, first_name, last_name, full_name, role')
         .eq('is_suspended', false)
-        .neq('id', userId) // исключаем самого сотрудника
+        .neq('id', userId) // РёСЃРєР»СЋС‡Р°РµРј СЃР°РјРѕРіРѕ СЃРѕС‚СЂСѓРґРЅРёРєР°
         .order('full_name', { ascending: true });
       
       if (error) throw error;
@@ -1533,8 +1480,8 @@ export default function EditUser() {
       const employees = Array.isArray(data) ? data : [];
       setPickerItems(employees);
     } catch (e) {
-      console.error('Ошибка загрузки сотрудников:', e);
-      showError('Не удалось загрузить список сотрудников');
+      console.error('РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ:', e);
+      showError('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ');
     }
   };
   const onAskUnsuspend = async () => {
@@ -1583,7 +1530,7 @@ export default function EditUser() {
       if (rpcErr) throw rpcErr;
       await syncEmployeeBlockState();
       
-      // Инвалидируем кеш и разрешаем выход, затем сразу назад
+      // РРЅРІР°Р»РёРґРёСЂСѓРµРј РєРµС€ Рё СЂР°Р·СЂРµС€Р°РµРј РІС‹С…РѕРґ, Р·Р°С‚РµРј СЃСЂР°Р·Сѓ РЅР°Р·Р°Рґ
       await queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_suspended'));
@@ -1631,7 +1578,7 @@ export default function EditUser() {
       }
       await syncEmployeeBlockState();
       
-      // Инвалидируем кеш и разрешаем выход, затем сразу назад
+      // РРЅРІР°Р»РёРґРёСЂСѓРµРј РєРµС€ Рё СЂР°Р·СЂРµС€Р°РµРј РІС‹С…РѕРґ, Р·Р°С‚РµРј СЃСЂР°Р·Сѓ РЅР°Р·Р°Рґ
       await queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_unsuspended'));
@@ -1660,7 +1607,7 @@ export default function EditUser() {
       showInfoToast(t('toast_loading_info'), { sticky: true });
 
 
-      // Вызываем RPC функцию для проверки заявок
+      // Р’С‹Р·С‹РІР°РµРј RPC С„СѓРЅРєС†РёСЋ РґР»СЏ РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє
       console.debug('[onAskDelete] calling check_employee_orders for userId:', userId);
 
       const { data, error } = await supabase.rpc('check_employee_orders', {
@@ -1670,14 +1617,14 @@ export default function EditUser() {
       console.debug('[onAskDelete] result:', { data, error });
 
       if (error) {
-        throw new Error(error.message || 'Ошибка проверки заявок');
+        throw new Error(error.message || 'РћС€РёР±РєР° РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє');
       }
 
       const { activeOrdersCount, totalOrdersCount, availableEmployees } = data || {};
 
       console.debug('[onAskDelete] activeOrdersCount:', activeOrdersCount);
 
-      // Сохраняем количество заявок и список доступных сотрудников
+      // РЎРѕС…СЂР°РЅСЏРµРј РєРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°СЏРІРѕРє Рё СЃРїРёСЃРѕРє РґРѕСЃС‚СѓРїРЅС‹С… СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ
       setActiveOrdersCount(activeOrdersCount || 0);
       setTotalOrdersCount(totalOrdersCount || 0);
       setPickerItems(availableEmployees || []);
@@ -1685,7 +1632,7 @@ export default function EditUser() {
       setSuccessorError('');
       setDeleteVisible(true);
     } catch (e) {
-      console.error('Ошибка при проверке заявок:', e);
+      console.error('РћС€РёР±РєР° РїСЂРё РїСЂРѕРІРµСЂРєРµ Р·Р°СЏРІРѕРє:', e);
       setErr(e?.message || t('err_check_orders_failed'));
       showError(e?.message || t('err_check_orders_failed'));
     }
@@ -1695,7 +1642,7 @@ export default function EditUser() {
     if (!meIsAdmin) return showWarning(t('error_no_access'));
     if (meId && userId === meId) return;
 
-    // Если есть заявки, но преемник не выбран — показываем ошибку
+    // Р•СЃР»Рё РµСЃС‚СЊ Р·Р°СЏРІРєРё, РЅРѕ РїСЂРµРµРјРЅРёРє РЅРµ РІС‹Р±СЂР°РЅ вЂ” РїРѕРєР°Р·С‹РІР°РµРј РѕС€РёР±РєСѓ
     if (totalOrdersCount > 0 && !successor?.id) {
       setSuccessorError(t('err_successor_required_delete'));
       return;
@@ -1706,7 +1653,7 @@ export default function EditUser() {
       setErr('');
       showInfoToast(t('toast_deleting_employee'), { sticky: true });
 
-      // Вызываем RPC функцию для деактивации
+      // Р’С‹Р·С‹РІР°РµРј RPC С„СѓРЅРєС†РёСЋ РґР»СЏ РґРµР°РєС‚РёРІР°С†РёРё
       console.debug('[onConfirmDelete] invoking delete_user:', { userId, successorId: successor?.id });
 
       const { data, error } = await supabase.functions.invoke(FUNCTIONS.DELETE_USER, {
@@ -1726,16 +1673,16 @@ export default function EditUser() {
         throw new Error(data.message || t('err_delete_failed'));
       }
 
-      // Разрешаем выход БЕЗ подтверждения ДО навигации (Apple-style)
+      // Allow navigation away before the screen changes after delete.
       allowLeaveRef.current = true;
 
-      // Инвалидируем кеш и переходим на список пользователей (не возвращаемся на удаленный профиль)
+      // Refresh employees list and leave the deleted profile screen.
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       showSuccessToast(t('toast_deleted'));
       setDeleteVisible(false);
       router.replace('/users');
     } catch (e) {
-      console.error('Ошибка деактивации:', e);
+      console.error('РћС€РёР±РєР° РґРµР°РєС‚РёРІР°С†РёРё:', e);
       setErr(e?.message || t('dlg_generic_warning'));
       showError(e?.message || t('err_deactivate_failed'));
     } finally {
@@ -1815,10 +1762,15 @@ export default function EditUser() {
                   accessibilityLabel={t('a11y_change_avatar')}
                   accessibilityHint={t('a11y_change_avatar_hint')}
                 >
-                  {avatarUrl ? (
-                    <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+                  {avatarDisplayUrl ? (
+                    <ExpoImage
+                      source={{ uri: avatarDisplayUrl }}
+                      style={styles.avatarImg}
+                      contentFit="cover"
+                      cachePolicy="none"
+                    />
                   ) : (
-                    <Text style={styles.avatarText}>{initials || '•'}</Text>
+                    <Text style={styles.avatarText}>{initials || 'вЂў'}</Text>
                   )}
                   <View style={styles.avatarCamBadge}>
                     <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
@@ -2319,14 +2271,15 @@ export default function EditUser() {
               maxHeightRatio={0.9}
             >
               <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
-                {avatarUrl ? (
-                  <Image
-                    source={{ uri: avatarUrl }}
+                {avatarDisplayUrl ? (
+                  <ExpoImage
+                    source={{ uri: avatarDisplayUrl }}
                     style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
-                    resizeMode="contain"
+                    contentFit="contain"
+                    cachePolicy="none"
                   />
                 ) : (
-                  <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'Нет фото'}</Text>
+                  <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'РќРµС‚ С„РѕС‚Рѕ'}</Text>
                 )}
               </View>
             </BaseModal>
@@ -2413,7 +2366,7 @@ export default function EditUser() {
   );
 }
 
-// ========== SuspendModal компонент ==========
+// ========== SuspendModal РєРѕРјРїРѕРЅРµРЅС‚ ==========
 function SuspendModal({
   visible,
   activeOrdersCount = 0,
@@ -2439,14 +2392,14 @@ function SuspendModal({
     {
       id: 'keep',
       title: t('user_block_keepOrders'),
-      // Разное описание в зависимости от наличия заявок
+      // Use a different description when the employee still has active orders.
       description: hasActiveOrders 
         ? t('user_block_keepOrders_desc')
         : t('user_block_noOrders_desc'),
     },
   ];
   
-  // Добавляем опцию переназначения только если есть активные заявки
+  // Р”РѕР±Р°РІР»СЏРµРј РѕРїС†РёСЋ РїРµСЂРµРЅР°Р·РЅР°С‡РµРЅРёСЏ С‚РѕР»СЊРєРѕ РµСЃР»Рё РµСЃС‚СЊ Р°РєС‚РёРІРЅС‹Рµ Р·Р°СЏРІРєРё
   if (hasActiveOrders) {
     options.push({
       id: 'reassign',
@@ -2510,7 +2463,7 @@ function SuspendModal({
                   pressed && Platform.OS === 'ios' ? { opacity: 0.7 } : null,
                 ]}
               >
-                {/* Заголовок опции */}
+                {/* Р—Р°РіРѕР»РѕРІРѕРє РѕРїС†РёРё */}
                 <View
                   style={{
                     flexDirection: 'row',
@@ -2555,7 +2508,7 @@ function SuspendModal({
                   </Text>
                 </View>
 
-                {/* Описание опции (видно только если выбрана) */}
+                {/* РћРїРёСЃР°РЅРёРµ РѕРїС†РёРё (РІРёРґРЅРѕ С‚РѕР»СЊРєРѕ РµСЃР»Рё РІС‹Р±СЂР°РЅР°) */}
                 {isSelected && (
                   <Text
                     style={{
@@ -2570,7 +2523,7 @@ function SuspendModal({
                   </Text>
                 )}
 
-                {/* Выбор преемника для "reassign" */}
+                {/* Р’С‹Р±РѕСЂ РїСЂРµРµРјРЅРёРєР° РґР»СЏ "reassign" */}
                 {option.id === 'reassign' && isSelected && (
                   <View style={{ marginTop: theme.spacing.md, marginLeft: 32 }}>
                     <Pressable
@@ -2704,7 +2657,7 @@ function SuspendModal({
   );
 }
 
-// ========== DeleteEmployeeModal компонент ==========
+// ========== DeleteEmployeeModal РєРѕРјРїРѕРЅРµРЅС‚ ==========
 function DeleteEmployeeModal({
   visible,
   totalOrdersCount = 0,
@@ -2852,7 +2805,7 @@ function DeleteEmployeeModal({
             </Text>
           </View>
           <UIButton
-            title={t('placeholder_pick_employee') || 'Выбрать другого'}
+            title={t('placeholder_pick_employee') || 'Р’С‹Р±СЂР°С‚СЊ РґСЂСѓРіРѕРіРѕ'}
             variant="outline"
             onPress={openSuccessorPicker}
             size="sm"
@@ -2862,6 +2815,7 @@ function DeleteEmployeeModal({
     </BaseModal>
   );
 }
+
 
 
 

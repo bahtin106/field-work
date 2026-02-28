@@ -5,6 +5,7 @@ import { handlePushTokenSyncRequest } from '../push-token-sync/index.ts';
 import { handleYandexDiskIntegrationRequest } from '../yandex-disk-integration/index.ts';
 import { handleYandexDiskMediaRequest } from '../yandex-disk-media/index.ts';
 import { handleYandexDiskReconcileRequest } from '../yandex-disk-reconcile/index.ts';
+import { handleProfileMediaStorageRequest } from '../profile-media-storage/index.ts';
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -30,6 +31,9 @@ Deno.serve(async (req) => {
   }
   if (path === '/yandex-disk-reconcile') {
     return handleYandexDiskReconcileRequest(req);
+  }
+  if (path === '/profile-media-storage') {
+    return handleProfileMediaStorageRequest(req);
   }
 
   return new Response('OK', { status: 200 });

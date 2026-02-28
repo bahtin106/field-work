@@ -3,6 +3,7 @@ import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
 import { supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
+import { inspectProfileMedia } from '../src/features/profileMedia/api';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS = 'id, first_name, last_name, full_name, role, avatar_url, company_id';
@@ -28,6 +29,7 @@ const buildProfileFromUser = (user, source = 'user-metadata') => {
     full_name: fullName,
     role: safeRole,
     avatar_url: metadata.avatar_url ?? null,
+    avatar_display_url: metadata.avatar_url ?? null,
     company_id: metadata.company_id ?? null,
     __source: source,
   };
@@ -53,6 +55,7 @@ const normalizeProfileData = (profile, fallbackUser, source = 'supabase') => {
     full_name: fullNameCandidate,
     role: safeRole,
     avatar_url: profile.avatar_url ?? null,
+    avatar_display_url: profile.avatar_display_url ?? profile.avatar_url ?? null,
     company_id: profile.company_id ?? null,
     __source: source,
   };
@@ -141,7 +144,17 @@ export function SimpleAuthProvider({ children }) {
         }
 
         debugLog('[SimpleAuth] Profile loaded:', data.role);
-        return normalizeProfileData(data, user, 'supabase');
+        const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+          [String(data?.avatar_url || '').trim()].filter(Boolean),
+        );
+        const safeData = cleanedUrls.includes(String(data?.avatar_url || '').trim())
+          ? { ...data, avatar_url: null, avatar_display_url: null }
+          : {
+              ...data,
+              avatar_display_url:
+                resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
+            };
+        return normalizeProfileData(safeData, user, 'supabase');
       } catch (error) {
         const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
         if (isTimeout) {

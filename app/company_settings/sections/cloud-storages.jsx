@@ -26,6 +26,9 @@ function toYandexIntegrationMessage(rawError, t) {
   if (!message) return fallback;
 
   const normalized = message.toLowerCase();
+  if (normalized.includes('unknown action')) {
+    return t('company_integrations_server_update_required');
+  }
   if (normalized.includes('missing yandex oauth client id')) {
     return t('company_integrations_yandex_error_missing_client_id');
   }
@@ -92,7 +95,9 @@ export default function YandexDiskIntegrationScreen() {
   const [folderPath, setFolderPath] = React.useState(DEFAULT_FOLDER);
   const [folderDraft, setFolderDraft] = React.useState(DEFAULT_FOLDER);
   const [provider, setProvider] = React.useState('app_storage');
+  const [profileProvider, setProfileProvider] = React.useState('app_storage');
   const [providerModalVisible, setProviderModalVisible] = React.useState(false);
+  const [providerTarget, setProviderTarget] = React.useState('orders');
   const [folderModalVisible, setFolderModalVisible] = React.useState(false);
   const processedOAuthRef = React.useRef('');
 
@@ -118,6 +123,7 @@ export default function YandexDiskIntegrationScreen() {
       setFolderPath(nextFolder);
       setFolderDraft(nextFolder);
       setProvider(payload?.media_provider || payload?.provider || 'app_storage');
+      setProfileProvider(payload?.profile_media_provider || 'app_storage');
       await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
     } catch (e) {
       toastRef.current?.error?.(toYandexIntegrationMessage(e, tRef.current));
@@ -219,16 +225,19 @@ export default function YandexDiskIntegrationScreen() {
   }, [folderDraft, t, toast]);
 
   const chooseProvider = React.useCallback(
-    async (nextProvider) => {
-      if (nextProvider === provider) return;
+    async (target, nextProvider) => {
+      const currentProvider = target === 'profiles' ? profileProvider : provider;
+      if (nextProvider === currentProvider) return;
       if (nextProvider === 'yandex_disk' && !status?.connected) {
         toast.info(t('company_integrations_yandex_connect_first'));
         return;
       }
       setLoading(true);
       try {
-        await yandexDiskIntegration('set_provider', { provider: nextProvider });
-        setProvider(nextProvider);
+        const action = target === 'profiles' ? 'set_profile_provider' : 'set_provider';
+        await yandexDiskIntegration(action, { provider: nextProvider });
+        if (target === 'profiles') setProfileProvider(nextProvider);
+        else setProvider(nextProvider);
         await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
         toast.success(t('toast_settingsSaved'));
       } catch (e) {
@@ -237,7 +246,7 @@ export default function YandexDiskIntegrationScreen() {
         setLoading(false);
       }
     },
-    [provider, queryClient, status?.connected, t, toast],
+    [profileProvider, provider, queryClient, status?.connected, t, toast],
   );
 
   if (isInitializing || !canAccess) return null;
@@ -253,6 +262,7 @@ export default function YandexDiskIntegrationScreen() {
     provider === 'yandex_disk'
       ? t('company_integrations_storage_provider_yandex')
       : t('company_integrations_storage_provider_app');
+  const profileProviderLabel = t('company_integrations_storage_provider_app');
   const yandexName =
     status?.account?.display_name ||
     status?.account?.login ||
@@ -360,10 +370,22 @@ export default function YandexDiskIntegrationScreen() {
           <SelectField
             label={t('company_integrations_media_orders_label')}
             value={providerLabel}
-            onPress={() => setProviderModalVisible(true)}
+            onPress={() => {
+              setProviderTarget('orders');
+              setProviderModalVisible(true);
+            }}
             disabled={loading}
             style={{ paddingHorizontal: separatorInset }}
           />
+          <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
+          <View style={[styles.disabledStorageRow, { paddingHorizontal: separatorInset }]}>
+            <Text style={styles.disabledStorageLabel}>
+              {t('company_integrations_profile_photos_label')}
+            </Text>
+            <Text style={styles.disabledStorageValue}>
+              {profileProviderLabel}
+            </Text>
+          </View>
         </Card>
 
         <SectionHeader>{t('company_integrations_yandex_section_title')}</SectionHeader>
@@ -468,16 +490,20 @@ export default function YandexDiskIntegrationScreen() {
       <SelectModal
         visible={providerModalVisible}
         onClose={() => setProviderModalVisible(false)}
-        title={t('company_integrations_storage_provider_modal_title')}
+        title={
+          providerTarget === 'profiles'
+            ? t('company_integrations_profile_storage_provider_modal_title')
+            : t('company_integrations_storage_provider_modal_title')
+        }
         searchable={false}
-        selectedId={provider}
+        selectedId={providerTarget === 'profiles' ? profileProvider : provider}
         items={[
           { id: 'app_storage', label: t('company_integrations_storage_provider_app') },
           { id: 'yandex_disk', label: t('company_integrations_storage_provider_yandex') },
         ]}
         onSelect={(item) => {
           setProviderModalVisible(false);
-          chooseProvider(String(item?.id || 'app_storage'));
+          chooseProvider(providerTarget, String(item?.id || 'app_storage'));
         }}
       />
 
@@ -542,6 +568,24 @@ function createStyles(theme) {
     },
     infoRow: {
       minHeight: theme.components?.listItem?.height ?? 48,
+    },
+    disabledStorageRow: {
+      minHeight: theme.components?.listItem?.height ?? 48,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      opacity: 0.65,
+    },
+    disabledStorageLabel: {
+      flex: 1,
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.md,
+      paddingRight: theme.spacing.md,
+    },
+    disabledStorageValue: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.md,
+      textAlign: 'right',
     },
     actionsWrap: {
       paddingHorizontal: theme.spacing.lg,

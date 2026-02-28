@@ -446,7 +446,14 @@ export default function EditOrderScreen() {
       const nextEntrance = row.entrance ?? entrance ?? '';
       const nextApartment = row.apartment ?? apartment ?? '';
       const nextIntercom = row.intercom ?? intercom ?? '';
-      const nextCustomerName = row.fio || row.customer_name || '';
+      const nextCustomerName =
+        row.fio ||
+        row.customer_name ||
+        row.client?.full_name ||
+        [row.client?.last_name, row.client?.first_name, row.client?.middle_name]
+          .filter(Boolean)
+          .join(' ') ||
+        '';
       const nextClientId = normalizeId(row.client_id);
       const nextObjectId = normalizeId(row.object_id);
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
@@ -1040,6 +1047,10 @@ export default function EditOrderScreen() {
         showToast(T('order_validation_fuel_format'), 'error');
         return;
       }
+      if (!selectedClientId) {
+        showToast(T('order_validation_client_required'), 'error');
+        return;
+      }
       if (selectedClientId && !selectedObjectId) {
         showToast(T('objects_select_required_for_order'), 'error');
         return;
@@ -1068,7 +1079,6 @@ export default function EditOrderScreen() {
       const payload = {
         title,
         comment: description,
-        fio: customerName,
         client_id: normalizeId(selectedClientId),
         object_id: normalizeId(selectedObjectId),
         assigned_to: toFeed ? null : assigneeId,
@@ -1339,14 +1349,6 @@ export default function EditOrderScreen() {
                 onPress={() => setObjectModalVisible(true)}
               />
             ) : null}
-            <TextField
-              ref={customerNameRef}
-              label={T('order_field_customer_name')}
-              value={customerName}
-              onChangeText={setCustomerName}
-              style={styles.field}
-              onFocus={() => focusField(customerNameRef)}
-            />
             <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
             {selectedClientId ? (
               <>

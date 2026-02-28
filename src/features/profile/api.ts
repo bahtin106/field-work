@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import { inspectProfileMedia } from '../profileMedia/api';
 
 export async function getCurrentUser() {
   return measureNetwork('profile.getCurrentUser', async () => {
@@ -21,7 +22,17 @@ export async function getMyProfile() {
       .maybeSingle();
 
     if (error) throw error;
-    return data || null;
+    if (!data) return null;
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      [String(data?.avatar_url || '').trim()].filter(Boolean),
+    );
+    if (cleanedUrls.includes(String(data?.avatar_url || '').trim())) {
+      return { ...data, avatar_url: null, avatar_display_url: null };
+    }
+    return {
+      ...data,
+      avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
+    };
   });
 }
 

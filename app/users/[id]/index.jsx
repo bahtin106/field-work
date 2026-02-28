@@ -1,11 +1,11 @@
 // app/users/[id]/index.jsx
 import { Feather } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Linking,
   Platform,
   Pressable,
@@ -96,7 +96,7 @@ export default function UserView() {
     }, [userId]),
   );
 
-  const avatarUrl = userData?.avatarUrl || null;
+  const avatarUrl = userData?.avatarDisplayUrl || userData?.avatarUrl || null;
   const firstName = userData?.firstName || '';
   const lastName = userData?.lastName || '';
   const email = userData?.email || '';
@@ -364,7 +364,12 @@ export default function UserView() {
         <View style={s.avatarContainer}>
           <View style={s.avatarXl}>
             {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={s.avatarImg} />
+              <ExpoImage
+                source={{ uri: avatarUrl }}
+                style={s.avatarImg}
+                contentFit="cover"
+                cachePolicy="none"
+              />
             ) : (
               <Text style={s.avatarTextXl}>{initials || '•'}</Text>
             )}
