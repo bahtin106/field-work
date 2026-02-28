@@ -341,8 +341,6 @@ export default function OrderDetails() {
           return (title || '').trim();
         case 'comment':
           return (description || '').trim();
-        case 'fio':
-          return (customerName || '').trim();
         case 'customer_name':
           return (customerName || '').trim();
         case 'phone':
@@ -495,7 +493,6 @@ export default function OrderDetails() {
       city: o.city || '',
       street: o.street || '',
       house: o.house || '',
-      fio: o.fio || '',
       phone: phoneDigits,
       time_window_start: o.time_window_start ? new Date(o.time_window_start).toISOString() : null,
       assigned_to: o.assigned_to || null,
@@ -514,7 +511,6 @@ export default function OrderDetails() {
       city: city || '',
       street: street || '',
       house: house || '',
-      fio: customerName || '',
       phone: phoneDigits,
       time_window_start: departureDate ? departureDate.toISOString() : null,
       assigned_to: assigneeId || null,
@@ -528,7 +524,6 @@ export default function OrderDetails() {
     city,
     street,
     house,
-    customerName,
     phone,
     departureDate,
     assigneeId,
@@ -851,7 +846,12 @@ export default function OrderDetails() {
           setCity(inspectedOrder.city || '');
           setStreet(inspectedOrder.street || '');
           setHouse(inspectedOrder.house || '');
-          setCustomerName(inspectedOrder.fio || inspectedOrder.customer_name || '');
+          setCustomerName(
+            inspectedOrder.fio ||
+              inspectedOrder.customer_name ||
+              formatClientNameForOrder(linkedClient) ||
+              '',
+          );
           setPhone(rawDigits || '');
           setDepartureDate(
             inspectedOrder.time_window_start ? new Date(inspectedOrder.time_window_start) : null,
@@ -931,6 +931,7 @@ export default function OrderDetails() {
     id,
     fetchServerPhotos,
     inspectYandexMedia,
+    linkedClient,
     makeSnapshotFromOrder,
     queryClient,
     refetchRequestData,
@@ -1340,7 +1341,8 @@ export default function OrderDetails() {
     if (!canEdit()) return;
 
     if (!title.trim()) return showWarning(t('order_validation_title_required'));
-    if (!customerName.trim()) return showWarning(t('order_validation_customer_required'));
+    const clientIdForContacts = order?.client_id ? String(order.client_id) : resolvedClientId;
+    if (!clientIdForContacts) return showWarning(t('order_validation_client_required'));
     if (!phone.trim()) return showWarning(t('order_validation_phone_required'));
     if (!departureDate) return showWarning(t('order_validation_date_required'));
     if (!assigneeId && !toFeed) return showWarning(t('order_validation_executor_required'));
@@ -1356,15 +1358,9 @@ export default function OrderDetails() {
         ? t('order_status_in_progress')
         : order.status;
 
-    const clientIdForContacts = order?.client_id ? String(order.client_id) : resolvedClientId;
-    if (!clientIdForContacts) {
-      return showWarning(t('order_validation_client_required_for_contact_details'));
-    }
-
     const payload = {
       title,
       comment: description,
-      fio: customerName,
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: departureDate.toISOString(),
       status: nextStatus,
@@ -1413,7 +1409,7 @@ export default function OrderDetails() {
       setCity(data.city || '');
       setStreet(data.street || '');
       setHouse(data.house || '');
-      setCustomerName(data.fio || '');
+      setCustomerName(formatClientNameForOrder(linkedClient) || '');
       setPhone(rawDigitsSaved || '');
       setDepartureDate(data.time_window_start ? new Date(data.time_window_start) : null);
       setAssigneeId(data.assigned_to || null);
@@ -1451,7 +1447,6 @@ export default function OrderDetails() {
     validateRequiredBySchemaEdit,
     canEdit,
     title,
-    customerName,
     description,
     phone,
     departureDate,
@@ -1472,6 +1467,7 @@ export default function OrderDetails() {
     showToast,
     showWarning,
     t,
+    linkedClient,
     resolvedClientId,
     updateClientMutation,
   ]);
@@ -2203,8 +2199,8 @@ export default function OrderDetails() {
   const customerDisplayName = useMemo(() => {
     const liveClientName = formatClientNameForOrder(linkedClient);
     if (liveClientName) return liveClientName;
-    return (order?.fio || order?.customer_name || '').trim() || t('common_dash');
-  }, [linkedClient, order?.customer_name, order?.fio, t]);
+    return t('common_dash');
+  }, [linkedClient, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2435,9 +2431,6 @@ export default function OrderDetails() {
                   </Text>
                 </View>
               </Pressable>
-              <View style={base.sep} />
-
-              <LabelValueRow label={t('order_field_datetime')} value={order?.datetime} />
               <View style={base.sep} />
 
               <ExpandableTextRow

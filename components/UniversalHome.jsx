@@ -3,11 +3,13 @@ import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
+import { inspectProfileMedia } from '../src/features/profileMedia/api';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
@@ -34,13 +36,28 @@ async function fetchSession() {
 
 async function fetchProfile(uid) {
   if (!uid) return null;
+
+  const resolveProfileAvatar = async (profile) => {
+    if (!profile) return null;
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      [String(profile?.avatar_url || '').trim()].filter(Boolean),
+    );
+    return cleanedUrls.includes(String(profile?.avatar_url || '').trim())
+      ? { ...profile, avatar_url: null, avatar_display_url: null }
+      : {
+          ...profile,
+          avatar_display_url:
+            resolvedUrls[String(profile?.avatar_url || '').trim()] || profile?.avatar_url || null,
+        };
+  };
+
   try {
     const { data: byUserId } = await supabase
       .from('profiles')
       .select('full_name, first_name, last_name, avatar_url, role, company_id, department_id')
       .eq('user_id', uid)
       .maybeSingle();
-    if (byUserId) return byUserId;
+    if (byUserId) return await resolveProfileAvatar(byUserId);
   } catch {}
 
   const { data: byId } = await supabase
@@ -48,7 +65,7 @@ async function fetchProfile(uid) {
     .select('full_name, first_name, last_name, avatar_url, role, company_id, department_id')
     .eq('id', uid)
     .maybeSingle();
-  return byId || null;
+  return await resolveProfileAvatar(byId || null);
 }
 
 async function fetchCountsMy(uid) {
@@ -148,7 +165,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     `${currentProfile?.first_name || ''} ${currentProfile?.last_name || ''}`.trim();
   const firstName = currentProfile?.first_name || '';
   const lastName = currentProfile?.last_name || '';
-  const avatarUrl = currentProfile?.avatar_url || null;
+  const avatarUrl = currentProfile?.avatar_display_url || currentProfile?.avatar_url || null;
   const companyId = currentProfile?.company_id || null;
   const { useDepartments } = useCompanySettings(companyId || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
@@ -380,7 +397,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
         >
           {avatarUrl ? (
             <View style={styles.avatarWrap}>
-              <Image source={{ uri: avatarUrl }} style={styles.avatarImg} resizeMode="cover" />
+              <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarImg} contentFit="cover" cachePolicy="none" />
             </View>
           ) : (
             <View style={styles.avatarFallback}>

@@ -47,6 +47,21 @@ const CALENDAR_SELECT_COLUMNS = ORDER_SELECT_COLUMNS;
 const CALENDAR_SELECT_COLUMNS_FALLBACK = ORDER_SELECT_COLUMNS_FALLBACK;
 const EXTRA_ORDER_FIELDS = ['time_window_end'];
 
+function buildClientDisplayName(client) {
+  if (!client || typeof client !== 'object') return '';
+  const fullName = String(client.full_name ?? '').trim();
+  if (fullName) return fullName;
+  return [
+    String(client.last_name ?? '').trim(),
+    String(client.first_name ?? '').trim(),
+    String(client.middle_name ?? '').trim(),
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizeOrder(row) {
   if (!row) return row;
   const customerPhoneVisible =
@@ -54,6 +69,7 @@ function normalizeOrder(row) {
   const legacyPhoneVisible = row.phone_visible ?? customerPhoneVisible;
   const objectItem = row.object || row.client_object || null;
   const clientItem = row.client || null;
+  const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
   return {
     ...row,
     customer_phone_visible: customerPhoneVisible,
@@ -61,6 +77,8 @@ function normalizeOrder(row) {
     time_window_start: row.time_window_start ?? null,
     object: objectItem,
     client: clientItem,
+    fio: customerName || null,
+    customer_name: customerName || null,
     object_name: objectItem?.name || null,
     object_summary: objectItem?.summary || null,
     secondary_phone: clientItem?.secondary_phone || null,

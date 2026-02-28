@@ -49,7 +49,6 @@ import {
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: true },
-  { field_key: 'fio', label: null, type: 'text', position: 20 },
   { field_key: 'phone', label: null, type: 'phone', position: 30 },
   { field_key: 'secondary_phone', label: null, type: 'phone', position: 112 },
   { field_key: 'contact_email', label: null, type: 'text', position: 114 },
@@ -57,6 +56,8 @@ const DEFAULT_FIELDS = [
 ];
 
 const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
+  'fio',
+  'customer_name',
   'region',
   'city',
   'street',
@@ -241,9 +242,7 @@ export default function CreateOrderScreen() {
       !!(form.secondary_phone?.trim()) ||
       !!(form.contact_email?.trim()) ||
       !!(form.contact_pref?.trim()) ||
-      !!(form.fio?.trim()) ||
       !!(form.phone?.trim()) ||
-      !!(form.customer_name?.trim()) ||
       !!description?.trim() ||
       !!departureDate ||
       !!departureEndDate ||
@@ -503,13 +502,10 @@ export default function CreateOrderScreen() {
     const normalizedContactEmail = String(form.contact_email || '').trim().toLowerCase() || null;
     const normalizedContactPref = String(form.contact_pref || '').trim() || null;
 
-    if (
-      !selectedClientId &&
-      (normalizedPhone || normalizedSecondaryPhone || normalizedContactEmail || normalizedContactPref)
-    ) {
+    if (!selectedClientId) {
       showBanner({
         type: 'warning',
-        message: t('order_validation_client_required_for_contact_details'),
+        message: t('order_validation_client_required'),
       });
       return;
     }
@@ -531,7 +527,6 @@ export default function CreateOrderScreen() {
       title: form.title ?? '',
       work_type_id: useWorkTypes ? normalizedWorkTypeId || null : null,
       comment: description,
-      fio: form.customer_name || form.fio || '',
       client_id: selectedClientId || null,
       object_id: selectedClientObjectId || null,
       assigned_to: toFeed ? null : assigneeId,
@@ -875,7 +870,6 @@ export default function CreateOrderScreen() {
     }
     setForm((prev) => ({
       ...prev,
-      fio: String(selectedClient.fullName || prev.fio || '').trim(),
       phone: String(selectedClient.phone || prev.phone || '').trim(),
       secondary_phone: String(selectedClient.secondaryPhone || prev.secondary_phone || '').trim(),
       contact_email: String(selectedClient.email || prev.contact_email || '').trim(),
@@ -1123,13 +1117,6 @@ export default function CreateOrderScreen() {
                 ) : null}
               </>
             ) : null}
-            {renderTextField({
-              label: getFieldLabel('fio'),
-              placeholder: t('create_order_placeholder_customer'),
-              value: form.fio || '',
-              onChangeText: (text) => setField('fio', text),
-              required: getField('fio')?.required,
-            })}
             {renderPhoneInput('phone')}
             {selectedClientId ? (
               <>

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Image as ExpoImage } from 'expo-image';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -7,6 +8,7 @@ import Card from '../../../components/ui/Card';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
+import { BaseModal } from '../../../components/ui/modals';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
@@ -14,6 +16,34 @@ import { useClientObject } from '../../../src/features/objects/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { buildAddressForNavigator, openAddressInYandex } from '../../../components/ui/map';
+
+const DEFAULT_OBJECT_INITIALS = 'OB';
+
+function withAlpha(color, alpha) {
+  if (typeof color === 'string') {
+    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) {
+      const hexAlpha = Math.round(Math.max(0, Math.min(1, alpha)) * 255)
+        .toString(16)
+        .padStart(2, '0');
+      return color + hexAlpha;
+    }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${alpha})`;
+  }
+  return `rgba(0,0,0,${alpha})`;
+}
+
+function getObjectInitials(name) {
+  return String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.slice(0, 1))
+    .join('')
+    .toUpperCase() || DEFAULT_OBJECT_INITIALS;
+}
 
 export default function ObjectViewScreen() {
   const { theme } = useTheme();
@@ -30,6 +60,7 @@ export default function ObjectViewScreen() {
     enabled: !!objectId && canViewClients,
   });
 
+  const [photoPreviewVisible, setPhotoPreviewVisible] = React.useState(false);
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
 
@@ -78,6 +109,28 @@ export default function ObjectViewScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.contentWrap}>
+        <View style={styles.avatarWrap}>
+          <Pressable
+            style={styles.avatarBox}
+            onPress={() => {
+              if (!objectItem?.photoUrl) return;
+              setPhotoPreviewVisible(true);
+            }}
+            disabled={!objectItem?.photoUrl}
+          >
+            {objectItem?.photoDisplayUrl || objectItem?.photoUrl ? (
+              <ExpoImage
+                source={{ uri: objectItem?.photoDisplayUrl || objectItem?.photoUrl }}
+                style={styles.avatarImg}
+                contentFit="cover"
+                cachePolicy="none"
+              />
+            ) : (
+              <Text style={styles.avatarText}>{getObjectInitials(objectItem?.name)}</Text>
+            )}
+          </Pressable>
+        </View>
+
         <Card style={styles.headerCard}>
           <View style={styles.headerRow}>
             <View style={styles.badge}>
@@ -91,9 +144,7 @@ export default function ObjectViewScreen() {
               router.push(`/clients/${objectItem.client.id}`);
             }}
           >
-            <Text style={styles.clientLink}>
-              {objectItem?.client?.full_name || t('common_dash')}
-            </Text>
+            <Text style={styles.clientLink}>{objectItem?.client?.full_name || t('common_dash')}</Text>
           </Pressable>
         </Card>
 
@@ -126,6 +177,26 @@ export default function ObjectViewScreen() {
           />
         </Card>
       </ScrollView>
+
+      <BaseModal
+        visible={photoPreviewVisible}
+        onClose={() => setPhotoPreviewVisible(false)}
+        title={t('objects_photo_title')}
+        maxHeightRatio={0.9}
+      >
+        <View style={styles.previewWrap}>
+          {objectItem?.photoDisplayUrl || objectItem?.photoUrl ? (
+            <ExpoImage
+              source={{ uri: objectItem?.photoDisplayUrl || objectItem?.photoUrl }}
+              style={styles.previewImg}
+              contentFit="contain"
+              cachePolicy="none"
+            />
+          ) : (
+            <Text style={styles.previewEmpty}>{t('placeholder_no_photo')}</Text>
+          )}
+        </View>
+      </BaseModal>
     </SafeAreaView>
   );
 }
@@ -148,6 +219,30 @@ function createStyles(theme) {
     mutedText: {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
+    },
+    avatarWrap: {
+      alignItems: 'center',
+      marginBottom: theme.spacing.md,
+    },
+    avatarBox: {
+      width: theme.components?.avatar?.xl ?? 96,
+      height: theme.components?.avatar?.xl ?? 96,
+      borderRadius: (theme.components?.avatar?.xl ?? 96) / 2,
+      backgroundColor: withAlpha(theme.colors.primary, 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+      borderWidth: theme.components.card.borderWidth,
+      borderColor: withAlpha(theme.colors.primary, 0.24),
+    },
+    avatarImg: {
+      width: '100%',
+      height: '100%',
+    },
+    avatarText: {
+      color: theme.colors.primary,
+      fontSize: theme.typography.sizes.xl ?? 24,
+      fontWeight: theme.typography.weight.bold ?? '700',
     },
     headerCard: {
       marginBottom: theme.spacing.md,
@@ -177,6 +272,18 @@ function createStyles(theme) {
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
     },
+    previewWrap: {
+      alignItems: 'center',
+      padding: theme.spacing.md,
+    },
+    previewImg: {
+      width: '100%',
+      height: undefined,
+      aspectRatio: 1,
+      borderRadius: theme.radii.lg,
+    },
+    previewEmpty: {
+      color: theme.colors.textSecondary,
+    },
   });
 }
-

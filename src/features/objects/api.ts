@@ -5,6 +5,7 @@ import {
   normalizeClientObject,
   sanitizeClientObjectPayload,
 } from './addressing';
+import { inspectProfileMedia } from '../profileMedia/api';
 
 const objectByIdInFlight = new Map<string, Promise<any>>();
 
@@ -19,7 +20,19 @@ export async function listClientObjects(clientId: string) {
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-    return Array.isArray(data) ? data.map(normalizeClientObject).filter(Boolean) : [];
+    const rows = Array.isArray(data) ? data : [];
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
+    );
+    const cleanedSet = new Set(cleanedUrls);
+    return rows
+      .map((row) => ({
+        ...row,
+        photo_url: cleanedSet.has(String(row?.photo_url || '').trim()) ? null : row?.photo_url,
+        photo_display_url: resolvedUrls[String(row?.photo_url || '').trim()] || row?.photo_url || null,
+      }))
+      .map(normalizeClientObject)
+      .filter(Boolean);
   });
 }
 
@@ -38,7 +51,18 @@ export async function getClientObjectById(objectId: string) {
       .maybeSingle();
 
     if (error) throw error;
-    const normalized = normalizeClientObject(data);
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      [String(data?.photo_url || '').trim()].filter(Boolean),
+    );
+    const cleanedSet = new Set(cleanedUrls);
+    const safeData = data
+      ? {
+          ...data,
+          photo_url: cleanedSet.has(String(data?.photo_url || '').trim()) ? null : data?.photo_url,
+          photo_display_url: resolvedUrls[String(data?.photo_url || '').trim()] || data?.photo_url || null,
+        }
+      : data;
+    const normalized = normalizeClientObject(safeData);
     if (!normalized) return null;
     return {
       ...normalized,
@@ -60,6 +84,7 @@ export async function createClientObject(payload: Record<string, any>) {
       client_id: payload.client_id,
       name: clean.name,
       is_primary: !!payload.is_primary,
+      photo_url: payload.photo_url ?? null,
       ...clean,
     };
     const { data, error } = await supabase
@@ -87,6 +112,9 @@ export async function updateClientObject(objectId: string, patch: Record<string,
     if (Object.prototype.hasOwnProperty.call(patch, 'is_primary')) {
       nextPatch.is_primary = !!patch.is_primary;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, 'photo_url')) {
+      nextPatch.photo_url = patch.photo_url || null;
+    }
 
     const { data, error } = await supabase
       .from('client_objects')
@@ -107,4 +135,3 @@ export async function deleteClientObject(objectId: string) {
     return true;
   });
 }
-

@@ -24,6 +24,7 @@ import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { uploadProfileMedia } from '../../src/features/profileMedia/api';
 
 // i18n
 import { useI18nVersion } from '../../src/i18n';
@@ -678,6 +679,16 @@ export default function NewUserScreen() {
       }
 
       setInviteModalVisible(false);
+      if (avatarUrl && inviteData?.user_id) {
+        try {
+          await uploadProfileMedia('employee', String(inviteData.user_id), avatarUrl);
+        } catch (avatarError) {
+          showBanner({
+            message: avatarError?.message || t('toast_generic_error'),
+            severity: 'warning',
+          });
+        }
+      }
       showSuccessToast(`${t('toast_invite_sent_prefix')} ${inviteEmail}`);
       await queryClient.invalidateQueries({ queryKey: ['employees'] });
       allowLeaveRef.current = true;
@@ -707,6 +718,7 @@ export default function NewUserScreen() {
     departmentId,
     useDepartments,
     inviteEmail,
+    avatarUrl,
     router,
     queryClient,
     t,

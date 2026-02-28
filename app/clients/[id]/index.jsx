@@ -1,7 +1,8 @@
 import React from 'react';
+import { Image as ExpoImage } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
-import { Linking, Pressable, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../../components/navigation/AppHeader';
@@ -94,8 +95,13 @@ export default function ClientViewScreen() {
       <ScrollView contentContainerStyle={styles.contentWrap}>
         <View style={styles.avatarWrap}>
           <View style={styles.avatarBox}>
-            {client?.avatarUrl ? (
-              <Image source={{ uri: client.avatarUrl }} style={styles.avatarImg} />
+            {client?.avatarDisplayUrl || client?.avatarUrl ? (
+              <ExpoImage
+                source={{ uri: client?.avatarDisplayUrl || client?.avatarUrl }}
+                style={styles.avatarImg}
+                contentFit="cover"
+                cachePolicy="none"
+              />
             ) : (
               <Text style={styles.avatarText}>{getInitials(client)}</Text>
             )}

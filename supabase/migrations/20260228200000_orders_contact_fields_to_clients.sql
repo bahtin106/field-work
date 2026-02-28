@@ -226,6 +226,7 @@ set email = nullif(lower(trim(coalesce(email, ''))), '')
 where email is distinct from nullif(lower(trim(coalesce(email, ''))), '');
 
 alter table public.orders
+  drop column if exists fio,
   drop column if exists phone,
   drop column if exists secondary_phone,
   drop column if exists contact_email,
@@ -263,7 +264,6 @@ begin
   update public.orders o
      set title = case when p_patch ? 'title' then (p_patch->>'title') else o.title end,
          comment = case when p_patch ? 'comment' then (p_patch->>'comment') else o.comment end,
-         fio = case when p_patch ? 'fio' then (p_patch->>'fio') else o.fio end,
          assigned_to = case
            when p_patch ? 'assigned_to' then nullif(p_patch->>'assigned_to', '')::uuid
            else o.assigned_to
@@ -350,6 +350,18 @@ grant execute on function public.update_order_if_version(text, timestamptz, json
 create or replace view public.orders_read_masked as
 select
   o.*,
+  coalesce(
+    nullif(trim(coalesce(c.full_name, '')), ''),
+    nullif(
+      regexp_replace(
+        trim(concat_ws(' ', c.last_name, c.first_name, coalesce(c.middle_name, ''))),
+        '\s+',
+        ' ',
+        'g'
+      ),
+      ''
+    )
+  ) as fio,
   co.name as object_name,
   co.summary as object_summary,
   co.country,

@@ -21,6 +21,7 @@ export const CLIENT_OBJECT_ADDRESS_FIELDS = [
 export function createEmptyClientObjectDraft(overrides = {}) {
   return {
     name: CLIENT_OBJECT_DEFAULT_NAME,
+    photoUrl: '',
     country: '',
     region: '',
     city: '',
@@ -65,6 +66,9 @@ export function normalizeClientObject(row) {
     client_id: row.client_id ? String(row.client_id) : null,
     company_id: row.company_id ? String(row.company_id) : null,
     name: String(row.name || '').trim() || CLIENT_OBJECT_DEFAULT_NAME,
+    photoUrl: String(row.photo_url || row.photoUrl || '').trim() || '',
+    photoDisplayUrl:
+      String(row.photo_display_url || row.photoDisplayUrl || row.photo_url || row.photoUrl || '').trim() || '',
     is_primary: !!row.is_primary,
   };
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
@@ -88,4 +92,3 @@ export function sanitizeClientObjectPayload(draft, { nameRequired = true } = {})
 export function hasClientObjectAddressContent(objectLike) {
   return CLIENT_OBJECT_ADDRESS_FIELDS.some((field) => String(objectLike?.[field] || '').trim());
 }
-
