@@ -249,10 +249,13 @@ export function SimpleAuthProvider({ children }) {
         await cleanupSessionRuntime('user-changed');
       }
 
-      const shouldBlockUi = event !== 'TOKEN_REFRESHED' || userChanged;
+      const isNonBlockingSameUserEvent =
+        !userChanged &&
+        (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED' || event === 'SIGNED_IN');
+      const shouldBlockUi = !isNonBlockingSameUserEvent;
       const hasCurrentProfile = profileRef.current?.id === nextUserId;
 
-      if (event === 'TOKEN_REFRESHED' && hasCurrentProfile && !userChanged) {
+      if (isNonBlockingSameUserEvent && hasCurrentProfile) {
         setState((prev) => ({
           ...prev,
           isInitializing: false,
@@ -384,9 +387,13 @@ export function SimpleAuthProvider({ children }) {
         if (initialSessionHandledRef.current) return;
         initialSessionHandledRef.current = true;
       }
-      handleAuthChange(event, session).catch((error) => {
-        console.error('[SimpleAuth] onAuthStateChange handler failed:', error);
-      });
+      // Supabase auth callbacks must stay synchronous; deferring async work
+      // avoids deadlocks with methods like auth.updateUser() in React Native.
+      setTimeout(() => {
+        handleAuthChange(event, session).catch((error) => {
+          console.error('[SimpleAuth] onAuthStateChange handler failed:', error);
+        });
+      }, 0);
     });
 
     return () => {

@@ -99,7 +99,9 @@ export const useMyCompanyId = () => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(() => {
-      syncCompany();
+      setTimeout(() => {
+        syncCompany();
+      }, 0);
     });
 
     return () => {

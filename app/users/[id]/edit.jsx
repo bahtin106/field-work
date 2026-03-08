@@ -32,10 +32,18 @@ import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
-import { isValidRu as isValidPhone, normalizeRu as normalizeRuPhone } from '../../../components/ui/phone';
+import {
+  hasMobilePhoneValue,
+  isValidOptionalMobilePhone,
+  normalizeOptionalMobilePhone,
+} from '../../../src/shared/validation/phone';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
+import {
+  updateCurrentUserPasswordViaBackend,
+  updatePasswordViaBackend,
+} from '../../../lib/passwordUpdateClient';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
 import { cleanupProfileMediaEntity, uploadProfileMedia } from '../../../src/features/profileMedia/api';
@@ -229,13 +237,11 @@ function isValidEmailStrict(raw) {
 }
 
 function normalizeOptionalPhoneForSave(raw) {
-  const normalized = normalizeRuPhone(String(raw || ''));
-  if (!normalized || normalized.length <= 1) return null;
-  return normalized;
+  return normalizeOptionalMobilePhone(raw);
 }
 
 function hasPhoneValue(raw) {
-  return !!normalizeOptionalPhoneForSave(raw);
+  return hasMobilePhoneValue(raw);
 }
 
 function mapSaveErrorToMessage(error, t) {
@@ -258,6 +264,15 @@ function mapSaveErrorToMessage(error, t) {
   return raw || t('error_save_failed');
 }
 
+function isSamePasswordError(error) {
+  const raw = String(error?.message || error || '');
+  const normalized = raw.toLowerCase();
+  return (
+    normalized.includes('new password should be different from the old password') ||
+    normalized.includes('should be different from the old password')
+  );
+}
+
 async function withTimeout(promise, ms, timeoutMessage = 'timeout') {
   let timer = null;
   try {
@@ -270,6 +285,14 @@ async function withTimeout(promise, ms, timeoutMessage = 'timeout') {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+async function updateUserPasswordViaFunction({ userId, newPassword, changedBy }) {
+  return updatePasswordViaBackend({
+    userId,
+    password: newPassword,
+    changedBy,
+  });
 }
 
 // === Lightweight wrappers for split modals (local to this screen) ===
@@ -657,7 +680,7 @@ export default function EditUser() {
         : null));
   const phoneError =
     fieldErrors.phone?.message ||
-    (shouldShowError('phone') && hasPhoneValue(phone) && !isValidPhone(String(phone || ''))
+    (shouldShowError('phone') && hasPhoneValue(phone) && !isValidOptionalMobilePhone(String(phone || ''))
       ? t('err_phone')
       : null);
   const [birthdate, setBirthdate] = useState(null);
@@ -688,6 +711,7 @@ export default function EditUser() {
   const [newPassword, setNewPassword] = useState('');
   const [_showPassword, _setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordFieldResetKey, setPasswordFieldResetKey] = useState(0);
   const [resetPwdVisible, setResetPwdVisible] = useState(false);
   const [resettingPwd, setResettingPwd] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
@@ -794,6 +818,7 @@ export default function EditUser() {
   const [pickerReturn, setPickerReturn] = useState(null); // 'delete' | 'suspend' | null
   const scrollRef = useRef(null);
   const _pwdRef = useRef(null);
+  const confirmPwdRef = useRef(null);
   const firstNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
@@ -855,6 +880,9 @@ export default function EditUser() {
   }, [isDirty]);
   useFocusEffect(
     useCallback(() => {
+      setErr('');
+      clearBanner();
+
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
         if (allowLeaveRef.current) return false;
         if (isDirty) {
@@ -865,7 +893,7 @@ export default function EditUser() {
         return false;
       });
       return () => sub.remove();
-    }, [isDirty]),
+    }, [clearBanner, isDirty]),
   );
   const allowLeaveRef = useRef(false);
   const generateTempPassword = useCallback(() => {
@@ -874,12 +902,17 @@ export default function EditUser() {
     const digits = Math.floor(1000 + Math.random() * 9000);
     return word + digits;
   }, []);
-    const showWarning = useCallback((msg) => {
+  const showWarning = useCallback((msg) => {
     showBanner({ message: String(msg || t('dlg_generic_warning')), severity: 'warning' });
   }, [showBanner, t]);
   const showError = useCallback((msg) => {
     showBanner({ message: String(msg || t('toast_generic_error')), severity: 'error' });
   }, [showBanner, t]);
+  const scrollToTop = useCallback(() => {
+    try {
+      scrollRef.current?.scrollTo?.({ y: 0, animated: true });
+    } catch {}
+  }, []);
   const confirmCancel = () => {
     setCancelVisible(false);
     // Р’РѕСЃСЃС‚Р°РЅР°РІР»РёРІР°РµРј РёР·РЅР°С‡Р°Р»СЊРЅС‹Р№ Р°РІР°С‚Р°СЂ РїСЂРё РѕС‚РјРµРЅРµ
@@ -959,20 +992,15 @@ export default function EditUser() {
         if (rpcErr) throw rpcErr;
 
         if (newPassword && newPassword.length) {
-          const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              userId: userId,
-              newPassword: newPassword,
+          await withTimeout(
+            updateUserPasswordViaFunction({
+              userId,
+              newPassword,
+              changedBy: meId || userId,
             }),
-          });
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`Password update failed: ${text}`);
-          }
-          const result = await res.json();
-          if (!result.success) throw new Error(result.message || 'Password update failed');
+            15000,
+            'password-update-timeout',
+          );
         }
       } else if (meIsAdmin && meId && userId && meId !== userId) {
         // РђРґРјРёРЅ СЂРµРґР°РєС‚РёСЂСѓРµС‚ РґСЂСѓРіРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
@@ -998,35 +1026,15 @@ export default function EditUser() {
 
         // Р•СЃР»Рё РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј email-server API
         if (newPassword && newPassword.length) {
-          console.debug('[proceedSave] [Admin Edit] Updating password via email-server at:', EMAIL_SERVICE_URL);
-
-          const res = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              userId: userId,
-              newPassword: newPassword,
+          await withTimeout(
+            updateUserPasswordViaFunction({
+              userId,
+              newPassword,
+              changedBy: meId,
             }),
-          });
-
-          console.debug('[proceedSave] Password update response status:', res.status);
-
-          if (!res.ok) {
-            const text = await res.text();
-            console.error('[proceedSave] Password update failed:', text);
-            throw new Error(`Password update failed: ${text}`);
-          }
-
-          const result = await res.json();
-          console.debug('[proceedSave] Password update result:', result);
-
-          if (!result.success) {
-            throw new Error(result.message || 'Password update failed');
-          }
-
-          console.debug('[proceedSave] Password updated successfully');
+            15000,
+            'password-update-timeout',
+          );
         }
       } else {
         // РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЂРµРґР°РєС‚РёСЂСѓРµС‚ СЃРµР±СЏ
@@ -1052,18 +1060,14 @@ export default function EditUser() {
 
         // Р•СЃР»Рё РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј email-server API
         if (newPassword && newPassword.length) {
-          const { error: updatePwdErr } = await withTimeout(
-            supabase.auth.updateUser({ password: newPassword }),
-            15000,
-            'password-update-timeout',
-          );
-          if (updatePwdErr) throw updatePwdErr;
-          console.debug('[proceedSave] [Self Edit] Password updated via supabase.auth.updateUser');
+          await updateCurrentUserPasswordViaBackend(newPassword);
         }
       }
 
       setNewPassword('');
       setConfirmPassword('');
+      // Force remount of password inputs to clear native masked text state on Android.
+      setPasswordFieldResetKey((prev) => prev + 1);
       setConfirmPwdVisible(false);
       setPendingSave(false);
       setInitialSnap(
@@ -1101,6 +1105,10 @@ export default function EditUser() {
       const msg = mapSaveErrorToMessage(e, t);
       setErr(msg);
       showError(msg);
+      if (isSamePasswordError(e)) {
+        scrollToTop();
+        _showErrorToast(msg);
+      }
     } finally {
       setSaving(false);
     }
@@ -1148,7 +1156,7 @@ export default function EditUser() {
       emailRef.current?.focus?.();
       return;
     }
-    if (hasPhoneValue(phone) && !isValidPhone(String(phone || ''))) {
+    if (hasPhoneValue(phone) && !isValidOptionalMobilePhone(String(phone || ''))) {
       setFieldErrors({ phone: { message: t('err_phone') } });
       ensureVisibleField({
         fieldRef: phoneRef,
@@ -1356,32 +1364,16 @@ export default function EditUser() {
 
       const tempPassword = generateTempPassword();
       
-      // 1. РћР±РЅРѕРІР»СЏРµРј РїР°СЂРѕР»СЊ С‡РµСЂРµР· email-server API
-      console.debug('[Edit] [Password Reset] Updating password via email-server at:', EMAIL_SERVICE_URL);
-      
-      const updateResponse = await fetch(`${EMAIL_SERVICE_URL}/update-password`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: userId,
+      // 1. Обновляем пароль через edge function update_user
+      await withTimeout(
+        updateUserPasswordViaFunction({
+          userId,
           newPassword: tempPassword,
+          changedBy: meId || userId,
         }),
-      });
-
-      console.debug('[Edit] [Password Reset] Update response status:', updateResponse.status);
-
-      if (!updateResponse.ok) {
-        const errorText = await updateResponse.text();
-        console.error('[Edit] [Password Reset] Update failed:', errorText);
-        throw new Error(`Password update failed: ${updateResponse.status}`);
-      }
-
-      const updateResult = await updateResponse.json();
-      console.debug('[Edit] [Password Reset] Update result:', updateResult);
-
-      if (!updateResult.success) {
-        throw new Error(updateResult.message || 'Password update failed');
-      }
+        15000,
+        'password-update-timeout',
+      );
 
       console.debug('[Edit] [Password Reset] Password updated successfully');
 
@@ -2005,6 +1997,8 @@ export default function EditUser() {
                 </SectionHeader>
                 <Card>
                   <SecurePasswordInput
+                    key={`new-password-${passwordFieldResetKey}`}
+                    ref={_pwdRef}
                     value={newPassword}
                     onChangeText={(v) => {
                       setNewPassword(v);
@@ -2013,12 +2007,16 @@ export default function EditUser() {
                     }}
                     placeholder={t('register_placeholder_password')}
                     inputStyle={styles.field}
+                    returnKeyType="next"
+                    onSubmitEditing={() => confirmPwdRef.current?.focus?.()}
                   />
                   <FieldErrorText message={fieldErrors.newPassword?.message} />
 
                   <View style={{ height: theme.spacing.sm }} />
 
                   <SecurePasswordInput
+                    key={`confirm-password-${passwordFieldResetKey}`}
+                    ref={confirmPwdRef}
                     value={confirmPassword}
                     onChangeText={(v) => {
                       setConfirmPassword(v);
@@ -2026,6 +2024,8 @@ export default function EditUser() {
                     }}
                     placeholder={t('placeholder_repeat_password')}
                     inputStyle={styles.field}
+                    returnKeyType="done"
+                    onSubmitEditing={handleSave}
                   />
                   <FieldErrorText message={fieldErrors.confirmPassword?.message} />
                 </Card>
