@@ -25,7 +25,7 @@ import {
   getPasswordValidationErrors,
   isValidPassword,
 } from '../../lib/authValidation';
-import { supabase } from '../../lib/supabase';
+import { updateCurrentUserPasswordViaBackend } from '../../lib/passwordUpdateClient';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
@@ -138,6 +138,10 @@ export default function SetPasswordScreen() {
     }, theme.timings.invalidInputWarningMs);
   }, [theme.timings.invalidInputWarningMs]);
 
+  const updatePassword = useCallback(async (nextPassword) => {
+    return updateCurrentUserPasswordViaBackend(nextPassword);
+  }, []);
+
   const handleSetPassword = useCallback(async () => {
     if (submitting) return;
     Keyboard.dismiss();
@@ -156,13 +160,7 @@ export default function SetPasswordScreen() {
 
     try {
       // Обновляем пароль для текущего пользователя
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password.trim(),
-      });
-
-      if (updateError) {
-        throw updateError;
-      }
+      await updatePassword(password.trim());
 
       toastSuccess('Пароль успешно установлен!');
       setTimeout(() => {
@@ -187,6 +185,7 @@ export default function SetPasswordScreen() {
     toastSuccess,
     toastError,
     scrollToFirstInvalid,
+    updatePassword,
   ]);
 
   return (
