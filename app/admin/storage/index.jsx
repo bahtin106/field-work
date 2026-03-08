@@ -101,7 +101,7 @@ export default function AdminStorageScreen() {
           const level = getUsedLevel(usedPercent);
           const levelLabel = t(`admin_storage_level_${level}`);
           const measuredAt = row?.measured_at ? new Date(row.measured_at) : null;
-          const measuredLabel = measuredAt ? measuredAt.toLocaleString() : t('common_dash');
+          const measuredLabel = measuredAt ? measuredAt.toLocaleString() : '';
           const sourceMeta = t('admin_storage_primary_source');
           const sourceTitle = row?.source_name || t('admin_storage_source_default');
           const key = String(row?.source_code || row?.source_name || 'unknown');
@@ -112,7 +112,7 @@ export default function AdminStorageScreen() {
               <Card paddedXOnly>
                 <View style={styles(theme).headerRow}>
                   <View style={styles(theme).fill}>
-                    <Text style={styles(theme).sourceMeta}>{sourceMeta || t('common_dash')}</Text>
+                    {sourceMeta ? <Text style={styles(theme).sourceMeta}>{sourceMeta}</Text> : null}
                   </View>
                   <View style={[styles(theme).levelPill, { backgroundColor: withAlpha(tone, 0.14) }]}>
                     <Text style={[styles(theme).levelText, { color: tone }]}>{levelLabel}</Text>

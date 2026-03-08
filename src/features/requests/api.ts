@@ -1,6 +1,13 @@
 import { supabase } from '../../../lib/supabase';
 import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../../lib/orderFilters';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import {
+  buildOrderAddressNavigatorQuery,
+  buildOrderAddressShort,
+  extractOrderAddress,
+  normalizeOrderAddressMode,
+} from './addressing';
+import { applyOrderRelationFilters } from './relationFilters';
 
 const DEFAULT_PAGE_SIZE = 20;
 const requestByIdInFlight = new Map<string, Promise<any>>();
@@ -12,15 +19,15 @@ const OBJECT_RELATION_SELECT = `
     summary,
     country,
     region,
+    district,
     city,
     street,
     house,
     postal_code,
-    building,
+    office,
     floor,
     entrance,
     apartment,
-    intercom,
     entrance_info,
     parking_notes,
     geo_lat,
@@ -37,8 +44,7 @@ const CLIENT_RELATION_SELECT = `
     full_name,
     email,
     phone,
-    secondary_phone,
-    contact_pref
+    secondary_phone:additional_phone_1
   )
 `;
 const ORDER_SELECT_COLUMNS = `*, ${OBJECT_RELATION_SELECT}, ${CLIENT_RELATION_SELECT}`;
@@ -69,9 +75,17 @@ function normalizeOrder(row) {
   const legacyPhoneVisible = row.phone_visible ?? customerPhoneVisible;
   const objectItem = row.object || row.client_object || null;
   const clientItem = row.client || null;
+  const addressFromRow = extractOrderAddress(row);
+  const addressFromObject = extractOrderAddress(objectItem);
+  const address = objectItem ? { ...addressFromRow, ...addressFromObject } : addressFromRow;
+  const addressMode = normalizeOrderAddressMode(row.address_mode);
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
   return {
     ...row,
+    address_mode: addressMode,
+    object_name_snapshot: String(row.object_name_snapshot || '').trim() || null,
+    address_short: buildOrderAddressShort(address) || null,
+    address_navigator_query: buildOrderAddressNavigatorQuery(address) || null,
     customer_phone_visible: customerPhoneVisible,
     phone_visible: legacyPhoneVisible,
     time_window_start: row.time_window_start ?? null,
@@ -79,25 +93,25 @@ function normalizeOrder(row) {
     client: clientItem,
     fio: customerName || null,
     customer_name: customerName || null,
-    object_name: objectItem?.name || null,
+    object_name: objectItem?.name || String(row.object_name_snapshot || '').trim() || null,
     object_summary: objectItem?.summary || null,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,
-    contact_pref: clientItem?.contact_pref || null,
-    country: objectItem?.country || null,
-    region: objectItem?.region || null,
-    city: objectItem?.city || null,
-    street: objectItem?.street || null,
-    house: objectItem?.house || null,
-    postal_code: objectItem?.postal_code || null,
-    building: objectItem?.building || null,
-    floor: objectItem?.floor || null,
-    entrance: objectItem?.entrance || null,
-    apartment: objectItem?.apartment || null,
-    intercom: objectItem?.intercom || null,
-    parking_notes: objectItem?.parking_notes || null,
-    geo_lat: objectItem?.geo_lat || null,
-    geo_lng: objectItem?.geo_lng || null,
+    country: address.country || null,
+    region: address.region || null,
+    district: address.district || null,
+    city: address.city || null,
+    street: address.street || null,
+    house: address.house || null,
+    postal_code: address.postal_code || null,
+    office: address.office || null,
+    floor: address.floor || null,
+    entrance: address.entrance || null,
+    apartment: address.apartment || null,
+    entrance_info: address.entrance_info || null,
+    parking_notes: address.parking_notes || null,
+    geo_lat: address.geo_lat || null,
+    geo_lng: address.geo_lng || null,
   };
 }
 
@@ -156,17 +170,7 @@ function shouldFallbackWithoutClientRelation(error) {
 
 function normalizePatchForDirectUpdate(patch) {
   if (!patch || typeof patch !== 'object') return {};
-  const next = { ...patch };
-  if (Object.prototype.hasOwnProperty.call(next, 'contact_pref')) {
-    const raw = String(next.contact_pref ?? '').trim();
-    next.contact_pref = raw || null;
-  }
-  return next;
-}
-
-function isContactPrefEnumError(error) {
-  const msg = String(error?.message || '').toLowerCase();
-  return msg.includes('contact_pref_enum') || msg.includes('invalid input value for enum');
+  return { ...patch };
 }
 
 export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
@@ -207,15 +211,7 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
     const safePatch = normalizePatchForDirectUpdate(patch);
     let query = supabase.from('orders').update(safePatch).eq('id', id);
     if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt);
-    let { data, error } = await query.select('id, updated_at').maybeSingle();
-    if (error && isContactPrefEnumError(error) && safePatch.contact_pref != null) {
-      const retryPatch = { ...safePatch, contact_pref: null };
-      let retryQuery = supabase.from('orders').update(retryPatch).eq('id', id);
-      if (expectedUpdatedAt) retryQuery = retryQuery.eq('updated_at', expectedUpdatedAt);
-      const retryResult = await retryQuery.select('id, updated_at').maybeSingle();
-      data = retryResult.data;
-      error = retryResult.error;
-    }
+    const { data, error } = await query.select('id, updated_at').maybeSingle();
     if (error) throw error;
 
     if (!data) {
@@ -238,6 +234,8 @@ export async function listRequests(params = {}) {
       executorId = null,
       departmentId = null,
       workTypeIds = [],
+      relationClientId = '',
+      relationObjectIds = [],
       page = 1,
       pageSize = DEFAULT_PAGE_SIZE,
     } = params;
@@ -269,6 +267,11 @@ export async function listRequests(params = {}) {
       if (!ids.length) return [];
       query = query.in('id', ids);
     }
+
+    query = applyOrderRelationFilters(query, {
+      clientId: relationClientId,
+      objectIds: relationObjectIds,
+    });
 
     const from = Math.max(0, (Number(page) - 1) * Number(pageSize));
     const to = from + Number(pageSize) - 1;
@@ -302,6 +305,11 @@ export async function listRequests(params = {}) {
         if (!ids.length) return [];
         fallbackQuery = fallbackQuery.in('id', ids);
       }
+
+      fallbackQuery = applyOrderRelationFilters(fallbackQuery, {
+        clientId: relationClientId,
+        objectIds: relationObjectIds,
+      });
 
       const retryResult = await fallbackQuery
         .order('time_window_start', { ascending: false })

@@ -7,7 +7,7 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
-import { START_PRESET } from '../../../lib/permissions';
+import { START_PRESET, usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -24,7 +24,6 @@ const ACCESS_SECTIONS = [
       { key: 'canDeleteOrders', labelKey: 'access_settings_perm_delete_orders' },
       { key: 'canAddGalleryPhotos', labelKey: 'access_settings_perm_add_gallery_photos' },
       { key: 'canAddCameraPhotos', labelKey: 'access_settings_perm_add_camera_photos' },
-      { key: 'canViewOrderPhotos', labelKey: 'access_settings_perm_view_order_photos' },
       { key: 'canViewOrderAmount', labelKey: 'access_settings_perm_view_order_amount' },
       { key: 'canEditOrderAmount', labelKey: 'access_settings_perm_edit_order_amount' },
       { key: 'canViewOrderFuelCost', labelKey: 'access_settings_perm_view_order_fuel' },
@@ -100,6 +99,7 @@ export default function AccessSettingsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
+  const { refresh: refreshPermissions } = usePermissions();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const s = React.useMemo(() => styles(theme), [theme]);
   const permissions = React.useMemo(
@@ -240,16 +240,29 @@ export default function AccessSettingsScreen() {
       try {
         const channel = supabase.channel(BROADCAST_CHANNEL);
         await channel.subscribe();
-        await channel.send({
-          type: 'broadcast',
-          event: BROADCAST_EVENT,
-          payload: { company_id: companyId, ts: Date.now() },
-        });
+        try {
+          const message = {
+            type: 'broadcast',
+            event: BROADCAST_EVENT,
+            payload: { company_id: companyId, ts: Date.now() },
+          };
+          if (typeof channel.httpSend === 'function') {
+            await channel.httpSend(message);
+          } else if (typeof channel.send === 'function') {
+            await channel.send(message);
+          }
+        } catch (e) {
+          // best-effort broadcast; ignore errors
+        }
         setTimeout(() => {
           try {
             supabase.removeChannel(channel);
           } catch {}
         }, BROADCAST_CLEANUP_DELAY_MS);
+      } catch {}
+
+      try {
+        await refreshPermissions({ silent: true });
       } catch {}
 
       toast.success(t('access_settings_saved'));
@@ -258,7 +271,7 @@ export default function AccessSettingsScreen() {
     } finally {
       setSaving(false);
     }
-  }, [cloudReady, companyId, permMatrix, permissions, t, toast]);
+  }, [cloudReady, companyId, permMatrix, permissions, t, toast, refreshPermissions]);
 
   const onApplyDefaults = React.useCallback(async () => {
     if (!companyId) {
@@ -285,16 +298,29 @@ export default function AccessSettingsScreen() {
       try {
         const channel = supabase.channel(BROADCAST_CHANNEL);
         await channel.subscribe();
-        await channel.send({
-          type: 'broadcast',
-          event: BROADCAST_EVENT,
-          payload: { company_id: companyId, ts: Date.now() },
-        });
+        try {
+          const message = {
+            type: 'broadcast',
+            event: BROADCAST_EVENT,
+            payload: { company_id: companyId, ts: Date.now() },
+          };
+          if (typeof channel.httpSend === 'function') {
+            await channel.httpSend(message);
+          } else if (typeof channel.send === 'function') {
+            await channel.send(message);
+          }
+        } catch (e) {
+          // best-effort broadcast; ignore errors
+        }
         setTimeout(() => {
           try {
             supabase.removeChannel(channel);
           } catch {}
         }, BROADCAST_CLEANUP_DELAY_MS);
+      } catch {}
+
+      try {
+        await refreshPermissions({ silent: true });
       } catch {}
 
       toast.success(t('access_settings_defaults_applied'));
@@ -303,7 +329,7 @@ export default function AccessSettingsScreen() {
     } finally {
       setResettingDefaults(false);
     }
-  }, [cloudReady, companyId, permissions, t, toast]);
+  }, [cloudReady, companyId, permissions, t, toast, refreshPermissions]);
 
   return (
     <Screen

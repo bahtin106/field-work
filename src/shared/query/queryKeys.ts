@@ -20,7 +20,15 @@ export const queryKeys = {
   },
   objects: {
     byClient: (clientId) => ['objects', 'by-client', String(clientId || '')],
+    byCompany: (companyId) => ['objects', 'by-company', String(companyId || '')],
     detail: (id) => ['objects', 'detail', String(id || '')],
+  },
+  fieldSettings: {
+    detail: (entityType) => ['field-settings', 'detail', String(entityType || '')],
+  },
+  tags: {
+    list: ({ companyId = '', tagType = '' } = {}) => ['tags', 'list', String(companyId || ''), String(tagType || '')],
+    suggestions: ({ tagType = '', query = '' } = {}) => ['tags', 'suggestions', String(tagType || ''), String(query || '')],
   },
   profile: {
     me: () => ['profile', 'me'],

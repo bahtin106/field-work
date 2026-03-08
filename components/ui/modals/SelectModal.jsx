@@ -1,4 +1,3 @@
-// components/ui/modals/SelectModal.jsx
 import React, { useMemo, useState } from 'react';
 import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { t as T } from '../../../src/i18n';
@@ -24,6 +23,11 @@ export default function SelectModal({
   listFooter,
   searchLabel = T('common_search'),
   searchPlaceholder = T('common_start_typing'),
+  onSearchChange,
+  onFilteredCountChange,
+  emptyComponent = null,
+  filterFn,
+  onItemLongPress,
 }) {
   const { theme } = useTheme();
   const s = useMemo(() => styles(theme), [theme]);
@@ -35,13 +39,20 @@ export default function SelectModal({
     typeof listBottomInset === 'number' ? listBottomInset : theme.spacing.xxxl + theme.spacing.md;
 
   const [query, setQuery] = useState(initialSearch);
+  const longPressHandledIdRef = React.useRef(null);
   React.useEffect(() => {
     if (!visible) setQuery(initialSearch || '');
   }, [visible, initialSearch]);
+  React.useEffect(() => {
+    onSearchChange?.(query);
+  }, [onSearchChange, query]);
 
   const data = useMemo(() => {
     if (!query.trim()) return items;
     const q = query.trim().toLowerCase();
+    if (typeof filterFn === 'function') {
+      return items.filter((item) => filterFn(item, q));
+    }
     return items.filter(
       (it) =>
         String(it.label || '')
@@ -51,7 +62,10 @@ export default function SelectModal({
           .toLowerCase()
           .includes(q),
     );
-  }, [items, query]);
+  }, [filterFn, items, query]);
+  React.useEffect(() => {
+    onFilteredCountChange?.(Array.isArray(data) ? data.length : 0);
+  }, [data, onFilteredCountChange]);
 
   const isSelectedItem = React.useCallback(
     (item) => {
@@ -67,11 +81,14 @@ export default function SelectModal({
     const isSelected = isSelectedItem(item);
     const handlePress = () => {
       if (disabled) return;
-      // Если у элемента есть свой onPress, вызываем его
+      const itemId = String(item?.id ?? '');
+      if (longPressHandledIdRef.current && longPressHandledIdRef.current === itemId) {
+        longPressHandledIdRef.current = null;
+        return;
+      }
       if (item.onPress) {
         item.onPress(item);
       } else if (onSelect) {
-        // Иначе вызываем общий onSelect
         onSelect(item);
       }
     };
@@ -79,6 +96,12 @@ export default function SelectModal({
     return (
       <Pressable
         onPress={handlePress}
+        onLongPress={(event) => {
+          if (disabled) return;
+          longPressHandledIdRef.current = String(item?.id ?? '');
+          onItemLongPress?.(item, event);
+        }}
+        delayLongPress={220}
         disabled={disabled}
         android_ripple={{ color: theme.colors.ripple }}
         style={({ pressed }) => [
@@ -159,6 +182,7 @@ export default function SelectModal({
           right: 0,
         }}
         ListFooterComponent={listFooter || <View style={{ height: bottomInset }} />}
+        ListEmptyComponent={emptyComponent || null}
         onScrollToIndexFailed={() => {}}
         keyboardShouldPersistTaps="handled"
       />

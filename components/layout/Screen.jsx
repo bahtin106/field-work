@@ -2,11 +2,12 @@
 import { useRoute } from '@react-navigation/native';
 import { useNavigation, usePathname, useSegments } from 'expo-router';
 import React from 'react';
-import { Keyboard, Platform, TouchableWithoutFeedback, View } from 'react-native';
+import { View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useI18nVersion } from '../../src/i18n';
 import { useTheme } from '../../theme/ThemeProvider';
+import DismissKeyboardArea from './DismissKeyboardArea';
 import GlobalCurrencyRecalcBanner from '../GlobalCurrencyRecalcBanner';
 import AppHeader from '../navigation/AppHeader';
 
@@ -30,6 +31,8 @@ export default function Screen({
   const showHeader = !isAuthScreen && headerOptions?.headerShown !== false;
   const insets = useSafeAreaInsets();
   const useScroll = scroll !== false && !isAuthScreen;
+  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 40;
+  const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 0;
   useI18nVersion(); // subscribe to i18n changes to re-render screen
 
   // Объединяем route params с переданными headerOptions, но не копируем
@@ -71,23 +74,15 @@ export default function Screen({
             contentContainerStyle,
           ]}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardDismissMode="none"
           showsVerticalScrollIndicator={false}
-          bottomOffset={40}
+          bottomOffset={keyboardBottomOffset}
+          extraKeyboardSpace={extraKeyboardSpace}
           onScroll={onScroll}
           scrollEventThrottle={scrollEventThrottle}
         >
           {showHeader && <GlobalCurrencyRecalcBanner />}
-          <TouchableWithoutFeedback
-            accessible={false}
-            onPress={() => {
-              try {
-                Keyboard.dismiss();
-              } catch {}
-            }}
-          >
-            <View style={{ flex: 1 }}>{children}</View>
-          </TouchableWithoutFeedback>
+          <DismissKeyboardArea style={{ flex: 1 }}>{children}</DismissKeyboardArea>
         </KeyboardAwareScrollView>
       ) : (
         <>

@@ -1,25 +1,41 @@
 import Router from 'expo-router';
-import { Keyboard, TextInput, View } from 'react-native';
+import { findNodeHandle, Keyboard, TextInput, View } from 'react-native';
 import { useAppLastSeen } from './useAppLastSeen';
+
+function getFocusedInputHandle() {
+  try {
+    const byInput =
+      TextInput.State && typeof TextInput.State.currentlyFocusedInput === 'function'
+        ? TextInput.State.currentlyFocusedInput()
+        : null;
+    if (byInput) {
+      const handle = findNodeHandle(byInput);
+      if (handle) return handle;
+    }
+    const byField =
+      TextInput.State && typeof TextInput.State.currentlyFocusedField === 'function'
+        ? TextInput.State.currentlyFocusedField()
+        : null;
+    return byField || null;
+  } catch {
+    return null;
+  }
+}
 
 export default function App() {
   useAppLastSeen(); // touch profiles.last_seen_at on start/foreground
+
   return (
     <View
       style={{ flex: 1 }}
-      // Capture phase responder: decide whether to dismiss keyboard before children handle touches
       onStartShouldSetResponderCapture={(e) => {
         try {
-          // If there's no focused input, nothing to do
-          const currentlyFocused =
-            TextInput.State && typeof TextInput.State.currentlyFocusedInput === 'function'
-              ? TextInput.State.currentlyFocusedInput()
-              : null;
-          if (!currentlyFocused) return false;
-          // If the touch target is the currently focused input — don't dismiss
+          const focusedHandle = getFocusedInputHandle();
+          if (!focusedHandle) return false;
+
           const target = e?.nativeEvent?.target;
-          if (target && currentlyFocused === target) return false;
-          // Otherwise dismiss keyboard (user tapped outside)
+          if (target && target === focusedHandle) return false;
+
           Keyboard.dismiss();
         } catch {}
         return false;

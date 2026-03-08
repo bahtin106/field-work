@@ -9,6 +9,7 @@ import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 async function fetchCompanies(search) {
@@ -88,12 +89,16 @@ export default function AdminCompaniesScreen() {
                 <Text style={styles(theme).meta}>
                   {t('admin_companies_employees')}: {row.employees_count ?? 0}
                 </Text>
-                <Text style={styles(theme).meta}>
-                  {t('admin_companies_plan')}: {row.plan_code || t('common_dash')}
-                </Text>
-                <Text style={styles(theme).meta}>
-                  {t('label_status')}: {row.subscription_status || t('common_dash')}
-                </Text>
+                {hasDisplayValue(row.plan_code) ? (
+                  <Text style={styles(theme).meta}>
+                    {t('admin_companies_plan')}: {row.plan_code}
+                  </Text>
+                ) : null}
+                {hasDisplayValue(row.subscription_status) ? (
+                  <Text style={styles(theme).meta}>
+                    {t('label_status')}: {row.subscription_status}
+                  </Text>
+                ) : null}
               </View>
               <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
             </Pressable>

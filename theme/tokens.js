@@ -39,6 +39,9 @@ const light = {
       done: { bg: '#F2F2F7', fg: '#6B7280' },
     },
     chipBg: '#E6F0FF',
+    tagBg: '#EEF2F6',
+    tagBorder: '#D7DEE8',
+    tagText: '#4A5565',
     badgeBg: '#EEF1F6',
     primaryDisabled: '#9DC6FF',
     navigationBarBg: '#FFFFFF',
@@ -106,11 +109,22 @@ const light = {
     },
     switch: {
       scale: 1,
+      minTouchSize: 48,
+      disabledOpacity: 0.42,
+      thumbColor: '#FFFFFF',
+      trackOn: '#007AFF',
+      trackOff: '#D1D5DB',
+      trackOnDisabled: '#9DC6FF',
+      trackOffDisabled: '#E5E7EB',
       iosBackgroundColor: '#E5E7EB',
     },
     activityIndicator: { size: 'large' },
     scrollView: {
-      paddingBottom: 24, // Стандартный нижний отступ для скроллов
+      paddingBottom: 24, // Standard scroll bottom padding
+    },
+    keyboardAware: {
+      bottomOffset: 40,
+      extraKeyboardSpace: 60,
     },
     calendarYear: {
       monthTitleSize: 11, // Компактный размер названия месяца
@@ -177,6 +191,9 @@ const dark = {
       done: { bg: '#1A1C22', fg: '#A3A3A3' },
     },
     chipBg: '#1C2333',
+    tagBg: '#263140',
+    tagBorder: '#334357',
+    tagText: '#D1D9E3',
     badgeBg: '#1E2433',
     primaryDisabled: '#3A6FD9',
     navigationBarBg: '#121218',
@@ -207,6 +224,10 @@ const dark = {
     ...light.components,
     switch: {
       ...(light.components?.switch || {}),
+      trackOn: '#2F6FFF',
+      trackOff: '#3A3F4B',
+      trackOnDisabled: '#3A6FD9',
+      trackOffDisabled: '#2A2E38',
       iosBackgroundColor: '#262A34',
     },
   },

@@ -1,6 +1,6 @@
 // components/ui/IconButton.jsx
-import React, { useRef, useState } from 'react';
-import { Pressable, Animated, StyleSheet, Platform, Easing } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Pressable, Animated, StyleSheet, Platform, Easing, Keyboard } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../theme';
@@ -14,7 +14,7 @@ function withAlpha(color, a) {
         .padStart(2, '0');
       return color + alpha;
     }
-    const rgb = color.match(/^rgb\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$/i);
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
     if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
   }
   return `rgba(0,0,0,${a})`;
@@ -92,9 +92,11 @@ export default function IconButton({
   const palette = resolvePalette(variant);
 
   const scale = useRef(new Animated.Value(1)).current;
-  const [success, setSuccess] = useState(false);
-  const iconOpacity = useRef(new Animated.Value(1)).current;
-  const iconScale = useRef(new Animated.Value(1)).current;
+  const baseOpacity = useRef(new Animated.Value(1)).current;
+  const baseScale = useRef(new Animated.Value(1)).current;
+  const checkOpacity = useRef(new Animated.Value(0)).current;
+  const checkScale = useRef(new Animated.Value(0.7)).current;
+  const successTimerRef = useRef(null);
 
   const onPressIn = () => {
     try {
@@ -111,27 +113,37 @@ export default function IconButton({
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 18, bounciness: 8 }).start();
   };
 
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current);
+        successTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const s = styles(theme, palette, touchSize, resolvedRadius, disabled);
 
   const handlePress = async () => {
     try {
+      try {
+        Keyboard.dismiss();
+      } catch {}
       const res = onPress ? await onPress() : undefined;
       const ok = res === true || res === undefined;
       if (ok) {
         try {
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         } catch {}
-        setSuccess(true);
 
-        // Плавная анимация появления галочки
         Animated.parallel([
-          Animated.timing(iconOpacity, {
+          Animated.timing(baseOpacity, {
             toValue: 0,
             duration: 120,
             easing: Easing.in(Easing.quad),
             useNativeDriver: true,
           }),
-          Animated.timing(iconScale, {
+          Animated.timing(baseScale, {
             toValue: 0.7,
             duration: 120,
             easing: Easing.in(Easing.quad),
@@ -139,13 +151,13 @@ export default function IconButton({
           }),
         ]).start(() => {
           Animated.parallel([
-            Animated.timing(iconOpacity, {
+            Animated.timing(checkOpacity, {
               toValue: 1,
               duration: 180,
               easing: Easing.out(Easing.quad),
               useNativeDriver: true,
             }),
-            Animated.spring(iconScale, {
+            Animated.spring(checkScale, {
               toValue: 1.05,
               speed: 14,
               bounciness: 12,
@@ -154,37 +166,50 @@ export default function IconButton({
           ]).start();
         });
 
-        // Через 1800 мс (как toast) убрать галочку плавно
-        setTimeout(() => {
+        if (successTimerRef.current) {
+          clearTimeout(successTimerRef.current);
+          successTimerRef.current = null;
+        }
+
+        successTimerRef.current = setTimeout(() => {
           Animated.parallel([
-            Animated.timing(iconOpacity, {
+            Animated.timing(checkOpacity, {
               toValue: 0,
               duration: 180,
               easing: Easing.in(Easing.quad),
               useNativeDriver: true,
             }),
-            Animated.timing(iconScale, {
+            Animated.timing(checkScale, {
               toValue: 0.8,
               duration: 180,
               easing: Easing.in(Easing.quad),
               useNativeDriver: true,
             }),
           ]).start(() => {
-            setSuccess(false);
             Animated.parallel([
-              Animated.timing(iconOpacity, {
+              Animated.timing(baseOpacity, {
                 toValue: 1,
                 duration: 180,
                 easing: Easing.out(Easing.quad),
                 useNativeDriver: true,
               }),
-              Animated.spring(iconScale, { toValue: 1, useNativeDriver: true }),
-            ]).start();
+              Animated.spring(baseScale, {
+                toValue: 1,
+                useNativeDriver: true,
+              }),
+            ]).start(() => {
+              successTimerRef.current = null;
+            });
           });
         }, 1800);
       }
     } catch {}
   };
+
+  const renderedChildren =
+    React.isValidElement(children) && children.props?.color == null
+      ? React.cloneElement(children, { color: palette.icon })
+      : children;
 
   return (
     <Pressable
@@ -205,14 +230,17 @@ export default function IconButton({
       }}
     >
       <Animated.View style={[{ transform: [{ scale }] }, s.btn, style]}>
-        <Animated.View style={{ opacity: iconOpacity, transform: [{ scale: iconScale }] }}>
-          {success ? (
-            <Feather name="check" size={18} color={theme.colors.primary} />
-          ) : React.isValidElement(children) && children.props?.color == null ? (
-            React.cloneElement(children, { color: palette.icon })
-          ) : (
-            children
-          )}
+        <Animated.View
+          pointerEvents="none"
+          style={[s.iconLayer, { opacity: baseOpacity, transform: [{ scale: baseScale }] }]}
+        >
+          {renderedChildren}
+        </Animated.View>
+        <Animated.View
+          pointerEvents="none"
+          style={[s.iconLayer, { opacity: checkOpacity, transform: [{ scale: checkScale }] }]}
+        >
+          <Feather name="check" size={18} color={theme.colors.primary} />
         </Animated.View>
       </Animated.View>
     </Pressable>
@@ -242,5 +270,10 @@ const styles = (t, p, size, radiusPx, disabled) =>
           ? t.shadows.card.ios
           : t.shadows.card.android
         : null),
+    },
+    iconLayer: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
   });

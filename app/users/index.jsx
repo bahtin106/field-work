@@ -6,18 +6,17 @@ import {
   ActivityIndicator,
   FlatList,
   InteractionManager,
-  Keyboard,
   Platform,
   RefreshControl,
   StyleSheet,
   Text,
-  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQueryClient } from '@tanstack/react-query';
 
 import AppHeader from '../../components/navigation/AppHeader';
+import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
@@ -39,6 +38,8 @@ import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
+import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
@@ -78,26 +79,21 @@ export default function UsersIndex() {
   const [refreshing, setRefreshing] = useState(false);
   const openUserNavGuardRef = useRef({ userId: null, startedAt: 0, inFlight: false });
 
-  // Initialize filters with a 5-second TTL as requested by user.
-  // When user leaves and returns within 5 seconds, filters persist.
-  // After 5 seconds, filters reset to defaults automatically.
-
   const filters = useFilters({
     screenKey: 'users',
     defaults: { departments: [], roles: [], suspended: null },
-    ttl: 5000, // 5 seconds
   });
+  const revalidateFilters = filters.revalidate;
 
   const { data: companyId, isLoading: companyIdLoading } = useMyCompanyIdQuery();
   const { useDepartments } = useCompanySettings(companyId || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
 
-  // ПАРАЛЛЕЛЬНАЯ ЗАГРУЗКА: оба хука вызываются одновременно на верхнем уровне компонента
-  // Это обеспечивает параллельную загрузку данных
+  // Р СџР С’Р В Р С’Р вЂєР вЂєР вЂўР вЂєР В¬Р СњР С’Р Р‡ Р вЂ”Р С’Р вЂњР В Р Р€Р вЂ”Р С™Р С’: Р С•Р В±Р В° РЎвЂ¦РЎС“Р С”Р В° Р Р†РЎвЂ№Р В·РЎвЂ№Р Р†Р В°РЎР‹РЎвЂљРЎРѓРЎРЏ Р С•Р Т‘Р Р…Р С•Р Р†РЎР‚Р ВµР СР ВµР Р…Р Р…Р С• Р Р…Р В° Р Р†Р ВµРЎР‚РЎвЂ¦Р Р…Р ВµР С РЎС“РЎР‚Р С•Р Р†Р Р…Р Вµ Р С”Р С•Р СР С—Р С•Р Р…Р ВµР Р…РЎвЂљР В°
+  // Р В­РЎвЂљР С• Р С•Р В±Р ВµРЎРѓР С—Р ВµРЎвЂЎР С‘Р Р†Р В°Р ВµРЎвЂљ Р С—Р В°РЎР‚Р В°Р В»Р В»Р ВµР В»РЎРЉР Р…РЎС“РЎР‹ Р В·Р В°Р С–РЎР‚РЎС“Р В·Р С”РЎС“ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦
   const {
     data: users = [],
     isLoading: usersLoading,
-    isRefetching: usersRefreshing,
     refetch: refreshUsers,
   } = useEmployees(filters.values, {
     enabled: !companyIdLoading,
@@ -107,7 +103,6 @@ export default function UsersIndex() {
   const {
     data: departments = [],
     isLoading: departmentsLoading,
-    isRefetching: departmentsRefreshing,
     refetch: refreshDepartments,
   } = useDepartmentsQuery({
     companyId,
@@ -116,37 +111,38 @@ export default function UsersIndex() {
   });
   useEmployeesRealtimeSync({ enabled: true, companyId });
 
-  // Включаем фильтрацию по отделам, когда они загружены
+  // Р вЂ™Р С”Р В»РЎР‹РЎвЂЎР В°Р ВµР С РЎвЂћР С‘Р В»РЎРЉРЎвЂљРЎР‚Р В°РЎвЂ Р С‘РЎР‹ Р С—Р С• Р С•РЎвЂљР Т‘Р ВµР В»Р В°Р С, Р С”Р С•Р С–Р Т‘Р В° Р С•Р Р…Р С‘ Р В·Р В°Р С–РЎР‚РЎС“Р В¶Р ВµР Р…РЎвЂ№
   // Combined loading state - wait for initial data from both sources
   // Once cached data is available, show it immediately (stale-while-revalidate pattern)
-  // КРИТИЧНО: Показываем loader только если ОБА источника грузятся И нет данных
+  // Р С™Р В Р ВР СћР ВР В§Р СњР С›: Р СџР С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµР С loader РЎвЂљР С•Р В»РЎРЉР С”Р С• Р ВµРЎРѓР В»Р С‘ Р С›Р вЂР С’ Р С‘РЎРѓРЎвЂљР С•РЎвЂЎР Р…Р С‘Р С”Р В° Р С–РЎР‚РЎС“Р В·РЎРЏРЎвЂљРЎРѓРЎРЏ Р В Р Р…Р ВµРЎвЂљ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦
   const hasAnyData = users.length > 0 || departments.length > 0;
   const isLoading = (usersLoading || departmentsLoading) && !hasAnyData;
 
-  // Pull-to-refresh обновляет оба источника одновременно
+  // Pull-to-refresh Р С•Р В±Р Р…Р С•Р Р†Р В»РЎРЏР ВµРЎвЂљ Р С•Р В±Р В° Р С‘РЎРѓРЎвЂљР С•РЎвЂЎР Р…Р С‘Р С”Р В° Р С•Р Т‘Р Р…Р С•Р Р†РЎР‚Р ВµР СР ВµР Р…Р Р…Р С•
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshUsers(), refreshDepartments()]);
   }, [refreshUsers, refreshDepartments]);
 
-  // Обновляем данные при возврате на экран (Apple-style: свежие данные, но без спама)
+  // Р С›Р В±Р Р…Р С•Р Р†Р В»РЎРЏР ВµР С Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р С—РЎР‚Р С‘ Р Р†Р С•Р В·Р Р†РЎР‚Р В°РЎвЂљР Вµ Р Р…Р В° РЎРЊР С”РЎР‚Р В°Р Р… (Apple-style: РЎРѓР Р†Р ВµР В¶Р С‘Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ, Р Р…Р С• Р В±Р ВµР В· РЎРѓР С—Р В°Р СР В°)
   const lastRefreshRef = React.useRef(0);
   
   useFocusEffect(
     useCallback(() => {
+      revalidateFilters({ extend: true });
       const now = Date.now();
       const timeSinceLastRefresh = now - lastRefreshRef.current;
       
-      // Обновляем только если прошло больше 1 секунды с последнего обновления
-      if (timeSinceLastRefresh > 1000 && !usersRefreshing && !departmentsRefreshing) {
+      // Refresh once on focus with small guard window.
+      if (timeSinceLastRefresh > 1000) {
         lastRefreshRef.current = now;
         refreshAll();
       }
-    }, [refreshAll, usersRefreshing, departmentsRefreshing]),
+    }, [revalidateFilters, refreshAll]),
   );
 
-  // Проксирующая функция для совместимости с фильтрами
+  // Р СџРЎР‚Р С•Р С”РЎРѓР С‘РЎР‚РЎС“РЎР‹РЎвЂ°Р В°РЎРЏ РЎвЂћРЎС“Р Р…Р С”РЎвЂ Р С‘РЎРЏ Р Т‘Р В»РЎРЏ РЎРѓР С•Р Р†Р СР ВµРЎРѓРЎвЂљР С‘Р СР С•РЎРѓРЎвЂљР С‘ РЎРѓ РЎвЂћР С‘Р В»РЎРЉРЎвЂљРЎР‚Р В°Р СР С‘
   const setFilterValue = filters.setValue;
-  // Открыть панель фильтров
+  // Р С›РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р С—Р В°Р Р…Р ВµР В»РЎРЉ РЎвЂћР С‘Р В»РЎРЉРЎвЂљРЎР‚Р С•Р Р†
   const openFiltersPanel = () => setFiltersVisible(true);
 
   const c = theme.colors;
@@ -260,22 +256,6 @@ export default function UsersIndex() {
     [queryClient],
   );
 
-  const filtered = useMemo(() => {
-    if (!debouncedQ) return users;
-    return users.filter((u) => {
-      const name = (
-        `${u.first_name || ''} ${u.last_name || ''}`.trim() ||
-        u.full_name ||
-        ''
-      ).toLowerCase();
-      const roleCode = (u.role || '').toLowerCase();
-      const roleTitle = ROLE_LABELS[u.role]?.toLowerCase?.() || '';
-      return (
-        name.includes(debouncedQ) || roleCode.includes(debouncedQ) || roleTitle.includes(debouncedQ)
-      );
-    });
-  }, [debouncedQ, users]);
-
   // Memoized department map for fast lookup
   const departmentMap = useMemo(() => {
     const map = new Map();
@@ -286,6 +266,31 @@ export default function UsersIndex() {
     }
     return map;
   }, [departments]);
+
+  const filtered = useMemo(() => {
+    if (!debouncedQ) return users;
+    return users.filter((u) => {
+      const departmentLabel =
+        useDepartments && u?.department_id ? departmentMap.get(String(u.department_id)) || '' : '';
+      return matchesSearch(
+        buildSearchIndex({
+          texts: [
+            `${u.first_name || ''} ${u.last_name || ''}`.trim(),
+            u?.display_name,
+            u?.full_name,
+            u?.email,
+            u?.role,
+            ROLE_LABELS[u?.role] || '',
+            departmentLabel,
+            u?.license_state,
+            u?.last_seen_at,
+          ],
+          phones: [u?.phone, u?.phone_number, u?.mobile_phone],
+        }),
+        debouncedQ,
+      );
+    });
+  }, [debouncedQ, departmentMap, useDepartments, users]);
 
   const sortOptions = employeeSortOptions(t);
 
@@ -369,7 +374,7 @@ export default function UsersIndex() {
     };
   }, [theme.colors, ALPHA_PILL_BG, ALPHA_PILL_BORDER, styles.rolePill, styles.rolePillText]);
 
-  // Robust Postgres timestamptz → Date parser (handles most common variants, treats no-TZ as UTC)
+  // Robust Postgres timestamptz РІвЂ вЂ™ Date parser (handles most common variants, treats no-TZ as UTC)
   function parsePgTs(ts) {
     if (!ts) return null;
     if (ts instanceof Date) return isNaN(ts) ? null : ts;
@@ -438,8 +443,9 @@ export default function UsersIndex() {
 
   // --- Filter definitions ---
   // Compose summary string for active filters to display in UI
-  const filterSummary = useMemo(() => {
-    const parts = [];
+  const filterSummaryData = useMemo(() => {
+    const fullParts = [];
+    const compactParts = [];
     // Department summary
     if (
       useDepartments &&
@@ -454,23 +460,54 @@ export default function UsersIndex() {
         })
         .filter(Boolean);
       if (names.length) {
-        parts.push(`${t('users_department')}: ${names.join(', ')}`);
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('users_department'),
+            values: names,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('users_department'),
+            values: names,
+            countWhenMany: true,
+          }),
+        );
       }
     }
     // Role summary
     if (Array.isArray(filters.values.roles) && filters.values.roles.length) {
       const roleNames = filters.values.roles.map((r) => ROLE_LABELS[r]).filter(Boolean);
       if (roleNames.length) {
-        parts.push(`${t('users_role')}: ${roleNames.join(', ')}`);
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('users_role'),
+            values: roleNames,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('users_role'),
+            values: roleNames,
+            countWhenMany: true,
+          }),
+        );
       }
     }
     // Suspended summary
     if (filters.values.suspended === true) {
-      parts.push(t('users_onlySuspended'));
+      fullParts.push(t('users_onlySuspended'));
+      compactParts.push(t('users_onlySuspended'));
     } else if (filters.values.suspended === false) {
-      parts.push(t('users_withoutSuspended'));
+      fullParts.push(t('users_withoutSuspended'));
+      compactParts.push(t('users_withoutSuspended'));
     }
-    return parts.join(t('common_bullet'));
+    return {
+      full: joinFilterSummary(fullParts, t('common_bullet')),
+      compact: joinFilterSummary(compactParts, t('common_bullet')),
+    };
   }, [filters.values, departments, useDepartments]);
 
   // --- Presence helpers (i18n-driven, no hardcoded strings)
@@ -489,7 +526,7 @@ export default function UsersIndex() {
 
   /**
    * Helper: Format relative time for last seen
-   * Returns: "2 минуты назад", "22 часа назад", "1 день назад", etc.
+   * Returns: "2 Р СР С‘Р Р…РЎС“РЎвЂљРЎвЂ№ Р Р…Р В°Р В·Р В°Р Т‘", "22 РЎвЂЎР В°РЎРѓР В° Р Р…Р В°Р В·Р В°Р Т‘", "1 Р Т‘Р ВµР Р…РЎРЉ Р Р…Р В°Р В·Р В°Р Т‘", etc.
    * Up to 3 days uses relative format, 4+ days shows date only
    */
   const getRelativeTime = React.useCallback((now, past) => {
@@ -499,43 +536,43 @@ export default function UsersIndex() {
     const diffHour = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHour / 24);
 
-    // Сейчас (меньше минуты)
+    // Р РЋР ВµР в„–РЎвЂЎР В°РЎРѓ (Р СР ВµР Р…РЎРЉРЎв‚¬Р Вµ Р СР С‘Р Р…РЎС“РЎвЂљРЎвЂ№)
     if (diffMin < 1) {
       return t('users_relativeTime_now');
     }
 
-    // Минуты (1-59 мин)
+    // Р СљР С‘Р Р…РЎС“РЎвЂљРЎвЂ№ (1-59 Р СР С‘Р Р…)
     if (diffMin < 60) {
       const n = diffMin;
       const word = pluralizeRu(
         n,
-        t('users_relativeTime_min_1'), // минуту
-        t('users_relativeTime_min_2_4'), // минуты
-        t('users_relativeTime_min_5'), // минут
+        t('users_relativeTime_min_1'), // Р СР С‘Р Р…РЎС“РЎвЂљРЎС“
+        t('users_relativeTime_min_2_4'), // Р СР С‘Р Р…РЎС“РЎвЂљРЎвЂ№
+        t('users_relativeTime_min_5'), // Р СР С‘Р Р…РЎС“РЎвЂљ
       );
       return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
-    // Часы (1-23 часа)
+    // Р В§Р В°РЎРѓРЎвЂ№ (1-23 РЎвЂЎР В°РЎРѓР В°)
     if (diffHour < 24) {
       const n = diffHour;
       const word = pluralizeRu(
         n,
-        t('users_relativeTime_hour_1'), // час
-        t('users_relativeTime_hour_2_4'), // часа
-        t('users_relativeTime_hour_5'), // часов
+        t('users_relativeTime_hour_1'), // РЎвЂЎР В°РЎРѓ
+        t('users_relativeTime_hour_2_4'), // РЎвЂЎР В°РЎРѓР В°
+        t('users_relativeTime_hour_5'), // РЎвЂЎР В°РЎРѓР С•Р Р†
       );
       return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
-    // Дни (1-3 дня)
+    // Р вЂќР Р…Р С‘ (1-3 Р Т‘Р Р…РЎРЏ)
     if (diffDay <= 3) {
       const n = diffDay;
       const word = pluralizeRu(
         n,
-        t('users_relativeTime_day_1'), // день
-        t('users_relativeTime_day_2_4'), // дня
-        t('users_relativeTime_day_5'), // дней
+        t('users_relativeTime_day_1'), // Р Т‘Р ВµР Р…РЎРЉ
+        t('users_relativeTime_day_2_4'), // Р Т‘Р Р…РЎРЏ
+        t('users_relativeTime_day_5'), // Р Т‘Р Р…Р ВµР в„–
       );
       return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
@@ -546,7 +583,7 @@ export default function UsersIndex() {
 
   const formatPresence = React.useCallback(
     (ts) => {
-      // Returns either "В сети" or "Был в сети: [relative_time]" or "Был в сети: [date]" or "Был в сети: никогда"
+      // Returns either "Р вЂ™ РЎРѓР ВµРЎвЂљР С‘" or "Р вЂРЎвЂ№Р В» Р Р† РЎРѓР ВµРЎвЂљР С‘: [relative_time]" or "Р вЂРЎвЂ№Р В» Р Р† РЎРѓР ВµРЎвЂљР С‘: [date]" or "Р вЂРЎвЂ№Р В» Р Р† РЎРѓР ВµРЎвЂљР С‘: Р Р…Р С‘Р С”Р С•Р С–Р Т‘Р В°"
       if (isOnlineNow(ts)) return t('users_online');
 
       if (!ts) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
@@ -615,7 +652,7 @@ export default function UsersIndex() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <DismissKeyboardArea style={{ flex: 1 }}>
         <View style={styles.container}>
           <AppHeader
             back
@@ -631,7 +668,7 @@ export default function UsersIndex() {
                   toast.warning(
                     t(
                       'subscription_edit_unavailable_toast',
-                      'Изменение недоступно. Продлите подписку',
+                      'Р ВР В·Р СР ВµР Р…Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р С•. Р СџРЎР‚Р С•Р Т‘Р В»Р С‘РЎвЂљР Вµ Р С—Р С•Р Т‘Р С—Р С‘РЎРѓР С”РЎС“',
                     ),
                   );
                   return;
@@ -649,17 +686,13 @@ export default function UsersIndex() {
               placeholder={t('users_search_placeholder')}
               onOpenFilters={openFiltersPanel}
               onOpenSort={() => setSortVisible(true)}
-              filterSummary={filterSummary}
+              filterSummary={filterSummaryData.full}
+              filterSummaryCompact={filterSummaryData.compact}
               onResetFilters={async () => {
                 const resetValues = filters.reset();
                 await filters.apply(resetValues);
               }}
-              metaText={
-                debouncedQ
-                  ? `${t('users_found')}: ${sortedFiltered.length}`
-                  : `${t('users_total')}: ${users.length}`
-              }
-              metaTextStyle={{ marginLeft: sz.sm }}
+              metaText={`${t('common_total')}: ${sortedFiltered.length}`}
             />
 
             {/* Removed error display - errors now handled by hooks */}
@@ -684,7 +717,7 @@ export default function UsersIndex() {
             ListEmptyComponent={<EmptyState />}
           />
         </View>
-      </TouchableWithoutFeedback>
+      </DismissKeyboardArea>
 
       <SortSelectModal
         visible={sortVisible}
@@ -712,11 +745,12 @@ export default function UsersIndex() {
         setValue={setFilterValue}
         defaults={{ departments: [], roles: [], suspended: null }}
         onReset={() => filters.reset()}
-        onApply={async () => {
-          await filters.apply();
+        onApply={async (nextValues) => {
+          await filters.apply(nextValues);
           // Users will be refreshed automatically via useEffect
         }}
       />
     </SafeAreaView>
   );
 }
+

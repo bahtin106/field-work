@@ -6,6 +6,7 @@ import { handleYandexDiskIntegrationRequest } from '../yandex-disk-integration/i
 import { handleYandexDiskMediaRequest } from '../yandex-disk-media/index.ts';
 import { handleYandexDiskReconcileRequest } from '../yandex-disk-reconcile/index.ts';
 import { handleProfileMediaStorageRequest } from '../profile-media-storage/index.ts';
+import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -34,6 +35,9 @@ Deno.serve(async (req) => {
   }
   if (path === '/profile-media-storage') {
     return handleProfileMediaStorageRequest(req);
+  }
+  if (path === '/telegram-bot') {
+    return handleTelegramBotRequest(req);
   }
 
   return new Response('OK', { status: 200 });

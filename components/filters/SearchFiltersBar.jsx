@@ -1,10 +1,27 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather, MaterialIcons } from '@expo/vector-icons';
 
 import TextField from '../ui/TextField';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
+
+function withAlpha(color, a) {
+  if (typeof color === 'string') {
+    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
+    if (hex) {
+      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
+        .toString(16)
+        .padStart(2, '0');
+      return color + alpha;
+    }
+    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) {
+      return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
+    }
+  }
+  return color;
+}
 
 function createStyles(theme) {
   const c = theme.colors;
@@ -19,6 +36,11 @@ function createStyles(theme) {
   const clearEdgeGap = Number(theme?.components?.input?.clearEdgeGap ?? sz.xs ?? 0);
   const clearSlotShift = Math.max(0, inputInset - clearEdgeGap);
   const clearIconOffsetY = Number(theme?.components?.icon?.opticalOffsetY ?? 0);
+  const infoInsetLeft = Number(sz.sm ?? 0);
+  const resetTapWidth = Math.max(
+    controlH,
+    Math.round((ty.sizes.sm ?? 14) * 6.5) + Number((sz.sm ?? 8) * 2),
+  );
 
   return StyleSheet.create({
     container: {
@@ -52,24 +74,31 @@ function createStyles(theme) {
       justifyContent: 'center',
       backgroundColor: c.surface,
     },
+    filterButtonActive: {
+      borderColor: c.primary,
+      backgroundColor: withAlpha(c.primary, 0.12),
+    },
     summaryRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+      position: 'relative',
+      minHeight: controlH,
+      paddingRight: resetTapWidth,
     },
     summaryText: {
       color: c.textSecondary,
       fontSize: ty.sizes.sm,
-      flex: 1,
-      flexWrap: 'wrap',
+      minHeight: controlH,
+      paddingLeft: infoInsetLeft,
+      paddingTop: sz.xs,
     },
     resetText: {
       color: c.primary,
       fontSize: ty.sizes.sm,
-      marginLeft: sz.sm,
       fontWeight: ty.weight.semibold,
+      textAlign: 'right',
     },
-    metaRow: {},
+    metaRow: {
+      paddingLeft: infoInsetLeft,
+    },
     metaText: {
       color: c.textSecondary,
       fontSize: ty.sizes.sm,
@@ -93,17 +122,40 @@ function createStyles(theme) {
       fontSize: iconSize,
       transform: [{ translateY: clearIconOffsetY }],
     },
+    resetWrap: {
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      width: resetTapWidth,
+      minHeight: controlH,
+      alignItems: 'flex-end',
+      justifyContent: 'flex-start',
+      paddingTop: sz.xs,
+    },
+    hiddenMeasure: {
+      position: 'absolute',
+      opacity: 0,
+      left: 0,
+      top: 0,
+      right: resetTapWidth,
+      fontSize: ty.sizes.sm,
+      paddingLeft: infoInsetLeft,
+      lineHeight: Math.round((ty.sizes.sm || 14) * 1.25),
+    },
   });
 }
 
 export default function SearchFiltersBar({
   value = '',
   onChangeText,
-  placeholder,
+  placeholder: _placeholder,
   onClear,
   onOpenFilters,
   onOpenSort,
   filterSummary,
+  filterSummaryCompact,
+  filterSummaryMaxLines,
+  filtersActive,
   onResetFilters,
   summaryResetLabel,
   metaText,
@@ -116,6 +168,14 @@ export default function SearchFiltersBar({
   const styles = useMemo(() => createStyles(theme), [theme]);
   const clearIconSize = theme?.components?.icon?.sizeSm ?? 18;
   const sortIconSize = theme?.components?.icon?.sizeSm ?? 18;
+  const isFiltersActive = filtersActive ?? Boolean(filterSummary);
+  const summaryLines = Math.max(
+    1,
+    Number(filterSummaryMaxLines ?? theme?.components?.searchFiltersBar?.summaryLines ?? 2),
+  );
+  const [fullSummaryFits, setFullSummaryFits] = useState(true);
+  const summaryToDisplay =
+    fullSummaryFits || !filterSummaryCompact ? filterSummary : filterSummaryCompact;
 
   return (
     <View style={[styles.container, style]}>
@@ -124,7 +184,7 @@ export default function SearchFiltersBar({
           <TextField
             value={value}
             onChangeText={onChangeText}
-            placeholder={placeholder || t('common_search')}
+            placeholder={t('common_search')}
             autoCapitalize="none"
             autoCorrect={false}
             hideSeparator
@@ -144,7 +204,12 @@ export default function SearchFiltersBar({
         </View>
         {onOpenSort ? (
           <Pressable
-            onPress={onOpenSort}
+            onPress={() => {
+              try {
+                Keyboard.dismiss();
+              } catch {}
+              onOpenSort?.();
+            }}
             style={styles.filterButton}
             android_ripple={{ borderless: false, color: theme.colors.border }}
             accessibilityRole="button"
@@ -153,23 +218,46 @@ export default function SearchFiltersBar({
             <MaterialIcons name="swap-vert" size={sortIconSize + 2} color={theme.colors.text} />
           </Pressable>
         ) : null}
-        <Pressable
-          onPress={onOpenFilters}
-          style={styles.filterButton}
-          android_ripple={{ borderless: false, color: theme.colors.border }}
-          accessibilityRole="button"
-          accessibilityLabel={t('common_filter')}
-        >
-          <Feather name="sliders" size={18} color={theme.colors.text} />
-        </Pressable>
+        {onOpenFilters ? (
+          <Pressable
+            onPress={() => {
+              try {
+                Keyboard.dismiss();
+              } catch {}
+              onOpenFilters?.();
+            }}
+            style={[styles.filterButton, isFiltersActive ? styles.filterButtonActive : null]}
+            android_ripple={{ borderless: false, color: theme.colors.border }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common_filter')}
+          >
+            <Feather
+              name="sliders"
+              size={18}
+              color={isFiltersActive ? theme.colors.primary : theme.colors.text}
+            />
+          </Pressable>
+        ) : null}
       </View>
 
       {filterSummary ? (
         <View style={styles.summaryRow}>
-          <Text style={styles.summaryText}>{filterSummary}</Text>
-          {onResetFilters ? (
-            <Pressable onPress={onResetFilters} accessibilityRole="button">
-              <Text style={styles.resetText}>
+          <Text style={styles.summaryText} numberOfLines={summaryLines} ellipsizeMode="tail">
+            {summaryToDisplay}
+          </Text>
+          <Text
+            style={styles.hiddenMeasure}
+            onTextLayout={(e) => {
+              const lines = Array.isArray(e?.nativeEvent?.lines) ? e.nativeEvent.lines.length : 0;
+              const fits = lines <= summaryLines;
+              if (fits !== fullSummaryFits) setFullSummaryFits(fits);
+            }}
+          >
+            {filterSummary}
+          </Text>
+          {onResetFilters && onOpenFilters ? (
+            <Pressable onPress={onResetFilters} accessibilityRole="button" style={styles.resetWrap}>
+              <Text style={styles.resetText} numberOfLines={1} ellipsizeMode="clip">
                 {summaryResetLabel || t('settings_sections_quiet_items_quiet_reset')}
               </Text>
             </Pressable>

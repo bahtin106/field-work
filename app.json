@@ -67,6 +67,12 @@
           "color": "#0A84FF",
           "defaultChannel": "app-notify"
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Разрешите приложению доступ к камере для съёмки фото заказов"
+        }
       ]
     ]
   }

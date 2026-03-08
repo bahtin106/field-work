@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Dimensions, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
   Easing,
@@ -38,12 +38,13 @@ import { supabase } from '../../lib/supabase';
 import { STORAGE_LIMITS } from '../../lib/constants';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { useDepartmentsQuery, useEmployees } from '../../src/features/employees/queries';
+import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
+import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { TBL } from '../../lib/constants';
 import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
 
 const BILLING_PROFILE_FALLBACK_STALE_MS = 60 * 1000;
 const BILLING_MEMBER_STATS_STALE_MS = 10 * 1000;
-const MANAGE_FILTERS_TTL_MS = 5 * 1000;
 const { width: WINDOW_WIDTH } = Dimensions.get('window');
 
 function StatusBadge({ theme, color, label }) {
@@ -172,8 +173,14 @@ export default function BillingScreen() {
   const manageFilters = useFilters({
     screenKey: `billing_license_manage_${companyId || 'none'}`,
     defaults: { departments: [], roles: [], suspended: null },
-    ttl: MANAGE_FILTERS_TTL_MS,
   });
+  const revalidateManageFilters = manageFilters.revalidate;
+
+  useFocusEffect(
+    React.useCallback(() => {
+      revalidateManageFilters({ extend: true });
+    }, [revalidateManageFilters]),
+  );
 
   const { data: departments = [] } = useDepartmentsQuery({
     companyId,
@@ -388,8 +395,17 @@ export default function BillingScreen() {
     const q = txt(manageSearch);
     return mergedMembers.filter((m) => {
       if (q) {
-        const haystack = `${txt(m.name)} ${txt(m.role)} ${txt(t(`role_${m.role}`, m.role))}`;
-        if (!haystack.includes(q)) return false;
+        if (
+          !matchesSearch(
+            buildSearchIndex({
+              texts: [m?.name, m?.role, t(`role_${m?.role}`, m?.role), m?.license_state],
+              phones: [m?.phone, m?.mobile_phone],
+            }),
+            q,
+          )
+        ) {
+          return false;
+        }
       }
       const deps = useDepartments && Array.isArray(manageFilters.values.departments)
         ? manageFilters.values.departments.map(String)
@@ -541,8 +557,8 @@ export default function BillingScreen() {
     }
   }, [manageFilters, restoreManageAfterFilters]);
 
-  const applyManageFilters = React.useCallback(async () => {
-    await manageFilters.apply();
+  const applyManageFilters = React.useCallback(async (nextValues) => {
+    await manageFilters.apply(nextValues);
     if (restoreManageAfterFilters) {
       setManageVisible(true);
       setRestoreManageAfterFilters(false);
@@ -696,7 +712,7 @@ export default function BillingScreen() {
   );
   const periodEndLabel = periodEndDate
     ? new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC' }).format(periodEndDate)
-    : t('common_dash', '-');
+    : '';
   const daysLeft = React.useMemo(() => {
     if (!periodEndDate) return 0;
     const now = new Date();
@@ -714,12 +730,24 @@ export default function BillingScreen() {
   const filterSummary = React.useMemo(() => {
     const parts = [];
     if (useDepartments && (manageFilters.values.departments || []).length > 0) {
-      parts.push(`${t('users_department')}: ${(manageFilters.values.departments || []).length}`);
+      parts.push(
+        summarizeFilterPart({
+          label: t('users_department'),
+          values: manageFilters.values.departments,
+        }),
+      );
     }
-    if ((manageFilters.values.roles || []).length > 0) parts.push(`${t('users_role')}: ${(manageFilters.values.roles || []).length}`);
+    if ((manageFilters.values.roles || []).length > 0) {
+      parts.push(
+        summarizeFilterPart({
+          label: t('users_role'),
+          values: manageFilters.values.roles,
+        }),
+      );
+    }
     if (manageFilters.values.suspended === true) parts.push(t('status_suspended'));
     if (manageFilters.values.suspended === false) parts.push(t('status_active'));
-    return parts.join(t('common_bullet'));
+    return joinFilterSummary(parts, t('common_bullet'));
   }, [manageFilters.values.departments, manageFilters.values.roles, manageFilters.values.suspended, t, useDepartments]);
 
   if (isRoleResolved && !isAdmin) {
@@ -821,7 +849,7 @@ export default function BillingScreen() {
                       <Text style={[base.value, styles(theme).lineValueStrong, { color: storageTone }]}>
                         {hasStorageUsage
                           ? `${formatStorage(usedStorageBytes)} / ${formatStorage(storageLimitBytes)}`
-                          : t('common_dash', '-')}
+                          : ''}
                       </Text>
                       <Feather
                         name={storageExpanded ? 'chevron-up' : 'chevron-down'}
@@ -960,7 +988,7 @@ export default function BillingScreen() {
               <Pressable key={m.user_id} onPress={() => toggleMember(m)} style={({ pressed }) => [styles(theme).manageRow, { backgroundColor: rowBg, borderColor: rowBorder }, pressed ? styles(theme).pressed : null]} disabled={savingChanges}>
                 <View style={styles(theme).fill}>
                   <Text style={styles(theme).memberName} numberOfLines={1} ellipsizeMode="tail">
-                    {m.name || t('common_dash')}
+                    {m.name || m.email || String(m.user_id || '')}
                   </Text>
                   <Text style={styles(theme).memberMeta} numberOfLines={1} ellipsizeMode="tail">
                     {roleDepartmentLabel}

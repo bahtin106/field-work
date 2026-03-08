@@ -94,9 +94,6 @@ const BaseModalImpl = (
 
   // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
   const [kbInset, setKbInset] = useState(0);
-  const [kbTop, setKbTop] = useState(
-    Math.max(Dimensions.get('window').height, Dimensions.get('screen').height),
-  );
 
   useEffect(() => {
     if (!rnVisible) {
@@ -109,25 +106,16 @@ const BaseModalImpl = (
       try {
         const windowH = Dimensions.get('window').height;
         const screenH = Math.max(windowH, Dimensions.get('screen').height);
-        const isIOS = Platform.OS === 'ios';
-        let h = 0;
-        let top = screenH;
-        if (isIOS) {
-          const endY = e.endCoordinates?.screenY ?? screenH;
-          h = Math.max(0, endY < screenH ? screenH - endY : 0);
-          top = endY;
-        } else {
-          const endY = e.endCoordinates?.screenY;
-          h = Math.max(0, e.endCoordinates?.height ?? 0);
-          top = Number.isFinite(endY) ? endY : screenH - h;
-        }
-        setKbInset(h);
-        setKbTop(top);
+        const endY = Number(e?.endCoordinates?.screenY);
+        const hFromEvent = Math.max(0, Number(e?.endCoordinates?.height) || 0);
+        const hFromScreenY = Number.isFinite(endY) ? Math.max(0, screenH - endY) : 0;
+        const metricsHeight = Math.max(0, Number(Keyboard.metrics?.()?.height) || 0);
+        const nextInset = Math.max(hFromEvent, hFromScreenY, metricsHeight);
+        setKbInset(nextInset);
       } catch {}
     });
     const subHide = Keyboard.addListener(hideE, () => {
       setKbInset(0);
-      setKbTop(Math.max(Dimensions.get('window').height, Dimensions.get('screen').height));
     });
     return () => {
       try {
@@ -138,9 +126,8 @@ const BaseModalImpl = (
   }, [rnVisible]);
 
   const windowH = Dimensions.get('window').height;
-  const screenH = Math.max(windowH, Dimensions.get('screen').height);
+  const minCardHeight = 220;
   const sheetMaxH = Math.max(220, Math.min(windowH * maxHeightRatio, windowH - (insets.top + 48)));
-  const [cardMeasuredHeight, setCardMeasuredHeight] = useState(sheetMaxH);
   const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
   const feedbackMessage =
     typeof feedback === 'string' ? feedback : String(feedback?.message || '').trim();
@@ -174,34 +161,44 @@ const BaseModalImpl = (
       bg: withAlpha(warningColor, 0.08),
     };
   }, [feedbackType, theme.colors.danger, theme.colors.primary, theme.colors.success, theme.colors.warning]);
-  // Only push modal if keyboard overlaps the card's bottom edge.
   const baseBottomPad = theme.spacing.md + (insets?.bottom || 0);
 
   // Clamp to prevent the modal from moving beyond the top safe area.
   const minTopGap = Math.max(12, theme.spacing.sm);
-  const effectiveCardHeight = Math.min(
-    sheetMaxH,
-    Number.isFinite(cardMeasuredHeight) && cardMeasuredHeight > 0 ? cardMeasuredHeight : sheetMaxH,
-  );
-  const maxExtraBottom = Math.max(
-    0,
-    screenH - effectiveCardHeight - (insets.top + minTopGap) - baseBottomPad,
-  );
-
-  const extraBottom = useMemo(() => {
-    // Baseline bottom edge without extra padding
-    const cardBottom = screenH - baseBottomPad;
-    const overlap = Math.max(0, cardBottom - kbTop);
-    const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
-    const overlapNeed = overlap > 0 ? overlap + 8 + extraPad : 0;
-    const insetNeed = kbInset > 0 ? kbInset + extraPad : 0;
-    const need = Math.max(overlapNeed, insetNeed);
-    return Math.min(need, maxExtraBottom);
-  }, [kbInset, kbTop, screenH, baseBottomPad, maxExtraBottom, keyboardExtraPadding]);
+  const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
+  const extraBottom = kbInset > 0 ? kbInset + extraPad : 0;
 
   const op = useSharedValue(0);
   const ty = useSharedValue(24);
   const sc = useSharedValue(1);
+  const animatedBottomPad = useSharedValue(baseBottomPad + extraBottom);
+  const animatedCardMaxHeight = useSharedValue(sheetMaxH);
+
+  const maxAllowedHeight = Math.max(
+    minCardHeight,
+    windowH - (insets.top + minTopGap) - (baseBottomPad + extraBottom),
+  );
+  const targetCardMaxHeight = Math.min(sheetMaxH, maxAllowedHeight);
+
+  useEffect(() => {
+    const targetPad = baseBottomPad + extraBottom;
+    const duration = kbInset > 0 ? 180 : 140;
+    animatedBottomPad.value = withTiming(targetPad, {
+      duration,
+      easing: Easing.out(Easing.cubic),
+    });
+    animatedCardMaxHeight.value = withTiming(targetCardMaxHeight, {
+      duration,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [
+    animatedBottomPad,
+    animatedCardMaxHeight,
+    baseBottomPad,
+    extraBottom,
+    kbInset,
+    targetCardMaxHeight,
+  ]);
 
   const open = () => {
     if (!rnVisible) setRnVisible(true);
@@ -223,8 +220,12 @@ const BaseModalImpl = (
   useImperativeHandle(ref, () => ({ close }));
 
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
+  const aWrap = useAnimatedStyle(() => ({
+    paddingBottom: animatedBottomPad.value,
+  }));
   const aCard = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }, { scale: sc.value }],
+    maxHeight: animatedCardMaxHeight.value,
   }));
 
   const dragY = useRef(0);
@@ -326,24 +327,20 @@ const BaseModalImpl = (
       </Pressable>
 
       {/* Bottom container - above backdrop */}
-      <View
+      <Animated.View
         style={[
           s.bottomWrap,
-          { paddingHorizontal: theme.spacing.md, paddingBottom: baseBottomPad + extraBottom },
+          aWrap,
+          { paddingHorizontal: theme.spacing.md },
         ]}
         pointerEvents="box-none"
       >
         <Animated.View
-          onLayout={(event) => {
-            const h = event?.nativeEvent?.layout?.height;
-            if (Number.isFinite(h) && h > 0) setCardMeasuredHeight(h);
-          }}
           style={[
             s.cardWrap,
             aCard,
             {
               alignSelf: 'stretch',
-              maxHeight: sheetMaxH,
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
               elevation: 10,
@@ -420,7 +417,7 @@ const BaseModalImpl = (
               </View>
             ) : null}
           </Animated.View>
-        </View>
+        </Animated.View>
     </Modal>
   );
 };

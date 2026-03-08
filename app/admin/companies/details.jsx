@@ -474,9 +474,9 @@ export default function AdminCompanyDetailsScreen() {
           <>
             <SectionHeader>{t('admin_company_about_title')}</SectionHeader>
             <Card paddedXOnly>
-              <LabelValueRow label={t('admin_companies_name')} value={data.name || t('common_dash')} />
+              <LabelValueRow label={t('admin_companies_name')} value={data.name || ''} />
               <View style={base.sep} />
-              <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDate(createdAt) : t('common_dash')} />
+              <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDate(createdAt) : ''} />
               <View style={base.sep} />
               <LabelValueRow label={t('admin_companies_employees')} value={String(employeesCount)} />
             </Card>
@@ -499,7 +499,7 @@ export default function AdminCompanyDetailsScreen() {
               <View style={base.sep} />
               <LabelValueRow
                 label={t('admin_company_period_end')}
-                value={periodEnd ? formatDate(periodEnd) : t('common_dash')}
+                value={periodEnd ? formatDate(periodEnd) : ''}
               />
               <View style={base.sep} />
               <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
@@ -596,7 +596,7 @@ export default function AdminCompanyDetailsScreen() {
       >
         <LabelValueRow
           label={t('admin_company_period_end_preview')}
-          value={previewPeriodEnd ? formatDate(previewPeriodEnd) : t('common_dash')}
+          value={previewPeriodEnd ? formatDate(previewPeriodEnd) : ''}
         />
         <View style={base.sep} />
         <TextField

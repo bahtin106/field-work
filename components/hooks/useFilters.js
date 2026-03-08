@@ -2,115 +2,168 @@
 /**
  * Hook for managing filter state and persistence across screens.
  *
- * This hook provides a consistent API for opening and closing a filter
- * modal, updating filter values, resetting to defaults, and applying
- * changes. When filters are applied, they are stored in AsyncStorage
- * under a namespaced key derived from the provided `screenKey`. On
- * re‑entry to a screen, previously applied filters are restored if
- * they were saved within the `ttl` (time to live) window. This gives
- * users the feeling that filters "stick" when navigating back and
- * forth without permanently persisting obsolete values.
- *
- * Example usage:
- *
- *   const {
- *     visible,
- *     open,
- *     close,
- *     values,
- *     setValue,
- *     reset,
- *     apply,
- *   } = useFilters({
- *     screenKey: 'orders',
- *     defaults: { status: null, dateFrom: null },
- *     ttl: 1000 * 60 * 30, // 30 minutes
- *   });
- *
- *   // then pass visible/open/close/values/etc to your FilterModal component
+ * The state is persisted per screen key with a short TTL so filters stay
+ * temporarily while user navigates around, but expire automatically.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AppState } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import logger from '../../lib/logger';
 
-// TTL default: 1 hour (in ms). If the stored filter state is older than
-// this, defaults will be used instead.
-const DEFAULT_TTL = 60 * 60 * 1000;
+// TTL default: 1 minute (in ms).
+const DEFAULT_TTL = 60 * 1000;
+const FILTERS_SESSION_KEY = '__FW_FILTERS_SESSION_ID__';
+
+function getFiltersSessionId() {
+  if (!globalThis[FILTERS_SESSION_KEY]) {
+    const randomPart = Math.random().toString(36).slice(2);
+    globalThis[FILTERS_SESSION_KEY] = `${Date.now()}-${randomPart}`;
+  }
+  return globalThis[FILTERS_SESSION_KEY];
+}
+
+const RUNTIME_FILTERS_SESSION_ID = getFiltersSessionId();
+
+function shallowEqual(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    const va = a[key];
+    const vb = b[key];
+    if (Array.isArray(va) && Array.isArray(vb)) {
+      if (va.length !== vb.length) return false;
+      for (let i = 0; i < va.length; i += 1) {
+        if (va[i] !== vb[i]) return false;
+      }
+      continue;
+    }
+    if (va !== vb) return false;
+  }
+  return true;
+}
 
 export function useFilters({ screenKey, defaults = {}, ttl = DEFAULT_TTL }) {
-  // Internal key for AsyncStorage
   const storageKey = useMemo(() => `filters:${screenKey}`, [screenKey]);
 
-  // Modal visibility
   const [visible, setVisible] = useState(false);
-
-  // Filter values (merged from defaults + persisted state)
   const [values, setValues] = useState(() => ({ ...defaults }));
+  const valuesRef = useRef(values);
+  const defaultsRef = useRef(defaults);
 
-  // On mount, attempt to hydrate from storage
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(storageKey);
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        // Ensure parsed object has expected structure
-        if (parsed && typeof parsed === 'object' && parsed.ts && parsed.values) {
-          const age = Date.now() - parsed.ts;
-          if (age < ttl) {
-            // Only update if still fresh and the hook has not unmounted
-            if (!cancelled) {
-              setValues((prev) => ({ ...prev, ...parsed.values }));
-            }
-          }
-        }
-      } catch (err) {
-        // Fail silently – invalid JSON or storage errors should not break UI
-        logger?.warn?.('[useFilters] failed to load filters:', err?.message || err);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [storageKey, ttl]);
-
-  // Open and close modal handlers
-  const open = useCallback(() => setVisible(true), []);
-  const close = useCallback(() => setVisible(false), []);
-
-  // Update a single filter value by key
-  const setValue = useCallback((key, value) => {
-    setValues((prev) => ({ ...prev, [key]: value }));
-  }, []);
-
-  // Reset all values back to defaults and return them for immediate use
-  const reset = useCallback(() => {
-    const resetValues = { ...defaults };
-    setValues(resetValues);
-    return resetValues;
+    valuesRef.current = values;
+  }, [values]);
+  useEffect(() => {
+    defaultsRef.current = defaults;
   }, [defaults]);
 
-  // Apply – persist current values (or provided values) to storage and close the modal.
-  // Returns a promise to allow callers to await completion.
-  const apply = useCallback(
-    async (valuesToPersist) => {
-      const finalValues = valuesToPersist || values;
+  const persistValues = useCallback(
+    async (nextValues, ts = Date.now()) => {
       try {
         await AsyncStorage.setItem(
           storageKey,
-          JSON.stringify({ ts: Date.now(), values: finalValues }),
+          JSON.stringify({
+            ts,
+            values: nextValues,
+            sessionId: RUNTIME_FILTERS_SESSION_ID,
+          }),
         );
       } catch (err) {
         logger?.warn?.('[useFilters] failed to save filters:', err?.message || err);
       }
-      setVisible(false);
     },
-    [storageKey, values],
+    [storageKey],
   );
 
-  // Expose API to consumer
+  // Revalidate persisted filters: restore if fresh and same session, otherwise reset/clear.
+  const revalidate = useCallback(
+    async ({ extend = false } = {}) => {
+      try {
+        const raw = await AsyncStorage.getItem(storageKey);
+        if (!raw) return false;
+
+        const parsed = JSON.parse(raw);
+        const hasShape = parsed && typeof parsed === 'object' && parsed.ts && parsed.values;
+        if (!hasShape) {
+          await AsyncStorage.removeItem(storageKey);
+          return false;
+        }
+
+        const isCurrentSession = parsed.sessionId === RUNTIME_FILTERS_SESSION_ID;
+        const age = Date.now() - Number(parsed.ts || 0);
+        const isFresh = age >= 0 && age < ttl;
+
+        if (!isCurrentSession || !isFresh) {
+          await AsyncStorage.removeItem(storageKey);
+          const resetValues = { ...defaultsRef.current };
+          setValues((prev) => (shallowEqual(prev, resetValues) ? prev : resetValues));
+          return false;
+        }
+
+        const hydratedValues = { ...defaultsRef.current, ...parsed.values };
+        setValues((prev) => (shallowEqual(prev, hydratedValues) ? prev : hydratedValues));
+
+        if (extend) {
+          await persistValues(hydratedValues);
+        }
+
+        return true;
+      } catch (err) {
+        logger?.warn?.('[useFilters] failed to revalidate filters:', err?.message || err);
+        return false;
+      }
+    },
+    [persistValues, storageKey, ttl],
+  );
+
+  useEffect(() => {
+    revalidate({ extend: true });
+  }, [revalidate]);
+
+  // If app returns from background, validate TTL against current time.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        revalidate({ extend: true });
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [revalidate]);
+
+  const open = useCallback(() => setVisible(true), []);
+  const close = useCallback(() => setVisible(false), []);
+
+  const setValue = useCallback((key, value) => {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const reset = useCallback(() => {
+    const resetValues = { ...defaultsRef.current };
+    setValues(resetValues);
+    return resetValues;
+  }, []);
+
+  const apply = useCallback(
+    async (valuesToPersist) => {
+      const finalValues = valuesToPersist || valuesRef.current;
+      await persistValues(finalValues);
+      setVisible(false);
+    },
+    [persistValues],
+  );
+
+  // Refresh filter TTL without changing selected values.
+  const touch = useCallback(async () => {
+    await persistValues(valuesRef.current);
+  }, [persistValues]);
+
   return useMemo(
     () => ({
       visible,
@@ -120,7 +173,9 @@ export function useFilters({ screenKey, defaults = {}, ttl = DEFAULT_TTL }) {
       setValue,
       reset,
       apply,
+      touch,
+      revalidate,
     }),
-    [visible, open, close, values, setValue, reset, apply],
+    [visible, open, close, values, setValue, reset, apply, touch, revalidate],
   );
 }

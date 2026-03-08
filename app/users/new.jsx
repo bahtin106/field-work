@@ -25,6 +25,11 @@ import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { uploadProfileMedia } from '../../src/features/profileMedia/api';
+import {
+  hasMobilePhoneValue,
+  isValidOptionalMobilePhone,
+  normalizeOptionalMobilePhone,
+} from '../../src/shared/validation/phone';
 
 // i18n
 import { useI18nVersion } from '../../src/i18n';
@@ -337,6 +342,11 @@ export default function NewUserScreen() {
         : emailCheckStatus === 'taken'
           ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
           : null);
+  const phoneError =
+    fieldErrors.phone?.message ||
+    (shouldShowError('phone') && hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)
+      ? t('err_phone')
+      : null);
 
   //  email   (debounced)
   const checkEmailAvailability = useCallback(
@@ -591,6 +601,17 @@ export default function NewUserScreen() {
       ]);
       return;
     }
+    if (hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        phone: {
+          code: FEEDBACK_CODES.INVALID_PHONE,
+          message: getMessageByCode(FEEDBACK_CODES.INVALID_PHONE, t),
+        },
+      }));
+      scrollToFirstInvalid([{ invalid: true, ref: phoneRef, fallbackY: 0 }]);
+      return;
+    }
 
     //      
     const canEditBySubscription = entitlements?.can_edit !== false;
@@ -619,6 +640,7 @@ export default function NewUserScreen() {
     entitlements?.features?.can_add_members,
     showBanner,
     scrollToFirstInvalid,
+    phone,
   ]);
 
   //     
@@ -630,7 +652,10 @@ export default function NewUserScreen() {
 
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
-      const phoneNormalized = String(phone || '').replace(/\D/g, '') || null;
+      if (hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
+        throw new Error(t('err_phone'));
+      }
+      const phoneNormalized = normalizeOptionalMobilePhone(phone);
       const bdate = birthdate instanceof Date
         ? withYear
           ? new Date(birthdate).toISOString().slice(0, 10)
@@ -883,10 +908,13 @@ export default function NewUserScreen() {
             value={phone}
             onChangeText={(val) => {
               setPhone(val);
+              clearFieldError('phone');
             }}
-            error={undefined}
+            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+            error={phoneError ? 'invalid' : undefined}
             style={styles.field}
           />
+          <FieldErrorText message={phoneError} />
           <TextField
             label={t('label_birthdate')}
             value={

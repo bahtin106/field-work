@@ -1,9 +1,9 @@
 // components/ui/modals/ConfirmAlertModals.jsx
 import React from 'react';
-import { View, Text, Pressable, Platform } from 'react-native';
+import { View, Text } from 'react-native';
 import { useTheme } from '../../../theme';
-import UIButton from '../Button';
 import BaseModal from './BaseModal';
+import ModalActionsRow from './ModalActionsRow';
 import { t as T } from '../../../src/i18n';
 
 export function ConfirmModal({
@@ -28,44 +28,33 @@ export function ConfirmModal({
     );
   };
   const footer = (
-    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.spacing.md }}>
-      <Pressable
-        onPress={onClose}
-        style={({ pressed }) => [
-          {
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-            borderRadius: 10,
-            alignItems: 'center',
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            backgroundColor: 'transparent',
-            flex: 1,
+    <ModalActionsRow
+      actions={[
+        {
+          key: 'cancel',
+          title: cancelLabel,
+          variant: 'secondary',
+          onPress: onClose,
+        },
+        {
+          key: 'confirm',
+          title: confirmLabel,
+          variant: confirmVariant,
+          loading,
+          onPress: () => {
+            try {
+              onClose?.();
+            } finally {
+              setTimeout(() => {
+                try {
+                  onConfirm?.();
+                } catch {}
+              }, 360);
+            }
           },
-          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-        ]}
-      >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>
-          {cancelLabel}
-        </Text>
-      </Pressable>
-      <UIButton
-        variant={confirmVariant}
-        size="md"
-        onPress={() => {
-          try {
-            onClose?.();
-          } finally {
-            setTimeout(() => {
-              try {
-                onConfirm?.();
-              } catch {}
-            }, 360);
-          }
-        }}
-        title={loading ? confirmLabel : confirmLabel}
-      />
-    </View>
+        },
+      ]}
+    />
   );
   return (
     <BaseModal
@@ -83,9 +72,16 @@ export function ConfirmModal({
 export function AlertModal({ visible, title, message, buttonLabel = T('btn_ok'), onClose }) {
   const { theme } = useTheme();
   const footer = (
-    <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-      <UIButton variant="primary" size="md" onPress={onClose} title={buttonLabel} />
-    </View>
+    <ModalActionsRow
+      actions={[
+        {
+          key: 'close',
+          title: buttonLabel,
+          variant: 'primary',
+          onPress: onClose,
+        },
+      ]}
+    />
   );
   return (
     <BaseModal

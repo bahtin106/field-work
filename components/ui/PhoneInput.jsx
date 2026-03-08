@@ -11,6 +11,7 @@ export default function PhoneInput({
   error,
   style,
   placeholder = T('fields_phone_placeholder'),
+  required = false,
 }) {
   const prevMaskedRef = useRef('');
 
@@ -44,7 +45,7 @@ export default function PhoneInput({
 
   return (
     <TextField
-      label={label}
+      label={required && !/\*/.test(String(label || '')) ? `${label} *` : label}
       value={masked}
       onChangeText={handleChange}
       placeholder={placeholder}

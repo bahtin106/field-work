@@ -1,21 +1,29 @@
 export const CLIENT_OBJECT_DEFAULT_NAME = 'Объект';
 
-export const CLIENT_OBJECT_ADDRESS_FIELDS = [
+export const CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS = [
   'country',
   'region',
+  'district',
   'city',
   'street',
   'house',
   'postal_code',
-  'building',
+  'office',
   'floor',
   'entrance',
   'apartment',
-  'intercom',
+];
+
+export const CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS = [
   'entrance_info',
   'parking_notes',
   'geo_lat',
   'geo_lng',
+];
+
+export const CLIENT_OBJECT_ADDRESS_FIELDS = [
+  ...CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
+  ...CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
 ];
 
 export function createEmptyClientObjectDraft(overrides = {}) {
@@ -24,15 +32,15 @@ export function createEmptyClientObjectDraft(overrides = {}) {
     photoUrl: '',
     country: '',
     region: '',
+    district: '',
     city: '',
     street: '',
     house: '',
     postal_code: '',
-    building: '',
+    office: '',
     floor: '',
     entrance: '',
     apartment: '',
-    intercom: '',
     entrance_info: '',
     parking_notes: '',
     geo_lat: '',
@@ -44,22 +52,70 @@ export function createEmptyClientObjectDraft(overrides = {}) {
 export function buildClientObjectAddressSummary(objectLike) {
   if (!objectLike || typeof objectLike !== 'object') return '';
   const parts = [
-    objectLike.country,
-    objectLike.region,
     objectLike.city,
     objectLike.street,
     objectLike.house,
-    objectLike.building,
-    objectLike.entrance,
-    objectLike.apartment,
+    objectLike.office ? `оф. ${String(objectLike.office).trim()}` : '',
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
   return parts.join(', ').trim();
 }
 
+export function buildClientObjectFullAddress(objectLike) {
+  if (!objectLike || typeof objectLike !== 'object') return '';
+  const parts = [
+    objectLike.postal_code,
+    objectLike.country,
+    objectLike.region,
+    objectLike.district,
+    objectLike.city,
+    objectLike.street ? `ул. ${String(objectLike.street).trim()}` : '',
+    objectLike.house ? `д. ${String(objectLike.house).trim()}` : '',
+    objectLike.apartment ? `кв. ${String(objectLike.apartment).trim()}` : '',
+    objectLike.office ? `оф. ${String(objectLike.office).trim()}` : '',
+    objectLike.entrance ? `подъезд ${String(objectLike.entrance).trim()}` : '',
+    objectLike.floor ? `этаж ${String(objectLike.floor).trim()}` : '',
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return parts.join(', ').trim();
+}
+
+export function buildClientObjectAdditionalInfoSummary(objectLike) {
+  if (!objectLike || typeof objectLike !== 'object') return '';
+  const parts = [
+    objectLike.parking_notes,
+    objectLike.entrance_info,
+    objectLike.geo_lat,
+    objectLike.geo_lng,
+  ]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return parts.join(', ').trim();
+}
+
+export function buildClientObjectShortAddress(objectLike) {
+  if (!objectLike || typeof objectLike !== 'object') return '';
+  const parts = [objectLike.city, objectLike.street, objectLike.house]
+    .map((v) => String(v || '').trim())
+    .filter(Boolean);
+  return parts.join(', ').trim();
+}
+
 export function normalizeClientObject(row) {
   if (!row || typeof row !== 'object') return null;
+  const tags = Array.isArray(row?.object_tag_links)
+    ? row.object_tag_links
+        .map((link) => {
+          const tag = link?.tag || link?.company_tags || null;
+          const id = String(tag?.id || '').trim();
+          const value = String(tag?.value || '').trim();
+          if (!id || !value) return null;
+          return { id, value };
+        })
+        .filter(Boolean)
+    : [];
   const normalized = {
     ...row,
     id: row.id ? String(row.id) : null,
@@ -70,6 +126,7 @@ export function normalizeClientObject(row) {
     photoDisplayUrl:
       String(row.photo_display_url || row.photoDisplayUrl || row.photo_url || row.photoUrl || '').trim() || '',
     is_primary: !!row.is_primary,
+    tags,
   };
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();

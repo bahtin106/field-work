@@ -8,6 +8,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+function resolveSupabaseBaseUrl(rawUrl) {
+  const fallback = process.env.SUPABASE_PUBLIC_URL || 'https://supabase.monitorapp.ru';
+  const candidate = String(rawUrl || '').trim();
+  if (!candidate) return fallback;
+
+  try {
+    const parsed = new URL(candidate);
+    const host = String(parsed.hostname || '').toLowerCase();
+    if (!host || host === 'supabase-kong' || host === 'localhost' || host.endsWith('.internal')) {
+      return fallback;
+    }
+    return parsed.origin;
+  } catch {
+    return fallback;
+  }
+}
+
 // Функция для простого хеширования пароля (bcrypt альтернатива)
 // Примечание: используем crypto вместо bcrypt
 function hashPassword(password) {
@@ -282,6 +299,80 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.post('/api/update-password', async (req, res) => {
+  try {
+    const userId = req.body.user_id || req.body.userId;
+    const { password, newPassword, supabaseUrl, supabaseServiceKey, changed_by } = req.body;
+    const finalPassword = password || newPassword;
+
+    if (!userId || !finalPassword) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing userId or password',
+        message: 'user_id and password are required',
+      });
+    }
+
+    const url = resolveSupabaseBaseUrl(supabaseUrl || process.env.SUPABASE_URL);
+    const key = supabaseServiceKey || process.env.SUPABASE_SERVICE_KEY;
+
+    if (!url || !key) {
+      console.error(`[${new Date().toISOString()}] Missing Supabase credentials`);
+      return res.status(500).json({
+        ok: false,
+        error: 'Missing Supabase configuration',
+        message: 'Supabase URL or Service Key not configured on server',
+      });
+    }
+
+    console.log(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Updating password for user: ${userId}`, {
+      changed_by: changed_by || userId,
+    });
+
+    const adminUrl = `${url}/auth/v1/admin/users/${userId}`;
+    const response = await fetch(adminUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': key,
+        'Authorization': `Bearer ${key}`
+      },
+      body: JSON.stringify({
+        password: finalPassword
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Admin API call failed:`, errorText);
+      return res.status(response.status).json({
+        ok: false,
+        error: 'Admin API call failed',
+        message: errorText,
+        details: errorText
+      });
+    }
+
+    const result = await response.json();
+    console.log(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Password updated successfully for user: ${userId}`);
+
+    return res.status(200).json({
+      ok: true,
+      success: true,
+      message: 'Password updated successfully',
+      result
+    });
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] [/api/update-password] Error:`, error.message);
+    return res.status(500).json({
+      ok: false,
+      error: 'Failed to update password',
+      message: error.message,
+      details: error.message
+    });
+  }
+});
+
 // Endpoint для обновления пароля в Supabase через Admin API
 app.post('/update-password', async (req, res) => {
   try {
@@ -291,7 +382,7 @@ app.post('/update-password', async (req, res) => {
       return res.status(400).json({ error: 'Missing userId or newPassword' });
     }
 
-    const url = supabaseUrl || process.env.SUPABASE_URL;
+    const url = resolveSupabaseBaseUrl(supabaseUrl || process.env.SUPABASE_URL);
     const key = supabaseServiceKey || process.env.SUPABASE_SERVICE_KEY;
 
     if (!url || !key) {
@@ -345,6 +436,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`[${new Date().toISOString()}] Email server running on port ${PORT}`);
   console.log(`POST http://localhost:${PORT}/send-email - Send email`);
+  console.log(`POST http://localhost:${PORT}/api/update-password - Update password`);
   console.log(`POST http://localhost:${PORT}/update-password - Password update confirmation`);
   console.log(`GET http://localhost:${PORT}/health - Health check`);
 });

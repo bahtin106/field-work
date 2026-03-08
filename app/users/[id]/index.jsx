@@ -27,6 +27,7 @@ import { pluralizeRu } from '../../../lib/pluralize';
 import { useEmployee, useEmployeesRealtimeSync } from '../../../src/features/employees/queries';
 import { getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useSubscriptionGuard } from '../../../hooks/useSubscriptionGuard';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { useTheme } from '../../../theme';
@@ -383,7 +384,7 @@ export default function UserView() {
             value={
               firstName || lastName
                 ? `${firstName || ''} ${lastName || ''}`.trim()
-                : t('common_dash', 'common_dash')
+                : ''
             }
           />
           <View style={base.sep} />
@@ -411,9 +412,7 @@ export default function UserView() {
                 >
                   <Text style={[base.value, s.link]}>{email}</Text>
                 </Pressable>
-              ) : (
-                <Text style={base.value}>{t('common_dash', 'common_dash')}</Text>
-              )
+              ) : null
             }
             rightActions={
               email ? (
@@ -451,9 +450,7 @@ export default function UserView() {
                 >
                   <Text style={[base.value, s.link]}>{formatRuMask(phone)}</Text>
                 </Pressable>
-              ) : (
-                <Text style={base.value}>{t('common_dash', 'common_dash')}</Text>
-              )
+              ) : null
             }
             rightActions={
                 phone ? (
@@ -471,14 +468,14 @@ export default function UserView() {
           <LabelValueRow
             label={t('label_birthdate', 'label_birthdate')}
             value={(() => {
-              if (!birthdate) return t('common_dash', 'common_dash');
+              if (!birthdate) return '';
               let dateObj = birthdate;
               // Если birthdate строка — преобразуем
               if (typeof birthdate === 'string') {
                 const parsed = new Date(birthdate);
                 if (!isNaN(parsed)) dateObj = parsed;
               }
-              if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return t('common_dash', 'common_dash');
+              if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) return '';
               try {
                 const dict = getDict?.() || {};
                 const offset = Number(dict.month_label_offset ?? 0) || 0;
@@ -491,7 +488,7 @@ export default function UserView() {
                 if (year === 1900) return `${day} ${monthName}`;
                 return `${day} ${monthName} ${year}`;
               } catch {
-                return t('common_dash', 'common_dash');
+                return '';
               }
             })()}
           />
@@ -501,24 +498,32 @@ export default function UserView() {
         <Card paddedXOnly>
           {meIsSuperAdmin && (
             <>
-              <View style={base.row}>
-                <Text style={base.label}>{t('admin_users_company')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={base.value}>{companyName || companyId || t('common_dash', 'common_dash')}</Text>
-                </View>
-              </View>
-              <View style={base.sep} />
+              {hasDisplayValue(companyName || companyId) ? (
+                <>
+                  <View style={base.row}>
+                    <Text style={base.label}>{t('admin_users_company')}</Text>
+                    <View style={base.rightWrap}>
+                      <Text style={base.value}>{companyName || companyId}</Text>
+                    </View>
+                  </View>
+                  <View style={base.sep} />
+                </>
+              ) : null}
             </>
           )}
           {useDepartments ? (
             <>
-              <View style={base.row}>
-                <Text style={base.label}>{t('label_department', 'label_department')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={base.value}>{departmentName || t('common_dash', 'common_dash')}</Text>
-                </View>
-              </View>
-              <View style={base.sep} />
+              {hasDisplayValue(departmentName) ? (
+                <>
+                  <View style={base.row}>
+                    <Text style={base.label}>{t('label_department', 'label_department')}</Text>
+                    <View style={base.rightWrap}>
+                      <Text style={base.value}>{departmentName}</Text>
+                    </View>
+                  </View>
+                  <View style={base.sep} />
+                </>
+              ) : null}
             </>
           ) : null}
           <View style={base.row}>

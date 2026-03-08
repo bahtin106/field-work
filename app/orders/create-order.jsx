@@ -9,6 +9,7 @@ import {
   AppState,
   BackHandler,
   findNodeHandle,
+  Keyboard,
   Pressable,
   StyleSheet,
   Text,
@@ -26,12 +27,18 @@ import { listItemStyles } from '../../components/ui/listItemStyles';
 import TextField from '../../components/ui/TextField';
 import PhoneInput from '../../components/ui/PhoneInput';
 import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import QuickPreviewModal from '../../components/ui/modals/QuickPreviewModal';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { usePermissions } from '../../lib/permissions';
-import { fetchFormSchema } from '../../lib/settings';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  toLegacySchemaFields,
+} from '../../src/features/fieldSettings/catalog';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { getLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -39,36 +46,56 @@ import { withAlpha } from '../../theme/colors';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { useClient, useClients, useUpdateClientMutation } from '../../src/features/clients/queries';
-import { useCreateClientObjectMutation } from '../../src/features/objects/queries';
-import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { collectClientPhoneSearchValues } from '../../src/features/clients/additionalPhones';
 import {
-  buildClientObjectAddressSummary,
+  useCreateClientObjectMutation,
+  useClientObjects,
+  useUpdateClientObjectMutation,
+} from '../../src/features/objects/queries';
+import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { parseClientPrefillFromSearch } from '../../src/features/clients/prefillFromSearch';
+import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
+import {
+  hasMobilePhoneValue,
+  toE164MobilePhoneOrNull,
+} from '../../src/shared/validation/phone';
+import { formatRuMask } from '../../components/ui/phone';
+import {
+  buildClientObjectFullAddress,
+  buildClientObjectShortAddress,
   createEmptyClientObjectDraft,
+  hasClientObjectAddressContent,
   sanitizeClientObjectPayload,
 } from '../../src/features/objects/addressing';
+import {
+  buildOrderAddressDisplay,
+  buildOrderAddressShort,
+  extractOrderAddressFromObject,
+  toOrderAddressPatch,
+} from '../../src/features/requests/addressing';
+import { findBestMatchingClientObject } from '../../src/features/objects/matching';
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: true },
   { field_key: 'phone', label: null, type: 'phone', position: 30 },
   { field_key: 'secondary_phone', label: null, type: 'phone', position: 112 },
   { field_key: 'contact_email', label: null, type: 'text', position: 114 },
-  { field_key: 'contact_pref', label: null, type: 'text', position: 116 },
 ];
 
 const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
   'fio',
   'customer_name',
   'region',
+  'district',
   'city',
   'street',
   'house',
   'country',
   'postal_code',
-  'building',
+  'office',
   'floor',
   'entrance',
   'apartment',
-  'intercom',
   'entrance_info',
   'parking_notes',
   'geo_lat',
@@ -76,8 +103,7 @@ const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
 ]);
 
 const SCROLL_ANIMATION_DELAY = 200;
-const PHONE_REGEX = /^7\d{10}$/;
-
+const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
 export default function CreateOrderScreen() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
@@ -108,9 +134,15 @@ export default function CreateOrderScreen() {
   const [assigneeId, setAssigneeId] = useState(null);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [selectedClientObjectId, setSelectedClientObjectId] = useState(null);
+  const [stagedSelectedObjectDraft, setStagedSelectedObjectDraft] = useState(null);
+  const [draftClientObject, setDraftClientObject] = useState(null);
   const [clientObjectModalVisible, setClientObjectModalVisible] = useState(false);
   const [clientObjectEditorVisible, setClientObjectEditorVisible] = useState(false);
   const [clientObjectDraft, setClientObjectDraft] = useState(createEmptyClientObjectDraft());
+  const [clientObjectEditorMode, setClientObjectEditorMode] = useState('draft');
+  const [suggestedMatchingObject, setSuggestedMatchingObject] = useState(null);
+  const [suggestedMatchingVisible, setSuggestedMatchingVisible] = useState(false);
+  const [ignoredMatchSignature, setIgnoredMatchSignature] = useState('');
   const [urgent, setUrgent] = useState(false);
   const [users, setUsers] = useState([]);
   const [toFeed, setToFeed] = useState(false);
@@ -124,10 +156,20 @@ export default function CreateOrderScreen() {
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [clientModalVisible, setClientModalVisible] = useState(false);
+  const [clientModalSearch, setClientModalSearch] = useState('');
+  const [previewClient, setPreviewClient] = useState(null);
+  const [previewClientVisible, setPreviewClientVisible] = useState(false);
+  const [previewAnchor, setPreviewAnchor] = useState({ x: 0, y: 0 });
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
   const [savedDraft, setSavedDraft] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
+    enabled: has('canCreateOrders'),
+  });
+  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
+    enabled: has('canCreateOrders'),
+  });
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
     { enabled: !!companyId && has('canViewClients') },
@@ -137,10 +179,24 @@ export default function CreateOrderScreen() {
   });
   const updateClientMutation = useUpdateClientMutation();
   const createClientObjectMutation = useCreateClientObjectMutation();
+  const updateClientObjectMutation = useUpdateClientObjectMutation();
+  const { data: clientObjectsByApi = [] } = useClientObjects(selectedClientId, { enabled: !!selectedClientId });
 
   const intentionalExitRef = useRef(false);
+  const clientFlowKeyRef = useRef(
+    `create-order-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
 
   const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
+  const orderFieldSettings = useMemo(
+    () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
+    [orderFieldSettingsData],
+  );
+  const objectFieldSettings = useMemo(
+    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
+    [objectFieldSettingsData],
+  );
+  const objectFieldsByKey = useMemo(() => new Map((objectFieldSettings?.fields || []).map((field) => [String(field.fieldKey || field.field_key || ''), field])), [objectFieldSettings]);
 
   const DRAFT_KEY = 'draft_create_order';
 
@@ -157,6 +213,8 @@ export default function CreateOrderScreen() {
         assigneeId,
         selectedClientId,
         selectedClientObjectId,
+        stagedSelectedObjectDraft,
+        draftClientObject,
         urgent,
         toFeed,
         timestamp: Date.now(),
@@ -165,7 +223,21 @@ export default function CreateOrderScreen() {
     } catch (e) {
       console.warn('[CreateOrder] Save draft failed:', e);
     }
-  }, [form, description, departureDate, departureEndDate, isDepartureRange, workTypeId, assigneeId, selectedClientId, selectedClientObjectId, urgent, toFeed]);
+  }, [
+    form,
+    description,
+    departureDate,
+    departureEndDate,
+    isDepartureRange,
+    workTypeId,
+    assigneeId,
+    selectedClientId,
+    selectedClientObjectId,
+    stagedSelectedObjectDraft,
+    draftClientObject,
+    urgent,
+    toFeed,
+  ]);
 
   // � � вЂ”� � В°� � С–� Ў� ‚� ЎС“� � В·� � С‘� ЎвЂљ� Ў� Љ � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
   const loadDraft = useCallback(async () => {
@@ -201,6 +273,8 @@ export default function CreateOrderScreen() {
     setAssigneeId(draft.assigneeId || null);
     setSelectedClientId(draft.selectedClientId || null);
     setSelectedClientObjectId(draft.selectedClientObjectId || null);
+    setStagedSelectedObjectDraft(draft.stagedSelectedObjectDraft || null);
+    setDraftClientObject(draft.draftClientObject || null);
     setUrgent(draft.urgent || false);
     setToFeed(draft.toFeed || false);
   }, []);
@@ -241,7 +315,6 @@ export default function CreateOrderScreen() {
       !!(form.title?.trim()) ||
       !!(form.secondary_phone?.trim()) ||
       !!(form.contact_email?.trim()) ||
-      !!(form.contact_pref?.trim()) ||
       !!(form.phone?.trim()) ||
       !!description?.trim() ||
       !!departureDate ||
@@ -250,6 +323,9 @@ export default function CreateOrderScreen() {
       !!workTypeId ||
       !!assigneeId ||
       !!selectedClientId ||
+      !!selectedClientObjectId ||
+      !!stagedSelectedObjectDraft ||
+      !!draftClientObject ||
       !!urgent ||
       !!toFeed
     );
@@ -262,6 +338,9 @@ export default function CreateOrderScreen() {
     workTypeId,
     assigneeId,
     selectedClientId,
+    selectedClientObjectId,
+    stagedSelectedObjectDraft,
+    draftClientObject,
     urgent,
     toFeed,
   ]);
@@ -316,18 +395,13 @@ export default function CreateOrderScreen() {
     [scrollToHandle],
   );
 
-  const normalizePhone = useCallback((val) => {
-    const raw = String(val || '').replace(/\D/g, '');
-    if (!raw) return null;
-    const digits = raw.replace(/^8(\d{10})$/, '7$1');
-    if (!PHONE_REGEX.test(digits)) return null;
-    return `+7${digits.slice(1)}`;
-  }, []);
+  const normalizePhone = useCallback((val) => toE164MobilePhoneOrNull(val), []);
 
   const getField = useCallback(
     (key) => (schema.fields || []).find((f) => f.field_key === key) || null,
     [schema],
   );
+  const isFieldRequired = useCallback((key) => getField(key)?.required === true, [getField]);
 
   const getFieldLabel = useCallback(
     (fieldKey, fallback) => {
@@ -339,19 +413,18 @@ export default function CreateOrderScreen() {
         fio: t('order_field_customer_name'),
         phone: t('order_details_phone'),
         region: t('order_field_region'),
+        district: t('order_field_district'),
         city: t('order_field_city'),
         street: t('order_field_street'),
         house: t('order_field_house'),
         country: t('order_field_country'),
         postal_code: t('order_field_postal_code'),
-        building: t('order_field_building'),
+        office: t('order_field_office'),
         floor: t('order_field_floor'),
         entrance: t('order_field_entrance'),
         apartment: t('order_field_apartment'),
-        intercom: t('order_field_intercom'),
         secondary_phone: t('order_field_secondary_phone'),
         contact_email: t('order_field_contact_email'),
-        contact_pref: t('order_field_contact_pref'),
         time_window_start: t('create_order_label_date'),
         assigned_to: t('create_order_label_executor'),
       };
@@ -388,6 +461,26 @@ export default function CreateOrderScreen() {
             missing.push(f.label || getFieldLabel(k));
             missingKeys.push(k);
           }
+        } else if (k === 'client_id') {
+          if (!selectedClientId) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
+        } else if (k === 'object_id') {
+          if (!selectedClientObjectId && !draftClientObject) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
+        } else if (k === 'work_type_id') {
+          if (useWorkTypes && !workTypeId) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
+        } else if (k === 'comment') {
+          if (!String(description || '').trim()) {
+            missing.push(f.label || getFieldLabel(k));
+            missingKeys.push(k);
+          }
         } else if (v === null || v === undefined || String(v).trim() === '') {
           missing.push(f.label || getFieldLabel(k));
           missingKeys.push(k);
@@ -406,7 +499,7 @@ export default function CreateOrderScreen() {
     } catch {
       return { ok: true };
     }
-  }, [schema, form, departureDate, toFeed, assigneeId, normalizePhone, getFieldLabel, t]);
+  }, [schema, form, departureDate, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description]);
 
   const handleSubmit = useCallback(async () => {
     if (!subscriptionGuard.canEdit) {
@@ -434,19 +527,19 @@ export default function CreateOrderScreen() {
 
     const title = (form.title || '').trim();
     const nextErrors = {};
-    if (useWorkTypes && !workTypeId) {
+    if (isFieldRequired('work_type_id') && useWorkTypes && !workTypeId) {
       nextErrors.work_type_id = { message: t('order_validation_work_type_required') };
     }
-    if (!title) {
+    if (isFieldRequired('title') && !title) {
       nextErrors.title = { message: t('order_validation_title_required') };
     }
-    if (!departureDate) {
+    if (isFieldRequired('time_window_start') && !departureDate) {
       nextErrors.time_window_start = { message: t('order_validation_date_required') };
     }
     if (isDepartureRange && (!departureEndDate || departureEndDate < departureDate)) {
       nextErrors.time_window_start = { message: t('order_validation_date_range_invalid') };
     }
-    if (!toFeed && !assigneeId) {
+    if (isFieldRequired('assigned_to') && !toFeed && !assigneeId) {
       nextErrors.assigned_to = { message: t('order_validation_executor_required') };
     }
     if (Object.keys(nextErrors).length) {
@@ -459,7 +552,7 @@ export default function CreateOrderScreen() {
     let phoneFormatted = null;
     if (phoneField) {
       phoneFormatted = normalizePhone(form.phone);
-      if (!phoneFormatted) {
+      if (hasMobilePhoneValue(form.phone) && !phoneFormatted) {
         setFieldErrors((prev) => ({
           ...prev,
           phone: { message: t('order_validation_phone_format') },
@@ -489,24 +582,42 @@ export default function CreateOrderScreen() {
       }
     }
 
-    if (selectedClientId && !selectedClientObjectId) {
-      showBanner({
-        type: 'warning',
-        message: t('objects_select_required_for_order'),
-      });
+    const normalizedPhone = normalizePhone(form.phone);
+    const normalizedSecondaryPhone = normalizePhone(form.secondary_phone);
+    if (hasMobilePhoneValue(form.secondary_phone) && !normalizedSecondaryPhone) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        secondary_phone: { message: t('order_validation_phone_format') },
+      }));
+      focusField('secondary_phone');
+      return;
+    }
+    const normalizedContactEmail = String(form.contact_email || '').trim().toLowerCase() || null;
+
+    if (isFieldRequired('client_id') && !selectedClientId) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        client_id: { message: t('order_validation_client_required') },
+      }));
+      focusField('client_id');
       return;
     }
 
-    const normalizedPhone = normalizePhone(form.phone);
-    const normalizedSecondaryPhone = normalizePhone(form.secondary_phone);
-    const normalizedContactEmail = String(form.contact_email || '').trim().toLowerCase() || null;
-    const normalizedContactPref = String(form.contact_pref || '').trim() || null;
+    if (isFieldRequired('object_id') && !selectedClientObjectId && !draftClientObject) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        object_id: { message: t('objects_select_required_for_order') },
+      }));
+      focusField('object_id');
+      return;
+    }
 
-    if (!selectedClientId) {
-      showBanner({
-        type: 'warning',
-        message: t('order_validation_client_required'),
-      });
+    if (draftClientObject && !selectedClientId) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        client_id: { message: t('order_validation_client_required_for_contact_details') },
+      }));
+      focusField('client_id');
       return;
     }
 
@@ -517,9 +628,48 @@ export default function CreateOrderScreen() {
           phone: normalizedPhone,
           email: normalizedContactEmail,
           secondary_phone: normalizedSecondaryPhone,
-          contact_pref: normalizedContactPref,
         },
       });
+    }
+
+    let resolvedObject = stagedSelectedObjectDraft || selectedClientObject;
+    let resolvedObjectId = selectedClientObjectId || null;
+    if (resolvedObjectId && stagedSelectedObjectDraft) {
+      const updated = await updateClientObjectMutation.mutateAsync({
+        id: String(resolvedObjectId),
+        patch: sanitizeClientObjectPayload(stagedSelectedObjectDraft),
+      });
+      await refetchSelectedClient();
+      resolvedObject = updated || stagedSelectedObjectDraft;
+      setStagedSelectedObjectDraft(null);
+    }
+    if (!resolvedObjectId && draftClientObject) {
+      if (!hasClientObjectAddressContent(draftClientObject)) {
+        showBanner({
+          type: 'warning',
+          message: t('order_validation_address_required'),
+        });
+        return;
+      }
+      const createdObject = await createClientObjectMutation.mutateAsync({
+        client_id: String(selectedClientId),
+        ...sanitizeClientObjectPayload(draftClientObject),
+      });
+      resolvedObject = createdObject || null;
+      resolvedObjectId = createdObject?.id || null;
+      setSelectedClientObjectId(createdObject?.id || null);
+      setDraftClientObject(null);
+    }
+
+    const resolvedAddressDraft = resolvedObject
+      ? extractOrderAddressFromObject(resolvedObject)
+      : null;
+    if (!buildOrderAddressShort(resolvedAddressDraft)) {
+      showBanner({
+        type: 'warning',
+        message: t('order_validation_address_required'),
+      });
+      return;
     }
 
     const payload = {
@@ -528,7 +678,10 @@ export default function CreateOrderScreen() {
       work_type_id: useWorkTypes ? normalizedWorkTypeId || null : null,
       comment: description,
       client_id: selectedClientId || null,
-      object_id: selectedClientObjectId || null,
+      object_id: resolvedObjectId || null,
+      address_mode: 'object',
+      object_name_snapshot: String(resolvedObject?.name || '').trim() || null,
+      ...toOrderAddressPatch(resolvedAddressDraft),
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: departureDate ? departureDate.toISOString() : null,
       time_window_end: isDepartureRange && departureEndDate ? departureEndDate.toISOString() : null,
@@ -537,10 +690,7 @@ export default function CreateOrderScreen() {
       currency: companySettings?.currency ?? null,
     };
 
-    let { error } = await supabase.from('orders').insert(payload);
-    if (error) {
-      throw error;
-    }
+    const { error } = await supabase.from('orders').insert(payload);
     if (error) {
       const rawMessage = String(error?.message || '').toUpperCase();
       if (rawMessage.includes('WORK_TYPE_NOT_FOUND_IN_COMPANY')) {
@@ -577,7 +727,10 @@ export default function CreateOrderScreen() {
     assigneeId,
     selectedClientId,
     selectedClientObjectId,
+    selectedClientObject,
+    draftClientObject,
     getField,
+    isFieldRequired,
     normalizePhone,
     description,
     urgent,
@@ -589,7 +742,11 @@ export default function CreateOrderScreen() {
     focusField,
     t,
     deleteDraft,
+    createClientObjectMutation,
+    refetchSelectedClient,
+    stagedSelectedObjectDraft,
     updateClientMutation,
+    updateClientObjectMutation,
     subscriptionGuard.canEdit,
   ]);
 
@@ -610,20 +767,20 @@ export default function CreateOrderScreen() {
 
   useEffect(() => {
     let mounted = true;
-    (async () => {
-      try {
-        const data = await fetchFormSchema('create');
-        if (!mounted) return;
-        const fields = (
-          Array.isArray(data?.fields) && data.fields.length > 0 ? data.fields : DEFAULT_FIELDS
-        ).filter((field) => !REMOVED_ORDER_ADDRESS_FIELDS.has(String(field?.field_key || '')));
-        setSchema({ context: 'create', fields });
-        const init = {};
-        for (const f of fields) init[f.field_key] = '';
-        setForm(init);
-      } catch (e) {
-        console.warn('[CreateOrder] get_form_schema failed:', e?.message || e);
-      }
+    (() => {
+      const remoteFields = toLegacySchemaFields(orderFieldSettings);
+      const fields = (remoteFields.length ? remoteFields : DEFAULT_FIELDS).filter(
+        (field) => !REMOVED_ORDER_ADDRESS_FIELDS.has(String(field?.field_key || '')),
+      );
+      if (!mounted) return;
+      setSchema({ context: 'create', fields });
+      setForm((prev) => {
+        const next = {};
+        for (const field of fields) {
+          next[field.field_key] = prev?.[field.field_key] ?? '';
+        }
+        return next;
+      });
     })();
 
     const loadUsers = async () => {
@@ -647,7 +804,7 @@ export default function CreateOrderScreen() {
     return () => {
       mounted = false;
     };
-  }, [loadDraft]);
+  }, [loadDraft, orderFieldSettings]);
 
   // AppState listener - � Ў� ѓ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С” � � С—� Ў� ‚� � С‘ � Ў� ѓ� � � � � � С•� Ў� ‚� � В°� ЎвЂЎ� � С‘� � � � � � В°� � � …� � С‘� � С‘/� � В·� � В°� � С”� Ў� ‚� ЎвЂ№� ЎвЂљ� � С‘� � С‘ � � С—� Ў� ‚� � С‘� � В»� � С•� � В¶� � Вµ� � � …� � С‘� Ў� Џ
   useEffect(() => {
@@ -746,7 +903,7 @@ export default function CreateOrderScreen() {
     (key, placeholder, opts = {}) => {
       const f = getField(key);
       if (!f) return null;
-      const label = withRequiredLabel(getFieldLabel(key, placeholder), f.required);
+      const label = withRequiredLabel(getFieldLabel(key, placeholder), isFieldRequired(key));
       const val = form[key] ?? '';
       return (
         <View key={key}>
@@ -756,20 +913,20 @@ export default function CreateOrderScreen() {
             placeholder: placeholder || label,
             value: val,
             onChangeText: (text) => setField(key, text),
-            required: f.required,
+            required: isFieldRequired(key),
             ...opts,
           })}
         </View>
       );
     },
-    [getField, getFieldLabel, form, renderTextField, setField, withRequiredLabel],
+    [getField, getFieldLabel, form, isFieldRequired, renderTextField, setField, withRequiredLabel],
   );
 
   const renderPhoneInput = useCallback(
     (key = 'phone') => {
       const f = getField(key);
       if (!f) return null;
-      const label = withRequiredLabel(getFieldLabel(key), f.required);
+      const label = withRequiredLabel(getFieldLabel(key), isFieldRequired(key));
       const val = form[key] ?? '';
       const errMsg = fieldErrors?.[key]?.message;
       const finalErr = shouldShowError(key) ? errMsg : null;
@@ -798,6 +955,7 @@ export default function CreateOrderScreen() {
       setField,
       formStyles,
       t,
+      isFieldRequired,
       withRequiredLabel,
       fieldErrors,
       shouldShowError,
@@ -831,6 +989,12 @@ export default function CreateOrderScreen() {
     const found = workTypes.find((w) => String(w.id) === String(workTypeId));
     return found?.name || t('create_order_work_type_selected');
   }, [workTypeId, workTypes, t]);
+  const openWorkTypeModal = useCallback(() => {
+    try {
+      Keyboard.dismiss();
+    } catch {}
+    setWorkTypeModalVisible(true);
+  }, []);
 
   const selectedAssigneeName = useMemo(() => {
     if (!assigneeId) return null;
@@ -847,25 +1011,61 @@ export default function CreateOrderScreen() {
     return client?.fullName || null;
   }, [clients, selectedClientId]);
 
-  const clientObjects = useMemo(
-    () => (Array.isArray(selectedClient?.objects) ? selectedClient.objects : []),
-    [selectedClient],
-  );
+  const clientObjects = useMemo(() => {
+    if (Array.isArray(selectedClient?.objects) && selectedClient.objects.length) return selectedClient.objects;
+    if (Array.isArray(clientObjectsByApi) && clientObjectsByApi.length) return clientObjectsByApi;
+    return [];
+  }, [selectedClient, clientObjectsByApi]);
   const selectedClientObject = useMemo(
     () => clientObjects.find((item) => String(item.id) === String(selectedClientObjectId)) || null,
     [clientObjects, selectedClientObjectId],
   );
+  const activeObjectDraft = useMemo(
+    () => stagedSelectedObjectDraft || selectedClientObject || draftClientObject || null,
+    [draftClientObject, selectedClientObject, stagedSelectedObjectDraft],
+  );
   const selectedClientObjectSummary = useMemo(
+    () => String(activeObjectDraft?.name || '').trim() || null,
+    [activeObjectDraft],
+  );
+  const activeAddressDraft = useMemo(
+    () => extractOrderAddressFromObject(activeObjectDraft),
+    [activeObjectDraft],
+  );
+  const visibleObjectAddressFieldKeys = useMemo(
     () =>
-      [selectedClientObject?.name, buildClientObjectAddressSummary(selectedClientObject)]
-        .filter(Boolean)
-        .join(' - '),
-    [selectedClientObject],
+      Object.keys(activeAddressDraft || {}).filter(
+        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
+      ),
+    [activeAddressDraft, objectFieldsByKey],
+  );
+  const shortAddressValue = useMemo(
+    () =>
+      buildOrderAddressDisplay(
+        visibleObjectAddressFieldKeys.reduce(
+          (acc, field) => ({ ...acc, [field]: activeAddressDraft?.[field] || '' }),
+          {},
+        ),
+      ) ||
+      buildClientObjectFullAddress(activeObjectDraft) ||
+      buildOrderAddressShort(
+        visibleObjectAddressFieldKeys.reduce(
+          (acc, field) => ({ ...acc, [field]: activeAddressDraft?.[field] || '' }),
+          {},
+        ),
+      ) ||
+      t('order_details_address_not_specified'),
+    [activeAddressDraft, activeObjectDraft, t, visibleObjectAddressFieldKeys],
+  );
+  const bestMatchingClientObject = useMemo(
+    () => findBestMatchingClientObject(draftClientObject, clientObjects),
+    [clientObjects, draftClientObject],
   );
 
   useEffect(() => {
     if (!selectedClientId || !selectedClient) {
       setSelectedClientObjectId(null);
+      setStagedSelectedObjectDraft(null);
       return;
     }
     setForm((prev) => ({
@@ -873,11 +1073,44 @@ export default function CreateOrderScreen() {
       phone: String(selectedClient.phone || prev.phone || '').trim(),
       secondary_phone: String(selectedClient.secondaryPhone || prev.secondary_phone || '').trim(),
       contact_email: String(selectedClient.email || prev.contact_email || '').trim(),
-      contact_pref: String(selectedClient.contactPref || prev.contact_pref || '').trim(),
     }));
+    if (draftClientObject) return;
     const primaryObject = clientObjects.find((item) => item?.is_primary) || clientObjects[0] || null;
-    setSelectedClientObjectId((prev) => prev || primaryObject?.id || null);
-  }, [clientObjects, selectedClient, selectedClientId]);
+    setSelectedClientObjectId((prev) => {
+      const prevId = String(prev || '').trim();
+      if (prevId && clientObjects.some((item) => String(item?.id || '') === prevId)) {
+        return prev;
+      }
+      return primaryObject?.id || null;
+    });
+  }, [clientObjects, draftClientObject, selectedClient, selectedClientId]);
+
+  useEffect(() => {
+    if (!selectedClientObjectId || !selectedClientObject) {
+      setStagedSelectedObjectDraft(null);
+      return;
+    }
+    setStagedSelectedObjectDraft((prev) => {
+      if (!prev?.id) return prev;
+      return String(prev.id) === String(selectedClientObjectId) ? prev : null;
+    });
+  }, [selectedClientObject, selectedClientObjectId]);
+
+  useEffect(() => {
+    if (!draftClientObject || !selectedClientId || !bestMatchingClientObject) {
+      setSuggestedMatchingObject(null);
+      setSuggestedMatchingVisible(false);
+      return;
+    }
+    if (bestMatchingClientObject.signature === ignoredMatchSignature) return;
+    setSuggestedMatchingObject(bestMatchingClientObject);
+    setSuggestedMatchingVisible(true);
+  }, [
+    bestMatchingClientObject,
+    draftClientObject,
+    ignoredMatchSignature,
+    selectedClientId,
+  ]);
 
   const formatDate = useCallback((date) => {
     if (!date) return null;
@@ -934,7 +1167,7 @@ export default function CreateOrderScreen() {
       const label = [user.first_name, user.last_name].filter(Boolean).join(' ');
       items.push({
         id: user.id,
-        label: label || t('common_dash'),
+        label: label || user.email || String(user.id),
         onPress: () => {
           setAssigneeId(user.id);
           setToFeed(false);
@@ -952,6 +1185,18 @@ export default function CreateOrderScreen() {
     return clients.map((client) => ({
       id: client.id,
       label: client.fullName || t('common_noName'),
+      subtitle: collectClientPhoneSearchValues(client).find(Boolean) || undefined,
+      clientRaw: client,
+      searchIndex: buildSearchIndex({
+        texts: [
+          client.fullName,
+          client.firstName,
+          client.lastName,
+          client.middleName,
+          client.email,
+        ],
+        phones: collectClientPhoneSearchValues(client),
+      }),
       onPress: () => {
         setSelectedClientId(client.id);
         setSelectedClientObjectId(null);
@@ -960,36 +1205,222 @@ export default function CreateOrderScreen() {
     }));
   }, [clients, t]);
 
+  const openClientPreview = useCallback((item, event) => {
+    const client = item?.clientRaw || null;
+    if (!client?.id) return;
+    const pageX = Number(event?.nativeEvent?.pageX);
+    const pageY = Number(event?.nativeEvent?.pageY);
+    if (Number.isFinite(pageX) && Number.isFinite(pageY)) {
+      setPreviewAnchor({ x: pageX, y: pageY });
+    }
+    setPreviewClient(client);
+    setPreviewClientVisible(true);
+  }, []);
+
+  const previewClientRows = useMemo(() => {
+    const phone = previewClient?.phone ? formatRuMask(previewClient.phone) : '';
+    const objectNames = Array.isArray(previewClient?.objects)
+      ? previewClient.objects
+          .map((objectItem) => String(objectItem?.name || '').trim())
+          .filter(Boolean)
+      : [];
+    return [
+      { key: 'phone', label: t('view_label_phone'), value: phone },
+      {
+        key: 'objects',
+        label: t('clients_objects_section'),
+        value: objectNames.join(', '),
+      },
+    ];
+  }, [previewClient, t]);
+
+  const previewClientTags = useMemo(
+    () =>
+      Array.isArray(previewClient?.tags)
+      ? previewClient.tags.map((tag) => String(tag?.value || '').trim()).filter(Boolean)
+      : [],
+    [previewClient?.tags],
+  );
+
+  const openPreviewClientCard = useCallback(() => {
+    const clientId = String(previewClient?.id || '').trim();
+    if (!clientId) return;
+    setPreviewClientVisible(false);
+    setClientModalVisible(false);
+    router.push({
+      pathname: `/clients/${clientId}`,
+      params: {
+        returnTo: '/orders/create-order',
+      },
+    });
+  }, [previewClient?.id]);
+
   const clientObjectItems = useMemo(() => {
-    if (!clientObjects.length) {
+    const items = [];
+    if (draftClientObject) {
+      items.push({
+        id: 'draft-object',
+        label: String(draftClientObject.name || '').trim() || t('objects_new'),
+        subtitle: buildClientObjectShortAddress(draftClientObject) || undefined,
+        onPress: () => {
+          setClientObjectModalVisible(false);
+          setClientObjectEditorMode('draft');
+          setClientObjectDraft(draftClientObject);
+          setClientObjectEditorVisible(true);
+        },
+      });
+    }
+    if (!clientObjects.length && items.length === 0) {
       return [{ id: 'empty', label: t('objects_empty'), disabled: true }];
     }
-    return clientObjects.map((objectItem) => ({
-      id: objectItem.id,
-      label: objectItem.is_primary
-        ? [objectItem.name, t('objects_primary')].filter(Boolean).join(' - ')
-        : objectItem.name,
-      onPress: () => {
-        setSelectedClientObjectId(objectItem.id);
-        setClientObjectModalVisible(false);
+    return [
+      ...items,
+      ...clientObjects.map((objectItem) => ({
+        id: objectItem.id,
+        label: objectItem.is_primary
+          ? [objectItem.name, t('objects_primary')].filter(Boolean).join(' - ')
+          : objectItem.name,
+        subtitle: buildClientObjectShortAddress(objectItem) || undefined,
+        onPress: () => {
+          setSelectedClientObjectId(objectItem.id);
+          setStagedSelectedObjectDraft(null);
+          setDraftClientObject(null);
+          setClientObjectModalVisible(false);
+        },
+      })),
+    ];
+  }, [clientObjects, draftClientObject, t]);
+
+  const openCreateClientFromModal = useCallback(() => {
+    const prefill = parseClientPrefillFromSearch(clientModalSearch);
+    setClientModalVisible(false);
+    router.push({
+      pathname: '/clients/new',
+      params: {
+        flow_key: clientFlowKeyRef.current,
+        flow_return_to: '/orders/create-order',
+        ...(prefill.firstName ? { prefill_first_name: prefill.firstName } : {}),
+        ...(prefill.lastName ? { prefill_last_name: prefill.lastName } : {}),
+        ...(prefill.middleName ? { prefill_middle_name: prefill.middleName } : {}),
+        ...(prefill.phoneRaw ? { prefill_phone: prefill.phoneRaw } : {}),
       },
-    }));
-  }, [clientObjects, t]);
+    });
+  }, [clientModalSearch]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const consumeCreatedClient = async () => {
+        const key = `${ORDER_CLIENT_FLOW_STORAGE_PREFIX}${clientFlowKeyRef.current}`;
+        try {
+          const raw = await AsyncStorage.getItem(key);
+          if (!raw || cancelled) return;
+          await AsyncStorage.removeItem(key);
+          const parsed = JSON.parse(raw);
+          const resolvedClientId = String(
+            parsed?.selectedClientId || parsed?.createdClientId || '',
+          ).trim();
+          if (!resolvedClientId) return;
+          setSelectedClientId(resolvedClientId);
+          setSelectedClientObjectId(null);
+          setClientModalVisible(false);
+          setClientModalSearch('');
+        } catch {}
+      };
+      void consumeCreatedClient();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
 
   const handleCreateClientObject = useCallback(async () => {
-    if (!selectedClientId) return;
-    try {
-      const created = await createClientObjectMutation.mutateAsync({
-        client_id: String(selectedClientId),
-        ...sanitizeClientObjectPayload(clientObjectDraft),
+    const missingObjectField = ['name', ...visibleObjectAddressFieldKeys].find((field) => {
+      if (!objectFieldsByKey.get(field)?.isRequired) return false;
+      return !String(clientObjectDraft?.[field] || '').trim();
+    });
+    if (missingObjectField) {
+      showBanner({
+        type: 'warning',
+        message: t('field_settings_required_fill', 'Заполните обязательные поля'),
       });
-      await refetchSelectedClient();
-      setSelectedClientObjectId(created?.id || null);
+      return;
+    }
+    if (
+      !hasClientObjectAddressContent(
+        visibleObjectAddressFieldKeys.reduce(
+          (acc, field) => ({ ...acc, [field]: clientObjectDraft?.[field] || '' }),
+          {},
+        ),
+      )
+    ) {
+      showBanner({
+        type: 'warning',
+        message: t('order_validation_address_required'),
+      });
+      return;
+    }
+    try {
+      const sanitizedDraft = {
+        ...createEmptyClientObjectDraft(),
+        ...sanitizeClientObjectPayload(clientObjectDraft),
+      };
+      if (clientObjectEditorMode === 'update' && selectedClientObjectId) {
+        const updated = await updateClientObjectMutation.mutateAsync({
+          id: String(selectedClientObjectId),
+          patch: sanitizeClientObjectPayload(clientObjectDraft),
+        });
+        await refetchSelectedClient();
+        setSelectedClientObjectId(updated?.id || selectedClientObjectId);
+        setStagedSelectedObjectDraft(null);
+        setDraftClientObject(null);
+      } else if (clientObjectEditorMode === 'persist' && selectedClientId) {
+        const created = await createClientObjectMutation.mutateAsync({
+          client_id: String(selectedClientId),
+          ...sanitizeClientObjectPayload(clientObjectDraft),
+        });
+        await refetchSelectedClient();
+        setSelectedClientObjectId(created?.id || null);
+        setDraftClientObject(null);
+      } else {
+        setDraftClientObject(sanitizedDraft);
+        setSelectedClientObjectId(null);
+      }
       setClientObjectEditorVisible(false);
     } catch (error) {
       showBanner(error?.message || t('clients_save_failed'));
     }
-  }, [clientObjectDraft, createClientObjectMutation, refetchSelectedClient, selectedClientId, showBanner, t]);
+  }, [
+    clientObjectDraft,
+    clientObjectEditorMode,
+    createClientObjectMutation,
+    objectFieldsByKey,
+    refetchSelectedClient,
+    selectedClientId,
+    selectedClientObjectId,
+    showBanner,
+    t,
+    updateClientObjectMutation,
+    visibleObjectAddressFieldKeys,
+  ]);
+
+  const openObjectFlow = useCallback(() => {
+    if (selectedClientId) {
+      setClientObjectModalVisible(true);
+      return;
+    }
+    setClientObjectEditorMode('draft');
+    setClientObjectDraft(draftClientObject || createEmptyClientObjectDraft({ name: t('objects_new') }));
+    setClientObjectEditorVisible(true);
+  }, [draftClientObject, selectedClientId, t]);
+
+  const openObjectAddressEditor = useCallback(() => {
+    const seedDraft =
+      activeObjectDraft || draftClientObject || createEmptyClientObjectDraft({ name: t('objects_new') });
+    setClientObjectEditorMode(selectedClientObjectId ? 'update' : 'draft');
+    setClientObjectDraft(seedDraft);
+    setClientObjectEditorVisible(true);
+  }, [activeObjectDraft, draftClientObject, selectedClientObjectId, t]);
 
   if (loading) {
     return (
@@ -1024,31 +1455,35 @@ export default function CreateOrderScreen() {
         <SectionHeader topSpacing="xs" bottomSpacing="xs">
           {t('create_order_section_main')}
         </SectionHeader>
-          <Card padded={false} style={formStyles.card}>
-        {renderTextField({
-          fieldKey: 'title',
-          label: getFieldLabel('title'),
-          placeholder: t('create_order_placeholder_title'),
-          value: form.title || '',
-          onChangeText: (text) => setField('title', text),
-          required: getField('title')?.required,
-        })}
-            {renderTextField({
-              label: t('order_field_description'),
-              placeholder: t('create_order_placeholder_description'),
-              value: description,
-              onChangeText: setDescription,
-              multiline: true,
-            })}
+        <Card padded={false} style={formStyles.card}>
+          {getField('title') ? renderTextField({
+            fieldKey: 'title',
+            label: getFieldLabel('title'),
+            placeholder: t('create_order_placeholder_title'),
+            value: form.title || '',
+            onChangeText: (text) => setField('title', text),
+            required: isFieldRequired('title'),
+          }) : null}
+          {getField('comment')
+            ? renderTextField({
+                fieldKey: 'comment',
+                label: getFieldLabel('comment', t('order_field_description')),
+                placeholder: t('create_order_placeholder_description'),
+                value: description,
+                onChangeText: setDescription,
+                multiline: false,
+                required: isFieldRequired('comment'),
+              })
+            : null}
 
-            {useWorkTypes && (
+          {useWorkTypes && getField('work_type_id') ? (
               <>
                 <TextField
-                  label={withRequiredLabel(t('create_order_work_type_label'), true)}
+            label={withRequiredLabel(t('create_order_work_type_label'), isFieldRequired('work_type_id'))}
                   value={selectedWorkTypeName || t('create_order_work_type_placeholder')}
                   pressable
                   style={formStyles.field}
-                  onPress={() => setWorkTypeModalVisible(true)}
+                  onPress={openWorkTypeModal}
                   error={
                     shouldShowError('work_type_id') && fieldErrors?.work_type_id ? 'invalid' : undefined
                   }
@@ -1059,127 +1494,144 @@ export default function CreateOrderScreen() {
                   }
                 />
               </>
-            )}
-          </Card>
+            ) : null}
+        </Card>
 
           <SectionHeader>{t('create_order_section_customer')}</SectionHeader>
           <Card padded={false} style={formStyles.card}>
-            {has('canViewClients') ? (
-              <TextField
-                label={t('routes_clients_client')}
-                value={selectedClientName || t('common_select')}
-                pressable
-                style={formStyles.field}
-                onPress={() => setClientModalVisible(true)}
-                rightSlot={
-                  selectedClientId ? (
-                    <ClearButton
-                      onPress={() => {
-                        setSelectedClientId(null);
-                        setSelectedClientObjectId(null);
-                        setField('phone', '');
-                        setField('secondary_phone', '');
-                        setField('contact_email', '');
-                        setField('contact_pref', '');
-                      }}
-                      accessibilityLabel={t('common_clear')}
-                    />
-                  ) : null
-                }
-              />
-            ) : null}
-            {selectedClientId ? (
+            {has('canViewClients') && getField('client_id') ? (
               <>
                 <TextField
-                  label={t('create_order_client_object_label')}
-                  value={selectedClientObjectSummary || t('create_order_client_object_placeholder')}
+                  label={withRequiredLabel(t('routes_clients_client'), isFieldRequired('client_id'))}
+                  value={selectedClientName || t('common_select')}
                   pressable
                   style={formStyles.field}
-                  onPress={() => setClientObjectModalVisible(true)}
+                  onPress={() => setClientModalVisible(true)}
+                  error={shouldShowError('client_id') && fieldErrors?.client_id ? 'invalid' : undefined}
                   rightSlot={
-                    selectedClientObjectId ? (
+                    selectedClientId ? (
                       <ClearButton
-                        onPress={() => setSelectedClientObjectId(null)}
+                        onPress={() => {
+                          setSelectedClientId(null);
+                          setSelectedClientObjectId(null);
+                          setStagedSelectedObjectDraft(null);
+                          setSuggestedMatchingObject(null);
+                          setSuggestedMatchingVisible(false);
+                          setField('phone', '');
+                          setField('secondary_phone', '');
+                          setField('contact_email', '');
+                        }}
                         accessibilityLabel={t('common_clear')}
                       />
                     ) : null
                   }
                 />
-                {has('canEditClients') ? (
-                  <Button
-                    title={t('create_order_client_object_add')}
-                    variant="secondary"
-                    onPress={() => {
-                      setClientObjectDraft(createEmptyClientObjectDraft({ name: t('objects_new') }));
-                      setClientObjectEditorVisible(true);
-                    }}
-                  />
-                ) : null}
+                <FieldErrorText
+                  message={shouldShowError('client_id') ? fieldErrors?.client_id?.message : null}
+                />
               </>
             ) : null}
-            {renderPhoneInput('phone')}
-            {selectedClientId ? (
+            {getField('object_id') ? (
               <>
-                {renderPhoneInput('secondary_phone')}
-                {renderTextField({
+                <TextField
+                  label={withRequiredLabel(t('create_order_client_object_label'), isFieldRequired('object_id'))}
+                  value={selectedClientObjectSummary || t('create_order_client_object_placeholder')}
+                  pressable
+                  style={formStyles.field}
+                  onPress={openObjectFlow}
+                  error={shouldShowError('object_id') && fieldErrors?.object_id ? 'invalid' : undefined}
+                  rightSlot={
+                    selectedClientObjectId || draftClientObject ? (
+                      <ClearButton
+                        onPress={() => {
+                          setSelectedClientObjectId(null);
+                          setStagedSelectedObjectDraft(null);
+                          setDraftClientObject(null);
+                          setSuggestedMatchingObject(null);
+                          setSuggestedMatchingVisible(false);
+                        }}
+                        accessibilityLabel={t('common_clear')}
+                      />
+                    ) : null
+                  }
+                />
+                <FieldErrorText
+                  message={shouldShowError('object_id') ? fieldErrors?.object_id?.message : null}
+                />
+              </>
+            ) : null}
+            {activeObjectDraft && visibleObjectAddressFieldKeys.length ? (
+              <TextField
+                label={t('order_details_address')}
+                value={shortAddressValue}
+                pressable
+                multiline
+                minLines={2}
+                style={formStyles.field}
+                onPress={openObjectAddressEditor}
+              />
+            ) : null}
+            {getField('phone') ? renderPhoneInput('phone') : null}
+            {selectedClientId && (getField('secondary_phone') || getField('contact_email')) ? (
+              <>
+                {getField('secondary_phone') ? renderPhoneInput('secondary_phone') : null}
+                {getField('contact_email') ? renderTextField({
                   fieldKey: 'contact_email',
                   label: getFieldLabel('contact_email'),
                   placeholder: t('create_order_placeholder_contact_email'),
                   value: form.contact_email || '',
                   onChangeText: (text) => setField('contact_email', text),
                   keyboardType: 'email-address',
-                  required: getField('contact_email')?.required,
-                })}
-                {renderTextField({
-                  fieldKey: 'contact_pref',
-                  label: getFieldLabel('contact_pref'),
-                  placeholder: t('create_order_placeholder_contact_pref'),
-                  value: form.contact_pref || '',
-                  onChangeText: (text) => setField('contact_pref', text),
-                  required: getField('contact_pref')?.required,
-                })}
+                  required: isFieldRequired('contact_email'),
+                }) : null}
               </>
             ) : null}
           </Card>
 
           <SectionHeader>{t('create_order_section_planning')}</SectionHeader>
           <Card padded={false} style={formStyles.card}>
-            {renderToggle(urgent, () => setUrgent((v) => !v), t('create_order_label_urgent'))}
+            {getField('urgent')
+              ? renderToggle(urgent, () => setUrgent((v) => !v), t('create_order_label_urgent'))
+              : null}
 
-            <TextField
-              label={withRequiredLabel(
-                getFieldLabel('time_window_start', t('create_order_label_date')),
-                true,
-              )}
-              value={departureDateDisplayLabel || t('create_order_placeholder_date')}
-              pressable
-              style={formStyles.field}
-              ref={dateFieldRef}
-              error={
-                shouldShowError('time_window_start') && fieldErrors?.time_window_start
-                  ? 'invalid'
-                  : undefined
-              }
-              rightSlot={
-                departureDate ? (
-                  <ClearButton
-                    onPress={() => { setDepartureDate(null); setDepartureEndDate(null); setIsDepartureRange(false); }}
-                    accessibilityLabel={t('common_clear')}
-                  />
-                ) : null
-              }
-              onPress={() => {
-                setShowDatePicker(true);
-                setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
-              }}
-            />
-            <FieldErrorText
-              message={
-                shouldShowError('time_window_start')
-                  ? fieldErrors?.time_window_start?.message
-                  : null
-              }
-            />
+            {getField('time_window_start') ? (
+              <>
+                <TextField
+                  label={withRequiredLabel(
+                    getFieldLabel('time_window_start', t('create_order_label_date')),
+                    isFieldRequired('time_window_start'),
+                  )}
+                  value={departureDateDisplayLabel || t('create_order_placeholder_date')}
+                  pressable
+                  style={formStyles.field}
+                  ref={dateFieldRef}
+                  error={
+                    shouldShowError('time_window_start') && fieldErrors?.time_window_start
+                      ? 'invalid'
+                      : undefined
+                  }
+                  rightSlot={
+                    departureDate ? (
+                      <ClearButton
+                        onPress={() => { setDepartureDate(null); setDepartureEndDate(null); setIsDepartureRange(false); }}
+                        accessibilityLabel={t('common_clear')}
+                      />
+                    ) : null
+                  }
+                  onPress={() => {
+                    setShowDatePicker(true);
+                    setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
+                  }}
+                />
+                <FieldErrorText
+                  message={
+                    shouldShowError('time_window_start')
+                      ? fieldErrors?.time_window_start?.message
+                      : null
+                  }
+                />
+              </>
+            ) : null}
 
 
             <DateTimeModal
@@ -1253,40 +1705,44 @@ export default function CreateOrderScreen() {
               </>
             )}
 
-            {renderToggle(
-              toFeed,
-              () => {
-                setToFeed((prev) => {
-                  const nv = !prev;
-                  if (nv) setAssigneeId(null);
-                  return nv;
-                });
-              },
-              t('create_order_label_to_feed'),
-            )}
+            {getField('assigned_to') ? (
+              <>
+                {renderToggle(
+                  toFeed,
+                  () => {
+                    setToFeed((prev) => {
+                      const nv = !prev;
+                      if (nv) setAssigneeId(null);
+                      return nv;
+                    });
+                  },
+                  t('create_order_label_to_feed'),
+                )}
 
-            <TextField
-              label={withRequiredLabel(
-                getFieldLabel('assigned_to', t('create_order_label_executor')),
-                !toFeed,
-              )}
-              value={
-                toFeed
-                  ? t('create_order_executor_in_feed')
-                  : selectedAssigneeName || t('create_order_placeholder_executor')
-              }
-              pressable
-              style={formStyles.field}
-              onPress={() => setAssigneeModalVisible(true)}
-              error={
-                shouldShowError('assigned_to') && fieldErrors?.assigned_to ? 'invalid' : undefined
-              }
-            />
-            <FieldErrorText
-              message={
-                shouldShowError('assigned_to') ? fieldErrors?.assigned_to?.message : null
-              }
-            />
+                <TextField
+                  label={withRequiredLabel(
+                    getFieldLabel('assigned_to', t('create_order_label_executor')),
+                    !toFeed && isFieldRequired('assigned_to'),
+                  )}
+                  value={
+                    toFeed
+                      ? t('create_order_executor_in_feed')
+                      : selectedAssigneeName || t('create_order_placeholder_executor')
+                  }
+                  pressable
+                  style={formStyles.field}
+                  onPress={() => setAssigneeModalVisible(true)}
+                  error={
+                    shouldShowError('assigned_to') && fieldErrors?.assigned_to ? 'invalid' : undefined
+                  }
+                />
+                <FieldErrorText
+                  message={
+                    shouldShowError('assigned_to') ? fieldErrors?.assigned_to?.message : null
+                  }
+                />
+              </>
+            ) : null}
           </Card>
 
           <View style={styles.buttonContainer}>
@@ -1327,6 +1783,9 @@ export default function CreateOrderScreen() {
         selectedId={workTypeId}
         onSelect={(item) => {
           if (!item?.id || item.disabled) return;
+          try {
+            Keyboard.dismiss();
+          } catch {}
           setWorkTypeId(String(item.id));
           setWorkTypeModalVisible(false);
         }}
@@ -1347,9 +1806,42 @@ export default function CreateOrderScreen() {
         title={t('routes_clients_client')}
         items={clientItems}
         searchable
+        searchLabel={null}
+        searchPlaceholder={t('order_client_modal_search_placeholder')}
+        onSearchChange={setClientModalSearch}
+        filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
+        emptyComponent={
+          <View style={{ paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.sm }}>
+            <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+              {t('order_client_search_empty_hint')}
+            </Text>
+          </View>
+        }
+        footer={
+          <View style={{ marginBottom: theme.spacing.lg }}>
+            <Button
+              title={t('order_client_create_new')}
+              variant="primary"
+              onPress={openCreateClientFromModal}
+            />
+          </View>
+        }
         selectedId={selectedClientId}
+        onItemLongPress={openClientPreview}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setClientModalVisible(false)}
+      />
+
+      <QuickPreviewModal
+        visible={previewClientVisible}
+        onClose={() => setPreviewClientVisible(false)}
+        title={String(previewClient?.fullName || '').trim() || t('common_noName')}
+        anchor={previewAnchor}
+        rows={previewClientRows}
+        tags={previewClientTags}
+        tagsTitle={t('tags_field_label')}
+        footerActionLabel={t('common_view')}
+        onFooterAction={openPreviewClientCard}
       />
 
       <SelectModal
@@ -1357,7 +1849,23 @@ export default function CreateOrderScreen() {
         title={t('objects_select')}
         items={clientObjectItems}
         searchable={false}
-        selectedId={selectedClientObjectId}
+        footer={
+          has('canEditClients') ? (
+            <View style={{ marginBottom: theme.spacing.lg }}>
+              <Button
+                title={t('create_order_client_object_add')}
+                variant="secondary"
+                onPress={() => {
+                  setClientObjectModalVisible(false);
+                  setClientObjectEditorMode(selectedClientId ? 'persist' : 'draft');
+                  setClientObjectDraft(createEmptyClientObjectDraft({ name: t('objects_new') }));
+                  setClientObjectEditorVisible(true);
+                }}
+              />
+            </View>
+          ) : null
+        }
+        selectedId={selectedClientObjectId || (draftClientObject ? 'draft-object' : null)}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setClientObjectModalVisible(false)}
       />
@@ -1366,9 +1874,41 @@ export default function CreateOrderScreen() {
         visible={clientObjectEditorVisible}
         title={t('objects_new_from_order')}
         draft={clientObjectDraft}
+        fieldSettings={objectFieldSettings}
         onChange={(field, value) => setClientObjectDraft((prev) => ({ ...prev, [field]: value }))}
         onSave={handleCreateClientObject}
         onClose={() => setClientObjectEditorVisible(false)}
+        saveLabel={t('objects_save_object')}
+      />
+
+      <ConfirmModal
+        visible={suggestedMatchingVisible}
+        title={t('order_object_match_title')}
+        message={
+          <View style={{ gap: theme.spacing.sm }}>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.md }}>
+              {t('order_object_match_message')}
+            </Text>
+            <Text style={{ color: theme.colors.text, fontSize: theme.typography.sizes.md, fontWeight: '600' }}>
+              {String(suggestedMatchingObject?.object?.name || '').trim() || t('objects_new')}
+            </Text>
+            <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}>
+              {suggestedMatchingObject?.shortAddress || t('order_details_address_not_specified')}
+            </Text>
+          </View>
+        }
+        confirmLabel={t('order_object_match_confirm')}
+        cancelLabel={t('order_object_match_keep_new')}
+        onConfirm={() => {
+          setSelectedClientObjectId(suggestedMatchingObject?.object?.id || null);
+          setStagedSelectedObjectDraft(null);
+          setDraftClientObject(null);
+          setIgnoredMatchSignature('');
+        }}
+        onClose={() => {
+          setIgnoredMatchSignature(String(suggestedMatchingObject?.signature || ''));
+          setSuggestedMatchingVisible(false);
+        }}
       />
 
       <ConfirmModal

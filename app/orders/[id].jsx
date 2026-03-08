@@ -1,9 +1,6 @@
-// removed Feather icons usage from this file per request
 import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
-import { BlurView } from 'expo-blur';
-import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -11,7 +8,6 @@ import {
   BackHandler,
   Dimensions,
   findNodeHandle,
-  Image,
   InteractionManager,
   Platform,
   Pressable,
@@ -25,24 +21,14 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  PanGestureHandler,
-  PinchGestureHandler,
-  State,
-  TapGestureHandler,
-} from 'react-native-gesture-handler';
 import Modal from 'react-native-modal';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
-} from 'react-native-reanimated';
+import { useAuth } from '../../components/hooks/useAuth';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
-import { yandexDiskMedia } from '../../lib/yandexDiskIntegration';
-import { fetchFormSchema } from '../../lib/settings';
+import { useOrderMedia } from '../../hooks/useOrderMedia';
+import dismissToRoute from '../../lib/navigation/dismissToRoute';
+import goBackSmart from '../../lib/navigation/goBackSmart';
+import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { extractStorageObjectPath } from '../../lib/storageObjectPaths';
 import { supabase } from '../../lib/supabase';
@@ -55,11 +41,11 @@ import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import SectionHeader from '../../components/ui/SectionHeader';
-import { SelectModal } from '../../components/ui/modals';
 import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import { listItemStyles } from '../../components/ui/listItemStyles';
+import { buildAddressForNavigator, openAddressInYandex } from '../../components/ui/map';
 import { usePermissions } from '../../lib/permissions';
 import { formatClientNameForOrder, getClientByOrderId } from '../../src/features/clients/api';
 import { useClient, useUpdateClientMutation } from '../../src/features/clients/queries';
@@ -72,21 +58,34 @@ import {
 import { updateRequestWithVersion } from '../../src/features/requests/api';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import {
+  buildOrderAddressDisplay,
+  buildOrderAddressShort,
+  extractOrderAddress,
+  normalizeOrderAddressMode,
+} from '../../src/features/requests/addressing';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+  toLegacySchemaFields,
+} from '../../src/features/fieldSettings/catalog';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
+import { isValidOptionalMobilePhone, toE164MobilePhoneOrNull } from '../../src/shared/validation/phone';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useQueryClient } from '@tanstack/react-query';
+import { Feather } from '@expo/vector-icons';
+import OrderPhotosModal from './components/OrderPhotosModal';
+import FullscreenImageViewer from './components/FullscreenImageViewer';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const PHOTO_PICKER_SOURCE = {
-  CAMERA: 'camera',
-  GALLERY: 'gallery',
-};
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
-const PHOTO_PICKER_QUALITY = 1;
 const PHOTO_FILE_EXTENSION = 'jpg';
 const PHOTO_MIME_TYPE = 'image/jpeg';
+const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'country',
   'region',
@@ -94,11 +93,10 @@ const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'street',
   'house',
   'postal_code',
-  'building',
+  'office',
   'floor',
   'entrance',
   'apartment',
-  'intercom',
   'entrance_info',
   'parking_notes',
   'geo_lat',
@@ -125,13 +123,41 @@ const REQUEST_SYNC_FIELDS = [
   'fuel_cost',
   'urgent',
 ];
-const MEDIA_CATEGORIES = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
+
+function isYandexMediaUrl(url) {
+  const raw = String(url || '').toLowerCase();
+  return YANDEX_URL_MARKERS.some((marker) => raw.includes(marker));
+}
+
+function isYandexProviderFailureMessage(rawMessage) {
+  const message = String(rawMessage || '').toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('quota') ||
+    message.includes('diskfull') ||
+    message.includes('no space') ||
+    message.includes('not connected') ||
+    message.includes('authorization expired') ||
+    message.includes('reconnect') ||
+    message.includes('invalid_grant') ||
+    message.includes('unauthorized') ||
+    message.includes('token refresh failed') ||
+    message.includes('temporarily unavailable') ||
+    message.includes('resource is locked') ||
+    message.includes('cloud-api.yandex') ||
+    message.includes('yandex disk')
+  );
+}
 
 export default function OrderDetails() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const auth = useAuth();
+  const authUserId = auth.user?.id || null;
+  const authRole = auth.profile?.role || null;
+  const authCompanyId = auth.profile?.company_id || null;
   const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'app_storage';
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -182,11 +208,15 @@ export default function OrderDetails() {
   const navigation = useNavigation();
   const isNavigatingRef = useRef(false);
   const queryClient = useQueryClient();
+  const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
+    enabled: !!id,
+  });
+  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
+    enabled: !!id,
+  });
   const updateClientMutation = useUpdateClientMutation();
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
-  const orderForInspectRef = useRef(null);
-  const mediaProbeInFlightRef = useRef(new Set());
 
   const [order, setOrder] = useState(null);
   const [orderReady, setOrderReady] = useState(false);
@@ -195,8 +225,20 @@ export default function OrderDetails() {
   const [userId, setUserId] = useState(null);
   const [executorName, setExecutorName] = useState(null);
   const [bannerMessage, setBannerMessage] = useState('');
+  const [effectiveMediaProvider, setEffectiveMediaProvider] = useState(mediaProvider);
+  const [cloudHealth, setCloudHealth] = useState('unknown');
   const [editMode, setEditMode] = useState(false);
   const [schemaEdit, setSchemaEdit] = useState({ context: 'edit', fields: [] });
+  const orderFieldSettings = useMemo(
+    () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
+    [orderFieldSettingsData],
+  );
+  const objectFieldSettings = useMemo(
+    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
+    [objectFieldSettingsData],
+  );
+  const orderFieldsByKey = useMemo(() => getEntityFieldMap(orderFieldSettings), [orderFieldSettings]);
+  const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -225,6 +267,17 @@ export default function OrderDetails() {
   const [amount, setAmount] = useState('');
   const [gsm, setGsm] = useState('');
   const canEditFinances = role === 'admin' || role === 'dispatcher';
+  const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
+  const cloudFallbackActive =
+    mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'app_storage';
+  const cloudHealthLabel = useMemo(
+    () =>
+      t(
+        `company_integrations_yandex_health_${cloudHealth}`,
+        t('company_integrations_yandex_health_error'),
+      ),
+    [cloudHealth, t],
+  );
   const normalizeId = useCallback((value) => {
     if (value === null || value === undefined || value === '') return null;
     return String(value);
@@ -251,7 +304,7 @@ export default function OrderDetails() {
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteCountdown, setDeleteCountdown] = useState(5);
   const [deleteEnabled, setDeleteEnabled] = useState(false);
-  const [photoSourceModal, setPhotoSourceModal] = useState({ visible: false, category: null });
+  const [orderPhotosModal, setOrderPhotosModal] = useState({ visible: false, category: null });
   const [amountEditModalVisible, setAmountEditModalVisible] = useState(false);
   const [fuelEditModalVisible, setFuelEditModalVisible] = useState(false);
   const [amountDraft, setAmountDraft] = useState('');
@@ -260,11 +313,21 @@ export default function OrderDetails() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
-  const [resolvedMediaUrls, setResolvedMediaUrls] = useState({});
-  const [mediaIssues, setMediaIssues] = useState({});
-  const [photoLoadingMap, setPhotoLoadingMap] = useState({});
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const [resolvedClientId, setResolvedClientId] = useState(null);
+  const [localPendingMap, setLocalPendingMap] = useState({});
+  const cloudFallbackNoticeShownRef = useRef(false);
+
+  // ─── Centralised media hook (caching, resolution, Yandex/Storage) ───
+  const orderMedia = useOrderMedia({ order, mediaProvider, t });
+  // Stable ref so fetchData doesn't re-create when orderMedia resolves URLs
+  const orderMediaRef = useRef(orderMedia);
+  useEffect(() => { orderMediaRef.current = orderMedia; }, [orderMedia]);
+
+  // Always-current order ref — prevents stale closures in parallel uploads
+  const orderRef = useRef(order);
+  useEffect(() => { orderRef.current = order; }, [order]);
+
   const { data: requestData, refetch: refetchRequestData } = useRequest(id, {
     enabled: !!id,
     staleTime: 45 * 1000,
@@ -276,13 +339,6 @@ export default function OrderDetails() {
   const dateFieldRef = useRef(null);
   const viewFade = useRef(new RNAnimated.Value(1)).current;
   const viewTranslate = useRef(new RNAnimated.Value(0)).current;
-  const scale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const bgOpacity = useSharedValue(1);
-  const panRef = useRef(null);
-  const tapRef = useRef(null);
-  const pinchRef = useRef(null);
 
   const buildOrderSyncToken = useCallback((entity) => {
     if (!entity || typeof entity !== 'object') return '';
@@ -307,6 +363,57 @@ export default function OrderDetails() {
       setTimeout(() => setBannerMessage(''), 2000);
     }
   }, []);
+
+  const notifyCloudFallback = useCallback(() => {
+    if (cloudFallbackNoticeShownRef.current) return;
+    cloudFallbackNoticeShownRef.current = true;
+    showToast(
+      isAdminUser
+        ? t('order_cloud_fallback_admin_notice')
+        : t('order_cloud_fallback_worker_notice'),
+    );
+  }, [isAdminUser, showToast, t]);
+
+  useEffect(() => {
+    setEffectiveMediaProvider(mediaProvider);
+    if (mediaProvider !== 'yandex_disk') {
+      setCloudHealth('ok');
+      cloudFallbackNoticeShownRef.current = false;
+    }
+  }, [mediaProvider]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      if (mediaProvider !== 'yandex_disk') return undefined;
+
+      (async () => {
+        try {
+          const status = await yandexDiskIntegration('status');
+          if (cancelled) return;
+          const connected = Boolean(status?.connected || status?.account);
+          const healthCode = String(status?.health || (connected ? 'unknown' : 'not_connected'));
+          setCloudHealth(healthCode);
+          if (!connected || healthCode !== 'ok') {
+            setEffectiveMediaProvider('app_storage');
+            notifyCloudFallback();
+          } else {
+            setEffectiveMediaProvider('yandex_disk');
+            cloudFallbackNoticeShownRef.current = false;
+          }
+        } catch (_e) {
+          if (cancelled) return;
+          setCloudHealth('error');
+          setEffectiveMediaProvider('app_storage');
+          notifyCloudFallback();
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }, [mediaProvider, notifyCloudFallback]),
+  );
 
   const deriveExecutorNameInstant = useCallback((o) => {
     if (!o) return null;
@@ -545,184 +652,32 @@ export default function OrderDetails() {
     }
   }, [order, makeSnapshotFromState, makeSnapshotFromOrder]);
 
-  const syncPhotosFromStorage = useCallback(async () => {
-    if (!order?.id) return;
-    if (mediaProvider !== 'app_storage') return;
-    try {
-      const bucket = 'orders-photos';
-      const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-      const next = { ...order };
+  // ─── Hydrate all form fields from order object (extracted to avoid duplication) ───
+  const hydrateFormFields = useCallback((o) => {
+    if (!o) return;
+    const rawDigits = (
+      (o.phone ?? o.customer_phone_visible ?? o.phone_visible) || ''
+    ).replace(/\D/g, '');
+    setTitle(o.title || '');
+    setDescription(o.comment || '');
+    setRegion(o.region || '');
+    setCity(o.city || '');
+    setStreet(o.street || '');
+    setHouse(o.house || '');
+    setCustomerName(o.fio || o.customer_name || '');
+    setPhone(rawDigits || '');
+    setDepartureDate(o.time_window_start ? new Date(o.time_window_start) : null);
+    setAssigneeId(o.assigned_to || null);
+    setToFeed(!o.assigned_to);
+    setUrgent(!!o.urgent);
+    setDepartmentId(o.department_id || null);
+    setAmount(o.price !== null && o.price !== undefined ? String(o.price) : '');
+    setGsm(o.fuel_cost !== null && o.fuel_cost !== undefined ? String(o.fuel_cost) : '');
+    // Executor name from cache (instant)
+    const cachedExecName = deriveExecutorNameInstant(o);
+    if (cachedExecName) setExecutorName(cachedExecName);
+  }, [deriveExecutorNameInstant]);
 
-      for (const cat of cats) {
-        const folder = `orders/${order.id}/${cat}`;
-        const { data: files } = await supabase.storage.from(bucket).list(folder);
-        const urls = (files || []).map((f) => {
-          const path = `${folder}/${f.name}`;
-          const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-          return data.publicUrl;
-        });
-        next[cat] = urls;
-      }
-      setOrder(next);
-    } catch (e) {
-      console.warn('Sync photos error:', e);
-    }
-  }, [order, mediaProvider]);
-
-  const fetchServerPhotos = useCallback(async (orderId) => {
-    if (mediaProvider !== 'app_storage') return null;
-    try {
-      const bucket = 'orders-photos';
-      const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-      const result = {};
-
-      for (const cat of cats) {
-        const list = await supabase.storage.from(bucket).list(`orders/${orderId}/${cat}`);
-        const files = list?.data || [];
-        const urls = files.map((f) => {
-          const { data } = supabase.storage
-            .from(bucket)
-            .getPublicUrl(`orders/${orderId}/${cat}/${f.name}`);
-          return data.publicUrl;
-        });
-        result[cat] = urls;
-      }
-      return result;
-    } catch (e) {
-      console.warn('Fetch server photos error:', e);
-      return null;
-    }
-  }, [mediaProvider]);
-
-  const getPhotoDisplayUrl = useCallback(
-    (sourceUrl) => {
-      if (!sourceUrl) return '';
-      return resolvedMediaUrls[sourceUrl] || sourceUrl;
-    },
-    [resolvedMediaUrls],
-  );
-
-  const getMediaIssueMessage = useCallback(
-    (sourceUrl) => {
-      const issue = mediaIssues[sourceUrl];
-      if (!issue) return '';
-      const code = String(issue.code || '').trim();
-      if (code === 'deleted_remote') return t('order_photo_issue_deleted_remote');
-      if (code === 'missing_mapping') return t('order_photo_issue_missing_mapping');
-      if (code === 'disk_unavailable') return t('order_photo_issue_disk_unavailable');
-      if (code === 'disk_auth') return t('order_photo_issue_disk_auth');
-      if (code === 'disk_locked') return t('order_photo_issue_disk_locked');
-      if (code === 'disk_error' || code === 'download_error')
-        return t('order_photo_issue_temporary');
-      if (code === 'client_network') return t('order_photo_issue_client_network');
-      if (issue.message) return issue.message;
-      return t('order_photo_issue_temporary');
-    },
-    [mediaIssues, t],
-  );
-
-  const setPhotoLoading = useCallback((url, value) => {
-    const key = String(url || '').trim();
-    if (!key) return;
-    setPhotoLoadingMap((prev) => {
-      if ((prev[key] || false) === value) return prev;
-      return { ...prev, [key]: value };
-    });
-  }, []);
-
-  const isLikelyYandexLink = useCallback((url) => {
-    const raw = String(url || '').toLowerCase();
-    return raw.startsWith('yadisk://') || raw.includes('yadi.sk') || raw.includes('disk.yandex');
-  }, []);
-
-  const inspectSingleMedia = useCallback(
-    async (category, sourceUrl) => {
-      const key = `${category}:${sourceUrl}`;
-      if (!order?.id || mediaProvider !== 'yandex_disk') return false;
-      if (mediaProbeInFlightRef.current.has(key)) return false;
-      mediaProbeInFlightRef.current.add(key);
-      try {
-        const data = await yandexDiskMedia('inspect_urls', {
-          order_id: order.id,
-          category,
-          urls: [sourceUrl],
-        });
-        const resolved = data?.resolved_urls && typeof data.resolved_urls === 'object'
-          ? data.resolved_urls
-          : {};
-        const issues = data?.issues && typeof data.issues === 'object' ? data.issues : {};
-        const mediaUrls = Array.isArray(data?.media_urls) ? data.media_urls : null;
-
-        if (Object.keys(resolved).length) {
-          setResolvedMediaUrls((prev) => ({ ...prev, ...resolved }));
-        }
-        if (Object.keys(issues).length) {
-          setMediaIssues((prev) => ({ ...prev, ...issues }));
-        }
-        if (Array.isArray(mediaUrls)) {
-          setOrder((prev) => {
-            if (!prev) return prev;
-            return { ...prev, [category]: mediaUrls };
-          });
-        }
-        return !!issues[sourceUrl];
-      } catch {
-        return false;
-      } finally {
-        mediaProbeInFlightRef.current.delete(key);
-      }
-    },
-    [mediaProvider, order?.id],
-  );
-
-  const inspectYandexMedia = useCallback(
-    async (baseOrder) => {
-      if (mediaProvider !== 'yandex_disk' || !baseOrder?.id) {
-        setResolvedMediaUrls({});
-        setMediaIssues({});
-        return baseOrder;
-      }
-
-      const nextResolved = {};
-      const nextIssues = {};
-      let nextOrder = { ...baseOrder };
-
-      for (const category of MEDIA_CATEGORIES) {
-        const urls = Array.isArray(nextOrder?.[category]) ? nextOrder[category].filter(Boolean) : [];
-        if (!urls.length) continue;
-        try {
-          const data = await yandexDiskMedia('inspect_urls', {
-            order_id: nextOrder.id,
-            category,
-            urls,
-          });
-
-          const resolved = data?.resolved_urls && typeof data.resolved_urls === 'object'
-            ? data.resolved_urls
-            : {};
-          const issues = data?.issues && typeof data.issues === 'object' ? data.issues : {};
-          const mediaUrls = Array.isArray(data?.media_urls) ? data.media_urls : urls;
-
-          Object.assign(nextResolved, resolved);
-          Object.assign(nextIssues, issues);
-
-          if (Array.isArray(mediaUrls)) {
-            nextOrder[category] = mediaUrls;
-          }
-        } catch (e) {
-          const message = String(e?.message || '').trim() || t('order_photo_issue_temporary');
-          for (const url of urls) {
-            nextIssues[url] = { code: 'disk_error', message };
-          }
-        }
-      }
-
-      setResolvedMediaUrls(nextResolved);
-      setMediaIssues(nextIssues);
-      return nextOrder;
-    },
-    [mediaProvider, t],
-  );
 
   const fetchData = useCallback(async () => {
     if (!id) {
@@ -731,21 +686,25 @@ export default function OrderDetails() {
     }
 
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData?.session?.user?.id || null;
+      // ── 1. Auth: instant from context (no network) ────────────────
+      const uid = authUserId;
+      const currentRole = authRole;
       setUserId(uid);
+      setRole(currentRole);
 
-      if (uid) {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', uid)
-          .single();
-        setRole(profile?.role || null);
+      // ── 2. Order data: show cache instantly, then refetch ─────────
+      const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
+
+      // If we have cached data and screen hasn't shown content yet, render instantly
+      if (cachedOrderRaw && !firstContentTrackedRef.current) {
+        const cachedOrder = { ...cachedOrderRaw, time_window_start: cachedOrderRaw.time_window_start ?? null };
+        hydrateFormFields(cachedOrder);
+        setOrder(cachedOrder);
+        setWorkTypeId(cachedOrder.work_type_id ?? null);
+        setOrderReady(true);
       }
 
-      // Use freshest detail from server first; fallback to cache only if needed.
-      const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
+      // Fetch fresh data in background
       let fetchedOrderRaw = null;
       try {
         const refetched = await refetchRequestData();
@@ -761,51 +720,36 @@ export default function OrderDetails() {
       }
       if (!fetchedOrderRaw) throw new Error('Order not found');
 
-      const fetchedOrder = fetchedOrderRaw
-        ? {
-            ...fetchedOrderRaw,
-            time_window_start: fetchedOrderRaw.time_window_start ?? null,
-          }
-        : null;
+      const fetchedOrder = {
+        ...fetchedOrderRaw,
+        time_window_start: fetchedOrderRaw.time_window_start ?? null,
+      };
 
+      // ── 3. Fill missing fields IN PARALLEL (not sequential!) ──────
+      const missingFieldsPromises = [];
       if (typeof fetchedOrder.department_id === 'undefined') {
-        try {
-          const { data: depRow } = await supabase
-            .from('orders')
-            .select('department_id')
-            .eq('id', id)
-            .single();
-          if (depRow) {
-            fetchedOrder.department_id = depRow.department_id || null;
-          }
-        } catch {}
+        missingFieldsPromises.push(
+          supabase.from('orders').select('department_id').eq('id', id).single()
+            .then(({ data }) => { if (data) fetchedOrder.department_id = data.department_id || null; })
+            .catch(() => {})
+        );
       }
-
       if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_id === null) {
-        try {
-          const { data: wtRow } = await supabase
-            .from('orders')
-            .select('work_type_id')
-            .eq('id', id)
-            .single();
-          if (wtRow) {
-            fetchedOrder.work_type_id = wtRow.work_type_id ?? null;
-          }
-        } catch {}
+        missingFieldsPromises.push(
+          supabase.from('orders').select('work_type_id').eq('id', id).single()
+            .then(({ data }) => { if (data) fetchedOrder.work_type_id = data.work_type_id ?? null; })
+            .catch(() => {})
+        );
       }
+      if (missingFieldsPromises.length) await Promise.all(missingFieldsPromises);
 
-      // ПЕРЕДЕЛАНО: сохраняем статус "В работе" в БД и перезагружаем заявку
+      // ── 4. Auto-status "Новый"→"В работе" ────────────────────────
       let effectiveOrder = fetchedOrder;
       if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
         try {
-          await updateRequestWithVersion(
-            id,
-            { status: 'В работе' },
-            fetchedOrder?.updated_at || null,
-          );
-
-          await queryClient.invalidateQueries({ queryKey: ['requests'] });
-          await queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
+          await updateRequestWithVersion(id, { status: 'В работе' }, fetchedOrder?.updated_at || null);
+          queryClient.invalidateQueries({ queryKey: ['requests'] });
+          queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
           const refreshed = await ensureRequestPrefetch(queryClient, id);
           effectiveOrder = refreshed || { ...fetchedOrder, status: 'В работе' };
         } catch (e) {
@@ -814,127 +758,113 @@ export default function OrderDetails() {
         }
       }
 
-      const inspectedOrder = await inspectYandexMedia(effectiveOrder);
-      setOrder(inspectedOrder);
-      setWorkTypeId(inspectedOrder.work_type_id ?? null);
+      // ── 5. Resolve media (async, non-blocking for screen) ────────
+      // Show order + form immediately, resolve media in background
+      hydrateFormFields(effectiveOrder);
+      setOrder(effectiveOrder);
+      setWorkTypeId(effectiveOrder.work_type_id ?? null);
       setOrderReady(true);
 
-      InteractionManager.runAfterInteractions(async () => {
-        try {
-          const fresh = await fetchServerPhotos(inspectedOrder.id);
-          if (fresh) {
-            setOrder((prev) => ({
-              ...prev,
-              contract_file: fresh.contract_file,
-              photo_before: fresh.photo_before,
-              photo_after: fresh.photo_after,
-              act_file: fresh.act_file,
-            }));
-          }
+      // Media resolution + sync + secondary data — all in parallel, non-blocking
+      const media = orderMediaRef.current;
+      const bgTasks = [];
 
-          initialFormSnapshotRef.current = makeSnapshotFromOrder(inspectedOrder);
-          const rawDigits = (
-            (inspectedOrder.phone ??
-              inspectedOrder.customer_phone_visible ??
-              inspectedOrder.phone_visible) ||
-            ''
-          ).replace(/\D/g, '');
+      // 5a. Yandex media resolution
+      bgTasks.push(
+        media.resolveOrder(effectiveOrder).then((inspected) => {
+          if (inspected) setOrder(inspected);
+        }).catch(() => {})
+      );
 
-          setTitle(inspectedOrder.title || '');
-          setDescription(inspectedOrder.comment || '');
-          setRegion(inspectedOrder.region || '');
-          setCity(inspectedOrder.city || '');
-          setStreet(inspectedOrder.street || '');
-          setHouse(inspectedOrder.house || '');
-          setCustomerName(
-            inspectedOrder.fio ||
-              inspectedOrder.customer_name ||
-              formatClientNameForOrder(linkedClient) ||
-              '',
-          );
-          setPhone(rawDigits || '');
-          setDepartureDate(
-            inspectedOrder.time_window_start ? new Date(inspectedOrder.time_window_start) : null,
-          );
-          setAssigneeId(inspectedOrder.assigned_to || null);
-          setToFeed(!inspectedOrder.assigned_to);
-          setUrgent(!!inspectedOrder.urgent);
-          setDepartmentId(inspectedOrder.department_id || null);
-          setAmount(
-            inspectedOrder.price !== null && inspectedOrder.price !== undefined
-              ? String(inspectedOrder.price)
-              : '',
-          );
-          setGsm(
-            inspectedOrder.fuel_cost !== null && inspectedOrder.fuel_cost !== undefined
-              ? String(inspectedOrder.fuel_cost)
-              : '',
-          );
-
-          if (inspectedOrder.assigned_to) {
-            const { data: executorProfile } = await supabase
-              .from('profiles')
-              .select('first_name, last_name')
-              .eq('id', inspectedOrder.assigned_to)
-              .single();
-            if (executorProfile) {
-              const full =
-                `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
-              EXECUTOR_NAME_CACHE.set(inspectedOrder.assigned_to, full);
-              setExecutorName(full);
-            } else {
-              setExecutorName(null);
+      // 5b. Storage photo sync — only remove photos missing from storage, never add orphans
+      bgTasks.push(
+        media.syncPhotos(effectiveOrder.id).then((fresh) => {
+          if (!fresh) return;
+          setOrder((prev) => {
+            const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
+            const next = { ...prev };
+            let changed = false;
+            for (const cat of cats) {
+              const dbPhotos = prev[cat] || [];
+              if (!dbPhotos.length) continue;
+              const storageSet = new Set(fresh[cat] || []);
+              const filtered = dbPhotos.filter((url) => storageSet.has(url));
+              if (filtered.length < dbPhotos.length) {
+                next[cat] = filtered;
+                changed = true;
+              }
             }
-          }
-        } catch (e) {
-          console.warn('Interaction error:', e);
-        }
-      });
+            return changed ? next : prev;
+          });
+        }).catch(() => {})
+      );
 
-      const { data: execList } = await supabase
-        .from('profiles')
-        .select('id, first_name, last_name, role')
-        .in('role', ['worker', 'dispatcher', 'admin'])
-        .order('last_name', { ascending: true });
-      setUsers(execList || []);
-
-      let nextDepartments = [];
-      try {
-        const orderCompanyId = fetchedOrder?.company_id || null;
-        let useDepartmentsEnabled = false;
-        if (orderCompanyId) {
-          const { data: companyRow } = await supabase
-            .from('companies')
-            .select('use_departments')
-            .eq('id', orderCompanyId)
-            .maybeSingle();
-          useDepartmentsEnabled = companyRow?.use_departments !== false;
-          setUseDepartmentsFlag(useDepartmentsEnabled);
-          if (useDepartmentsEnabled) {
-            const { data: deptList } = await supabase
-              .from('departments')
-              .select('id, name')
-              .eq('is_enabled', true)
-              .eq('company_id', orderCompanyId)
-              .order('name', { ascending: true });
-            nextDepartments = deptList || [];
-          }
+      // 5c. Executor name
+      if (effectiveOrder.assigned_to) {
+        const cachedName = deriveExecutorNameInstant(effectiveOrder);
+        if (cachedName) {
+          setExecutorName(cachedName);
+        } else {
+          bgTasks.push(
+            supabase.from('profiles').select('first_name, last_name').eq('id', effectiveOrder.assigned_to).single()
+              .then(({ data: executorProfile }) => {
+                if (executorProfile) {
+                  const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
+                  EXECUTOR_NAME_CACHE.set(effectiveOrder.assigned_to, full);
+                  setExecutorName(full);
+                }
+              }).catch(() => {})
+          );
         }
-        if (!orderCompanyId) setUseDepartmentsFlag(false);
-      } catch {}
-      setDepartments(nextDepartments);
+      }
+
+      // 5d. Users list
+      bgTasks.push(
+        supabase.from('profiles').select('id, first_name, last_name, role')
+          .in('role', ['worker', 'dispatcher', 'admin'])
+          .order('last_name', { ascending: true })
+          .then(({ data: execList }) => setUsers(execList || []))
+          .catch(() => {})
+      );
+
+      // 5e. Departments
+      const orderCompanyId = fetchedOrder?.company_id || authCompanyId || null;
+      if (orderCompanyId) {
+        bgTasks.push(
+          (async () => {
+            try {
+              const { data: companyRow } = await supabase.from('companies').select('use_departments').eq('id', orderCompanyId).maybeSingle();
+              const useDepartmentsEnabled = companyRow?.use_departments !== false;
+              setUseDepartmentsFlag(useDepartmentsEnabled);
+              if (useDepartmentsEnabled) {
+                const { data: deptList } = await supabase.from('departments').select('id, name').eq('is_enabled', true).eq('company_id', orderCompanyId).order('name', { ascending: true });
+                setDepartments(deptList || []);
+              }
+            } catch {}
+          })()
+        );
+      } else {
+        setUseDepartmentsFlag(false);
+      }
+
+      // Fire all background tasks in parallel — screen is already visible
+      await Promise.allSettled(bgTasks);
+
+      initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
     } catch (e) {
       console.warn('Fetch data error:', e);
       setOrderReady(true);
     }
   }, [
     id,
-    fetchServerPhotos,
-    inspectYandexMedia,
-    linkedClient,
+    authUserId,
+    authRole,
+    authCompanyId,
+    hydrateFormFields,
     makeSnapshotFromOrder,
     queryClient,
     refetchRequestData,
+    deriveExecutorNameInstant,
   ]);
 
   const canEditByRole = useCallback(
@@ -989,29 +919,15 @@ export default function OrderDetails() {
     [id, canEdit, queryClient, companyId, order?.assigned_to, requestData?.assigned_to],
   );
 
-  const compressAndUpload = useCallback(
-    async (category, source) => {
+  const uploadLocalUri = useCallback(
+    async (category, uri) => {
       try {
-        let result = null;
-        if (source === PHOTO_PICKER_SOURCE.CAMERA) {
-          const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
-          if (!permissionResult.granted) {
-            showToast(t('order_no_camera_permission'));
-            return;
-          }
-          result = await ImagePicker.launchCameraAsync({ quality: PHOTO_PICKER_QUALITY });
-        } else {
-          const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!permissionResult.granted) {
-            showToast(t('order_no_gallery_permission'));
-            return;
-          }
-          result = await ImagePicker.launchImageLibraryAsync({ quality: PHOTO_PICKER_QUALITY });
-        }
-        if (!result || result.canceled) return;
+        const cur = orderRef.current;
+        const orderId = cur?.id;
+        if (!orderId) return false;
 
         const manipulated = await ImageManipulator.manipulateAsync(
-          result.assets[0].uri,
+          uri,
           [{ resize: { width: PHOTO_MAX_WIDTH } }],
           { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
         );
@@ -1020,185 +936,165 @@ export default function OrderDetails() {
         const ab = await resp.arrayBuffer();
         const fileData = new Uint8Array(ab);
 
-        if (mediaProvider === 'yandex_disk') {
-          const data = await yandexDiskMedia('upload', {
-            order_id: order.id,
-            category,
-            file_base64: encodeBase64(ab),
-            mime: PHOTO_MIME_TYPE,
-          });
-          const publicUrl = String(data?.url || '');
-          if (!publicUrl) {
-            showToast(t('order_toast_upload_error'));
-            return;
+        const uploadToAppStorage = async () => {
+          const fileName = `${Date.now()}.${PHOTO_FILE_EXTENSION}`;
+          const path = `orders/${orderId}/${category}/${fileName}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from('orders-photos')
+            .upload(path, fileData, { cacheControl: '3600', upsert: false, contentType: PHOTO_MIME_TYPE });
+
+          if (uploadError) {
+            console.warn('[order-photo-upload] storage upload error', uploadError);
+            return '';
           }
 
-          const updated = [...(order[category] || []), publicUrl];
-          let updateError = null;
+          const { data: publicData } = supabase.storage.from('orders-photos').getPublicUrl(path);
+          return String(publicData?.publicUrl || '');
+        };
+
+        let publicUrl = '';
+        if (effectiveMediaProvider === 'yandex_disk') {
           try {
-            await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
+            const data = await yandexDiskMedia('upload', {
+              order_id: orderId,
+              category,
+              file_base64: encodeBase64(ab),
+              mime: PHOTO_MIME_TYPE,
+            });
+            publicUrl = String(data?.url || '');
+            orderMediaRef.current.removeFromCache(publicUrl);
           } catch (e) {
-            updateError = e;
+            if (!isYandexProviderFailureMessage(e?.message || e)) throw e;
+            setCloudHealth('error');
+            setEffectiveMediaProvider('app_storage');
+            notifyCloudFallback();
+            publicUrl = await uploadToAppStorage();
           }
-
-          if (updateError) {
-            if (updateError?.code === 'CONFLICT' && updateError?.latest) {
-              setOrder(updateError.latest);
-              showToast('Заявка уже обновилась на другом устройстве.');
-              return;
-            }
-            showToast('Ошибка сохранения ссылки');
-            return;
-          }
-
-          setOrder({ ...order, [category]: updated });
-          if (data?.display_url) {
-            setResolvedMediaUrls((prev) => ({ ...prev, [publicUrl]: String(data.display_url) }));
-          }
-          setMediaIssues((prev) => {
-            if (!Object.prototype.hasOwnProperty.call(prev, publicUrl)) return prev;
-            const next = { ...prev };
-            delete next[publicUrl];
-            return next;
-          });
-          showToast(t('order_toast_photo_uploaded'));
-          return;
-        }
-        const fileName = `${Date.now()}.${PHOTO_FILE_EXTENSION}`;
-        const path = `orders/${order.id}/${category}/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('orders-photos')
-          .upload(path, fileData, {
-            cacheControl: '3600',
-            upsert: false,
-            contentType: PHOTO_MIME_TYPE,
-          });
-
-        if (uploadError) {
-          console.warn('[order-photo-upload] storage upload error', {
-            message: uploadError?.message,
-            name: uploadError?.name,
-            statusCode: uploadError?.statusCode,
-            error: uploadError?.error,
-            path,
-            bucket: 'orders-photos',
-            size: fileData?.length,
-          });
-          showToast('Ошибка загрузки фото');
-          return;
+        } else {
+          publicUrl = await uploadToAppStorage();
         }
 
-        const { data: publicData } = supabase.storage.from('orders-photos').getPublicUrl(path);
-        const publicUrl = publicData.publicUrl;
+        if (!publicUrl) {
+          showToast(t('order_toast_upload_error'));
+          return false;
+        }
 
-        const updated = [...(order[category] || []), publicUrl];
-
-        let updateError = null;
+        // Read the LATEST photos from ref (not stale closure) to build the updated array
+        const latest = orderRef.current;
+        const updated = [...(latest[category] || []), publicUrl];
         try {
-          await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
+          await updateRequestWithVersion(orderId, { [category]: updated }, latest?.updated_at || null);
+          setOrder((o) => {
+            // Functional updater: append even if state changed between await and here
+            const fresh = [...(o[category] || [])];
+            if (!fresh.includes(publicUrl)) fresh.push(publicUrl);
+            return { ...o, [category]: fresh };
+          });
+          queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
+            if (!old) return old;
+            const arr = [...(old[category] || [])];
+            if (!arr.includes(publicUrl)) arr.push(publicUrl);
+            return { ...old, [category]: arr };
+          });
+          return true;
         } catch (e) {
-          updateError = e;
-        }
-
-        if (updateError) {
-          if (updateError?.code === 'CONFLICT' && updateError?.latest) {
-            setOrder(updateError.latest);
-            showToast('Заявка уже обновилась на другом устройстве.');
-            return;
-          }
-          showToast('Ошибка сохранения ссылки');
-          return;
-        }
-
-        setOrder({ ...order, [category]: updated });
-        showToast(t('order_toast_photo_uploaded'));
-        if (mediaProvider === 'app_storage') {
-          await syncPhotosFromStorage();
+          return false;
         }
       } catch (e) {
-        console.warn('Upload error:', e);
-        showToast(t('order_toast_upload_error'));
+        console.warn('uploadLocalUri error', e);
+        return false;
       }
     },
-    [order, showToast, syncPhotosFromStorage, t, mediaProvider],
+    [effectiveMediaProvider, notifyCloudFallback, queryClient, showToast, t],
+  );
+
+  const compressAndUploadMultiple = useCallback(
+    async (category, uris = []) => {
+      if (!uris.length) return;
+      // Sequential uploads to avoid DB race conditions (each upload reads latest state via orderRef)
+      let ok = 0;
+      for (const uri of uris) {
+        try {
+          const success = await uploadLocalUri(category, uri);
+          if (success) ok++;
+        } catch (e) {
+          console.warn('[compressAndUploadMultiple] single upload failed', e);
+        }
+      }
+      if (ok > 0) {
+        showToast(
+          ok === 1
+            ? t('order_toast_photo_uploaded')
+            : t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(ok)),
+        );
+      }
+    },
+    [uploadLocalUri, showToast, t],
   );
 
   const removePhoto = useCallback(
-    async (category, index) => {
-      const updated = [...(order[category] || [])];
-      const [removed] = updated.splice(index, 1);
+    (category, index) => {
+      const cur = orderRef.current;
+      const orderId = cur?.id;
+      if (!orderId) return;
 
-      if (mediaProvider === 'yandex_disk') {
-        await yandexDiskMedia('delete', {
-          order_id: order.id,
-          category,
-          url: removed,
+      const photos = cur[category] || [];
+      const removed = photos[index];
+      if (!removed) return;
+
+      // Optimistic: remove from UI immediately
+      const filterOut = (arr) => (arr || []).filter((u) => u !== removed);
+      setOrder((prev) => ({ ...prev, [category]: filterOut(prev[category]) }));
+      orderMediaRef.current.removeFromCache(removed);
+      queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
+        if (!old) return old;
+        return { ...old, [category]: filterOut(old[category]) };
+      });
+
+      // Background: actual deletion
+      const rollback = () => {
+        setOrder((prev) => {
+          const arr = prev[category] || [];
+          if (arr.includes(removed)) return prev;
+          const restored = [...arr];
+          restored.splice(index, 0, removed);
+          return { ...prev, [category]: restored };
         });
-
-        let yError = null;
-        try {
-          await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
-        } catch (e) {
-          yError = e;
-        }
-
-        if (!yError) {
-          setOrder({ ...order, [category]: updated });
-          setResolvedMediaUrls((prev) => {
-            if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
-            const next = { ...prev };
-            delete next[removed];
-            return next;
-          });
-          setMediaIssues((prev) => {
-            if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
-            const next = { ...prev };
-            delete next[removed];
-            return next;
-          });
-          showToast(t('order_toast_photo_deleted'));
-        } else {
-          showToast(t('order_toast_delete_error'));
-        }
-        return;
-      }
-
-      const relativePath = extractStorageObjectPath(removed, 'orders-photos');
-      if (relativePath) {
-        await supabase.storage.from('orders-photos').remove([relativePath]);
-      }
-
-      let error = null;
-      try {
-        await updateRequestWithVersion(order.id, { [category]: updated }, order?.updated_at || null);
-      } catch (e) {
-        error = e;
-      }
-
-      if (!error) {
-        setOrder({ ...order, [category]: updated });
-        setResolvedMediaUrls((prev) => {
-          if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
-          const next = { ...prev };
-          delete next[removed];
-          return next;
+        queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
+          if (!old) return old;
+          const arr = old[category] || [];
+          if (arr.includes(removed)) return old;
+          const restored = [...arr];
+          restored.splice(index, 0, removed);
+          return { ...old, [category]: restored };
         });
-        setMediaIssues((prev) => {
-          if (!Object.prototype.hasOwnProperty.call(prev, removed)) return prev;
-          const next = { ...prev };
-          delete next[removed];
-          return next;
-        });
-        showToast(t('order_toast_photo_deleted'));
-        if (mediaProvider === 'app_storage') {
-          await syncPhotosFromStorage();
-        }
-      } else {
         showToast(t('order_toast_delete_error'));
-      }
+      };
+
+      (async () => {
+        try {
+          const updated = filterOut(cur[category]);
+
+          if (isYandexMediaUrl(removed) && mediaProvider === 'yandex_disk') {
+            await yandexDiskMedia('delete', { order_id: orderId, category, url: removed });
+            await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
+          } else {
+            const relativePath = extractStorageObjectPath(removed, 'orders-photos');
+            if (relativePath) {
+              supabase.storage.from('orders-photos').remove([relativePath]).catch((e) =>
+                console.warn('[removePhoto] storage removal failed:', e),
+              );
+            }
+            await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
+          }
+        } catch (e) {
+          console.warn('[removePhoto] background deletion failed:', e);
+          rollback();
+        }
+      })();
     },
-    [order, showToast, syncPhotosFromStorage, t, mediaProvider],
+    [mediaProvider, queryClient, showToast, t],
   );
 
   const canFinishOrder = useCallback(() => {
@@ -1347,10 +1243,11 @@ export default function OrderDetails() {
     if (!departureDate) return showWarning(t('order_validation_date_required'));
     if (!assigneeId && !toFeed) return showWarning(t('order_validation_executor_required'));
 
-    const rawPhone = phone.replace(/\D/g, '');
-    if (rawPhone.length !== 11 || rawPhone[0] !== '7' || rawPhone[1] !== '9') {
+    if (!isValidOptionalMobilePhone(phone)) {
       return showWarning(t('order_validation_phone_format'));
     }
+    const normalizedPhone = toE164MobilePhoneOrNull(phone);
+    if (!normalizedPhone) return showWarning(t('order_validation_phone_format'));
 
     const nextStatus = toFeed
       ? t('order_status_in_feed')
@@ -1382,7 +1279,7 @@ export default function OrderDetails() {
       await updateClientMutation.mutateAsync({
         id: clientIdForContacts,
         patch: {
-          phone: `+7${rawPhone.slice(1)}`,
+          phone: normalizedPhone,
         },
       });
       data = await updateRequestWithVersion(targetId, payload, order?.updated_at || null);
@@ -1508,10 +1405,11 @@ export default function OrderDetails() {
   const deleteOrderCompletely = useCallback(async () => {
     try {
       const categories = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-      if (mediaProvider === 'yandex_disk') {
-        for (const cat of categories) {
-          const urls = Array.isArray(order?.[cat]) ? order[cat] : [];
-          for (const url of urls) {
+      const bucket = 'orders-photos';
+      for (const cat of categories) {
+        const urls = Array.isArray(order?.[cat]) ? order[cat] : [];
+        for (const url of urls) {
+          if (isYandexMediaUrl(url) && mediaProvider === 'yandex_disk') {
             try {
               await yandexDiskMedia('delete', {
                 order_id: order.id,
@@ -1521,29 +1419,22 @@ export default function OrderDetails() {
             } catch {
               // ignore cleanup errors on remote provider during hard delete
             }
+            continue;
           }
-        }
-      } else {
-        const bucket = 'orders-photos';
-        for (const cat of categories) {
-          const listRes = await supabase.storage.from(bucket).list(`orders/${order.id}/${cat}`);
-          const files = listRes?.data || [];
-          if (files.length) {
-            const paths = files.map((f) => `orders/${order.id}/${cat}/${f.name}`);
-            await supabase.storage.from(bucket).remove(paths);
-          }
-        }
 
-        const allUrls = []
-          .concat(order?.contract_file || [])
-          .concat(order?.photo_before || [])
-          .concat(order?.photo_after || [])
-          .concat(order?.act_file || []);
-        const relPaths = Array.from(
-          new Set(allUrls.map((u) => extractStorageObjectPath(u, 'orders-photos')).filter(Boolean)),
-        );
-        if (relPaths.length) {
-          await supabase.storage.from(bucket).remove(relPaths);
+          const relativePath = extractStorageObjectPath(url, bucket);
+          if (relativePath) {
+            await supabase.storage.from(bucket).remove([relativePath]).catch(() => {});
+          }
+        }
+      }
+
+      for (const cat of categories) {
+        const listRes = await supabase.storage.from(bucket).list(`orders/${order.id}/${cat}`);
+        const files = listRes?.data || [];
+        if (files.length) {
+          const paths = files.map((f) => `orders/${order.id}/${cat}/${f.name}`);
+          await supabase.storage.from(bucket).remove(paths).catch(() => {});
         }
       }
 
@@ -1562,34 +1453,42 @@ export default function OrderDetails() {
         return;
       }
 
+      const deletedOrderClientId = String(order?.client_id || resolvedClientId || '').trim();
+      if (deletedOrderClientId) {
+        queryClient.invalidateQueries({
+          queryKey: ['clients', 'delete-blockers', deletedOrderClientId],
+        });
+      }
+      queryClient.invalidateQueries({
+        queryKey: ['clients', 'delete-blockers'],
+      });
+
       showToast(t('order_toast_order_deleted'));
       setDeleteModalVisible(false);
-      if (navigation?.canGoBack?.()) navigation.goBack();
-      else router.replace('/orders/orders');
+      goBackSmart(
+        navigation,
+        router,
+        backTargetPath ? { pathname: backTargetPath, params: returnParams } : null,
+        '/orders',
+      );
     } catch (e) {
       console.warn('Delete error:', e);
       showToast(t('order_toast_delete_error'));
     }
-  }, [order, navigation, router, showToast, t, mediaProvider]);
+  }, [order, resolvedClientId, queryClient, navigation, router, showToast, t, mediaProvider, backTargetPath, returnParams]);
 
   const goBack = useCallback(() => {
     if (editMode) {
       requestCloseEdit();
       return;
     }
-
-    if (returnTo && !isNavigatingRef.current && backTargetPath !== pathname) {
-      isNavigatingRef.current = true;
-      router.replace({ pathname: backTargetPath, params: returnParams });
-      return;
-    }
-
-    if (navigation?.canGoBack?.()) {
-      navigation.goBack();
-    } else {
-      router.replace('/orders/my-orders');
-    }
-  }, [editMode, returnTo, backTargetPath, pathname, router, returnParams, navigation, requestCloseEdit]);
+    goBackSmart(
+      navigation,
+      router,
+      returnTo && backTargetPath !== pathname ? { pathname: backTargetPath, params: returnParams } : null,
+      '/orders/my-orders',
+    );
+  }, [editMode, returnTo, backTargetPath, pathname, navigation, router, returnParams, requestCloseEdit]);
 
   const requestCloseEdit = useCallback(() => {
     if (formIsDirty()) {
@@ -1618,107 +1517,22 @@ export default function OrderDetails() {
     } catch {}
   }, []);
 
-  const resetZoom = useCallback(() => {
-    scale.value = withTiming(1, { duration: 180 });
-    translateX.value = withTiming(0, { duration: 180 });
-    translateY.value = withTiming(0, { duration: 180 });
-  }, [scale, translateX, translateY]);
-
-  const closeViewer = useCallback(() => {
-    setViewerVisible(false);
-    scale.value = 1;
-    translateX.value = 0;
-    translateY.value = 0;
-    bgOpacity.value = 1;
-  }, [scale, translateX, translateY, bgOpacity]);
-
-  const onDoubleTap = useCallback(
-    (e) => {
-      const { x, y } = e.nativeEvent;
-      const nextScale = scale.value > 1 ? 1 : 2.5;
-      if (nextScale === 1) {
-        scale.value = withTiming(1, { duration: 180 });
-        translateX.value = withTiming(0, { duration: 180 });
-        translateY.value = withTiming(0, { duration: 180 });
-      } else {
-        const dx = (SCREEN_W / 2 - x) * (nextScale - 1);
-        const dy = (SCREEN_H / 2 - y) * (nextScale - 1);
-        scale.value = withTiming(nextScale, { duration: 200 });
-        translateX.value = withTiming(dx, { duration: 200 });
-        translateY.value = withTiming(dy, { duration: 200 });
-      }
-    },
-    [scale, translateX, translateY],
-  );
-
-  const onVerticalPan = useCallback(
-    ({ nativeEvent }) => {
-      if (scale.value > 1.01) return;
-      const { translationY, velocityY, state } = nativeEvent;
-      translateY.value = translationY;
-      bgOpacity.value = 1 - Math.min(Math.abs(translationY) / 300, 0.8);
-
-      if (state === State.END || state === State.CANCELLED || state === State.FAILED) {
-        const shouldClose = Math.abs(translationY) > 120 || Math.abs(velocityY) > 600;
-        if (shouldClose) {
-          bgOpacity.value = withTiming(0, { duration: 160 }, () => runOnJS(closeViewer)());
-        } else {
-          translateY.value = withSpring(0);
-          bgOpacity.value = withTiming(1, { duration: 160 });
-        }
-      }
-    },
-    [scale, bgOpacity, translateY, closeViewer],
-  );
-
+  // ─── Photo viewer (uses FullscreenImageViewer) ────────────────────
   const openViewer = useCallback(
     (photos, index) => {
-      const prepared = Array.isArray(photos) ? photos.map((u) => getPhotoDisplayUrl(u)).filter(Boolean) : [];
+      const prepared = Array.isArray(photos)
+        ? photos.map((u) => orderMedia.getDisplayUrl(u)).filter(Boolean)
+        : [];
       setViewerPhotos(prepared);
       setViewerIndex(index);
       setViewerVisible(true);
-      scale.value = 1;
-      translateX.value = 0;
-      translateY.value = 0;
-      bgOpacity.value = 1;
     },
-    [bgOpacity, getPhotoDisplayUrl, scale, translateX, translateY],
+    [orderMedia],
   );
 
-  const onPinchGestureEvent = useCallback(
-    (e) => {
-      const s = e?.nativeEvent?.scale ?? 1;
-      scale.value = s;
-    },
-    [scale],
-  );
-
-  const onPinchStateChange = useCallback(
-    (e) => {
-      const st = e?.nativeEvent?.state;
-      if (st === State.END || st === State.CANCELLED || st === State.FAILED) {
-        const next = Math.max(1, Math.min(3, scale.value));
-        scale.value = withTiming(next, { duration: 150 });
-        if (next === 1) {
-          translateX.value = withTiming(0, { duration: 150 });
-          translateY.value = withTiming(0, { duration: 150 });
-        }
-      }
-    },
-    [scale, translateX, translateY],
-  );
-
-  const animatedImageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-      { scale: scale.value },
-    ],
-  }));
-
-  const animatedBackdropStyle = useAnimatedStyle(() => ({
-    opacity: bgOpacity.value,
-  }));
+  const closeViewer = useCallback(() => {
+    setViewerVisible(false);
+  }, []);
 
   const getStatusMeta = useCallback(
     (status) => {
@@ -1759,183 +1573,21 @@ export default function OrderDetails() {
     [theme],
   );
 
-  const renderPhotoRow = useCallback(
-    (titleText, category) => {
-      const photos = order[category] || [];
-      return (
-        <View>
-          <SectionHeader topSpacing="lg">{titleText}</SectionHeader>
-          <Card>
-            {canAddAnyPhotos ? (
-              <Pressable
-              style={({ pressed }) => [
-                {
-                  backgroundColor:
-                    theme.colors.chipBg || theme.colors.inputBg || theme.colors.surface,
-                  paddingVertical: theme.spacing?.xs || 6,
-                  paddingHorizontal: theme.spacing?.md || 12,
-                  borderRadius: theme.radii?.pill || 999,
-                  alignSelf: 'flex-start',
-                  marginBottom: theme.spacing?.sm || 8,
-                },
-                pressed && { opacity: 0.8 },
-              ]}
-              onPress={() => {
-                if (!canAddAnyPhotos) {
-                  showToast(t('order_photo_add_not_allowed'));
-                  return;
-                }
-                if (photoSourceItems.length === 1) {
-                  compressAndUpload(category, photoSourceItems[0].id);
-                  return;
-                }
-                setPhotoSourceModal({ visible: true, category });
-              }}
-            >
-              <Text
-                style={{
-                  color: theme.colors.primary,
-                  fontWeight: theme.typography?.weight?.semibold || '600',
-                  fontSize: theme.typography?.sizes?.xs || 13,
-                }}
-              >
-                {t('order_details_add_photo')}
-              </Text>
-              </Pressable>
-            ) : null}
+  // ─── Photo permissions (must be before handlePhotoRowAdd!) ────────
+  const canAddCameraPhotos = has('canAddCameraPhotos');
+  const canAddGalleryPhotos = has('canAddGalleryPhotos');
+  const canAddAnyPhotos = canAddCameraPhotos || canAddGalleryPhotos;
 
-            {!canViewOrderPhotos ? (
-              <Text style={[base.value, { color: theme.colors.textSecondary }]}>
-                {t('order_photo_view_not_allowed')}
-              </Text>
-            ) : (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: theme.spacing?.sm || 8 }}
-              >
-              {photos.map((url, index) => (
-                <View
-                  key={index}
-                  style={{ position: 'relative', marginRight: theme.spacing?.md || 10 }}
-                >
-                  {(() => {
-                    const displayUrl = getPhotoDisplayUrl(url);
-                    const issueMessage = getMediaIssueMessage(url);
-                    return (
-                  <Pressable
-                    style={({ pressed }) => [
-                      {
-                        borderRadius: theme.radii?.lg || 12,
-                        overflow: 'hidden',
-                        ...(Platform.OS === 'ios'
-                          ? theme.shadows?.card?.ios || {}
-                          : theme.shadows?.card?.android || {}),
-                      },
-                      pressed && { transform: [{ scale: 0.98 }] },
-                    ]}
-                    onPress={() => {
-                      if (!issueMessage) openViewer(photos, index);
-                    }}
-                  >
-                    {issueMessage ? (
-                      <View style={styles.photoUnavailableTile}>
-                        <Text style={styles.photoUnavailableTitle}>{t('order_photo_unavailable')}</Text>
-                        <Text style={styles.photoUnavailableReason}>{issueMessage}</Text>
-                      </View>
-                    ) : (
-                      <View style={styles.photoTileFrame}>
-                        <Image
-                          source={{ uri: displayUrl }}
-                          style={{ width: 116, height: 116, borderRadius: theme.radii?.lg || 12 }}
-                          onLoadStart={() => setPhotoLoading(url, true)}
-                          onLoadEnd={() => setPhotoLoading(url, false)}
-                          onError={() => {
-                            setPhotoLoading(url, false);
-                            (async () => {
-                              let handled = false;
-                              if (mediaProvider === 'yandex_disk' && isLikelyYandexLink(url)) {
-                                handled = await inspectSingleMedia(category, url);
-                              }
-                              if (!handled) {
-                                setMediaIssues((prev) => ({
-                                  ...prev,
-                                  [url]: {
-                                    code: 'client_network',
-                                    message: t('order_photo_issue_client_network'),
-                                  },
-                                }));
-                              }
-                            })();
-                          }}
-                        />
-                        {photoLoadingMap[url] ? (
-                          <View style={styles.photoLoadingOverlay}>
-                            <ActivityIndicator color={theme.colors.primary} size="small" />
-                          </View>
-                        ) : null}
-                      </View>
-                    )}
-                  </Pressable>
-                    );
-                  })()}
-                  {canAddAnyPhotos ? (
-                  <Pressable
-                    style={{
-                      position: 'absolute',
-                      top: theme.spacing?.xs || 4,
-                      right: theme.spacing?.xs || 4,
-                      backgroundColor: theme.colors.danger,
-                      width: 24,
-                      height: 24,
-                      borderRadius: theme.radii?.lg || 12,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 5,
-                    }}
-                    onPress={() => removePhoto(category, index)}
-                  >
-                    <Text
-                      style={{
-                        color: theme.colors.onPrimary,
-                        fontWeight: theme.typography?.weight?.bold || '700',
-                        fontSize: theme.typography?.sizes?.md || 16,
-                        lineHeight: 18,
-                      }}
-                    >
-                      ×
-                    </Text>
-                  </Pressable>
-                  ) : null}
-                </View>
-              ))}
-              </ScrollView>
-            )}
-          </Card>
-        </View>
-      );
+  // ─── Photo row add handler ────────────────────────────────────────
+  const handlePhotoRowAdd = useCallback(
+    (category) => {
+      if (!canAddAnyPhotos) {
+        showToast(t('order_photo_add_not_allowed'));
+        return;
+      }
+      setOrderPhotosModal({ visible: true, category });
     },
-    [
-      order,
-      base.value,
-      canAddAnyPhotos,
-      canViewOrderPhotos,
-      compressAndUpload,
-      getMediaIssueMessage,
-      getPhotoDisplayUrl,
-      inspectSingleMedia,
-      isLikelyYandexLink,
-      mediaProvider,
-      openViewer,
-      photoSourceItems,
-      photoLoadingMap,
-      removePhoto,
-      setPhotoLoading,
-      showToast,
-      styles,
-      t,
-      theme,
-    ],
+    [canAddAnyPhotos, showToast, t],
   );
 
   useEffect(() => {
@@ -1975,51 +1627,55 @@ export default function OrderDetails() {
     applyNavBar();
   }, [applyNavBar]);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
+  const handleUploadUri = useCallback(
+    async (category, uri) => {
+      const id = `local:${Date.now()}`;
+      setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), { id, uri, pending: true }] }));
       try {
-        const data = await fetchFormSchema('edit');
-        if (mounted && data && Array.isArray(data.fields)) {
-          setSchemaEdit({
-            ...data,
-            fields: data.fields.filter(
-              (field) => !REMOVED_ORDER_OBJECT_FIELDS.has(String(field?.field_key || '')),
-            ),
-          });
-        }
-      } catch {
-        // silent fallback
+        await uploadLocalUri(category, uri);
+      } catch (e) {
+        console.warn('handleUploadUri error', e);
+      } finally {
+        setLocalPendingMap((p) => ({ ...(p || {}), [category]: ((p && p[category]) || []).filter((x) => x.uri !== uri) }));
       }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    },
+    [uploadLocalUri],
+  );
+
+  const handleUploadMultiple = useCallback(
+    async (category, uris = []) => {
+      const ids = uris.map((u) => ({ id: `local:${Date.now()}_${Math.random()}`, uri: u, pending: true }));
+      setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), ...ids] }));
+      try {
+        await compressAndUploadMultiple(category, uris);
+      } catch (e) {
+        console.warn('handleUploadMultiple error', e);
+      } finally {
+        setLocalPendingMap((p) => ({ ...(p || {}), [category]: ((p && p[category]) || []).filter((x) => !ids.find((y) => y.id === x.id)) }));
+      }
+    },
+    [compressAndUploadMultiple],
+  );
+
+  useEffect(() => {
+    const fields = toLegacySchemaFields(orderFieldSettings).filter(
+      (field) => !REMOVED_ORDER_OBJECT_FIELDS.has(String(field?.field_key || '')),
+    );
+    setSchemaEdit({ context: 'edit', fields });
+  }, [orderFieldSettings]);
 
   useEffect(() => {
     fetchData();
   }, [id, fetchData]);
 
   useEffect(() => {
-    orderForInspectRef.current = order || null;
-  }, [order]);
-
-  useEffect(() => {
-    const snapshot = orderForInspectRef.current;
-    if (mediaProvider === 'yandex_disk' && snapshot?.id) {
-      inspectYandexMedia(snapshot)
-        .then((next) => {
-          if (next) {
-            setOrder(next);
-          }
-        })
-        .catch(() => {});
-      return;
+    // Clear media caches only when switching away from yandex_disk
+    if (mediaProvider !== 'yandex_disk') {
+      orderMedia.clearCaches();
     }
-    setResolvedMediaUrls({});
-    setMediaIssues({});
-  }, [inspectYandexMedia, mediaProvider, order?.id, order?.updated_at]);
+    // Note: resolveOrder is handled by fetchData and the proactive effect in useOrderMedia
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mediaProvider]);
 
   useEffect(() => {
     let alive = true;
@@ -2111,10 +1767,15 @@ export default function OrderDetails() {
         return;
       }
 
-      if (returnTo && !isNavigatingRef.current && backTargetPath !== pathname) {
+      if (
+        returnTo &&
+        !isNavigatingRef.current &&
+        backTargetPath !== pathname &&
+        !(typeof navigation?.canGoBack === 'function' && navigation.canGoBack())
+      ) {
         e.preventDefault();
         isNavigatingRef.current = true;
-        router.replace({ pathname: backTargetPath, params: returnParams });
+        dismissToRoute(router, { pathname: backTargetPath, params: returnParams });
       }
     });
     return sub;
@@ -2178,10 +1839,6 @@ export default function OrderDetails() {
     }, [editMode, requestCloseEdit, goBack]),
   );
 
-  useEffect(() => {
-    resetZoom();
-  }, [viewerIndex, resetZoom]);
-
   // Короткая версия для заголовка native (обязательно строка — чтобы не ломать Screen/header)
   const fullTitle = order?.title || t('routes.orders/[id]', 'routes.orders/[id]');
   const shortTitle = useMemo(() => {
@@ -2199,8 +1856,66 @@ export default function OrderDetails() {
   const customerDisplayName = useMemo(() => {
     const liveClientName = formatClientNameForOrder(linkedClient);
     if (liveClientName) return liveClientName;
-    return t('common_dash');
-  }, [linkedClient, t]);
+    return '';
+  }, [linkedClient]);
+  const orderAddress = useMemo(() => extractOrderAddress(order), [order]);
+  const shortOrderAddress = useMemo(() => buildOrderAddressShort(orderAddress), [orderAddress]);
+  const orderAddressForNavigator = useMemo(() => buildAddressForNavigator(orderAddress), [orderAddress]);
+  const orderAddressItems = useMemo(
+    () =>
+      [
+        [t('order_field_country'), orderAddress.country],
+        [t('order_field_region'), orderAddress.region],
+        [t('order_field_district'), orderAddress.district],
+        [t('order_field_city'), orderAddress.city],
+        [t('order_field_street'), orderAddress.street],
+        [t('order_field_house'), orderAddress.house],
+        [t('order_field_office'), orderAddress.office],
+        [t('order_field_floor'), orderAddress.floor],
+        [t('order_field_entrance'), orderAddress.entrance],
+        [t('order_field_apartment'), orderAddress.apartment],
+        [t('order_field_postal_code'), orderAddress.postal_code],
+        [t('order_field_entrance_info'), orderAddress.entrance_info],
+        [t('order_field_parking_notes'), orderAddress.parking_notes],
+        [t('order_field_geo_lat'), orderAddress.geo_lat],
+        [t('order_field_geo_lng'), orderAddress.geo_lng],
+      ]
+        .filter(([label]) => {
+          const keyMap = {
+            [t('order_field_country')]: 'country',
+            [t('order_field_region')]: 'region',
+            [t('order_field_district')]: 'district',
+            [t('order_field_city')]: 'city',
+            [t('order_field_street')]: 'street',
+            [t('order_field_house')]: 'house',
+            [t('order_field_office')]: 'office',
+            [t('order_field_floor')]: 'floor',
+            [t('order_field_entrance')]: 'entrance',
+            [t('order_field_apartment')]: 'apartment',
+            [t('order_field_postal_code')]: 'postal_code',
+            [t('order_field_entrance_info')]: 'entrance_info',
+            [t('order_field_parking_notes')]: 'parking_notes',
+            [t('order_field_geo_lat')]: 'geo_lat',
+            [t('order_field_geo_lng')]: 'geo_lng',
+          };
+          const fieldKey = keyMap[label];
+          return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled !== false : true;
+        })
+        .filter(([, value]) => String(value || '').trim().length > 0)
+        .map(([label, value]) => ({ label, value: String(value || '').trim() })),
+    [objectFieldsByKey, orderAddress, t],
+  );
+  const normalizedAddressMode = useMemo(
+    () => normalizeOrderAddressMode(order?.address_mode),
+    [order?.address_mode],
+  );
+  const isObjectDeleted = normalizedAddressMode === 'object' && !linkedObjectId;
+  const objectRowValue = useMemo(() => {
+    if (linkedObjectId) return String(order?.object_name || '').trim();
+    if (isObjectDeleted) return t('objects_deleted');
+    if (normalizedAddressMode === 'custom') return t('order_address_custom_mode');
+    return '';
+  }, [isObjectDeleted, linkedObjectId, normalizedAddressMode, order?.object_name, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2235,12 +1950,24 @@ export default function OrderDetails() {
 
   const onOpenClient = useCallback(() => {
     if (!linkedClientId || !canViewClients) return;
-    router.push(`/clients/${linkedClientId}`);
-  }, [canViewClients, linkedClientId, router]);
+    router.push({
+      pathname: `/clients/${linkedClientId}`,
+      params: {
+        returnTo: `/orders/${order?.id}`,
+        returnParams: JSON.stringify({}),
+      },
+    });
+  }, [canViewClients, linkedClientId, order?.id, router]);
   const onOpenObject = useCallback(() => {
     if (!linkedObjectId || !canViewClients) return;
-    router.push(`/objects/${linkedObjectId}`);
-  }, [canViewClients, linkedObjectId, router]);
+    router.push({
+      pathname: `/objects/${linkedObjectId}`,
+      params: {
+        returnTo: `/orders/${order?.id}`,
+        returnParams: JSON.stringify({}),
+      },
+    });
+  }, [canViewClients, linkedObjectId, order?.id, router]);
 
   if (permsLoading || loading || !order) {
     return (
@@ -2259,23 +1986,11 @@ export default function OrderDetails() {
     isFree &&
     !isReadOnlyBySubscription &&
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
-  const canAddCameraPhotos = has('canAddCameraPhotos');
-  const canAddGalleryPhotos = has('canAddGalleryPhotos');
-  const canViewOrderPhotos = has('canViewOrderPhotos');
   const canViewOrderAmount = has('canViewOrderAmount');
   const canEditOrderAmount = canViewOrderAmount && has('canEditOrderAmount');
   const canViewOrderFuelCost = has('canViewOrderFuelCost');
   const canEditOrderFuelCost = canViewOrderFuelCost && has('canEditOrderFuelCost');
   const canViewFinanceSection = canViewOrderAmount || canViewOrderFuelCost;
-  const canAddAnyPhotos = canAddCameraPhotos || canAddGalleryPhotos;
-  const photoSourceItems = [
-    canAddCameraPhotos
-      ? { id: PHOTO_PICKER_SOURCE.CAMERA, label: t('order_photo_source_camera') }
-      : null,
-    canAddGalleryPhotos
-      ? { id: PHOTO_PICKER_SOURCE.GALLERY, label: t('order_photo_source_gallery') }
-      : null,
-  ].filter(Boolean);
 
   return (
     <>
@@ -2285,6 +2000,7 @@ export default function OrderDetails() {
       >
       <AppHeader
         back
+        onBackPress={goBack}
         options={{
           headerTitleAlign: 'left',
           title: shortTitle,
@@ -2369,20 +2085,36 @@ export default function OrderDetails() {
               </View>
               <View style={base.sep} />
 
-              <View style={base.row}>
+              {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? (
+              <Pressable
+                style={base.row}
+                onPress={() => {
+                  const assignee = order?.assigned_to || null;
+                  if (!assignee) return;
+                  // allow opening own profile always; others require permission
+                  const allowed = String(assignee) === String(auth.user?.id) || has('canViewClients');
+                  if (!allowed) return;
+                  router.push(`/users/${assignee}`);
+                }}
+                disabled={!order?.assigned_to || !(String(order?.assigned_to) === String(auth.user?.id) || has('canViewClients'))}
+              >
                 <Text style={base.label}>{t('order_details_executor')}</Text>
                 <View style={base.rightWrap}>
                   {deriveExecutorNameInstant(order) || executorName ? (
-                    <Text style={base.value}>{deriveExecutorNameInstant(order) || executorName}</Text>
+                    <Text style={[base.value, order?.assigned_to && (String(order?.assigned_to) === String(auth.user?.id) || has('canViewClients')) ? styles.link : null]}>
+                      {deriveExecutorNameInstant(order) || executorName}
+                    </Text>
                   ) : (
                     <Text style={[base.value, { color: theme.colors.textSecondary }]}>
                       {t('order_details_not_assigned')}
                     </Text>
                   )}
                 </View>
-              </View>
-              <View style={base.sep} />
+              </Pressable>
+              ) : null}
+              {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
+              {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? (
               <View style={base.row}>
                 <Text style={base.label}>{t('order_details_work_type')}</Text>
                 <View style={base.rightWrap}>
@@ -2391,8 +2123,10 @@ export default function OrderDetails() {
                   </Text>
                 </View>
               </View>
-              <View style={base.sep} />
+              ) : null}
+              {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
+              {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? (
               <Pressable
                 style={base.row}
                 onPress={() => {
@@ -2431,18 +2165,22 @@ export default function OrderDetails() {
                   </Text>
                 </View>
               </Pressable>
-              <View style={base.sep} />
+              ) : null}
+              {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
+              {orderFieldsByKey.get('comment')?.isEnabled !== false ? (
               <ExpandableTextRow
                 label={t('order_details_description')}
                 value={descriptionValue || t('order_details_description_empty')}
               />
+              ) : null}
             </Card>
 
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
               {t('order_details_object_data')}
             </SectionHeader>
             <Card paddedXOnly>
+              {orderFieldsByKey.get('client_id')?.isEnabled !== false ? (
               <Pressable style={base.row} onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
                 <Text style={base.label}>{t('order_details_customer')}</Text>
                 <View style={base.rightWrap}>
@@ -2451,35 +2189,69 @@ export default function OrderDetails() {
                   </Text>
                 </View>
               </Pressable>
-              <View style={base.sep} />
+              ) : null}
+              {orderFieldsByKey.get('client_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
+              {orderFieldsByKey.get('object_id')?.isEnabled !== false ? (
               <Pressable style={base.row} onPress={onOpenObject} disabled={!linkedObjectId || !canViewClients}>
                 <Text style={base.label}>{t('routes_objects_object')}</Text>
                 <View style={base.rightWrap}>
-                  <Text style={[base.value, linkedObjectId && canViewClients ? styles.link : null]}>
-                    {[order?.object_name, order?.object_summary].filter(Boolean).join(' - ') ||
-                      t('common_dash')}
+                  <Text
+                    style={[
+                      base.value,
+                      linkedObjectId && canViewClients ? styles.link : null,
+                      isObjectDeleted ? styles.deletedObjectText : null,
+                    ]}
+                  >
+                    {objectRowValue}
                   </Text>
                 </View>
               </Pressable>
-              <View style={base.sep} />
+              ) : null}
+              {(orderFieldsByKey.get('object_id')?.isEnabled !== false && orderAddressItems.length > 0) ? <View style={base.sep} /> : null}
+              {orderAddressItems.length > 0 ? (
+              <ExpandableTextRow
+                label={t('order_details_address')}
+                value={orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')}
+                collapsedValue={buildOrderAddressDisplay(orderAddress) || shortOrderAddress || t('order_details_address_not_specified')}
+                expandedKeyValueItems={orderAddressItems}
+                expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
+                collapsedValueStyle={styles.link}
+                onValuePress={
+                  orderAddressForNavigator
+                    ? () => {
+                        openAddressInYandex(orderAddressForNavigator);
+                      }
+                    : null
+                }
+                onCollapsedPress={
+                  orderAddressForNavigator
+                    ? () => {
+                        openAddressInYandex(orderAddressForNavigator);
+                      }
+                    : null
+                }
+                forceShow
+              />
+              ) : null}
+              {(orderAddressItems.length > 0 || orderFieldsByKey.get('object_id')?.isEnabled !== false) && (orderFieldsByKey.get('secondary_phone')?.isEnabled !== false || orderFieldsByKey.get('contact_email')?.isEnabled !== false) ? <View style={base.sep} /> : null}
+              {orderFieldsByKey.get('secondary_phone')?.isEnabled !== false ? (
               <LabelValueRow
                 label={t('order_field_secondary_phone')}
                 value={order?.secondary_phone}
               />
-              <View style={base.sep} />
-              <LabelValueRow label={t('order_field_contact_email')} value={order?.contact_email} />
-              <View style={base.sep} />
-              <LabelValueRow label={t('order_field_contact_pref')} value={order?.contact_pref} />
+              ) : null}
+              {orderFieldsByKey.get('secondary_phone')?.isEnabled !== false && orderFieldsByKey.get('contact_email')?.isEnabled !== false ? <View style={base.sep} /> : null}
+              {orderFieldsByKey.get('contact_email')?.isEnabled !== false ? <LabelValueRow label={t('order_field_contact_email')} value={order?.contact_email} /> : null}
             </Card>
 
-            {canViewFinanceSection ? (
+            {canViewFinanceSection && (orderFieldsByKey.get('price')?.isEnabled !== false || orderFieldsByKey.get('fuel_cost')?.isEnabled !== false) ? (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_finance_data')}
                 </SectionHeader>
                 <Card paddedXOnly>
-                  {canViewOrderAmount ? (
+                  {canViewOrderAmount && orderFieldsByKey.get('price')?.isEnabled !== false ? (
                     <>
                       <LabelValueRow
                         label={t('order_details_amount')}
@@ -2505,9 +2277,9 @@ export default function OrderDetails() {
                     </>
                   ) : null}
 
-                  {canViewOrderAmount && canViewOrderFuelCost ? <View style={base.sep} /> : null}
+                  {canViewOrderAmount && orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderFuelCost && orderFieldsByKey.get('fuel_cost')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
-                  {canViewOrderFuelCost ? (
+                  {canViewOrderFuelCost && orderFieldsByKey.get('fuel_cost')?.isEnabled !== false ? (
                     <>
                       <View style={base.row}>
                         <Text style={base.label}>{t('order_details_fuel')}</Text>
@@ -2540,10 +2312,66 @@ export default function OrderDetails() {
               </>
             ) : null}
 
-            {!isFree && renderPhotoRow(t('order_details_contract_photo'), 'contract_file')}
-            {!isFree && renderPhotoRow(t('order_details_photo_before'), 'photo_before')}
-            {!isFree && renderPhotoRow(t('order_details_photo_after'), 'photo_after')}
-            {!isFree && renderPhotoRow(t('order_details_act'), 'act_file')}
+            {!isFree && (
+              <>
+                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                  {t('order_details_photos_section', 'Фото')}
+                </SectionHeader>
+                {cloudFallbackActive ? (
+                  <Text style={styles.cloudWarningText}>
+                    {isAdminUser
+                      ? `${t('order_cloud_fallback_admin_notice')} (${cloudHealthLabel})`
+                      : t('order_cloud_fallback_worker_notice')}
+                  </Text>
+                ) : null}
+                <Card paddedXOnly>
+                  {[
+                    { key: 'contract_file', label: t('order_details_contract_photo') },
+                    { key: 'photo_before', label: t('order_details_photo_before') },
+                    { key: 'photo_after', label: t('order_details_photo_after') },
+                    { key: 'act_file', label: t('order_details_act') },
+                  ].map((row, idx, arr) => {
+                    const count = (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length;
+                    return (
+                      <View key={row.key}>
+                        {idx > 0 && <View style={base.sep} />}
+                        <Pressable
+                          style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+                          onPress={() => setOrderPhotosModal({ visible: true, category: row.key })}
+                        >
+                          <Text style={base.label}>{row.label}</Text>
+                          <View style={base.rightWrap}>
+                            <Text style={base.value}>
+                              {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+                            </Text>
+                            <Feather
+                              name="chevron-right"
+                              size={theme.icons?.sm ?? 18}
+                              color={theme.colors.textSecondary}
+                              style={{ marginLeft: theme.spacing.xs }}
+                            />
+                          </View>
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </Card>
+              </>
+            )}
+
+            <OrderPhotosModal
+              visible={orderPhotosModal.visible}
+              onClose={() => setOrderPhotosModal({ visible: false, category: null })}
+              category={orderPhotosModal.category}
+              photos={order?.[orderPhotosModal.category] || []}
+              pending={localPendingMap[orderPhotosModal.category] || []}
+              getDisplayUrl={orderMedia.getDisplayUrl}
+              getIssue={orderMedia.getIssue}
+              onUploadUri={handleUploadUri}
+              onUploadMultiple={handleUploadMultiple}
+              onRemove={removePhoto}
+              onOpenViewer={(photos, idx) => openViewer(photos, idx)}
+            />
 
             {canAcceptOrder && (
               <Pressable
@@ -2590,21 +2418,6 @@ export default function OrderDetails() {
       )}
     </SafeAreaView>
 
-      <SelectModal
-        visible={photoSourceModal.visible}
-        title={t('order_photo_source_title')}
-        items={photoSourceItems}
-        searchable={false}
-        onClose={() => setPhotoSourceModal({ visible: false, category: null })}
-        onSelect={(item) => {
-          const source = item?.id;
-          const category = photoSourceModal.category;
-          setPhotoSourceModal({ visible: false, category: null });
-          if (!source || !category) return;
-          compressAndUpload(category, source);
-        }}
-      />
-
       <Modal
         isVisible={workTypeModalVisible}
         onBackdropPress={() => setWorkTypeModalVisible(false)}
@@ -2634,120 +2447,12 @@ export default function OrderDetails() {
         </View>
       </Modal>
 
-      <Modal
-        isVisible={viewerVisible}
-        backdropOpacity={0}
-        style={{ margin: 0 }}
-        onBackButtonPress={() => setViewerVisible(false)}
-        useNativeDriver
-        onModalHide={applyNavBar}
-      >
-        <View style={StyleSheet.absoluteFill}>
-          <BlurView intensity={50} tint="dark" style={[StyleSheet.absoluteFill]} />
-          <Animated.View
-            style={[
-              StyleSheet.absoluteFill,
-              { backgroundColor: theme.colors.overlay },
-              animatedBackdropStyle,
-            ]}
-          />
-
-          <View style={styles.viewerTopBar}>
-            <View style={styles.counterPill}>
-              <Text style={styles.counterText}>
-                {viewerPhotos.length ? `${viewerIndex + 1}/${viewerPhotos.length}` : ''}
-              </Text>
-            </View>
-            <Pressable onPress={closeViewer} hitSlop={12} style={styles.closeBtn}>
-              <Text style={{ color: theme.colors.onPrimary, fontSize: 22, fontWeight: '700' }}>
-                ×
-              </Text>
-            </Pressable>
-          </View>
-
-          {(() => {
-            const GAP = 16;
-            return (
-              <RNAnimated.FlatList
-                style={{ backgroundColor: theme.colors.background }}
-                data={viewerPhotos}
-                keyExtractor={(item, idx) => String(idx)}
-                horizontal
-                pagingEnabled={false}
-                snapToInterval={SCREEN_W + GAP}
-                snapToAlignment="center"
-                decelerationRate="normal"
-                disableIntervalMomentum
-                bounces={false}
-                showsHorizontalScrollIndicator={false}
-                getItemLayout={(_, index) => ({
-                  length: SCREEN_W + GAP,
-                  offset: (SCREEN_W + GAP) * index,
-                  index,
-                })}
-                initialScrollIndex={viewerIndex}
-                onMomentumScrollEnd={(e) => {
-                  const x = e.nativeEvent.contentOffset.x;
-                  const idx = Math.round(x / (SCREEN_W + GAP));
-                  setViewerIndex(idx);
-                }}
-                renderItem={({ item }) => (
-                  <View
-                    style={{
-                      width: SCREEN_W + GAP,
-                      height: SCREEN_H,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: theme.colors.background,
-                    }}
-                  >
-                    <PinchGestureHandler
-                      ref={pinchRef}
-                      onGestureEvent={onPinchGestureEvent}
-                      onHandlerStateChange={onPinchStateChange}
-                    >
-                      <Animated.View style={[StyleSheet.absoluteFill]}>
-                        <TapGestureHandler ref={tapRef} numberOfTaps={2} onActivated={onDoubleTap}>
-                          <Animated.View style={[StyleSheet.absoluteFill]}>
-                            <PanGestureHandler
-                              ref={panRef}
-                              onGestureEvent={onVerticalPan}
-                              onHandlerStateChange={onVerticalPan}
-                              activeOffsetY={[-12, 12]}
-                              failOffsetX={[-8, 8]}
-                            >
-                              <Animated.View
-                                style={[
-                                  StyleSheet.absoluteFill,
-                                  animatedImageStyle,
-                                  {
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                  },
-                                ]}
-                              >
-                                <Image
-                                  source={{ uri: item }}
-                                  style={{
-                                    width: SCREEN_W,
-                                    height: SCREEN_H,
-                                    resizeMode: 'contain',
-                                    backgroundColor: theme.colors.background,
-                                  }}
-                                />
-                              </Animated.View>
-                            </PanGestureHandler>
-                          </Animated.View>
-                        </TapGestureHandler>
-                      </Animated.View>
-                    </PinchGestureHandler>
-                  </View>
-                )}
-              />
-            );
-          })()}
-        </View>
-      </Modal>
+      <FullscreenImageViewer
+        visible={viewerVisible}
+        images={viewerPhotos}
+        initialIndex={viewerIndex}
+        onClose={closeViewer}
+      />
 
       <Modal
         isVisible={cancelVisible}
@@ -3048,6 +2753,10 @@ function createStyles(theme) {
       letterSpacing: 0.3,
     },
     link: { color: theme.colors.primary },
+    deletedObjectText: {
+      color: theme.colors.textSecondary,
+      fontStyle: 'italic',
+    },
     finishButton: {
       marginTop: sp.lg + 2 || 18,
       backgroundColor: theme.colors.primary,
@@ -3099,6 +2808,12 @@ function createStyles(theme) {
     },
     assigneeOption: { paddingVertical: sp.md || 10 },
     assigneeText: { fontSize: typo.sizes?.md || 16, color: theme.colors.text },
+    cloudWarningText: {
+      color: theme.colors.warning || theme.colors.primary,
+      fontSize: typo.sizes?.sm || 14,
+      marginBottom: sp.sm || 8,
+      marginTop: -(sp.xs || 4),
+    },
     banner: {
       position: 'absolute',
       left: sp.lg || 16,
@@ -3114,71 +2829,6 @@ function createStyles(theme) {
       color: theme.colors.onPrimary,
       textAlign: 'center',
       fontWeight: typo.weight?.semibold || '600',
-    },
-    viewerTopBar: {
-      position: 'absolute',
-      top: sp.lg || 16,
-      left: 0,
-      right: 0,
-      zIndex: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: sp.lg || 16,
-    },
-    counterPill: {
-      backgroundColor: theme.colors.overlay,
-      borderRadius: rad.pill || 999,
-      paddingHorizontal: sp.md || 12,
-      paddingVertical: sp.xs || 6,
-    },
-    counterText: {
-      color: theme.colors.onPrimary,
-      fontWeight: typo.weight?.bold || '700',
-    },
-    closeBtn: {
-      backgroundColor: theme.colors.overlay,
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    photoUnavailableTile: {
-      width: 116,
-      height: 116,
-      borderRadius: rad.lg || 12,
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingHorizontal: sp.sm || 8,
-    },
-    photoUnavailableTitle: {
-      color: theme.colors.text,
-      fontSize: typo.sizes?.xs || 12,
-      fontWeight: typo.weight?.semibold || '600',
-      textAlign: 'center',
-    },
-    photoUnavailableReason: {
-      color: theme.colors.textSecondary,
-      fontSize: typo.sizes?.xxs || 11,
-      textAlign: 'center',
-      marginTop: sp.xs || 4,
-      lineHeight: (typo.sizes?.xxs || 11) + 4,
-    },
-    photoTileFrame: {
-      width: 116,
-      height: 116,
-      borderRadius: rad.lg || 12,
-      overflow: 'hidden',
-    },
-    photoLoadingOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(255,255,255,0.25)',
     },
   });
 }

@@ -1,6 +1,6 @@
 // components/ui/ToastProvider.jsx
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Keyboard, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme';
 // --- i18n labels (safe runtime require) ---
@@ -36,6 +36,7 @@ export default function ToastProvider({ children }) {
 
   const [msg, setMsg] = useState(null); // { text, type }
   const [anchorOffset, setAnchorOffset] = useState(theme.components?.toast?.anchorOffset ?? 120);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const timerRef = useRef(null);
   const mounted = useSharedValue(true);
@@ -44,6 +45,46 @@ export default function ToastProvider({ children }) {
   // Reanimated shared values
   const ty = useSharedValue(20); // translateY
   const op = useSharedValue(0); // opacity
+  const bottom = useSharedValue((insets?.bottom || 0) + anchorOffset);
+
+  useEffect(() => {
+    const calcHeight = (event) => {
+      const raw = Number(event?.endCoordinates?.height || 0);
+      if (!Number.isFinite(raw) || raw <= 0) return 0;
+      const safeBottom = Number(insets?.bottom || 0);
+      return Math.max(0, raw - safeBottom);
+    };
+
+    const onKeyboardShow = (event) => {
+      setKeyboardHeight(calcHeight(event));
+    };
+
+    const onKeyboardHide = () => {
+      setKeyboardHeight(0);
+    };
+
+    const subscriptions = [];
+    if (Platform.OS === 'ios') {
+      subscriptions.push(Keyboard.addListener('keyboardWillChangeFrame', onKeyboardShow));
+      subscriptions.push(Keyboard.addListener('keyboardWillHide', onKeyboardHide));
+    } else {
+      subscriptions.push(Keyboard.addListener('keyboardDidShow', onKeyboardShow));
+      subscriptions.push(Keyboard.addListener('keyboardDidHide', onKeyboardHide));
+    }
+
+    return () => {
+      subscriptions.forEach((sub) => sub?.remove?.());
+    };
+  }, [insets?.bottom]);
+
+  useEffect(() => {
+    const keyboardLift = keyboardHeight > 0 ? keyboardHeight + (theme.spacing?.sm ?? 8) : 0;
+    const targetBottom = (insets?.bottom || 0) + anchorOffset + keyboardLift;
+    bottom.value = withTiming(targetBottom, {
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [anchorOffset, bottom, insets?.bottom, keyboardHeight, theme.spacing?.sm]);
 
   useEffect(() => {
     return () => {
@@ -144,6 +185,7 @@ export default function ToastProvider({ children }) {
   const aStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: ty.value }],
     opacity: op.value,
+    bottom: bottom.value,
   }));
 
   return (
@@ -157,7 +199,6 @@ export default function ToastProvider({ children }) {
             style={[
               styles.portalContainer,
               aStyle,
-              { bottom: (insets?.bottom || 0) + anchorOffset },
             ]}
           >
             <View style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>

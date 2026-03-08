@@ -110,7 +110,7 @@ function readWithFallback(order, field, key) {
     const rawStreet = order?.street || order?.snt || null;
     const street =
       typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(ул\.?|улица)\s+/i, '') : rawStreet;
-    const house = order?.house || order?.plot || order?.building || null;
+    const house = order?.house || order?.plot || null;
     const composed = [city, street, house].filter(Boolean).join(', ');
     const cand = [order?.address, order?.addr, composed].find(Boolean);
     val = cand || '';

@@ -635,6 +635,10 @@ function RootLayoutInner() {
                 name="company_settings/index"
                 options={{ title: 'Настройки компании' }}
               />
+              <Stack.Screen
+                name="company_settings/sections/telegram-bot"
+                options={{ title: 'Telegram Bot' }}
+              />
               <Stack.Screen name="users/index" options={{ title: 'Users' }} />
               <Stack.Screen name="users/new" options={{ title: 'New User' }} />
               <Stack.Screen name="users/[id]/index" options={{ title: 'User' }} />
