@@ -9,6 +9,7 @@ import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
+import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
@@ -101,6 +102,47 @@ async function fetchCountsAll() {
   return { feed: feedAll, new: newAll, progress: progressAll, all: allAll };
 }
 
+function HomeWarningCard({
+  styles,
+  theme,
+  icon,
+  title,
+  body,
+  cta,
+  onPress,
+}) {
+  return (
+    <Card style={styles.subscriptionWarningCard}>
+      <View style={styles.subscriptionWarningHeader}>
+        <View style={styles.subscriptionWarningBadge}>
+          <FeatherIcon
+            name={icon}
+            size={14}
+            color={theme.colors.warning || theme.colors.primary}
+          />
+        </View>
+        <View style={styles.subscriptionWarningBody}>
+          <Text style={styles.subscriptionWarningTitle}>{title}</Text>
+          <Text style={styles.subscriptionWarningText}>{body}</Text>
+        </View>
+      </View>
+      <Pressable
+        onPress={onPress}
+        android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+        style={({ pressed }) => [styles.subscriptionWarningLinkRow, pressed && styles.rowPressed]}
+        accessibilityRole="button"
+      >
+        <Text style={styles.subscriptionWarningLinkText}>{cta}</Text>
+        <FeatherIcon
+          name="chevron-right"
+          size={16}
+          color={theme.colors.textSecondary || theme.colors.text}
+        />
+      </Pressable>
+    </Card>
+  );
+}
+
 export default function UniversalHome({ role, user, profile: providedProfile }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -167,7 +209,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_display_url || currentProfile?.avatar_url || null;
   const companyId = currentProfile?.company_id || null;
-  const { useDepartments } = useCompanySettings(companyId || null);
+  const { settings: companySettings, useDepartments } = useCompanySettings(companyId || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
@@ -233,6 +275,10 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   };
   const openAppSettings = useCallback(() => router.push('/app_settings/AppSettings'), [router]);
   const openCompanySettings = useCallback(() => router.push('/company_settings'), [router]);
+  const openCloudStorageSettings = useCallback(
+    () => router.push('/company_settings/sections/yandex-disk'),
+    [router],
+  );
   const openAdministration = useCallback(() => router.push('/admin'), [router]);
   const openStats = useCallback(() => router.push('/stats'), [router]);
   const openBilling = useCallback(() => router.push('/billing'), [router]);
@@ -245,6 +291,25 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     }
     router.push('/orders/create-order');
   }, [isReadOnlyBySubscription, router, t, toast]);
+  const { data: cloudIntegrationStatus } = useQuery({
+    queryKey: ['cloud-storage-status', companyId],
+    queryFn: () => yandexDiskIntegration('status'),
+    enabled: isAdmin && !!companyId && companySettings?.media_provider === 'yandex_disk',
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnMount: true,
+    placeholderData: (prev) => prev,
+  });
+  const cloudHealthCode = String(
+    cloudIntegrationStatus?.health ||
+      (cloudIntegrationStatus?.connected ? 'unknown' : 'not_connected'),
+  );
+  const hasCloudIssue =
+    isAdmin &&
+    companySettings?.media_provider === 'yandex_disk' &&
+    !!companyId &&
+    cloudHealthCode !== 'ok';
+
   const handleLogout = async () => {
     try {
       await signOut();
@@ -407,21 +472,21 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
           <View style={styles.profileInfo}>
             <Text style={styles.profileName} numberOfLines={1}>
-              {profileLoading ? t('common_dash') : fullName || t('common_dash')}
+              {profileLoading ? '' : (fullName || '')}
             </Text>
             <View style={styles.metaRows}>
               <Text style={styles.companyText} numberOfLines={1}>
-                {companyName || t('common_dash')}
+                {companyName || ''}
               </Text>
               <View style={styles.roleRow}>
                 <Text style={styles.profileRoleText} numberOfLines={1}>
                   {roleLabel}
                 </Text>
               </View>
-              {useDepartments ? (
+              {useDepartments && departmentName ? (
                 <View style={styles.departmentRow}>
                   <Text style={styles.departmentText} numberOfLines={1}>
-                    {`${t('users_department')}: ${departmentName || t('common_dash')}`}
+                    {`${t('users_department')}: ${departmentName}`}
                   </Text>
                 </View>
               ) : null}
@@ -439,43 +504,30 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
       </Card>
 
       {isReadOnlyBySubscription ? (
-        <Card style={styles.subscriptionWarningCard}>
-          <View style={styles.subscriptionWarningHeader}>
-            <View style={styles.subscriptionWarningBadge}>
-              <FeatherIcon
-                name="alert-triangle"
-                size={14}
-                color={theme.colors.warning || theme.colors.primary}
-              />
-            </View>
-            <View style={styles.subscriptionWarningBody}>
-              <Text style={styles.subscriptionWarningTitle}>
-                {t('home_subscription_expired_title', '– —ü– —ï– “ë– —ó– —ë–°–É– —î– ¬∞ – —ë–°–É–°‚Äö– ¬µ– —î– ¬ª– ¬∞')}
-              </Text>
-              <Text style={styles.subscriptionWarningText}>
-                {t(
-                  'home_subscription_expired_body',
-                  '– ¬ – ¬µ– ¬∂– —ë– —ò –°‚Ä°–°‚Äö– ¬µ– –Ö– —ë–°–è: – —ë– ¬∑– —ò– ¬µ– –Ö– ¬µ– –Ö– —ë– ¬µ – –Ö– ¬µ– “ë– —ï–°–É–°‚Äö–°—ì– —ó– –Ö– —ï – “ë– —ï – —ó–°–Ç– —ï– “ë– ¬ª– ¬µ– –Ö– —ë–°–è – —ó– —ï– “ë– —ó– —ë–°–É– —î– —ë.',
-                )}
-              </Text>
-            </View>
-          </View>
-          <Pressable
-            onPress={openBilling}
-            android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
-            style={({ pressed }) => [styles.subscriptionWarningLinkRow, pressed && styles.rowPressed]}
-            accessibilityRole="button"
-          >
-            <Text style={styles.subscriptionWarningLinkText}>
-              {t('home_subscription_expired_cta', '– —ü– —ï–°–É– —ò– —ï–°‚Äö–°–Ç– ¬µ–°‚Äö–°–ä – —ó– —ï– “ë– —ó– —ë–°–É– —î–°—ì')}
-            </Text>
-            <FeatherIcon
-              name="chevron-right"
-              size={16}
-              color={theme.colors.textSecondary || theme.colors.text}
-            />
-          </Pressable>
-        </Card>
+        <HomeWarningCard
+          styles={styles}
+          theme={theme}
+          icon="alert-triangle"
+          title={t('home_subscription_expired_title')}
+          body={t('home_subscription_expired_body')}
+          cta={t('home_subscription_expired_cta')}
+          onPress={openBilling}
+        />
+      ) : null}
+
+      {hasCloudIssue ? (
+        <HomeWarningCard
+          styles={styles}
+          theme={theme}
+          icon="cloud-off"
+          title={t('home_cloud_issue_title')}
+          body={t('home_cloud_issue_body').replace('{status}', t(
+            `company_integrations_yandex_health_${cloudHealthCode}`,
+            t('company_integrations_yandex_health_error'),
+          ))}
+          cta={t('home_cloud_issue_cta')}
+          onPress={openCloudStorageSettings}
+        />
       ) : null}
 
       <Card style={[styles.cardRounded, styles.menuCard]} padded={false}>

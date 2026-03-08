@@ -24,6 +24,8 @@ import Button from '../ui/Button';
 import TextField from '../ui/TextField';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+const EMPTY_ARRAY = [];
+const EMPTY_OBJECT = {};
 
 function withAlpha(color, a) {
   if (typeof color === 'string') {
@@ -56,21 +58,28 @@ const normalizeSelectionIds = (ids) =>
 export default function FiltersPanel({
   visible,
   onClose,
-  departments = [],
-  rolesOptions = [],
-  values = {},
+  departments = EMPTY_ARRAY,
+  rolesOptions = EMPTY_ARRAY,
+  objectFilters = null,
+  inlineOptionSearch = null,
+  previewCountResolver = null,
+  previewCountValue = null,
+  previewCountLabel = null,
+  previewStatusResolver = null,
+  values = EMPTY_OBJECT,
   setValue,
-  defaults = {},
+  defaults = EMPTY_OBJECT,
   onApply,
   mode = 'filters',
   assignment = null,
-  searchItems = [],
+  searchItems = EMPTY_ARRAY,
   showSearchCategory = true,
 }) {
   const { theme } = useTheme();
   useTranslation();
 
   const isAssignmentMode = mode === 'assignment' && assignment;
+  const isObjectsMode = mode === 'objects';
   const isAssignmentMulti = isAssignmentMode && assignment?.multiple === true;
   const assignmentEmployees = useMemo(
     () =>
@@ -122,12 +131,18 @@ export default function FiltersPanel({
     departments: Array.isArray(values.departments) ? values.departments.map(String) : [],
     roles: Array.isArray(values.roles) ? values.roles : [],
     suspended: values.suspended ?? null,
+    cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
+    streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
+    clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
   });
   // Baseline snapshot: values at the moment panel becomes visible
   const [baseline, setBaseline] = useState({
     departments: Array.isArray(values.departments) ? values.departments.map(String) : [],
     roles: Array.isArray(values.roles) ? values.roles : [],
     suspended: values.suspended ?? null,
+    cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
+    streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
+    clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
   });
   const [assignmentDraftSelection, setAssignmentDraftSelection] = useState(
     isAssignmentMulti
@@ -147,11 +162,14 @@ export default function FiltersPanel({
         departments: Array.isArray(values.departments) ? values.departments.map(String) : [],
         roles: Array.isArray(values.roles) ? values.roles : [],
         suspended: values.suspended ?? null,
+        cities: Array.isArray(values.cities) ? values.cities.map(String) : [],
+        streets: Array.isArray(values.streets) ? values.streets.map(String) : [],
+        clientIds: Array.isArray(values.clientIds) ? values.clientIds.map(String) : [],
       };
       setDraft(snap);
       setBaseline(snap);
     }
-  }, [visible, values.departments, values.roles, values.suspended]);
+  }, [visible, values.clientIds, values.cities, values.departments, values.roles, values.streets, values.suspended]);
 
   // Animation (slide from right like a page). Kept mounted.
   const tx = useRef(new Animated.Value(visible ? 0 : SCREEN_W)).current;
@@ -232,6 +250,13 @@ export default function FiltersPanel({
     if (isAssignmentMode) {
       return showSearchCategory ? [searchCategory, ...assignmentCategories] : assignmentCategories;
     }
+    if (isObjectsMode) {
+      const objectCategories = [];
+      objectCategories.push({ key: 'objects_cities', label: t('common_city', 'Город') });
+      objectCategories.push({ key: 'objects_streets', label: t('common_street', 'Улица') });
+      objectCategories.push({ key: 'objects_clients', label: t('common_client', 'Клиент') });
+      return showSearchCategory ? [searchCategory, ...objectCategories] : objectCategories;
+    }
     const cats = [];
     if (departments && departments.length > 0) {
       cats.push({ key: 'departments', label: t('users_department') });
@@ -239,19 +264,24 @@ export default function FiltersPanel({
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departments, isAssignmentMode, showSearchCategory]);
+  }, [assignmentCategories, departments, isAssignmentMode, isObjectsMode, showSearchCategory]);
 
   const restoredCategoryRef = useRef(false);
-  const lastCategoriesRef = useRef(null);
+  const lastCategoriesKeyRef = useRef('');
+  const categoriesKey = useMemo(
+    () => (Array.isArray(categories) ? categories.map((cat) => cat?.key).join('|') : ''),
+    [categories],
+  );
 
   // Active category: restore from storage if recent (TTL 5s), otherwise select first
   const [activeCat, setActiveCat] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [inlineSearchQuery, setInlineSearchQuery] = useState('');
 
   useEffect(() => {
     if (!visible) {
       restoredCategoryRef.current = false;
-      lastCategoriesRef.current = null;
+      lastCategoriesKeyRef.current = '';
       setActiveCat(null);
       return;
     }
@@ -281,8 +311,8 @@ export default function FiltersPanel({
 
     if (
       restoredCategoryRef.current &&
-      lastCategoriesRef.current &&
-      lastCategoriesRef.current === categories
+      lastCategoriesKeyRef.current &&
+      lastCategoriesKeyRef.current === categoriesKey
     ) {
       return;
     }
@@ -311,11 +341,12 @@ export default function FiltersPanel({
     };
 
     restoredCategoryRef.current = true;
-    lastCategoriesRef.current = categories;
+    lastCategoriesKeyRef.current = categoriesKey;
     restoreCategory();
   }, [
     visible,
     categories,
+    categoriesKey,
     CATEGORY_TTL,
     isAssignmentMode,
     assignment?.selectedId,
@@ -325,6 +356,7 @@ export default function FiltersPanel({
 
   useEffect(() => {
     setSearchQuery('');
+    setInlineSearchQuery('');
   }, [activeCat, visible, isAssignmentMode]);
 
   useEffect(() => {
@@ -367,6 +399,12 @@ export default function FiltersPanel({
     if (isAssignmentMode) {
       return !eqArrays(assignmentDraftSelection || [], assignmentBaselineSelection || []);
     }
+    if (isObjectsMode) {
+      if (!eqArrays(draft.cities || [], baseline.cities || [])) return true;
+      if (!eqArrays(draft.streets || [], baseline.streets || [])) return true;
+      if (!eqArrays(draft.clientIds || [], baseline.clientIds || [])) return true;
+      return false;
+    }
     if (!eqArrays(draft.departments || [], baseline.departments || [])) return true;
     if (!eqArrays(draft.roles || [], baseline.roles || [])) return true;
     if ((draft.suspended ?? null) !== (baseline.suspended ?? null)) return true;
@@ -377,12 +415,22 @@ export default function FiltersPanel({
     assignmentBaselineSelection,
     assignmentDraftSelection,
     isAssignmentMode,
+    isObjectsMode,
   ]);
 
   // Check if any filters are active (different from defaults)
   const hasActiveFilters = useMemo(() => {
     if (isAssignmentMode) {
       return !eqArrays(assignmentDraftSelection || [], assignmentDefaultSelection || []);
+    }
+    if (isObjectsMode) {
+      const defaultCities = Array.isArray(defaults.cities) ? defaults.cities.map(String) : [];
+      const defaultStreets = Array.isArray(defaults.streets) ? defaults.streets.map(String) : [];
+      const defaultClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
+      if (!eqArrays(draft.cities || [], defaultCities)) return true;
+      if (!eqArrays(draft.streets || [], defaultStreets)) return true;
+      if (!eqArrays(draft.clientIds || [], defaultClientIds)) return true;
+      return false;
     }
     const defaultDeps = Array.isArray(defaults.departments)
       ? defaults.departments.map(String)
@@ -394,7 +442,7 @@ export default function FiltersPanel({
     if (!eqArrays(draft.roles || [], defaultRoles)) return true;
     if ((draft.suspended ?? null) !== defaultSuspended) return true;
     return false;
-  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode]);
+  }, [assignmentDefaultSelection, assignmentDraftSelection, defaults, draft, isAssignmentMode, isObjectsMode]);
 
   const handleAssignmentReset = () => {
     const defaultSelection = [...assignmentDefaultSelection];
@@ -419,6 +467,17 @@ export default function FiltersPanel({
   };
 
   const selectSuspended = (val) => setDraft((d) => ({ ...d, suspended: val }));
+  const toggleObjectsMulti = (key, value) => {
+    const safeValue = String(value || '').trim();
+    if (!safeValue) return;
+    setDraft((prev) => {
+      const current = Array.isArray(prev[key]) ? prev[key].map(String) : [];
+      const next = current.includes(safeValue)
+        ? current.filter((v) => v !== safeValue)
+        : [...current, safeValue];
+      return { ...prev, [key]: next };
+    });
+  };
 
   const styles = useMemo(() => {
     const leftRatioRaw = theme?.components?.filtersPanel?.leftColumnRatio;
@@ -481,6 +540,15 @@ export default function FiltersPanel({
         fontWeight: ty.weight.bold,
         marginLeft: sz.sm,
       },
+      previewRow: {
+        paddingHorizontal: sz.md,
+        paddingBottom: sz.xs,
+      },
+      previewText: {
+        color: c.textSecondary,
+        fontSize: ty.sizes.sm,
+        fontWeight: ty.weight.medium,
+      },
       content: { flexDirection: 'row', flex: 1 },
         categoriesColumn: {
           width: leftWidth,
@@ -512,6 +580,13 @@ export default function FiltersPanel({
         paddingHorizontal: sz.md,
         marginTop: sz.sm,
       },
+      inlineSearchBox: {
+        backgroundColor: c.surface,
+        borderWidth: 1,
+        borderColor: c.border,
+        borderRadius: rad.md,
+        overflow: 'hidden',
+      },
       applyBar: {
         position: 'absolute',
         bottom: 0,
@@ -525,7 +600,7 @@ export default function FiltersPanel({
       resetBtnText: { color: c.primary, fontSize: ty.sizes.sm, fontWeight: ty.weight.semibold },
       iconButton: { padding: 8, marginRight: 4 },
     });
-  }, [c, sz, ty, sh, BACK_BUTTON_SIZE, OVERLAY_Z_INDEX, RATIO_MIN, RATIO_MAX, theme]);
+  }, [c, sz, ty, sh, rad.md, BACK_BUTTON_SIZE, OVERLAY_Z_INDEX, RATIO_MIN, RATIO_MAX, theme]);
 
   const optionRow = useMemo(
     () => ({
@@ -581,6 +656,84 @@ export default function FiltersPanel({
   );
 
   const headerTitle = isAssignmentMode ? assignment?.title || t('common_filter') : t('common_filter');
+  const resolvedPreviewCount = useMemo(() => {
+    if (typeof previewCountResolver === 'function') {
+      try {
+        const next = previewCountResolver(draft);
+        return Number.isFinite(Number(next)) ? Number(next) : null;
+      } catch {
+        return null;
+      }
+    }
+    if (previewCountValue == null) return null;
+    return Number.isFinite(Number(previewCountValue)) ? Number(previewCountValue) : null;
+  }, [draft, previewCountResolver, previewCountValue]);
+  const previewCaption = previewCountLabel || t('common_found', 'Найдено');
+  const resolvedPreviewStatus = useMemo(() => {
+    if (typeof previewStatusResolver !== 'function') return null;
+    try {
+      return (
+        previewStatusResolver({
+          draft,
+          defaults,
+          count: resolvedPreviewCount,
+          mode,
+        }) || null
+      );
+    } catch {
+      return null;
+    }
+  }, [defaults, draft, mode, previewStatusResolver, resolvedPreviewCount]);
+  const shouldShowPreview =
+    resolvedPreviewStatus?.visible != null
+      ? Boolean(resolvedPreviewStatus.visible)
+      : resolvedPreviewCount != null;
+  const previewColor = resolvedPreviewStatus?.color || c.textSecondary;
+  const inlineSearchCategoryKeys = useMemo(
+    () =>
+      Array.isArray(inlineOptionSearch?.categoryKeys)
+        ? inlineOptionSearch.categoryKeys.map((key) => String(key))
+        : EMPTY_ARRAY,
+    [inlineOptionSearch?.categoryKeys],
+  );
+  const inlineSearchEnabled = Boolean(
+    activeCat &&
+      inlineSearchCategoryKeys.length > 0 &&
+      inlineSearchCategoryKeys.includes(String(activeCat)),
+  );
+  const normalizedInlineSearch = useMemo(
+    () => String(inlineSearchQuery || '').trim().toLowerCase(),
+    [inlineSearchQuery],
+  );
+
+  const renderInlineOptionsSearch = () => {
+    if (!inlineSearchEnabled) return null;
+    return (
+      <View style={styles.searchFieldWrap}>
+        <View style={styles.inlineSearchBox}>
+          <TextField
+            placeholder={t('common_search')}
+            value={inlineSearchQuery}
+            onChangeText={setInlineSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            hideSeparator={true}
+            rightSlot={
+              inlineSearchQuery ? (
+                <Pressable
+                  android_ripple={{ borderless: true, color: withAlpha(c.border, 0.1) }}
+                  onPress={() => setInlineSearchQuery('')}
+                  style={{ padding: 4 }}
+                >
+                  <Feather name="x" size={16} color={c.textSecondary} />
+                </Pressable>
+              ) : null
+            }
+          />
+        </View>
+      </View>
+    );
+  };
 
   const renderAssignmentOptions = () => {
     if (!isAssignmentMode) return null;
@@ -719,6 +872,183 @@ export default function FiltersPanel({
       return renderAssignmentOptions();
     }
     switch (activeCat) {
+      case 'objects_cities': {
+        const citiesRaw = Array.isArray(objectFilters?.cities) ? objectFilters.cities : [];
+        const cities = normalizedInlineSearch
+          ? citiesRaw.filter((city) =>
+              String(city?.label ?? city?.name ?? city?.value ?? city?.id ?? '')
+                .toLowerCase()
+                .includes(normalizedInlineSearch),
+            )
+          : citiesRaw;
+        const allSelected = !Array.isArray(draft.cities) || draft.cities.length === 0;
+        return (
+          <>
+            {renderInlineOptionsSearch()}
+            <Pressable
+              key="all_objects_cities"
+              onPress={() => setDraft((d) => ({ ...d, cities: [] }))}
+              style={({ pressed }) => [
+                optionRow,
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+              ]}
+            >
+              <View style={[checkboxBase, allSelected && checkboxSelected]}>
+                {allSelected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+              </View>
+              <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+                {t('users_showAll')}
+              </Text>
+            </Pressable>
+            {cities.length === 0 ? (
+              <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+                <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>{t('common_noData')}</Text>
+              </View>
+            ) : (
+              cities.map((city) => {
+                const id = String(city?.value ?? city?.id ?? city?.label ?? '').trim();
+                const label = String(city?.label ?? city?.name ?? id).trim();
+                const selected = Array.isArray(draft.cities) ? draft.cities.includes(id) : false;
+                return (
+                  <Pressable
+                    key={`objects_city_${id}`}
+                    onPress={() => toggleObjectsMulti('cities', id)}
+                    style={({ pressed }) => [
+                      optionRow,
+                      pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+                    ]}
+                  >
+                    <View style={[checkboxBase, selected && checkboxSelected]}>
+                      {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+                    </View>
+                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </>
+        );
+      }
+      case 'objects_streets': {
+        const streetsRaw = Array.isArray(objectFilters?.streets) ? objectFilters.streets : [];
+        const streets = normalizedInlineSearch
+          ? streetsRaw.filter((street) =>
+              String(street?.label ?? street?.name ?? street?.value ?? street?.id ?? '')
+                .toLowerCase()
+                .includes(normalizedInlineSearch),
+            )
+          : streetsRaw;
+        const allSelected = !Array.isArray(draft.streets) || draft.streets.length === 0;
+        return (
+          <>
+            {renderInlineOptionsSearch()}
+            <Pressable
+              key="all_objects_streets"
+              onPress={() => setDraft((d) => ({ ...d, streets: [] }))}
+              style={({ pressed }) => [
+                optionRow,
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+              ]}
+            >
+              <View style={[checkboxBase, allSelected && checkboxSelected]}>
+                {allSelected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+              </View>
+              <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+                {t('users_showAll')}
+              </Text>
+            </Pressable>
+            {streets.length === 0 ? (
+              <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+                <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>{t('common_noData')}</Text>
+              </View>
+            ) : (
+              streets.map((street) => {
+                const id = String(street?.value ?? street?.id ?? street?.label ?? '').trim();
+                const label = String(street?.label ?? street?.name ?? id).trim();
+                const selected = Array.isArray(draft.streets) ? draft.streets.includes(id) : false;
+                return (
+                  <Pressable
+                    key={`objects_street_${id}`}
+                    onPress={() => toggleObjectsMulti('streets', id)}
+                    style={({ pressed }) => [
+                      optionRow,
+                      pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+                    ]}
+                  >
+                    <View style={[checkboxBase, selected && checkboxSelected]}>
+                      {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+                    </View>
+                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </>
+        );
+      }
+      case 'objects_clients': {
+        const clientsRaw = Array.isArray(objectFilters?.clients) ? objectFilters.clients : [];
+        const clients = normalizedInlineSearch
+          ? clientsRaw.filter((client) =>
+              String(client?.label ?? client?.name ?? client?.value ?? client?.id ?? '')
+                .toLowerCase()
+                .includes(normalizedInlineSearch),
+            )
+          : clientsRaw;
+        const allSelected = !Array.isArray(draft.clientIds) || draft.clientIds.length === 0;
+        return (
+          <>
+            {renderInlineOptionsSearch()}
+            <Pressable
+              key="all_objects_clients"
+              onPress={() => setDraft((d) => ({ ...d, clientIds: [] }))}
+              style={({ pressed }) => [
+                optionRow,
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+              ]}
+            >
+              <View style={[checkboxBase, allSelected && checkboxSelected]}>
+                {allSelected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+              </View>
+              <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+                {t('users_showAll')}
+              </Text>
+            </Pressable>
+            {clients.length === 0 ? (
+              <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+                <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>{t('common_noData')}</Text>
+              </View>
+            ) : (
+              clients.map((client) => {
+                const id = String(client?.value ?? client?.id ?? client?.label ?? '').trim();
+                const label = String(client?.label ?? client?.name ?? id).trim();
+                const selected = Array.isArray(draft.clientIds) ? draft.clientIds.includes(id) : false;
+                return (
+                  <Pressable
+                    key={`objects_client_${id}`}
+                    onPress={() => toggleObjectsMulti('clientIds', id)}
+                    style={({ pressed }) => [
+                      optionRow,
+                      pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+                    ]}
+                  >
+                    <View style={[checkboxBase, selected && checkboxSelected]}>
+                      {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+                    </View>
+                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </>
+        );
+      }
       case 'departments':
         if (!departments || departments.length === 0) {
           return (
@@ -898,6 +1228,26 @@ export default function FiltersPanel({
                   handleAssignmentReset();
                   return;
                 }
+                if (isObjectsMode) {
+                  const emptyCities = Array.isArray(defaults.cities) ? defaults.cities.map(String) : [];
+                  const emptyStreets = Array.isArray(defaults.streets) ? defaults.streets.map(String) : [];
+                  const emptyClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
+                  const snapshot = {
+                    ...draft,
+                    cities: emptyCities,
+                    streets: emptyStreets,
+                    clientIds: emptyClientIds,
+                  };
+                  setDraft(snapshot);
+                  setBaseline(snapshot);
+                  if (setValue) {
+                    setValue('cities', emptyCities);
+                    setValue('streets', emptyStreets);
+                    setValue('clientIds', emptyClientIds);
+                  }
+                  if (onApply) onApply(snapshot);
+                  return;
+                }
                 const emptyDeps = Array.isArray(defaults.departments)
                   ? defaults.departments.map(String)
                   : [];
@@ -920,7 +1270,7 @@ export default function FiltersPanel({
                 }
                 if (onApply) {
                   // Call onApply to let parent persist the cleared filters. Do not close the panel.
-                  onApply();
+                  onApply(snapshot);
                 }
                 // Do not call onClose here; keep panel open per UX request.
               }}
@@ -937,6 +1287,13 @@ export default function FiltersPanel({
             <View style={styles.resetBtn} />
           )}
         </View>
+        {shouldShowPreview && resolvedPreviewCount != null ? (
+          <View style={styles.previewRow}>
+            <Text style={[styles.previewText, { color: previewColor }]}>
+              {`${previewCaption}: ${resolvedPreviewCount}`}
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.content}>
           <View style={styles.categoriesColumn}>
@@ -989,6 +1346,27 @@ export default function FiltersPanel({
                   if (onClose) onClose();
                   return;
                 }
+                if (isObjectsMode) {
+                  if (setValue) {
+                    setValue('cities', Array.isArray(draft.cities) ? draft.cities : []);
+                    setValue('streets', Array.isArray(draft.streets) ? draft.streets : []);
+                    setValue('clientIds', Array.isArray(draft.clientIds) ? draft.clientIds : []);
+                  }
+                  const objectSnapshot = {
+                    cities: Array.isArray(draft.cities) ? draft.cities : [],
+                    streets: Array.isArray(draft.streets) ? draft.streets : [],
+                    clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
+                  };
+                  if (onApply) onApply(objectSnapshot);
+                  setBaseline((prev) => ({
+                    ...prev,
+                    cities: Array.isArray(draft.cities) ? draft.cities : [],
+                    streets: Array.isArray(draft.streets) ? draft.streets : [],
+                    clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
+                  }));
+                  if (onClose) onClose();
+                  return;
+                }
                 if (setValue) {
                   setValue(
                     'departments',
@@ -997,7 +1375,12 @@ export default function FiltersPanel({
                   setValue('roles', Array.isArray(draft.roles) ? draft.roles : []);
                   setValue('suspended', draft.suspended ?? null);
                 }
-                if (onApply) onApply();
+                const usersSnapshot = {
+                  departments: Array.isArray(draft.departments) ? draft.departments : [],
+                  roles: Array.isArray(draft.roles) ? draft.roles : [],
+                  suspended: draft.suspended ?? null,
+                };
+                if (onApply) onApply(usersSnapshot);
                 // update baseline to reflect applied state
                 setBaseline({
                   departments: Array.isArray(draft.departments) ? draft.departments : [],

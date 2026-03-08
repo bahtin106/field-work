@@ -1,9 +1,11 @@
 import { AntDesign, Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import React from 'react';
-import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import AdditionalPhoneInputRow from '../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
@@ -12,18 +14,47 @@ import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
+import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
 import { useToast } from '../../../components/ui/ToastProvider';
+import TagEditorField from '../../../components/tags/TagEditorField';
+import { TAG_TYPE } from '../../../components/tags/tagConfig';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../lib/permissions';
 import {
+  extractConflictingClientId,
+  findClientByPrimaryPhone,
+  getClientById,
+} from '../../../src/features/clients/api';
+import {
   useClient,
+  useClientDeleteBlockers,
   useDeleteClientMutation,
   useUpdateClientMutation,
 } from '../../../src/features/clients/queries';
+import {
+  buildClientAdditionalPhonesPatch,
+  CLIENT_ADDITIONAL_PHONE_SLOT_COUNT,
+  createEmptyAdditionalClientPhones,
+  getClientAdditionalPhones,
+  getNextHiddenAdditionalPhoneSlotId,
+  getVisibleAdditionalPhoneSlotIds,
+  normalizeAdditionalClientPhones,
+} from '../../../src/features/clients/additionalPhones';
 import { useClientObjects } from '../../../src/features/objects/queries';
 import { uploadClientAvatar } from '../../../src/features/clients/avatar';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
+import { useSetClientTagsMutation } from '../../../src/features/tags/queries';
+import { resolveTagErrorMessage } from '../../../src/features/tags/errors';
+import { CLIENT_COMMENT_MAX_LENGTH } from '../../../src/features/clients/constants';
+import {
+  hasMobilePhoneValue,
+  isValidOptionalMobilePhone,
+  normalizeOptionalMobilePhone,
+} from '../../../src/shared/validation/phone';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
+import dismissToRoute from '../../../lib/navigation/dismissToRoute';
+import { hasRelationFilters } from '../../../src/features/requests/relationFilters';
 
 const getImagePickerMediaTypesImages = () => {
   try {
@@ -102,15 +133,28 @@ function AvatarSheetModal({
 }
 
 function snapshotClientForm(obj = {}) {
+  const additionalPhones = normalizeAdditionalClientPhones(obj.additionalPhones);
+  const visibleSlots = Array.isArray(obj.additionalPhoneVisibleSlots)
+    ? Array.from(
+        new Set(
+          obj.additionalPhoneVisibleSlots
+            .map((slotId) => Number(slotId))
+            .filter((slotId) => Number.isFinite(slotId))
+            .map((slotId) => Math.trunc(slotId)),
+        ),
+      ).sort((a, b) => a - b)
+    : getVisibleAdditionalPhoneSlotIds(additionalPhones);
   return JSON.stringify({
     firstName: String(obj.firstName || '').trim(),
     lastName: String(obj.lastName || '').trim(),
     middleName: String(obj.middleName || '').trim(),
+    comment: String(obj.comment || '').trim(),
     email: String(obj.email || '').trim().toLowerCase() || '',
     phone: String(obj.phone || '').trim() || '',
-    secondaryPhone: String(obj.secondaryPhone || '').trim() || '',
-    contactPref: String(obj.contactPref || '').trim() || '',
+    additionalPhones,
+    additionalPhoneVisibleSlots: visibleSlots,
     avatarUrl: String(obj.avatarUrl || '') || '',
+    tags: Array.isArray(obj.tags) ? obj.tags.map((v) => String(v || '').trim().toLowerCase()) : [],
   });
 }
 
@@ -124,22 +168,68 @@ export default function EditClientScreen() {
 
   const canEditClients = has('canEditClients');
   const canDeleteClients = has('canDeleteClients');
+  const canViewAllOrders = has('canViewAllOrders');
 
-  const { id } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const id = params?.id;
+  const rawReturnTo = params?.returnTo;
+  const rawReturnParams = params?.returnParams;
+  const rawSelectMode = params?.select_mode;
+  const rawFlowKey = params?.flow_key;
+  const rawFlowReturnTo = params?.flow_return_to;
   const clientId = Array.isArray(id) ? id[0] : id;
+  const selectMode = React.useMemo(() => {
+    const value = Array.isArray(rawSelectMode) ? rawSelectMode[0] : rawSelectMode;
+    return String(value || '').toLowerCase() === '1' || String(value || '').toLowerCase() === 'true';
+  }, [rawSelectMode]);
+  const flowKey = React.useMemo(() => {
+    const value = Array.isArray(rawFlowKey) ? rawFlowKey[0] : rawFlowKey;
+    return value ? String(value) : '';
+  }, [rawFlowKey]);
+  const flowReturnTo = React.useMemo(() => {
+    const value = Array.isArray(rawFlowReturnTo) ? rawFlowReturnTo[0] : rawFlowReturnTo;
+    return value ? String(value) : '';
+  }, [rawFlowReturnTo]);
+  const returnTo = React.useMemo(() => {
+    const value = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
+    return value ? String(value) : '/clients';
+  }, [rawReturnTo]);
+  const returnParams = React.useMemo(() => {
+    const value = Array.isArray(rawReturnParams) ? rawReturnParams[0] : rawReturnParams;
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(String(value));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, [rawReturnParams]);
 
+  const [deleteVisible, setDeleteVisible] = React.useState(false);
   const { data: client } = useClient(clientId, { enabled: !!clientId });
+  const {
+    data: deleteBlockers,
+    isLoading: deleteBlockersLoading,
+    isError: deleteBlockersError,
+    refetch: refetchDeleteBlockers,
+  } = useClientDeleteBlockers(clientId, {
+    enabled: !!clientId,
+  });
   const { data: clientObjects = [] } = useClientObjects(clientId, { enabled: !!clientId });
   const updateMutation = useUpdateClientMutation();
   const deleteMutation = useDeleteClientMutation();
+  const setClientTagsMutation = useSetClientTagsMutation();
+  const { settings } = useCompanySettings();
 
   const [firstName, setFirstName] = React.useState('');
   const [lastName, setLastName] = React.useState('');
   const [middleName, setMiddleName] = React.useState('');
+  const [comment, setComment] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [phone, setPhone] = React.useState('');
-  const [secondaryPhone, setSecondaryPhone] = React.useState('');
-  const [contactPref, setContactPref] = React.useState('');
+  const [additionalPhones, setAdditionalPhones] = React.useState(createEmptyAdditionalClientPhones());
+  const [visibleAdditionalPhoneSlots, setVisibleAdditionalPhoneSlots] = React.useState([]);
+  const [tags, setTags] = React.useState([]);
   const [avatarUrl, setAvatarUrl] = React.useState('');
   const avatarDisplayUrl = React.useMemo(
     () => (String(avatarUrl || '').startsWith('http') ? client?.avatarDisplayUrl || avatarUrl : avatarUrl),
@@ -154,9 +244,9 @@ export default function EditClientScreen() {
 
   const [cancelVisible, setCancelVisible] = React.useState(false);
   const [cancelKey, setCancelKey] = React.useState(0);
-  const [deleteVisible, setDeleteVisible] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [initialSnap, setInitialSnap] = React.useState(null);
+  const [duplicateClient, setDuplicateClient] = React.useState(null);
 
   const allowLeaveRef = React.useRef(false);
   const cameraIconSize = React.useMemo(() => {
@@ -179,27 +269,83 @@ export default function EditClientScreen() {
 
   React.useEffect(() => {
     if (!client) return;
+    const nextAdditionalPhones = getClientAdditionalPhones(client);
+    const nextVisibleSlots = getVisibleAdditionalPhoneSlotIds(nextAdditionalPhones);
     const next = {
       firstName: client.firstName || '',
       lastName: client.lastName || '',
       middleName: client.middleName || '',
+      comment: client.comment || '',
       email: client.email || '',
       phone: client.phone || '',
-      secondaryPhone: client.secondaryPhone || '',
-      contactPref: client.contactPref || '',
+      additionalPhones: nextAdditionalPhones,
+      additionalPhoneVisibleSlots: nextVisibleSlots,
       avatarUrl: client.avatarUrl || '',
+      tags: Array.isArray(client?.tags) ? client.tags.map((tag) => String(tag?.value || '').trim()) : [],
     };
 
     setFirstName(next.firstName);
     setLastName(next.lastName);
     setMiddleName(next.middleName);
+    setComment(next.comment);
     setEmail(next.email);
     setPhone(next.phone);
-    setSecondaryPhone(next.secondaryPhone);
-    setContactPref(next.contactPref);
+    setAdditionalPhones(next.additionalPhones);
+    setVisibleAdditionalPhoneSlots(nextVisibleSlots);
     setAvatarUrl(next.avatarUrl);
+    setTags(next.tags);
     setInitialSnap(snapshotClientForm(next));
   }, [client]);
+
+  React.useEffect(() => {
+    let active = true;
+    const hasValue = hasMobilePhoneValue(phone);
+    const isValid = isValidOptionalMobilePhone(phone);
+    if (!hasValue || !isValid || !clientId) {
+      setDuplicateClient(null);
+      return () => {
+        active = false;
+      };
+    }
+    const timerId = setTimeout(async () => {
+      try {
+        const found = await findClientByPrimaryPhone(phone, { excludeClientId: String(clientId) });
+        if (!active) return;
+        setDuplicateClient(found || null);
+      } catch {
+        if (!active) return;
+        setDuplicateClient(null);
+      }
+    }, 240);
+    return () => {
+      active = false;
+      clearTimeout(timerId);
+    };
+  }, [clientId, phone]);
+
+  const updateAdditionalPhoneBySlotId = React.useCallback((slotId, patch) => {
+    const slotIndex = Number(slotId) - 1;
+    if (!Number.isFinite(slotIndex) || slotIndex < 0) return;
+    setAdditionalPhones((prev) =>
+      prev.map((item, itemIndex) =>
+        itemIndex === slotIndex ? { ...item, ...patch } : item,
+      ),
+    );
+  }, []);
+
+  const canAddAdditionalPhone = visibleAdditionalPhoneSlots.length < CLIENT_ADDITIONAL_PHONE_SLOT_COUNT;
+
+  const handleAddAdditionalPhone = React.useCallback(() => {
+    setVisibleAdditionalPhoneSlots((prev) => {
+      const nextSlotId = getNextHiddenAdditionalPhoneSlotId(prev);
+      if (!nextSlotId) return prev;
+      return [...prev, nextSlotId].sort((a, b) => a - b);
+    });
+  }, []);
+
+  const handleRemoveAdditionalPhone = React.useCallback((slotId) => {
+    setVisibleAdditionalPhoneSlots((prev) => prev.filter((value) => value !== slotId));
+  }, []);
 
   const sortedObjects = React.useMemo(
     () =>
@@ -217,6 +363,43 @@ export default function EditClientScreen() {
     return name || t('placeholder_no_name');
   }, [firstName, lastName, middleName, t]);
 
+  const blockingOrdersCount = Number(deleteBlockers?.blockingOrdersCount || 0);
+  const blockingObjectsCount = Number(deleteBlockers?.blockingObjectsCount || 0);
+  const accessibleBlockingOrdersCount = canViewAllOrders
+    ? blockingOrdersCount
+    : Number(deleteBlockers?.myOrdersCount || 0) + Number(deleteBlockers?.feedOrdersCount || 0);
+
+  const blockersRoute = React.useMemo(() => {
+    if (!deleteBlockers) return null;
+    const relationClientId = String(clientId || '');
+    const relationObjectIds = Array.isArray(deleteBlockers?.blockingObjectIds)
+      ? deleteBlockers.blockingObjectIds.map((value) => String(value || '')).filter(Boolean)
+      : [];
+
+    if (
+      !hasRelationFilters({
+        clientId: relationClientId,
+        objectIds: relationObjectIds,
+      })
+    ) {
+      return null;
+    }
+
+    if (!canViewAllOrders && accessibleBlockingOrdersCount <= 0) {
+      return null;
+    }
+
+    return {
+      pathname: canViewAllOrders ? '/orders/all-orders' : '/orders/my-orders',
+      params: {
+        ...(canViewAllOrders ? {} : { seedFilter: 'all' }),
+        relation_client_id: relationClientId,
+        relation_object_ids: relationObjectIds.join(','),
+        relation_label: headerName,
+      },
+    };
+  }, [accessibleBlockingOrdersCount, canViewAllOrders, clientId, deleteBlockers, headerName]);
+
   const initials = React.useMemo(
     () => `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
     [firstName, lastName],
@@ -229,14 +412,28 @@ export default function EditClientScreen() {
         firstName,
         lastName,
         middleName,
+        comment,
         email,
         phone,
-        secondaryPhone,
-        contactPref,
+        additionalPhones,
+        additionalPhoneVisibleSlots: visibleAdditionalPhoneSlots,
         avatarUrl,
+        tags,
       }) !== initialSnap
     );
-  }, [avatarUrl, contactPref, email, firstName, initialSnap, lastName, middleName, phone, secondaryPhone]);
+  }, [
+    avatarUrl,
+    email,
+    firstName,
+    initialSnap,
+    lastName,
+    middleName,
+    comment,
+    phone,
+    additionalPhones,
+    visibleAdditionalPhoneSlots,
+    tags,
+  ]);
 
   const goBack = React.useCallback(() => {
     allowLeaveRef.current = true;
@@ -261,6 +458,29 @@ export default function EditClientScreen() {
     goBack();
   }, [goBack]);
 
+  const openDuplicateClient = React.useCallback(() => {
+    if (!duplicateClient?.id) return;
+    router.push({
+      pathname: `/clients/${duplicateClient.id}/edit`,
+      params: {
+        ...(flowKey ? { flow_key: flowKey, select_mode: selectMode ? '1' : '0' } : {}),
+        ...(flowReturnTo ? { flow_return_to: flowReturnTo } : {}),
+      },
+    });
+  }, [duplicateClient?.id, flowKey, flowReturnTo, router, selectMode]);
+
+  const handleChooseClient = React.useCallback(async () => {
+    if (!clientId || !flowKey) return;
+    try {
+      await AsyncStorage.setItem(
+        `order_client_flow:${String(flowKey)}`,
+        JSON.stringify({ selectedClientId: String(clientId), ts: Date.now() }),
+      );
+    } catch {}
+    allowLeaveRef.current = true;
+    router.back();
+  }, [clientId, flowKey, router]);
+
   React.useEffect(() => {
     const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || !isDirty) return;
@@ -273,6 +493,9 @@ export default function EditClientScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      if (clientId) {
+        refetchDeleteBlockers().catch(() => {});
+      }
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
         if (allowLeaveRef.current) return false;
         if (!isDirty) return false;
@@ -281,7 +504,7 @@ export default function EditClientScreen() {
         return true;
       });
       return () => sub.remove();
-    }, [isDirty]),
+    }, [clientId, isDirty, refetchDeleteBlockers]),
   );
 
   const ensureCameraPerms = React.useCallback(async () => {
@@ -363,6 +586,27 @@ export default function EditClientScreen() {
       toast.warning(t('clients_required_any_name'));
       return false;
     }
+    if (!hasMobilePhoneValue(phone)) {
+      toast.warning(t('clients_required_phone'));
+      return false;
+    }
+    if (!isValidOptionalMobilePhone(phone)) {
+      toast.warning(t('err_phone'));
+      return false;
+    }
+    if (duplicateClient?.id) {
+      toast.warning(t('clients_phone_duplicate_hint'));
+      return false;
+    }
+    const firstInvalidAdditional = visibleAdditionalPhoneSlots.find((slotId) => {
+      const slotIndex = Number(slotId) - 1;
+      const value = additionalPhones?.[slotIndex]?.phone || '';
+      return hasMobilePhoneValue(value) && !isValidOptionalMobilePhone(value);
+    });
+    if (firstInvalidAdditional) {
+      toast.warning(t('err_phone'));
+      return false;
+    }
 
     setSaving(true);
     try {
@@ -370,10 +614,13 @@ export default function EditClientScreen() {
         first_name: cleanFirstName,
         last_name: cleanLastName,
         middle_name: cleanMiddleName || null,
+        comment: String(comment || '').trim() || null,
         email: String(email || '').trim().toLowerCase() || null,
-        phone: String(phone || '').trim() || null,
-        secondary_phone: String(secondaryPhone || '').trim() || null,
-        contact_pref: String(contactPref || '').trim() || null,
+        phone: normalizeOptionalMobilePhone(phone),
+        ...buildClientAdditionalPhonesPatch(additionalPhones, {
+          defaultLabel: t('order_field_secondary_phone'),
+          visibleSlotIds: visibleAdditionalPhoneSlots,
+        }),
       };
 
       if (!avatarUrl) {
@@ -389,6 +636,13 @@ export default function EditClientScreen() {
         id: String(clientId),
         patch,
       });
+
+      if (settings?.enable_client_tags) {
+        await setClientTagsMutation.mutateAsync({
+          clientId: String(clientId),
+          tags,
+        });
+      }
 
       if (avatarUrl && !String(avatarUrl).startsWith('http')) {
         const uploadedUrl = await uploadClientAvatar(String(clientId), avatarUrl);
@@ -409,7 +663,27 @@ export default function EditClientScreen() {
       }
       return true;
     } catch (error) {
-      toast.error(error?.message || t('clients_save_failed'));
+      const duplicateClientId = extractConflictingClientId(error);
+      if (duplicateClientId) {
+        try {
+          const found = await getClientById(duplicateClientId);
+          setDuplicateClient(
+            found
+              ? {
+                  id: String(found.id),
+                  fullName: found.fullName || '',
+                  phone: found.phone || null,
+                }
+              : { id: duplicateClientId },
+          );
+        } catch {
+          setDuplicateClient({ id: duplicateClientId });
+        }
+        toast.warning(t('clients_phone_duplicate_hint'));
+        return false;
+      }
+      const tagError = resolveTagErrorMessage(error, t);
+      toast.error(tagError || error?.message || t('clients_save_failed'));
       return false;
     } finally {
       setSaving(false);
@@ -423,15 +697,20 @@ export default function EditClientScreen() {
     firstName,
     lastName,
     middleName,
+    comment,
     navigation,
     phone,
-    secondaryPhone,
-    contactPref,
+    additionalPhones,
+    visibleAdditionalPhoneSlots,
+    duplicateClient?.id,
     router,
     saving,
     t,
     toast,
     updateMutation,
+    setClientTagsMutation,
+    settings?.enable_client_tags,
+    tags,
   ]);
 
   if (!canEditClients) {
@@ -448,8 +727,14 @@ export default function EditClientScreen() {
     <>
       <EditScreenTemplate
         title={t('header_edit_user')}
-        rightTextLabel={saving ? t('toast_saving') : t('header_save')}
-        onRightPress={saveClient}
+        rightTextLabel={
+          selectMode && flowKey
+            ? t('btn_choose')
+            : saving
+              ? t('toast_saving')
+              : t('header_save')
+        }
+        onRightPress={selectMode && flowKey ? handleChooseClient : saveClient}
         onBack={handleCancelPress}
       >
         <Card style={styles.headerCard}>
@@ -505,6 +790,28 @@ export default function EditClientScreen() {
             style={styles.field}
           />
           <TextField
+            label={t('clients_comment_label')}
+            value={comment}
+            onChangeText={setComment}
+            placeholder={t('clients_comment_placeholder')}
+            maxLength={CLIENT_COMMENT_MAX_LENGTH}
+            multiline
+            numberOfLines={3}
+            style={styles.field}
+          />
+          {settings?.enable_client_tags ? (
+            <TagEditorField
+              label={t('tags_field_label')}
+              tagType={TAG_TYPE.CLIENT}
+              tags={tags}
+              onChange={setTags}
+              placeholder={t('tags_input_placeholder')}
+            />
+          ) : null}
+        </Card>
+        <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader>
+        <Card paddedXOnly>
+          <TextField
             label={t('label_email')}
             value={email}
             onChangeText={setEmail}
@@ -512,19 +819,50 @@ export default function EditClientScreen() {
             autoCapitalize="none"
             style={styles.field}
           />
-          <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
-          <PhoneInput
-            label={t('order_field_secondary_phone')}
-            value={secondaryPhone}
-            onChangeText={setSecondaryPhone}
-            style={styles.field}
-          />
-          <TextField
-            label={t('order_field_contact_pref')}
-            value={contactPref}
-            onChangeText={setContactPref}
-            style={styles.field}
-          />
+          <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} required />
+          {duplicateClient?.id ? (
+            <Pressable
+              onPress={openDuplicateClient}
+              style={styles.duplicateHintRow}
+              accessibilityRole="button"
+            >
+              <Text style={styles.duplicateHintText}>{t('clients_phone_duplicate_hint')}</Text>
+              <Text style={styles.duplicateHintAction}>{t('clients_phone_duplicate_action')}</Text>
+            </Pressable>
+          ) : null}
+          {visibleAdditionalPhoneSlots.map((slotId) => {
+            const slotIndex = slotId - 1;
+            const entry = additionalPhones[slotIndex] || { phone: '', label: '' };
+            return (
+              <AdditionalPhoneInputRow
+                key={`additional-phone-${slotId}`}
+                phoneValue={entry.phone || ''}
+                onPhoneChange={(nextValue) => updateAdditionalPhoneBySlotId(slotId, { phone: nextValue })}
+                designationValue={entry.label || ''}
+                onDesignationChange={(nextValue) => updateAdditionalPhoneBySlotId(slotId, { label: nextValue })}
+                onRemove={() => handleRemoveAdditionalPhone(slotId)}
+                style={styles.additionalPhoneGroup}
+              />
+            );
+          })}
+          {canAddAdditionalPhone ? (
+            <View style={styles.additionalPhoneAddRow}>
+              <Text style={styles.additionalPhoneAddText}>{t('clients_additional_phone_add')}</Text>
+              <Pressable
+                onPress={handleAddAdditionalPhone}
+                style={styles.additionalPhoneAddButton}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('clients_additional_phone_a11y_add')}
+              >
+                <Feather
+                  name="plus"
+                  size={theme.components?.icon?.sizeXs ?? Math.round((theme.icons?.sm ?? 18) * 0.75)}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
+            </View>
+          ) : null}
         </Card>
 
         <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
@@ -538,7 +876,15 @@ export default function EditClientScreen() {
                   value={objectItem.name || t('objects_unnamed')}
                   pressable
                   style={styles.field}
-                  onPress={() => router.push(`/objects/${objectItem.id}`)}
+                  onPress={() =>
+                    router.push({
+                      pathname: `/objects/${objectItem.id}`,
+                      params: {
+                        returnTo: `/clients/${clientId}/edit`,
+                        returnParams: JSON.stringify({ returnTo, returnParams: JSON.stringify(returnParams) }),
+                      },
+                    })
+                  }
                 />
               );
             })
@@ -552,7 +898,7 @@ export default function EditClientScreen() {
           />
         </Card>
 
-        {canDeleteClients ? (
+        {canDeleteClients && !(selectMode && flowKey) ? (
           <UIButton
             title={t('btn_delete')}
             variant="destructive"
@@ -574,29 +920,136 @@ export default function EditClientScreen() {
         onConfirm={handleLeaveWithoutSaving}
       />
 
-      <ConfirmModal
+      <BaseModal
         visible={deleteVisible}
         onClose={() => setDeleteVisible(false)}
         title={t('clients_delete_title')}
-        message={t('clients_delete_message')}
-        confirmLabel={t('btn_delete')}
-        cancelLabel={t('btn_cancel')}
-        confirmVariant="destructive"
-        onConfirm={async () => {
-          try {
-            await cleanupProfileMediaEntity('client', String(clientId || ''));
-            for (const objectItem of clientObjects || []) {
-              await cleanupProfileMediaEntity('object', String(objectItem?.id || ''));
-            }
-            await deleteMutation.mutateAsync(String(clientId || ''));
-            toast.success(t('clients_deleted_success'));
-            allowLeaveRef.current = true;
-            router.replace('/clients');
-          } catch (error) {
-            toast.error(error?.message || t('clients_save_failed'));
-          }
-        }}
-      />
+        footer={
+          deleteBlockersLoading ? (
+            <ModalActionsRow
+              actions={[
+                {
+                  key: 'cancel',
+                  title: t('btn_cancel'),
+                  variant: 'secondary',
+                  onPress: () => setDeleteVisible(false),
+                },
+                {
+                  key: 'loading',
+                  title: t('clients_delete_checking_orders'),
+                  variant: 'secondary',
+                  disabled: true,
+                  loading: true,
+                },
+              ]}
+            />
+          ) : blockingOrdersCount > 0 ? (
+            <ModalActionsRow
+              actions={[
+                {
+                  key: 'cancel',
+                  title: t('btn_cancel'),
+                  variant: 'secondary',
+                  onPress: () => setDeleteVisible(false),
+                },
+                blockersRoute
+                  ? {
+                      key: 'view',
+                      title: t('common_view'),
+                      variant: 'primary',
+                      onPress: () => {
+                        setDeleteVisible(false);
+                        router.push(blockersRoute);
+                      },
+                    }
+                  : null,
+              ]}
+            />
+          ) : (
+            <ModalActionsRow
+              actions={[
+                {
+                  key: 'cancel',
+                  title: t('btn_cancel'),
+                  variant: 'secondary',
+                  onPress: () => setDeleteVisible(false),
+                },
+                {
+                  key: 'delete',
+                  title: t('btn_delete'),
+                  variant: 'destructive',
+                  loading: deleteMutation.isPending,
+                  onPress: async () => {
+                    try {
+                      const latest = await refetchDeleteBlockers();
+                      const nextBlockingCount = Number(latest?.data?.blockingOrdersCount || 0);
+                      if (nextBlockingCount > 0) {
+                        toast.warning(t('clients_delete_has_orders'));
+                        return;
+                      }
+                      await cleanupProfileMediaEntity('client', String(clientId || ''));
+                      for (const objectItem of clientObjects || []) {
+                        await cleanupProfileMediaEntity('object', String(objectItem?.id || ''));
+                      }
+                      await deleteMutation.mutateAsync(String(clientId || ''));
+                      toast.success(t('clients_deleted_success'));
+                      setDeleteVisible(false);
+                      allowLeaveRef.current = true;
+                      dismissToRoute(router, {
+                        pathname: returnTo,
+                        params: returnParams,
+                      });
+                    } catch (error) {
+                      const rawMessage = String(error?.message || '');
+                      if (
+                        rawMessage.includes('orders_client_id_fkey') ||
+                        rawMessage.includes('orders_object_id_fkey') ||
+                        rawMessage.includes('violates foreign key constraint')
+                      ) {
+                        toast.error(t('clients_delete_has_orders'));
+                        return;
+                      }
+                      toast.error(rawMessage || t('clients_save_failed'));
+                    }
+                  },
+                },
+              ]}
+            />
+          )
+        }
+      >
+        <View style={styles.deleteModalContent}>
+          {deleteBlockersLoading ? (
+            <View style={styles.deleteModalLoading}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+              <Text style={styles.deleteModalMessage}>{t('clients_delete_checking_orders')}</Text>
+            </View>
+          ) : deleteBlockersError ? (
+            <Text style={styles.deleteModalMessage}>{t('clients_delete_check_failed')}</Text>
+          ) : blockingOrdersCount > 0 ? (
+            <>
+              <Text style={styles.deleteModalMessage}>
+                {t('clients_delete_blocked_message')
+                  .replace('{orders}', String(blockingOrdersCount))
+                  .replace('{objects}', String(blockingObjectsCount))}
+              </Text>
+              {!canViewAllOrders && Number(deleteBlockers?.otherOrdersCount || 0) > 0 ? (
+                <Text style={styles.deleteModalHint}>
+                  {t('clients_delete_blocked_other_orders').replace(
+                    '{count}',
+                    String(deleteBlockers?.otherOrdersCount || 0),
+                  )}
+                </Text>
+              ) : null}
+              {deleteBlockers?.isPartial ? (
+                <Text style={styles.deleteModalHint}>{t('clients_delete_partial_check')}</Text>
+              ) : null}
+            </>
+          ) : (
+            <Text style={styles.deleteModalMessage}>{t('clients_delete_message')}</Text>
+          )}
+        </View>
+      </BaseModal>
 
       <AvatarSheetModal
         key={`avatar-${avatarKey}`}
@@ -702,6 +1155,48 @@ function createStyles(theme) {
     field: {
       marginVertical: theme.spacing.xs,
     },
+    additionalPhoneGroup: {
+      marginBottom: theme.spacing.xs,
+    },
+    additionalPhoneAddRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: Number(theme.spacing?.lg ?? 16),
+      paddingVertical: theme.spacing.xs,
+      marginBottom: theme.spacing.xs,
+    },
+    additionalPhoneAddText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
+    },
+    additionalPhoneAddButton: {
+      minWidth: 24,
+      minHeight: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    duplicateHintRow: {
+      marginBottom: theme.spacing.xs,
+      paddingHorizontal: Number(theme.spacing?.lg ?? 16),
+      paddingTop: Math.max(2, Number(theme.spacing?.xxs ?? 2)),
+      paddingBottom: Number(theme.spacing?.xs ?? 8),
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: theme.spacing.xs,
+    },
+    duplicateHintText: {
+      flex: 1,
+      color: theme.colors.warning,
+      fontSize: theme.typography.sizes.sm,
+    },
+    duplicateHintAction: {
+      color: theme.colors.primary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+    },
     emptyText: {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
@@ -710,6 +1205,25 @@ function createStyles(theme) {
     deleteBtn: {
       alignSelf: 'stretch',
       marginTop: theme.spacing.sm,
+    },
+    deleteModalContent: {
+      gap: theme.spacing.sm,
+      paddingBottom: theme.spacing.sm,
+    },
+    deleteModalLoading: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    deleteModalMessage: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.md,
+      lineHeight: Math.round(theme.typography.sizes.md * 1.35),
+    },
+    deleteModalHint: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: Math.round(theme.typography.sizes.sm * 1.4),
     },
     leaveBody: {
       marginBottom: theme.spacing.md,

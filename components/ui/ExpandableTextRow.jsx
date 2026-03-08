@@ -19,11 +19,13 @@ function ExpandableTextRowComponent({
   collapsedValue = null,
   onValuePress = null,
   expandedActionText = null,
-  toggleOnChevronOnly = false,
+  toggleOnChevronOnly = true,
   collapsedValueStyle = null,
   expandedValueStyle = null,
   expandedLabelBold = false,
   expandedKeyValueItems = null,
+  onCollapsedPress = null,
+  rowPressDisabled = false,
   // new optional props
   chevronName = 'chevron-down',
   onChevronPress = null,
@@ -51,7 +53,8 @@ function ExpandableTextRowComponent({
       top: Math.max(theme.components?.interactive?.hitSlop?.top ?? 10, 14),
       right: Math.max(theme.components?.interactive?.hitSlop?.right ?? 10, 14),
       bottom: Math.max(theme.components?.interactive?.hitSlop?.bottom ?? 10, 14),
-      left: Math.max(theme.components?.interactive?.hitSlop?.left ?? 10, 14),
+      // keep left hitSlop small to avoid overlapping neighboring action (e.g., "Карта")
+      left: Math.min(Math.max(theme.components?.interactive?.hitSlop?.left ?? 6, 6), 8),
     }),
     [theme],
   );
@@ -85,7 +88,7 @@ function ExpandableTextRowComponent({
     <View>
       <Pressable
         style={base.row}
-        onPress={toggleOnChevronOnly && expanded ? undefined : handleRowPress}
+        onPress={rowPressDisabled ? undefined : toggleOnChevronOnly && expanded ? undefined : handleRowPress}
         hitSlop={theme.components?.interactive?.hitSlop}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
@@ -94,22 +97,33 @@ function ExpandableTextRowComponent({
           {label}
         </Text>
         <View style={styles.rightWrap}>
-          {showCollapsedValue ? (
-            <Text
-              style={[base.value, styles.collapsedValue, collapsedValueStyle]}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {normalizedCollapsedValue}
-            </Text>
-          ) : null}
+              {showCollapsedValue ? (
+                onCollapsedPress ? (
+                  <Pressable onPress={onCollapsedPress} hitSlop={theme.components?.interactive?.hitSlop}>
+                    <Text
+                      style={[base.value, styles.collapsedValue, collapsedValueStyle]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {normalizedCollapsedValue}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <Text
+                    style={[base.value, styles.collapsedValue, collapsedValueStyle]}
+                    numberOfLines={1}
+                    ellipsizeMode="tail"
+                  >
+                    {normalizedCollapsedValue}
+                  </Text>
+                )
+              ) : null}
           {showExpandedAction ? (
-            <Text
-              onPress={onValuePress}
-              style={[base.value, styles.collapsedValue, collapsedValueStyle]}
-            >
-              {normalizedExpandedActionText}
-            </Text>
+            <Pressable onPress={onValuePress} hitSlop={theme.components?.interactive?.hitSlop}>
+              <Text style={[base.value, styles.collapsedValue, collapsedValueStyle]}> 
+                {normalizedExpandedActionText}
+              </Text>
+            </Pressable>
           ) : null}
           <Pressable
             onPress={() => {
@@ -171,11 +185,13 @@ function createStyles(theme) {
       paddingRight: theme.spacing.xs,
     },
     collapsedValue: {
-      flex: 1,
+      flexShrink: 1,
       minWidth: 0,
+      alignSelf: 'center',
     },
     chevronWrap: {
       marginLeft: theme.components?.listItem?.chevronGap ?? theme.spacing.sm,
+      alignSelf: 'center',
     },
     chevronPressable: {
       borderRadius: theme.radii.sm,
@@ -183,6 +199,7 @@ function createStyles(theme) {
       minHeight: 36,
       alignItems: 'center',
       justifyContent: 'center',
+      alignSelf: 'center',
       paddingHorizontal: theme.spacing.xs,
       marginRight: -theme.spacing.xs,
     },

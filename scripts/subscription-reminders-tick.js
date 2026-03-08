@@ -66,14 +66,15 @@ async function sendEmail(emailServiceUrl, payload) {
 
 async function loadAuthEmail(supabase, profile) {
   const authUserId = profile?.user_id || profile?.id || null;
+  const profileEmail = String(profile?.email || '').trim().toLowerCase() || null;
   if (!authUserId) return null;
 
   const { data, error } = await supabase.auth.admin.getUserById(authUserId);
   if (error) {
     console.warn(`[subscription-reminders] getUserById failed for ${authUserId}: ${error.message}`);
-    return null;
+    return profileEmail;
   }
-  return data?.user?.email || null;
+  return data?.user?.email || profileEmail;
 }
 
 async function main() {
@@ -133,7 +134,7 @@ async function main() {
     supabase.from('companies').select('id,name').in('id', companyIds),
     supabase
       .from('profiles')
-      .select('id,user_id,company_id,role,first_name,last_name,full_name,locale,is_suspended')
+      .select('id,user_id,email,company_id,role,first_name,last_name,full_name,locale,is_suspended')
       .in('company_id', companyIds)
       .eq('role', 'admin'),
   ]);

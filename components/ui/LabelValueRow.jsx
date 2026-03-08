@@ -3,6 +3,21 @@ import { View, Text } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { listItemStyles } from './listItemStyles';
 
+const EMPTY_PLACEHOLDER_VALUES = new Set(['-', '–', '—']);
+
+function normalizeDisplayValue(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  return String(value);
+}
+
+function isEmptyDisplayValue(value) {
+  const normalized = normalizeDisplayValue(value).trim();
+  if (!normalized) return true;
+  return EMPTY_PLACEHOLDER_VALUES.has(normalized);
+}
+
 /**
  * Universal label/value row component.
  * 
@@ -29,9 +44,13 @@ export default function LabelValueRow({
   rightActions,
   maxValueLines = 3,
   style,
+  fullRow = false,
+  hideWhenEmpty = true,
 }) {
   const { theme } = useTheme();
   const base = useMemo(() => listItemStyles(theme), [theme]);
+  const hasCustomValue = valueComponent !== null && valueComponent !== undefined && valueComponent !== false;
+  const shouldHide = hideWhenEmpty && !hasCustomValue && isEmptyDisplayValue(value);
 
   const renderLabel = () => {
     if (typeof label === 'string') {
@@ -54,6 +73,18 @@ export default function LabelValueRow({
       </Text>
     );
   };
+
+  if (fullRow) {
+    if (shouldHide) return null;
+    return (
+      <View style={[{ flexDirection: 'column', paddingVertical: 2 }, style]}>
+        <View>{renderLabel()}</View>
+        <View style={{ marginTop: 6 }}>{renderValue()}</View>
+      </View>
+    );
+  }
+
+  if (shouldHide) return null;
 
   return (
     <View style={[base.row, style]}>

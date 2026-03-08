@@ -1,8 +1,9 @@
 import React from 'react';
-import { Keyboard, Platform, TouchableWithoutFeedback, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeProvider';
+import DismissKeyboardArea from './DismissKeyboardArea';
 import AppHeader from '../navigation/AppHeader';
 
 export default function EditScreenTemplate({
@@ -26,6 +27,8 @@ export default function EditScreenTemplate({
     24,
     (theme.components?.scrollView?.paddingBottom ?? 24) + (insets?.bottom ?? 0),
   );
+  const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 40;
+  const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 0;
 
   const mergedOptions = {
     headerTitleAlign: 'left',
@@ -57,25 +60,19 @@ export default function EditScreenTemplate({
           contentContainerStyle,
         ]}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardDismissMode="none"
         showsVerticalScrollIndicator={false}
         contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
         scrollEnabled={scrollEnabled}
-        bottomOffset={40}
+        bottomOffset={keyboardBottomOffset}
+        extraKeyboardSpace={extraKeyboardSpace}
         onScroll={onScroll}
         scrollEventThrottle={scrollEventThrottle}
       >
         {dismissKeyboardOnPress ? (
-          <TouchableWithoutFeedback
-            accessible={false}
-            onPress={() => {
-              try {
-                Keyboard.dismiss();
-              } catch {}
-            }}
-          >
+          <DismissKeyboardArea>
             <View>{children}</View>
-          </TouchableWithoutFeedback>
+          </DismissKeyboardArea>
         ) : (
           <View>{children}</View>
         )}

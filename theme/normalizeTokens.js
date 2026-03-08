@@ -110,6 +110,21 @@ export function buildTheme(mode) {
     },
     switch: {
       scale: base.components?.switch?.scale ?? 1,
+      minTouchSize: base.components?.switch?.minTouchSize ?? 48,
+      disabledOpacity: base.components?.switch?.disabledOpacity ?? 0.42,
+      thumbColor: base.components?.switch?.thumbColor ?? '#FFFFFF',
+      trackOn: base.components?.switch?.trackOn ?? colors.primary,
+      trackOff: base.components?.switch?.trackOff ?? colors.inputBorder ?? colors.border,
+      trackOnDisabled:
+        base.components?.switch?.trackOnDisabled ??
+        base.colors?.primaryDisabled ??
+        base.components?.switch?.trackOn ??
+        colors.primary,
+      trackOffDisabled:
+        base.components?.switch?.trackOffDisabled ??
+        base.components?.switch?.trackOff ??
+        colors.inputBorder ??
+        colors.border,
       iosBackgroundColor: base.components?.switch?.iosBackgroundColor ?? base.colors?.inputBorder ?? '#E5E7EB',
     },
     // NEW: sensible defaults; additive, won't break existing usage

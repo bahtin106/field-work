@@ -1,6 +1,6 @@
-// apps/field-work/app/orders/edit/[id].jsx
-import { format } from 'date-fns';
+﻿import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,6 +9,7 @@ import {
   BackHandler,
   Keyboard,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -24,16 +25,37 @@ import {
   useUpdateRequestMutation,
 } from '../../../src/features/requests/queries';
 import { useClient, useClients, useUpdateClientMutation } from '../../../src/features/clients/queries';
-import { buildClientObjectAddressSummary } from '../../../src/features/objects/addressing';
+import { collectClientPhoneSearchValues } from '../../../src/features/clients/additionalPhones';
+import { useClientObjects } from '../../../src/features/objects/queries';
+import {
+  buildClientObjectAddressSummary,
+  buildClientObjectShortAddress,
+} from '../../../src/features/objects/addressing';
+import {
+  ORDER_ADDRESS_MODE,
+  buildOrderAddressDisplay,
+  buildOrderAddressShort,
+  extractOrderAddress,
+  extractOrderAddressFromObject,
+  normalizeOrderAddressMode,
+  toOrderAddressPatch,
+} from '../../../src/features/requests/addressing';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+} from '../../../src/features/fieldSettings/catalog';
+import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import FiltersPanel from '../../../components/filters/FiltersPanel';
 import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
 import { useUsers } from '../../../components/hooks/useUsers';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
+import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
-import { ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
-import { isValidRu as isValidPhone } from '../../../components/ui/phone';
+import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
+import QuickPreviewModal from '../../../components/ui/modals/QuickPreviewModal';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
@@ -42,13 +64,22 @@ import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import { t as T } from '../../../src/i18n';
+import { formatRuMask } from '../../../components/ui/phone';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
+import { FieldErrorText } from '../../../src/shared/feedback';
+import {
+  isValidOptionalMobilePhone,
+  toE164MobilePhoneOrNull,
+} from '../../../src/shared/validation/phone';
+import { parseClientPrefillFromSearch } from '../../../src/features/clients/prefillFromSearch';
+import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matching';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
 const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
+const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
 
 export default function EditOrderScreen() {
   const navigation = useNavigation();
@@ -76,6 +107,12 @@ export default function EditOrderScreen() {
 
   const updateRequestMutation = useUpdateRequestMutation();
   const queryClient = useQueryClient();
+  const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
+    enabled: !!id,
+  });
+  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
+    enabled: !!id,
+  });
 
   const { theme } = useTheme();
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
@@ -96,11 +133,7 @@ export default function EditOrderScreen() {
     onlyEnabled: true,
   });
   useRequestRealtimeSync({ enabled: !!id && !!companyId, companyId });
-
-  // moved up: СЃРѕСЃС‚РѕСЏРЅРёРµ РІРёРґРёРјРѕСЃС‚Рё picker РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РґРѕСЃС‚СѓРїРЅРѕ РґРѕ РІС‹Р·РѕРІР° useUsers
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
-
-  // useUsers С‚РµРїРµСЂСЊ С‡РёС‚Р°РµС‚ РєРѕСЂСЂРµРєС‚РЅРѕРµ Р·РЅР°С‡РµРЅРёРµ enabled
   const { users: employees } = useUsers({
     filters: {},
     enabled: assigneePickerVisible,
@@ -114,23 +147,25 @@ export default function EditOrderScreen() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [region, setRegion] = useState('');
+  const [district, setDistrict] = useState('');
   const [city, setCity] = useState('');
   const [street, setStreet] = useState('');
   const [house, setHouse] = useState('');
   const [country, setCountry] = useState('');
   const [postalCode, setPostalCode] = useState('');
-  const [building, setBuilding] = useState('');
+  const [office, setOffice] = useState('');
   const [floor, setFloor] = useState('');
   const [entrance, setEntrance] = useState('');
   const [apartment, setApartment] = useState('');
-  const [intercom, setIntercom] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [selectedObjectId, setSelectedObjectId] = useState(null);
+  const [addressMode, setAddressMode] = useState(ORDER_ADDRESS_MODE.OBJECT);
+  const [addressModalVisible, setAddressModalVisible] = useState(false);
+  const [addressModalDraft, setAddressModalDraft] = useState(() => extractOrderAddress({}));
   const [phone, setPhone] = useState('');
   const [secondaryPhone, setSecondaryPhone] = useState('');
   const [contactEmail, setContactEmail] = useState('');
-  const [contactPref, setContactPref] = useState('');
   const [entranceInfo, setEntranceInfo] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
   const [departureEndDate, setDepartureEndDate] = useState(null);
@@ -142,6 +177,10 @@ export default function EditOrderScreen() {
   const [statusLabel, setStatusLabel] = useState('');
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [clientModalVisible, setClientModalVisible] = useState(false);
+  const [clientModalSearch, setClientModalSearch] = useState('');
+  const [previewClient, setPreviewClient] = useState(null);
+  const [previewClientVisible, setPreviewClientVisible] = useState(false);
+  const [previewAnchor, setPreviewAnchor] = useState({ x: 0, y: 0 });
   const [objectModalVisible, setObjectModalVisible] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
   const [parkingNotes, setParkingNotes] = useState('');
@@ -151,28 +190,27 @@ export default function EditOrderScreen() {
   const [formHydrated, setFormHydrated] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
   const [cancelKey, setCancelKey] = useState(0);
-
-  // Р’РѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРЅС‹Рµ refs Рё СЃРѕСЃС‚РѕСЏРЅРёСЏ, РєРѕС‚РѕСЂС‹Рµ РёСЃРїРѕР»СЊР·СѓРµС‚ РєРѕРјРїРѕРЅРµРЅС‚ РґР°Р»СЊС€Рµ
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const insets = useSafeAreaInsets();
   const titleRef = useRef(null);
   const descriptionRef = useRef(null);
   const regionRef = useRef(null);
+  const districtRef = useRef(null);
   const cityRef = useRef(null);
   const streetRef = useRef(null);
   const houseRef = useRef(null);
   const postalCodeRef = useRef(null);
   const countryRef = useRef(null);
-  const buildingRef = useRef(null);
+  const officeRef = useRef(null);
   const floorRef = useRef(null);
   const entranceRef = useRef(null);
   const apartmentRef = useRef(null);
-  const intercomRef = useRef(null);
   const customerNameRef = useRef(null);
   const secondaryPhoneRef = useRef(null);
   const contactEmailRef = useRef(null);
-  const contactPrefRef = useRef(null);
   const entranceInfoRef = useRef(null);
   const parkingNotesRef = useRef(null);
   const geoLatRef = useRef(null);
@@ -187,21 +225,55 @@ export default function EditOrderScreen() {
     enabled: !!selectedClientId && hasPermission('canViewClients'),
   });
   const updateClientMutation = useUpdateClientMutation();
-
-  // РјРѕРґР°Р»СЊРЅС‹Рµ СЃРѕСЃС‚РѕСЏРЅРёСЏ (Р±С‹Р»Рё СѓРґР°Р»РµРЅС‹ СЂР°РЅРµРµ вЂ” РІРµСЂРЅСѓС‚СЊ)
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
+  const orderFieldSettings = useMemo(
+    () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
+    [orderFieldSettingsData],
+  );
+  const objectFieldSettings = useMemo(
+    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
+    [objectFieldSettingsData],
+  );
+  const orderFieldsByKey = useMemo(() => getEntityFieldMap(orderFieldSettings), [orderFieldSettings]);
+  const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
   const allowLeaveRef = useRef(false);
+  const clientFlowKeyRef = useRef(
+    `edit-order-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
   const assignedLabelRequestIdRef = useRef(0);
   const normalizeId = useCallback((value) => {
     if (value === null || value === undefined || value === '') return null;
     return String(value);
   }, []);
-
-  // РёРјСЏ РІС‹Р±СЂР°РЅРЅРѕРіРѕ РёСЃРїРѕР»РЅРёС‚РµР»СЏ (РІРѕСЃСЃС‚Р°РЅРѕРІР»РµРЅРѕ)
+  const requiredSuffix = T('common_required_suffix');
+  const withRequiredLabel = useCallback(
+    (label, required) => {
+      if (!required || !label) return label;
+      if (String(label).includes('*')) return label;
+      return `${label}${requiredSuffix}`;
+    },
+    [requiredSuffix],
+  );
+  const isFieldRequired = useCallback(
+    (fieldKey) => orderFieldsByKey.get(fieldKey)?.isRequired === true,
+    [orderFieldsByKey],
+  );
+  const clearFieldError = useCallback((fieldKey) => {
+    setFieldErrors((prev) => {
+      if (!prev?.[fieldKey]) return prev;
+      const next = { ...prev };
+      delete next[fieldKey];
+      return next;
+    });
+  }, []);
+  const getFieldError = useCallback(
+    (fieldKey) => (submittedAttempt ? fieldErrors?.[fieldKey]?.message || null : null),
+    [fieldErrors, submittedAttempt],
+  );
   const selectedEmployeeName = useMemo(() => {
     if (selectedEmployee) return selectedEmployee.display_name || selectedEmployee.email || '';
     return assignedEmployeeLabel || T('common_noName');
@@ -211,14 +283,20 @@ export default function EditOrderScreen() {
     const client = clients.find((item) => String(item.id) === String(selectedClientId));
     return client?.fullName || '';
   }, [clients, selectedClientId]);
-  const clientObjects = useMemo(
-    () => (Array.isArray(selectedClient?.objects) ? selectedClient.objects : []),
-    [selectedClient],
+  const { data: clientObjectsByApi = [] } = useClientObjects(selectedClientId, { enabled: !!selectedClientId });
+
+  const clientObjects = useMemo(() => {
+    if (Array.isArray(selectedClient?.objects) && selectedClient.objects.length) return selectedClient.objects;
+    if (Array.isArray(clientObjectsByApi) && clientObjectsByApi.length) return clientObjectsByApi;
+    return [];
+  }, [selectedClient, clientObjectsByApi]);
+  const selectedObject = useMemo(
+    () => clientObjects.find((item) => String(item.id) === String(selectedObjectId)) || null,
+    [clientObjects, selectedObjectId],
   );
   const selectedObjectSummary = useMemo(() => {
-    const objectItem = clientObjects.find((item) => String(item.id) === String(selectedObjectId));
-    return [objectItem?.name, buildClientObjectAddressSummary(objectItem)].filter(Boolean).join(' - ');
-  }, [clientObjects, selectedObjectId]);
+    return [selectedObject?.name, buildClientObjectAddressSummary(selectedObject)].filter(Boolean).join(' - ');
+  }, [selectedObject]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -256,17 +334,75 @@ export default function EditOrderScreen() {
     return clients.map((client) => ({
       id: client.id,
       label: client.fullName || T('common_noName'),
+      subtitle: collectClientPhoneSearchValues(client).find(Boolean) || undefined,
+      clientRaw: client,
+      searchIndex: buildSearchIndex({
+        texts: [
+          client.fullName,
+          client.firstName,
+          client.lastName,
+          client.middleName,
+          client.email,
+        ],
+        phones: collectClientPhoneSearchValues(client),
+      }),
       onPress: () => {
         setSelectedClientId(client.id);
         setSelectedObjectId(null);
+        setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
         setPhone(String(client.phone || ''));
         setSecondaryPhone(String(client.secondaryPhone || ''));
         setContactEmail(String(client.email || ''));
-        setContactPref(String(client.contactPref || ''));
         setClientModalVisible(false);
       },
     }));
   }, [clients]);
+
+  const openClientPreview = useCallback((item, event) => {
+    const client = item?.clientRaw || null;
+    if (!client?.id) return;
+    const pageX = Number(event?.nativeEvent?.pageX);
+    const pageY = Number(event?.nativeEvent?.pageY);
+    if (Number.isFinite(pageX) && Number.isFinite(pageY)) {
+      setPreviewAnchor({ x: pageX, y: pageY });
+    }
+    setPreviewClient(client);
+    setPreviewClientVisible(true);
+  }, []);
+
+  const previewClientRows = useMemo(() => {
+    const phoneValue = previewClient?.phone ? formatRuMask(previewClient.phone) : '';
+    const objectNames = Array.isArray(previewClient?.objects)
+      ? previewClient.objects
+          .map((objectItem) => String(objectItem?.name || '').trim())
+          .filter(Boolean)
+      : [];
+    return [
+      { key: 'phone', label: T('view_label_phone'), value: phoneValue },
+      { key: 'objects', label: T('clients_objects_section'), value: objectNames.join(', ') },
+    ];
+  }, [previewClient]);
+
+  const previewClientTags = useMemo(
+    () =>
+      Array.isArray(previewClient?.tags)
+      ? previewClient.tags.map((tag) => String(tag?.value || '').trim()).filter(Boolean)
+      : [],
+    [previewClient?.tags],
+  );
+
+  const openPreviewClientCard = useCallback(() => {
+    const clientId = String(previewClient?.id || '').trim();
+    if (!clientId) return;
+    setPreviewClientVisible(false);
+    setClientModalVisible(false);
+    router.push({
+      pathname: `/clients/${clientId}`,
+      params: {
+        returnTo: `/orders/edit/${String(id || '')}`,
+      },
+    });
+  }, [id, previewClient?.id, router]);
   const objectItems = useMemo(() => {
     if (!clientObjects.length) {
       return [{ id: 'empty', label: T('objects_empty'), disabled: true }];
@@ -276,12 +412,78 @@ export default function EditOrderScreen() {
       label: objectItem.is_primary
         ? [objectItem.name, T('objects_primary')].filter(Boolean).join(' - ')
         : objectItem.name,
+      subtitle: buildClientObjectShortAddress(objectItem) || undefined,
       onPress: () => {
         setSelectedObjectId(objectItem.id);
+        const objectAddress = extractOrderAddressFromObject(objectItem);
+        setCountry(objectAddress.country);
+        setRegion(objectAddress.region);
+        setDistrict(objectAddress.district);
+        setCity(objectAddress.city);
+        setStreet(objectAddress.street);
+        setHouse(objectAddress.house);
+        setPostalCode(objectAddress.postal_code);
+        setOffice(objectAddress.office);
+        setFloor(objectAddress.floor);
+        setEntrance(objectAddress.entrance);
+        setApartment(objectAddress.apartment);
+        setEntranceInfo(objectAddress.entrance_info);
+        setParkingNotes(objectAddress.parking_notes);
+        setGeoLat(objectAddress.geo_lat);
+        setGeoLng(objectAddress.geo_lng);
         setObjectModalVisible(false);
       },
     }));
   }, [clientObjects]);
+
+  const openCreateClientFromModal = useCallback(() => {
+    const prefill = parseClientPrefillFromSearch(clientModalSearch);
+    setClientModalVisible(false);
+    router.push({
+      pathname: '/clients/new',
+      params: {
+        flow_key: clientFlowKeyRef.current,
+        flow_return_to: `/orders/edit/${String(id || '')}`,
+        ...(prefill.firstName ? { prefill_first_name: prefill.firstName } : {}),
+        ...(prefill.lastName ? { prefill_last_name: prefill.lastName } : {}),
+        ...(prefill.middleName ? { prefill_middle_name: prefill.middleName } : {}),
+        ...(prefill.phoneRaw ? { prefill_phone: prefill.phoneRaw } : {}),
+      },
+    });
+  }, [clientModalSearch, id, router]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const consumeCreatedClient = async () => {
+        const key = `${ORDER_CLIENT_FLOW_STORAGE_PREFIX}${clientFlowKeyRef.current}`;
+        try {
+          const raw = await AsyncStorage.getItem(key);
+          if (!raw || cancelled) return;
+          await AsyncStorage.removeItem(key);
+          const parsed = JSON.parse(raw);
+          const resolvedClientId = String(
+            parsed?.selectedClientId || parsed?.createdClientId || '',
+          ).trim();
+          if (!resolvedClientId) return;
+          setSelectedClientId(resolvedClientId);
+          setSelectedObjectId(null);
+          setClientModalVisible(false);
+          setClientModalSearch('');
+        } catch {}
+      };
+      void consumeCreatedClient();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+  useEffect(() => {
+    if (selectedClientId) return;
+    setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
+    setSelectedObjectId(null);
+    setAddressModalVisible(false);
+  }, [selectedClientId]);
 
   const selectedEmployee = useMemo(() => {
     if (!assigneeId || !employees?.length) return null;
@@ -344,23 +546,6 @@ export default function EditOrderScreen() {
     refetch: refetchOrder,
   } = useRequest(id);
 
-  const normalizeRuPhoneForDb = useCallback((input) => {
-    const digits = String(input || '').replace(/\D/g, '');
-    if (!digits) return null;
-
-    let normalized = digits;
-    if (normalized.length === 11 && normalized.startsWith('8')) {
-      normalized = `7${normalized.slice(1)}`;
-    } else if (normalized.length === 10 && normalized.startsWith('9')) {
-      normalized = `7${normalized}`;
-    }
-
-    if (normalized.length !== 11) return null;
-    if (!normalized.startsWith('7')) return null;
-    if (normalized[1] !== '9') return null;
-    return `+${normalized}`;
-  }, []);
-
   const parseDecimalOrNull = useCallback((input) => {
     const raw = String(input ?? '').trim();
     if (!raw) return null;
@@ -389,23 +574,23 @@ export default function EditOrderScreen() {
         title: String(draft.title || '').trim(),
         description: String(draft.description || '').trim(),
         region: String(draft.region || '').trim(),
+        district: String(draft.district || '').trim(),
         city: String(draft.city || '').trim(),
         street: String(draft.street || '').trim(),
         house: String(draft.house || '').trim(),
         country: String(draft.country || '').trim(),
         postalCode: String(draft.postalCode || '').trim(),
-        building: String(draft.building || '').trim(),
+        office: String(draft.office || '').trim(),
         floor: String(draft.floor || '').trim(),
         entrance: String(draft.entrance || '').trim(),
         apartment: String(draft.apartment || '').trim(),
-        intercom: String(draft.intercom || '').trim(),
         customerName: String(draft.customerName || '').trim(),
         selectedClientId: draft.selectedClientId || null,
         selectedObjectId: draft.selectedObjectId || null,
+        addressMode: normalizeOrderAddressMode(draft.addressMode),
         phone: String(draft.phone || '').replace(/\D/g, ''),
         secondaryPhone: String(draft.secondaryPhone || '').replace(/\D/g, ''),
         contactEmail: String(draft.contactEmail || '').trim(),
-        contactPref: String(draft.contactPref || '').trim(),
         entranceInfo: String(draft.entranceInfo || '').trim(),
         parkingNotes: String(draft.parkingNotes || '').trim(),
         geoLat: String(draft.geoLat || '').trim(),
@@ -436,16 +621,16 @@ export default function EditOrderScreen() {
       const nextTitle = row.title || '';
       const nextDescription = row.comment || '';
       const nextRegion = row.region || '';
+      const nextDistrict = row.district || '';
       const nextCity = row.city || '';
       const nextStreet = row.street || '';
       const nextHouse = row.house || '';
       const nextCountry = row.country ?? country ?? '';
       const nextPostalCode = row.postal_code ?? postalCode ?? '';
-      const nextBuilding = row.building ?? building ?? '';
+      const nextOffice = row.office ?? office ?? '';
       const nextFloor = row.floor ?? floor ?? '';
       const nextEntrance = row.entrance ?? entrance ?? '';
       const nextApartment = row.apartment ?? apartment ?? '';
-      const nextIntercom = row.intercom ?? intercom ?? '';
       const nextCustomerName =
         row.fio ||
         row.customer_name ||
@@ -456,10 +641,13 @@ export default function EditOrderScreen() {
         '';
       const nextClientId = normalizeId(row.client_id);
       const nextObjectId = normalizeId(row.object_id);
+      let nextAddressMode = normalizeOrderAddressMode(row.address_mode);
+      if (nextAddressMode === ORDER_ADDRESS_MODE.OBJECT && !nextObjectId) {
+        nextAddressMode = ORDER_ADDRESS_MODE.CUSTOM;
+      }
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
       const nextSecondaryPhone = String(row.secondary_phone || '').replace(/\D/g, '');
       const nextContactEmail = row.contact_email ?? '';
-      const nextContactPref = row.contact_pref ?? '';
       const nextEntranceInfo = row.entrance_info ?? '';
       const nextParkingNotes = row.parking_notes ?? '';
       const nextGeoLat = row.geo_lat ?? '';
@@ -491,23 +679,23 @@ export default function EditOrderScreen() {
       setTitle(nextTitle);
       setDescription(nextDescription);
       setRegion(nextRegion);
+      setDistrict(nextDistrict);
       setCity(nextCity);
       setStreet(nextStreet);
       setHouse(nextHouse);
       setCountry(nextCountry);
       setPostalCode(nextPostalCode);
-      setBuilding(nextBuilding);
+      setOffice(nextOffice);
       setFloor(nextFloor);
       setEntrance(nextEntrance);
       setApartment(nextApartment);
-      setIntercom(nextIntercom);
       setCustomerName(nextCustomerName);
       setSelectedClientId(nextClientId);
       setSelectedObjectId(nextObjectId);
+      setAddressMode(nextAddressMode);
       setPhone(raw);
       setSecondaryPhone(nextSecondaryPhone);
       setContactEmail(String(nextContactEmail || ''));
-      setContactPref(String(nextContactPref || ''));
       setEntranceInfo(String(nextEntranceInfo || ''));
       setParkingNotes(String(nextParkingNotes || ''));
       setGeoLat(String(nextGeoLat || ''));
@@ -538,23 +726,23 @@ export default function EditOrderScreen() {
         title: nextTitle,
         description: nextDescription,
         region: nextRegion,
+        district: nextDistrict,
         city: nextCity,
         street: nextStreet,
         house: nextHouse,
         country: nextCountry,
         postalCode: nextPostalCode,
-        building: nextBuilding,
+        office: nextOffice,
         floor: nextFloor,
         entrance: nextEntrance,
         apartment: nextApartment,
-        intercom: nextIntercom,
         customerName: nextCustomerName,
         selectedClientId: nextClientId,
         selectedObjectId: nextObjectId,
+        addressMode: nextAddressMode,
         phone: raw,
         secondaryPhone: nextSecondaryPhone,
         contactEmail: nextContactEmail,
-        contactPref: nextContactPref,
         entranceInfo: nextEntranceInfo,
         parkingNotes: nextParkingNotes,
         geoLat: nextGeoLat,
@@ -587,23 +775,17 @@ export default function EditOrderScreen() {
       if (!nextWorkTypeResolved || nextWorkTypeId == null) {
         supabase
           .from('orders')
-          .select('work_type_id, client_id, secondary_phone, contact_email, contact_pref, time_window_end')
+          .select('work_type_id, client_id, time_window_end')
           .eq('id', id)
           .maybeSingle()
           .then(({ data: wtRow }) => {
             if (cancelled || userEditedRef.current || !wtRow) return;
             const resolvedWorkTypeId = normalizeId(wtRow.work_type_id);
             const resolvedClientId = normalizeId(wtRow.client_id) || nextClientId;
-            const resolvedSecondaryPhone = String(wtRow.secondary_phone || '').replace(/\D/g, '');
-            const resolvedContactEmail = String(wtRow.contact_email || '');
-            const resolvedContactPref = String(wtRow.contact_pref || '');
             const resolvedDepartureEndDate = normalizeDateOrNull(wtRow.time_window_end);
             setWorkTypeId(resolvedWorkTypeId);
             setSelectedClientId(resolvedClientId);
             setSelectedObjectId(nextObjectId);
-            setSecondaryPhone((prev) => prev || resolvedSecondaryPhone);
-            setContactEmail((prev) => prev || resolvedContactEmail);
-            setContactPref((prev) => prev || resolvedContactPref);
             setDepartureEndDate((prev) => prev || resolvedDepartureEndDate);
             setIsDepartureRange((prev) => prev || !!resolvedDepartureEndDate);
             setWorkTypeResolved(true);
@@ -611,23 +793,23 @@ export default function EditOrderScreen() {
               title: nextTitle,
               description: nextDescription,
               region: nextRegion,
+              district: nextDistrict,
               city: nextCity,
               street: nextStreet,
               house: nextHouse,
               country: nextCountry,
               postalCode: nextPostalCode,
-              building: nextBuilding,
+              office: nextOffice,
               floor: nextFloor,
               entrance: nextEntrance,
               apartment: nextApartment,
-              intercom: nextIntercom,
               customerName: nextCustomerName,
               selectedClientId: resolvedClientId,
               selectedObjectId: nextObjectId,
+              addressMode: nextAddressMode,
               phone: raw,
-              secondaryPhone: nextSecondaryPhone || resolvedSecondaryPhone,
-              contactEmail: nextContactEmail || resolvedContactEmail,
-              contactPref: nextContactPref || resolvedContactPref,
+              secondaryPhone: nextSecondaryPhone,
+              contactEmail: nextContactEmail,
               departureDate: nextDepartureDate,
               departureEndDate: nextDepartureEndDate || resolvedDepartureEndDate,
               isDepartureRange: nextIsDepartureRange || !!resolvedDepartureEndDate,
@@ -660,21 +842,18 @@ export default function EditOrderScreen() {
     workTypeNameFromParams,
     country,
     postalCode,
-    building,
+    office,
     floor,
     entrance,
     apartment,
-    intercom,
   ]);
-
-  // РћРїС‚РёРјРёР·РёСЂСѓРµРј РІС‹Р·РѕРІ refreshAssignedLabel вЂ” РЅРµ Р·Р°РїСЂР°С€РёРІР°РµРј, РµСЃР»Рё label СѓР¶Рµ СѓСЃС‚Р°РЅРѕРІР»РµРЅ
   useEffect(() => {
     if (!assigneeId) {
       assignedLabelRequestIdRef.current += 1;
       setAssignedEmployeeLabel('');
       return;
     }
-    if (assignedEmployeeLabel) return; // СѓР¶Рµ РµСЃС‚СЊ РёРјСЏ вЂ” РїСЂРѕРїСѓСЃРєР°РµРј Р»РёС€РЅРёР№ Р·Р°РїСЂРѕСЃ
+    if (assignedEmployeeLabel) return;
     refreshAssignedLabel(assigneeId);
   }, [assigneeId, refreshAssignedLabel, assignedEmployeeLabel]);
 
@@ -690,23 +869,23 @@ export default function EditOrderScreen() {
       title,
       description,
       region,
+      district,
       city,
       street,
       house,
       country,
       postalCode,
-      building,
+      office,
       floor,
       entrance,
       apartment,
-      intercom,
       customerName,
       selectedClientId,
       selectedObjectId,
+      addressMode,
       phone,
       secondaryPhone,
       contactEmail,
-      contactPref,
       entranceInfo,
       parkingNotes,
       geoLat,
@@ -729,23 +908,23 @@ export default function EditOrderScreen() {
     title,
     description,
     region,
+    district,
     city,
     street,
     house,
     country,
     postalCode,
-    building,
+    office,
     floor,
     entrance,
     apartment,
-    intercom,
     customerName,
     selectedClientId,
     selectedObjectId,
+    addressMode,
     phone,
     secondaryPhone,
     contactEmail,
-    contactPref,
     entranceInfo,
     parkingNotes,
     geoLat,
@@ -801,8 +980,40 @@ export default function EditOrderScreen() {
       StyleSheet.create({
         card: formStyles.card,
         field: formStyles.field,
+        toggleRow: {
+          ...formStyles.field,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        toggleLabel: {
+          color: theme.colors.text,
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.medium,
+        },
+        toggle: {
+          width: 42,
+          height: 24,
+          borderRadius: 999,
+          padding: 2,
+          justifyContent: 'center',
+          backgroundColor: theme.colors.inputBorder,
+        },
+        toggleOn: {
+          backgroundColor: theme.colors.primary,
+        },
+        toggleKnob: {
+          width: 20,
+          height: 20,
+          borderRadius: 10,
+          backgroundColor: theme.colors.surface,
+          alignSelf: 'flex-start',
+        },
+        toggleKnobOn: {
+          alignSelf: 'flex-end',
+        },
       }),
-    [formStyles],
+    [formStyles, theme],
   );
 
   const showToast = (msg, type = 'info', options) => {
@@ -868,14 +1079,12 @@ export default function EditOrderScreen() {
       const normalized = selectedId ?? null;
       setAssigneeId(normalized);
       setToFeed(!normalized);
-      // Р•СЃР»Рё Р±С‹Р» СЃС‚Р°С‚СѓСЃ "Р’ Р»РµРЅС‚Рµ" вЂ” РїСЂРё РЅР°Р·РЅР°С‡РµРЅРёРё РёСЃРїРѕР»РЅРёС‚РµР»СЏ РїРµСЂРµРІРѕРґРёРј РІ "РќРѕРІС‹Р№"
       try {
         if (normalized && statusKey === 'in_feed') {
           setStatusKey('new');
           setStatusLabel(T('order_status_new'));
         }
       } catch {
-        // ignore
       }
       setAssigneePickerVisible(false);
     },
@@ -889,7 +1098,6 @@ export default function EditOrderScreen() {
       setStatusKey('in_feed');
       setStatusLabel(T('order_status_in_feed'));
     } catch {
-      // ignore
     }
   }, [setAssigneeId, setToFeed, setStatusKey, setStatusLabel]);
 
@@ -916,9 +1124,121 @@ export default function EditOrderScreen() {
     }),
     [employees, assigneeId, handleAssignmentApply, handleAssignmentReset, selectExecutorTitle],
   );
+  const customAddressDraft = useMemo(
+    () => ({
+      country,
+      region,
+      district,
+      city,
+      street,
+      house,
+      postal_code: postalCode,
+      office,
+      floor,
+      entrance,
+      apartment,
+      entrance_info: entranceInfo,
+      parking_notes: parkingNotes,
+      geo_lat: geoLat,
+      geo_lng: geoLng,
+    }),
+    [
+      apartment,
+      office,
+      city,
+      country,
+      district,
+      entrance,
+      entranceInfo,
+      floor,
+      geoLat,
+      geoLng,
+      house,
+      parkingNotes,
+      postalCode,
+      region,
+      street,
+    ],
+  );
+  const activeAddressDraft = useMemo(
+    () =>
+      addressMode === ORDER_ADDRESS_MODE.OBJECT
+        ? selectedObject
+          ? extractOrderAddressFromObject(selectedObject)
+          : customAddressDraft
+        : customAddressDraft,
+    [addressMode, customAddressDraft, selectedObject],
+  );
+  const hasActiveAddress = useMemo(
+    () =>
+      !!buildOrderAddressShort(
+        Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
+          if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
+          return { ...acc, [field]: activeAddressDraft?.[field] || '' };
+        }, {}),
+      ),
+    [activeAddressDraft, objectFieldsByKey],
+  );
+  const shortAddressValue = useMemo(
+    () =>
+      buildOrderAddressDisplay(
+        Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
+          if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
+          return { ...acc, [field]: activeAddressDraft?.[field] || '' };
+        }, {}),
+      ) ||
+      buildOrderAddressShort(
+        Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
+          if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
+          return { ...acc, [field]: activeAddressDraft?.[field] || '' };
+        }, {}),
+      ) ||
+      T('order_details_address_not_specified'),
+    [activeAddressDraft, objectFieldsByKey],
+  );
+  const customAddressFields = useMemo(
+    () => [
+      { key: 'country', label: T('order_field_country'), ref: countryRef },
+      { key: 'region', label: T('order_field_region'), ref: regionRef },
+      { key: 'district', label: T('order_field_district'), ref: districtRef },
+      { key: 'city', label: T('order_field_city'), ref: cityRef },
+      { key: 'street', label: T('order_field_street'), ref: streetRef },
+      { key: 'house', label: T('order_field_house'), ref: houseRef },
+      { key: 'postal_code', label: T('order_field_postal_code'), ref: postalCodeRef },
+      { key: 'office', label: T('order_field_office'), ref: officeRef },
+      { key: 'floor', label: T('order_field_floor'), ref: floorRef },
+      { key: 'entrance', label: T('order_field_entrance'), ref: entranceRef },
+      { key: 'apartment', label: T('order_field_apartment'), ref: apartmentRef },
+      { key: 'entrance_info', label: T('order_field_entrance_info'), ref: entranceInfoRef },
+      { key: 'parking_notes', label: T('order_field_parking_notes'), ref: parkingNotesRef },
+      { key: 'geo_lat', label: T('order_field_geo_lat'), ref: geoLatRef, keyboardType: 'decimal-pad' },
+      { key: 'geo_lng', label: T('order_field_geo_lng'), ref: geoLngRef, keyboardType: 'decimal-pad' },
+    ].filter((field) => objectFieldsByKey.get(field.key)?.isEnabled !== false),
+    [objectFieldsByKey],
+  );
+  const applyAddressDraft = useCallback((draft) => {
+    const next = extractOrderAddress(draft);
+    setCountry(next.country);
+    setRegion(next.region);
+    setDistrict(next.district);
+    setCity(next.city);
+    setStreet(next.street);
+    setHouse(next.house);
+    setPostalCode(next.postal_code);
+    setOffice(next.office);
+    setFloor(next.floor);
+    setEntrance(next.entrance);
+    setApartment(next.apartment);
+    setEntranceInfo(next.entrance_info);
+    setParkingNotes(next.parking_notes);
+    setGeoLat(next.geo_lat);
+    setGeoLng(next.geo_lng);
+  }, []);
 
   const handleSave = async () => {
     if (permissionsLoading) return;
+    setSubmittedAttempt(true);
+    setFieldErrors({});
     if (!hasPermission('canEditOrders')) {
       showToast(T('order_edit_no_permission'), 'warning');
       return;
@@ -932,28 +1252,25 @@ export default function EditOrderScreen() {
       showToast(T('settings_recalc_in_progress'), 'warning');
       return;
     }
-    // РЎРєСЂС‹РІР°РµРј РєР»Р°РІРёР°С‚СѓСЂСѓ Рё СЃРЅРёРјР°РµРј С„РѕРєСѓСЃ СЃ РїРѕР»РµР№ РїРµСЂРµРґ РІР°Р»РёРґР°С†РёРµР№/СЃРѕС…СЂР°РЅРµРЅРёРµРј
     try {
       Keyboard.dismiss();
-      // РџРѕРїСЂРѕР±СѓРµРј СЂР°Р·РјС‹С‚СЊ РІСЃРµ РїРѕР»СЏ, РµСЃР»Рё Сѓ РЅРёС… РµСЃС‚СЊ РјРµС‚РѕРґ blur
       [
         titleRef,
         descriptionRef,
         regionRef,
+        districtRef,
         cityRef,
         streetRef,
         houseRef,
         postalCodeRef,
         countryRef,
-        buildingRef,
+        officeRef,
         floorRef,
         entranceRef,
         apartmentRef,
-        intercomRef,
         customerNameRef,
         secondaryPhoneRef,
         contactEmailRef,
-        contactPrefRef,
         entranceInfoRef,
         parkingNotesRef,
         geoLatRef,
@@ -965,23 +1282,74 @@ export default function EditOrderScreen() {
               r.current.blur();
             }
           } catch {
-            // ignore
           }
         },
       );
     } catch {
-      // ignore
     }
 
-    if (!title.trim()) return showToast(T('order_validation_title_required'), 'error');
-    if (!normalizeDateOrNull(departureDate)) {
-      return showToast(T('order_validation_date_required'), 'error');
+    const nextErrors = {};
+    if (isFieldRequired('title') && !title.trim()) {
+      nextErrors.title = { message: T('order_validation_title_required') };
     }
+    if (isFieldRequired('comment') && !String(description || '').trim()) {
+      nextErrors.comment = { message: T('field_settings_required_fill', 'Заполните обязательные поля') };
+    }
+    if (isFieldRequired('time_window_start') && !normalizeDateOrNull(departureDate)) {
+      nextErrors.time_window_start = { message: T('order_validation_date_required') };
+    }
+    if (isFieldRequired('assigned_to') && !toFeed && !assigneeId) {
+      nextErrors.assigned_to = { message: T('order_validation_executor_required') };
+    }
+    if (isFieldRequired('work_type_id') && useWorkTypes && !workTypeId) {
+      nextErrors.work_type_id = { message: T('order_validation_work_type_required') };
+    }
+    if (isFieldRequired('client_id') && !selectedClientId) {
+      nextErrors.client_id = { message: T('order_validation_client_required') };
+    }
+    if (
+      isFieldRequired('object_id') &&
+      selectedClientId &&
+      addressMode === ORDER_ADDRESS_MODE.OBJECT &&
+      !selectedObjectId
+    ) {
+      nextErrors.object_id = { message: T('objects_select_required_for_order') };
+    }
+    const normalizedPhoneForRequired = toE164MobilePhoneOrNull(phone);
+    if (isFieldRequired('phone') && !normalizedPhoneForRequired) {
+      nextErrors.phone = {
+        message: phone ? T('order_validation_phone_format') : T('order_validation_phone_required'),
+      };
+    }
+    if (isFieldRequired('secondary_phone') && !toE164MobilePhoneOrNull(secondaryPhone)) {
+      nextErrors.secondary_phone = {
+        message: secondaryPhone ? T('order_validation_phone_format') : T('field_settings_required_fill', 'Заполните обязательные поля'),
+      };
+    }
+    if (isFieldRequired('contact_email') && !String(contactEmail || '').trim()) {
+      nextErrors.contact_email = { message: T('field_settings_required_fill', 'Заполните обязательные поля') };
+    }
+    if (Object.keys(nextErrors).length) {
+      setFieldErrors(nextErrors);
+      return;
+    }
+
     const rawPhone = (phone || '').replace(/\D/g, '');
-    if (rawPhone && !isValidPhone(String(phone || ''))) {
+    if (rawPhone && !isValidOptionalMobilePhone(String(phone || ''))) {
+      setFieldErrors((prev) => ({ ...prev, phone: { message: T('order_validation_phone_format') } }));
       return showToast(T('order_validation_phone_format'), 'error');
     }
-    if (rawPhone && !normalizeRuPhoneForDb(phone)) {
+    if (rawPhone && !toE164MobilePhoneOrNull(phone)) {
+      setFieldErrors((prev) => ({ ...prev, phone: { message: T('order_validation_phone_format') } }));
+      return showToast(T('order_validation_phone_format'), 'error');
+    }
+    const rawSecondaryPhone = (secondaryPhone || '').replace(/\D/g, '');
+    if (rawSecondaryPhone && !isValidOptionalMobilePhone(String(secondaryPhone || ''))) {
+      setFieldErrors((prev) => ({ ...prev, secondary_phone: { message: T('order_validation_phone_format') } }));
+      return showToast(T('order_validation_phone_format'), 'error');
+    }
+    if (rawSecondaryPhone && !toE164MobilePhoneOrNull(secondaryPhone)) {
+      setFieldErrors((prev) => ({ ...prev, secondary_phone: { message: T('order_validation_phone_format') } }));
       return showToast(T('order_validation_phone_format'), 'error');
     }
     const parsedPrice = parseDecimalOrNull(price);
@@ -1010,25 +1378,38 @@ export default function EditOrderScreen() {
       showToast(T('toast_saving'), 'info', { sticky: true });
 
       const normalizedDepartureDate = normalizeDateOrNull(departureDate);
-      if (!normalizedDepartureDate) {
+      if (isFieldRequired('time_window_start') && !normalizedDepartureDate) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          time_window_start: { message: T('order_validation_date_required') },
+        }));
         showToast(T('order_validation_date_required'), 'error');
         return;
       }
       const normalizedDepartureEndDate = normalizeDateOrNull(departureEndDate);
       if (isDepartureRange && !normalizedDepartureEndDate) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          time_window_start: { message: T('order_validation_date_required') },
+        }));
         showToast(T('order_validation_date_required'), 'error');
         return;
       }
       if (
         isDepartureRange &&
+        normalizedDepartureDate &&
         normalizedDepartureEndDate &&
         normalizedDepartureEndDate.getTime() < normalizedDepartureDate.getTime()
       ) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          time_window_start: { message: T('order_validation_date_range_invalid') },
+        }));
         showToast(T('order_validation_date_range_invalid'), 'error');
         return;
       }
 
-      const normalizedPhone = normalizeRuPhoneForDb(phone);
+      const normalizedPhone = toE164MobilePhoneOrNull(phone);
       const parsedPrice = parseDecimalOrNull(price);
       const parsedFuelCost = parseDecimalOrNull(fuelCost);
       if (String(price ?? '').trim() && parsedPrice === null) {
@@ -1047,20 +1428,36 @@ export default function EditOrderScreen() {
         showToast(T('order_validation_fuel_format'), 'error');
         return;
       }
-      if (!selectedClientId) {
+      if (isFieldRequired('client_id') && !selectedClientId) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          client_id: { message: T('order_validation_client_required') },
+        }));
         showToast(T('order_validation_client_required'), 'error');
         return;
       }
-      if (selectedClientId && !selectedObjectId) {
+      if (
+        isFieldRequired('object_id') &&
+        selectedClientId &&
+        addressMode === ORDER_ADDRESS_MODE.OBJECT &&
+        !selectedObjectId
+      ) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          object_id: { message: T('objects_select_required_for_order') },
+        }));
         showToast(T('objects_select_required_for_order'), 'error');
         return;
       }
-      const normalizedSecondaryPhone = normalizeRuPhoneForDb(secondaryPhone);
+      if (orderFieldsByKey.get('object_id')?.isEnabled !== false && !hasActiveAddress) {
+        showToast(T('order_validation_address_required'), 'error');
+        return;
+      }
+      const normalizedSecondaryPhone = toE164MobilePhoneOrNull(secondaryPhone);
       const normalizedContactEmail = String(contactEmail || '').trim().toLowerCase() || null;
-      const normalizedContactPref = String(contactPref || '').trim() || null;
       if (
         !selectedClientId &&
-        (normalizedPhone || normalizedSecondaryPhone || normalizedContactEmail || normalizedContactPref)
+        (normalizedPhone || normalizedSecondaryPhone || normalizedContactEmail)
       ) {
         showToast(T('order_validation_client_required_for_contact_details'), 'error');
         return;
@@ -1072,7 +1469,6 @@ export default function EditOrderScreen() {
             phone: normalizedPhone,
             email: normalizedContactEmail,
             secondary_phone: normalizedSecondaryPhone,
-            contact_pref: normalizedContactPref,
           },
         });
       }
@@ -1080,9 +1476,18 @@ export default function EditOrderScreen() {
         title,
         comment: description,
         client_id: normalizeId(selectedClientId),
-        object_id: normalizeId(selectedObjectId),
+        object_id:
+          addressMode === ORDER_ADDRESS_MODE.OBJECT ? normalizeId(selectedObjectId) : null,
+        address_mode: addressMode,
+        object_name_snapshot:
+          addressMode === ORDER_ADDRESS_MODE.OBJECT
+            ? String(
+                selectedObject?.name || orderData?.object_name_snapshot || orderData?.object_name || '',
+              ).trim() || null
+            : null,
+        ...toOrderAddressPatch(activeAddressDraft),
         assigned_to: toFeed ? null : assigneeId,
-        time_window_start: normalizedDepartureDate.toISOString(),
+        time_window_start: normalizedDepartureDate ? normalizedDepartureDate.toISOString() : null,
         time_window_end:
           isDepartureRange && normalizedDepartureEndDate
             ? normalizedDepartureEndDate.toISOString()
@@ -1108,23 +1513,23 @@ export default function EditOrderScreen() {
         title,
         description,
         region,
+        district,
         city,
         street,
         house,
         country,
         postalCode,
-        building,
+        office,
         floor,
         entrance,
         apartment,
-        intercom,
         customerName,
         selectedClientId,
         selectedObjectId,
+        addressMode,
         phone,
         secondaryPhone,
         contactEmail,
-        contactPref,
         departureDate,
         departureEndDate,
         isDepartureRange,
@@ -1145,12 +1550,13 @@ export default function EditOrderScreen() {
       }
       if (err?.code === 'CONFLICT') {
         showToast(
-          'Р—Р°СЏРІРєР° СѓР¶Рµ Р±С‹Р»Р° РёР·РјРµРЅРµРЅР° РЅР° РґСЂСѓРіРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ. РћС‚РєСЂС‹С‚Р° Р°РєС‚СѓР°Р»СЊРЅР°СЏ РІРµСЂСЃРёСЏ, РїСЂРѕРІРµСЂСЊС‚Рµ РїРѕР»СЏ.',
+          'Р вЂ”Р В°РЎРЏР Р†Р С”Р В° РЎС“Р В¶Р Вµ Р В±РЎвЂ№Р В»Р В° Р С‘Р В·Р СР ВµР Р…Р ВµР Р…Р В° Р Р…Р В° Р Т‘РЎР‚РЎС“Р С–Р С•Р С РЎС“РЎРѓРЎвЂљРЎР‚Р С•Р в„–РЎРѓРЎвЂљР Р†Р Вµ. Р С›РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљР В° Р В°Р С”РЎвЂљРЎС“Р В°Р В»РЎРЉР Р…Р В°РЎРЏ Р Р†Р ВµРЎР‚РЎРѓР С‘РЎРЏ, Р С—РЎР‚Р С•Р Р†Р ВµРЎР‚РЎРЉРЎвЂљР Вµ Р С—Р С•Р В»РЎРЏ.',
           'warning',
         );
         await refetchOrder();
       } else {
-        showToast(T('order_save_error'), 'error');
+        const message = String(err?.message || '').trim();
+        showToast(message || T('order_save_error'), 'error');
       }
     } finally {
       setSaving(false);
@@ -1256,37 +1662,60 @@ export default function EditOrderScreen() {
       >
       <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
-            <TextField
-              ref={titleRef}
-              label={T('order_field_title')}
-              placeholder={T('order_placeholder_title')}
-              value={title}
-              onChangeText={setTitle}
-              style={styles.field}
-              onFocus={() => focusField(titleRef)}
-              required
-            />
+            {orderFieldsByKey.get('title')?.isEnabled !== false ? (
+            <>
+              <TextField
+                ref={titleRef}
+                label={withRequiredLabel(T('order_field_title'), isFieldRequired('title'))}
+                placeholder={T('order_placeholder_title')}
+                value={title}
+                onChangeText={(value) => {
+                  setTitle(value);
+                  clearFieldError('title');
+                }}
+                style={styles.field}
+                onFocus={() => focusField(titleRef)}
+                error={getFieldError('title') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('title')} />
+            </>
+            ) : null}
 
-            <TextField
-              ref={descriptionRef}
-              label={T('order_field_description')}
-              placeholder={T('order_placeholder_description')}
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              minLines={3}
-              style={styles.field}
-              onFocus={() => focusField(descriptionRef)}
-            />
+            {orderFieldsByKey.get('comment')?.isEnabled !== false ? (
+            <>
+              <TextField
+                ref={descriptionRef}
+                label={withRequiredLabel(T('order_field_description'), isFieldRequired('comment'))}
+                placeholder={T('order_placeholder_description')}
+                value={description}
+                onChangeText={(value) => {
+                  setDescription(value);
+                  clearFieldError('comment');
+                }}
+                multiline
+                minLines={3}
+                style={styles.field}
+                onFocus={() => focusField(descriptionRef)}
+                error={getFieldError('comment') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('comment')} />
+            </>
+            ) : null}
 
-            <TextField
-              label={T('order_details_executor')}
-              value={selectedEmployeeName}
-              placeholder={T('order_details_not_assigned')}
-              pressable
-              style={styles.field}
-              onPress={() => setAssigneePickerVisible(true)}
-            />
+            {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? (
+            <>
+              <TextField
+                label={withRequiredLabel(T('order_details_executor'), isFieldRequired('assigned_to') && !toFeed)}
+                value={selectedEmployeeName}
+                placeholder={T('order_details_not_assigned')}
+                pressable
+                style={styles.field}
+                onPress={() => setAssigneePickerVisible(true)}
+                error={getFieldError('assigned_to') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('assigned_to')} />
+            </>
+            ) : null}
 
             <TextField
               label={T('orders_filter_status')}
@@ -1297,20 +1726,26 @@ export default function EditOrderScreen() {
               onPress={() => setStatusModalVisible(true)}
             />
 
-            {useWorkTypes && (
-              <TextField
-                label={T('order_field_work_type')}
-                value={selectedWorkTypeName}
-                placeholder={T('order_details_work_type_not_selected')}
-                pressable
-                style={styles.field}
-                onPress={() => setWorkTypeModalVisible(true)}
-              />
+            {useWorkTypes && orderFieldsByKey.get('work_type_id')?.isEnabled !== false && (
+              <>
+                <TextField
+                  label={withRequiredLabel(T('order_field_work_type'), isFieldRequired('work_type_id'))}
+                  value={selectedWorkTypeName}
+                  placeholder={T('order_details_work_type_not_selected')}
+                  pressable
+                  style={styles.field}
+                  onPress={() => setWorkTypeModalVisible(true)}
+                  error={getFieldError('work_type_id') ? 'invalid' : undefined}
+                />
+                <FieldErrorText message={getFieldError('work_type_id')} />
+              </>
             )}
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_finances')}</SectionHeader>
+          {(orderFieldsByKey.get('price')?.isEnabled !== false || orderFieldsByKey.get('fuel_cost')?.isEnabled !== false) ? (
           <Card padded={false} style={styles.card}>
+            {orderFieldsByKey.get('price')?.isEnabled !== false ? (
             <TextField
               label={T('order_details_amount')}
               placeholder={T('order_placeholder_amount')}
@@ -1319,6 +1754,8 @@ export default function EditOrderScreen() {
               keyboardType="decimal-pad"
               style={styles.field}
             />
+            ) : null}
+            {orderFieldsByKey.get('fuel_cost')?.isEnabled !== false ? (
             <TextField
               label={T('order_details_fuel')}
               placeholder={T('order_placeholder_amount')}
@@ -1327,56 +1764,131 @@ export default function EditOrderScreen() {
               keyboardType="decimal-pad"
               style={styles.field}
             />
+            ) : null}
           </Card>
+          ) : null}
 
           <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
           <Card padded={false} style={styles.card}>
-            {hasPermission('canViewClients') ? (
-              <TextField
-                label={T('routes_clients_client')}
-                value={selectedClientName || T('common_select')}
-                pressable
-                style={styles.field}
-                onPress={() => setClientModalVisible(true)}
-              />
+            {hasPermission('canViewClients') && orderFieldsByKey.get('client_id')?.isEnabled !== false ? (
+              <>
+                <TextField
+                  label={withRequiredLabel(T('routes_clients_client'), isFieldRequired('client_id'))}
+                  value={selectedClientName || T('common_select')}
+                  pressable
+                  style={styles.field}
+                  onPress={() => setClientModalVisible(true)}
+                  error={getFieldError('client_id') ? 'invalid' : undefined}
+                />
+                <FieldErrorText message={getFieldError('client_id')} />
+              </>
             ) : null}
-            {selectedClientId ? (
-              <TextField
-                label={T('create_order_client_object_label')}
-                value={selectedObjectSummary || T('create_order_client_object_placeholder')}
-                pressable
-                style={styles.field}
-                onPress={() => setObjectModalVisible(true)}
-              />
+            {selectedClientId && orderFieldsByKey.get('object_id')?.isEnabled !== false ? (
+              <>
+                <View style={styles.toggleRow}>
+                  <Text style={styles.toggleLabel}>{T('order_address_use_custom')}</Text>
+                  <Pressable
+                    onPress={() =>
+                      setAddressMode((prev) =>
+                        prev === ORDER_ADDRESS_MODE.CUSTOM
+                          ? ORDER_ADDRESS_MODE.OBJECT
+                          : ORDER_ADDRESS_MODE.CUSTOM,
+                      )
+                    }
+                    style={[
+                      styles.toggle,
+                      addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleOn : null,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.toggleKnob,
+                        addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleKnobOn : null,
+                      ]}
+                    />
+                  </Pressable>
+                </View>
+                {addressMode === ORDER_ADDRESS_MODE.OBJECT ? (
+                  <>
+                    <TextField
+                      label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
+                      value={selectedObjectSummary || T('create_order_client_object_placeholder')}
+                      pressable
+                      style={styles.field}
+                      onPress={() => setObjectModalVisible(true)}
+                      error={getFieldError('object_id') ? 'invalid' : undefined}
+                    />
+                    <FieldErrorText message={getFieldError('object_id')} />
+                  </>
+                ) : null}
+                {addressMode === ORDER_ADDRESS_MODE.CUSTOM ? (
+                  <TextField
+                    label={T('order_details_address')}
+                    value={shortAddressValue}
+                    pressable
+                    style={styles.field}
+                    onPress={() => {
+                      setAddressModalDraft(extractOrderAddress(activeAddressDraft));
+                      setAddressModalVisible(true);
+                    }}
+                  />
+                ) : null}
+              </>
             ) : null}
-            <PhoneInput value={phone} onChangeText={setPhone} style={styles.field} />
-            {selectedClientId ? (
+            {orderFieldsByKey.get('phone')?.isEnabled !== false ? (
               <>
                 <PhoneInput
-                  ref={secondaryPhoneRef}
-                  label={T('order_field_secondary_phone')}
-                  value={secondaryPhone}
-                  onChangeText={setSecondaryPhone}
+                  label={withRequiredLabel(T('fields_phone'), isFieldRequired('phone'))}
+                  value={phone}
+                  onChangeText={(value) => {
+                    setPhone(value);
+                    clearFieldError('phone');
+                  }}
                   style={styles.field}
+                  required={isFieldRequired('phone')}
+                  error={getFieldError('phone') ? 'invalid' : undefined}
                 />
-                <TextField
-                  ref={contactEmailRef}
-                  label={T('order_field_contact_email')}
-                  value={contactEmail}
-                  onChangeText={setContactEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  style={styles.field}
-                  onFocus={() => focusField(contactEmailRef)}
-                />
-                <TextField
-                  ref={contactPrefRef}
-                  label={T('order_field_contact_pref')}
-                  value={contactPref}
-                  onChangeText={setContactPref}
-                  style={styles.field}
-                  onFocus={() => focusField(contactPrefRef)}
-                />
+                <FieldErrorText message={getFieldError('phone')} />
+              </>
+            ) : null}
+            {selectedClientId && (orderFieldsByKey.get('secondary_phone')?.isEnabled !== false || orderFieldsByKey.get('contact_email')?.isEnabled !== false) ? (
+              <>
+                {orderFieldsByKey.get('secondary_phone')?.isEnabled !== false ? (
+                <>
+                  <PhoneInput
+                    ref={secondaryPhoneRef}
+                    label={withRequiredLabel(T('order_field_secondary_phone'), isFieldRequired('secondary_phone'))}
+                    value={secondaryPhone}
+                    onChangeText={(value) => {
+                      setSecondaryPhone(value);
+                      clearFieldError('secondary_phone');
+                    }}
+                    style={styles.field}
+                    required={isFieldRequired('secondary_phone')}
+                    error={getFieldError('secondary_phone') ? 'invalid' : undefined}
+                  />
+                  <FieldErrorText message={getFieldError('secondary_phone')} />
+                </>
+                ) : null}
+                {orderFieldsByKey.get('contact_email')?.isEnabled !== false ? (
+                <>
+                  <TextField
+                    ref={contactEmailRef}
+                    label={withRequiredLabel(T('order_field_contact_email'), isFieldRequired('contact_email'))}
+                    value={contactEmail}
+                    onChangeText={(value) => {
+                      setContactEmail(value);
+                      clearFieldError('contact_email');
+                    }}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    style={styles.field}
+                    onFocus={() => focusField(contactEmailRef)}
+                    error={getFieldError('contact_email') ? 'invalid' : undefined}
+                  />
+                  <FieldErrorText message={getFieldError('contact_email')} />
+                </>
+                ) : null}
               </>
             ) : null}
           </Card>
@@ -1384,23 +1896,28 @@ export default function EditOrderScreen() {
           <SectionHeader bottomSpacing="xs">
             {T('company_settings_sections_departure_helperText_departureOn')}
           </SectionHeader>
+          {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? (
           <Card padded={false} style={styles.card}>
-            <TextField
-              label={T('order_field_departure_date')}
-              value={
-                displayDepartureDate
-                  ? (() => {
-                      const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
-                      if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
-                      const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
-                      return `${startLabel} — ${endLabel}`;
-                    })()
-                  : T('order_placeholder_departure_date')
-              }
-              pressable
-              style={styles.field}
-              onPress={() => setShowDateModal(true)}
-            />
+            <>
+              <TextField
+                label={withRequiredLabel(T('order_field_departure_date'), isFieldRequired('time_window_start'))}
+                value={
+                  displayDepartureDate
+                    ? (() => {
+                        const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
+                        if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
+                        const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
+                        return `${startLabel} вЂ” ${endLabel}`;
+                      })()
+                    : T('order_placeholder_departure_date')
+                }
+                pressable
+                style={styles.field}
+                onPress={() => setShowDateModal(true)}
+                error={getFieldError('time_window_start') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('time_window_start')} />
+            </>
 
             {useDepartureTime && !isDepartureRange && (
               <>
@@ -1424,9 +1941,65 @@ export default function EditOrderScreen() {
               </>
             )}
           </Card>
+          ) : null}
 
           <View style={{ height: theme.spacing?.xxl ?? BOTTOM_SPACER_FALLBACK }} />
       </EditScreenTemplate>
+
+      <BaseModal
+        visible={addressModalVisible}
+        onClose={() => setAddressModalVisible(false)}
+        title={T('order_details_address')}
+        maxHeightRatio={0.9}
+        footer={(
+          <View style={{ flexDirection: 'row', gap: theme.spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Button
+                title={T('btn_cancel')}
+                variant="ghost"
+                onPress={() => setAddressModalVisible(false)}
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button
+                title={T('btn_save')}
+                onPress={() => {
+                  applyAddressDraft(addressModalDraft);
+                  setAddressMode(ORDER_ADDRESS_MODE.CUSTOM);
+                  setAddressModalVisible(false);
+                }}
+              />
+            </View>
+          </View>
+        )}
+      >
+        <ScrollView
+          style={{ flexShrink: 1, minHeight: 0 }}
+          contentContainerStyle={{ paddingBottom: theme.spacing.sm }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator
+        >
+          <Card paddedXOnly>
+            {customAddressFields.map((field) => (
+              <TextField
+                key={`modal-address-${field.key}`}
+                ref={field.ref}
+                label={field.label}
+                value={String(addressModalDraft?.[field.key] || '')}
+                onChangeText={(value) =>
+                  setAddressModalDraft((prev) => ({
+                    ...prev,
+                    [field.key]: String(value || ''),
+                  }))
+                }
+                keyboardType={field.keyboardType}
+                style={styles.field}
+                onFocus={() => focusField(field.ref)}
+              />
+            ))}
+          </Card>
+        </ScrollView>
+      </BaseModal>
 
       <SelectModal
         visible={workTypeModalVisible}
@@ -1454,7 +2027,6 @@ export default function EditOrderScreen() {
           try {
             setStatusKey(item?.id ?? null);
             setStatusLabel(item?.label ?? '');
-            // РµСЃР»Рё РІС‹Р±СЂР°РЅР° Р»РµРЅС‚Р° вЂ” СЃРЅРёРјР°РµРј РёСЃРїРѕР»РЅРёС‚РµР»СЏ
             if (item?.id === 'in_feed') {
               setAssigneeId(null);
               setToFeed(true);
@@ -1462,7 +2034,6 @@ export default function EditOrderScreen() {
               setToFeed(false);
             }
           } catch {
-            // ignore
           } finally {
             setStatusModalVisible(false);
           }
@@ -1475,9 +2046,42 @@ export default function EditOrderScreen() {
         title={T('routes_clients_client')}
         items={clientItems}
         searchable
+        searchLabel={null}
+        searchPlaceholder={T('order_client_modal_search_placeholder')}
+        onSearchChange={setClientModalSearch}
+        filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
+        emptyComponent={
+          <View style={{ paddingVertical: theme.spacing.md, paddingHorizontal: theme.spacing.sm }}>
+            <Text style={{ color: theme.colors.textSecondary, textAlign: 'center' }}>
+              {T('order_client_search_empty_hint')}
+            </Text>
+          </View>
+        }
+        footer={
+          <View style={{ marginBottom: theme.spacing.lg }}>
+            <Button
+              title={T('order_client_create_new')}
+              variant="primary"
+              onPress={openCreateClientFromModal}
+            />
+          </View>
+        }
         selectedId={selectedClientId}
+        onItemLongPress={openClientPreview}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setClientModalVisible(false)}
+      />
+
+      <QuickPreviewModal
+        visible={previewClientVisible}
+        onClose={() => setPreviewClientVisible(false)}
+        title={String(previewClient?.fullName || '').trim() || T('common_noName')}
+        anchor={previewAnchor}
+        rows={previewClientRows}
+        tags={previewClientTags}
+        tagsTitle={T('tags_field_label')}
+        footerActionLabel={T('common_view')}
+        onFooterAction={openPreviewClientCard}
       />
 
       <SelectModal

@@ -45,7 +45,7 @@ function toErrorMessage(error: unknown) {
     if (message) return message;
     try {
       return JSON.stringify(anyErr);
-    } catch {}
+    } catch (_e) {}
   }
   return 'Unknown error';
 }
@@ -72,7 +72,7 @@ function normalizeUrl(input: string) {
     const u = new URL(raw);
     u.hash = '';
     return u.toString();
-  } catch {
+  } catch (_e) {
     return raw;
   }
 }
@@ -85,7 +85,7 @@ function canonicalUrl(input: string) {
     u.search = '';
     const normalizedPath = u.pathname.replace(/\/+$/, '');
     return `${u.origin}${normalizedPath}`.toLowerCase();
-  } catch {
+  } catch (_e) {
     return raw.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
   }
 }
@@ -100,7 +100,7 @@ function toYandexDisplayCandidate(url: string) {
       u.searchParams.set('download', '1');
     }
     return u.toString();
-  } catch {
+  } catch (_e) {
     return raw;
   }
 }
@@ -114,7 +114,7 @@ function pathFromInternalUrl(sourceUrl: string) {
   if (!raw.startsWith(INTERNAL_URL_PREFIX)) return '';
   try {
     return decodeURIComponent(raw.slice(INTERNAL_URL_PREFIX.length));
-  } catch {
+  } catch (_e) {
     return '';
   }
 }
@@ -345,6 +345,15 @@ async function getCallerAndOrderContext(
     .select('id, company_id, title, object_id, time_window_start, created_at, object:client_objects(id, name, summary)')
     .eq('id', orderId)
     .maybeSingle();
+  
+  // DEBUG: Log order lookup context
+  console.log('[yandex-disk-media] order lookup:', {
+    orderId,
+    orderErr,
+    order,
+    companyId: profile?.company_id,
+  });
+  
   if (orderErr || !order) throw new Error('Order not found');
   if (String(order.company_id) !== String(profile.company_id)) throw new Error('Forbidden');
 
@@ -604,6 +613,15 @@ export async function handleYandexDiskMediaRequest(req: Request) {
     };
     const action = String(body.action || '').trim();
     const orderId = String(body.order_id || '').trim();
+    
+    // DEBUG: Log incoming request
+    console.log('[yandex-disk-media] incoming request:', {
+      action,
+      orderId,
+      category: body.category,
+      hasFile: !!body.file_base64,
+    });
+    
     if (!action || !orderId) {
       return json(400, { success: false, message: 'Missing action or order_id' });
     }
@@ -660,7 +678,19 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         await uploadToYandex(accessToken, filePath, bytes, mime);
       }
       const sourceUrl = internalUrlFromPath(filePath);
-      const displayUrl = await getPathDownloadUrl(accessToken, filePath);
+      // Prefer persistent public URL when possible (cached/display_url), fall back to download link
+      let displayUrl = '';
+      try {
+        // Try to obtain a stable public URL for faster client delivery
+        displayUrl = await publishAndGetPublicUrl(accessToken, filePath);
+      } catch (e) {
+        // Fallback to download href if publishing fails
+        try {
+          displayUrl = await getPathDownloadUrl(accessToken, filePath);
+        } catch (_e) {
+          displayUrl = internalUrlFromPath(filePath);
+        }
+      }
 
       const { error: mapErr } = await admin.from('order_media_external_map').upsert(
         {
@@ -670,6 +700,8 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           provider: 'yandex_disk',
           source_url: sourceUrl,
           external_path: filePath,
+          display_url: displayUrl,
+          display_url_updated_at: new Date().toISOString(),
           created_by: ctx.userId,
         },
         { onConflict: 'order_id,category,source_url' },
@@ -722,11 +754,11 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         }
       }
 
-      let rows: Array<{ source_url: string; external_path: string }> = [];
+      let rows: Array<{ source_url: string; external_path: string; display_url?: string | null }> = [];
       if (dbUrls.length) {
         const { data, error } = await admin
           .from('order_media_external_map')
-          .select('source_url, external_path')
+          .select('source_url, external_path, display_url')
           .eq('company_id', ctx.companyId)
           .eq('order_id', ctx.order.id)
           .eq('provider', 'yandex_disk')
@@ -736,7 +768,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       }
 
       const resolved: Record<string, string> = {};
-      const rowBySource = new Map<string, { source_url: string; external_path: string }>();
+      const rowBySource = new Map<string, { source_url: string; external_path: string; display_url?: string | null }>();
       for (const row of rows || []) {
         if (row?.source_url) rowBySource.set(String(row.source_url), row as any);
       }
@@ -747,7 +779,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           try {
             resolved[sourceUrl] = await getPathDownloadUrl(accessToken, directPath);
             continue;
-          } catch {
+          } catch (_e) {
             resolved[sourceUrl] = sourceUrl;
             continue;
           }
@@ -758,9 +790,31 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           resolved[sourceUrl] = toYandexDisplayCandidate(sourceUrl);
           continue;
         }
+        // If we already have a cached display URL, use it immediately
+        if (row.display_url) {
+          resolved[sourceUrl] = String(row.display_url);
+          continue;
+        }
         try {
-          resolved[sourceUrl] = await getPathDownloadUrl(accessToken, String(row.external_path));
-        } catch {
+          // Try to publish/get a persistent public URL and cache it
+          let pubUrl = '';
+          try {
+            pubUrl = await publishAndGetPublicUrl(accessToken, String(row.external_path));
+          } catch (_e) {
+            // Fallback to download link
+            pubUrl = await getPathDownloadUrl(accessToken, String(row.external_path));
+          }
+          resolved[sourceUrl] = pubUrl;
+          // Best-effort persist to mapping for future requests
+          if (row && (row as any).id != null) {
+            admin
+              .from('order_media_external_map')
+              .update({ display_url: pubUrl, display_url_updated_at: new Date().toISOString() })
+              .eq('id', Number((row as any).id))
+              .then(() => {})
+              .catch(() => {});
+          }
+        } catch (_e) {
           resolved[sourceUrl] = toYandexDisplayCandidate(sourceUrl);
         }
       }
@@ -798,11 +852,11 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         }
       }
 
-      let rows: Array<{ id: number; source_url: string; external_path: string }> = [];
+      let rows: Array<{ id: number; source_url: string; external_path: string; display_url?: string | null }> = [];
       if (dbUrls.length) {
         const { data, error } = await admin
           .from('order_media_external_map')
-          .select('id, source_url, external_path')
+          .select('id, source_url, external_path, display_url')
           .eq('company_id', ctx.companyId)
           .eq('order_id', ctx.order.id)
           .eq('category', category)
@@ -815,7 +869,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       if (accessToken) {
         const { data: candidates, error: candidatesErr } = await admin
           .from('order_media_external_map')
-          .select('id, source_url, external_path')
+          .select('id, source_url, external_path, display_url')
           .eq('company_id', ctx.companyId)
           .eq('order_id', ctx.order.id)
           .eq('category', category)
@@ -824,7 +878,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         categoryCandidates = candidates || [];
       }
 
-      const rowBySource = new Map<string, { id: number; source_url: string; external_path: string }>();
+      const rowBySource = new Map<string, { id: number; source_url: string; external_path: string; display_url?: string | null }>();
       for (const row of rows || []) {
         if (row?.source_url) rowBySource.set(String(row.source_url), row as any);
       }
@@ -848,22 +902,27 @@ export async function handleYandexDiskMediaRequest(req: Request) {
               categoryCandidates.find((row) => canonicalUrl(String(row.source_url || '')) === needle) || null;
             if (!mapRow) {
               for (const candidate of categoryCandidates) {
-                const candidateId = Number(candidate.id);
-                const extPath = String(candidate.external_path || '').trim();
-                if (!extPath) continue;
-                try {
-                  let can = candidateDownloadCanonical.get(candidateId);
-                  if (!can) {
-                    const dl = await getPathDownloadUrl(accessToken, extPath);
-                    can = canonicalUrl(dl);
-                    candidateDownloadCanonical.set(candidateId, can);
-                  }
-                  if (can && can === needle) {
-                    mapRow = candidate;
-                    break;
-                  }
-                } catch {}
-              }
+                  const candidateId = Number(candidate.id);
+                  const extPath = String(candidate.external_path || '').trim();
+                  if (!extPath) continue;
+                  try {
+                    // If candidate already has cached display_url, use it for canonical comparison
+                    let can = candidateDownloadCanonical.get(candidateId);
+                    if (!can) {
+                      if ((candidate as any).display_url) {
+                        can = canonicalUrl(String((candidate as any).display_url));
+                      } else {
+                        const dl = await getPathDownloadUrl(accessToken, extPath);
+                        can = canonicalUrl(dl);
+                      }
+                      candidateDownloadCanonical.set(candidateId, can);
+                    }
+                    if (can && can === needle) {
+                      mapRow = candidate;
+                      break;
+                    }
+                  } catch (_e) {}
+                }
             }
             externalPath = String(mapRow?.external_path || '').trim();
           }
@@ -998,7 +1057,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
                 mapRow = row as any;
                 break;
               }
-            } catch {}
+            } catch (_e) {}
           }
         }
       }
@@ -1129,7 +1188,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
             { method: 'DELETE', headers: { Authorization: `OAuth ${accessToken}` } },
           );
           if ([202, 204, 404, 423].includes(delRes.status)) removedRemote += 1;
-        } catch {
+        } catch (_e) {
           // ignore remote failures; metadata cleanup still proceeds
         }
       }

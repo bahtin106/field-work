@@ -1,9 +1,10 @@
 // components/ui/Button.jsx
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   Animated,
   Easing,
+  Keyboard,
   Platform,
   StyleSheet,
   Text,
@@ -60,6 +61,20 @@ export default function Button({
     ]).start();
   };
 
+  useEffect(() => {
+    scale.setValue(1);
+    opacity.setValue(1);
+
+    return () => {
+      try {
+        scale.stopAnimation();
+        opacity.stopAnimation();
+        scale.setValue(1);
+        opacity.setValue(1);
+      } catch {}
+    };
+  }, [opacity, scale, disabled, loading]);
+
   // ---- tokens from theme.components.button ----
   const buttonTokens = theme?.components?.button || {};
 
@@ -99,10 +114,16 @@ export default function Button({
   const sizes = sizesMap[size] || sizesMap.md;
 
   const s = styles(theme, palette, sizes, disabled || loading);
+  const handlePress = () => {
+    try {
+      Keyboard.dismiss();
+    } catch {}
+    onPress?.();
+  };
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={handlePress}
       activeOpacity={1} // сами управляем opacity анимацией
       delayPressIn={0}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}

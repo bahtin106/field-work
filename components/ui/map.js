@@ -6,7 +6,7 @@ import { Linking } from 'react-native';
  */
 export function buildAddressForNavigator(addr = {}) {
   if (!addr || typeof addr !== 'object') return '';
-  const parts = [addr.country, addr.region, addr.city, addr.street, addr.house, addr.building];
+  const parts = [addr.country, addr.region, addr.district, addr.city, addr.street, addr.house, addr.office];
   return parts.filter(Boolean).map((p) => String(p).trim()).join(', ');
 }
 

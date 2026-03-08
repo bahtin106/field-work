@@ -1,7 +1,18 @@
-// theme/ThemeProvider.jsx
+﻿// theme/ThemeProvider.jsx
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Appearance, FlatList, Platform, ScrollView, SectionList, Text, useColorScheme } from 'react-native';
+import {
+  Appearance,
+  findNodeHandle,
+  FlatList,
+  Keyboard,
+  Platform,
+  ScrollView,
+  SectionList,
+  Text,
+  TextInput,
+  useColorScheme,
+} from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { tokens } from './tokens';
 
@@ -146,17 +157,32 @@ function buildTheme(mode, systemScheme = null) {
     },
     switch: {
       scale: base.components?.switch?.scale ?? 1,
+      minTouchSize: base.components?.switch?.minTouchSize ?? 48,
+      disabledOpacity: base.components?.switch?.disabledOpacity ?? 0.42,
+      thumbColor: base.components?.switch?.thumbColor ?? '#FFFFFF',
+      trackOn: base.components?.switch?.trackOn ?? colors.primary,
+      trackOff: base.components?.switch?.trackOff ?? colors.inputBorder ?? colors.border,
+      trackOnDisabled:
+        base.components?.switch?.trackOnDisabled ??
+        base.colors?.primaryDisabled ??
+        base.components?.switch?.trackOn ??
+        colors.primary,
+      trackOffDisabled:
+        base.components?.switch?.trackOffDisabled ??
+        base.components?.switch?.trackOff ??
+        colors.inputBorder ??
+        colors.border,
       iosBackgroundColor: base.components?.switch?.iosBackgroundColor ?? base.colors?.inputBorder ?? '#E5E7EB',
     },
     // NEW: sensible defaults; additive, won't break existing usage
     sectionTitle: {
-      // Левый отступ заголовка секции
+      // Р›РµРІС‹Р№ РѕС‚СЃС‚СѓРї Р·Р°РіРѕР»РѕРІРєР° СЃРµРєС†РёРё
       ml: base.components?.sectionTitle?.ml ?? 'lg',
-      // Фолбэки для совместимости (если где-то читают mt/mb)
+      // Р¤РѕР»Р±СЌРєРё РґР»СЏ СЃРѕРІРјРµСЃС‚РёРјРѕСЃС‚Рё (РµСЃР»Рё РіРґРµ-С‚Рѕ С‡РёС‚Р°СЋС‚ mt/mb)
       mt: base.components?.sectionTitle?.mt ?? 'xs',
       mb: base.components?.sectionTitle?.mb ?? 'xs',
     },
-    // Единые отступы вокруг заголовков секций (обертка SectionHeader)
+    // Р•РґРёРЅС‹Рµ РѕС‚СЃС‚СѓРїС‹ РІРѕРєСЂСѓРі Р·Р°РіРѕР»РѕРІРєРѕРІ СЃРµРєС†РёР№ (РѕР±РµСЂС‚РєР° SectionHeader)
     sectionHeader: {
       top: base.components?.sectionHeader?.top ?? 'md',
       bottom: base.components?.sectionHeader?.bottom ?? 'xs',
@@ -192,8 +218,15 @@ function buildTheme(mode, systemScheme = null) {
     scrollView: {
       paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
     },
+    keyboardAware: {
+      bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 40,
+      extraKeyboardSpace:
+        base.components?.keyboardAware?.extraKeyboardSpace ??
+        (base.components?.input?.height ?? base.components?.listItem?.height ?? 48) +
+          (base.spacing?.lg ?? 16),
+    },
     activityIndicator: { size: base.components?.activityIndicator?.size ?? 'large' },
-    // Глобальные настройки хедера и бегущей строки
+    // Р“Р»РѕР±Р°Р»СЊРЅС‹Рµ РЅР°СЃС‚СЂРѕР№РєРё С…РµРґРµСЂР° Рё Р±РµРіСѓС‰РµР№ СЃС‚СЂРѕРєРё
     header: {
       height: base.components?.header?.height ?? 56,
       edgePadding: base.components?.header?.edgePadding ?? spacing.md,
@@ -227,6 +260,12 @@ function buildTheme(mode, systemScheme = null) {
     invalidInputWarningMs: base.timings?.invalidInputWarningMs ?? 3000,
     postRegisterNavDelayMs: base.timings?.postRegisterNavDelayMs ?? 1000,
   };
+  const icons = {
+    sm: base.icons?.sm ?? 18,
+    md: base.icons?.md ?? 22,
+    lg: base.icons?.lg ?? 28,
+  };
+
   return {
     mode: effective,
     colors,
@@ -235,6 +274,7 @@ function buildTheme(mode, systemScheme = null) {
     radii,
     spacing,
     components,
+    icons,
     media,
     timings,
     _raw: base,
@@ -287,26 +327,55 @@ export const ThemeProvider = ({ children }) => {
         // Preserve existing defaults while applying ours
         Comp.defaultProps = { ...(Comp.defaultProps || {}), ...props };
       };
+
+      const dismissFocusedOnOutsideTap = (e) => {
+        try {
+          const focusedInput =
+            TextInput.State && typeof TextInput.State.currentlyFocusedInput === 'function'
+              ? TextInput.State.currentlyFocusedInput()
+              : null;
+          const focusedField =
+            TextInput.State && typeof TextInput.State.currentlyFocusedField === 'function'
+              ? TextInput.State.currentlyFocusedField()
+              : null;
+          const focusedHandle = focusedInput ? findNodeHandle(focusedInput) : focusedField;
+          if (!focusedHandle) return false;
+
+          const target = e?.nativeEvent?.target;
+          if (target && target === focusedHandle) return false;
+
+          if (focusedInput && TextInput.State?.blurTextInput) {
+            TextInput.State.blurTextInput(focusedInput);
+          } else if (focusedField && TextInput.State?.blurTextInput) {
+            TextInput.State.blurTextInput(focusedField);
+          }
+          Keyboard.dismiss();
+        } catch {}
+        return false;
+      };
+
       const common = {
-        keyboardShouldPersistTaps: 'always',
+        keyboardShouldPersistTaps: 'never',
         keyboardDismissMode: 'on-drag',
+        onStartShouldSetResponderCapture: dismissFocusedOnOutsideTap,
         ...(Platform.OS === 'android' ? { nestedScrollEnabled: true } : null),
       };
       setDefaults(ScrollView, common);
       setDefaults(FlatList, common);
       setDefaults(SectionList, common);
       setDefaults(KeyboardAwareScrollView, {
-        keyboardShouldPersistTaps: 'always',
-        keyboardDismissMode: Platform.OS === 'ios' ? 'interactive' : 'on-drag',
+        keyboardShouldPersistTaps: 'handled',
+        keyboardDismissMode: 'none',
         contentInsetAdjustmentBehavior: Platform.OS === 'ios' ? 'always' : 'automatic',
-        bottomOffset: 40, // единая высота подъёма, как на экране редактирования пользователя
+        bottomOffset: theme.components?.keyboardAware?.bottomOffset ?? 40,
+        extraKeyboardSpace: theme.components?.keyboardAware?.extraKeyboardSpace ?? 0,
       });
-      // Глобальное поведение для текста в полях: обрезать длинные значения троеточием.
-      // Это устанавливает ellipsizeMode и дефолтное число линий = 1. Компоненты,
-      // где нужно несколько строк, должны явно переопределить numberOfLines.
+      // Р“Р»РѕР±Р°Р»СЊРЅРѕРµ РїРѕРІРµРґРµРЅРёРµ РґР»СЏ С‚РµРєСЃС‚Р° РІ РїРѕР»СЏС…: РѕР±СЂРµР·Р°С‚СЊ РґР»РёРЅРЅС‹Рµ Р·РЅР°С‡РµРЅРёСЏ С‚СЂРѕРµС‚РѕС‡РёРµРј.
+      // Р­С‚Рѕ СѓСЃС‚Р°РЅР°РІР»РёРІР°РµС‚ ellipsizeMode Рё РґРµС„РѕР»С‚РЅРѕРµ С‡РёСЃР»Рѕ Р»РёРЅРёР№ = 1. РљРѕРјРїРѕРЅРµРЅС‚С‹,
+      // РіРґРµ РЅСѓР¶РЅРѕ РЅРµСЃРєРѕР»СЊРєРѕ СЃС‚СЂРѕРє, РґРѕР»Р¶РЅС‹ СЏРІРЅРѕ РїРµСЂРµРѕРїСЂРµРґРµР»РёС‚СЊ numberOfLines.
       setDefaults(Text, { ellipsizeMode: 'tail', numberOfLines: 1 });
     } catch {}
-  }, []);
+  }, [theme]);
 
   return (
     <ThemeContext.Provider value={{ theme, mode, setMode, toggle }}>
@@ -316,3 +385,4 @@ export const ThemeProvider = ({ children }) => {
 };
 
 export const useTheme = () => useContext(ThemeContext);
+

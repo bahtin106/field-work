@@ -378,14 +378,11 @@ export default function YandexDiskIntegrationScreen() {
             style={{ paddingHorizontal: separatorInset }}
           />
           <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
-          <View style={[styles.disabledStorageRow, { paddingHorizontal: separatorInset }]}>
-            <Text style={styles.disabledStorageLabel}>
-              {t('company_integrations_profile_photos_label')}
-            </Text>
-            <Text style={styles.disabledStorageValue}>
-              {profileProviderLabel}
-            </Text>
-          </View>
+          <LabelValueRow
+            label={t('company_integrations_profile_photos_label')}
+            value={profileProviderLabel}
+            style={[styles.infoRow, styles.disabledStorageRow, { paddingHorizontal: separatorInset }]}
+          />
         </Card>
 
         <SectionHeader>{t('company_integrations_yandex_section_title')}</SectionHeader>
@@ -570,22 +567,7 @@ function createStyles(theme) {
       minHeight: theme.components?.listItem?.height ?? 48,
     },
     disabledStorageRow: {
-      minHeight: theme.components?.listItem?.height ?? 48,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
       opacity: 0.65,
-    },
-    disabledStorageLabel: {
-      flex: 1,
-      color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.md,
-      paddingRight: theme.spacing.md,
-    },
-    disabledStorageValue: {
-      color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.md,
-      textAlign: 'right',
     },
     actionsWrap: {
       paddingHorizontal: theme.spacing.lg,

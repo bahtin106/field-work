@@ -165,12 +165,6 @@ for select
 to authenticated
 using (
   company_id = user_company_id()
-  and has_app_role_permission(
-    company_id,
-    user_role(),
-    'canViewClients',
-    clients_permission_default(user_role(), 'canViewClients')
-  )
 );
 
 drop policy if exists client_objects_insert_company on public.client_objects;
@@ -406,137 +400,155 @@ begin
           where co.id = o.client_address_id
        );
   end if;
+
+  -- Legacy migration: only run if orders still have address columns
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'orders'
+       and column_name = 'country'
+  ) then
+    -- Use dynamic SQL to avoid parse-time errors if some address columns are missing
+    declare
+      v_sql text;
+    begin
+      v_sql := $sql$
+      with legacy_order_objects as (
+        select distinct on (o.client_id, public.client_object_summary(
+            o.country,
+            o.region,
+            o.city,
+            o.street,
+            o.house,
+            o.building,
+            o.entrance,
+            o.apartment
+          ))
+          o.client_id,
+          o.company_id,
+          public.client_object_summary(
+            o.country,
+            o.region,
+            o.city,
+            o.street,
+            o.house,
+            o.building,
+            o.entrance,
+            o.apartment
+          ) as summary,
+          o.country,
+          o.region,
+          o.city,
+          o.street,
+          o.house,
+          o.postal_code,
+          o.building,
+          o.floor,
+          o.entrance,
+          o.apartment,
+          o.intercom,
+          o.entrance_info,
+          o.parking_notes,
+          o.geo_lat,
+          o.geo_lng
+        from public.orders o
+        where o.client_id is not null
+          and o.object_id is null
+          and public.client_object_summary(
+            o.country,
+            o.region,
+            o.city,
+            o.street,
+            o.house,
+            o.building,
+            o.entrance,
+            o.apartment
+          ) is not null
+        order by o.client_id, public.client_object_summary(
+            o.country,
+            o.region,
+            o.city,
+            o.street,
+            o.house,
+            o.building,
+            o.entrance,
+            o.apartment
+          ), o.created_at asc, o.id asc
+      )
+      insert into public.client_objects (
+        client_id,
+        company_id,
+        name,
+        is_primary,
+        country,
+        region,
+        city,
+        street,
+        house,
+        postal_code,
+        building,
+        floor,
+        entrance,
+        apartment,
+        intercom,
+        entrance_info,
+        parking_notes,
+        geo_lat,
+        geo_lng,
+        summary
+      )
+      select
+        l.client_id,
+        l.company_id,
+        'Объект',
+        false,
+        l.country,
+        l.region,
+        l.city,
+        l.street,
+        l.house,
+        l.postal_code,
+        l.building,
+        l.floor,
+        l.entrance,
+        l.apartment,
+        l.intercom,
+        l.entrance_info,
+        l.parking_notes,
+        l.geo_lat,
+        l.geo_lng,
+        l.summary
+      from legacy_order_objects l
+      where not exists (
+        select 1
+          from public.client_objects co
+         where co.client_id = l.client_id
+           and co.summary is not distinct from l.summary
+      );
+
+      update public.orders o
+         set object_id = co.id
+        from public.client_objects co
+       where o.client_id = co.client_id
+         and o.object_id is null
+         and public.client_object_summary(
+           o.country,
+           o.region,
+           o.city,
+           o.street,
+           o.house,
+           o.building,
+           o.entrance,
+           o.apartment
+         ) is not distinct from co.summary;
+      $sql$;
+
+      execute v_sql;
+    end;
+  end if;
 end
 $$;
-
-with legacy_order_objects as (
-  select distinct on (o.client_id, public.client_object_summary(
-      o.country,
-      o.region,
-      o.city,
-      o.street,
-      o.house,
-      o.building,
-      o.entrance,
-      o.apartment
-    ))
-    o.client_id,
-    o.company_id,
-    public.client_object_summary(
-      o.country,
-      o.region,
-      o.city,
-      o.street,
-      o.house,
-      o.building,
-      o.entrance,
-      o.apartment
-    ) as summary,
-    o.country,
-    o.region,
-    o.city,
-    o.street,
-    o.house,
-    o.postal_code,
-    o.building,
-    o.floor,
-    o.entrance,
-    o.apartment,
-    o.intercom,
-    o.entrance_info,
-    o.parking_notes,
-    o.geo_lat,
-    o.geo_lng
-  from public.orders o
-  where o.client_id is not null
-    and o.object_id is null
-    and public.client_object_summary(
-      o.country,
-      o.region,
-      o.city,
-      o.street,
-      o.house,
-      o.building,
-      o.entrance,
-      o.apartment
-    ) is not null
-  order by o.client_id, public.client_object_summary(
-      o.country,
-      o.region,
-      o.city,
-      o.street,
-      o.house,
-      o.building,
-      o.entrance,
-      o.apartment
-    ), o.created_at asc, o.id asc
-)
-insert into public.client_objects (
-  client_id,
-  company_id,
-  name,
-  is_primary,
-  country,
-  region,
-  city,
-  street,
-  house,
-  postal_code,
-  building,
-  floor,
-  entrance,
-  apartment,
-  intercom,
-  entrance_info,
-  parking_notes,
-  geo_lat,
-  geo_lng,
-  summary
-)
-select
-  l.client_id,
-  l.company_id,
-  'Объект',
-  false,
-  l.country,
-  l.region,
-  l.city,
-  l.street,
-  l.house,
-  l.postal_code,
-  l.building,
-  l.floor,
-  l.entrance,
-  l.apartment,
-  l.intercom,
-  l.entrance_info,
-  l.parking_notes,
-  l.geo_lat,
-  l.geo_lng,
-  l.summary
-from legacy_order_objects l
-where not exists (
-  select 1
-    from public.client_objects co
-   where co.client_id = l.client_id
-     and co.summary is not distinct from l.summary
-);
-
-update public.orders o
-   set object_id = co.id
-  from public.client_objects co
- where o.client_id = co.client_id
-   and o.object_id is null
-   and public.client_object_summary(
-     o.country,
-     o.region,
-     o.city,
-     o.street,
-     o.house,
-     o.building,
-     o.entrance,
-     o.apartment
-   ) is not distinct from co.summary;
 
 create or replace function public.orders_sync_client_from_object()
 returns trigger

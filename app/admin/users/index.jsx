@@ -9,6 +9,7 @@ import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 async function fetchUsers(search) {
@@ -77,13 +78,19 @@ export default function AdminUsersScreen() {
             <Pressable style={styles(theme).row} onPress={() => router.push(`/users/${row.profile_id}`)}>
               <View style={styles(theme).rowLeft}>
                 <Text style={styles(theme).name}>{row.full_name || row.email || row.profile_id}</Text>
-                <Text style={styles(theme).meta}>{row.email || t('common_dash')}</Text>
-                <Text style={styles(theme).meta}>
-                  {t('label_role')}: {row.role || t('common_dash')}
-                </Text>
-                <Text style={styles(theme).meta}>
-                  {t('admin_users_company')}: {row.company_name || row.company_id || t('common_dash')}
-                </Text>
+                {hasDisplayValue(row.email) ? (
+                  <Text style={styles(theme).meta}>{row.email}</Text>
+                ) : null}
+                {hasDisplayValue(row.role) ? (
+                  <Text style={styles(theme).meta}>
+                    {t('label_role')}: {row.role}
+                  </Text>
+                ) : null}
+                {hasDisplayValue(row.company_name || row.company_id) ? (
+                  <Text style={styles(theme).meta}>
+                    {t('admin_users_company')}: {row.company_name || row.company_id}
+                  </Text>
+                ) : null}
               </View>
               <Feather name="chevron-right" size={18} color={theme.colors.textSecondary} />
             </Pressable>

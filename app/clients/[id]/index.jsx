@@ -10,32 +10,64 @@ import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import IconButton from '../../../components/ui/IconButton';
+import TagList from '../../../components/tags/TagList';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { useClient, useClientOrderCount } from '../../../src/features/clients/queries';
+import {
+  buildAdditionalPhoneDisplayLabel,
+  getClientAdditionalPhones,
+} from '../../../src/features/clients/additionalPhones';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
+import { hasDisplayValue } from '../../../src/shared/display/value';
+
+const SAFE_AREA_EDGES = ['left', 'right'];
 
 export default function ClientViewScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const router = useRouter();
-  const { id } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const id = params?.id;
+  const rawReturnTo = params?.returnTo;
+  const rawReturnParams = params?.returnParams;
   const clientId = Array.isArray(id) ? id[0] : id;
+  const returnTo = React.useMemo(() => {
+    const value = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
+    return value ? String(value) : '/clients';
+  }, [rawReturnTo]);
+  const returnParams = React.useMemo(() => {
+    const value = Array.isArray(rawReturnParams) ? rawReturnParams[0] : rawReturnParams;
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(String(value));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, [rawReturnParams]);
   const { has } = usePermissions();
 
   const canViewClients = has('canViewClients');
   const canEditClients = has('canEditClients');
 
   const { data: client } = useClient(clientId, { enabled: !!clientId && canViewClients });
+  const { settings } = useCompanySettings();
   useClientOrderCount(clientId, {
     enabled: !!clientId && canViewClients,
   });
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const toast = useToast();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
+  const additionalPhones = React.useMemo(() => getClientAdditionalPhones(client), [client]);
+  const visibleAdditionalPhones = React.useMemo(
+    () => additionalPhones.filter((item) => !!item?.phone),
+    [additionalPhones],
+  );
 
   const onCopyEmail = React.useCallback(async () => {
     const email = client?.email || '';
@@ -53,8 +85,8 @@ export default function ClientViewScreen() {
     }
   }, [client?.email, t, toast]);
 
-  const onCopyPhone = React.useCallback(async () => {
-    const phone = client?.phone || '';
+  const copyPhoneValue = React.useCallback(async (rawPhone) => {
+    const phone = rawPhone || '';
     if (!phone) return false;
     const text = toE164(phone) || '+' + normalizeRu(phone);
     try {
@@ -67,11 +99,15 @@ export default function ClientViewScreen() {
       } catch {}
       return false;
     }
-  }, [client?.phone, t, toast]);
+  }, [t, toast]);
+
+  const onCopyPhone = React.useCallback(() => {
+    return copyPhoneValue(client?.phone || '');
+  }, [client?.phone, copyPhoneValue]);
 
   if (!canViewClients) {
     return (
-      <SafeAreaView style={styles.safeArea}>
+      <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
         <AppHeader back options={{ title: t('routes_clients_client') }} />
         <View style={styles.centered}>
           <Text style={styles.mutedText}>{t('clients_no_view_permission')}</Text>
@@ -82,13 +118,22 @@ export default function ClientViewScreen() {
   const objects = Array.isArray(client?.objects) ? client.objects : [];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
       <AppHeader
         back
         options={{
           title: t('routes_clients_client'),
           rightTextLabel: canEditClients ? t('btn_edit') : undefined,
-          onRightPress: canEditClients ? () => router.push(`/clients/${clientId}/edit`) : undefined,
+          onRightPress: canEditClients
+            ? () =>
+                router.push({
+                  pathname: `/clients/${clientId}/edit`,
+                  params: {
+                    returnTo,
+                    returnParams: JSON.stringify(returnParams),
+                  },
+                })
+            : undefined,
         }}
       />
 
@@ -109,18 +154,42 @@ export default function ClientViewScreen() {
         </View>
 
         <>
+          {settings?.enable_client_tags && client?.tags?.length ? (
+            <>
+              <SectionHeader topSpacing="xs">{t('tags_field_label')}</SectionHeader>
+              <Card style={{ paddingVertical: theme.spacing.md }}>
+                <TagList
+                  tags={client.tags}
+                  align="start"
+                  onPressTag={(tag) => {
+                    const value = String(tag?.value || '').trim();
+                    if (!value) return;
+                    router.push({ pathname: '/clients', params: { tag: value } });
+                  }}
+                />
+              </Card>
+            </>
+          ) : null}
+
           <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
           <Card paddedXOnly>
-            <LabelValueRow label={t('label_last_name')} value={client?.lastName || t('common_dash')} />
+            <LabelValueRow
+              label={t('label_full_name')}
+              value={
+                [client?.lastName, client?.firstName, client?.middleName]
+                  .filter((p) => !!p && String(p).trim() !== '')
+                  .join(' ') || ''
+              }
+            />
             <View style={base.sep} />
-            <LabelValueRow label={t('label_first_name')} value={client?.firstName || t('common_dash')} />
-            <View style={base.sep} />
-            <LabelValueRow label={t('label_middle_name')} value={client?.middleName || t('common_dash')} />
-            <View style={base.sep} />
+            <LabelValueRow label={t('clients_comment_label')} value={client?.comment || ''} />
+          </Card>
+          <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader>
+          <Card paddedXOnly>
             <LabelValueRow
               label={t('view_label_email')}
               valueComponent={
-                client?.email ? (
+                hasDisplayValue(client?.email) ? (
                   <Pressable
                     accessibilityRole="link"
                     onPress={async () => {
@@ -140,9 +209,7 @@ export default function ClientViewScreen() {
                   >
                     <Text style={[base.value, styles.link]}>{client.email}</Text>
                   </Pressable>
-                ) : (
-                  <Text style={base.value}>{t('common_dash')}</Text>
-                )
+                ) : null
               }
               rightActions={
                 client?.email ? (
@@ -156,7 +223,7 @@ export default function ClientViewScreen() {
             <LabelValueRow
               label={t('view_label_phone')}
               valueComponent={
-                client?.phone ? (
+                hasDisplayValue(client?.phone) ? (
                   <Pressable
                     accessibilityRole="link"
                     onPress={async () => {
@@ -176,9 +243,7 @@ export default function ClientViewScreen() {
                   >
                     <Text style={[base.value, styles.link]}>{formatRuMask(client.phone)}</Text>
                   </Pressable>
-                ) : (
-                  <Text style={base.value}>{t('common_dash')}</Text>
-                )
+                ) : null
               }
               rightActions={
                 client?.phone ? (
@@ -188,16 +253,48 @@ export default function ClientViewScreen() {
                 ) : null
               }
             />
-            <View style={base.sep} />
-            <LabelValueRow
-              label={t('order_field_secondary_phone')}
-              value={client?.secondaryPhone ? formatRuMask(client.secondaryPhone) : t('common_dash')}
-            />
-            <View style={base.sep} />
-            <LabelValueRow
-              label={t('order_field_contact_pref')}
-              value={client?.contactPref || t('common_dash')}
-            />
+            {visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
+            {visibleAdditionalPhones.map((item, index) => {
+              const rowLabel = buildAdditionalPhoneDisplayLabel(t, item?.label);
+              const isLast = index === visibleAdditionalPhones.length - 1;
+              return (
+                <React.Fragment key={`additional-phone-row-${index + 1}`}>
+                  <LabelValueRow
+                    label={rowLabel}
+                    valueComponent={
+                      <Pressable
+                        accessibilityRole="link"
+                        onPress={async () => {
+                          const url = `tel:${toE164(item.phone) || '+' + normalizeRu(item.phone)}`;
+                          try {
+                            await Linking.openURL(url);
+                          } catch {
+                            try {
+                              const ok = await Linking.canOpenURL(url);
+                              if (ok) await Linking.openURL(url);
+                              else toast.error(t('errors_callsUnavailable'));
+                            } catch {
+                              toast.error(t('errors_callsUnavailable'));
+                            }
+                          }
+                        }}
+                      >
+                        <Text style={[base.value, styles.link]}>{formatRuMask(item.phone)}</Text>
+                      </Pressable>
+                    }
+                    rightActions={
+                      <IconButton
+                        onPress={() => copyPhoneValue(item.phone)}
+                        accessibilityLabel={t('a11y_copy_phone')}
+                      >
+                        <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                      </IconButton>
+                    }
+                  />
+                  {!isLast ? <View style={base.sep} /> : null}
+                </React.Fragment>
+              );
+            })}
           </Card>
 
           <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
@@ -208,7 +305,15 @@ export default function ClientViewScreen() {
                   <Pressable
                     key={objectItem.id}
                     style={base.row}
-                    onPress={() => router.push(`/objects/${objectItem.id}`)}
+                    onPress={() =>
+                      router.push({
+                        pathname: `/objects/${objectItem.id}`,
+                        params: {
+                          returnTo: `/clients/${clientId}`,
+                          returnParams: JSON.stringify({ returnTo, returnParams: JSON.stringify(returnParams) }),
+                        },
+                      })
+                    }
                   >
                     <Text style={base.label}>{t('routes_objects_object')}</Text>
                     <View style={base.rightWrap}>

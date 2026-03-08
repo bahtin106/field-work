@@ -2,11 +2,13 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
+import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
   createClientObject,
   deleteClientObject,
   getClientObjectById,
   listClientObjects,
+  listClientObjectsByCompany,
   updateClientObject,
 } from './api';
 
@@ -18,6 +20,28 @@ export function useClientObjects(clientId, options = {}) {
     staleTime: 30 * 1000,
     ...options,
   });
+}
+
+export function useCompanyObjects(companyId, options = {}) {
+  const result = useQuery({
+    queryKey: queryKeys.objects.byCompany(companyId),
+    queryFn: () => listClientObjectsByCompany(String(companyId || '')),
+    enabled: !!companyId,
+    staleTime: 30 * 1000,
+    ...options,
+  });
+
+  // Debug instrumentation to help diagnose flicker when client permissions change
+  useEffect(() => {
+    try {
+      const len = Array.isArray(result.data) ? result.data.length : 0;
+      console.debug('[useCompanyObjects] companyId=', companyId, 'enabled=', !!companyId, 'status=', result.status, 'isFetching=', result.isFetching, 'data.length=', len);
+    } catch (e) {
+      console.debug('[useCompanyObjects] debug failed', e);
+    }
+  }, [companyId, result.status, result.isFetching, result.data]);
+
+  return result;
 }
 
 export function useClientObject(objectId, options = {}) {
@@ -47,17 +71,53 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
           filter: `company_id=eq.${companyId}`,
         },
         (payload) => {
-          const objectId = payload?.new?.id || payload?.old?.id;
-          const clientId = payload?.new?.client_id || payload?.old?.client_id;
+          try {
+            console.debug('[useClientObjectsRealtimeSync] payload event=', payload?.event, 'table=', payload?.table, 'new.id=', payload?.new?.id, 'old.id=', payload?.old?.id);
+            const objectId = payload?.new?.id || payload?.old?.id;
+            const clientId = payload?.new?.client_id || payload?.old?.client_id;
+            if (objectId) {
+              console.debug('[useClientObjectsRealtimeSync] invalidating object detail', objectId);
+              queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) });
+            }
+            if (clientId) {
+              console.debug('[useClientObjectsRealtimeSync] invalidating objects.byClient and clients.detail for client', clientId);
+              queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
+              queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
+            }
+            console.debug('[useClientObjectsRealtimeSync] invalidating top-level clients/requests queries');
+            queryClient.invalidateQueries({ queryKey: ['clients'] });
+            queryClient.invalidateQueries({ queryKey: ['requests'] });
+          } catch (e) {
+            console.debug('[useClientObjectsRealtimeSync] realtime handler failed', e);
+          }
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'object_tag_links',
+          filter: `company_id=eq.${companyId}`,
+        },
+        (payload) => {
+          const objectId = String(payload?.new?.object_id || payload?.old?.object_id || '');
           if (objectId) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) });
+            void invalidateNow(queryClient, queryKeys.objects.detail(objectId));
           }
-          if (clientId) {
-            queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
-            queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
-          }
-          queryClient.invalidateQueries({ queryKey: ['clients'] });
-          queryClient.invalidateQueries({ queryKey: ['requests'] });
+          void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'company_tags',
+          filter: `company_id=eq.${companyId}`,
+        },
+        () => {
+          void invalidateManyNow(queryClient, [['objects'], ['clients'], ['tags']]);
         },
       )
       .subscribe();
@@ -128,4 +188,3 @@ export function useDeleteClientObjectMutation() {
     },
   });
 }
-

@@ -30,7 +30,7 @@ WITH due_subscriptions AS (
     p.id AS recipient_user_id,
     ds.event_type,
     ds.period_end_date,
-    au.email,
+    COALESCE(NULLIF(au.email, ''), NULLIF(to_jsonb(p)->>'email', '')) AS email,
     CASE WHEN lower(COALESCE(p.locale, 'ru')) LIKE 'en%' THEN 'en' ELSE 'ru' END AS lang,
     COALESCE(p.first_name, '') AS first_name,
     COALESCE(p.last_name, '') AS last_name,
@@ -42,11 +42,11 @@ WITH due_subscriptions AS (
     ON p.company_id = ds.company_id
    AND p.role = 'admin'
    AND COALESCE(p.is_suspended, false) = false
-  JOIN auth.users au
-    ON au.id = p.id
-   AND COALESCE(au.email, '') <> ''
+  LEFT JOIN auth.users au
+    ON au.id = COALESCE(NULLIF(to_jsonb(p)->>'user_id', '')::uuid, p.id)
   LEFT JOIN public.companies c ON c.id = ds.company_id
   WHERE ds.event_type IS NOT NULL
+    AND COALESCE(NULLIF(au.email, ''), NULLIF(to_jsonb(p)->>'email', '')) IS NOT NULL
 ), ins AS (
   INSERT INTO public.subscription_email_notifications (
     company_id,

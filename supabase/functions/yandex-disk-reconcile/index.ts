@@ -166,10 +166,11 @@ export async function handleYandexDiskReconcileRequest(req: Request) {
   if (req.method !== 'POST') return json(405, { success: false, message: 'POST only' });
 
   try {
-    const expectedKey = String(Deno.env.get('YANDEX_RECONCILE_KEY') || '').trim();
-    const gotKey = String(req.headers.get('x-reconcile-key') || '').trim();
-    if (!expectedKey || gotKey !== expectedKey) {
-      return json(401, { success: false, message: 'Unauthorized' });
+    // 1. Validate JWT token from Authorization header
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!token) {
+      return json(401, { success: false, message: 'Missing Authorization header' });
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
@@ -178,6 +179,23 @@ export async function handleYandexDiskReconcileRequest(req: Request) {
       Deno.env.get('SERVICE_ROLE_KEY') ||
       '';
     if (!supabaseUrl || !serviceRole) throw new Error('Missing Supabase env');
+
+    // 2. Verify the provided token matches SERVICE_ROLE_KEY exactly
+    if (token !== serviceRole) {
+      return json(401, { 
+        success: false, 
+        message: 'Invalid token. Service role key required.'
+      });
+    }
+
+    // 3. Additional layer: verify x-reconcile-key if configured (defense-in-depth)
+    const expectedKey = String(Deno.env.get('YANDEX_RECONCILE_KEY') || '').trim();
+    if (expectedKey) {
+      const gotKey = String(req.headers.get('x-reconcile-key') || '').trim();
+      if (gotKey !== expectedKey) {
+        return json(401, { success: false, message: 'Invalid x-reconcile-key' });
+      }
+    }
 
     const body = (await req.json().catch(() => ({}))) as {
       company_id?: string;

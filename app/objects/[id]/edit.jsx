@@ -3,8 +3,8 @@ import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import React from 'react';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
-import EditScreenTemplate from '../../../components/layout/EditScreenTemplate';
+import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
@@ -12,22 +12,37 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
+import TagEditorField from '../../../components/tags/TagEditorField';
+import { TAG_TYPE } from '../../../components/tags/tagConfig';
+import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../lib/permissions';
 import {
   useClientObject,
   useDeleteClientObjectMutation,
   useUpdateClientObjectMutation,
 } from '../../../src/features/objects/queries';
+import { useClient } from '../../../src/features/clients/queries';
+import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+} from '../../../src/features/fieldSettings/catalog';
+import {
+  CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
   CLIENT_OBJECT_ADDRESS_FIELDS,
   CLIENT_OBJECT_DEFAULT_NAME,
+  CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   createEmptyClientObjectDraft,
   sanitizeClientObjectPayload,
+  buildClientObjectShortAddress,
 } from '../../../src/features/objects/addressing';
 import { uploadClientObjectPhoto } from '../../../src/features/objects/photo';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
+import { useSetObjectTagsMutation } from '../../../src/features/tags/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
+import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
 
@@ -117,6 +132,7 @@ function snapshotObjectForm(obj = {}) {
   return JSON.stringify({
     name: String(obj.name || '').trim() || '',
     photoUrl: String(obj.photoUrl || '').trim() || '',
+    tags: Array.isArray(obj.tags) ? obj.tags.map((v) => String(v || '').trim().toLowerCase()) : [],
     ...Object.fromEntries(
       CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => [field, String(obj[field] || '').trim() || '']),
     ),
@@ -130,15 +146,40 @@ export default function EditObjectScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const { has } = usePermissions();
-  const { id } = useLocalSearchParams();
+  const params = useLocalSearchParams();
+  const id = params?.id;
+  const rawReturnTo = params?.returnTo;
+  const rawReturnParams = params?.returnParams;
   const objectId = Array.isArray(id) ? id[0] : id;
+  const returnTo = React.useMemo(() => {
+    const value = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo;
+    return value ? String(value) : '';
+  }, [rawReturnTo]);
+  const returnParams = React.useMemo(() => {
+    const value = Array.isArray(rawReturnParams) ? rawReturnParams[0] : rawReturnParams;
+    if (!value) return {};
+    try {
+      const parsed = JSON.parse(String(value));
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }, [rawReturnParams]);
 
   const canEditClients = has('canEditClients');
   const { data: objectItem } = useClientObject(objectId, { enabled: !!objectId });
+  const clientId = objectItem?.client_id;
+  const { data: clientData } = useClient(clientId, { enabled: !!clientId });
   const updateMutation = useUpdateClientObjectMutation();
   const deleteMutation = useDeleteClientObjectMutation();
+  const setObjectTagsMutation = useSetObjectTagsMutation();
+  const { settings } = useCompanySettings();
+  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
+    enabled: !!objectId,
+  });
 
   const [draft, setDraft] = React.useState(createEmptyClientObjectDraft());
+  const [tags, setTags] = React.useState([]);
   const [initialSnap, setInitialSnap] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [cancelVisible, setCancelVisible] = React.useState(false);
@@ -147,9 +188,42 @@ export default function EditObjectScreen() {
   const [cropVisible, setCropVisible] = React.useState(false);
   const [cropSrc, setCropSrc] = React.useState(null);
   const [photoPreviewVisible, setPhotoPreviewVisible] = React.useState(false);
+  const [addressModalVisible, setAddressModalVisible] = React.useState(false);
   const [avatarKey, setAvatarKey] = React.useState(0);
   const allowLeaveRef = React.useRef(false);
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const formStyles = useEditFormStyles();
+  const styles = React.useMemo(() => createStyles(theme, formStyles), [theme, formStyles]);
+  const [addressLabelHeight, setAddressLabelHeight] = React.useState(0);
+  const [addressValueHeight, setAddressValueHeight] = React.useState(0);
+  const objectFieldSettings = React.useMemo(
+    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
+    [objectFieldSettingsData],
+  );
+  const objectFieldsByKey = React.useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
+  const visibleAddressFields = React.useMemo(
+    () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled !== false),
+    [objectFieldsByKey],
+  );
+  const visiblePrimaryAddressFields = React.useMemo(
+    () =>
+      CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS.filter(
+        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
+      ),
+    [objectFieldsByKey],
+  );
+  const visibleAdditionalInfoFields = React.useMemo(
+    () =>
+      CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS.filter(
+        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
+      ),
+    [objectFieldsByKey],
+  );
+  const withRequiredLabel = React.useCallback(
+    (field, label) => (objectFieldsByKey.get(field)?.isRequired ? `${label} *` : label),
+    [objectFieldsByKey],
+  );
+  const chevronIconSize = theme.icons?.sm ?? 18;
+  const chevronMarginTop = Math.max(0, Math.round(addressLabelHeight + (addressValueHeight - chevronIconSize) / 2));
   const photoDisplayUrl = React.useMemo(
     () =>
       /^https?:\/\//i.test(String(draft.photoUrl || ''))
@@ -179,14 +253,16 @@ export default function EditObjectScreen() {
       photoUrl: objectItem.photoUrl || '',
       ...Object.fromEntries(CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => [field, objectItem[field] || ''])),
     });
+    const nextTags = Array.isArray(objectItem?.tags) ? objectItem.tags.map((tag) => String(tag?.value || '').trim()) : [];
     setDraft(next);
-    setInitialSnap(snapshotObjectForm(next));
+    setTags(nextTags);
+    setInitialSnap(snapshotObjectForm({ ...next, tags: nextTags }));
   }, [objectItem]);
 
   const isDirty = React.useMemo(() => {
     if (!initialSnap) return false;
-    return snapshotObjectForm(draft) !== initialSnap;
-  }, [draft, initialSnap]);
+    return snapshotObjectForm({ ...draft, tags }) !== initialSnap;
+  }, [draft, initialSnap, tags]);
 
   const goBack = React.useCallback(() => {
     allowLeaveRef.current = true;
@@ -196,6 +272,21 @@ export default function EditObjectScreen() {
     }
     router.back();
   }, [navigation, router]);
+  const goAfterDelete = React.useCallback(() => {
+    allowLeaveRef.current = true;
+    if (returnTo) {
+      dismissToRoute(router, {
+        pathname: returnTo,
+        params: returnParams,
+      });
+      return;
+    }
+    if (objectItem?.client_id) {
+      dismissToRoute(router, `/clients/${objectItem.client_id}`);
+      return;
+    }
+    dismissToRoute(router, '/objects');
+  }, [objectItem?.client_id, returnParams, returnTo, router]);
 
   React.useEffect(() => {
     const sub = navigation.addListener('beforeRemove', (event) => {
@@ -279,6 +370,13 @@ export default function EditObjectScreen() {
     if (!objectId || saving || !canEditClients) return;
     setSaving(true);
     try {
+      const missingRequiredField = ['name', ...visibleAddressFields].find((field) => {
+        if (!objectFieldsByKey.get(field)?.isRequired) return false;
+        return !String(draft?.[field] || '').trim();
+      });
+      if (missingRequiredField) {
+        throw new Error(t('field_settings_required_fill', 'Заполните обязательные поля'));
+      }
       const cleanPatch = sanitizeClientObjectPayload(draft, { nameRequired: false });
       const currentPhotoUrl = String(draft.photoUrl || '').trim();
       let persistedPhotoUrl = String(objectItem?.photoUrl || '').trim() || null;
@@ -302,6 +400,13 @@ export default function EditObjectScreen() {
         },
       });
 
+      if (settings?.enable_object_tags) {
+        await setObjectTagsMutation.mutateAsync({
+          objectId: String(objectId),
+          tags,
+        });
+      }
+
       toast.success(t('objects_saved'));
       allowLeaveRef.current = true;
       router.replace(`/objects/${objectId}`);
@@ -310,7 +415,7 @@ export default function EditObjectScreen() {
     } finally {
       setSaving(false);
     }
-  }, [canEditClients, draft, objectId, objectItem?.photoUrl, router, saving, t, toast, updateMutation]);
+  }, [canEditClients, draft, objectFieldsByKey, objectId, objectItem?.photoUrl, router, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAddressFields]);
 
   if (!canEditClients) {
     return (
@@ -364,34 +469,81 @@ export default function EditObjectScreen() {
             </Pressable>
 
             <View style={styles.headerTextWrap}>
-              <Text style={styles.nameTitle}>{draft.name || t('objects_unnamed')}</Text>
-              <Text style={styles.clientName}>{objectItem?.client?.full_name || t('common_dash')}</Text>
+              <Text style={styles.nameTitle} numberOfLines={2} ellipsizeMode="tail">
+                {draft.name || t('objects_unnamed')}
+              </Text>
+              <Text style={styles.clientName} numberOfLines={2} ellipsizeMode="tail">
+                {`${t('routes_clients_client')}: ${clientData?.full_name || objectItem?.client?.full_name || '-'}`}
+              </Text>
             </View>
           </View>
         </Card>
 
-        <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
+        <SectionHeader topSpacing="xs">{t('section_general')}</SectionHeader>
         <Card paddedXOnly>
           <TextField
-            label={t('objects_field_name')}
+            label={withRequiredLabel('name', t('objects_field_name'))}
             value={draft.name}
             onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
             style={styles.field}
           />
+          <View style={styles.field}>
+            <Pressable
+              style={styles.addressRow}
+              onPress={() => setAddressModalVisible(true)}
+              accessibilityRole="button"
+            >
+              <View style={styles.addressTextWrap}>
+                <Text
+                  style={styles.fieldLabel}
+                  onLayout={(e) => setAddressLabelHeight(Math.round(e.nativeEvent.layout.height))}
+                >
+                  {t('order_details_address')}
+                </Text>
+                <Text
+                  style={styles.addressValue}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                  onLayout={(e) => setAddressValueHeight(Math.round(e.nativeEvent.layout.height))}
+                >
+                  {buildClientObjectShortAddress(draft) || t('objects_empty')}
+                </Text>
+              </View>
+              <View style={[styles.chevronWrap, { marginTop: chevronMarginTop }]}>
+                <Feather name="chevron-right" size={chevronIconSize} color={theme.colors.textSecondary} />
+              </View>
+            </Pressable>
+          </View>
+          {settings?.enable_object_tags ? (
+            <TagEditorField
+              label={t('tags_field_label')}
+              tagType={TAG_TYPE.OBJECT}
+              tags={tags}
+              onChange={setTags}
+              placeholder={t('tags_input_placeholder')}
+            />
+          ) : null}
         </Card>
 
-        <SectionHeader topSpacing="xs">{t('objects_address_section')}</SectionHeader>
-        <Card paddedXOnly>
-          {CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => (
-            <TextField
-              key={field}
-              label={t(`order_field_${field}`)}
-              value={String(draft[field] || '')}
-              onChangeText={(value) => setDraft((prev) => ({ ...prev, [field]: value }))}
-              style={styles.field}
-            />
-          ))}
-        </Card>
+        {visibleAdditionalInfoFields.length ? (
+          <>
+            <SectionHeader>{t('objects_additional_info_section')}</SectionHeader>
+            <Card paddedXOnly>
+              {visibleAdditionalInfoFields.map((field) => (
+                <TextField
+                  key={field}
+                  label={withRequiredLabel(field, t(`order_field_${field}`))}
+                  value={String(draft[field] || '')}
+                  onChangeText={(value) => setDraft((prev) => ({ ...prev, [field]: value }))}
+                  keyboardType={field === 'geo_lat' || field === 'geo_lng' ? 'decimal-pad' : undefined}
+                  multiline={field === 'entrance_info' || field === 'parking_notes'}
+                  minLines={field === 'entrance_info' || field === 'parking_notes' ? 2 : undefined}
+                  style={styles.field}
+                />
+              ))}
+            </Card>
+          </>
+        ) : null}
 
         <UIButton
           title={t('btn_delete')}
@@ -431,8 +583,7 @@ export default function EditObjectScreen() {
               clientId: objectItem?.client_id,
             });
             toast.success(t('objects_deleted'));
-            allowLeaveRef.current = true;
-            router.replace(`/clients/${objectItem?.client_id}`);
+            goAfterDelete();
           } catch (error) {
             toast.error(error?.message || t('clients_save_failed'));
           }
@@ -458,6 +609,37 @@ export default function EditObjectScreen() {
       />
 
       <BaseModal
+        visible={addressModalVisible}
+        onClose={() => setAddressModalVisible(false)}
+        title={t('objects_address_section')}
+        maxHeightRatio={0.9}
+        footer={(
+          <UIButton
+            title={t('btn_done')}
+            onPress={() => setAddressModalVisible(false)}
+          />
+        )}
+      >
+        <ScrollView
+          style={{ width: '100%' }}
+          contentContainerStyle={{ paddingVertical: theme.spacing.sm }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Card paddedXOnly>
+            {visiblePrimaryAddressFields.map((field) => (
+              <TextField
+                key={field}
+                label={withRequiredLabel(field, t(`order_field_${field}`))}
+                value={String(draft[field] || '')}
+                onChangeText={(value) => setDraft((prev) => ({ ...prev, [field]: value }))}
+                style={styles.field}
+              />
+            ))}
+          </Card>
+        </ScrollView>
+      </BaseModal>
+
+      <BaseModal
         visible={photoPreviewVisible}
         onClose={() => setPhotoPreviewVisible(false)}
         title={t('objects_photo_title')}
@@ -480,7 +662,8 @@ export default function EditObjectScreen() {
   );
 }
 
-function createStyles(theme) {
+function createStyles(theme, formStyles) {
+  const insetKey = theme.components?.input?.separator?.insetX ?? 'lg';
   return StyleSheet.create({
     blockedWrap: {
       flex: 1,
@@ -537,15 +720,44 @@ function createStyles(theme) {
       color: theme.colors.text,
       fontSize: theme.typography.sizes.md,
       fontWeight: theme.typography.weight.semibold,
+      flexShrink: 1,
+    },
+    addressValue: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight?.regular ?? '400',
+      flexShrink: 1,
     },
     clientName: {
-      color: theme.colors.primary,
+      color: '#000',
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
+      flexShrink: 1,
     },
-    field: {
-      marginVertical: theme.spacing.xs,
+    addressRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: theme.spacing.sm,
     },
+    addressTextWrap: {
+      flex: 1,
+      paddingRight: theme.spacing.sm,
+      paddingLeft: theme.spacing[insetKey],
+    },
+    chevronWrap: {
+      justifyContent: 'center',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      paddingHorizontal: Math.max(0, Math.round((theme.spacing?.xs ?? 6) / 2)),
+    },
+    fieldLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      marginBottom: theme.components?.input?.labelSpacing ?? theme.spacing.xs,
+      fontWeight: theme.typography.weight?.medium ?? '500',
+    },
+    field: formStyles.field,
     deleteBtn: {
       marginTop: theme.spacing.sm,
     },

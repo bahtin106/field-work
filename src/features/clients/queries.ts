@@ -2,8 +2,10 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
+import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
   createClient,
+  getClientDeleteBlockers,
   deleteClient,
   getClientById,
   getClientOrderCount,
@@ -40,6 +42,16 @@ export function useClientOrderCount(id, options = {}) {
   });
 }
 
+export function useClientDeleteBlockers(id, options = {}) {
+  return useQuery({
+    queryKey: ['clients', 'delete-blockers', String(id || '')],
+    queryFn: () => getClientDeleteBlockers(String(id || '')),
+    enabled: !!id,
+    staleTime: 15 * 1000,
+    ...options,
+  });
+}
+
 export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}) {
   const queryClient = useQueryClient();
 
@@ -61,6 +73,7 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}
           if (rowId) {
             queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(rowId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.clients.orderCount(rowId) });
+            queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers', String(rowId)] });
             queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(rowId) });
           }
           queryClient.invalidateQueries({ queryKey: ['clients'] });
@@ -79,8 +92,37 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}
           if (clientId) {
             queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
             queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
+            queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers', String(clientId)] });
           }
           queryClient.invalidateQueries({ queryKey: ['clients'] });
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'client_tag_links',
+          filter: `company_id=eq.${companyId}`,
+        },
+        (payload) => {
+          const clientId = String(payload?.new?.client_id || payload?.old?.client_id || '');
+          if (clientId) {
+            void invalidateNow(queryClient, queryKeys.clients.detail(clientId));
+          }
+          void invalidateManyNow(queryClient, [['clients'], ['tags']]);
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'company_tags',
+          filter: `company_id=eq.${companyId}`,
+        },
+        () => {
+          void invalidateManyNow(queryClient, [['clients'], ['objects'], ['tags']]);
         },
       )
       .subscribe();
@@ -127,7 +169,13 @@ export function useDeleteClientMutation() {
 
   return useMutation({
     mutationFn: (id: string) => deleteClient(String(id || '')),
-    onSuccess: () => {
+    onSuccess: (_result, deletedId: string) => {
+      if (deletedId) {
+        queryClient.removeQueries({ queryKey: queryKeys.clients.detail(deletedId) });
+        queryClient.removeQueries({ queryKey: queryKeys.clients.orderCount(deletedId) });
+        queryClient.removeQueries({ queryKey: ['clients', 'delete-blockers', String(deletedId)] });
+        queryClient.removeQueries({ queryKey: queryKeys.objects.byClient(deletedId) });
+      }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
   });

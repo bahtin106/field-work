@@ -1,12 +1,11 @@
 // app/orders/all-orders.jsx
 
-import { useFocusEffect, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  BackHandler,
   FlatList,
   Modal,
   Platform,
@@ -23,6 +22,7 @@ import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
+import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
@@ -34,6 +34,7 @@ import {
   useRequestFilterOptions,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import {
   markFirstContent,
@@ -332,18 +333,43 @@ export default function AllOrdersScreen() {
   );
 
   const router = useRouter();
+  const navigation = useNavigation();
+  const handleBackPress = useCallback(() => {
+    goBackSmart(navigation, router, null, '/orders');
+  }, [navigation, router]);
 
   // Из вкладки «Все» аппаратная Назад ведёт на Главную
-  useFocusEffect(
-    useCallback(() => {
-      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        router.replace('/orders');
-        return true;
-      });
-      return () => sub.remove();
-    }, [router]),
+  const {
+    filter,
+    executor,
+    department,
+    search,
+    work_type,
+    materials,
+    relation_client_id,
+    relation_object_ids,
+    relation_label,
+  } = useLocalSearchParams();
+  const relationClientId = useMemo(
+    () =>
+      Array.isArray(relation_client_id)
+        ? String(relation_client_id[0] || '')
+        : String(relation_client_id || ''),
+    [relation_client_id],
   );
-  const { filter, executor, department, search, work_type, materials } = useLocalSearchParams();
+  const relationObjectIds = useMemo(() => parseRelationIdsParam(relation_object_ids), [relation_object_ids]);
+  const relationLabel = useMemo(
+    () => (Array.isArray(relation_label) ? String(relation_label[0] || '') : String(relation_label || '')),
+    [relation_label],
+  );
+  const hasLinkedRelationFilter = useMemo(
+    () =>
+      hasRelationFilters({
+        clientId: relationClientId,
+        objectIds: relationObjectIds,
+      }),
+    [relationClientId, relationObjectIds],
+  );
 
   const [statusFilter, setStatusFilter] = useState(
     filter === 'completed'
@@ -454,8 +480,10 @@ export default function AllOrdersScreen() {
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
       next.workTypeIds = workTypeFilter;
     }
+    if (relationClientId) next.relationClientId = relationClientId;
+    if (relationObjectIds.length) next.relationObjectIds = relationObjectIds;
     return next;
-  }, [statusFilter, executorFilter, departmentFilter, useWorkTypes, workTypeFilter]);
+  }, [departmentFilter, executorFilter, relationClientId, relationObjectIds, statusFilter, useWorkTypes, workTypeFilter]);
 
   const {
     items: requestItems = [],
@@ -581,6 +609,9 @@ export default function AllOrdersScreen() {
     executor: executorFilter,
     department: departmentFilter,
     search: searchQuery,
+    relation_client_id: relationClientId,
+    relation_object_ids: relationObjectIds.join(','),
+    relation_label: relationLabel,
   });
   useEffect(() => {
     returnParamsRef.current = {
@@ -588,8 +619,11 @@ export default function AllOrdersScreen() {
       executor: executorFilter,
       department: departmentFilter,
       search: searchQuery,
+      ...(relationClientId ? { relation_client_id: relationClientId } : {}),
+      ...(relationObjectIds.length ? { relation_object_ids: relationObjectIds.join(',') } : {}),
+      ...(relationLabel ? { relation_label: relationLabel } : {}),
     };
-  }, [departmentFilter, executorFilter, searchQuery, statusFilter]);
+  }, [departmentFilter, executorFilter, relationClientId, relationLabel, relationObjectIds, searchQuery, statusFilter]);
   const openOrderDetails = useCallback(
     (orderIdRaw) => {
       const orderId = String(orderIdRaw || '').trim();
@@ -677,6 +711,13 @@ export default function AllOrdersScreen() {
   const listHeader = useMemo(
     () => (
       <View style={{ padding: 16 }}>
+        {hasLinkedRelationFilter ? (
+          <Text style={[styles.cardSubtitle, { marginBottom: 10 }]}>
+            {relationLabel
+              ? `${t('orders_related_filter')}: ${relationLabel}`
+              : t('orders_related_filter_hint')}
+          </Text>
+        ) : null}
         <Text style={styles.header}>Все заявки</Text>
 
         <View style={styles.filterContainer}>
@@ -723,13 +764,14 @@ export default function AllOrdersScreen() {
         />
       </View>
     ),
-    [styles, statusFilter, searchQuery, workTypeFilter, executorFilter, useWorkTypes, router, t],
+    [executorFilter, hasLinkedRelationFilter, relationLabel, router, searchQuery, statusFilter, styles, t, useWorkTypes, workTypeFilter],
   );
 
   return (
     <Screen scroll={false} headerOptions={{ headerShown: false }}>
       <AppHeader
         back
+        onBackPress={handleBackPress}
         options={{
           headerTitleAlign: 'left',
           title: t('routes.orders/all-orders'),

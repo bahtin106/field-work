@@ -147,11 +147,12 @@ export default function OrdersFiltersPanel({
   };
 
   const applyChanges = () => {
+    const snapshot = normalizeValues(draft);
     Object.entries(draft).forEach(([key, value]) => {
       if (setValue) setValue(key, value);
     });
-    setBaseline(draft);
-    if (onApply) onApply();
+    setBaseline(snapshot);
+    if (onApply) onApply(snapshot);
     if (onClose) onClose();
   };
 

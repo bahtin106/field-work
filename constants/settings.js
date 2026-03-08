@@ -7,16 +7,9 @@ export const SETTINGS_SECTIONS = {
     items: [
       { key: 'timezone', label: T('company_settings_sections_company_items_timezone'), type: 'tz' },
       {
-        key: 'employees',
-        label: T('company_settings_sections_company_items_employees'),
-        route: '/users',
-        showValue: false,
-      },
-      {
-        key: 'clients',
-        label: T('company_settings_sections_company_items_clients'),
-        route: '/clients',
-        showValue: false,
+        key: 'telegram_bot',
+        label: T('company_settings_sections_company_items_telegram_bot'),
+        route: '/company_settings/sections/telegram-bot',
       },
       {
         key: 'billing',
@@ -44,6 +37,30 @@ export const SETTINGS_SECTIONS = {
         label: T('company_settings_sections_management_items_form_builder'),
         route: '/company_settings/sections/field-editor',
       },
+      // `work_types` and `departments` moved to REFERENCE section
+    ],
+  },
+  REFERENCE: {
+    title: T('settings_sections_reference_title'),
+    items: [
+      {
+        key: 'employees',
+        label: T('company_settings_sections_company_items_employees'),
+        route: '/users',
+        showValue: false,
+      },
+      {
+        key: 'clients',
+        label: T('company_settings_sections_company_items_clients'),
+        route: '/clients',
+        showValue: false,
+      },
+      {
+        key: 'objects',
+        label: T('settings_sections_reference_items_objects'),
+        route: '/objects',
+        showValue: false,
+      },
       {
         key: 'work_types',
         label: T('company_settings_sections_management_items_work_types'),
@@ -53,6 +70,11 @@ export const SETTINGS_SECTIONS = {
         key: 'departments',
         label: T('company_settings_sections_management_items_departments'),
         route: '/company_settings/sections/DepartmentsSettings',
+      },
+      {
+        key: 'tags',
+        label: T('settings_sections_reference_items_tags'),
+        route: '/company_settings/sections/tags',
       },
     ],
   },

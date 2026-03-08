@@ -40,6 +40,10 @@ function useRequestInfiniteQuery(queryKey, params, options = {}) {
   };
 }
 
+function invalidateClientDeleteBlockersNamespace(queryClient) {
+  queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
+}
+
 export function useAllRequests(params = {}, options = {}) {
   return useRequestInfiniteQuery(queryKeys.requests.all(params), { ...params, scope: 'all' }, options);
 }
@@ -116,6 +120,7 @@ export function useRequestRealtimeSync({ enabled = true, companyId = null } = {}
       queryClient.invalidateQueries({ queryKey: ['requests', 'all'] });
       queryClient.invalidateQueries({ queryKey: ['requests', 'my'] });
       queryClient.invalidateQueries({ queryKey: ['requests', 'calendar'] });
+      invalidateClientDeleteBlockersNamespace(queryClient);
     };
 
     const filter = companyId ? `company_id=eq.${companyId}` : undefined;
@@ -180,6 +185,10 @@ export function useUpdateRequestMutation() {
         queryClient.setQueryData(queryKeys.requests.detail(next.id), next);
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
+      invalidateClientDeleteBlockersNamespace(queryClient);
+    },
+    onSettled: () => {
+      invalidateClientDeleteBlockersNamespace(queryClient);
     },
   });
 }

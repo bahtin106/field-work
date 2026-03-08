@@ -14,13 +14,22 @@ export async function listClientObjects(clientId: string) {
     if (!clientId) return [];
     const { data, error } = await supabase
       .from('client_objects')
-      .select('*')
+      .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .eq('client_id', clientId)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-    const rows = Array.isArray(data) ? data : [];
+      if (error) {
+        console.debug('[objects.api] listClientObjectsByCompany error:', error?.message || error);
+      }
+      const rows = Array.isArray(data) ? data : [];
+      try {
+        console.debug('[objects.api] listClientObjectsByCompany rows.length=', rows.length);
+        if (rows.length > 0) console.debug('[objects.api] sample row=', JSON.stringify(rows[0]));
+      } catch (e) {
+        console.debug('[objects.api] debug log failed', e);
+      }
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
       rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
     );
@@ -36,6 +45,50 @@ export async function listClientObjects(clientId: string) {
   });
 }
 
+export async function listClientObjectsByCompany(companyId: string) {
+  return measureNetwork('objects.listByCompany', async () => {
+    if (!companyId) return [];
+    try {
+      console.debug('[objects.api] listClientObjectsByCompany called with companyId=', companyId);
+    } catch (e) {}
+    const { data, error } = await supabase
+      .from('client_objects')
+      .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+      .eq('company_id', companyId)
+      .order('is_primary', { ascending: false })
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.debug('[objects.api] listClientObjectsByCompany supabase error=', error?.message || error);
+      throw error;
+    }
+    const rows = Array.isArray(data) ? data : [];
+    try {
+      console.debug('[objects.api] listClientObjectsByCompany received rows.length=', rows.length);
+    } catch (e) {}
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
+      rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
+    );
+    const cleanedSet = new Set(cleanedUrls);
+    return rows
+      .map((row) => ({
+        ...row,
+        photo_url: cleanedSet.has(String(row?.photo_url || '').trim()) ? null : row?.photo_url,
+        photo_display_url: resolvedUrls[String(row?.photo_url || '').trim()] || row?.photo_url || null,
+      }))
+      .map((r) => {
+        const normalized = normalizeClientObject(r);
+        if (!normalized) return null;
+        return {
+          ...normalized,
+          client: null,
+          summary: normalized.summary || '',
+        };
+      })
+      .filter(Boolean);
+  });
+}
+
 export async function getClientObjectById(objectId: string) {
   const key = String(objectId || '').trim();
   if (!key) return null;
@@ -45,10 +98,10 @@ export async function getClientObjectById(objectId: string) {
 
   const p = measureNetwork('objects.getById', async () => {
     const { data, error } = await supabase
-      .from('client_objects')
-      .select('*, client:clients(id, company_id, full_name, first_name, last_name, middle_name, email, phone)')
-      .eq('id', key)
-      .maybeSingle();
+        .from('client_objects')
+        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .eq('id', key)
+        .maybeSingle();
 
     if (error) throw error;
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
@@ -66,7 +119,7 @@ export async function getClientObjectById(objectId: string) {
     if (!normalized) return null;
     return {
       ...normalized,
-      client: data?.client || null,
+      client: null,
       summary: normalized.summary || buildClientObjectAddressSummary(normalized) || null,
     };
   }).finally(() => {
@@ -90,7 +143,7 @@ export async function createClientObject(payload: Record<string, any>) {
     const { data, error } = await supabase
       .from('client_objects')
       .insert(insertPayload)
-      .select('*')
+      .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .single();
 
     if (error) throw error;
@@ -120,7 +173,7 @@ export async function updateClientObject(objectId: string, patch: Record<string,
       .from('client_objects')
       .update(nextPatch)
       .eq('id', objectId)
-      .select('*')
+      .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .single();
 
     if (error) throw error;
