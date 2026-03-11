@@ -76,7 +76,6 @@ export async function listOrderFinanceEntries(orderId) {
 
 export async function upsertOrderFinanceEntry(payload) {
   const row = {
-    id: normalizeId(payload?.id),
     company_id: normalizeId(payload?.company_id),
     order_id: normalizeId(payload?.order_id),
     kind: String(payload?.kind || 'expense').trim(),
@@ -92,6 +91,10 @@ export async function upsertOrderFinanceEntry(payload) {
     visibility_scope: String(payload?.visibility_scope || 'all').trim(),
     sort_order: Number.isFinite(Number(payload?.sort_order)) ? Number(payload.sort_order) : 100,
   };
+  const normalizedId = normalizeId(payload?.id);
+  if (normalizedId) {
+    row.id = normalizedId;
+  }
 
   if (!row.title) throw new Error('Title is required');
   if (!row.company_id || !row.order_id) throw new Error('company_id and order_id are required');
@@ -127,7 +130,6 @@ export async function listCompanyFinanceRules(companyId) {
 
 export async function upsertCompanyFinanceRule(payload) {
   const row = {
-    id: normalizeId(payload?.id),
     company_id: normalizeId(payload?.company_id),
     name: String(payload?.name || '').trim(),
     kind: String(payload?.kind || 'expense').trim(),
@@ -143,6 +145,10 @@ export async function upsertCompanyFinanceRule(payload) {
     is_enabled: payload?.is_enabled !== false,
     sort_order: Number.isFinite(Number(payload?.sort_order)) ? Number(payload.sort_order) : 100,
   };
+  const normalizedId = normalizeId(payload?.id);
+  if (normalizedId) {
+    row.id = normalizedId;
+  }
 
   if (!row.company_id) throw new Error('company_id is required');
   if (!row.name) throw new Error('name is required');
