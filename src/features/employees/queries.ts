@@ -19,6 +19,7 @@ export function useEmployee(id, options = {}) {
     queryFn: () => getEmployeeById(id),
     enabled: !!id,
     staleTime: 120 * 1000,
+    refetchOnMount: 'always',
     ...options,
   });
 }

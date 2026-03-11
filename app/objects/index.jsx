@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ActivityIndicator, FlatList, Keyboard, View } from 'react-native';
+import { ActivityIndicator, FlatList, Keyboard, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 
 import AppHeader from '../../components/navigation/AppHeader';
@@ -10,6 +10,7 @@ import FiltersPanel from '../../components/filters/FiltersPanel';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import { useFilters } from '../../components/hooks/useFilters';
 import ObjectCard from '../../components/objects/ObjectCard';
+import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -79,6 +80,7 @@ export default function ObjectsIndex() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { profile } = useAuthContext();
+  const { has } = usePermissions();
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState(OBJECT_SORT.NAME_ASC);
   const [q, setQ] = useState('');
@@ -109,15 +111,15 @@ export default function ObjectsIndex() {
 
   const { data: allObjects = [], isLoading: objectsLoading, refetch: refetchObjects } = useCompanyObjects(
     companyId,
-    { enabled: !!companyId, keepPreviousData: true, staleTime: 30 * 1000 },
+    { enabled: !!companyId && has('canViewObjects'), keepPreviousData: true, staleTime: 30 * 1000 },
   );
 
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
-    { enabled: !!companyId, staleTime: 30 * 1000 },
+    { enabled: !!companyId && has('canViewClients'), staleTime: 30 * 1000 },
   );
 
-  useClientObjectsRealtimeSync({ enabled: !!companyId, companyId });
+  useClientObjectsRealtimeSync({ enabled: !!companyId && has('canViewObjects'), companyId });
 
   useEffect(() => {
     const ms = Number(theme?.timings?.backDelayMs ?? 300);
@@ -327,16 +329,28 @@ export default function ObjectsIndex() {
     ({ item }) => (
       <ObjectCard
         item={item}
+        canViewClients={has('canViewClients')}
         onPress={(id) => {
           Keyboard.dismiss();
           router.push(`/objects/${id}`);
         }}
       />
     ),
-    [router],
+    [has, router],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
+
+  if (!has('canViewObjects')) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }} edges={['left', 'right']}>
+        <AppHeader back options={{ title: t('clients_objects_section') }} />
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: theme.spacing.lg }}>
+          <Text style={{ color: theme.colors.textSecondary }}>{t('objects_no_view_permission')}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if ((objectsLoading || companyLoading) && allObjects.length === 0) {
     return (

@@ -24,6 +24,12 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { pluralizeRu } from '../../../lib/pluralize';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+} from '../../../src/features/fieldSettings/catalog';
+import { createEntityFieldPresentation } from '../../../src/features/fieldSettings/presentation';
+import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 import { useEmployee, useEmployeesRealtimeSync } from '../../../src/features/employees/queries';
 import { getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -78,6 +84,9 @@ export default function UserView() {
     staleTime: 2 * 60 * 1000,
     refetchOnMount: 'always',
   });
+  const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
+    enabled: !!userId,
+  });
   useEmployeesRealtimeSync({ enabled: !!userId });
 
   // Гарантируем обновление при возврате на экран (после редактирования)
@@ -120,6 +129,20 @@ export default function UserView() {
   const companyName = userData?.companyName || null;
   const companyId = userData?.companyId || null;
   const { useDepartments } = useCompanySettings(companyId || null);
+  const employeeFieldSettings = React.useMemo(
+    () => employeeFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE),
+    [employeeFieldSettingsData],
+  );
+  const fieldUi = React.useMemo(
+    () => createEntityFieldPresentation(employeeFieldSettings),
+    [employeeFieldSettings],
+  );
+  const canShowAvatarImage = fieldUi.isVisible('avatar_url');
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
+  const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
+  const canShowCompanySection =
+    fieldUi.hasVisibleFields(['department_id', 'role']) &&
+    ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role'));
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
@@ -364,7 +387,7 @@ export default function UserView() {
         {/* Top avatar on background */}
         <View style={s.avatarContainer}>
           <View style={s.avatarXl}>
-            {avatarUrl ? (
+            {canShowAvatarImage && avatarUrl ? (
               <ExpoImage
                 source={{ uri: avatarUrl }}
                 style={s.avatarImg}
@@ -377,8 +400,12 @@ export default function UserView() {
           </View>
         </View>
 
-        <SectionHeader>{t('section_personal', 'section_personal')}</SectionHeader>
+        {canShowPersonalSection ? (
+          <SectionHeader>{t('section_personal', 'section_personal')}</SectionHeader>
+        ) : null}
+        {canShowPersonalSection ? (
         <Card paddedXOnly>
+          {fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name') ? (
           <LabelValueRow
             label={t('view_label_name', 'view_label_name')}
             value={
@@ -387,84 +414,12 @@ export default function UserView() {
                 : ''
             }
           />
-          <View style={base.sep} />
+          ) : null}
+          {(fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name')) && fieldUi.isVisible('birthdate') ? (
+            <View style={base.sep} />
+          ) : null}
 
-          <LabelValueRow
-            label={t('view_label_email', 'view_label_email')}
-            valueComponent={
-              email ? (
-                <Pressable
-                  accessibilityRole="link"
-                  onPress={async () => {
-                    const url = `mailto:${email}`;
-                    try {
-                      await Linking.openURL(url);
-                    } catch {
-                      try {
-                        const ok = await Linking.canOpenURL(url);
-                        if (ok) await Linking.openURL(url);
-                        else toast.error(t('errors_openMail', 'errors_openMail'));
-                      } catch {
-                        toast.error(t('errors_openMail', 'errors_openMail'));
-                      }
-                    }
-                  }}
-                >
-                  <Text style={[base.value, s.link]}>{email}</Text>
-                </Pressable>
-              ) : null
-            }
-            rightActions={
-              email ? (
-                <IconButton
-                  onPress={onCopyEmail}
-                  accessibilityLabel={t('a11y_copy_email', 'a11y_copy_email')}
-                >
-                  <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
-                </IconButton>
-              ) : null
-            }
-          />
-          <View style={base.sep} />
-
-          <LabelValueRow
-            label={t('view_label_phone', 'view_label_phone')}
-            valueComponent={
-              phone ? (
-                <Pressable
-                  accessibilityRole="link"
-                  onPress={async () => {
-                    const url = `tel:${toE164(phone) || '+' + normalizeRu(phone)}`;
-                    try {
-                      await Linking.openURL(url);
-                    } catch {
-                      try {
-                        const ok = await Linking.canOpenURL(url);
-                        if (ok) await Linking.openURL(url);
-                        else toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
-                      } catch {
-                        toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
-                      }
-                    }
-                  }}
-                >
-                  <Text style={[base.value, s.link]}>{formatRuMask(phone)}</Text>
-                </Pressable>
-              ) : null
-            }
-            rightActions={
-                phone ? (
-                  <IconButton
-                    onPress={onCopyPhone}
-                    accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
-                  >
-                    <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
-                  </IconButton>
-                ) : null
-            }
-          />
-          <View style={base.sep} />
-
+          {fieldUi.isVisible('birthdate') ? (
           <LabelValueRow
             label={t('label_birthdate', 'label_birthdate')}
             value={(() => {
@@ -492,9 +447,99 @@ export default function UserView() {
               }
             })()}
           />
+          ) : null}
         </Card>
+        ) : null}
 
-        <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader>
+        {canShowContactSection ? (
+          <SectionHeader>{t('clients_contacts_section', 'clients_contacts_section')}</SectionHeader>
+        ) : null}
+        {canShowContactSection ? (
+        <Card paddedXOnly>
+          {fieldUi.isVisible('email') ? (
+            <>
+              <LabelValueRow
+                label={t('view_label_email', 'view_label_email')}
+                valueComponent={
+                  email ? (
+                    <Pressable
+                      accessibilityRole="link"
+                      onPress={async () => {
+                        const url = `mailto:${email}`;
+                        try {
+                          await Linking.openURL(url);
+                        } catch {
+                          try {
+                            const ok = await Linking.canOpenURL(url);
+                            if (ok) await Linking.openURL(url);
+                            else toast.error(t('errors_openMail', 'errors_openMail'));
+                          } catch {
+                            toast.error(t('errors_openMail', 'errors_openMail'));
+                          }
+                        }
+                      }}
+                    >
+                      <Text style={[base.value, s.link]}>{email}</Text>
+                    </Pressable>
+                  ) : null
+                }
+                rightActions={
+                  email ? (
+                    <IconButton
+                      onPress={onCopyEmail}
+                      accessibilityLabel={t('a11y_copy_email', 'a11y_copy_email')}
+                    >
+                      <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                    </IconButton>
+                  ) : null
+                }
+              />
+              {fieldUi.isVisible('phone') ? <View style={base.sep} /> : null}
+            </>
+          ) : null}
+          {fieldUi.isVisible('phone') ? (
+            <LabelValueRow
+              label={t('view_label_phone', 'view_label_phone')}
+              valueComponent={
+                phone ? (
+                  <Pressable
+                    accessibilityRole="link"
+                    onPress={async () => {
+                      const url = `tel:${toE164(phone) || '+' + normalizeRu(phone)}`;
+                      try {
+                        await Linking.openURL(url);
+                      } catch {
+                        try {
+                          const ok = await Linking.canOpenURL(url);
+                          if (ok) await Linking.openURL(url);
+                          else toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                        } catch {
+                          toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                        }
+                      }
+                    }}
+                  >
+                    <Text style={[base.value, s.link]}>{formatRuMask(phone)}</Text>
+                  </Pressable>
+                ) : null
+              }
+              rightActions={
+                phone ? (
+                  <IconButton
+                    onPress={onCopyPhone}
+                    accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
+                  >
+                    <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                  </IconButton>
+                ) : null
+              }
+            />
+          ) : null}
+        </Card>
+        ) : null}
+
+        {canShowCompanySection ? <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader> : null}
+        {canShowCompanySection ? (
         <Card paddedXOnly>
           {meIsSuperAdmin && (
             <>
@@ -511,7 +556,7 @@ export default function UserView() {
               ) : null}
             </>
           )}
-          {useDepartments ? (
+          {useDepartments && fieldUi.isVisible('department_id') ? (
             <>
               {hasDisplayValue(departmentName) ? (
                 <>
@@ -526,13 +571,15 @@ export default function UserView() {
               ) : null}
             </>
           ) : null}
+          {fieldUi.isVisible('role') ? (
           <View style={base.row}>
             <Text style={base.label}>{t('label_role', 'label_role')}</Text>
             <View style={base.rightWrap}>
               <Text style={base.value}>{roleLabel}</Text>
             </View>
           </View>
-          <View style={base.sep} />
+          ) : null}
+          {fieldUi.isVisible('role') ? <View style={base.sep} /> : null}
           <View style={base.row}>
             <Text style={base.label}>{t('label_status', 'label_status')}</Text>
             <View style={base.rightWrap}>
@@ -564,6 +611,7 @@ export default function UserView() {
             </View>
           </View>
         </Card>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

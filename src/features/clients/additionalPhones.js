@@ -36,6 +36,31 @@ function normalizeSlotIds(slotIds) {
   return Array.from(unique).sort((a, b) => a - b);
 }
 
+export function resolveVisibleAdditionalPhoneSlotIds(options = {}) {
+  const enabledSlotIds = normalizeSlotIds(options.enabledSlotIds);
+  const requiredSlotIds = normalizeSlotIds(options.requiredSlotIds).filter((slotId) =>
+    enabledSlotIds.includes(slotId),
+  );
+  const explicitVisibleSlotIds = normalizeSlotIds(options.explicitVisibleSlotIds).filter((slotId) =>
+    enabledSlotIds.includes(slotId),
+  );
+  const valueVisibleSlotIds = normalizeSlotIds(options.valueVisibleSlotIds).filter((slotId) =>
+    enabledSlotIds.includes(slotId),
+  );
+
+  return normalizeSlotIds([
+    ...requiredSlotIds,
+    ...explicitVisibleSlotIds,
+    ...valueVisibleSlotIds,
+  ]);
+}
+
+export function getAddableAdditionalPhoneSlotIds(enabledSlotIds, requiredSlotIds) {
+  const enabled = normalizeSlotIds(enabledSlotIds);
+  const required = new Set(normalizeSlotIds(requiredSlotIds));
+  return enabled.filter((slotId) => !required.has(slotId));
+}
+
 export function normalizeAdditionalClientPhones(value) {
   const source = Array.isArray(value) ? value : [];
   return CLIENT_ADDITIONAL_PHONE_SLOT_IDS.map((_slotId, index) => {
@@ -92,15 +117,26 @@ export function getClientAdditionalPhones(client) {
 export function buildClientAdditionalPhonesPatch(additionalPhones, options = {}) {
   const fallbackLabel = trimToNull(options.defaultLabel);
   const normalized = normalizeAdditionalClientPhones(additionalPhones);
+  const hiddenSource = normalizeAdditionalClientPhones(options.hiddenSource || additionalPhones);
   const visibleSlotIds = normalizeSlotIds(options.visibleSlotIds || CLIENT_ADDITIONAL_PHONE_SLOT_IDS);
   const visible = new Set(visibleSlotIds);
+  const preserveHidden = options.preserveHidden === true;
   const patch = {};
 
   normalized.forEach((entry, index) => {
     const slotId = index + 1;
     const isVisible = visible.has(slotId);
-    patch[`additional_phone_${slotId}`] = isVisible ? toE164MobilePhoneOrNull(entry.phone) : null;
-    patch[`additional_phone_${slotId}_label`] = isVisible ? entry.label || fallbackLabel || null : null;
+    const hiddenEntry = hiddenSource[index] || { phone: null, label: null };
+    patch[`additional_phone_${slotId}`] = isVisible
+      ? toE164MobilePhoneOrNull(entry.phone)
+      : preserveHidden
+        ? toE164MobilePhoneOrNull(hiddenEntry.phone)
+        : null;
+    patch[`additional_phone_${slotId}_label`] = isVisible
+      ? entry.label || fallbackLabel || null
+      : preserveHidden
+        ? hiddenEntry.label || null
+        : null;
   });
 
   return patch;

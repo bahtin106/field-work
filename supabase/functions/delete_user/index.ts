@@ -4,7 +4,6 @@
 
 import { serve } from 'https://deno.land/std@0.210.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
-import { cleanupProfileMediaEntity } from '../profile-media-storage/index.ts';
 
 type ReqBody = {
   user_id: string;
@@ -97,19 +96,6 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
         .update({ assigned_to: reassign_to })
         .eq('assigned_to', user_id);
       if (reassignErr) throw new Error('Orders reassign failed: ' + reassignErr.message);
-    }
-
-    const targetCompanyId = String((target as any)?.company_id || '').trim();
-    if (targetCompanyId) {
-      try {
-        await cleanupProfileMediaEntity(admin, {
-          companyId: targetCompanyId,
-          entityType: 'employee',
-          entityId: user_id,
-        });
-      } catch (cleanupErr) {
-        console.error('[delete_user] profile media cleanup failed', cleanupErr);
-      }
     }
 
     // Удаляем профиль

@@ -9,6 +9,7 @@ import {
   getClientObjectById,
   listClientObjects,
   listClientObjectsByCompany,
+  searchCompanyObjectsForOrder,
   updateClientObject,
 } from './api';
 
@@ -50,6 +51,35 @@ export function useClientObject(objectId, options = {}) {
     queryFn: () => getClientObjectById(String(objectId || '')),
     enabled: !!objectId,
     staleTime: 60 * 1000,
+    ...options,
+  });
+}
+
+export function useSearchCompanyObjectsForOrder(params = {}, options = {}) {
+  const {
+    query = '',
+    street = '',
+    house = '',
+    city = '',
+    clientId = null,
+  } = params as {
+    query?: string;
+    street?: string;
+    house?: string;
+    city?: string;
+    clientId?: string | null;
+  };
+
+  const hasEnoughInput =
+    String(street || '').trim().length >= 3 ||
+    String(query || '').trim().length >= 8 ||
+    (String(street || '').trim().length >= 2 && String(house || '').trim().length >= 1);
+
+  return useQuery({
+    queryKey: queryKeys.objects.searchForOrder(params),
+    queryFn: () => searchCompanyObjectsForOrder(params),
+    enabled: hasEnoughInput,
+    staleTime: 15 * 1000,
     ...options,
   });
 }

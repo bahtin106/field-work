@@ -91,6 +91,30 @@ function normalizeObjectForMatch(objectLike) {
   return normalized;
 }
 
+export function findExactMatchingClientObject(draftObject, clientObjects) {
+  if (!draftObject || !Array.isArray(clientObjects) || clientObjects.length === 0) return null;
+
+  const normalizedDraft = normalizeObjectForMatch(draftObject);
+
+  return (
+    clientObjects.find((candidateRaw) => {
+      const normalizedCandidate = normalizeObjectForMatch(candidateRaw);
+      if (normalizedDraft.name !== normalizedCandidate.name) return false;
+      return (
+        ['country', 'region', 'district', 'city', 'street', 'postal_code'].every(
+          (field) => normalizedDraft[field] === normalizedCandidate[field],
+        ) &&
+        ['house', 'office', 'entrance', 'apartment', 'floor'].every(
+          (field) => normalizedDraft[field] === normalizedCandidate[field],
+        ) &&
+        ['entrance_info', 'parking_notes', 'geo_lat', 'geo_lng'].every(
+          (field) => normalizedDraft[field] === normalizedCandidate[field],
+        )
+      );
+    }) || null
+  );
+}
+
 function hasStrictFieldConflict(draft, candidate) {
   return EXACT_FIELDS.some((field) => {
     if (!draft[field] || !candidate[field]) return false;

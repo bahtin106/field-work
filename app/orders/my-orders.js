@@ -1,4 +1,4 @@
-import { useNavigation, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';

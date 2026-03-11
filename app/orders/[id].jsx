@@ -29,12 +29,13 @@ import { useOrderMedia } from '../../hooks/useOrderMedia';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
+import { orderMediaStorage } from '../../lib/orderMediaStorage';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
-import { extractStorageObjectPath } from '../../lib/storageObjectPaths';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 
 import * as ImageManipulator from 'expo-image-manipulator';
+import { FileSystemUploadType, uploadAsync as uploadFileAsync, downloadAsync, cacheDirectory } from 'expo-file-system/legacy';
 import { encode as encodeBase64 } from 'base64-arraybuffer';
 
 import AppHeader from '../../components/navigation/AppHeader';
@@ -83,7 +84,6 @@ import FullscreenImageViewer from './components/FullscreenImageViewer';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
-const PHOTO_FILE_EXTENSION = 'jpg';
 const PHOTO_MIME_TYPE = 'image/jpeg';
 const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
@@ -149,6 +149,16 @@ function isYandexProviderFailureMessage(rawMessage) {
   );
 }
 
+function shouldRetryDeleteWithAlternateProvider(rawMessage) {
+  const message = String(rawMessage || '').toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('media mapping not found') ||
+    message.includes('media provider is not beget s3') ||
+    message.includes('media provider is not yandex disk')
+  );
+}
+
 export default function OrderDetails() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -158,7 +168,7 @@ export default function OrderDetails() {
   const authUserId = auth.user?.id || null;
   const authRole = auth.profile?.role || null;
   const authCompanyId = auth.profile?.company_id || null;
-  const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'app_storage';
+  const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'beget_s3';
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
@@ -269,7 +279,7 @@ export default function OrderDetails() {
   const canEditFinances = role === 'admin' || role === 'dispatcher';
   const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
   const cloudFallbackActive =
-    mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'app_storage';
+    mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'beget_s3';
   const cloudHealthLabel = useMemo(
     () =>
       t(
@@ -313,6 +323,9 @@ export default function OrderDetails() {
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
   const [viewerIndex, setViewerIndex] = useState(0);
+  const viewerRawPhotosRef = useRef([]);
+  const viewerCategoryRef = useRef(null);
+  const [viewerCategoryLabel, setViewerCategoryLabel] = useState('');
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
   const [resolvedClientId, setResolvedClientId] = useState(null);
   const [localPendingMap, setLocalPendingMap] = useState({});
@@ -395,7 +408,7 @@ export default function OrderDetails() {
           const healthCode = String(status?.health || (connected ? 'unknown' : 'not_connected'));
           setCloudHealth(healthCode);
           if (!connected || healthCode !== 'ok') {
-            setEffectiveMediaProvider('app_storage');
+            setEffectiveMediaProvider('beget_s3');
             notifyCloudFallback();
           } else {
             setEffectiveMediaProvider('yandex_disk');
@@ -404,7 +417,7 @@ export default function OrderDetails() {
         } catch (_e) {
           if (cancelled) return;
           setCloudHealth('error');
-          setEffectiveMediaProvider('app_storage');
+          setEffectiveMediaProvider('beget_s3');
           notifyCloudFallback();
         }
       })();
@@ -920,7 +933,9 @@ export default function OrderDetails() {
   );
 
   const uploadLocalUri = useCallback(
-    async (category, uri) => {
+    async (category, uri, opts) => {
+      const replaceUrl = opts?.replaceUrl || null;
+      const silent = opts?.silent === true;
       try {
         const cur = orderRef.current;
         const orderId = cur?.id;
@@ -932,73 +947,205 @@ export default function OrderDetails() {
           { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
         );
 
-        const resp = await fetch(manipulated.uri);
-        const ab = await resp.arrayBuffer();
-        const fileData = new Uint8Array(ab);
+        let ab = null;
+        const ensureArrayBuffer = async () => {
+          if (ab) return ab;
+          const fallbackResp = await fetch(manipulated.uri);
+          ab = await fallbackResp.arrayBuffer();
+          return ab;
+        };
+        const uploadToBegetStorage = async () => {
+          try {
+            let data = null;
+            let directUploadCompleted = false;
+            try {
+              const prepared = await orderMediaStorage('prepare_upload', {
+                order_id: orderId,
+                category,
+                mime: PHOTO_MIME_TYPE,
+              });
+              const uploadUrl = String(prepared?.upload_url || '').trim();
+              const uploadMethod = String(prepared?.upload_method || 'PUT').trim() || 'PUT';
+              const uploadHeaders =
+                prepared?.upload_headers && typeof prepared.upload_headers === 'object'
+                  ? Object.fromEntries(
+                      Object.entries(prepared.upload_headers)
+                        .map(([key, value]) => [String(key || '').trim(), String(value || '').trim()])
+                        .filter(([key, value]) => key && value),
+                    )
+                  : {};
+              if (!uploadUrl) throw new Error('prepare upload failed');
 
-        const uploadToAppStorage = async () => {
-          const fileName = `${Date.now()}.${PHOTO_FILE_EXTENSION}`;
-          const path = `orders/${orderId}/${category}/${fileName}`;
+              const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
+                httpMethod: uploadMethod,
+                headers: uploadHeaders,
+                uploadType: FileSystemUploadType.BINARY_CONTENT,
+              });
+              if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
+                throw new Error(String(uploadRes?.body || 'direct upload failed'));
+              }
+              directUploadCompleted = true;
 
-          const { error: uploadError } = await supabase.storage
-            .from('orders-photos')
-            .upload(path, fileData, { cacheControl: '3600', upsert: false, contentType: PHOTO_MIME_TYPE });
-
-          if (uploadError) {
-            console.warn('[order-photo-upload] storage upload error', uploadError);
-            return '';
+              data = await orderMediaStorage('commit_upload', {
+                order_id: orderId,
+                category,
+                object_key: prepared?.object_key || null,
+                public_url: prepared?.public_url || null,
+              });
+            } catch (directError) {
+              if (directUploadCompleted) throw directError;
+              console.warn('[order-photo-upload] direct beget upload fallback', directError);
+              const fallbackBuffer = await ensureArrayBuffer();
+              data = await orderMediaStorage('upload', {
+                order_id: orderId,
+                category,
+                file_base64: encodeBase64(fallbackBuffer),
+                mime: PHOTO_MIME_TYPE,
+              });
+            }
+            return {
+              url: String(data?.url || ''),
+              mediaUrls: Array.isArray(data?.media_urls)
+                ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
+                : null,
+              orderUpdatedAt: data?.order_updated_at ? String(data.order_updated_at) : null,
+            };
+          } catch (error) {
+            console.warn('[order-photo-upload] beget upload error', error);
+            return { url: '', mediaUrls: null, orderUpdatedAt: null };
           }
-
-          const { data: publicData } = supabase.storage.from('orders-photos').getPublicUrl(path);
-          return String(publicData?.publicUrl || '');
         };
 
         let publicUrl = '';
+        let providerMediaUrls = null;
+        let providerOrderUpdatedAt = null;
         if (effectiveMediaProvider === 'yandex_disk') {
           try {
-            const data = await yandexDiskMedia('upload', {
-              order_id: orderId,
-              category,
-              file_base64: encodeBase64(ab),
-              mime: PHOTO_MIME_TYPE,
-            });
+            let data = null;
+            let directUploadCompleted = false;
+            try {
+              const prepared = await yandexDiskMedia('prepare_upload', {
+                order_id: orderId,
+                category,
+                mime: PHOTO_MIME_TYPE,
+              });
+              const uploadUrl = String(prepared?.upload_url || '').trim();
+              const uploadMethod = String(prepared?.upload_method || 'PUT').trim() || 'PUT';
+              const uploadHeaders =
+                prepared?.upload_headers && typeof prepared.upload_headers === 'object'
+                  ? Object.fromEntries(
+                      Object.entries(prepared.upload_headers)
+                        .map(([key, value]) => [String(key || '').trim(), String(value || '').trim()])
+                        .filter(([key, value]) => key && value),
+                    )
+                  : {};
+              if (!uploadUrl) throw new Error('prepare upload failed');
+
+              const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
+                httpMethod: uploadMethod,
+                headers: uploadHeaders,
+                uploadType: FileSystemUploadType.BINARY_CONTENT,
+              });
+              if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
+                throw new Error(String(uploadRes?.body || 'direct upload failed'));
+              }
+              directUploadCompleted = true;
+
+              data = await yandexDiskMedia('commit_upload', {
+                order_id: orderId,
+                category,
+                external_path: prepared?.external_path || null,
+              });
+            } catch (directError) {
+              if (directUploadCompleted) throw directError;
+              console.warn('[order-photo-upload] direct yandex upload fallback', directError);
+              const fallbackBuffer = await ensureArrayBuffer();
+              data = await yandexDiskMedia('upload', {
+                order_id: orderId,
+                category,
+                file_base64: encodeBase64(fallbackBuffer),
+                mime: PHOTO_MIME_TYPE,
+              });
+            }
             publicUrl = String(data?.url || '');
+            providerMediaUrls = Array.isArray(data?.media_urls)
+              ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
+              : null;
+            providerOrderUpdatedAt = data?.order_updated_at ? String(data.order_updated_at) : null;
             orderMediaRef.current.removeFromCache(publicUrl);
           } catch (e) {
             if (!isYandexProviderFailureMessage(e?.message || e)) throw e;
             setCloudHealth('error');
-            setEffectiveMediaProvider('app_storage');
+            setEffectiveMediaProvider('beget_s3');
             notifyCloudFallback();
-            publicUrl = await uploadToAppStorage();
+            const result = await uploadToBegetStorage();
+            publicUrl = result.url;
+            providerMediaUrls = result.mediaUrls;
+            providerOrderUpdatedAt = result.orderUpdatedAt;
           }
         } else {
-          publicUrl = await uploadToAppStorage();
+          const result = await uploadToBegetStorage();
+          publicUrl = result.url;
+          providerMediaUrls = result.mediaUrls;
+          providerOrderUpdatedAt = result.orderUpdatedAt;
         }
 
         if (!publicUrl) {
-          showToast(t('order_toast_upload_error'));
+          if (!silent) showToast(t('order_toast_upload_error'));
           return false;
         }
 
         // Read the LATEST photos from ref (not stale closure) to build the updated array
         const latest = orderRef.current;
-        const updated = [...(latest[category] || []), publicUrl];
+        const buildUpdated = (arr) => {
+          const list = [...(arr || [])];
+          if (replaceUrl) {
+            const ri = list.indexOf(replaceUrl);
+            if (ri >= 0) {
+              list[ri] = publicUrl;
+              return list;
+            }
+          }
+          if (providerMediaUrls) return [...providerMediaUrls];
+          // Prepend new photos so they appear at the start
+          if (!list.includes(publicUrl)) list.unshift(publicUrl);
+          return list;
+        };
+        const updated = buildUpdated(latest[category]);
         try {
-          await updateRequestWithVersion(orderId, { [category]: updated }, latest?.updated_at || null);
-          setOrder((o) => {
-            // Functional updater: append even if state changed between await and here
-            const fresh = [...(o[category] || [])];
-            if (!fresh.includes(publicUrl)) fresh.push(publicUrl);
-            return { ...o, [category]: fresh };
-          });
+          if (replaceUrl || !providerMediaUrls) {
+            await updateRequestWithVersion(
+              orderId,
+              { [category]: updated },
+              providerOrderUpdatedAt || latest?.updated_at || null,
+            );
+          }
+          setOrder((o) => ({ ...o, [category]: buildUpdated(o[category]) }));
           queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
             if (!old) return old;
-            const arr = [...(old[category] || [])];
-            if (!arr.includes(publicUrl)) arr.push(publicUrl);
-            return { ...old, [category]: arr };
+            return { ...old, [category]: buildUpdated(old[category]) };
           });
           return true;
         } catch (e) {
+          if (replaceUrl && publicUrl) {
+            try {
+              const payload = { order_id: orderId, category, url: publicUrl };
+              const tryYandex = () => yandexDiskMedia('delete', payload);
+              const tryBeget = () => orderMediaStorage('delete', payload);
+              const preferYandex = isYandexMediaUrl(publicUrl);
+
+              try {
+                await (preferYandex ? tryYandex() : tryBeget());
+              } catch (primaryError) {
+                if (!shouldRetryDeleteWithAlternateProvider(primaryError?.message || primaryError)) {
+                  throw primaryError;
+                }
+                await (preferYandex ? tryBeget() : tryYandex());
+              }
+            } catch (cleanupError) {
+              console.warn('[uploadLocalUri] rollback cleanup failed:', cleanupError);
+            }
+          }
           return false;
         }
       } catch (e) {
@@ -1010,8 +1157,10 @@ export default function OrderDetails() {
   );
 
   const compressAndUploadMultiple = useCallback(
-    async (category, uris = []) => {
+    async (category, uris = [], options = {}) => {
       if (!uris.length) return;
+      const onItemSettled =
+        options && typeof options.onItemSettled === 'function' ? options.onItemSettled : null;
       // Sequential uploads to avoid DB race conditions (each upload reads latest state via orderRef)
       let ok = 0;
       for (const uri of uris) {
@@ -1020,6 +1169,10 @@ export default function OrderDetails() {
           if (success) ok++;
         } catch (e) {
           console.warn('[compressAndUploadMultiple] single upload failed', e);
+        } finally {
+          try {
+            onItemSettled?.(uri);
+          } catch {}
         }
       }
       if (ok > 0) {
@@ -1032,6 +1185,22 @@ export default function OrderDetails() {
     },
     [uploadLocalUri, showToast, t],
   );
+
+  const deleteOrderMediaByUrl = useCallback(async (orderId, category, url) => {
+    const payload = { order_id: orderId, category, url };
+    const tryYandex = () => yandexDiskMedia('delete', payload);
+    const tryBeget = () => orderMediaStorage('delete', payload);
+    const preferYandex = isYandexMediaUrl(url);
+
+    try {
+      return preferYandex ? await tryYandex() : await tryBeget();
+    } catch (primaryError) {
+      if (!shouldRetryDeleteWithAlternateProvider(primaryError?.message || primaryError)) {
+        throw primaryError;
+      }
+      return preferYandex ? await tryBeget() : await tryYandex();
+    }
+  }, []);
 
   const removePhoto = useCallback(
     (category, index) => {
@@ -1076,16 +1245,11 @@ export default function OrderDetails() {
         try {
           const updated = filterOut(cur[category]);
 
-          if (isYandexMediaUrl(removed) && mediaProvider === 'yandex_disk') {
-            await yandexDiskMedia('delete', { order_id: orderId, category, url: removed });
-            await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
-          } else {
-            const relativePath = extractStorageObjectPath(removed, 'orders-photos');
-            if (relativePath) {
-              supabase.storage.from('orders-photos').remove([relativePath]).catch((e) =>
-                console.warn('[removePhoto] storage removal failed:', e),
-              );
-            }
+          const data = await deleteOrderMediaByUrl(orderId, category, removed);
+          const mediaUrls = Array.isArray(data?.media_urls)
+            ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
+            : null;
+          if (!mediaUrls) {
             await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
           }
         } catch (e) {
@@ -1094,7 +1258,100 @@ export default function OrderDetails() {
         }
       })();
     },
-    [mediaProvider, queryClient, showToast, t],
+    [queryClient, showToast, t, deleteOrderMediaByUrl],
+  );
+
+  const removePhotosBatch = useCallback(
+    (category, urls = []) => {
+      const cur = orderRef.current;
+      const orderId = cur?.id;
+      if (!orderId) return;
+
+      const selected = (urls || []).map((value) => String(value || '')).filter(Boolean);
+      if (!selected.length) return;
+
+      const originalPhotos = Array.isArray(cur?.[category]) ? [...cur[category]] : [];
+      const selectedSet = new Set(selected);
+      const nextPhotos = originalPhotos.filter((url) => !selectedSet.has(String(url)));
+      const buildPersistedPhotos = (failedUrls = []) => {
+        const failedSet = new Set((failedUrls || []).map((value) => String(value || '')));
+        return originalPhotos.filter(
+          (url) => !selectedSet.has(String(url)) || failedSet.has(String(url)),
+        );
+      };
+
+      setOrder((prev) => ({ ...prev, [category]: nextPhotos }));
+      for (const url of selected) {
+        orderMediaRef.current.removeFromCache(url);
+      }
+      queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
+        if (!old) return old;
+        return { ...old, [category]: nextPhotos };
+      });
+
+      const restoreFailed = (failedUrls) => {
+        const failedSet = new Set((failedUrls || []).map((value) => String(value || '')));
+        if (!failedSet.size) return;
+
+        setOrder((prev) => {
+          const currentPhotos = Array.isArray(prev?.[category]) ? prev[category] : [];
+          const restored = [];
+          for (const photo of originalPhotos) {
+            if (!selectedSet.has(String(photo)) || failedSet.has(String(photo))) {
+              restored.push(photo);
+            }
+          }
+          for (const photo of currentPhotos) {
+            if (!restored.includes(photo)) restored.push(photo);
+          }
+          return { ...prev, [category]: restored };
+        });
+
+        queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
+          if (!old) return old;
+          const currentPhotos = Array.isArray(old?.[category]) ? old[category] : [];
+          const restored = [];
+          for (const photo of originalPhotos) {
+            if (!selectedSet.has(String(photo)) || failedSet.has(String(photo))) {
+              restored.push(photo);
+            }
+          }
+          for (const photo of currentPhotos) {
+            if (!restored.includes(photo)) restored.push(photo);
+          }
+          return { ...old, [category]: restored };
+        });
+      };
+
+      (async () => {
+        const failedUrls = [];
+        for (const removed of selected) {
+          try {
+            const updated = buildPersistedPhotos(failedUrls);
+            const data = await deleteOrderMediaByUrl(orderId, category, removed);
+            const mediaUrls = Array.isArray(data?.media_urls)
+              ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
+              : null;
+            if (!mediaUrls) {
+              await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
+            }
+          } catch (error) {
+            console.warn('[removePhotosBatch] background deletion failed:', error);
+            failedUrls.push(removed);
+          }
+        }
+
+        if (failedUrls.length) {
+          restoreFailed(failedUrls);
+          showToast(
+            failedUrls.length === selected.length
+              ? t('order_toast_delete_error')
+              : t('order_toast_delete_partial_error', 'Часть фото удалить не удалось'),
+          );
+        }
+      })();
+    },
+    [queryClient, showToast, t, deleteOrderMediaByUrl],
   );
 
   const canFinishOrder = useCallback(() => {
@@ -1404,40 +1661,6 @@ export default function OrderDetails() {
 
   const deleteOrderCompletely = useCallback(async () => {
     try {
-      const categories = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-      const bucket = 'orders-photos';
-      for (const cat of categories) {
-        const urls = Array.isArray(order?.[cat]) ? order[cat] : [];
-        for (const url of urls) {
-          if (isYandexMediaUrl(url) && mediaProvider === 'yandex_disk') {
-            try {
-              await yandexDiskMedia('delete', {
-                order_id: order.id,
-                category: cat,
-                url,
-              });
-            } catch {
-              // ignore cleanup errors on remote provider during hard delete
-            }
-            continue;
-          }
-
-          const relativePath = extractStorageObjectPath(url, bucket);
-          if (relativePath) {
-            await supabase.storage.from(bucket).remove([relativePath]).catch(() => {});
-          }
-        }
-      }
-
-      for (const cat of categories) {
-        const listRes = await supabase.storage.from(bucket).list(`orders/${order.id}/${cat}`);
-        const files = listRes?.data || [];
-        if (files.length) {
-          const paths = files.map((f) => `orders/${order.id}/${cat}/${f.name}`);
-          await supabase.storage.from(bucket).remove(paths).catch(() => {});
-        }
-      }
-
       const { data, error: delErr } = await supabase
         .from('orders')
         .delete()
@@ -1519,12 +1742,16 @@ export default function OrderDetails() {
 
   // ─── Photo viewer (uses FullscreenImageViewer) ────────────────────
   const openViewer = useCallback(
-    (photos, index) => {
-      const prepared = Array.isArray(photos)
-        ? photos.map((u) => orderMedia.getDisplayUrl(u)).filter(Boolean)
-        : [];
-      setViewerPhotos(prepared);
-      setViewerIndex(index);
+    (photos, index, category, label) => {
+      if (!Array.isArray(photos) || !photos.length) return;
+      const pairs = photos
+        .map((raw) => ({ raw, display: orderMedia.getDisplayUrl(raw) }))
+        .filter((p) => p.display);
+      viewerRawPhotosRef.current = pairs.map((p) => p.raw);
+      viewerCategoryRef.current = category || null;
+      setViewerCategoryLabel(label || '');
+      setViewerPhotos(pairs.map((p) => p.display));
+      setViewerIndex(Math.min(index, pairs.length - 1));
       setViewerVisible(true);
     },
     [orderMedia],
@@ -1533,6 +1760,74 @@ export default function OrderDetails() {
   const closeViewer = useCallback(() => {
     setViewerVisible(false);
   }, []);
+
+  const handleViewerDelete = useCallback(
+    (viewerIdx) => {
+      const category = viewerCategoryRef.current;
+      const rawPhotos = viewerRawPhotosRef.current;
+      if (!category || !rawPhotos?.[viewerIdx]) return;
+
+      const rawUrl = rawPhotos[viewerIdx];
+      viewerRawPhotosRef.current = rawPhotos.filter((_, i) => i !== viewerIdx);
+
+      const orderPhotos = orderRef.current?.[category] || [];
+      const realIndex = orderPhotos.indexOf(rawUrl);
+      if (realIndex >= 0) removePhoto(category, realIndex);
+    },
+    [removePhoto],
+  );
+
+  const handleViewerRotateSave = useCallback(
+    (rotationsMap) => {
+      const category = viewerCategoryRef.current;
+      const rawPhotos = [...(viewerRawPhotosRef.current || [])];
+      if (!category || !rawPhotos.length) return;
+
+      // Fire-and-forget — runs entirely in background
+      (async () => {
+        for (const [indexStr, degrees] of Object.entries(rotationsMap)) {
+          if (!degrees) continue;
+          const idx = Number(indexStr);
+          const rawUrl = rawPhotos[idx];
+          if (!rawUrl) continue;
+
+          try {
+            const displayUrl = orderMediaRef.current.getDisplayUrl(rawUrl) || rawUrl;
+            const localPath = `${cacheDirectory}rotate_src_${Date.now()}.jpg`;
+            const { uri: localUri } = await downloadAsync(displayUrl, localPath);
+
+            const manipulated = await ImageManipulator.manipulateAsync(
+              localUri,
+              [{ rotate: degrees }],
+              { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+            );
+
+            // Replace in place — the old URL is swapped for the new one at the same index
+            const success = await uploadLocalUri(category, manipulated.uri, { replaceUrl: rawUrl });
+            if (success) {
+              // Delete old file from storage in background
+              const orderId = orderRef.current?.id;
+              if (orderId) {
+                try {
+                  if (isYandexMediaUrl(rawUrl)) {
+                    await yandexDiskMedia('delete', { order_id: orderId, category, url: rawUrl });
+                  } else {
+                    await orderMediaStorage('delete', { order_id: orderId, category, url: rawUrl });
+                  }
+                } catch (delErr) {
+                  console.warn('[Viewer] old rotated file cleanup:', delErr);
+                }
+              }
+              orderMediaRef.current.removeFromCache(rawUrl);
+            }
+          } catch (e) {
+            console.warn('[Viewer] rotate save error:', e);
+          }
+        }
+      })();
+    },
+    [uploadLocalUri],
+  );
 
   const getStatusMeta = useCallback(
     (status) => {
@@ -1647,11 +1942,21 @@ export default function OrderDetails() {
       const ids = uris.map((u) => ({ id: `local:${Date.now()}_${Math.random()}`, uri: u, pending: true }));
       setLocalPendingMap((p) => ({ ...(p || {}), [category]: [...((p && p[category]) || []), ...ids] }));
       try {
-        await compressAndUploadMultiple(category, uris);
+        await compressAndUploadMultiple(category, uris, {
+          onItemSettled: (uri) => {
+            setLocalPendingMap((p) => ({
+              ...(p || {}),
+              [category]: ((p && p[category]) || []).filter((x) => x.uri !== uri),
+            }));
+          },
+        });
       } catch (e) {
         console.warn('handleUploadMultiple error', e);
       } finally {
-        setLocalPendingMap((p) => ({ ...(p || {}), [category]: ((p && p[category]) || []).filter((x) => !ids.find((y) => y.id === x.id)) }));
+        setLocalPendingMap((p) => ({
+          ...(p || {}),
+          [category]: ((p && p[category]) || []).filter((x) => !ids.find((y) => y.id === x.id)),
+        }));
       }
     },
     [compressAndUploadMultiple],
@@ -1667,15 +1972,6 @@ export default function OrderDetails() {
   useEffect(() => {
     fetchData();
   }, [id, fetchData]);
-
-  useEffect(() => {
-    // Clear media caches only when switching away from yandex_disk
-    if (mediaProvider !== 'yandex_disk') {
-      orderMedia.clearCaches();
-    }
-    // Note: resolveOrder is handled by fetchData and the proactive effect in useOrderMedia
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mediaProvider]);
 
   useEffect(() => {
     let alive = true;
@@ -1848,6 +2144,7 @@ export default function OrderDetails() {
   }, [fullTitle]);
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
   const canViewClients = has('canViewClients');
+  const canViewObjects = has('canViewObjects');
   const linkedClientId = order?.client_id ? String(order.client_id) : resolvedClientId;
   const linkedObjectId = order?.object_id ? String(order.object_id) : null;
   const { data: linkedClient } = useClient(linkedClientId, {
@@ -1856,8 +2153,10 @@ export default function OrderDetails() {
   const customerDisplayName = useMemo(() => {
     const liveClientName = formatClientNameForOrder(linkedClient);
     if (liveClientName) return liveClientName;
+    const savedCustomerName = String(order?.fio || order?.customer_name || customerName || '').trim();
+    if (savedCustomerName) return savedCustomerName;
     return '';
-  }, [linkedClient]);
+  }, [customerName, linkedClient, order?.customer_name, order?.fio]);
   const orderAddress = useMemo(() => extractOrderAddress(order), [order]);
   const shortOrderAddress = useMemo(() => buildOrderAddressShort(orderAddress), [orderAddress]);
   const orderAddressForNavigator = useMemo(() => buildAddressForNavigator(orderAddress), [orderAddress]);
@@ -1959,7 +2258,7 @@ export default function OrderDetails() {
     });
   }, [canViewClients, linkedClientId, order?.id, router]);
   const onOpenObject = useCallback(() => {
-    if (!linkedObjectId || !canViewClients) return;
+    if (!linkedObjectId || !canViewObjects) return;
     router.push({
       pathname: `/objects/${linkedObjectId}`,
       params: {
@@ -1967,7 +2266,7 @@ export default function OrderDetails() {
         returnParams: JSON.stringify({}),
       },
     });
-  }, [canViewClients, linkedObjectId, order?.id, router]);
+  }, [canViewObjects, linkedObjectId, order?.id, router]);
 
   if (permsLoading || loading || !order) {
     return (
@@ -2193,13 +2492,13 @@ export default function OrderDetails() {
               {orderFieldsByKey.get('client_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
               {orderFieldsByKey.get('object_id')?.isEnabled !== false ? (
-              <Pressable style={base.row} onPress={onOpenObject} disabled={!linkedObjectId || !canViewClients}>
+              <Pressable style={base.row} onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
                 <Text style={base.label}>{t('routes_objects_object')}</Text>
                 <View style={base.rightWrap}>
                   <Text
                     style={[
                       base.value,
-                      linkedObjectId && canViewClients ? styles.link : null,
+                      linkedObjectId && canViewObjects ? styles.link : null,
                       isObjectDeleted ? styles.deletedObjectText : null,
                     ]}
                   >
@@ -2370,7 +2669,16 @@ export default function OrderDetails() {
               onUploadUri={handleUploadUri}
               onUploadMultiple={handleUploadMultiple}
               onRemove={removePhoto}
-              onOpenViewer={(photos, idx) => openViewer(photos, idx)}
+              onRemoveMany={removePhotosBatch}
+              onOpenViewer={(photos, idx) => {
+                const catLabels = {
+                  contract_file: t('order_details_contract_photo'),
+                  photo_before: t('order_details_photo_before'),
+                  photo_after: t('order_details_photo_after'),
+                  act_file: t('order_details_act'),
+                };
+                openViewer(photos, idx, orderPhotosModal.category, catLabels[orderPhotosModal.category] || '');
+              }}
             />
 
             {canAcceptOrder && (
@@ -2452,6 +2760,9 @@ export default function OrderDetails() {
         images={viewerPhotos}
         initialIndex={viewerIndex}
         onClose={closeViewer}
+        onDelete={handleViewerDelete}
+        onRotateSave={handleViewerRotateSave}
+        categoryLabel={viewerCategoryLabel}
       />
 
       <Modal

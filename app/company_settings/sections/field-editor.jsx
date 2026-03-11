@@ -1,12 +1,20 @@
-﻿import { useNavigation } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
+import { useNavigation } from 'expo-router';
 import React from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, UIManager, View, findNodeHandle } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  UIManager,
+  View,
+  findNodeHandle,
+} from 'react-native';
 
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
-import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
-import SectionHeader from '../../../components/ui/SectionHeader';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
@@ -14,6 +22,7 @@ import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
+  getOrderedEntityFields,
 } from '../../../src/features/fieldSettings/catalog';
 import {
   useEntityFieldSettings,
@@ -33,7 +42,22 @@ const ENTITY_ROWS = [
     titleKey: 'field_settings_tab_object',
     fallbackTitle: 'Объекты',
   },
+  {
+    id: ENTITY_FIELD_TYPES.EMPLOYEE,
+    titleKey: 'field_settings_tab_employee',
+    fallbackTitle: 'Сотрудники',
+  },
+  {
+    id: ENTITY_FIELD_TYPES.CLIENT,
+    titleKey: 'field_settings_tab_client',
+    fallbackTitle: 'Клиенты',
+  },
 ];
+
+const DEFAULT_EXPANDED_ENTITY = ENTITY_FIELD_TYPES.ORDER;
+const AUTO_RETRY_BASE_DELAY_MS = 4000;
+const AUTO_RETRY_MAX_DELAY_MS = 30000;
+const AUTO_RETRY_MAX_ATTEMPTS = 3;
 
 function cloneSettings(settings) {
   return {
@@ -42,6 +66,60 @@ function cloneSettings(settings) {
     source: settings?.source || 'fallback',
     fields: (settings?.fields || []).map((field) => ({ ...field })),
   };
+}
+
+function buildEntityState(initialValue) {
+  return ENTITY_ROWS.reduce((acc, row) => {
+    acc[row.id] = initialValue;
+    return acc;
+  }, {});
+}
+
+function buildEntitySaveState() {
+  return ENTITY_ROWS.reduce((acc, row) => {
+    acc[row.id] = { phase: 'idle', lastSavedAt: null, errorMessage: null };
+    return acc;
+  }, {});
+}
+
+function getEntityMeta(entityType, t) {
+  const row = ENTITY_ROWS.find((item) => item.id === entityType);
+  return {
+    title: row ? t(row.titleKey, row.fallbackTitle) : String(entityType || ''),
+  };
+}
+
+function sanitizeEditorLabel(rawLabel) {
+  return String(rawLabel || '')
+    .replace(/\s*\*+\s*$/u, '')
+    .trim();
+}
+
+function serializeFieldState(fields) {
+  return JSON.stringify(
+    (Array.isArray(fields) ? fields : []).map((field) => ({
+      fieldKey: String(field.fieldKey || field.field_key || ''),
+      isEnabled: field.isEnabled !== false,
+      isRequired: field.isRequired === true,
+    })),
+  );
+}
+
+function isTransientSaveError(error) {
+  const message = String(error?.message || '').toUpperCase();
+  return (
+    message.includes('PGRST003') ||
+    message.includes('CONNECTION POOL') ||
+    message.includes('TIMED OUT ACQUIRING CONNECTION') ||
+    message.includes('NETWORK REQUEST FAILED') ||
+    message.includes('FAILED TO FETCH') ||
+    message.includes('FETCH FAILED')
+  );
+}
+
+function getRetryDelayMs(attempt) {
+  const safeAttempt = Number.isFinite(attempt) ? Math.max(0, attempt) : 0;
+  return Math.min(AUTO_RETRY_MAX_DELAY_MS, AUTO_RETRY_BASE_DELAY_MS * 2 ** safeAttempt);
 }
 
 function toggleFieldEnabled(fields, fieldKey, nextValue) {
@@ -94,53 +172,278 @@ export default function FieldEditorScreen() {
 
   const orderQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, { enabled: isAdmin });
   const objectQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, { enabled: isAdmin });
+  const employeeQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, { enabled: isAdmin });
+  const clientQuery = useEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT, { enabled: isAdmin });
   const saveMutation = useSaveEntityFieldSettingsMutation();
 
-  const [expandedMap, setExpandedMap] = React.useState({
-    [ENTITY_FIELD_TYPES.ORDER]: true,
-    [ENTITY_FIELD_TYPES.OBJECT]: false,
-  });
-  const [drafts, setDrafts] = React.useState({
-    [ENTITY_FIELD_TYPES.ORDER]: null,
-    [ENTITY_FIELD_TYPES.OBJECT]: null,
-  });
-  const [dirtyMap, setDirtyMap] = React.useState({
-    [ENTITY_FIELD_TYPES.ORDER]: false,
-    [ENTITY_FIELD_TYPES.OBJECT]: false,
-  });
+  const [expandedMap, setExpandedMap] = React.useState(() => ({
+    ...buildEntityState(false),
+    [DEFAULT_EXPANDED_ENTITY]: true,
+  }));
+  const [drafts, setDrafts] = React.useState(() => buildEntityState(null));
+  const [dirtyMap, setDirtyMap] = React.useState(() => buildEntityState(false));
+  const [saveStateMap, setSaveStateMap] = React.useState(() => buildEntitySaveState());
   const scrollRef = React.useRef(null);
   const rowRefs = React.useRef({});
-  const sectionHeaderHeightRef = React.useRef(0);
   const stickyHeaderHeightRef = React.useRef(0);
+  const draftsRef = React.useRef(drafts);
+  const dirtyMapRef = React.useRef(dirtyMap);
+  const queryMapRef = React.useRef(null);
+  const saveTimersRef = React.useRef({});
+  const retryTimersRef = React.useRef({});
+  const inFlightRef = React.useRef(buildEntityState(false));
+  const queuedSaveRef = React.useRef(buildEntityState(false));
+  const lastErrorToastRef = React.useRef(buildEntityState(false));
+  const retryAttemptRef = React.useRef(buildEntityState(0));
+  const globalSaveLockRef = React.useRef(false);
 
   React.useLayoutEffect(() => {
     nav?.setParams?.({ headerTitle: t('settings_management_form_builder', 'Редактор полей') });
   }, [nav, t]);
 
   React.useEffect(() => {
-    const orderData = orderQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER);
+    const nextData = orderQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER);
     setDrafts((prev) =>
       prev[ENTITY_FIELD_TYPES.ORDER] && dirtyMap[ENTITY_FIELD_TYPES.ORDER]
         ? prev
-        : { ...prev, [ENTITY_FIELD_TYPES.ORDER]: cloneSettings(orderData) },
+        : { ...prev, [ENTITY_FIELD_TYPES.ORDER]: cloneSettings(nextData) },
     );
   }, [dirtyMap, orderQuery.data]);
 
   React.useEffect(() => {
-    const objectData = objectQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT);
+    const nextData = objectQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT);
     setDrafts((prev) =>
       prev[ENTITY_FIELD_TYPES.OBJECT] && dirtyMap[ENTITY_FIELD_TYPES.OBJECT]
         ? prev
-        : { ...prev, [ENTITY_FIELD_TYPES.OBJECT]: cloneSettings(objectData) },
+        : { ...prev, [ENTITY_FIELD_TYPES.OBJECT]: cloneSettings(nextData) },
     );
   }, [dirtyMap, objectQuery.data]);
+
+  React.useEffect(() => {
+    const nextData = employeeQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE);
+    setDrafts((prev) =>
+      prev[ENTITY_FIELD_TYPES.EMPLOYEE] && dirtyMap[ENTITY_FIELD_TYPES.EMPLOYEE]
+        ? prev
+        : { ...prev, [ENTITY_FIELD_TYPES.EMPLOYEE]: cloneSettings(nextData) },
+    );
+  }, [dirtyMap, employeeQuery.data]);
+
+  React.useEffect(() => {
+    const nextData = clientQuery.data || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT);
+    setDrafts((prev) =>
+      prev[ENTITY_FIELD_TYPES.CLIENT] && dirtyMap[ENTITY_FIELD_TYPES.CLIENT]
+        ? prev
+        : { ...prev, [ENTITY_FIELD_TYPES.CLIENT]: cloneSettings(nextData) },
+    );
+  }, [clientQuery.data, dirtyMap]);
 
   const queryMap = React.useMemo(
     () => ({
       [ENTITY_FIELD_TYPES.ORDER]: orderQuery,
       [ENTITY_FIELD_TYPES.OBJECT]: objectQuery,
+      [ENTITY_FIELD_TYPES.EMPLOYEE]: employeeQuery,
+      [ENTITY_FIELD_TYPES.CLIENT]: clientQuery,
     }),
-    [objectQuery, orderQuery],
+    [clientQuery, employeeQuery, objectQuery, orderQuery],
+  );
+
+  React.useEffect(() => {
+    draftsRef.current = drafts;
+  }, [drafts]);
+
+  React.useEffect(() => {
+    dirtyMapRef.current = dirtyMap;
+  }, [dirtyMap]);
+
+  React.useEffect(() => {
+    queryMapRef.current = queryMap;
+  }, [queryMap]);
+
+  React.useEffect(() => () => {
+    Object.values(saveTimersRef.current || {}).forEach((timerId) => clearTimeout(timerId));
+    Object.values(retryTimersRef.current || {}).forEach((timerId) => clearTimeout(timerId));
+  }, []);
+
+  const persistEntityDraft = React.useCallback(
+    async (entityType, options = {}) => {
+      const current = draftsRef.current?.[entityType];
+      const entityQuery = queryMapRef.current?.[entityType];
+      if (!current) return;
+
+      if (inFlightRef.current[entityType]) {
+        queuedSaveRef.current[entityType] = true;
+        return;
+      }
+
+      if (globalSaveLockRef.current) {
+        queuedSaveRef.current[entityType] = true;
+        setSaveStateMap((prev) => ({
+          ...prev,
+          [entityType]: {
+            ...prev[entityType],
+            phase: 'queued',
+            errorMessage: null,
+          },
+        }));
+        return;
+      }
+
+      clearTimeout(saveTimersRef.current[entityType]);
+      saveTimersRef.current[entityType] = null;
+      clearTimeout(retryTimersRef.current[entityType]);
+      retryTimersRef.current[entityType] = null;
+      inFlightRef.current[entityType] = true;
+      globalSaveLockRef.current = true;
+      queuedSaveRef.current[entityType] = false;
+      const serializedBeforeRequest = serializeFieldState(current.fields);
+      const versionBeforeRequest = current.versionToken || null;
+
+      setSaveStateMap((prev) => ({
+        ...prev,
+        [entityType]: {
+          ...prev[entityType],
+          phase: 'saving',
+          errorMessage: null,
+        },
+      }));
+
+      try {
+        const saved = await saveMutation.mutateAsync({
+          entityType,
+          fields: current.fields,
+          expectedVersion: current.versionToken,
+        });
+
+        const latestDraft = draftsRef.current?.[entityType];
+        const unchanged =
+          !!latestDraft &&
+          serializeFieldState(latestDraft.fields) === serializedBeforeRequest &&
+          String(latestDraft.versionToken || '') === String(versionBeforeRequest || '');
+
+        setDrafts((prev) => {
+          const liveDraft = prev[entityType];
+          if (!liveDraft) return prev;
+          return {
+            ...prev,
+            [entityType]: unchanged
+              ? cloneSettings(saved)
+              : {
+                  ...liveDraft,
+                  versionToken: saved.versionToken,
+                  source: saved.source,
+                },
+          };
+        });
+        setDirtyMap((prev) => ({
+          ...prev,
+          [entityType]: unchanged ? false : prev[entityType],
+        }));
+        retryAttemptRef.current[entityType] = 0;
+        lastErrorToastRef.current[entityType] = false;
+        setSaveStateMap((prev) => ({
+          ...prev,
+          [entityType]: {
+            phase: unchanged ? 'saved' : 'queued',
+            lastSavedAt: Date.now(),
+            errorMessage: null,
+          },
+        }));
+        toast.success(
+          t(
+            'field_settings_saved',
+            `Настройки полей «${getEntityMeta(entityType, t).title}» сохранены`,
+          ),
+        );
+      } catch (error) {
+        const raw = String(error?.message || '').toUpperCase();
+        const isConflict = raw.includes('FIELD_SETTINGS_CONFLICT');
+        const isTransient = isTransientSaveError(error);
+
+        if (isConflict) {
+          await entityQuery?.refetch?.();
+          const freshSource =
+            queryMapRef.current?.[entityType]?.data || buildFallbackEntityFieldSettings(entityType);
+          setDrafts((prev) => ({ ...prev, [entityType]: cloneSettings(freshSource) }));
+          setDirtyMap((prev) => ({ ...prev, [entityType]: false }));
+        }
+
+        setSaveStateMap((prev) => ({
+          ...prev,
+          [entityType]: {
+            ...prev[entityType],
+            phase: isTransient ? 'queued' : 'error',
+            errorMessage: String(
+              error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
+            ),
+          },
+        }));
+
+        if (
+          !isTransient &&
+          (!lastErrorToastRef.current[entityType] || isConflict || options.showErrorToast === true)
+        ) {
+          toast.error(
+            String(
+              isConflict
+                ? t(
+                    'field_settings_conflict',
+                    'Настройки уже изменил другой администратор. Экран обновлен до последней версии.',
+                  )
+                : error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
+            ),
+          );
+          lastErrorToastRef.current[entityType] = true;
+        }
+
+        if (
+          !isConflict &&
+          dirtyMapRef.current?.[entityType] &&
+          retryAttemptRef.current[entityType] < AUTO_RETRY_MAX_ATTEMPTS
+        ) {
+          const nextAttempt = retryAttemptRef.current[entityType] + 1;
+          retryAttemptRef.current[entityType] = nextAttempt;
+          retryTimersRef.current[entityType] = setTimeout(() => {
+            void persistEntityDraft(entityType, { showErrorToast: false });
+          }, getRetryDelayMs(nextAttempt - 1));
+        } else if (isTransient) {
+          setSaveStateMap((prev) => ({
+            ...prev,
+            [entityType]: {
+              ...prev[entityType],
+              phase: 'error',
+              errorMessage: String(
+                error?.message || t('field_settings_save_failed', 'РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕР»РµР№'),
+              ),
+            },
+          }));
+
+          if (!lastErrorToastRef.current[entityType]) {
+            toast.error(
+              String(
+                error?.message ||
+                  t('field_settings_save_failed', 'РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕР»РµР№'),
+              ),
+            );
+            lastErrorToastRef.current[entityType] = true;
+          }
+        }
+      } finally {
+        inFlightRef.current[entityType] = false;
+        globalSaveLockRef.current = false;
+        const shouldSaveQueued = queuedSaveRef.current[entityType] === true;
+        if (shouldSaveQueued) {
+          queuedSaveRef.current[entityType] = false;
+          void persistEntityDraft(entityType, { showErrorToast: false });
+        } else {
+          const nextQueuedEntity = ENTITY_ROWS.find((row) => queuedSaveRef.current[row.id] === true)?.id;
+          if (nextQueuedEntity) {
+            queuedSaveRef.current[nextQueuedEntity] = false;
+            void persistEntityDraft(nextQueuedEntity, { showErrorToast: false });
+          }
+        }
+      }
+    },
+    [saveMutation, t, toast],
   );
 
   const updateDraft = React.useCallback((entityType, updater) => {
@@ -150,20 +453,32 @@ export default function FieldEditorScreen() {
       return { ...prev, [entityType]: next };
     });
     setDirtyMap((prev) => ({ ...prev, [entityType]: true }));
+    setSaveStateMap((prev) => ({
+      ...prev,
+      [entityType]: {
+        ...prev[entityType],
+        phase: inFlightRef.current[entityType] ? 'queued' : 'idle',
+        errorMessage: null,
+      },
+    }));
   }, []);
 
-  const resetDraft = React.useCallback(
-    (entityType) => {
-      const source =
-        entityType === ENTITY_FIELD_TYPES.ORDER
-          ? orderQuery.data || buildFallbackEntityFieldSettings(entityType)
-          : objectQuery.data || buildFallbackEntityFieldSettings(entityType);
-
-      setDrafts((prev) => ({ ...prev, [entityType]: cloneSettings(source) }));
-      setDirtyMap((prev) => ({ ...prev, [entityType]: false }));
-    },
-    [objectQuery.data, orderQuery.data],
+  const hasDirtyChanges = React.useMemo(
+    () => ENTITY_ROWS.some((row) => dirtyMap[row.id] === true),
+    [dirtyMap],
   );
+
+  const isSavingAny = React.useMemo(
+    () => ENTITY_ROWS.some((row) => saveStateMap[row.id]?.phase === 'saving'),
+    [saveStateMap],
+  );
+
+  const handleSaveAll = React.useCallback(async () => {
+    for (const row of ENTITY_ROWS) {
+      if (dirtyMapRef.current?.[row.id] !== true) continue;
+      await persistEntityDraft(row.id, { showErrorToast: true });
+    }
+  }, [persistEntityDraft]);
 
   const handleToggleEnabled = React.useCallback(
     (entityType, fieldKey, nextValue) => {
@@ -185,52 +500,15 @@ export default function FieldEditorScreen() {
     [updateDraft],
   );
 
-  const handleSave = React.useCallback(
-    async (entityType) => {
-      const current = drafts[entityType];
-      const entityQuery = queryMap[entityType];
-      if (!current) return;
-
-      try {
-        const saved = await saveMutation.mutateAsync({
-          entityType,
-          fields: current.fields,
-          expectedVersion: current.versionToken,
-        });
-
-        setDrafts((prev) => ({ ...prev, [entityType]: cloneSettings(saved) }));
-        setDirtyMap((prev) => ({ ...prev, [entityType]: false }));
-        toast.success(
-          t(
-            'field_settings_saved',
-            entityType === ENTITY_FIELD_TYPES.ORDER
-              ? 'Настройки полей заявок сохранены'
-              : 'Настройки полей объектов сохранены',
-          ),
-        );
-      } catch (error) {
-        const raw = String(error?.message || '').toUpperCase();
-        if (raw.includes('FIELD_SETTINGS_CONFLICT')) {
-          await entityQuery.refetch();
-          resetDraft(entityType);
-          toast.warning(
-            t(
-              'field_settings_conflict',
-              'Настройки уже изменил другой администратор. Экран обновлен до последней версии.',
-            ),
-          );
-          return;
-        }
-
-        toast.error(
-          String(
-            error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
-          ),
-        );
-      }
-    },
-    [drafts, queryMap, resetDraft, saveMutation, t, toast],
-  );
+  const getEntityStatusLabel = React.useCallback((entityType) => {
+    const state = saveStateMap[entityType];
+    if (!state) return null;
+    if (state.phase === 'saving') return t('toast_saving', 'Сохраняем…');
+    if (state.phase === 'queued') return t('field_settings_saving_pending', 'Подготовка сохранения…');
+    if (state.phase === 'error') return t('field_settings_unsaved', 'Не сохранено');
+    if (state.phase === 'saved') return t('field_settings_saved_short', 'Сохранено');
+    return null;
+  }, [saveStateMap, t]);
 
   const scrollToExpandedRow = React.useCallback((entityType) => {
     if (!scrollRef.current?.scrollTo) return;
@@ -239,14 +517,13 @@ export default function FieldEditorScreen() {
     const scrollHandle = findNodeHandle(scrollRef.current);
     if (!targetHandle || !scrollHandle) return;
 
-    const sectionHeaderHeight = Number(sectionHeaderHeightRef.current || 0);
     const stickyHeaderHeight = Number(stickyHeaderHeightRef.current || 0);
     UIManager.measureLayout(
       targetHandle,
       scrollHandle,
       () => {},
       (_x, y) => {
-        const targetY = Math.max(0, y - stickyHeaderHeight - sectionHeaderHeight);
+        const targetY = Math.max(0, y - stickyHeaderHeight);
         scrollRef.current?.scrollTo({ y: targetY, animated: true });
       },
     );
@@ -260,8 +537,7 @@ export default function FieldEditorScreen() {
         const nextValue = !prev[entityType];
         shouldScrollToRow = nextValue;
         return {
-          [ENTITY_FIELD_TYPES.ORDER]: false,
-          [ENTITY_FIELD_TYPES.OBJECT]: false,
+          ...buildEntityState(false),
           [entityType]: nextValue,
         };
       });
@@ -282,8 +558,9 @@ export default function FieldEditorScreen() {
       const requiredDisabled =
         field.supportsRequired !== true ||
         field.isEnabled === false ||
-        field.lockedRequired === true ||
-        saveMutation.isPending;
+        field.lockedRequired === true;
+
+      const translatedLabel = sanitizeEditorLabel(t(field.labelKey, field.fallbackLabel || field.fieldKey));
 
       return (
         <React.Fragment key={field.fieldKey}>
@@ -291,7 +568,7 @@ export default function FieldEditorScreen() {
           <View style={[base.row, s.fieldRow, field.isEnabled === false ? s.fieldRowDisabled : null]}>
             <View style={s.fieldInfo}>
               <Text style={[base.label, s.fieldTitle, field.isEnabled === false ? s.fieldTitleDisabled : null]}>
-                {t(field.labelKey, field.fallbackLabel || field.fieldKey)}
+                {translatedLabel}
               </Text>
             </View>
             <View style={s.fieldControls}>
@@ -299,7 +576,7 @@ export default function FieldEditorScreen() {
                 <ThemedSwitch
                   value={field.isEnabled !== false}
                   onValueChange={(value) => handleToggleEnabled(entityType, field.fieldKey, value)}
-                  disabled={field.canToggleEnabled === false || saveMutation.isPending}
+                  disabled={field.canToggleEnabled === false}
                 />
               </View>
               <View style={s.fieldSwitchCell}>
@@ -314,17 +591,16 @@ export default function FieldEditorScreen() {
         </React.Fragment>
       );
     },
-    [base.label, base.row, base.sep, handleToggleEnabled, handleToggleRequired, s, saveMutation.isPending, t],
+    [base.label, base.row, base.sep, handleToggleEnabled, handleToggleRequired, s, t],
   );
 
   const renderEntityEditor = React.useCallback(
     (entityType) => {
       const draft = drafts[entityType];
       const query = queryMap[entityType];
-      const visibleFields = draft?.fields || [];
-      const hasDirty = dirtyMap[entityType];
+      const visibleFields = getOrderedEntityFields(draft, { lockedFirst: true });
 
-      if (query.isLoading && !draft) {
+      if (query?.isLoading && !draft) {
         return (
           <View style={s.loadingWrap}>
             <ActivityIndicator color={theme.colors.primary} />
@@ -343,26 +619,10 @@ export default function FieldEditorScreen() {
               </Text>
             </View>
           )}
-
-          <View style={s.footer}>
-            <Button
-              title={t('btn_cancel', 'Отмена')}
-              variant="secondary"
-              onPress={() => resetDraft(entityType)}
-              disabled={!hasDirty || saveMutation.isPending}
-              style={s.footerButton}
-            />
-            <Button
-              title={saveMutation.isPending ? t('toast_saving', 'Сохраняем…') : t('btn_save', 'Сохранить')}
-              onPress={() => handleSave(entityType)}
-              disabled={!hasDirty || saveMutation.isPending}
-              style={s.footerButton}
-            />
-          </View>
         </View>
       );
     },
-    [dirtyMap, drafts, handleSave, queryMap, renderFieldRow, resetDraft, s, saveMutation.isPending, t, theme.colors.primary],
+    [drafts, queryMap, renderFieldRow, s, t, theme.colors.primary],
   );
 
   if (!isAdmin) {
@@ -383,17 +643,8 @@ export default function FieldEditorScreen() {
         ref={scrollRef}
         contentContainerStyle={s.content}
         keyboardShouldPersistTaps="handled"
-        stickyHeaderIndices={[1]}
+        stickyHeaderIndices={[0]}
       >
-        <View
-          onLayout={(event) => {
-            sectionHeaderHeightRef.current = event.nativeEvent.layout.height;
-          }}
-        >
-          <SectionHeader topSpacing="xs" bottomSpacing="xs">
-            {t('field_settings_editing_title', 'Редактирование')}
-          </SectionHeader>
-        </View>
         <View style={s.stickyHeaderShell}>
           <View
             onLayout={(event) => {
@@ -416,7 +667,9 @@ export default function FieldEditorScreen() {
         </View>
         <Card paddedXOnly style={s.fieldBodyCard}>
           {ENTITY_ROWS.map((row, index) => {
-            const isExpanded = expandedMap[row.id];
+            const isExpanded = expandedMap[row.id] === true;
+            const statusLabel = getEntityStatusLabel(row.id);
+            const isError = saveStateMap[row.id]?.phase === 'error';
 
             return (
               <View
@@ -426,18 +679,42 @@ export default function FieldEditorScreen() {
                 }}
               >
                 {index > 0 ? <View style={base.sep} /> : null}
-                <ExpandableTextRow
-                  key={`${row.id}-${isExpanded ? 'expanded' : 'collapsed'}`}
-                  label={t(row.titleKey, row.fallbackTitle)}
-                  value=""
-                  collapsedValue=""
-                  forceShow
-                  toggleOnChevronOnly={false}
-                  initiallyExpanded={isExpanded}
-                  onChevronPress={() => toggleExpanded(row.id)}
-                  onValuePress={() => toggleExpanded(row.id)}
-                  chevronName={isExpanded ? 'chevron-up' : 'chevron-down'}
-                />
+                <Pressable
+                  style={[base.row, s.entityToggleRow]}
+                  onPress={() => toggleExpanded(row.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: isExpanded }}
+                >
+                  <View style={s.entityTitleWrap}>
+                    <Text
+                      style={[
+                        base.label,
+                        s.entityToggleLabel,
+                        isExpanded ? s.entityToggleLabelExpanded : null,
+                      ]}
+                    >
+                      {t(row.titleKey, row.fallbackTitle)}
+                    </Text>
+                    {statusLabel ? (
+                      <Text
+                        style={[
+                          s.entityStatusText,
+                          isError ? s.entityStatusError : null,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {statusLabel}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={s.entityToggleChevron}>
+                    <Feather
+                      name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? 18}
+                      color={theme.colors.textSecondary}
+                    />
+                  </View>
+                </Pressable>
                 {isExpanded ? (
                   <View style={s.groupedFieldsWrap}>
                     <View style={base.sep} />
@@ -449,6 +726,17 @@ export default function FieldEditorScreen() {
           })}
         </Card>
       </ScrollView>
+      <View style={s.footerBar}>
+        <Button
+          title={isSavingAny ? t('btn_saving', 'Saving...') : t('btn_save', 'Save')}
+          onPress={() => {
+            void handleSaveAll();
+          }}
+          loading={isSavingAny}
+          disabled={!hasDirtyChanges || isSavingAny}
+          style={s.footerButton}
+        />
+      </View>
     </Screen>
   );
 }
@@ -463,7 +751,7 @@ function createStyles(theme) {
   return StyleSheet.create({
     content: {
       padding: theme.spacing.lg,
-      paddingBottom: theme.spacing.xxl,
+      paddingBottom: theme.spacing.xxl + 88,
       gap: 0,
     },
     center: {
@@ -475,18 +763,6 @@ function createStyles(theme) {
     stickyHeaderShell: {
       backgroundColor: theme.colors.background,
       zIndex: 1,
-    },
-    editorWrap: {
-      paddingTop: 0,
-      paddingHorizontal: theme.spacing.xs,
-      paddingBottom: theme.spacing.sm,
-      gap: 0,
-    },
-    loadingWrap: {
-      minHeight: theme.components?.listItem?.height ?? theme.spacing.xxxl,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: theme.spacing.lg,
     },
     fieldHeaderCard: {
       backgroundColor: theme.colors.surface,
@@ -513,6 +789,17 @@ function createStyles(theme) {
       shadowOffset: { width: 0, height: 0 },
       elevation: 0,
     },
+    footerBar: {
+      paddingHorizontal: theme.spacing.lg,
+      paddingTop: theme.spacing.sm,
+      paddingBottom: theme.spacing.lg,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      backgroundColor: theme.colors.background,
+    },
+    footerButton: {
+      width: '100%',
+    },
     fieldHeaderRow: {
       gap: theme.spacing.md,
       paddingTop: 0,
@@ -521,6 +808,72 @@ function createStyles(theme) {
     },
     fieldHeaderSpacer: {
       minHeight: 1,
+    },
+    fieldInfo: {
+      flex: 1,
+      minWidth: 0,
+      paddingRight: theme.spacing.md,
+    },
+    fieldControls: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+      flexShrink: 0,
+      width: switchColumnsWidth,
+      justifyContent: 'space-between',
+    },
+    fieldColumnTitle: {
+      width: switchColumnWidth,
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
+    entityToggleRow: {
+      paddingTop: 0,
+      paddingBottom: 0,
+    },
+    entityTitleWrap: {
+      flex: 1,
+      minWidth: 0,
+      paddingRight: theme.spacing.sm,
+    },
+    entityToggleLabel: {
+      color: theme.colors.text,
+      fontWeight: theme.typography.weight.regular,
+    },
+    entityToggleLabelExpanded: {
+      fontWeight: theme.typography.weight.semibold,
+    },
+    entityStatusText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.xs ?? theme.typography.sizes.sm,
+      marginTop: theme.spacing.xxs ?? 2,
+    },
+    entityStatusError: {
+      color: theme.colors.danger,
+    },
+    entityToggleChevron: {
+      minWidth: theme.components?.listItem?.chevronTouchSize ?? 36,
+      minHeight: theme.components?.listItem?.chevronTouchSize ?? 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: -theme.spacing.xs,
+    },
+    groupedFieldsWrap: {
+      paddingLeft: theme.spacing.lg,
+    },
+    editorWrap: {
+      paddingTop: 0,
+      paddingHorizontal: theme.spacing.xs,
+      paddingBottom: theme.spacing.sm,
+      gap: 0,
+    },
+    loadingWrap: {
+      minHeight: theme.components?.listItem?.height ?? theme.spacing.xxxl,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: theme.spacing.lg,
     },
     fieldRow: {
       gap: theme.spacing.md,
@@ -531,39 +884,16 @@ function createStyles(theme) {
     fieldRowDisabled: {
       opacity: 0.48,
     },
-    fieldInfo: {
-      flex: 1,
-      minWidth: 0,
-      paddingRight: theme.spacing.md,
-    },
     fieldTitle: {
       color: theme.colors.text,
     },
     fieldTitleDisabled: {
       color: theme.colors.textSecondary,
     },
-    fieldControls: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: theme.spacing.sm,
-      flexShrink: 0,
-      width: switchColumnsWidth,
-      justifyContent: 'space-between',
-    },
     fieldSwitchCell: {
       width: switchColumnWidth,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    fieldColumnTitle: {
-      width: switchColumnWidth,
-      color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.sm,
-      lineHeight: 20,
-      textAlign: 'center',
-    },
-    groupedFieldsWrap: {
-      paddingLeft: theme.spacing.lg,
     },
     emptyWrap: {
       paddingHorizontal: theme.spacing.md,
@@ -572,14 +902,6 @@ function createStyles(theme) {
     muted: {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
-    },
-    footer: {
-      flexDirection: 'row',
-      gap: theme.spacing.sm,
-      paddingTop: theme.spacing.sm,
-    },
-    footerButton: {
-      flex: 1,
     },
   });
 }

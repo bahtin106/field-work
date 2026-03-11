@@ -83,10 +83,11 @@ export default function ObjectViewScreen() {
     }
   }, [rawReturnParams]);
 
+  const canViewObjects = has('canViewObjects');
   const canViewClients = has('canViewClients');
-  const canEditClients = has('canEditClients');
+  const canEditObjects = has('canEditObjects');
   const { data: objectItem } = useClientObject(objectId, {
-    enabled: !!objectId,
+    enabled: !!objectId && canViewObjects,
   });
   const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
     enabled: !!objectId,
@@ -165,14 +166,25 @@ export default function ObjectViewScreen() {
   const showObjectName = objectFieldsByKey.get('name')?.isEnabled !== false;
   const showClientRow = hasDisplayValue(clientDisplayName);
 
+  if (!canViewObjects) {
+    return (
+      <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
+        <AppHeader back options={{ title: t('routes_objects_object') }} />
+        <View style={styles.centered}>
+          <Text style={styles.mutedText}>{t('objects_no_view_permission')}</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
       <AppHeader
         back
         options={{
           title: t('routes_objects_object'),
-          rightTextLabel: canEditClients ? t('btn_edit') : undefined,
-          onRightPress: canEditClients
+          rightTextLabel: canEditObjects ? t('btn_edit') : undefined,
+          onRightPress: canEditObjects
             ? () =>
                 router.push({
                   pathname: `/objects/${objectId}/edit`,
@@ -253,7 +265,7 @@ export default function ObjectViewScreen() {
                     <Text style={styles.clientLink}>{clientDisplayName}</Text>
                   </Pressable>
                 ) : (
-                  <Text style={styles.clientLink}>{clientDisplayName}</Text>
+                  <Text style={styles.clientText}>{clientDisplayName}</Text>
                 )
               }
             />
@@ -361,6 +373,11 @@ function createStyles(theme) {
     /* headerCard, headerRow, badge, badgeText, nameTitle removed — not used after UI simplification */
     clientLink: {
       color: theme.colors.primary,
+      fontSize: theme.typography.sizes.sm,
+      marginTop: theme.spacing.xs,
+    },
+    clientText: {
+      color: theme.colors.text,
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
     },

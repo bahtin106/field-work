@@ -251,6 +251,26 @@ export default function CompanySettings() {
   const normalizedProfileRole = String(profile?.role || '').toLowerCase();
   const canAccessCompanySettings = normalizedProfileRole === 'admin';
   const isAdmin = normalizedProfileRole === 'admin';
+  const navigationLockRef = React.useRef(false);
+  const navigationLockTimerRef = React.useRef(null);
+
+  const runSingleNavigation = React.useCallback((navigate) => {
+    if (navigationLockRef.current) return;
+    navigationLockRef.current = true;
+
+    if (navigationLockTimerRef.current) {
+      clearTimeout(navigationLockTimerRef.current);
+    }
+
+    try {
+      navigate?.();
+    } finally {
+      navigationLockTimerRef.current = setTimeout(() => {
+        navigationLockRef.current = false;
+        navigationLockTimerRef.current = null;
+      }, 600);
+    }
+  }, []);
 
   React.useEffect(() => {
     if (isInitializing) return;
@@ -258,6 +278,14 @@ export default function CompanySettings() {
       router.replace('/orders');
     }
   }, [canAccessCompanySettings, isInitializing, router]);
+
+  React.useEffect(() => {
+    return () => {
+      if (navigationLockTimerRef.current) {
+        clearTimeout(navigationLockTimerRef.current);
+      }
+    };
+  }, []);
 
   // Load company settings via shared query cache.
   const {
@@ -818,7 +846,13 @@ export default function CompanySettings() {
       return [];
     }
   }, [phoneModeOptions, phoneMode, theme.colors.primary]);
-  const go = React.useCallback((href) => () => router.push(href), [router]);
+  const go = React.useCallback(
+    (href) => () => {
+      if (!href) return;
+      runSingleNavigation(() => router.push(href));
+    },
+    [router, runSingleNavigation],
+  );
   const findRoute = React.useCallback((key) => {
     try {
       for (const sec of Object.values(SETTINGS_SECTIONS)) {

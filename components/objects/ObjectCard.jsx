@@ -1,11 +1,13 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useClient } from '../../src/features/clients/queries';
 import { buildClientObjectShortAddress } from '../../src/features/objects/addressing';
 import { withAlpha } from '../../theme/colors';
 
-export default function ObjectCard({ item, onPress }) {
+export default function ObjectCard({ item, onPress, canViewClients: canViewClientsProp = null }) {
+  const { has } = usePermissions();
   const { theme } = useTheme();
   const c = theme.colors;
   const sz = theme.spacing;
@@ -41,7 +43,9 @@ export default function ObjectCard({ item, onPress }) {
   );
 
   const name = String(item?.name || '').trim() || item?.summary || '';
-  const { data: client } = useClient(item?.client_id, { enabled: !!item?.client_id });
+  const canViewClients =
+    typeof canViewClientsProp === 'boolean' ? canViewClientsProp : has('canViewClients');
+  const { data: client } = useClient(item?.client_id, { enabled: !!item?.client_id && canViewClients });
   const owner =
     String(client?.fullName || client?.full_name || item?._client?.name || item?.client?.full_name || '').trim() || '';
   const address =

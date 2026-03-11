@@ -37,6 +37,10 @@ import {
   isValidOptionalMobilePhone,
   normalizeOptionalMobilePhone,
 } from '../../../src/shared/validation/phone';
+import {
+  getEmailFieldError,
+  normalizeOptionalEmail,
+} from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
@@ -46,6 +50,13 @@ import {
 } from '../../../lib/passwordUpdateClient';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getOrderedEntityFields,
+} from '../../../src/features/fieldSettings/catalog';
+import { createEntityFieldPresentation } from '../../../src/features/fieldSettings/presentation';
+import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 import { cleanupProfileMediaEntity, uploadProfileMedia } from '../../../src/features/profileMedia/api';
 import { useMyCompanyIdQuery } from '../../../src/features/profile/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -210,32 +221,6 @@ function _range(a, b) {
   for (let i = a; i <= b; i++) arr.push(i);
   return arr;
 }
-function isValidEmailStrict(raw) {
-  const s = String(raw || '').trim();
-  if (!s) return false;
-  if (s.length > 254) return false;
-  if (/\s/.test(s)) return false;
-  const parts = s.split('@');
-  if (parts.length !== 2) return false;
-  const [local, domain] = parts;
-  if (!local || !domain) return false;
-  if (local.length > 64) return false;
-  if (local.startsWith('.') || local.endsWith('.')) return false;
-  if (local.includes('..')) return false;
-  if (!/^[A-Za-z0-9._%+-]+$/.test(local)) return false;
-  const labels = domain.split('.');
-  if (labels.length < 2) return false;
-  for (const lab of labels) {
-    if (!lab) return false;
-    if (lab.length > 63) return false;
-    if (!/^[A-Za-z0-9-]+$/.test(lab)) return false;
-    if (lab.startsWith('-') || lab.endsWith('-')) return false;
-  }
-  const tld = labels[labels.length - 1];
-  if (tld.length < 2 || tld.length > 24) return false;
-  return true;
-}
-
 function normalizeOptionalPhoneForSave(raw) {
   return normalizeOptionalMobilePhone(raw);
 }
@@ -646,7 +631,6 @@ export default function EditUser() {
   const [phone, setPhone] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({});
-  const emailValid = useMemo(() => isValidEmailStrict(email), [email]);
   const requiredMsg = useMemo(() => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t), [t]);
   const shouldShowError = useCallback(
     (field) => submittedAttempt || !!touched[field],
@@ -665,29 +649,14 @@ export default function EditUser() {
     const name = `${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim();
     return name || t('placeholder_no_name');
   }, [firstName, lastName, t]);
-  const firstNameError =
-    fieldErrors.firstName?.message ||
-    (shouldShowError('firstName') && !firstName.trim() ? requiredMsg : null);
-  const lastNameError =
-    fieldErrors.lastName?.message ||
-    (shouldShowError('lastName') && !lastName.trim() ? requiredMsg : null);
-  const emailError =
-    fieldErrors.email?.message ||
-    (shouldShowError('email') && (!email.trim()
-      ? requiredMsg
-      : !emailValid
-        ? getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t)
-        : null));
-  const phoneError =
-    fieldErrors.phone?.message ||
-    (shouldShowError('phone') && hasPhoneValue(phone) && !isValidOptionalMobilePhone(String(phone || ''))
-      ? t('err_phone')
-      : null);
   const [birthdate, setBirthdate] = useState(null);
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
   const settingsCompanyId = employeeData?.companyId || companyId || null;
   const { useDepartments } = useCompanySettings(settingsCompanyId);
+  const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
+    enabled: !!settingsCompanyId,
+  });
   const { data: departments = [] } = useDepartmentsQuery({
     companyId: settingsCompanyId,
     enabled: !!settingsCompanyId && useDepartments,
@@ -716,6 +685,81 @@ export default function EditUser() {
   const [resettingPwd, setResettingPwd] = useState(false);
   const [showRoles, setShowRoles] = useState(false);
   const [viewAvatarVisible, setViewAvatarVisible] = useState(false);
+  const employeeFieldSettings = useMemo(
+    () => employeeFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE),
+    [employeeFieldSettingsData],
+  );
+  const fieldUi = useMemo(
+    () => createEntityFieldPresentation(employeeFieldSettings),
+    [employeeFieldSettings],
+  );
+  const canManageAvatar = fieldUi.isVisible('avatar_url');
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
+  const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
+  const canShowCompanySection =
+    fieldUi.hasVisibleFields(['department_id', 'role']) &&
+    ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role'));
+  const orderedPersonalFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(employeeFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['first_name', 'last_name', 'birthdate'],
+      }).map((field) => field.fieldKey),
+    [employeeFieldSettings],
+  );
+  const orderedContactFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(employeeFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['email', 'phone'],
+      }).map((field) => field.fieldKey),
+    [employeeFieldSettings],
+  );
+  const orderedCompanyFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(employeeFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['department_id', 'role'],
+      }).map((field) => field.fieldKey),
+    [employeeFieldSettings],
+  );
+  const firstNameError =
+    fieldErrors.firstName?.message ||
+    (shouldShowError('firstName') && fieldUi.isRequired('first_name') && !firstName.trim() ? requiredMsg : null);
+  const lastNameError =
+    fieldErrors.lastName?.message ||
+    (shouldShowError('lastName') && fieldUi.isRequired('last_name') && !lastName.trim() ? requiredMsg : null);
+  const emailError =
+    fieldErrors.email?.message ||
+    ((fieldUi.isVisible('email') && shouldShowError('email'))
+      ? getEmailFieldError(email, {
+          required: fieldUi.isRequired('email'),
+          requiredMessage: requiredMsg,
+          t,
+        })
+      : null);
+  const phoneError =
+    fieldErrors.phone?.message ||
+    (fieldUi.isVisible('phone') && shouldShowError('phone')
+      ? !hasPhoneValue(phone)
+        ? fieldUi.isRequired('phone') ? requiredMsg : null
+        : !isValidOptionalMobilePhone(String(phone || ''))
+          ? t('err_phone')
+          : null
+      : null);
+  const birthdateError =
+    fieldErrors.birthdate?.message ||
+    (fieldUi.isVisible('birthdate') && shouldShowError('birthdate') && fieldUi.isRequired('birthdate') && !birthdate
+      ? requiredMsg
+      : null);
+  const departmentError =
+    fieldErrors.department_id?.message ||
+    (useDepartments && fieldUi.isVisible('department_id') && shouldShowError('department_id') && fieldUi.isRequired('department_id') && !departmentId
+      ? requiredMsg
+      : null);
 
   const [err, setErr] = useState('');
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
@@ -946,21 +990,25 @@ export default function EditUser() {
       showInfoToast(t('toast_saving'));
       let savedAvatarUrl = avatarUrl || null;
 
-      // РЎРѕС…СЂР°РЅСЏРµРј РёР·РјРµРЅРµРЅРёСЏ Р°РІР°С‚Р°СЂР° РІ Р‘Р” С‚РѕР»СЊРєРѕ РµСЃР»Рё РµСЃС‚СЊ СЂРµР°Р»СЊРЅС‹Рµ РёР·РјРµРЅРµРЅРёСЏ
       // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", Р° РЅРµ "СѓРґР°Р»РёС‚СЊ"
-      if (!isSuperAdminEditingOther && pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
+      if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
         if (pendingAvatarUrl === '') {
           await cleanupProfileMediaEntity('employee', String(userId));
           savedAvatarUrl = null;
         } else if (!String(pendingAvatarUrl).startsWith('http')) {
           savedAvatarUrl = await uploadProfileMedia('employee', String(userId), pendingAvatarUrl);
+          if (!savedAvatarUrl) {
+            throw new Error('Не удалось сохранить аватар');
+          }
         } else {
           savedAvatarUrl = pendingAvatarUrl;
-          const { error: updErr } = await supabase
-            .from(TABLES.profiles)
-            .update({ avatar_url: savedAvatarUrl })
-            .eq('id', userId);
-          if (updErr) throw updErr;
+          if (!isSuperAdminEditingOther) {
+            const { error: updErr } = await supabase
+              .from(TABLES.profiles)
+              .update({ avatar_url: savedAvatarUrl })
+              .eq('id', userId);
+            if (updErr) throw updErr;
+          }
         }
 
         setAvatarUrl(savedAvatarUrl);
@@ -1074,7 +1122,7 @@ export default function EditUser() {
         JSON.stringify({
           firstName: firstName.trim(),
           lastName: lastName.trim(),
-          email: String(email || '').trim(),
+          email: normalizeOptionalEmail(email) || '',
           phone: normalizeOptionalPhoneForSave(phone) || '',
           birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
           role,
@@ -1089,16 +1137,23 @@ export default function EditUser() {
         first_name: firstName.trim() || null,
         last_name: lastName.trim() || null,
         full_name: buildFullName(firstName, lastName) || null,
-        email: String(email || '').trim(),
+        email: normalizeOptionalEmail(email),
         phone: normalizeOptionalPhoneForSave(phone),
         birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
         role,
         department_id: departmentId || null,
         avatar_url: savedAvatarUrl,
+        avatarDisplayUrl: savedAvatarUrl,
+        avatar_display_url: savedAvatarUrl,
         isSuspended: !!isSuspended,
         meIsAdmin,
         myUid: meId,
       }));
+      queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
+      if (meId && String(meId) === String(userId)) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.profile.me() });
+      }
+      refetchEmployee().catch(() => {});
       allowLeaveRef.current = true;
       showSuccessToast(t('toast_success'));
     } catch (e) {
@@ -1120,7 +1175,7 @@ export default function EditUser() {
     clearBanner();
     setFieldErrors({});
     setSubmittedAttempt(true);
-    if (!firstName.trim()) {
+    if (fieldUi.isRequired('first_name') && !firstName.trim()) {
       setFieldErrors({ firstName: { message: requiredMsg } });
       ensureVisibleField({
         fieldRef: firstNameRef,
@@ -1132,7 +1187,7 @@ export default function EditUser() {
       firstNameRef.current?.focus?.();
       return;
     }
-    if (!lastName.trim()) {
+    if (fieldUi.isRequired('last_name') && !lastName.trim()) {
       setFieldErrors({ lastName: { message: requiredMsg } });
       ensureVisibleField({
         fieldRef: lastNameRef,
@@ -1144,8 +1199,13 @@ export default function EditUser() {
       lastNameRef.current?.focus?.();
       return;
     }
-    if (!emailValid) {
-      setFieldErrors({ email: { message: getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t) } });
+    const emailFieldError = getEmailFieldError(email, {
+      required: fieldUi.isRequired('email'),
+      requiredMessage: requiredMsg,
+      t,
+    });
+    if (fieldUi.isVisible('email') && emailFieldError) {
+      setFieldErrors({ email: { message: emailFieldError } });
       ensureVisibleField({
         fieldRef: emailRef,
         scrollRef,
@@ -1156,7 +1216,19 @@ export default function EditUser() {
       emailRef.current?.focus?.();
       return;
     }
-    if (hasPhoneValue(phone) && !isValidOptionalMobilePhone(String(phone || ''))) {
+    if (fieldUi.isRequired('phone') && !hasPhoneValue(phone)) {
+      setFieldErrors({ phone: { message: requiredMsg } });
+      ensureVisibleField({
+        fieldRef: phoneRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
+      phoneRef.current?.focus?.();
+      return;
+    }
+    if (fieldUi.isVisible('phone') && hasPhoneValue(phone) && !isValidOptionalMobilePhone(String(phone || ''))) {
       setFieldErrors({ phone: { message: t('err_phone') } });
       ensureVisibleField({
         fieldRef: phoneRef,
@@ -1166,6 +1238,14 @@ export default function EditUser() {
         headerHeight,
       });
       phoneRef.current?.focus?.();
+      return;
+    }
+    if (fieldUi.isRequired('birthdate') && !birthdate) {
+      setFieldErrors({ birthdate: { message: requiredMsg } });
+      return;
+    }
+    if (useDepartments && fieldUi.isRequired('department_id') && !departmentId) {
+      setFieldErrors({ department_id: { message: requiredMsg } });
       return;
     }
     // Р•СЃР»Рё СЂРµРґР°РєС‚РёСЂСѓРµРј СЃРѕР±СЃС‚РІРµРЅРЅС‹Р№ РїСЂРѕС„РёР»СЊ Рё Р·Р°РґР°РЅ РЅРѕРІС‹Р№ РїР°СЂРѕР»СЊ вЂ” РїСЂРѕРІРµСЂСЏРµРј РµРіРѕ
@@ -1723,6 +1803,190 @@ export default function EditUser() {
   const isSelfAdmin = meIsAdmin && meId === userId;
   const initials =
     `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
+  const personalFieldRenderers = {
+      first_name: () => (
+        <>
+          <TextField
+            ref={firstNameRef}
+            label={fieldUi.withRequiredLabel('first_name', t('label_first_name'))}
+            placeholder={t('placeholder_first_name')}
+            placeholderTextColor={theme.colors.inputPlaceholder}
+            style={styles.field}
+            value={firstName}
+            onChangeText={(val) => {
+              setFirstName(val);
+              clearFieldError('firstName');
+            }}
+            onFocus={() => {
+              setFocusFirst(true);
+              ensureVisibleField({
+                fieldRef: firstNameRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
+            }}
+            onBlur={() => {
+              setFocusFirst(false);
+              setTouched((prev) => ({ ...prev, firstName: true }));
+            }}
+            forceValidation={submittedAttempt}
+            error={firstNameError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={firstNameError} />
+        </>
+      ),
+      last_name: () => (
+        <>
+          <TextField
+            ref={lastNameRef}
+            label={fieldUi.withRequiredLabel('last_name', t('label_last_name'))}
+            placeholder={t('placeholder_last_name')}
+            placeholderTextColor={theme.colors.inputPlaceholder}
+            style={styles.field}
+            value={lastName}
+            onChangeText={(val) => {
+              setLastName(val);
+              clearFieldError('lastName');
+            }}
+            onFocus={() => {
+              setFocusLast(true);
+              ensureVisibleField({
+                fieldRef: lastNameRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
+            }}
+            onBlur={() => {
+              setFocusLast(false);
+              setTouched((prev) => ({ ...prev, lastName: true }));
+            }}
+            forceValidation={submittedAttempt}
+            error={lastNameError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={lastNameError} />
+        </>
+      ),
+      birthdate: () => (
+        <>
+          <TextField
+            label={fieldUi.withRequiredLabel('birthdate', t('label_birthdate'))}
+            value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
+            style={styles.field}
+            multiline={false}
+            pressable
+            error={birthdateError ? 'invalid' : undefined}
+            onPress={() => setDobModalVisible(true)}
+            rightSlot={
+              birthdate ? (
+                <ClearButton
+                  onPress={() => setBirthdate(null)}
+                  accessibilityLabel={t('common_clear')}
+                />
+              ) : null
+            }
+          />
+          <FieldErrorText message={birthdateError} />
+        </>
+      ),
+    };
+  const contactFieldRenderers = {
+      email: () => (
+        <>
+          <TextField
+            ref={emailRef}
+            label={fieldUi.withRequiredLabel('email', t('label_email'))}
+            placeholder={t('placeholder_email')}
+            placeholderTextColor={theme.colors.inputPlaceholder}
+            style={styles.field}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={email}
+            onChangeText={(val) => {
+              setEmail(val);
+              clearFieldError('email');
+            }}
+            onFocus={() => {
+              setFocusEmail(true);
+              ensureVisibleField({
+                fieldRef: emailRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
+            }}
+            onBlur={() => {
+              setFocusEmail(false);
+              setTouched((prev) => ({ ...prev, email: true }));
+            }}
+            forceValidation={submittedAttempt}
+            error={emailError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={emailError} />
+        </>
+      ),
+      phone: () => (
+        <>
+          <PhoneInput
+            ref={phoneRef}
+            value={phone}
+            onChangeText={(val) => {
+              setPhone(val);
+              clearFieldError('phone');
+            }}
+            error={phoneError ? 'invalid' : undefined}
+            style={styles.field}
+            required={fieldUi.isRequired('phone')}
+            onFocus={() => {
+              setFocusPhone(true);
+              ensureVisibleField({
+                fieldRef: phoneRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
+            }}
+            onBlur={() => {
+              setFocusPhone(false);
+              setTouched((prev) => ({ ...prev, phone: true }));
+            }}
+          />
+          <FieldErrorText message={phoneError} />
+        </>
+      ),
+    };
+  const companyFieldRenderers = {
+      department_id: useDepartments ? (
+        <>
+          <TextField
+            label={fieldUi.withRequiredLabel('department_id', t('label_department'))}
+            value={activeDeptName || t('placeholder_department')}
+            style={styles.field}
+            pressable
+            error={departmentError ? 'invalid' : undefined}
+            onPress={() => setDeptModalVisible(true)}
+          />
+          <FieldErrorText message={departmentError} />
+        </>
+      ) : null,
+      role: !isSelfAdmin ? (
+        <>
+          <TextField
+            label={fieldUi.withRequiredLabel('role', t('label_role'))}
+            value={ROLE_LABELS_LOCAL[role] || role}
+            style={styles.field}
+            pressable
+            onPress={() => setShowRoles(true)}
+          />
+        </>
+      ) : null,
+    };
   return (
     <EditScreenTemplate
       title={t('header_edit_user')}
@@ -1746,15 +2010,18 @@ export default function EditUser() {
               <View style={styles.headerRow}>
                 <Pressable
                   style={styles.avatar}
-                  onPress={() => {
-                    setAvatarKey((k) => k + 1);
-                    setAvatarSheet(true);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('a11y_change_avatar')}
-                  accessibilityHint={t('a11y_change_avatar_hint')}
+                  onPress={canManageAvatar
+                    ? () => {
+                        setAvatarKey((k) => k + 1);
+                        setAvatarSheet(true);
+                      }
+                    : undefined}
+                  disabled={!canManageAvatar}
+                  accessibilityRole={canManageAvatar ? 'button' : undefined}
+                  accessibilityLabel={canManageAvatar ? t('a11y_change_avatar') : undefined}
+                  accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
                 >
-                  {avatarDisplayUrl ? (
+                  {canManageAvatar && avatarDisplayUrl ? (
                     <ExpoImage
                       source={{ uri: avatarDisplayUrl }}
                       style={styles.avatarImg}
@@ -1764,9 +2031,11 @@ export default function EditUser() {
                   ) : (
                     <Text style={styles.avatarText}>{initials || 'вЂў'}</Text>
                   )}
-                  <View style={styles.avatarCamBadge}>
-                    <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
-                  </View>
+                  {canManageAvatar ? (
+                    <View style={styles.avatarCamBadge}>
+                      <AntDesign name="camera" size={CAMERA_ICON} color={theme.colors.onPrimary} />
+                    </View>
+                  ) : null}
                 </Pressable>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.nameTitle}>{headerName}</Text>
@@ -1853,142 +2122,35 @@ export default function EditUser() {
                 style={{ marginBottom: theme.spacing.md }}
               />
             ) : null}
+            {canShowPersonalSection ? (
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
               {t('section_personal')}
             </SectionHeader>
+            ) : null}
+            {canShowPersonalSection ? (
             <Card>
-              <TextField
-                ref={firstNameRef}
-                label={t('label_first_name')}
-                placeholder={t('placeholder_first_name')}
-                placeholderTextColor={theme.colors.inputPlaceholder}
-                style={styles.field}
-                value={firstName}
-                onChangeText={(val) => {
-                  setFirstName(val);
-                  clearFieldError('firstName');
-                }}
-                onFocus={() => {
-                  setFocusFirst(true);
-                  ensureVisibleField({
-                    fieldRef: firstNameRef,
-                    scrollRef,
-                    scrollYRef,
-                    insetsBottom: insets.bottom ?? 0,
-                    headerHeight,
-                  });
-                }}
-                onBlur={() => {
-                  setFocusFirst(false);
-                  setTouched((prev) => ({ ...prev, firstName: true }));
-                }}
-                forceValidation={submittedAttempt}
-                error={firstNameError ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={firstNameError} />
-              <TextField
-                ref={lastNameRef}
-                label={t('label_last_name')}
-                placeholder={t('placeholder_last_name')}
-                placeholderTextColor={theme.colors.inputPlaceholder}
-                style={styles.field}
-                value={lastName}
-                onChangeText={(val) => {
-                  setLastName(val);
-                  clearFieldError('lastName');
-                }}
-                onFocus={() => {
-                  setFocusLast(true);
-                  ensureVisibleField({
-                    fieldRef: lastNameRef,
-                    scrollRef,
-                    scrollYRef,
-                    insetsBottom: insets.bottom ?? 0,
-                    headerHeight,
-                  });
-                }}
-                onBlur={() => {
-                  setFocusLast(false);
-                  setTouched((prev) => ({ ...prev, lastName: true }));
-                }}
-                forceValidation={submittedAttempt}
-                error={lastNameError ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={lastNameError} />
-              <TextField
-                ref={emailRef}
-                label={t('label_email')}
-                placeholder={t('placeholder_email')}
-                placeholderTextColor={theme.colors.inputPlaceholder}
-                style={styles.field}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={email}
-                onChangeText={(val) => {
-                  setEmail(val);
-                  clearFieldError('email');
-                }}
-                onFocus={() => {
-                  setFocusEmail(true);
-                  ensureVisibleField({
-                    fieldRef: emailRef,
-                    scrollRef,
-                    scrollYRef,
-                    insetsBottom: insets.bottom ?? 0,
-                    headerHeight,
-                  });
-                }}
-                onBlur={() => {
-                  setFocusEmail(false);
-                  setTouched((prev) => ({ ...prev, email: true }));
-                }}
-                forceValidation={submittedAttempt}
-                error={emailError ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={emailError} />
-              <PhoneInput
-                ref={phoneRef}
-                value={phone}
-              onChangeText={(val, _meta) => {
-                setPhone(val);
-                clearFieldError('phone');
-              }}
-                error={phoneError ? 'invalid' : undefined}
-                style={styles.field}
-                onFocus={() => {
-                  setFocusPhone(true);
-                  ensureVisibleField({
-                    fieldRef: phoneRef,
-                    scrollRef,
-                    scrollYRef,
-                    insetsBottom: insets.bottom ?? 0,
-                    headerHeight,
-                  });
-                }}
-                onBlur={() => {
-                  setFocusPhone(false);
-                  setTouched((prev) => ({ ...prev, phone: true }));
-                }}
-              />
-              <FieldErrorText message={phoneError} />
-              <TextField
-                label={t('label_birthdate')}
-                value={birthdate ? formatDateRU(birthdate, withYear) : t('placeholder_birthdate')}
-                style={styles.field}
-                multiline={false}
-                pressable
-                onPress={() => setDobModalVisible(true)}
-                rightSlot={
-                  birthdate ? (
-                    <ClearButton
-                      onPress={() => setBirthdate(null)}
-                      accessibilityLabel={t('common_clear')}
-                    />
-                  ) : null
-                }
-              />
+              {orderedPersonalFieldKeys.map((fieldKey) => (
+                <React.Fragment key={fieldKey}>
+                  {personalFieldRenderers[fieldKey]?.() || null}
+                </React.Fragment>
+              ))}
             </Card>
+            ) : null}
+
+            {canShowContactSection ? (
+              <>
+                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                  {t('clients_contacts_section')}
+                </SectionHeader>
+                <Card>
+                  {orderedContactFieldKeys.map((fieldKey) => (
+                    <React.Fragment key={fieldKey}>
+                      {contactFieldRenderers[fieldKey]?.() || null}
+                    </React.Fragment>
+                  ))}
+                </Card>
+              </>
+            ) : null}
 
             {meId && meId === userId && (
               <>
@@ -2032,31 +2194,15 @@ export default function EditUser() {
               </>
             )}
 
-            {meIsAdmin && (useDepartments || !isSelfAdmin) ? (
+            {meIsAdmin && canShowCompanySection && (useDepartments || !isSelfAdmin) ? (
               <>
                 <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
                 <Card>
-                  {useDepartments ? (
-                    <TextField
-                      label={t('label_department')}
-                      value={activeDeptName || t('placeholder_department')}
-                      style={styles.field}
-                      pressable
-                      onPress={() => setDeptModalVisible(true)}
-                    />
-                  ) : null}
-
-                  {!isSelfAdmin && (
-                    <>
-                      <TextField
-                        label={t('label_role')}
-                        value={ROLE_LABELS_LOCAL[role] || role}
-                        style={styles.field}
-                        pressable
-                        onPress={() => setShowRoles(true)}
-                      />
-                    </>
-                  )}
+                  {orderedCompanyFieldKeys.map((fieldKey) => (
+                    <React.Fragment key={fieldKey}>
+                      {companyFieldRenderers[fieldKey] || null}
+                    </React.Fragment>
+                  ))}
                 </Card>
               </>
             ) : null}
@@ -2250,39 +2396,43 @@ export default function EditUser() {
               maxHeightRatio={0.8}
             />
 
-            <AvatarSheetModal
-              key={`avatar-${avatarKey}`}
-              visible={avatarSheet}
-              hasAvatar={!!avatarUrl}
-              onTakePhoto={pickFromCamera}
-              onPickFromLibrary={pickFromLibrary}
-              onDeletePhoto={deleteAvatar}
-              onViewPhoto={() => {
-                setViewAvatarVisible(true);
-              }}
-              onClose={() => setAvatarSheet(false)}
-            />
+            {canManageAvatar ? (
+              <AvatarSheetModal
+                key={`avatar-${avatarKey}`}
+                visible={avatarSheet}
+                hasAvatar={!!avatarUrl}
+                onTakePhoto={pickFromCamera}
+                onPickFromLibrary={pickFromLibrary}
+                onDeletePhoto={deleteAvatar}
+                onViewPhoto={() => {
+                  setViewAvatarVisible(true);
+                }}
+                onClose={() => setAvatarSheet(false)}
+              />
+            ) : null}
             <AvatarCropModal visible={cropVisible} uri={cropSrc} onCancel={onCropCancel} onConfirm={onCropConfirm} />
 
-            <BaseModal
-              visible={viewAvatarVisible}
-              onClose={() => setViewAvatarVisible(false)}
-              title={t('profile_photo_title')}
-              maxHeightRatio={0.9}
-            >
-              <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
-                {avatarDisplayUrl ? (
-                  <ExpoImage
-                    source={{ uri: avatarDisplayUrl }}
-                    style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
-                    contentFit="contain"
-                    cachePolicy="none"
-                  />
-                ) : (
-                  <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'РќРµС‚ С„РѕС‚Рѕ'}</Text>
-                )}
-              </View>
-            </BaseModal>
+            {canManageAvatar ? (
+              <BaseModal
+                visible={viewAvatarVisible}
+                onClose={() => setViewAvatarVisible(false)}
+                title={t('profile_photo_title')}
+                maxHeightRatio={0.9}
+              >
+                <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
+                  {avatarDisplayUrl ? (
+                    <ExpoImage
+                      source={{ uri: avatarDisplayUrl }}
+                      style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
+                      contentFit="contain"
+                      cachePolicy="none"
+                    />
+                  ) : (
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'РќРµС‚ С„РѕС‚Рѕ'}</Text>
+                  )}
+                </View>
+              </BaseModal>
+            ) : null}
             {useDepartments ? (
               <DepartmentSelectModal
                 visible={deptModalVisible}
