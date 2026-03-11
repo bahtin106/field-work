@@ -1,4 +1,4 @@
-import { useFocusEffect } from '@react-navigation/native';
+﻿import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
@@ -347,7 +347,6 @@ export default function OrderDetails() {
     note: '',
     input_amount: '0',
     input_percent: '0',
-    recipient_user_id: null,
   });
   const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
@@ -361,13 +360,13 @@ export default function OrderDetails() {
   const [localPendingMap, setLocalPendingMap] = useState({});
   const cloudFallbackNoticeShownRef = useRef(false);
 
-  // ─── Centralised media hook (caching, resolution, Yandex/Storage) ───
+  // в”Ђв”Ђв”Ђ Centralised media hook (caching, resolution, Yandex/Storage) в”Ђв”Ђв”Ђ
   const orderMedia = useOrderMedia({ order, mediaProvider, t });
   // Stable ref so fetchData doesn't re-create when orderMedia resolves URLs
   const orderMediaRef = useRef(orderMedia);
   useEffect(() => { orderMediaRef.current = orderMedia; }, [orderMedia]);
 
-  // Always-current order ref — prevents stale closures in parallel uploads
+  // Always-current order ref вЂ” prevents stale closures in parallel uploads
   const orderRef = useRef(order);
   useEffect(() => { orderRef.current = order; }, [order]);
 
@@ -566,7 +565,7 @@ export default function OrderDetails() {
       }
 
       return missing.length
-        ? { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` }
+        ? { ok: false, msg: `Р—Р°РїРѕР»РЅРёС‚Рµ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РїРѕР»СЏ: ${missing.join(', ')}` }
         : { ok: true };
     } catch {
       return { ok: true };
@@ -583,16 +582,16 @@ export default function OrderDetails() {
 
   const formatMoney = useCallback(
     (v, currency = null) => {
-      if (v === null || v === undefined || v === '') return '—';
+      if (v === null || v === undefined || v === '') return 'вЂ”';
       const n = typeof v === 'string' ? parseFloat(v) : Number(v);
-      if (!Number.isFinite(n)) return '—';
+      if (!Number.isFinite(n)) return 'вЂ”';
       const cur = currency || companySettings?.currency || 'RUB';
       try {
         // use centralized util for consistent behavior across app
         const { formatCurrency } = require('../../lib/currency');
-        return formatCurrency(n, cur, 'ru-RU') || '—';
+        return formatCurrency(n, cur, 'ru-RU') || 'вЂ”';
       } catch {
-        return '—';
+        return 'вЂ”';
       }
     },
     [companySettings],
@@ -700,7 +699,7 @@ export default function OrderDetails() {
     }
   }, [order, makeSnapshotFromState, makeSnapshotFromOrder]);
 
-  // ─── Hydrate all form fields from order object (extracted to avoid duplication) ───
+  // в”Ђв”Ђв”Ђ Hydrate all form fields from order object (extracted to avoid duplication) в”Ђв”Ђв”Ђ
   const hydrateFormFields = useCallback((o) => {
     if (!o) return;
     const rawDigits = (
@@ -734,13 +733,13 @@ export default function OrderDetails() {
     }
 
     try {
-      // ── 1. Auth: instant from context (no network) ────────────────
+      // в”Ђв”Ђ 1. Auth: instant from context (no network) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const uid = authUserId;
       const currentRole = authRole;
       setUserId(uid);
       setRole(currentRole);
 
-      // ── 2. Order data: show cache instantly, then refetch ─────────
+      // в”Ђв”Ђ 2. Order data: show cache instantly, then refetch в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const cachedOrderRaw = queryClient.getQueryData(queryKeys.requests.detail(id));
 
       // If we have cached data and screen hasn't shown content yet, render instantly
@@ -773,7 +772,7 @@ export default function OrderDetails() {
         time_window_start: fetchedOrderRaw.time_window_start ?? null,
       };
 
-      // ── 3. Fill missing fields IN PARALLEL (not sequential!) ──────
+      // в”Ђв”Ђ 3. Fill missing fields IN PARALLEL (not sequential!) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const missingFieldsPromises = [];
       if (typeof fetchedOrder.department_id === 'undefined') {
         missingFieldsPromises.push(
@@ -791,29 +790,29 @@ export default function OrderDetails() {
       }
       if (missingFieldsPromises.length) await Promise.all(missingFieldsPromises);
 
-      // ── 4. Auto-status "Новый"→"В работе" ────────────────────────
+      // в”Ђв”Ђ 4. Auto-status "РќРѕРІС‹Р№"в†’"Р’ СЂР°Р±РѕС‚Рµ" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       let effectiveOrder = fetchedOrder;
-      if (uid && fetchedOrder.status === 'Новый' && fetchedOrder.assigned_to === uid) {
+      if (uid && fetchedOrder.status === 'РќРѕРІС‹Р№' && fetchedOrder.assigned_to === uid) {
         try {
-          await updateRequestWithVersion(id, { status: 'В работе' }, fetchedOrder?.updated_at || null);
+          await updateRequestWithVersion(id, { status: 'Р’ СЂР°Р±РѕС‚Рµ' }, fetchedOrder?.updated_at || null);
           queryClient.invalidateQueries({ queryKey: ['requests'] });
           queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
           const refreshed = await ensureRequestPrefetch(queryClient, id);
-          effectiveOrder = refreshed || { ...fetchedOrder, status: 'В работе' };
+          effectiveOrder = refreshed || { ...fetchedOrder, status: 'Р’ СЂР°Р±РѕС‚Рµ' };
         } catch (e) {
           console.warn('Persist status error:', e);
           effectiveOrder = fetchedOrder;
         }
       }
 
-      // ── 5. Resolve media (async, non-blocking for screen) ────────
+      // в”Ђв”Ђ 5. Resolve media (async, non-blocking for screen) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       // Show order + form immediately, resolve media in background
       hydrateFormFields(effectiveOrder);
       setOrder(effectiveOrder);
       setWorkTypeId(effectiveOrder.work_type_id ?? null);
       setOrderReady(true);
 
-      // Media resolution + sync + secondary data — all in parallel, non-blocking
+      // Media resolution + sync + secondary data вЂ” all in parallel, non-blocking
       const media = orderMediaRef.current;
       const bgTasks = [];
 
@@ -824,7 +823,7 @@ export default function OrderDetails() {
         }).catch(() => {})
       );
 
-      // 5b. Storage photo sync — only remove photos missing from storage, never add orphans
+      // 5b. Storage photo sync вЂ” only remove photos missing from storage, never add orphans
       bgTasks.push(
         media.syncPhotos(effectiveOrder.id).then((fresh) => {
           if (!fresh) return;
@@ -895,7 +894,7 @@ export default function OrderDetails() {
         setUseDepartmentsFlag(false);
       }
 
-      // Fire all background tasks in parallel — screen is already visible
+      // Fire all background tasks in parallel вЂ” screen is already visible
       await Promise.allSettled(bgTasks);
 
       initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
@@ -1214,7 +1213,7 @@ export default function OrderDetails() {
         showToast(
           ok === 1
             ? t('order_toast_photo_uploaded')
-            : t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(ok)),
+            : t('order_toast_photos_uploaded', 'Р—Р°РіСЂСѓР¶РµРЅРѕ {count} С„РѕС‚Рѕ').replace('{count}', String(ok)),
         );
       }
     },
@@ -1240,33 +1239,33 @@ export default function OrderDetails() {
   const financeKindLabel = useCallback(
     (kind) =>
       kind === 'income'
-        ? t('finance_kind_income', 'Доход')
+        ? t('finance_kind_income', 'Р”РѕС…РѕРґ')
         : kind === 'discount'
-          ? t('finance_kind_discount', 'Скидка')
-          : t('finance_kind_expense', 'Расход'),
+          ? t('finance_kind_discount', 'РЎРєРёРґРєР°')
+          : t('finance_kind_expense', 'Р Р°СЃС…РѕРґ'),
     [t],
   );
 
   const financeCalcModeLabel = useCallback(
     (mode) =>
       mode === 'percent'
-        ? t('finance_calc_percent', 'Процент')
-        : t('finance_calc_fixed', 'Фиксированная сумма'),
+        ? t('finance_calc_percent', 'РџСЂРѕС†РµРЅС‚')
+        : t('finance_calc_fixed', 'Р¤РёРєСЃРёСЂРѕРІР°РЅРЅР°СЏ СЃСѓРјРјР°'),
     [t],
   );
 
   const financePercentBaseLabel = useCallback(
     (baseValue) => {
       if (baseValue === 'base_price') {
-        return t('finance_percent_base_price', 'От базовой суммы заявки');
+        return t('finance_percent_base_price', 'РћС‚ Р±Р°Р·РѕРІРѕР№ СЃСѓРјРјС‹ Р·Р°СЏРІРєРё');
       }
       if (baseValue === 'gross_before_discount') {
-        return t('finance_percent_gross_before_discount', 'От суммы до скидок');
+        return t('finance_percent_gross_before_discount', 'РћС‚ СЃСѓРјРјС‹ РґРѕ СЃРєРёРґРѕРє');
       }
       if (baseValue === 'net_before_expense') {
-        return t('finance_percent_net_before_expense', 'От прибыли до расходов');
+        return t('finance_percent_net_before_expense', 'РћС‚ РїСЂРёР±С‹Р»Рё РґРѕ СЂР°СЃС…РѕРґРѕРІ');
       }
-      return t('finance_percent_gross_after_discount', 'От суммы после скидок');
+      return t('finance_percent_gross_after_discount', 'РћС‚ СЃСѓРјРјС‹ РїРѕСЃР»Рµ СЃРєРёРґРѕРє');
     },
     [t],
   );
@@ -1282,11 +1281,10 @@ export default function OrderDetails() {
         note: '',
         input_amount: '0',
         input_percent: '0',
-        recipient_user_id: order?.assigned_to || null,
       });
       setFinanceEntryModalVisible(true);
     },
-    [order?.assigned_to],
+    [],
   );
 
   const openEditFinanceEntry = useCallback((entry) => {
@@ -1300,7 +1298,6 @@ export default function OrderDetails() {
       note: String(entry.note || ''),
       input_amount: String(entry.input_amount ?? '0'),
       input_percent: String(entry.input_percent ?? '0'),
-      recipient_user_id: entry.recipient_user_id || null,
     });
     setFinanceEntryModalVisible(true);
   }, []);
@@ -1309,7 +1306,7 @@ export default function OrderDetails() {
     if (!id || !companyId) return;
     const title = String(financeEntryDraft.title || '').trim();
     if (!title) {
-      showWarning(t('finance_rule_name_required', 'Укажите название'));
+      showWarning(t('finance_rule_name_required', 'РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ'));
       return;
     }
 
@@ -1325,7 +1322,7 @@ export default function OrderDetails() {
         note: String(financeEntryDraft.note || '').trim() || null,
         input_amount: parseMoney(financeEntryDraft.input_amount) || 0,
         input_percent: parseMoney(financeEntryDraft.input_percent) || 0,
-        recipient_user_id: financeEntryDraft.recipient_user_id || null,
+        recipient_user_id: null,
       });
       setFinanceEntryModalVisible(false);
       showToast(t('order_toast_saved'));
@@ -1339,7 +1336,7 @@ export default function OrderDetails() {
       if (!entry?.id || entry?.is_system) return;
       try {
         await deleteFinanceEntryMutation.mutateAsync(entry.id);
-        showToast(t('finance_rule_deleted', 'Запись удалена'));
+        showToast(t('finance_rule_deleted', 'Р—Р°РїРёСЃСЊ СѓРґР°Р»РµРЅР°'));
       } catch (error) {
         showWarning(error?.message || t('order_save_error'));
       }
@@ -1491,7 +1488,7 @@ export default function OrderDetails() {
           showToast(
             failedUrls.length === selected.length
               ? t('order_toast_delete_error')
-              : t('order_toast_delete_partial_error', 'Часть фото удалить не удалось'),
+              : t('order_toast_delete_partial_error', 'Р§Р°СЃС‚СЊ С„РѕС‚Рѕ СѓРґР°Р»РёС‚СЊ РЅРµ СѓРґР°Р»РѕСЃСЊ'),
           );
         }
       })();
@@ -1517,7 +1514,7 @@ export default function OrderDetails() {
 
     if (missing.length > 0) {
       showToast(
-        t('order_toast_add_photos', `Добавьте: ${missing.join(', ')}`).replace(
+        t('order_toast_add_photos', `Р”РѕР±Р°РІСЊС‚Рµ: ${missing.join(', ')}`).replace(
           '{items}',
           missing.join(', '),
         ),
@@ -1527,7 +1524,7 @@ export default function OrderDetails() {
 
     let error = null;
     try {
-      await updateRequestWithVersion(order.id, { status: 'Завершённая' }, order?.updated_at || null);
+      await updateRequestWithVersion(order.id, { status: 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ' }, order?.updated_at || null);
     } catch (e) {
       error = e;
     }
@@ -1535,7 +1532,7 @@ export default function OrderDetails() {
     if (error) {
       if (error?.code === 'CONFLICT' && error?.latest) {
         setOrder(error.latest);
-        showToast('Заявка уже обновилась на другом устройстве.');
+        showToast('Р—Р°СЏРІРєР° СѓР¶Рµ РѕР±РЅРѕРІРёР»Р°СЃСЊ РЅР° РґСЂСѓРіРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ.');
         return;
       }
       showToast(t('order_toast_finish_error'));
@@ -1553,7 +1550,7 @@ export default function OrderDetails() {
       if (!order?.id) return;
       const { data, error } = await supabase.rpc('accept_order', { p_order_id: order.id });
       if (error) {
-        showToast('Не удалось принять заявку');
+        showToast('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРЅСЏС‚СЊ Р·Р°СЏРІРєСѓ');
         return;
       }
       const asBool = (v) => v === true || v === 'true' || v === 1 || v === '1' || v === 't';
@@ -1581,7 +1578,7 @@ export default function OrderDetails() {
 
       if (!accepted && latestOrder && !latestOrder.assigned_to && userId) {
         const latestStatus = String(latestOrder.status || '');
-        const isInFeed = latestStatus === t('order_status_in_feed') || latestStatus === 'В ленте';
+        const isInFeed = latestStatus === t('order_status_in_feed') || latestStatus === 'Р’ Р»РµРЅС‚Рµ';
         if (isInFeed) {
           try {
             const fallbackOrder = await updateRequestWithVersion(
@@ -1614,15 +1611,15 @@ export default function OrderDetails() {
         setExecutorName(me ? `${me.first_name || ''} ${me.last_name || ''}`.trim() : null);
         setAssigneeId(userId);
         setToFeed(false);
-        showToast('Заявка принята');
+        showToast('Р—Р°СЏРІРєР° РїСЂРёРЅСЏС‚Р°');
       } else {
         const assignedToOther =
           !!latestOrder?.assigned_to &&
           (!userId || String(latestOrder.assigned_to) !== String(userId));
         if (assignedToOther) {
-          showToast('Упс, заявку уже принял кто-то другой');
+          showToast('РЈРїСЃ, Р·Р°СЏРІРєСѓ СѓР¶Рµ РїСЂРёРЅСЏР» РєС‚Рѕ-С‚Рѕ РґСЂСѓРіРѕР№');
         } else {
-          showToast('Не удалось принять заявку');
+          showToast('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРЅСЏС‚СЊ Р·Р°СЏРІРєСѓ');
         }
       }
     } catch {
@@ -1695,7 +1692,7 @@ export default function OrderDetails() {
           setOrder(error.latest);
           initialFormSnapshotRef.current = makeSnapshotFromOrder(error.latest);
         }
-        showToast('Заявка уже изменена на другом устройстве. Данные обновлены.');
+        showToast('Р—Р°СЏРІРєР° СѓР¶Рµ РёР·РјРµРЅРµРЅР° РЅР° РґСЂСѓРіРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ. Р”Р°РЅРЅС‹Рµ РѕР±РЅРѕРІР»РµРЅС‹.');
         return;
       }
       showToast(error.message || t('order_save_error'));
@@ -1813,11 +1810,11 @@ export default function OrderDetails() {
         .select('id');
 
       if (delErr) {
-        showToast('Ошибка удаления');
+        showToast('РћС€РёР±РєР° СѓРґР°Р»РµРЅРёСЏ');
         return;
       }
       if (!Array.isArray(data) || data.length === 0) {
-        showToast('Удаление запрещено RLS или запись не найдена');
+        showToast('РЈРґР°Р»РµРЅРёРµ Р·Р°РїСЂРµС‰РµРЅРѕ RLS РёР»Рё Р·Р°РїРёСЃСЊ РЅРµ РЅР°Р№РґРµРЅР°');
         return;
       }
 
@@ -1885,7 +1882,7 @@ export default function OrderDetails() {
     } catch {}
   }, []);
 
-  // ─── Photo viewer (uses FullscreenImageViewer) ────────────────────
+  // в”Ђв”Ђв”Ђ Photo viewer (uses FullscreenImageViewer) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   const openViewer = useCallback(
     (photos, index, category, label) => {
       if (!Array.isArray(photos) || !photos.length) return;
@@ -1928,7 +1925,7 @@ export default function OrderDetails() {
       const rawPhotos = [...(viewerRawPhotosRef.current || [])];
       if (!category || !rawPhotos.length) return;
 
-      // Fire-and-forget — runs entirely in background
+      // Fire-and-forget вЂ” runs entirely in background
       (async () => {
         for (const [indexStr, degrees] of Object.entries(rotationsMap)) {
           if (!degrees) continue;
@@ -1947,7 +1944,7 @@ export default function OrderDetails() {
               { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
             );
 
-            // Replace in place — the old URL is swapped for the new one at the same index
+            // Replace in place вЂ” the old URL is swapped for the new one at the same index
             const success = await uploadLocalUri(category, manipulated.uri, { replaceUrl: rawUrl });
             if (success) {
               // Delete old file from storage in background
@@ -1978,28 +1975,28 @@ export default function OrderDetails() {
     (status) => {
       const statusSet = theme?.colors?.status || theme?._raw?.colors?.status;
       switch (status) {
-        case 'В ленте': {
+        case 'Р’ Р»РµРЅС‚Рµ': {
           const c = statusSet?.feed;
           return {
             bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
             fg: c?.fg ?? theme.colors.warning ?? theme.colors.primary,
           };
         }
-        case 'Новый': {
+        case 'РќРѕРІС‹Р№': {
           const c = statusSet?.new;
           return {
             bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
             fg: c?.fg ?? theme.colors.primary,
           };
         }
-        case 'В работе': {
+        case 'Р’ СЂР°Р±РѕС‚Рµ': {
           const c = statusSet?.progress;
           return {
             bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
             fg: c?.fg ?? theme.colors.success ?? theme.colors.primary,
           };
         }
-        case 'Завершённая': {
+        case 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ': {
           const c = statusSet?.done;
           return {
             bg: c?.bg ?? theme.colors.surface,
@@ -2013,12 +2010,12 @@ export default function OrderDetails() {
     [theme],
   );
 
-  // ─── Photo permissions (must be before handlePhotoRowAdd!) ────────
+  // в”Ђв”Ђв”Ђ Photo permissions (must be before handlePhotoRowAdd!) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   const canAddCameraPhotos = has('canAddCameraPhotos');
   const canAddGalleryPhotos = has('canAddGalleryPhotos');
   const canAddAnyPhotos = canAddCameraPhotos || canAddGalleryPhotos;
 
-  // ─── Photo row add handler ────────────────────────────────────────
+  // в”Ђв”Ђв”Ђ Photo row add handler в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
   const handlePhotoRowAdd = useCallback(
     (category) => {
       if (!canAddAnyPhotos) {
@@ -2280,12 +2277,12 @@ export default function OrderDetails() {
     }, [editMode, requestCloseEdit, goBack]),
   );
 
-  // Короткая версия для заголовка native (обязательно строка — чтобы не ломать Screen/header)
+  // РљРѕСЂРѕС‚РєР°СЏ РІРµСЂСЃРёСЏ РґР»СЏ Р·Р°РіРѕР»РѕРІРєР° native (РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ СЃС‚СЂРѕРєР° вЂ” С‡С‚РѕР±С‹ РЅРµ Р»РѕРјР°С‚СЊ Screen/header)
   const fullTitle = order?.title || t('routes.orders/[id]', 'routes.orders/[id]');
   const shortTitle = useMemo(() => {
     if (!fullTitle) return '';
     const max = 36;
-    return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
+    return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}вЂ¦` : fullTitle;
   }, [fullTitle]);
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
   const canViewClients = has('canViewClients');
@@ -2424,7 +2421,7 @@ export default function OrderDetails() {
   const statusMeta = getStatusMeta(order.status);
   const _selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
-  const isInFeedStatus = order.status === 'В ленте' || order.status === t('order_status_in_feed');
+  const isInFeedStatus = order.status === 'Р’ Р»РµРЅС‚Рµ' || order.status === t('order_status_in_feed');
   const canAcceptOrder =
     isInFeedStatus &&
     isFree &&
@@ -2462,7 +2459,7 @@ export default function OrderDetails() {
                     showToast(
                       t(
                         'subscription_edit_unavailable_toast',
-                        'Изменение недоступно. Оплатите подписку',
+                        'РР·РјРµРЅРµРЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ. РћРїР»Р°С‚РёС‚Рµ РїРѕРґРїРёСЃРєСѓ',
                       ),
                     );
                     return;
@@ -2499,7 +2496,7 @@ export default function OrderDetails() {
                   <Text style={{ color: theme.colors.warning, fontWeight: '600' }}>
                     {t(
                       'subscription_read_only_notice',
-                      'Режим чтения: изменение недоступно до продления подписки',
+                      'Р РµР¶РёРј С‡С‚РµРЅРёСЏ: РёР·РјРµРЅРµРЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ РґРѕ РїСЂРѕРґР»РµРЅРёСЏ РїРѕРґРїРёСЃРєРё',
                     )}
                   </Text>
                 </Card>
@@ -2606,7 +2603,7 @@ export default function OrderDetails() {
                         );
                       }
                       const endDate = new Date(order.time_window_end);
-                      return `${format(startDate, 'd MMMM yyyy', { locale: ru })} — ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
+                      return `${format(startDate, 'd MMMM yyyy', { locale: ru })} вЂ” ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
                     })()}
                   </Text>
                 </View>
@@ -2759,35 +2756,35 @@ export default function OrderDetails() {
                   {canViewFinanceEntries ? (
                     <>
                       <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_gross_total', 'Валовая сумма')}</Text>
+                        <Text style={base.label}>{t('order_finance_gross_total', 'Р’Р°Р»РѕРІР°СЏ СЃСѓРјРјР°')}</Text>
                         <View style={base.rightWrap}>
                           <Text style={base.value}>{formatMoney(grossTotal, order?.currency || companySettings?.currency)}</Text>
                         </View>
                       </View>
                       <View style={base.sep} />
                       <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_discount_total', 'Скидки')}</Text>
+                        <Text style={base.label}>{t('order_finance_discount_total', 'РЎРєРёРґРєРё')}</Text>
                         <View style={base.rightWrap}>
                           <Text style={base.value}>{formatMoney(discountTotal, order?.currency || companySettings?.currency)}</Text>
                         </View>
                       </View>
                       <View style={base.sep} />
                       <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_income_total', 'Доп. доходы')}</Text>
+                        <Text style={base.label}>{t('order_finance_income_total', 'Р”РѕРї. РґРѕС…РѕРґС‹')}</Text>
                         <View style={base.rightWrap}>
                           <Text style={base.value}>{formatMoney(incomeTotal, order?.currency || companySettings?.currency)}</Text>
                         </View>
                       </View>
                       <View style={base.sep} />
                       <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_expense_total', 'Расходы')}</Text>
+                        <Text style={base.label}>{t('order_finance_expense_total', 'Р Р°СЃС…РѕРґС‹')}</Text>
                         <View style={base.rightWrap}>
                           <Text style={base.value}>{formatMoney(expenseTotal, order?.currency || companySettings?.currency)}</Text>
                         </View>
                       </View>
                       <View style={base.sep} />
                       <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_net_total', 'Чистая прибыль')}</Text>
+                        <Text style={base.label}>{t('order_finance_net_total', 'Р§РёСЃС‚Р°СЏ РїСЂРёР±С‹Р»СЊ')}</Text>
                         <View style={base.rightWrap}>
                           <Text style={[base.value, { fontWeight: theme.typography?.weight?.semibold || '600' }]}>
                             {formatMoney(netTotal, order?.currency || companySettings?.currency)}
@@ -2799,25 +2796,25 @@ export default function OrderDetails() {
                         <>
                           <View style={base.sep} />
                           <View style={[base.row, { alignItems: 'center' }]}>
-                            <Text style={base.label}>{t('order_finance_entries_title', 'Финансовые статьи')}</Text>
+                            <Text style={base.label}>{t('order_finance_entries_title', 'Р¤РёРЅР°РЅСЃРѕРІС‹Рµ СЃС‚Р°С‚СЊРё')}</Text>
                             <View style={[base.rightWrap, { flexDirection: 'row', gap: theme.spacing?.xs ?? 6 }]}>
                               <Pressable
                                 onPress={() => openCreateFinanceEntry('income')}
                                 style={({ pressed }) => [pressed && { opacity: 0.7 }]}
                               >
-                                <Text style={[base.value, styles.link]}>{t('order_finance_add_income', '+ доход')}</Text>
+                                <Text style={[base.value, styles.link]}>{t('order_finance_add_income', '+ РґРѕС…РѕРґ')}</Text>
                               </Pressable>
                               <Pressable
                                 onPress={() => openCreateFinanceEntry('expense')}
                                 style={({ pressed }) => [pressed && { opacity: 0.7 }]}
                               >
-                                <Text style={[base.value, styles.link]}>{t('order_finance_add_expense', '+ расход')}</Text>
+                                <Text style={[base.value, styles.link]}>{t('order_finance_add_expense', '+ СЂР°СЃС…РѕРґ')}</Text>
                               </Pressable>
                               <Pressable
                                 onPress={() => openCreateFinanceEntry('discount')}
                                 style={({ pressed }) => [pressed && { opacity: 0.7 }]}
                               >
-                                <Text style={[base.value, styles.link]}>{t('order_finance_add_discount', '+ скидка')}</Text>
+                                <Text style={[base.value, styles.link]}>{t('order_finance_add_discount', '+ СЃРєРёРґРєР°')}</Text>
                               </Pressable>
                             </View>
                           </View>
@@ -2834,7 +2831,6 @@ export default function OrderDetails() {
                       ) : null}
 
                       {financeEntries.map((entry) => {
-                        const recipientName = entry?.recipient?.full_name || executorName || '';
                         const amountLabel =
                           entry.calc_mode === 'percent'
                             ? `${Number(entry.input_percent || 0)}% (${financePercentBaseLabel(entry.percent_base)})`
@@ -2854,17 +2850,8 @@ export default function OrderDetails() {
                               <>
                                 <View style={base.sep} />
                                 <LabelValueRow
-                                  label={t('order_finance_note', 'Комментарий')}
+                                  label={t('order_finance_note', 'РљРѕРјРјРµРЅС‚Р°СЂРёР№')}
                                   value={entry.note}
-                                />
-                              </>
-                            ) : null}
-                            {recipientName ? (
-                              <>
-                                <View style={base.sep} />
-                                <LabelValueRow
-                                  label={t('order_finance_recipient', 'Получатель')}
-                                  value={recipientName}
                                 />
                               </>
                             ) : null}
@@ -2893,7 +2880,7 @@ export default function OrderDetails() {
             {!isFree && (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
-                  {t('order_details_photos_section', 'Фото')}
+                  {t('order_details_photos_section', 'Р¤РѕС‚Рѕ')}
                 </SectionHeader>
                 {cloudFallbackActive ? (
                   <Text style={styles.cloudWarningText}>
@@ -2920,7 +2907,7 @@ export default function OrderDetails() {
                           <Text style={base.label}>{row.label}</Text>
                           <View style={base.rightWrap}>
                             <Text style={base.value}>
-                              {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+                              {t('order_photos_count', '{count} С„РѕС‚Рѕ').replace('{count}', String(count))}
                             </Text>
                             <Feather
                               name="chevron-right"
@@ -2969,7 +2956,7 @@ export default function OrderDetails() {
               </Pressable>
             )}
 
-            {order.status !== 'Завершённая' && !isFree && canEdit() && (
+            {order.status !== 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ' && !isFree && canEdit() && (
               <Pressable
                 style={({ pressed }) => [
                   styles.finishButton,
@@ -3241,15 +3228,15 @@ export default function OrderDetails() {
         onModalHide={applyNavBar}
       >
         <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_finance_entry_modal_title', 'Финансовая статья')}</Text>
+          <Text style={styles.modalTitle}>{t('order_finance_entry_modal_title', 'Р¤РёРЅР°РЅСЃРѕРІР°СЏ СЃС‚Р°С‚СЊСЏ')}</Text>
           <TextField
-            label={t('finance_rule_name', 'Название')}
+            label={t('finance_rule_name', 'РќР°Р·РІР°РЅРёРµ')}
             value={financeEntryDraft.title}
             onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, title: value }))}
-            placeholder={t('finance_rule_name', 'Название')}
+            placeholder={t('finance_rule_name', 'РќР°Р·РІР°РЅРёРµ')}
           />
           <TextField
-            label={t('finance_rule_kind', 'Тип')}
+            label={t('finance_rule_kind', 'РўРёРї')}
             value={financeKindLabel(financeEntryDraft.kind)}
             pressable
             onPress={() =>
@@ -3262,7 +3249,7 @@ export default function OrderDetails() {
             }
           />
           <TextField
-            label={t('finance_rule_calc_mode', 'Формат расчёта')}
+            label={t('finance_rule_calc_mode', 'Р¤РѕСЂРјР°С‚ СЂР°СЃС‡С‘С‚Р°')}
             value={financeCalcModeLabel(financeEntryDraft.calc_mode)}
             pressable
             onPress={() =>
@@ -3275,7 +3262,7 @@ export default function OrderDetails() {
           {financeEntryDraft.calc_mode === 'percent' ? (
             <>
               <TextField
-                label={t('finance_rule_percent_value', 'Процент')}
+                label={t('finance_rule_percent_value', 'РџСЂРѕС†РµРЅС‚')}
                 value={String(financeEntryDraft.input_percent || '')}
                 onChangeText={(value) =>
                   setFinanceEntryDraft((prev) => ({ ...prev, input_percent: value }))
@@ -3283,7 +3270,7 @@ export default function OrderDetails() {
                 keyboardType="decimal-pad"
               />
               <TextField
-                label={t('finance_rule_percent_base', 'Основа процента')}
+                label={t('finance_rule_percent_base', 'РћСЃРЅРѕРІР° РїСЂРѕС†РµРЅС‚Р°')}
                 value={financePercentBaseLabel(financeEntryDraft.percent_base)}
                 pressable
                 onPress={() =>
@@ -3303,7 +3290,7 @@ export default function OrderDetails() {
             </>
           ) : (
             <TextField
-              label={t('finance_rule_fixed_amount', 'Сумма')}
+              label={t('finance_rule_fixed_amount', 'РЎСѓРјРјР°')}
               value={String(financeEntryDraft.input_amount || '')}
               onChangeText={(value) =>
                 setFinanceEntryDraft((prev) => ({ ...prev, input_amount: value }))
@@ -3312,25 +3299,7 @@ export default function OrderDetails() {
             />
           )}
           <TextField
-            label={t('finance_rule_recipient_user', 'Сотрудник')}
-            value={
-              financeEntryDraft.recipient_user_id
-                ? users.find((u) => String(u.id) === String(financeEntryDraft.recipient_user_id))
-                    ?.full_name || executorName || ''
-                : t('common_not_selected', 'Не выбрано')
-            }
-            pressable
-            onPress={() =>
-              setFinanceEntryDraft((prev) => {
-                const ids = [null, ...users.map((u) => u.id)];
-                const current = ids.findIndex((idItem) => String(idItem || '') === String(prev.recipient_user_id || ''));
-                const next = current === -1 ? 0 : (current + 1) % ids.length;
-                return { ...prev, recipient_user_id: ids[next] };
-              })
-            }
-          />
-          <TextField
-            label={t('finance_rule_note_template', 'Комментарий')}
+            label={t('finance_rule_note_template', 'РљРѕРјРјРµРЅС‚Р°СЂРёР№')}
             value={financeEntryDraft.note}
             onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, note: value }))}
             multiline
@@ -3424,7 +3393,7 @@ function createStyles(theme) {
     },
     backText: { color: theme.colors.primary, fontSize: typo.sizes?.md || 16 },
 
-    // ЗАМЕНА кнопки на ссылку
+    // Р—РђРњР•РќРђ РєРЅРѕРїРєРё РЅР° СЃСЃС‹Р»РєСѓ
     editLink: {
       paddingHorizontal: sp.md || 12,
       paddingVertical: sp.xs || 6,
@@ -3434,7 +3403,7 @@ function createStyles(theme) {
       fontWeight: typo.weight?.semibold || '600',
     },
 
-    // headerCard больше не используется, можно оставить или удалить по желанию
+    // headerCard Р±РѕР»СЊС€Рµ РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ, РјРѕР¶РЅРѕ РѕСЃС‚Р°РІРёС‚СЊ РёР»Рё СѓРґР°Р»РёС‚СЊ РїРѕ Р¶РµР»Р°РЅРёСЋ
     // headerCard: { ...existing code... },
 
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: sp.sm || 8 },
@@ -3539,3 +3508,5 @@ function createStyles(theme) {
     },
   });
 }
+
+
