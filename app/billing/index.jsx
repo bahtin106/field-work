@@ -78,6 +78,114 @@ function asIntOrNull(value) {
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null;
 }
 
+function diffPreciseDays(targetDate, now = new Date()) {
+  if (!(targetDate instanceof Date) || Number.isNaN(targetDate.getTime())) return 0;
+  return Math.max(0, Math.ceil((targetDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
+}
+
+function normalizeTimeZone(value) {
+  const zone = String(value || '').trim();
+  if (!zone) return 'UTC';
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: zone }).format(new Date());
+    return zone;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function getTimeZoneOffsetMinutes(date, timeZone) {
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return 0;
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const parts = Object.fromEntries(dtf.formatToParts(d).map((part) => [part.type, part.value]));
+    const zonedUtcMs = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      0,
+      0,
+    );
+    return Math.round((zonedUtcMs - d.getTime()) / 60000);
+  } catch {
+    return 0;
+  }
+}
+
+function formatUtcOffset(totalMinutes) {
+  const mins = Number.isFinite(totalMinutes) ? Math.trunc(totalMinutes) : 0;
+  const sign = mins >= 0 ? '+' : '-';
+  const abs = Math.abs(mins);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `UTC${sign}${hh}:${mm}`;
+}
+
+function formatPeriodEndLabel(date, timeZone) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+  const safeZone = normalizeTimeZone(timeZone);
+  const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
+  const datePart = new Intl.DateTimeFormat(locale, {
+    timeZone: safeZone,
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
+  const timePart = new Intl.DateTimeFormat(locale, {
+    timeZone: safeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+  return `${datePart} ${String(locale || '').toLowerCase().startsWith('en') ? 'at' : 'в'} ${timePart} (${formatUtcOffset(getTimeZoneOffsetMinutes(date, safeZone))})`;
+}
+
+function formatRuUnit(value, forms) {
+  const abs = Math.abs(Math.trunc(value));
+  const mod10 = abs % 10;
+  const mod100 = abs % 100;
+  if (mod10 === 1 && mod100 !== 11) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+  return forms[2];
+}
+
+function formatRemainingLabel(targetDate, now = new Date(), locale) {
+  if (!(targetDate instanceof Date) || Number.isNaN(targetDate.getTime())) return '';
+  const diffMs = targetDate.getTime() - now.getTime();
+  if (diffMs <= 0) {
+    return String(locale || '').toLowerCase().startsWith('en') ? 'Expired' : 'Истекла';
+  }
+
+  const totalMinutes = Math.ceil(diffMs / (60 * 1000));
+  const totalHours = Math.ceil(diffMs / (60 * 60 * 1000));
+  const totalDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+  const isEn = String(locale || '').toLowerCase().startsWith('en');
+
+  if (totalMinutes < 60) {
+    if (isEn) return `${totalMinutes} min left`;
+    return `Осталось ${totalMinutes} ${formatRuUnit(totalMinutes, ['минута', 'минуты', 'минут'])}`;
+  }
+
+  if (totalHours < 24) {
+    if (isEn) return `${totalHours} h left`;
+    return `Осталось ${totalHours} ${formatRuUnit(totalHours, ['час', 'часа', 'часов'])}`;
+  }
+
+  if (isEn) return `${totalDays} days left`;
+  return `Осталось ${totalDays} ${formatRuUnit(totalDays, ['день', 'дня', 'дней'])}`;
+}
+
 function formatStorage(valueBytes) {
   const bytes = Number(valueBytes || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
@@ -123,7 +231,7 @@ export default function BillingScreen() {
   const authUserId = profileFallback?.id || null;
   const normalizedCurrentUserId = String(currentUserId || authUserId || '').trim();
   const { data: entitlements, isLoading, error, refresh } = useCompanyEntitlements(companyId);
-  const { useDepartments } = useCompanySettings(companyId || null);
+  const { settings: companySettings, useDepartments } = useCompanySettings(companyId || null);
   const {
     data: storageUsage,
     isLoading: storageLoading,
@@ -710,16 +818,24 @@ export default function BillingScreen() {
     () => (entitlements?.current_period_end ? new Date(entitlements.current_period_end) : null),
     [entitlements?.current_period_end],
   );
-  const periodEndLabel = periodEndDate
-    ? new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC' }).format(periodEndDate)
-    : '';
+  const companyTimeZone = React.useMemo(
+    () => normalizeTimeZone(companySettings?.timezone),
+    [companySettings?.timezone],
+  );
+  const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
+  const periodEndLabel = React.useMemo(
+    () => formatPeriodEndLabel(periodEndDate, companyTimeZone),
+    [companyTimeZone, periodEndDate],
+  );
+  const remainingLabel = React.useMemo(
+    () => formatRemainingLabel(periodEndDate, new Date(), locale),
+    [locale, periodEndDate],
+  );
   const daysLeft = React.useMemo(() => {
-    if (!periodEndDate) return 0;
-    const now = new Date();
-    const ms = periodEndDate.getTime() - now.getTime();
-    if (ms <= 0) return 0;
-    return Math.ceil(ms / (24 * 60 * 60 * 1000));
-  }, [periodEndDate]);
+    const backendDaysLeft = Number(entitlements?.days_left);
+    if (Number.isFinite(backendDaysLeft)) return Math.max(0, Math.floor(backendDaysLeft));
+    return diffPreciseDays(periodEndDate);
+  }, [entitlements?.days_left, periodEndDate]);
   const daysLeftColor = React.useMemo(() => {
     if (!periodEndDate || daysLeft <= 0) return theme.colors.danger;
     if (daysLeft > 14) return theme.colors.success;
@@ -801,8 +917,13 @@ export default function BillingScreen() {
               />
               <View style={base.sep} />
               <LabelValueRow
-                label={t('billing_days_left')}
-                valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: daysLeftColor }]}>{`${daysLeft} ${t('billing_days_left_unit')}`}</Text>}
+                label={t('settings_company_timezone')}
+                value={companyTimeZone}
+              />
+              <View style={base.sep} />
+              <LabelValueRow
+                label={t('billing_remaining_label', 'Осталось')}
+                valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: daysLeftColor }]}>{remainingLabel || `${daysLeft} ${t('billing_days_left_unit')}`}</Text>}
               />
             </Card>
             {isOwner ? (

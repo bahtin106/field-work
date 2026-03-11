@@ -44,6 +44,7 @@ import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
   getEntityFieldMap,
+  getOrderedEntityFields,
 } from '../../../src/features/fieldSettings/catalog';
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 
@@ -71,6 +72,7 @@ import {
   isValidOptionalMobilePhone,
   toE164MobilePhoneOrNull,
 } from '../../../src/shared/validation/phone';
+import { getEmailFieldError, normalizeOptionalEmail } from '../../../src/shared/validation/fields';
 import { parseClientPrefillFromSearch } from '../../../src/features/clients/prefillFromSearch';
 import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matching';
 import { useTheme } from '../../../theme/ThemeProvider';
@@ -180,6 +182,8 @@ export default function EditOrderScreen() {
   const [clientModalSearch, setClientModalSearch] = useState('');
   const [previewClient, setPreviewClient] = useState(null);
   const [previewClientVisible, setPreviewClientVisible] = useState(false);
+  const [previewObject, setPreviewObject] = useState(null);
+  const [previewObjectVisible, setPreviewObjectVisible] = useState(false);
   const [previewAnchor, setPreviewAnchor] = useState({ x: 0, y: 0 });
   const [objectModalVisible, setObjectModalVisible] = useState(false);
   const [departmentId, setDepartmentId] = useState(null);
@@ -192,6 +196,7 @@ export default function EditOrderScreen() {
   const [cancelKey, setCancelKey] = useState(0);
   const [fieldErrors, setFieldErrors] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
+  const [touched, setTouched] = useState({});
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const insets = useSafeAreaInsets();
@@ -219,10 +224,10 @@ export default function EditOrderScreen() {
   const [fuelCost, setFuelCost] = useState('');
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
-    { enabled: !!companyId && hasPermission('canViewClients') },
+    { enabled: !!companyId },
   );
   const { data: selectedClient } = useClient(selectedClientId, {
-    enabled: !!selectedClientId && hasPermission('canViewClients'),
+    enabled: !!selectedClientId,
   });
   const updateClientMutation = useUpdateClientMutation();
   const [showDateModal, setShowDateModal] = useState(false);
@@ -237,6 +242,33 @@ export default function EditOrderScreen() {
   );
   const orderFieldsByKey = useMemo(() => getEntityFieldMap(orderFieldSettings), [orderFieldSettings]);
   const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
+  const orderedGeneralFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(orderFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['title', 'comment', 'assigned_to', 'work_type_id'],
+      }).map((field) => field.fieldKey),
+    [orderFieldSettings],
+  );
+  const orderedCustomerFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(orderFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['client_id', 'object_id', 'phone', 'secondary_phone', 'contact_email'],
+      }).map((field) => field.fieldKey),
+    [orderFieldSettings],
+  );
+  const orderedDepartureFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(orderFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['time_window_start'],
+      }).map((field) => field.fieldKey),
+    [orderFieldSettings],
+  );
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
@@ -270,9 +302,13 @@ export default function EditOrderScreen() {
       return next;
     });
   }, []);
+  const shouldShowError = useCallback(
+    (fieldKey) => submittedAttempt || !!touched[fieldKey],
+    [submittedAttempt, touched],
+  );
   const getFieldError = useCallback(
-    (fieldKey) => (submittedAttempt ? fieldErrors?.[fieldKey]?.message || null : null),
-    [fieldErrors, submittedAttempt],
+    (fieldKey) => (shouldShowError(fieldKey) ? fieldErrors?.[fieldKey]?.message || null : null),
+    [fieldErrors, shouldShowError],
   );
   const selectedEmployeeName = useMemo(() => {
     if (selectedEmployee) return selectedEmployee.display_name || selectedEmployee.email || '';
@@ -281,8 +317,8 @@ export default function EditOrderScreen() {
   const selectedClientName = useMemo(() => {
     if (!selectedClientId) return '';
     const client = clients.find((item) => String(item.id) === String(selectedClientId));
-    return client?.fullName || '';
-  }, [clients, selectedClientId]);
+    return client?.fullName || selectedClient?.fullName || selectedClient?.full_name || customerName || '';
+  }, [clients, customerName, selectedClient, selectedClientId]);
   const { data: clientObjectsByApi = [] } = useClientObjects(selectedClientId, { enabled: !!selectedClientId });
 
   const clientObjects = useMemo(() => {
@@ -295,8 +331,12 @@ export default function EditOrderScreen() {
     [clientObjects, selectedObjectId],
   );
   const selectedObjectSummary = useMemo(() => {
-    return [selectedObject?.name, buildClientObjectAddressSummary(selectedObject)].filter(Boolean).join(' - ');
-  }, [selectedObject]);
+    const liveSummary = [selectedObject?.name, buildClientObjectAddressSummary(selectedObject)]
+      .filter(Boolean)
+      .join(' - ');
+    if (liveSummary) return liveSummary;
+    return String(orderData?.object_name_snapshot || orderData?.object_name || '').trim();
+  }, [orderData?.object_name, orderData?.object_name_snapshot, selectedObject]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -390,8 +430,36 @@ export default function EditOrderScreen() {
       : [],
     [previewClient?.tags],
   );
+  const previewObjectRows = useMemo(() => {
+    if (!previewObject) return [];
+    const fullAddress =
+      buildClientObjectAddressSummary(previewObject) || buildClientObjectShortAddress(previewObject) || '';
+    return [
+      {
+        key: 'client',
+        label: T('routes_clients_client'),
+        value: String(previewObject.clientName || '').trim(),
+      },
+      {
+        key: 'address',
+        label: T('order_details_address'),
+        value: fullAddress || T('order_details_address_not_specified'),
+      },
+      {
+        key: 'entrance_info',
+        label: T('order_field_entrance_info'),
+        value: String(previewObject.entrance_info || '').trim(),
+      },
+      {
+        key: 'parking_notes',
+        label: T('order_field_parking_notes'),
+        value: String(previewObject.parking_notes || '').trim(),
+      },
+    ].filter((row) => String(row?.value || '').trim());
+  }, [previewObject]);
 
   const openPreviewClientCard = useCallback(() => {
+    if (!hasPermission('canViewClients')) return;
     const clientId = String(previewClient?.id || '').trim();
     if (!clientId) return;
     setPreviewClientVisible(false);
@@ -402,7 +470,57 @@ export default function EditOrderScreen() {
         returnTo: `/orders/edit/${String(id || '')}`,
       },
     });
-  }, [id, previewClient?.id, router]);
+  }, [hasPermission, id, previewClient?.id, router]);
+
+  const redirectToNewObjectCreation = useCallback(() => {
+    if (!selectedClientId) return;
+    setAddressModalVisible(false);
+    setObjectModalVisible(false);
+    showToast(
+      T(
+        'order_object_edit_requires_new_object',
+        'У вас нет прав на редактирование выбранного объекта. Создайте новый объект для этой заявки.',
+      ),
+      'warning',
+    );
+    router.push({
+      pathname: `/clients/${String(selectedClientId)}/objects/new`,
+      params: {
+        returnTo: `/orders/edit/${String(id || '')}`,
+      },
+    });
+  }, [id, router, selectedClientId, showToast]);
+
+  const openPreviewObjectCard = useCallback(() => {
+    if (!hasPermission('canViewObjects')) return;
+    const objectId = String(previewObject?.id || '').trim();
+    if (!objectId) return;
+    setPreviewObjectVisible(false);
+    setObjectModalVisible(false);
+    router.push({
+      pathname: `/objects/${objectId}`,
+      params: {
+        returnTo: `/orders/edit/${String(id || '')}`,
+      },
+    });
+  }, [hasPermission, id, previewObject?.id, router]);
+
+  const openObjectPreview = useCallback((item, event) => {
+    if (!hasPermission('canViewObjects')) return;
+    const objectItem = item?.objectRaw || null;
+    if (!objectItem?.id) return;
+    const pageX = Number(event?.nativeEvent?.pageX);
+    const pageY = Number(event?.nativeEvent?.pageY);
+    if (Number.isFinite(pageX) && Number.isFinite(pageY)) {
+      setPreviewAnchor({ x: pageX, y: pageY });
+    }
+    setPreviewObject({
+      ...objectItem,
+      clientName: selectedClientName || '',
+    });
+    setPreviewObjectVisible(true);
+  }, [hasPermission, selectedClientName]);
+
   const objectItems = useMemo(() => {
     if (!clientObjects.length) {
       return [{ id: 'empty', label: T('objects_empty'), disabled: true }];
@@ -413,6 +531,7 @@ export default function EditOrderScreen() {
         ? [objectItem.name, T('objects_primary')].filter(Boolean).join(' - ')
         : objectItem.name,
       subtitle: buildClientObjectShortAddress(objectItem) || undefined,
+      objectRaw: objectItem,
       onPress: () => {
         setSelectedObjectId(objectItem.id);
         const objectAddress = extractOrderAddressFromObject(objectItem);
@@ -1016,7 +1135,7 @@ export default function EditOrderScreen() {
     [formStyles, theme],
   );
 
-  const showToast = (msg, type = 'info', options) => {
+  const showToast = useCallback((msg, type = 'info', options) => {
     const text = String(msg || '');
     try {
       if (type === 'error') {
@@ -1033,7 +1152,7 @@ export default function EditOrderScreen() {
         console.warn('Toast error:', e);
       }
     }
-  };
+  }, [toastError, toastInfo, toastSuccess, toastWarning]);
 
   const performLeave = useCallback(() => {
     allowLeaveRef.current = true;
@@ -1326,8 +1445,13 @@ export default function EditOrderScreen() {
         message: secondaryPhone ? T('order_validation_phone_format') : T('field_settings_required_fill', 'Заполните обязательные поля'),
       };
     }
-    if (isFieldRequired('contact_email') && !String(contactEmail || '').trim()) {
-      nextErrors.contact_email = { message: T('field_settings_required_fill', 'Заполните обязательные поля') };
+    const contactEmailError = getEmailFieldError(contactEmail, {
+      required: isFieldRequired('contact_email'),
+      requiredMessage: T('field_settings_required_fill', 'Заполните обязательные поля'),
+      t: T,
+    });
+    if (contactEmailError) {
+      nextErrors.contact_email = { message: contactEmailError };
     }
     if (Object.keys(nextErrors).length) {
       setFieldErrors(nextErrors);
@@ -1454,7 +1578,7 @@ export default function EditOrderScreen() {
         return;
       }
       const normalizedSecondaryPhone = toE164MobilePhoneOrNull(secondaryPhone);
-      const normalizedContactEmail = String(contactEmail || '').trim().toLowerCase() || null;
+      const normalizedContactEmail = normalizeOptionalEmail(contactEmail);
       if (
         !selectedClientId &&
         (normalizedPhone || normalizedSecondaryPhone || normalizedContactEmail)
@@ -1565,6 +1689,309 @@ export default function EditOrderScreen() {
   };
 
   const isScreenReady = !!orderData && formHydrated;
+  const renderEditGeneralField = useCallback(
+    (fieldKey) => {
+      switch (fieldKey) {
+        case 'title':
+          return (
+            <>
+              <TextField
+                ref={titleRef}
+                label={withRequiredLabel(T('order_field_title'), isFieldRequired('title'))}
+                placeholder={T('order_placeholder_title')}
+                value={title}
+                onChangeText={(value) => {
+                  setTitle(value);
+                  clearFieldError('title');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, title: true }))}
+                style={styles.field}
+                onFocus={() => focusField(titleRef)}
+                error={getFieldError('title') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('title')} />
+            </>
+          );
+        case 'comment':
+          return (
+            <>
+              <TextField
+                ref={descriptionRef}
+                label={withRequiredLabel(T('order_field_description'), isFieldRequired('comment'))}
+                placeholder={T('order_placeholder_description')}
+                value={description}
+                onChangeText={(value) => {
+                  setDescription(value);
+                  clearFieldError('comment');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, comment: true }))}
+                multiline
+                minLines={3}
+                style={styles.field}
+                onFocus={() => focusField(descriptionRef)}
+                error={getFieldError('comment') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('comment')} />
+            </>
+          );
+        case 'assigned_to':
+          return (
+            <>
+              <TextField
+                label={withRequiredLabel(T('order_details_executor'), isFieldRequired('assigned_to') && !toFeed)}
+                value={selectedEmployeeName}
+                placeholder={T('order_details_not_assigned')}
+                pressable
+                style={styles.field}
+                onPress={() => setAssigneePickerVisible(true)}
+                error={getFieldError('assigned_to') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('assigned_to')} />
+            </>
+          );
+        case 'work_type_id':
+          if (!useWorkTypes) return null;
+          return (
+            <>
+              <TextField
+                label={withRequiredLabel(T('order_field_work_type'), isFieldRequired('work_type_id'))}
+                value={selectedWorkTypeName}
+                placeholder={T('order_details_work_type_not_selected')}
+                pressable
+                style={styles.field}
+                onPress={() => setWorkTypeModalVisible(true)}
+                error={getFieldError('work_type_id') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('work_type_id')} />
+            </>
+          );
+        default:
+          return null;
+      }
+    },
+    [
+      clearFieldError,
+      description,
+      focusField,
+      getFieldError,
+      isFieldRequired,
+      selectedEmployeeName,
+      selectedWorkTypeName,
+      setDescription,
+      styles.field,
+      title,
+      toFeed,
+      useWorkTypes,
+      withRequiredLabel,
+    ],
+  );
+
+  const renderEditCustomerField = useCallback(
+    (fieldKey) => {
+      switch (fieldKey) {
+        case 'client_id':
+          return (
+            <>
+              <TextField
+                label={withRequiredLabel(T('routes_clients_client'), isFieldRequired('client_id'))}
+                value={selectedClientName || T('common_select')}
+                pressable
+                style={styles.field}
+                onPress={() => setClientModalVisible(true)}
+                error={getFieldError('client_id') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('client_id')} />
+            </>
+          );
+        case 'object_id':
+          if (!selectedClientId) return null;
+          return (
+            <>
+              <View style={styles.toggleRow}>
+                <Text style={styles.toggleLabel}>{T('order_address_use_custom')}</Text>
+                <Pressable
+                  onPress={() => {
+                    if (
+                      addressMode === ORDER_ADDRESS_MODE.OBJECT &&
+                      selectedObjectId &&
+                      !hasPermission('canEditObjects')
+                    ) {
+                      redirectToNewObjectCreation();
+                      return;
+                    }
+                    setAddressMode((prev) =>
+                      prev === ORDER_ADDRESS_MODE.CUSTOM ? ORDER_ADDRESS_MODE.OBJECT : ORDER_ADDRESS_MODE.CUSTOM,
+                    );
+                  }}
+                  style={[
+                    styles.toggle,
+                    addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleOn : null,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.toggleKnob,
+                      addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleKnobOn : null,
+                    ]}
+                  />
+                </Pressable>
+              </View>
+              {addressMode === ORDER_ADDRESS_MODE.OBJECT ? (
+                <>
+                  <TextField
+                    label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
+                    value={selectedObjectSummary || T('create_order_client_object_placeholder')}
+                    pressable
+                    style={styles.field}
+                    onPress={() => setObjectModalVisible(true)}
+                    error={getFieldError('object_id') ? 'invalid' : undefined}
+                  />
+                  <FieldErrorText message={getFieldError('object_id')} />
+                </>
+              ) : null}
+              {addressMode === ORDER_ADDRESS_MODE.CUSTOM ? (
+                <TextField
+                  label={T('order_details_address')}
+                  value={shortAddressValue}
+                  pressable
+                  style={styles.field}
+                  onPress={() => {
+                    setAddressModalDraft(extractOrderAddress(activeAddressDraft));
+                    setAddressModalVisible(true);
+                  }}
+                />
+              ) : null}
+            </>
+          );
+        case 'phone':
+          return (
+            <>
+              <PhoneInput
+                label={withRequiredLabel(T('fields_phone'), isFieldRequired('phone'))}
+                value={phone}
+                onChangeText={(value) => {
+                  setPhone(value);
+                  clearFieldError('phone');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+                style={styles.field}
+                required={isFieldRequired('phone')}
+                error={getFieldError('phone') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('phone')} />
+            </>
+          );
+        case 'secondary_phone':
+          if (!selectedClientId || orderFieldsByKey.get('secondary_phone')?.isEnabled === false) return null;
+          return (
+            <>
+              <PhoneInput
+                ref={secondaryPhoneRef}
+                label={withRequiredLabel(T('order_field_secondary_phone'), isFieldRequired('secondary_phone'))}
+                value={secondaryPhone}
+                onChangeText={(value) => {
+                  setSecondaryPhone(value);
+                  clearFieldError('secondary_phone');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, secondary_phone: true }))}
+                style={styles.field}
+                required={isFieldRequired('secondary_phone')}
+                error={getFieldError('secondary_phone') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('secondary_phone')} />
+            </>
+          );
+        case 'contact_email':
+          if (!selectedClientId || orderFieldsByKey.get('contact_email')?.isEnabled === false) return null;
+          return (
+            <>
+              <TextField
+                ref={contactEmailRef}
+                label={withRequiredLabel(T('order_field_contact_email'), isFieldRequired('contact_email'))}
+                value={contactEmail}
+                onChangeText={(value) => {
+                  setContactEmail(value);
+                  clearFieldError('contact_email');
+                }}
+                onBlur={() => setTouched((prev) => ({ ...prev, contact_email: true }))}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                style={styles.field}
+                onFocus={() => focusField(contactEmailRef)}
+                error={getFieldError('contact_email') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('contact_email')} />
+            </>
+          );
+        default:
+          return null;
+      }
+    },
+    [
+      activeAddressDraft,
+      addressMode,
+      clearFieldError,
+      contactEmail,
+      focusField,
+      getFieldError,
+      hasPermission,
+      isFieldRequired,
+      orderFieldsByKey,
+      phone,
+      redirectToNewObjectCreation,
+      secondaryPhone,
+      selectedClientId,
+      selectedClientName,
+      selectedObjectId,
+      selectedObjectSummary,
+      shortAddressValue,
+      styles.field,
+      styles.toggle,
+      styles.toggleKnob,
+      styles.toggleKnobOn,
+      styles.toggleLabel,
+      styles.toggleOn,
+      styles.toggleRow,
+      withRequiredLabel,
+    ],
+  );
+
+  const renderEditDepartureField = useCallback(
+    (fieldKey) => {
+      if (fieldKey !== 'time_window_start') return null;
+      return (
+        <>
+          <TextField
+            label={withRequiredLabel(T('order_field_departure_date'), isFieldRequired('time_window_start'))}
+            value={
+              displayDepartureDate
+                ? (() => {
+                    const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
+                    if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
+                    const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
+                    return `${startLabel} вЂ” ${endLabel}`;
+                  })()
+                : T('order_placeholder_departure_date')
+            }
+            pressable
+            style={styles.field}
+            onPress={() => setShowDateModal(true)}
+            error={getFieldError('time_window_start') ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={getFieldError('time_window_start')} />
+        </>
+      );
+    },
+    [
+      displayDepartureDate,
+      displayDepartureEndDate,
+      getFieldError,
+      isDepartureRange,
+      isFieldRequired,
+      styles.field,
+      withRequiredLabel,
+    ],
+  );
 
   if ((orderLoading && !orderData) || (!!orderData && !isScreenReady)) {
     return (
@@ -1662,60 +2089,9 @@ export default function EditOrderScreen() {
       >
       <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
-            {orderFieldsByKey.get('title')?.isEnabled !== false ? (
-            <>
-              <TextField
-                ref={titleRef}
-                label={withRequiredLabel(T('order_field_title'), isFieldRequired('title'))}
-                placeholder={T('order_placeholder_title')}
-                value={title}
-                onChangeText={(value) => {
-                  setTitle(value);
-                  clearFieldError('title');
-                }}
-                style={styles.field}
-                onFocus={() => focusField(titleRef)}
-                error={getFieldError('title') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('title')} />
-            </>
-            ) : null}
-
-            {orderFieldsByKey.get('comment')?.isEnabled !== false ? (
-            <>
-              <TextField
-                ref={descriptionRef}
-                label={withRequiredLabel(T('order_field_description'), isFieldRequired('comment'))}
-                placeholder={T('order_placeholder_description')}
-                value={description}
-                onChangeText={(value) => {
-                  setDescription(value);
-                  clearFieldError('comment');
-                }}
-                multiline
-                minLines={3}
-                style={styles.field}
-                onFocus={() => focusField(descriptionRef)}
-                error={getFieldError('comment') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('comment')} />
-            </>
-            ) : null}
-
-            {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? (
-            <>
-              <TextField
-                label={withRequiredLabel(T('order_details_executor'), isFieldRequired('assigned_to') && !toFeed)}
-                value={selectedEmployeeName}
-                placeholder={T('order_details_not_assigned')}
-                pressable
-                style={styles.field}
-                onPress={() => setAssigneePickerVisible(true)}
-                error={getFieldError('assigned_to') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('assigned_to')} />
-            </>
-            ) : null}
+            {orderedGeneralFieldKeys.map((fieldKey) => (
+              <View key={fieldKey}>{renderEditGeneralField(fieldKey)}</View>
+            ))}
 
             <TextField
               label={T('orders_filter_status')}
@@ -1725,21 +2101,6 @@ export default function EditOrderScreen() {
               style={styles.field}
               onPress={() => setStatusModalVisible(true)}
             />
-
-            {useWorkTypes && orderFieldsByKey.get('work_type_id')?.isEnabled !== false && (
-              <>
-                <TextField
-                  label={withRequiredLabel(T('order_field_work_type'), isFieldRequired('work_type_id'))}
-                  value={selectedWorkTypeName}
-                  placeholder={T('order_details_work_type_not_selected')}
-                  pressable
-                  style={styles.field}
-                  onPress={() => setWorkTypeModalVisible(true)}
-                  error={getFieldError('work_type_id') ? 'invalid' : undefined}
-                />
-                <FieldErrorText message={getFieldError('work_type_id')} />
-              </>
-            )}
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_finances')}</SectionHeader>
@@ -1770,127 +2131,9 @@ export default function EditOrderScreen() {
 
           <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
           <Card padded={false} style={styles.card}>
-            {hasPermission('canViewClients') && orderFieldsByKey.get('client_id')?.isEnabled !== false ? (
-              <>
-                <TextField
-                  label={withRequiredLabel(T('routes_clients_client'), isFieldRequired('client_id'))}
-                  value={selectedClientName || T('common_select')}
-                  pressable
-                  style={styles.field}
-                  onPress={() => setClientModalVisible(true)}
-                  error={getFieldError('client_id') ? 'invalid' : undefined}
-                />
-                <FieldErrorText message={getFieldError('client_id')} />
-              </>
-            ) : null}
-            {selectedClientId && orderFieldsByKey.get('object_id')?.isEnabled !== false ? (
-              <>
-                <View style={styles.toggleRow}>
-                  <Text style={styles.toggleLabel}>{T('order_address_use_custom')}</Text>
-                  <Pressable
-                    onPress={() =>
-                      setAddressMode((prev) =>
-                        prev === ORDER_ADDRESS_MODE.CUSTOM
-                          ? ORDER_ADDRESS_MODE.OBJECT
-                          : ORDER_ADDRESS_MODE.CUSTOM,
-                      )
-                    }
-                    style={[
-                      styles.toggle,
-                      addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleOn : null,
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.toggleKnob,
-                        addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleKnobOn : null,
-                      ]}
-                    />
-                  </Pressable>
-                </View>
-                {addressMode === ORDER_ADDRESS_MODE.OBJECT ? (
-                  <>
-                    <TextField
-                      label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
-                      value={selectedObjectSummary || T('create_order_client_object_placeholder')}
-                      pressable
-                      style={styles.field}
-                      onPress={() => setObjectModalVisible(true)}
-                      error={getFieldError('object_id') ? 'invalid' : undefined}
-                    />
-                    <FieldErrorText message={getFieldError('object_id')} />
-                  </>
-                ) : null}
-                {addressMode === ORDER_ADDRESS_MODE.CUSTOM ? (
-                  <TextField
-                    label={T('order_details_address')}
-                    value={shortAddressValue}
-                    pressable
-                    style={styles.field}
-                    onPress={() => {
-                      setAddressModalDraft(extractOrderAddress(activeAddressDraft));
-                      setAddressModalVisible(true);
-                    }}
-                  />
-                ) : null}
-              </>
-            ) : null}
-            {orderFieldsByKey.get('phone')?.isEnabled !== false ? (
-              <>
-                <PhoneInput
-                  label={withRequiredLabel(T('fields_phone'), isFieldRequired('phone'))}
-                  value={phone}
-                  onChangeText={(value) => {
-                    setPhone(value);
-                    clearFieldError('phone');
-                  }}
-                  style={styles.field}
-                  required={isFieldRequired('phone')}
-                  error={getFieldError('phone') ? 'invalid' : undefined}
-                />
-                <FieldErrorText message={getFieldError('phone')} />
-              </>
-            ) : null}
-            {selectedClientId && (orderFieldsByKey.get('secondary_phone')?.isEnabled !== false || orderFieldsByKey.get('contact_email')?.isEnabled !== false) ? (
-              <>
-                {orderFieldsByKey.get('secondary_phone')?.isEnabled !== false ? (
-                <>
-                  <PhoneInput
-                    ref={secondaryPhoneRef}
-                    label={withRequiredLabel(T('order_field_secondary_phone'), isFieldRequired('secondary_phone'))}
-                    value={secondaryPhone}
-                    onChangeText={(value) => {
-                      setSecondaryPhone(value);
-                      clearFieldError('secondary_phone');
-                    }}
-                    style={styles.field}
-                    required={isFieldRequired('secondary_phone')}
-                    error={getFieldError('secondary_phone') ? 'invalid' : undefined}
-                  />
-                  <FieldErrorText message={getFieldError('secondary_phone')} />
-                </>
-                ) : null}
-                {orderFieldsByKey.get('contact_email')?.isEnabled !== false ? (
-                <>
-                  <TextField
-                    ref={contactEmailRef}
-                    label={withRequiredLabel(T('order_field_contact_email'), isFieldRequired('contact_email'))}
-                    value={contactEmail}
-                    onChangeText={(value) => {
-                      setContactEmail(value);
-                      clearFieldError('contact_email');
-                    }}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    style={styles.field}
-                    onFocus={() => focusField(contactEmailRef)}
-                    error={getFieldError('contact_email') ? 'invalid' : undefined}
-                  />
-                  <FieldErrorText message={getFieldError('contact_email')} />
-                </>
-                ) : null}
-              </>
-            ) : null}
+            {orderedCustomerFieldKeys.map((fieldKey) => (
+              <View key={fieldKey}>{renderEditCustomerField(fieldKey)}</View>
+            ))}
           </Card>
 
           <SectionHeader bottomSpacing="xs">
@@ -1898,26 +2141,9 @@ export default function EditOrderScreen() {
           </SectionHeader>
           {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? (
           <Card padded={false} style={styles.card}>
-            <>
-              <TextField
-                label={withRequiredLabel(T('order_field_departure_date'), isFieldRequired('time_window_start'))}
-                value={
-                  displayDepartureDate
-                    ? (() => {
-                        const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
-                        if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
-                        const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
-                        return `${startLabel} вЂ” ${endLabel}`;
-                      })()
-                    : T('order_placeholder_departure_date')
-                }
-                pressable
-                style={styles.field}
-                onPress={() => setShowDateModal(true)}
-                error={getFieldError('time_window_start') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('time_window_start')} />
-            </>
+            {orderedDepartureFieldKeys.map((fieldKey) => (
+              <View key={fieldKey}>{renderEditDepartureField(fieldKey)}</View>
+            ))}
 
             {useDepartureTime && !isDepartureRange && (
               <>
@@ -2080,8 +2306,18 @@ export default function EditOrderScreen() {
         rows={previewClientRows}
         tags={previewClientTags}
         tagsTitle={T('tags_field_label')}
-        footerActionLabel={T('common_view')}
-        onFooterAction={openPreviewClientCard}
+        footerActionLabel={hasPermission('canViewClients') ? T('common_view') : undefined}
+        onFooterAction={hasPermission('canViewClients') ? openPreviewClientCard : undefined}
+      />
+
+      <QuickPreviewModal
+        visible={previewObjectVisible}
+        onClose={() => setPreviewObjectVisible(false)}
+        title={String(previewObject?.name || '').trim() || T('objects_new')}
+        anchor={previewAnchor}
+        rows={previewObjectRows}
+        footerActionLabel={hasPermission('canViewObjects') ? T('common_view') : undefined}
+        onFooterAction={hasPermission('canViewObjects') ? openPreviewObjectCard : undefined}
       />
 
       <SelectModal
@@ -2090,6 +2326,7 @@ export default function EditOrderScreen() {
         items={objectItems}
         searchable={false}
         selectedId={selectedObjectId}
+        onItemLongPress={openObjectPreview}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setObjectModalVisible(false)}
       />

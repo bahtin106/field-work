@@ -1,4 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import {
+  createBegetPresignedPutUrl,
+  buildBegetPublicUrl,
+  deleteBegetKeys,
+  headBegetObject,
+  listBegetKeys,
+  putBegetObject,
+} from '../_shared/beget-s3.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -44,18 +52,21 @@ const ENTITY_META = {
     column: 'avatar_url',
     yandexDir: 'Сотрудники',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/${entityId}`,
+    begetDir: 'Сотрудники',
   },
   client: {
     table: 'clients',
     column: 'avatar_url',
     yandexDir: 'Клиенты',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/clients/${entityId}`,
+    begetDir: 'Клиенты',
   },
   object: {
     table: 'client_objects',
     column: 'photo_url',
     yandexDir: 'Объекты',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/objects/${entityId}`,
+    begetDir: 'Объекты',
   },
 } as const;
 
@@ -144,6 +155,12 @@ function isLikelyPublicYandexUrl(url: string) {
   return raw.startsWith('https://yadi.sk/') || raw.includes('disk.yandex');
 }
 
+function isSupabaseAvatarStorageUrl(url: string | null | undefined) {
+  const raw = String(url || '').trim().toLowerCase();
+  if (!raw) return false;
+  return raw.includes('/storage/v1/object/public/avatars/');
+}
+
 async function resolvePublicYandexDownloadUrl(publicUrl: string) {
   const res = await fetch(
     `https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${encodeURIComponent(publicUrl)}`,
@@ -221,15 +238,6 @@ function resolvePublicBaseUrl(req: Request, fallbackUrl: string) {
     if (origin && !origin.includes('kong:8000')) return origin.replace(/\/+$/, '');
   } catch {}
   return String(fallbackUrl || '').trim().replace(/\/+$/, '');
-}
-
-function buildPublicStorageUrl(publicBaseUrl: string, bucket: string, path: string) {
-  const safeBucket = encodeURIComponent(String(bucket || '').trim());
-  const safePath = String(path || '')
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-  return `${publicBaseUrl.replace(/\/+$/, '')}/storage/v1/object/public/${safeBucket}/${safePath}`;
 }
 
 async function verifyRenderRequest(url: URL) {
@@ -322,6 +330,26 @@ async function removeStoragePrefixFiles({
   }
 
   return { removed };
+}
+
+async function removeBegetPrefixFiles({
+  prefix,
+  keepPaths = [],
+}: {
+  prefix: string;
+  keepPaths?: string[];
+}) {
+  const keep = new Set((keepPaths || []).map(normalizePath).filter(Boolean));
+  const safePrefix = normalizePath(prefix).replace(/\/+$/, '');
+  if (!safePrefix) return { removed: 0 };
+
+  const keys = await listBegetKeys(safePrefix);
+  const batch = keys
+    .map((key) => normalizePath(key))
+    .filter((key) => key && !keep.has(key));
+
+  await deleteBegetKeys(batch);
+  return { removed: batch.length };
 }
 
 async function createYandexFolder(accessToken: string, path: string) {
@@ -573,6 +601,19 @@ function buildYandexFolderPath(
   return `${root}/${companyDir}/${PROFILE_MEDIA_ROOT_DIR}/${entityDir}/${entityLabel}`;
 }
 
+function buildBegetStoragePrefix(
+  companyName: string,
+  entityType: EntityType,
+  entityLabel: string,
+  entityId: string,
+) {
+  const companyDir = sanitizePathSegment(companyName || 'Компания', 'Компания');
+  const entityDir = ENTITY_META[entityType].begetDir;
+  const shortId = String(entityId || '').trim().slice(0, 8) || 'item';
+  const label = sanitizePathSegment(entityLabel || `${entityDir}_${shortId}`, `${entityDir}_${shortId}`);
+  return `Компании/${companyDir}/Профили/${entityDir}/${label}_${shortId}`;
+}
+
 async function getEntityContext(
   admin: ReturnType<typeof createClient>,
   companyId: string,
@@ -611,15 +652,22 @@ async function getEntityContext(
     entity: data as Record<string, unknown>,
     currentUrl,
     companyName: String(company.name || '').trim() || 'Компания',
-    provider: String(company.profile_media_provider || 'app_storage'),
+    provider: String(company.profile_media_provider || 'beget_s3'),
     table: meta.table,
     column: meta.column,
     storagePrefix: meta.storagePrefix(entityId),
+    begetStoragePrefix: buildBegetStoragePrefix(
+      String(company.name || '').trim() || 'Компания',
+      entityType,
+      entityLabel,
+      entityId,
+    ),
     entityLabel,
   };
 }
 
 function assertWriteAccess(caller: { userId: string; role: string }, entityType: EntityType, entityId: string) {
+  if (caller.role === 'superadmin') return;
   if (entityType === 'employee') {
     if (caller.role === 'admin' || caller.userId === entityId) return;
     throw new Error('Forbidden');
@@ -665,11 +713,19 @@ async function updateEntityUrl(
   nextUrl: string | null,
 ) {
   const meta = ENTITY_META[entityType];
-  const { error } = await admin
+  const { data, error } = await admin
     .from(meta.table)
     .update({ [meta.column]: nextUrl })
-    .eq('id', entityId);
+    .eq('id', entityId)
+    .select(`id, ${meta.column}`)
+    .maybeSingle();
   if (error) throw error;
+  if (!data?.id) throw new Error(`Failed to persist ${meta.column}`);
+
+  const persistedUrl = String((data as Record<string, unknown>)[meta.column] || '').trim() || null;
+  if ((nextUrl || null) !== persistedUrl) {
+    throw new Error(`Failed to persist ${meta.column}`);
+  }
 }
 
 async function clearYandexMapById(admin: ReturnType<typeof createClient>, mapId: number | null | undefined) {
@@ -686,8 +742,10 @@ async function cleanupExistingMedia({
   storagePrefix,
   existingMap,
   keepLocalPath,
-  keepYandexDbUrl,
+  keepBegetPath,
   accessToken,
+  cleanupLocal = true,
+  cleanupBegetPrefix = false,
 }: {
   admin: ReturnType<typeof createClient>;
   companyId: string;
@@ -696,55 +754,197 @@ async function cleanupExistingMedia({
   storagePrefix: string;
   existingMap: { id: number; provider: string; db_url: string; external_path: string } | null;
   keepLocalPath?: string | null;
-  keepYandexDbUrl?: string | null;
+  keepBegetPath?: string | null;
   accessToken?: string | null;
+  cleanupLocal?: boolean;
+  cleanupBegetPrefix?: boolean;
 }) {
-  await removeStoragePrefixFiles({
-    admin,
-    bucket: AVATARS_BUCKET,
-    prefix: storagePrefix,
-    keepPaths: keepLocalPath ? [keepLocalPath] : [],
-  });
-
-  if (existingMap?.provider === 'yandex_disk') {
-    const shouldKeepYandex = keepYandexDbUrl && existingMap.db_url === keepYandexDbUrl;
-    if (!shouldKeepYandex) {
-      if (accessToken) {
-        await deleteYandexResourceSafe(accessToken, String(existingMap.external_path || ''));
-        const entityFolder = parentPath(String(existingMap.external_path || ''));
-        if (entityFolder) {
-          await deleteYandexResourceSafe(accessToken, entityFolder);
-        }
-      }
-      await clearYandexMapById(admin, existingMap.id);
-    }
-  } else if (existingMap?.id != null) {
+  if (cleanupLocal) {
+    await removeStoragePrefixFiles({
+      admin,
+      bucket: AVATARS_BUCKET,
+      prefix: storagePrefix,
+      keepPaths: keepLocalPath ? [keepLocalPath] : [],
+    });
+  }
+  if (cleanupBegetPrefix) {
+    // External provider cleanup is processed asynchronously from media_cleanup_queue.
+  }
+  if (existingMap?.id != null) {
     await clearYandexMapById(admin, existingMap.id);
   }
 }
 
-async function uploadToAppStorage(
-  admin: ReturnType<typeof createClient>,
-  publicBaseUrl: string,
-  entityType: EntityType,
-  entityId: string,
+async function uploadToBegetStorage(
+  storagePrefix: string,
   bytes: Uint8Array,
   mime: string,
 ) {
-  const storagePrefix = ENTITY_META[entityType].storagePrefix(entityId);
   const ext = getFileExtensionByMime(mime);
-  const path = `${storagePrefix}/profile_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  const path = `${storagePrefix}/аватар_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 
-  const { error: uploadError } = await admin.storage.from(AVATARS_BUCKET).upload(path, bytes, {
+  await putBegetObject({
+    key: path,
+    body: bytes,
     contentType: mime || 'image/jpeg',
-    upsert: false,
   });
-  if (uploadError) throw uploadError;
 
-  const publicUrl = buildPublicStorageUrl(publicBaseUrl, AVATARS_BUCKET, path);
+  const publicUrl = buildBegetPublicUrl(path);
   if (!publicUrl) throw new Error('Cannot build public url');
 
   return { publicUrl, path };
+}
+
+async function prepareBegetDirectUpload(
+  storagePrefix: string,
+  mime: string,
+) {
+  const ext = getFileExtensionByMime(mime);
+  const path = `${storagePrefix}/аватар_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  const publicUrl = buildBegetPublicUrl(path);
+  const signed = await createBegetPresignedPutUrl({
+    key: path,
+    contentType: mime || 'image/jpeg',
+    expiresInSec: 900,
+  });
+
+  return {
+    path,
+    publicUrl,
+    uploadUrl: signed.url,
+    uploadMethod: signed.method,
+    uploadHeaders: signed.headers,
+  };
+}
+
+async function commitBegetDirectUpload(args: {
+  admin: ReturnType<typeof createClient>;
+  companyId: string;
+  callerUserId: string;
+  entityType: EntityType;
+  entityId: string;
+  currentUrl: string | null;
+  existingMap: { id: number; provider: string; db_url: string; external_path: string } | null;
+  storagePrefix: string;
+  objectKey: string;
+  publicUrl: string;
+}) {
+  await headBegetObject(args.objectKey);
+  const accessToken =
+    args.existingMap?.provider === 'yandex_disk'
+      ? (await getValidAccessToken(args.admin, args.companyId)).accessToken
+      : null;
+  await cleanupExistingMedia({
+    admin: args.admin,
+    companyId: args.companyId,
+    entityType: args.entityType,
+    entityId: args.entityId,
+    storagePrefix: args.storagePrefix,
+    existingMap: args.existingMap,
+    keepBegetPath: args.objectKey,
+    accessToken,
+    cleanupLocal: isSupabaseAvatarStorageUrl(args.currentUrl),
+    cleanupBegetPrefix: false,
+  });
+  await updateEntityUrl(args.admin, args.entityType, args.entityId, args.publicUrl);
+  const { error: mapErr } = await args.admin.from('profile_media_external_map').upsert(
+    {
+      company_id: args.companyId,
+      entity_type: args.entityType,
+      entity_id: args.entityId,
+      provider: 'beget_s3',
+      db_url: args.publicUrl,
+      external_path: args.objectKey,
+      created_by: args.callerUserId,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'entity_type,entity_id' },
+  );
+  if (mapErr) throw mapErr;
+
+}
+
+async function prepareYandexDirectUpload(args: {
+  accessToken: string;
+  folderPath: string;
+  companyName: string;
+  entityType: EntityType;
+  entityLabel: string;
+  mime: string;
+}) {
+  const folder = buildYandexFolderPath(
+    args.folderPath,
+    args.companyName,
+    args.entityType,
+    args.entityLabel,
+  );
+  await ensureFolderTree(args.accessToken, folder);
+
+  const ext = getFileExtensionByMime(args.mime);
+  const filePath = `${folder}/profile_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  const linkRes = await fetch(
+    `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
+    { headers: { Authorization: `OAuth ${args.accessToken}` } },
+  );
+  if (!linkRes.ok) {
+    const text = await linkRes.text();
+    const mapped = mapYandexApiError(linkRes.status, text);
+    throw new Error(mapped || `Upload link failed: ${text}`);
+  }
+  const linkData = (await linkRes.json()) as { href?: string };
+  if (!linkData?.href) throw new Error('Upload href missing');
+
+  return {
+    filePath,
+    uploadUrl: String(linkData.href),
+    uploadMethod: 'PUT',
+    uploadHeaders: { 'Content-Type': args.mime || 'application/octet-stream' },
+  };
+}
+
+async function commitYandexDirectUpload(args: {
+  admin: ReturnType<typeof createClient>;
+  companyId: string;
+  callerUserId: string;
+  entityType: EntityType;
+  entityId: string;
+  existingMap: { id: number; provider: string; db_url: string; external_path: string } | null;
+  storagePrefix: string;
+  accessToken: string;
+  filePath: string;
+}) {
+  const publicUrl = await publishAndGetPublicUrl(args.accessToken, args.filePath);
+  try {
+    await cleanupExistingMedia({
+      admin: args.admin,
+      companyId: args.companyId,
+      entityType: args.entityType,
+      entityId: args.entityId,
+      storagePrefix: args.storagePrefix,
+      existingMap: args.existingMap,
+      accessToken: args.accessToken,
+    });
+    await updateEntityUrl(args.admin, args.entityType, args.entityId, publicUrl);
+    const { error: mapErr } = await args.admin.from('profile_media_external_map').upsert(
+      {
+        company_id: args.companyId,
+        entity_type: args.entityType,
+        entity_id: args.entityId,
+        provider: 'yandex_disk',
+        db_url: publicUrl,
+        external_path: args.filePath,
+        created_by: args.callerUserId,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'entity_type,entity_id' },
+    );
+    if (mapErr) throw mapErr;
+  } catch (error) {
+    await deleteYandexResourceSafe(args.accessToken, args.filePath).catch(() => null);
+    throw error;
+  }
+
+  return publicUrl;
 }
 
 export async function cleanupProfileMediaEntity(
@@ -758,24 +958,18 @@ export async function cleanupProfileMediaEntity(
   const { companyId, entityType, entityId } = args;
   const ctx = await getEntityContext(admin, companyId, entityType, entityId);
   const existingMap = await getExistingExternalMap(admin, companyId, entityType, entityId);
-  const { accessToken } = await getValidAccessToken(admin, companyId);
-
-  if (existingMap?.provider === 'yandex_disk' && !accessToken) {
-    throw new Error('Yandex Disk not connected');
-  }
-
-  await cleanupExistingMedia({
-    admin,
-    companyId,
-    entityType,
-    entityId,
-    storagePrefix: ctx.storagePrefix,
-    existingMap,
-    accessToken,
-  });
-
   if (ctx.currentUrl) {
     await updateEntityUrl(admin, entityType, entityId, null);
+  }
+  if (isSupabaseAvatarStorageUrl(ctx.currentUrl)) {
+    await removeStoragePrefixFiles({
+      admin,
+      bucket: AVATARS_BUCKET,
+      prefix: ctx.storagePrefix,
+    }).catch(() => null);
+  }
+  if (existingMap?.id != null) {
+    await clearYandexMapById(admin, existingMap.id);
   }
 
   return { success: true };
@@ -783,7 +977,6 @@ export async function cleanupProfileMediaEntity(
 
 export async function handleProfileMediaStorageRequest(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
     const publicBaseUrl = resolvePublicBaseUrl(req, supabaseUrl);
@@ -852,6 +1045,9 @@ export async function handleProfileMediaStorageRequest(req: Request) {
       file_base64?: string;
       mime?: string;
       urls?: string[];
+      object_key?: string;
+      public_url?: string;
+      external_path?: string;
     };
 
     const action = String(body.action || '').trim();
@@ -867,7 +1063,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
       const { data: rows, error } = await admin
         .from('profile_media_external_map')
-        .select('id, entity_type, entity_id, db_url, external_path')
+        .select('id, entity_type, entity_id, provider, db_url, external_path')
         .eq('company_id', caller.companyId)
         .in('db_url', urls);
       if (error) throw error;
@@ -877,7 +1073,14 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         mapByUrl.set(String(row.db_url || ''), row);
       }
 
-      const { accessToken } = await getValidAccessToken(admin, caller.companyId);
+      const needsYandexAccess = urls.some((url) => {
+        const row = mapByUrl.get(url);
+        if (row) return String(row.provider || '').trim() === 'yandex_disk';
+        return isLikelyPublicYandexUrl(url);
+      });
+      const accessToken = needsYandexAccess
+        ? (await getValidAccessToken(admin, caller.companyId)).accessToken
+        : null;
       const cleaned: string[] = [];
       const resolvedUrls: Record<string, string> = {};
 
@@ -898,6 +1101,12 @@ export async function handleProfileMediaStorageRequest(req: Request) {
           } catch {}
           continue;
         }
+
+        if (String(row.provider || '').trim() === 'beget_s3') {
+          resolvedUrls[url] = url;
+          continue;
+        }
+
         if (!accessToken) continue;
 
         const pathState = await inspectYandexPathStatus(accessToken, String(row.external_path || ''));
@@ -930,6 +1139,96 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
     assertWriteAccess(caller, entityType, entityId);
 
+    const ctx = await getEntityContext(admin, caller.companyId, entityType, entityId);
+    const existingMap = await getExistingExternalMap(admin, caller.companyId, entityType, entityId);
+
+    if (action === 'prepare_upload') {
+      const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
+
+      if (ctx.provider === 'yandex_disk') {
+        const connState = await getValidAccessToken(admin, caller.companyId);
+        const accessToken = connState.accessToken;
+        if (!accessToken) {
+          return json(400, { success: false, message: 'Yandex Disk not connected' });
+        }
+        const prepared = await prepareYandexDirectUpload({
+          accessToken,
+          folderPath: connState.folderPath,
+          companyName: ctx.companyName,
+          entityType,
+          entityLabel: ctx.entityLabel,
+          mime,
+        });
+        return json(200, {
+          success: true,
+          provider: 'yandex_disk',
+          upload_url: prepared.uploadUrl,
+          upload_method: prepared.uploadMethod,
+          upload_headers: prepared.uploadHeaders as unknown as Json,
+          external_path: prepared.filePath,
+        });
+      }
+
+      const prepared = await prepareBegetDirectUpload(ctx.begetStoragePrefix, mime);
+      return json(200, {
+        success: true,
+        provider: 'beget_s3',
+        upload_url: prepared.uploadUrl,
+        upload_method: prepared.uploadMethod,
+        upload_headers: prepared.uploadHeaders as unknown as Json,
+        object_key: prepared.path,
+        public_url: prepared.publicUrl,
+      });
+    }
+
+    if (action === 'commit_upload') {
+      const filePath = String(body.external_path || '').trim();
+      if (filePath) {
+        const accessToken = (await getValidAccessToken(admin, caller.companyId)).accessToken;
+        if (!accessToken) {
+          return json(400, { success: false, message: 'Yandex Disk not connected' });
+        }
+        const publicUrl = await commitYandexDirectUpload({
+          admin,
+          companyId: caller.companyId,
+          callerUserId: caller.userId,
+          entityType,
+          entityId,
+          existingMap,
+          storagePrefix: ctx.storagePrefix,
+          accessToken,
+          filePath,
+        });
+        return json(200, {
+          success: true,
+          provider: 'yandex_disk',
+          url: publicUrl,
+          internal_url: internalUrlFromPath(filePath),
+        });
+      }
+
+      const objectKey = String(body.object_key || '').trim();
+      const publicUrl = String(body.public_url || '').trim() || buildBegetPublicUrl(objectKey);
+      if (!objectKey) return json(400, { success: false, message: 'object_key is required' });
+      await commitBegetDirectUpload({
+        admin,
+        companyId: caller.companyId,
+        callerUserId: caller.userId,
+        entityType,
+        entityId,
+        currentUrl: ctx.currentUrl,
+        existingMap,
+        storagePrefix: ctx.storagePrefix,
+        objectKey,
+        publicUrl,
+      });
+      return json(200, {
+        success: true,
+        provider: 'beget_s3',
+        url: publicUrl,
+      });
+    }
+
     if (action === 'delete' || action === 'cleanup_entity') {
       await cleanupProfileMediaEntity(admin, {
         companyId: caller.companyId,
@@ -949,9 +1248,6 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
     const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-
-    const ctx = await getEntityContext(admin, caller.companyId, entityType, entityId);
-    const existingMap = await getExistingExternalMap(admin, caller.companyId, entityType, entityId);
 
     if (ctx.provider === 'yandex_disk') {
       const connState = await getValidAccessToken(admin, caller.companyId);
@@ -974,6 +1270,15 @@ export async function handleProfileMediaStorageRequest(req: Request) {
       const publicUrl = await publishAndGetPublicUrl(accessToken, filePath);
 
       try {
+        await cleanupExistingMedia({
+          admin,
+          companyId: caller.companyId,
+          entityType,
+          entityId,
+          storagePrefix: ctx.storagePrefix,
+          existingMap,
+          accessToken,
+        });
         await updateEntityUrl(admin, entityType, entityId, publicUrl);
         const { error: mapErr } = await admin.from('profile_media_external_map').upsert(
           {
@@ -994,17 +1299,6 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         throw error;
       }
 
-      await cleanupExistingMedia({
-        admin,
-        companyId: caller.companyId,
-        entityType,
-        entityId,
-        storagePrefix: ctx.storagePrefix,
-        existingMap,
-        keepYandexDbUrl: publicUrl,
-        accessToken,
-      });
-
       return json(200, {
         success: true,
         url: publicUrl,
@@ -1013,30 +1307,48 @@ export async function handleProfileMediaStorageRequest(req: Request) {
       });
     }
 
-    const uploadResult = await uploadToAppStorage(admin, publicBaseUrl, entityType, entityId, bytes, mime);
+    const uploadResult = await uploadToBegetStorage(ctx.begetStoragePrefix, bytes, mime);
     try {
+      const accessToken =
+        existingMap?.provider === 'yandex_disk'
+          ? (await getValidAccessToken(admin, caller.companyId)).accessToken
+          : null;
+      await cleanupExistingMedia({
+        admin,
+        companyId: caller.companyId,
+        entityType,
+        entityId,
+        storagePrefix: ctx.storagePrefix,
+        existingMap,
+        keepBegetPath: uploadResult.path,
+        accessToken,
+        cleanupLocal: isSupabaseAvatarStorageUrl(ctx.currentUrl),
+      });
       await updateEntityUrl(admin, entityType, entityId, uploadResult.publicUrl);
+      const { error: mapErr } = await admin.from('profile_media_external_map').upsert(
+        {
+          company_id: caller.companyId,
+          entity_type: entityType,
+          entity_id: entityId,
+          provider: 'beget_s3',
+          db_url: uploadResult.publicUrl,
+          external_path: uploadResult.path,
+          created_by: caller.userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'entity_type,entity_id' },
+      );
+      if (mapErr) throw mapErr;
+
     } catch (error) {
-      await admin.storage.from(AVATARS_BUCKET).remove([uploadResult.path]).catch(() => null);
+      await deleteBegetKeys([uploadResult.path]).catch(() => null);
       throw error;
     }
-
-    const { accessToken } = await getValidAccessToken(admin, caller.companyId);
-    await cleanupExistingMedia({
-      admin,
-      companyId: caller.companyId,
-      entityType,
-      entityId,
-      storagePrefix: ctx.storagePrefix,
-      existingMap,
-      keepLocalPath: uploadResult.path,
-      accessToken,
-    });
 
     return json(200, {
       success: true,
       url: uploadResult.publicUrl,
-      provider: 'app_storage',
+      provider: 'beget_s3',
     });
   } catch (error) {
     const message = toErrorMessage(error);

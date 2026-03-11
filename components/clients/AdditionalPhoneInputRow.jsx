@@ -14,6 +14,9 @@ export default function AdditionalPhoneInputRow({
   designationValue,
   onDesignationChange,
   onRemove,
+  phoneError,
+  phoneRequired = false,
+  onPhoneBlur,
   style,
 }) {
   const { theme } = useTheme();
@@ -143,6 +146,9 @@ export default function AdditionalPhoneInputRow({
         label=""
         value={phoneValue}
         onChangeText={onPhoneChange}
+        onBlur={onPhoneBlur}
+        required={phoneRequired}
+        error={phoneError ? 'invalid' : undefined}
         style={styles.phoneField}
       />
     </View>

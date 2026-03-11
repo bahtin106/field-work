@@ -6,6 +6,7 @@ import { formatCurrency } from '../lib/currency';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../providers/SettingsProvider';
+import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
 
 /* ===== Color helpers ===== */
@@ -29,10 +30,10 @@ function withAlpha(color, a) {
 /* ===== Name cache for executor (avoid N requests in lists) ===== */
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 
-const RUS_LABELS = {
-  customer_name: 'Заказчик',
-  address: 'Адрес',
-  time_window_start: 'Дата выезда',
+const PRIMARY_ROW_LABEL_KEYS = {
+  customer_name: 'order_details_customer',
+  address: 'order_details_address',
+  time_window_start: 'order_details_departure_date',
 };
 
 function formatDateShort(iso, showTime = true) {
@@ -160,6 +161,7 @@ function DynamicOrderCard({
   onPress,
   viewerRole, // 'admin' | 'dispatcher' | 'worker' (optional)
 }) {
+  const { t } = useTranslation();
   const settings = useSettings();
   const { presetsByContext, getFieldByKey } = settings;
   const { theme } = useTheme();
@@ -208,11 +210,13 @@ function DynamicOrderCard({
         const label =
           field?.label && field.label !== key
             ? field.label
-            : RUS_LABELS[key] || (field?.label ?? key);
+            : PRIMARY_ROW_LABEL_KEYS[key]
+              ? t(PRIMARY_ROW_LABEL_KEYS[key])
+              : (field?.label ?? key);
         return { key, label, value };
       })
       .filter((r) => r.key !== 'title');
-  }, [fields, order, getFieldByKey]);
+  }, [fields, order, getFieldByKey, t]);
 
   // Status pill
   const statusTitle = useMemo(

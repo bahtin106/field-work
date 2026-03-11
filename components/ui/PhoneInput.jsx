@@ -12,6 +12,7 @@ export default function PhoneInput({
   style,
   placeholder = T('fields_phone_placeholder'),
   required = false,
+  ...rest
 }) {
   const prevMaskedRef = useRef('');
 
@@ -53,6 +54,7 @@ export default function PhoneInput({
       maxLength={18} // "+7 (XXX) XXX-XX-XX"
       error={error}
       style={style}
+      {...rest}
     />
   );
 }

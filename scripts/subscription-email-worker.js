@@ -23,6 +23,17 @@ function toInt(value, fallback, min, max) {
   return Math.min(max, Math.max(min, Math.trunc(n)));
 }
 
+function normalizeTimeZone(value) {
+  const zone = String(value || '').trim();
+  if (!zone) return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone }).format(new Date());
+    return zone;
+  } catch {
+    return 'UTC';
+  }
+}
+
 async function sendEmail(emailServiceUrl, payload) {
   const response = await fetch(`${emailServiceUrl.replace(/\/$/, '')}/send-email`, {
     method: 'POST',
@@ -97,8 +108,24 @@ async function finishJob(supabase, jobId, success, errorMessage, httpStatus, res
   }
 }
 
-function buildPayload(job) {
+async function fetchCompanyTimeZones(supabase, companyIds) {
+  const ids = Array.from(new Set((Array.isArray(companyIds) ? companyIds : []).filter(Boolean)));
+  if (!ids.length) return new Map();
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id, timezone')
+    .in('id', ids);
+  if (error) throw new Error(`load company timezones failed: ${error.message}`);
+  const map = new Map();
+  for (const row of Array.isArray(data) ? data : []) {
+    map.set(row.id, normalizeTimeZone(row.timezone));
+  }
+  return map;
+}
+
+function buildPayload(job, timeZoneByCompanyId) {
   const payload = job?.payload || {};
+  const currentTimeZone = timeZoneByCompanyId?.get?.(job.company_id) || payload.company_timezone || 'UTC';
   return {
     type: 'subscription-reminder',
     email: job.email,
@@ -108,6 +135,7 @@ function buildPayload(job) {
     subscriptionEvent: job.event_type,
     daysLeft: Number.isFinite(Number(payload.days_left)) ? Number(payload.days_left) : 0,
     periodEndIso: payload.period_end_iso || job.period_end_iso || null,
+    timeZone: currentTimeZone,
     lang: job.locale || 'ru',
   };
 }
@@ -138,7 +166,8 @@ async function main() {
 
   const runtime = await fetchRuntimeConfig(supabase);
   const limit = toInt(process.env.SUBSCRIPTION_EMAIL_WORKER_LIMIT, runtime.batchLimit, 1, 500);
-  const maxBatches = toInt(process.env.SUBSCRIPTION_EMAIL_WORKER_MAX_BATCHES, 10, 1, 200);
+  // Keep each tick bounded so backlog drain does not monopolize the server CPU.
+  const maxBatches = toInt(process.env.SUBSCRIPTION_EMAIL_WORKER_MAX_BATCHES, 5, 1, 200);
 
   const stats = {
     enqueued: 0,
@@ -154,13 +183,17 @@ async function main() {
   for (let i = 0; i < maxBatches; i += 1) {
     const jobs = await claimJobs(supabase, limit, runtime.processingTimeoutSeconds);
     if (!jobs.length) break;
+    const timeZoneByCompanyId = await fetchCompanyTimeZones(
+      supabase,
+      jobs.map((job) => job.company_id),
+    );
 
     stats.batches += 1;
     stats.claimed += jobs.length;
 
     for (const job of jobs) {
       try {
-        const payload = buildPayload(job);
+        const payload = buildPayload(job, timeZoneByCompanyId);
         if (!payload.email) {
           stats.retriedOrDead += 1;
           await finishJob(supabase, job.id, false, 'email is empty', null, null);

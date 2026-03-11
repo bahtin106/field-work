@@ -1,4 +1,4 @@
-export const CLIENT_OBJECT_DEFAULT_NAME = 'Объект';
+export const CLIENT_OBJECT_DEFAULT_NAME = 'Новый объект';
 
 export const CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS = [
   'country',

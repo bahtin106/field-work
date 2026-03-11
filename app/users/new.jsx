@@ -4,7 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Image, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
@@ -24,12 +24,24 @@ import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getOrderedEntityFields,
+} from '../../src/features/fieldSettings/catalog';
+import { createEntityFieldPresentation } from '../../src/features/fieldSettings/presentation';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { uploadProfileMedia } from '../../src/features/profileMedia/api';
 import {
   hasMobilePhoneValue,
   isValidOptionalMobilePhone,
   normalizeOptionalMobilePhone,
 } from '../../src/shared/validation/phone';
+import {
+  getEmailFieldError,
+  isValidOptionalEmail,
+  normalizeOptionalEmail,
+} from '../../src/shared/validation/fields';
 
 // i18n
 import { useI18nVersion } from '../../src/i18n';
@@ -39,9 +51,8 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { ROLE, ROLE_LABELS, EDITABLE_ROLES as ROLES } from '../../constants/roles';
 import {
   AUTH_CONSTRAINTS,
-  isValidEmail as isValidEmailShared,
 } from '../../lib/authValidation';
-import { AVATAR, STORAGE, TBL } from '../../lib/constants';
+import { TBL } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
 import { getDict, t as T } from '../../src/i18n';
 
@@ -54,8 +65,6 @@ const TABLES = {
 const __IS_PROD = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 const __pick = (val, devFallback) => (val != null ? val : __IS_PROD ? null : devFallback);
 
-const AVA_PREFIX = AVATAR.FILENAME_PREFIX;
-const AVA_MIME = AVATAR.MIME;
 
 const _FN_INVITE_USER = process.env.EXPO_PUBLIC_FN_INVITE_USER || 'invite-user';
 
@@ -194,6 +203,9 @@ export default function NewUserScreen() {
   const { data: companyId } = useMyCompanyIdQuery();
   const { data: entitlements } = useCompanyEntitlements(companyId || null);
   const { useDepartments } = useCompanySettings(companyId || null);
+  const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
+    enabled: !!companyId,
+  });
   const { data: departments = [] } = useDepartmentsQuery({
     companyId,
     enabled: !!companyId && useDepartments,
@@ -308,8 +320,48 @@ export default function NewUserScreen() {
     const sharedMin = Number(AUTH_CONSTRAINTS?.PASSWORD?.MIN_LENGTH || 0) || 0;
     return Math.max(sharedMin, envVal || 6);
   }, []);
+  const employeeFieldSettings = useMemo(
+    () => employeeFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE),
+    [employeeFieldSettingsData],
+  );
+  const fieldUi = useMemo(
+    () => createEntityFieldPresentation(employeeFieldSettings),
+    [employeeFieldSettings],
+  );
+  const canManageAvatar = fieldUi.isVisible('avatar_url');
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
+  const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
+  const canShowCompanySection =
+    fieldUi.hasVisibleFields(['department_id', 'role']) && (useDepartments || fieldUi.isVisible('role'));
+  const orderedPersonalFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(employeeFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['first_name', 'last_name', 'birthdate'],
+      }).map((field) => field.fieldKey),
+    [employeeFieldSettings],
+  );
+  const orderedContactFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(employeeFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['email', 'phone'],
+      }).map((field) => field.fieldKey),
+    [employeeFieldSettings],
+  );
+  const orderedCompanyFieldKeys = useMemo(
+    () =>
+      getOrderedEntityFields(employeeFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['department_id', 'role'],
+      }).map((field) => field.fieldKey),
+    [employeeFieldSettings],
+  );
 
-  const emailValid = useMemo(() => isValidEmailShared(email), [email]);
+  const emailValid = useMemo(() => isValidOptionalEmail(email), [email]);
   const shouldShowError = useCallback(
     (field) => submittedAttempt || !!touched[field],
     [submittedAttempt, touched],
@@ -328,30 +380,43 @@ export default function NewUserScreen() {
   );
   const firstNameError =
     fieldErrors.firstName?.message ||
-    (shouldShowError('firstName') && !firstName.trim() ? requiredMsg : null);
+    (shouldShowError('firstName') && fieldUi.isRequired('first_name') && !firstName.trim() ? requiredMsg : null);
   const lastNameError =
     fieldErrors.lastName?.message ||
-    (shouldShowError('lastName') && !lastName.trim() ? requiredMsg : null);
+    (shouldShowError('lastName') && fieldUi.isRequired('last_name') && !lastName.trim() ? requiredMsg : null);
   const emailError =
     fieldErrors.email?.message ||
-    ((shouldShowError('email') || emailCheckStatus === 'taken') &&
-    !email.trim()
-      ? requiredMsg
-      : email.trim() && !emailValid
-        ? getMessageByCode(FEEDBACK_CODES.INVALID_EMAIL, t)
-        : emailCheckStatus === 'taken'
-          ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
-          : null);
+    ((fieldUi.isVisible('email') && (shouldShowError('email') || emailCheckStatus === 'taken'))
+      ? getEmailFieldError(email, {
+          required: fieldUi.isRequired('email'),
+          requiredMessage: requiredMsg,
+          t,
+        }) || (emailCheckStatus === 'taken' ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t) : null)
+      : null);
   const phoneError =
     fieldErrors.phone?.message ||
-    (shouldShowError('phone') && hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)
-      ? t('err_phone')
+    (fieldUi.isVisible('phone') && shouldShowError('phone')
+      ? !hasMobilePhoneValue(phone)
+        ? fieldUi.isRequired('phone') ? requiredMsg : null
+        : !isValidOptionalMobilePhone(phone)
+          ? t('err_phone')
+          : null
+      : null);
+  const birthdateError =
+    fieldErrors.birthdate?.message ||
+    (fieldUi.isVisible('birthdate') && shouldShowError('birthdate') && fieldUi.isRequired('birthdate') && !birthdate
+      ? requiredMsg
+      : null);
+  const departmentError =
+    fieldErrors.department_id?.message ||
+    (useDepartments && fieldUi.isVisible('department_id') && shouldShowError('department_id') && fieldUi.isRequired('department_id') && !departmentId
+      ? requiredMsg
       : null);
 
   //  email   (debounced)
   const checkEmailAvailability = useCallback(
     async (emailToCheck) => {
-      if (!emailToCheck || !isValidEmailShared(emailToCheck)) {
+      if (!emailToCheck || !isValidOptionalEmail(emailToCheck)) {
         setEmailCheckStatus(null);
         return;
       }
@@ -395,7 +460,7 @@ export default function NewUserScreen() {
 
     //  800ms  
     emailCheckTimeoutRef.current = setTimeout(() => {
-      checkEmailAvailability(email.trim().toLowerCase());
+      checkEmailAvailability(normalizeOptionalEmail(email));
     }, 800);
 
     return () => {
@@ -423,6 +488,145 @@ export default function NewUserScreen() {
     () =>
       `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
     [firstName, lastName],
+  );
+  const personalFieldRenderers = useMemo(
+    () => ({
+      first_name: () => (
+        <>
+          <TextField
+            ref={firstNameRef}
+            label={fieldUi.withRequiredLabel('first_name', t('label_first_name'))}
+            placeholder={t('placeholder_first_name')}
+            style={styles.field}
+            value={firstName}
+            onChangeText={(val) => {
+              setFirstName(val);
+              clearFieldError('firstName');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
+            forceValidation={submittedAttempt}
+            error={firstNameError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={firstNameError} />
+        </>
+      ),
+      last_name: () => (
+        <>
+          <TextField
+            ref={lastNameRef}
+            label={fieldUi.withRequiredLabel('last_name', t('label_last_name'))}
+            placeholder={t('placeholder_last_name')}
+            style={styles.field}
+            value={lastName}
+            onChangeText={(val) => {
+              setLastName(val);
+              clearFieldError('lastName');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, lastName: true }))}
+            forceValidation={submittedAttempt}
+            error={lastNameError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={lastNameError} />
+        </>
+      ),
+      birthdate: () => (
+        <>
+          <TextField
+            label={fieldUi.withRequiredLabel('birthdate', t('label_birthdate'))}
+            value={
+              birthdate
+                ? String(formatDateRU(birthdate, withYear))
+                : String(t('placeholder_birthdate'))
+            }
+            style={styles.field}
+            pressable
+            error={birthdateError ? 'invalid' : undefined}
+            onPress={() => setDobModalVisible(true)}
+            rightSlot={
+              birthdate ? (
+                <ClearButton
+                  onPress={() => setBirthdate(null)}
+                  accessibilityLabel={t('common_clear')}
+                />
+              ) : null
+            }
+          />
+          <FieldErrorText message={birthdateError} />
+        </>
+      ),
+    }),
+    [birthdate, birthdateError, clearFieldError, fieldUi, firstName, firstNameError, lastName, lastNameError, styles.field, submittedAttempt, t, withYear],
+  );
+  const contactFieldRenderers = useMemo(
+    () => ({
+      email: () => (
+        <>
+          <TextField
+            ref={emailRef}
+            label={fieldUi.withRequiredLabel('email', t('label_email'))}
+            placeholder={t('placeholder_email')}
+            style={styles.field}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={email}
+            onChangeText={(val) => {
+              setEmail(val);
+              clearFieldError('email');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, email: true }))}
+            forceValidation={submittedAttempt}
+            error={emailError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={emailError} />
+        </>
+      ),
+      phone: () => (
+        <>
+          <PhoneInput
+            ref={phoneRef}
+            value={phone}
+            onChangeText={(val) => {
+              setPhone(val);
+              clearFieldError('phone');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
+            error={phoneError ? 'invalid' : undefined}
+            style={styles.field}
+            required={fieldUi.isRequired('phone')}
+          />
+          <FieldErrorText message={phoneError} />
+        </>
+      ),
+    }),
+    [clearFieldError, email, emailError, fieldUi, phone, phoneError, styles.field, submittedAttempt, t],
+  );
+  const companyFieldRenderers = useMemo(
+    () => ({
+      department_id: useDepartments ? (
+        <>
+          <TextField
+            label={fieldUi.withRequiredLabel('department_id', t('label_department'))}
+            value={String(activeDeptName || t('placeholder_department'))}
+            style={styles.field}
+            pressable
+            error={departmentError ? 'invalid' : undefined}
+            onPress={() => setDeptModalVisible(true)}
+          />
+          <FieldErrorText message={departmentError} />
+        </>
+      ) : null,
+      role: (
+        <TextField
+          label={fieldUi.withRequiredLabel('role', t('label_role'))}
+          value={String(ROLE_LABELS_LOCAL[role] || role)}
+          style={styles.field}
+          pressable
+          onPress={() => setShowRoles(true)}
+        />
+      ),
+    }),
+    [activeDeptName, departmentError, fieldUi, role, styles.field, t, useDepartments],
   );
 
   const initialSnapRef = useRef('');
@@ -512,24 +716,7 @@ export default function NewUserScreen() {
   };
   const _uploadAvatar = async (userId, uri) => {
     try {
-      const resp = await fetch(uri);
-      const ab = await resp.arrayBuffer();
-      const fileData = new Uint8Array(ab);
-      const filename = `${AVA_PREFIX}${Date.now()}.jpg`;
-      const path = `${STORAGE.AVATAR_PREFIX}/${userId}/${filename}`;
-      const { error: upErr } = await supabase.storage
-        .from(STORAGE.AVATORS || STORAGE.AVATARS)
-        .upload(path, fileData, { contentType: AVA_MIME, upsert: false });
-      if (upErr) throw upErr;
-      const { data: pub } = supabase.storage
-        .from(STORAGE.AVATORS || STORAGE.AVATARS)
-        .getPublicUrl(path);
-      const publicUrl = pub?.publicUrl || null;
-      const { error: updErr } = await supabase
-        .from(TABLES.profiles)
-        .update({ avatar_url: publicUrl })
-        .eq('id', userId);
-      if (updErr) throw updErr;
+      const publicUrl = await uploadProfileMedia('employee', String(userId), uri);
       setAvatarUrl(publicUrl);
       return publicUrl;
     } catch (e) {
@@ -577,9 +764,13 @@ export default function NewUserScreen() {
     setSubmittedAttempt(true);
 
     //    ( )
-    const missingFirst = !firstName.trim();
-    const missingLast = !lastName.trim();
-    const invalidEmail = !emailValid;
+    const missingFirst = fieldUi.isRequired('first_name') && !firstName.trim();
+    const missingLast = fieldUi.isRequired('last_name') && !lastName.trim();
+    const missingEmail = fieldUi.isRequired('email') && !email.trim();
+    const invalidEmail = fieldUi.isVisible('email') && !!email.trim() && !emailValid;
+    const missingPhone = fieldUi.isRequired('phone') && !hasMobilePhoneValue(phone);
+    const missingBirthdate = fieldUi.isRequired('birthdate') && !birthdate;
+    const missingDepartment = useDepartments && fieldUi.isRequired('department_id') && !departmentId;
     const emailTaken = emailCheckStatus === 'taken';
 
     if (emailTaken) {
@@ -593,15 +784,21 @@ export default function NewUserScreen() {
       return;
     }
 
-    if (missingFirst || missingLast || invalidEmail) {
+    if (missingFirst || missingLast || missingEmail || invalidEmail || missingPhone || missingBirthdate || missingDepartment) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        ...(missingBirthdate ? { birthdate: { message: requiredMsg } } : {}),
+        ...(missingDepartment ? { department_id: { message: requiredMsg } } : {}),
+      }));
       scrollToFirstInvalid([
         { invalid: missingFirst, ref: firstNameRef, fallbackY: 0 },
         { invalid: missingLast, ref: lastNameRef, fallbackY: 0 },
-        { invalid: invalidEmail, ref: emailRef, fallbackY: 0 },
+        { invalid: missingEmail || invalidEmail, ref: emailRef, fallbackY: 0 },
+        { invalid: missingPhone, ref: phoneRef, fallbackY: 0 },
       ]);
       return;
     }
-    if (hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
+    if (fieldUi.isVisible('phone') && hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
       setFieldErrors((prev) => ({
         ...prev,
         phone: {
@@ -635,12 +832,17 @@ export default function NewUserScreen() {
     emailValid,
     emailCheckStatus,
     email,
+    birthdate,
+    departmentId,
+    requiredMsg,
     t,
+    useDepartments,
     entitlements?.can_edit,
     entitlements?.features?.can_add_members,
     showBanner,
     scrollToFirstInvalid,
     phone,
+    fieldUi,
   ]);
 
   //     
@@ -679,13 +881,14 @@ export default function NewUserScreen() {
 
       const payload = {
         email: inviteEmail,
-        first_name: firstName.trim() || null,
-        last_name: lastName.trim() || null,
+        first_name: fieldUi.isVisible('first_name') ? firstName.trim() || null : null,
+        last_name: fieldUi.isVisible('last_name') ? lastName.trim() || null : null,
         full_name: fullName || null,
-        phone: phoneNormalized,
-        birthdate: bdate,
-        role,
-        department_id: useDepartments ? (departmentId || null) : null,
+        phone: fieldUi.isVisible('phone') ? phoneNormalized : null,
+        birthdate: fieldUi.isVisible('birthdate') ? bdate : null,
+        role: fieldUi.isVisible('role') ? role : ROLE.WORKER,
+        department_id:
+          useDepartments && fieldUi.isVisible('department_id') ? departmentId || null : null,
       };
 
       const { data: inviteData, error: inviteError } = await supabase.functions.invoke(
@@ -750,6 +953,7 @@ export default function NewUserScreen() {
     showSuccessToast,
     showBanner,
     clearBanner,
+    fieldUi,
   ]);
   const roleItems = useMemo(
     () => ROLES.map((r) => ({ id: r, label: ROLE_LABELS_LOCAL[r] || r })),
@@ -803,26 +1007,29 @@ export default function NewUserScreen() {
           <View style={styles.headerRow}>
             <Pressable
               style={styles.avatar}
-              onPress={() => setAvatarSheet(true)}
-              accessibilityRole="button"
-              accessibilityLabel={t('a11y_change_avatar')}
-              accessibilityHint={t('a11y_change_avatar_hint')}
+              onPress={canManageAvatar ? () => setAvatarSheet(true) : undefined}
+              disabled={!canManageAvatar}
+              accessibilityRole={canManageAvatar ? 'button' : undefined}
+              accessibilityLabel={canManageAvatar ? t('a11y_change_avatar') : undefined}
+              accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
             >
-              {avatarUrl ? (
+              {canManageAvatar && avatarUrl ? (
                 <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
               ) : (
                 <Text style={styles.avatarText}>{initials || '*'}</Text>
               )}
-              <View style={styles.avatarCamBadge}>
-                <Feather
-                  name="camera"
-                  size={Math.max(
-                    theme.icons?.minCamera ?? 12,
-                    Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)),
-                  )}
-                  color={theme.colors.onPrimary}
-                />
-              </View>
+              {canManageAvatar ? (
+                <View style={styles.avatarCamBadge}>
+                  <Feather
+                    name="camera"
+                    size={Math.max(
+                      theme.icons?.minCamera ?? 12,
+                      Math.round((theme.icons?.sm ?? 18) * (theme.icons?.cameraRatio ?? 0.67)),
+                    )}
+                    color={theme.colors.onPrimary}
+                  />
+                </View>
+              ) : null}
             </Pressable>
             <View style={{ flex: 1 }}>
               <Text style={styles.nameTitle}>{headerName}</Text>
@@ -853,109 +1060,38 @@ export default function NewUserScreen() {
             style={{ marginBottom: theme.spacing.md }}
           />
         )}
-        <SectionHeader bottomSpacing="xs">{t('section_personal')}</SectionHeader>
+        {canShowPersonalSection ? <SectionHeader bottomSpacing="xs">{t('section_personal')}</SectionHeader> : null}
+        {canShowPersonalSection ? (
         <Card paddedXOnly>
-          <TextField
-            ref={firstNameRef}
-            label={t('label_first_name')}
-            placeholder={t('placeholder_first_name')}
-            style={styles.field}
-            value={firstName}
-            onChangeText={(val) => {
-              setFirstName(val);
-              clearFieldError('firstName');
-            }}
-            onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
-            forceValidation={submittedAttempt}
-            error={firstNameError ? 'invalid' : undefined}
-          />
-          <FieldErrorText message={firstNameError} />
-          <TextField
-            ref={lastNameRef}
-            label={t('label_last_name')}
-            placeholder={t('placeholder_last_name')}
-            style={styles.field}
-            value={lastName}
-            onChangeText={(val) => {
-              setLastName(val);
-              clearFieldError('lastName');
-            }}
-            onBlur={() => setTouched((prev) => ({ ...prev, lastName: true }))}
-            forceValidation={submittedAttempt}
-            error={lastNameError ? 'invalid' : undefined}
-          />
-          <FieldErrorText message={lastNameError} />
-          <TextField
-            ref={emailRef}
-            label={t('label_email')}
-            placeholder={t('placeholder_email')}
-            style={styles.field}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            value={email}
-            onChangeText={(val) => {
-              setEmail(val);
-              clearFieldError('email');
-            }}
-            onBlur={() => setTouched((prev) => ({ ...prev, email: true }))}
-            forceValidation={submittedAttempt}
-            error={emailError ? 'invalid' : undefined}
-          />
-          <FieldErrorText message={emailError} />
-          <PhoneInput
-            ref={phoneRef}
-            value={phone}
-            onChangeText={(val) => {
-              setPhone(val);
-              clearFieldError('phone');
-            }}
-            onBlur={() => setTouched((prev) => ({ ...prev, phone: true }))}
-            error={phoneError ? 'invalid' : undefined}
-            style={styles.field}
-          />
-          <FieldErrorText message={phoneError} />
-          <TextField
-            label={t('label_birthdate')}
-            value={
-              birthdate
-                ? String(formatDateRU(birthdate, withYear))
-                : String(t('placeholder_birthdate'))
-            }
-            style={styles.field}
-            pressable
-            onPress={() => setDobModalVisible(true)}
-            rightSlot={
-              birthdate ? (
-                <ClearButton
-                  onPress={() => setBirthdate(null)}
-                  accessibilityLabel={t('common_clear')}
-                />
-              ) : null
-            }
-          />
+          {orderedPersonalFieldKeys.map((fieldKey) => (
+            <React.Fragment key={fieldKey}>
+              {personalFieldRenderers[fieldKey]?.() || null}
+            </React.Fragment>
+          ))}
         </Card>
+        ) : null}
 
-        <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader>
+        {canShowContactSection ? <SectionHeader bottomSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+        {canShowContactSection ? (
         <Card paddedXOnly>
-          {useDepartments ? (
-            <TextField
-              label={t('label_department')}
-              value={String(activeDeptName || t('placeholder_department'))}
-              style={styles.field}
-              pressable
-              onPress={() => setDeptModalVisible(true)}
-            />
-          ) : null}
-
-          <TextField
-            label={t('label_role')}
-            value={String(ROLE_LABELS_LOCAL[role] || role)}
-            style={styles.field}
-            pressable
-            onPress={() => setShowRoles(true)}
-          />
+          {orderedContactFieldKeys.map((fieldKey) => (
+            <React.Fragment key={fieldKey}>
+              {contactFieldRenderers[fieldKey]?.() || null}
+            </React.Fragment>
+          ))}
         </Card>
+        ) : null}
+
+        {canShowCompanySection ? <SectionHeader bottomSpacing="xs">{t('section_company_role')}</SectionHeader> : null}
+        {canShowCompanySection ? (
+        <Card paddedXOnly>
+          {orderedCompanyFieldKeys.map((fieldKey) => (
+            <React.Fragment key={fieldKey}>
+              {companyFieldRenderers[fieldKey] || null}
+            </React.Fragment>
+          ))}
+        </Card>
+        ) : null}
 
         {/*        -     */}
 
@@ -974,42 +1110,44 @@ export default function NewUserScreen() {
           }}
         />
 
-        <SelectModal
-          visible={avatarSheet}
-          onClose={() => setAvatarSheet(false)}
-          title={t('profile_photo_title')}
-          items={[
-            {
-              id: 'camera',
-              label: t('profile_photo_take'),
-              onPress: () => {
-                setAvatarSheet(false);
-                pickFromCamera();
+        {canManageAvatar ? (
+          <SelectModal
+            visible={avatarSheet}
+            onClose={() => setAvatarSheet(false)}
+            title={t('profile_photo_title')}
+            items={[
+              {
+                id: 'camera',
+                label: t('profile_photo_take'),
+                onPress: () => {
+                  setAvatarSheet(false);
+                  pickFromCamera();
+                },
               },
-            },
-            {
-              id: 'gallery',
-              label: t('profile_photo_choose'),
-              onPress: () => {
-                setAvatarSheet(false);
-                pickFromLibrary();
+              {
+                id: 'gallery',
+                label: t('profile_photo_choose'),
+                onPress: () => {
+                  setAvatarSheet(false);
+                  pickFromLibrary();
+                },
               },
-            },
-            ...(avatarUrl
-              ? [
-                  {
-                    id: 'remove',
-                    label: t('profile_photo_delete'),
-                    onPress: () => {
-                      setAvatarSheet(false);
-                      setAvatarUrl(null);
+              ...(avatarUrl
+                ? [
+                    {
+                      id: 'remove',
+                      label: t('profile_photo_delete'),
+                      onPress: () => {
+                        setAvatarSheet(false);
+                        setAvatarUrl(null);
+                      },
                     },
-                  },
-                ]
-              : []),
-          ]}
-          searchable={false}
-        />
+                  ]
+                : []),
+            ]}
+            searchable={false}
+          />
+        ) : null}
 
         {useDepartments ? (
           <SelectModal

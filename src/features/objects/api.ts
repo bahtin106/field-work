@@ -9,6 +9,31 @@ import { inspectProfileMedia } from '../profileMedia/api';
 
 const objectByIdInFlight = new Map<string, Promise<any>>();
 
+export type OrderObjectSearchResult = {
+  objectId: string;
+  clientId: string;
+  objectName: string;
+  clientName: string;
+  shortAddress: string;
+  score: number;
+  isSameClient: boolean;
+  country: string;
+  region: string;
+  district: string;
+  city: string;
+  street: string;
+  house: string;
+  postal_code: string;
+  office: string;
+  floor: string;
+  entrance: string;
+  apartment: string;
+  entrance_info: string;
+  parking_notes: string;
+  geo_lat: string;
+  geo_lng: string;
+};
+
 export async function listClientObjects(clientId: string) {
   return measureNetwork('objects.listByClient', async () => {
     if (!clientId) return [];
@@ -128,6 +153,73 @@ export async function getClientObjectById(objectId: string) {
 
   objectByIdInFlight.set(key, p);
   return p;
+}
+
+export async function searchCompanyObjectsForOrder({
+  query = '',
+  street = '',
+  house = '',
+  city = '',
+  clientId = null,
+  limit = 6,
+}: {
+  query?: string;
+  street?: string;
+  house?: string;
+  city?: string;
+  clientId?: string | null;
+  limit?: number;
+}): Promise<OrderObjectSearchResult[]> {
+  return measureNetwork('objects.searchForOrder', async () => {
+    const safeQuery = String(query || '').trim().slice(0, 160);
+    const safeStreet = String(street || '').trim().slice(0, 120);
+    const safeHouse = String(house || '').trim().slice(0, 32);
+    const safeCity = String(city || '').trim().slice(0, 120);
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Number(limit), 1), 10) : 6;
+
+    const hasEnoughInput =
+      safeStreet.length >= 3 ||
+      safeQuery.length >= 8 ||
+      (safeStreet.length >= 2 && safeHouse.length >= 1);
+
+    if (!hasEnoughInput) return [];
+
+    const { data, error } = await supabase.rpc('search_company_objects_for_order', {
+      p_query: safeQuery,
+      p_street: safeStreet,
+      p_house: safeHouse,
+      p_city: safeCity,
+      p_client_id: clientId ? String(clientId) : null,
+      p_limit: safeLimit,
+    });
+
+    if (error) throw error;
+
+    return (Array.isArray(data) ? data : []).map((row: any) => ({
+      objectId: String(row?.object_id || ''),
+      clientId: String(row?.client_id || ''),
+      objectName: String(row?.object_name || '').trim(),
+      clientName: String(row?.client_name || '').trim(),
+      shortAddress: String(row?.short_address || '').trim(),
+      score: Number(row?.score || 0),
+      isSameClient: !!row?.is_same_client,
+      country: String(row?.country || '').trim(),
+      region: String(row?.region || '').trim(),
+      district: String(row?.district || '').trim(),
+      city: String(row?.city || '').trim(),
+      street: String(row?.street || '').trim(),
+      house: String(row?.house || '').trim(),
+      postal_code: String(row?.postal_code || '').trim(),
+      office: String(row?.office || '').trim(),
+      floor: String(row?.floor || '').trim(),
+      entrance: String(row?.entrance || '').trim(),
+      apartment: String(row?.apartment || '').trim(),
+      entrance_info: String(row?.entrance_info || '').trim(),
+      parking_notes: String(row?.parking_notes || '').trim(),
+      geo_lat: String(row?.geo_lat || '').trim(),
+      geo_lng: String(row?.geo_lng || '').trim(),
+    }));
+  });
 }
 
 export async function createClientObject(payload: Record<string, any>) {

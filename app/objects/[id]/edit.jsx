@@ -16,6 +16,7 @@ import TagEditorField from '../../../components/tags/TagEditorField';
 import { TAG_TYPE } from '../../../components/tags/tagConfig';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../lib/permissions';
+import { FieldErrorText, FEEDBACK_CODES, getMessageByCode } from '../../../src/shared/feedback';
 import {
   useClientObject,
   useDeleteClientObjectMutation,
@@ -26,6 +27,7 @@ import { useEntityFieldSettings } from '../../../src/features/fieldSettings/quer
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
+  getOrderedEntityFields,
   getEntityFieldMap,
 } from '../../../src/features/fieldSettings/catalog';
 import {
@@ -41,6 +43,7 @@ import { uploadClientObjectPhoto } from '../../../src/features/objects/photo';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useSetObjectTagsMutation } from '../../../src/features/tags/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
 import { useTheme } from '../../../theme/ThemeProvider';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 
@@ -166,10 +169,13 @@ export default function EditObjectScreen() {
     }
   }, [rawReturnParams]);
 
-  const canEditClients = has('canEditClients');
-  const { data: objectItem } = useClientObject(objectId, { enabled: !!objectId });
+  const canViewObjects = has('canViewObjects');
+  const canViewClients = has('canViewClients');
+  const canEditObjects = has('canEditObjects');
+  const canDeleteObjects = has('canDeleteObjects');
+  const { data: objectItem } = useClientObject(objectId, { enabled: !!objectId && canViewObjects });
   const clientId = objectItem?.client_id;
-  const { data: clientData } = useClient(clientId, { enabled: !!clientId });
+  const { data: clientData } = useClient(clientId, { enabled: !!clientId && canViewClients });
   const updateMutation = useUpdateClientObjectMutation();
   const deleteMutation = useDeleteClientObjectMutation();
   const setObjectTagsMutation = useSetObjectTagsMutation();
@@ -190,6 +196,7 @@ export default function EditObjectScreen() {
   const [photoPreviewVisible, setPhotoPreviewVisible] = React.useState(false);
   const [addressModalVisible, setAddressModalVisible] = React.useState(false);
   const [avatarKey, setAvatarKey] = React.useState(0);
+  const [fieldErrors, setFieldErrors] = React.useState({});
   const allowLeaveRef = React.useRef(false);
   const formStyles = useEditFormStyles();
   const styles = React.useMemo(() => createStyles(theme, formStyles), [theme, formStyles]);
@@ -204,7 +211,7 @@ export default function EditObjectScreen() {
     () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled !== false),
     [objectFieldsByKey],
   );
-  const visiblePrimaryAddressFields = React.useMemo(
+  const _visiblePrimaryAddressFields = React.useMemo(
     () =>
       CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS.filter(
         (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
@@ -217,6 +224,24 @@ export default function EditObjectScreen() {
         (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
       ),
     [objectFieldsByKey],
+  );
+  const orderedPrimaryAddressFields = React.useMemo(
+    () =>
+      getOrderedEntityFields(objectFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
+      }).map((field) => field.fieldKey),
+    [objectFieldSettings],
+  );
+  const orderedAdditionalInfoFields = React.useMemo(
+    () =>
+      getOrderedEntityFields(objectFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
+      }).map((field) => field.fieldKey),
+    [objectFieldSettings],
   );
   const withRequiredLabel = React.useCallback(
     (field, label) => (objectFieldsByKey.get(field)?.isRequired ? `${label} *` : label),
@@ -266,12 +291,28 @@ export default function EditObjectScreen() {
 
   const goBack = React.useCallback(() => {
     allowLeaveRef.current = true;
-    if (navigation && typeof navigation.goBack === 'function') {
+    if (
+      navigation &&
+      typeof navigation.canGoBack === 'function' &&
+      navigation.canGoBack() &&
+      typeof navigation.goBack === 'function'
+    ) {
       navigation.goBack();
       return;
     }
+    if (returnTo) {
+      dismissToRoute(router, {
+        pathname: returnTo,
+        params: returnParams,
+      });
+      return;
+    }
+    if (objectId) {
+      dismissToRoute(router, `/objects/${objectId}`);
+      return;
+    }
     router.back();
-  }, [navigation, router]);
+  }, [navigation, objectId, returnParams, returnTo, router]);
   const goAfterDelete = React.useCallback(() => {
     allowLeaveRef.current = true;
     if (returnTo) {
@@ -367,16 +408,21 @@ export default function EditObjectScreen() {
   }, []);
 
   const saveObject = React.useCallback(async () => {
-    if (!objectId || saving || !canEditClients) return;
+    if (!objectId || saving || !canEditObjects) return;
+    const nextFieldErrors = ['name', ...visibleAddressFields, ...visibleAdditionalInfoFields].reduce((acc, field) => {
+      const message = getRequiredTextFieldError(draft?.[field], {
+        required: objectFieldsByKey.get(field)?.isRequired === true,
+        requiredMessage: getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
+      });
+      if (!message) return acc;
+      return { ...acc, [field]: message };
+    }, {});
+    setFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) {
+      return;
+    }
     setSaving(true);
     try {
-      const missingRequiredField = ['name', ...visibleAddressFields].find((field) => {
-        if (!objectFieldsByKey.get(field)?.isRequired) return false;
-        return !String(draft?.[field] || '').trim();
-      });
-      if (missingRequiredField) {
-        throw new Error(t('field_settings_required_fill', 'Заполните обязательные поля'));
-      }
       const cleanPatch = sanitizeClientObjectPayload(draft, { nameRequired: false });
       const currentPhotoUrl = String(draft.photoUrl || '').trim();
       let persistedPhotoUrl = String(objectItem?.photoUrl || '').trim() || null;
@@ -408,20 +454,29 @@ export default function EditObjectScreen() {
       }
 
       toast.success(t('objects_saved'));
-      allowLeaveRef.current = true;
-      router.replace(`/objects/${objectId}`);
+      goBack();
     } catch (error) {
       toast.error(error?.message || t('clients_save_failed'));
     } finally {
       setSaving(false);
     }
-  }, [canEditClients, draft, objectFieldsByKey, objectId, objectItem?.photoUrl, router, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAddressFields]);
+  }, [canEditObjects, draft, goBack, objectFieldsByKey, objectId, objectItem?.photoUrl, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAddressFields, visibleAdditionalInfoFields]);
 
-  if (!canEditClients) {
+  if (!canViewObjects) {
     return (
       <EditScreenTemplate title={t('routes_objects_edit')}>
         <View style={styles.blockedWrap}>
-          <Text style={styles.blockedText}>{t('clients_no_edit_permission')}</Text>
+          <Text style={styles.blockedText}>{t('objects_no_view_permission')}</Text>
+        </View>
+      </EditScreenTemplate>
+    );
+  }
+
+  if (!canEditObjects) {
+    return (
+      <EditScreenTemplate title={t('routes_objects_edit')}>
+        <View style={styles.blockedWrap}>
+          <Text style={styles.blockedText}>{t('objects_no_edit_permission')}</Text>
         </View>
       </EditScreenTemplate>
     );
@@ -484,9 +539,14 @@ export default function EditObjectScreen() {
           <TextField
             label={withRequiredLabel('name', t('objects_field_name'))}
             value={draft.name}
-            onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
+            onChangeText={(value) => {
+              setDraft((prev) => ({ ...prev, name: value }));
+              setFieldErrors((prev) => (prev?.name ? { ...prev, name: null } : prev));
+            }}
+            error={fieldErrors?.name ? 'invalid' : undefined}
             style={styles.field}
           />
+          <FieldErrorText message={fieldErrors?.name || null} />
           <View style={styles.field}>
             <Pressable
               style={styles.addressRow}
@@ -529,17 +589,23 @@ export default function EditObjectScreen() {
           <>
             <SectionHeader>{t('objects_additional_info_section')}</SectionHeader>
             <Card paddedXOnly>
-              {visibleAdditionalInfoFields.map((field) => (
-                <TextField
-                  key={field}
-                  label={withRequiredLabel(field, t(`order_field_${field}`))}
-                  value={String(draft[field] || '')}
-                  onChangeText={(value) => setDraft((prev) => ({ ...prev, [field]: value }))}
-                  keyboardType={field === 'geo_lat' || field === 'geo_lng' ? 'decimal-pad' : undefined}
-                  multiline={field === 'entrance_info' || field === 'parking_notes'}
-                  minLines={field === 'entrance_info' || field === 'parking_notes' ? 2 : undefined}
-                  style={styles.field}
-                />
+              {orderedAdditionalInfoFields.map((field) => (
+                <React.Fragment key={field}>
+                  <TextField
+                    label={withRequiredLabel(field, t(`order_field_${field}`))}
+                    value={String(draft[field] || '')}
+                    onChangeText={(value) => {
+                      setDraft((prev) => ({ ...prev, [field]: value }));
+                      setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
+                    }}
+                    keyboardType={field === 'geo_lat' || field === 'geo_lng' ? 'decimal-pad' : undefined}
+                    multiline={field === 'entrance_info' || field === 'parking_notes'}
+                    minLines={field === 'entrance_info' || field === 'parking_notes' ? 2 : undefined}
+                    error={fieldErrors?.[field] ? 'invalid' : undefined}
+                    style={styles.field}
+                  />
+                  <FieldErrorText message={fieldErrors?.[field] || null} />
+                </React.Fragment>
               ))}
             </Card>
           </>
@@ -550,6 +616,7 @@ export default function EditObjectScreen() {
           variant="destructive"
           onPress={() => setDeleteVisible(true)}
           style={styles.deleteBtn}
+          disabled={!canDeleteObjects}
         />
       </EditScreenTemplate>
 
@@ -576,8 +643,8 @@ export default function EditObjectScreen() {
         cancelLabel={t('btn_cancel')}
         confirmVariant="destructive"
         onConfirm={async () => {
+          if (!canDeleteObjects) return;
           try {
-            await cleanupProfileMediaEntity('object', String(objectId || ''));
             await deleteMutation.mutateAsync({
               id: String(objectId || ''),
               clientId: objectItem?.client_id,
@@ -626,14 +693,20 @@ export default function EditObjectScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <Card paddedXOnly>
-            {visiblePrimaryAddressFields.map((field) => (
-              <TextField
-                key={field}
-                label={withRequiredLabel(field, t(`order_field_${field}`))}
-                value={String(draft[field] || '')}
-                onChangeText={(value) => setDraft((prev) => ({ ...prev, [field]: value }))}
-                style={styles.field}
-              />
+            {orderedPrimaryAddressFields.map((field) => (
+              <React.Fragment key={field}>
+                <TextField
+                  label={withRequiredLabel(field, t(`order_field_${field}`))}
+                  value={String(draft[field] || '')}
+                  onChangeText={(value) => {
+                    setDraft((prev) => ({ ...prev, [field]: value }));
+                    setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
+                  }}
+                  error={fieldErrors?.[field] ? 'invalid' : undefined}
+                  style={styles.field}
+                />
+                <FieldErrorText message={fieldErrors?.[field] || null} />
+              </React.Fragment>
             ))}
           </Card>
         </ScrollView>

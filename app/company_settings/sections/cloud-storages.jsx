@@ -94,8 +94,8 @@ export default function YandexDiskIntegrationScreen() {
   const [status, setStatus] = React.useState(null);
   const [folderPath, setFolderPath] = React.useState(DEFAULT_FOLDER);
   const [folderDraft, setFolderDraft] = React.useState(DEFAULT_FOLDER);
-  const [provider, setProvider] = React.useState('app_storage');
-  const [profileProvider, setProfileProvider] = React.useState('app_storage');
+  const [provider, setProvider] = React.useState('beget_s3');
+  const [profileProvider, setProfileProvider] = React.useState('beget_s3');
   const [providerModalVisible, setProviderModalVisible] = React.useState(false);
   const [providerTarget, setProviderTarget] = React.useState('orders');
   const [folderModalVisible, setFolderModalVisible] = React.useState(false);
@@ -122,8 +122,8 @@ export default function YandexDiskIntegrationScreen() {
         DEFAULT_FOLDER;
       setFolderPath(nextFolder);
       setFolderDraft(nextFolder);
-      setProvider(payload?.media_provider || payload?.provider || 'app_storage');
-      setProfileProvider(payload?.profile_media_provider || 'app_storage');
+      setProvider(payload?.media_provider || payload?.provider || 'beget_s3');
+      setProfileProvider(payload?.profile_media_provider || 'beget_s3');
       await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
     } catch (e) {
       toastRef.current?.error?.(toYandexIntegrationMessage(e, tRef.current));
@@ -262,7 +262,10 @@ export default function YandexDiskIntegrationScreen() {
     provider === 'yandex_disk'
       ? t('company_integrations_storage_provider_yandex')
       : t('company_integrations_storage_provider_app');
-  const profileProviderLabel = t('company_integrations_storage_provider_app');
+  const profileProviderLabel =
+    profileProvider === 'yandex_disk'
+      ? t('company_integrations_storage_provider_yandex')
+      : t('company_integrations_storage_provider_app');
   const yandexName =
     status?.account?.display_name ||
     status?.account?.login ||
@@ -495,12 +498,12 @@ export default function YandexDiskIntegrationScreen() {
         searchable={false}
         selectedId={providerTarget === 'profiles' ? profileProvider : provider}
         items={[
-          { id: 'app_storage', label: t('company_integrations_storage_provider_app') },
+          { id: 'beget_s3', label: t('company_integrations_storage_provider_app') },
           { id: 'yandex_disk', label: t('company_integrations_storage_provider_yandex') },
         ]}
         onSelect={(item) => {
           setProviderModalVisible(false);
-          chooseProvider(providerTarget, String(item?.id || 'app_storage'));
+          chooseProvider(providerTarget, String(item?.id || 'beget_s3'));
         }}
       />
 

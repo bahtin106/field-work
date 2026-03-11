@@ -1,14 +1,11 @@
 // hooks/useOrderMedia.js
 // Centralised hook for resolving, caching and managing order photos.
-// Handles both app_storage (Supabase Storage) and yandex_disk providers.
+// Handles both beget_s3 and yandex_disk providers.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { supabase } from '../lib/supabase';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
-import { extractStorageObjectPath } from '../lib/storageObjectPaths';
 
 const MEDIA_CATEGORIES = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
-const BUCKET = 'orders-photos';
 
 /** Weak per-order cache so resolved URLs survive hook re-mounts within same session. */
 const _globalResolvedCache = new Map();  // key → display URL
@@ -24,7 +21,7 @@ function isLikelyYandexLink(url) {
  *
  * @param {object} params
  * @param {object|null} params.order          – current order object (must have .id)
- * @param {string} params.mediaProvider       – 'app_storage' | 'yandex_disk'
+ * @param {string} params.mediaProvider       – 'beget_s3' | 'yandex_disk'
  * @param {(key: string) => string} params.t  – i18n translate fn
  * @returns {{ resolvedUrls, issues, resolveOrder, syncPhotos, getDisplayUrl, inspectSingle }}
  */
@@ -76,11 +73,16 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     [issues, t],
   );
 
+  const canResolveYandexUrl = useCallback(
+    (sourceUrl) => Boolean(order?.id && isLikelyYandexLink(sourceUrl)),
+    [order?.id],
+  );
+
   // ─── Inspect single URL (Yandex) ─────────────────────────────────
   const inspectSingle = useCallback(
     async (category, sourceUrl) => {
       const key = `${category}:${sourceUrl}`;
-      if (!order?.id || mediaProvider !== 'yandex_disk') return { resolved: false, issue: false };
+      if (!canResolveYandexUrl(sourceUrl)) return { resolved: false, issue: false };
       if (probeInFlight.current.has(key)) return { resolved: false, issue: false };
       probeInFlight.current.add(key);
       try {
@@ -116,26 +118,25 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         probeInFlight.current.delete(key);
       }
     },
-    [mediaProvider, order?.id],
+    [canResolveYandexUrl, order?.id],
   );
 
   // ─── Full order inspection (Yandex) — parallelised ────────────
   const resolveOrder = useCallback(
     async (baseOrder) => {
-      if (mediaProvider !== 'yandex_disk' || !baseOrder?.id) {
-        if (isMounted.current) {
-          setResolvedUrls({});
-          setIssues({});
-        }
-        return baseOrder;
-      }
+      if (!baseOrder?.id) return baseOrder;
 
       const nextOrder = { ...baseOrder };
       const categoryPromises = MEDIA_CATEGORIES.filter((cat) => {
-        const urls = Array.isArray(nextOrder[cat]) ? nextOrder[cat].filter(Boolean) : [];
+        const urls = Array.isArray(nextOrder[cat])
+          ? nextOrder[cat].filter((url) => Boolean(url && isLikelyYandexLink(url)))
+          : [];
         return urls.length > 0;
       }).map(async (category) => {
-        const urls = nextOrder[category].filter(Boolean);
+        const originalUrls = Array.isArray(nextOrder[category])
+          ? nextOrder[category].filter(Boolean)
+          : [];
+        const urls = originalUrls.filter((url) => Boolean(url && isLikelyYandexLink(url)));
         try {
           const data = await yandexDiskMedia('inspect_urls', {
             order_id: nextOrder.id,
@@ -148,15 +149,21 @@ export function useOrderMedia({ order, mediaProvider, t }) {
               : {};
           const issuesMap =
             data?.issues && typeof data.issues === 'object' ? data.issues : {};
-          const mediaUrls = Array.isArray(data?.media_urls) ? data.media_urls : urls;
-          return { category, resolved, issues: issuesMap, mediaUrls };
+          const survivingYandexUrls = Array.isArray(data?.media_urls) ? data.media_urls : urls;
+          const survivingYandexSet = new Set(survivingYandexUrls.map((url) => String(url || '')));
+          const mergedUrls = originalUrls.filter((url) => {
+            const normalized = String(url || '');
+            if (!isLikelyYandexLink(normalized)) return true;
+            return survivingYandexSet.has(normalized);
+          });
+          return { category, resolved, issues: issuesMap, mediaUrls: mergedUrls };
         } catch (e) {
           const message = String(e?.message || '').trim() || t('order_photo_issue_temporary');
           const issuesMap = {};
           for (const url of urls) {
             issuesMap[url] = { code: 'disk_error', message };
           }
-          return { category, resolved: {}, issues: issuesMap, mediaUrls: urls };
+          return { category, resolved: {}, issues: issuesMap, mediaUrls: originalUrls };
         }
       });
 
@@ -181,43 +188,18 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       }
       return nextOrder;
     },
-    [mediaProvider, t],
+    [t],
   );
 
   // ─── Sync photos from Supabase Storage ───────────────────────────
-  const syncPhotos = useCallback(
-    async (orderId) => {
-      if (mediaProvider !== 'app_storage') return null;
-      try {
-        const result = {};
-        // Parallel listing for all categories
-        const listings = await Promise.all(
-          MEDIA_CATEGORIES.map(async (cat) => {
-            const folder = `orders/${orderId}/${cat}`;
-            const { data: files } = await supabase.storage.from(BUCKET).list(folder);
-            const urls = (files || []).map((f) => {
-              const path = `${folder}/${f.name}`;
-              const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-              return data.publicUrl;
-            });
-            return { cat, urls };
-          }),
-        );
-        for (const { cat, urls } of listings) {
-          result[cat] = urls;
-        }
-        return result;
-      } catch (e) {
-        console.warn('syncPhotos error:', e);
-        return null;
-      }
-    },
-    [mediaProvider],
-  );
+  const syncPhotos = useCallback(async (_orderId) => {
+    if (mediaProvider !== 'beget_s3') return null;
+    return null;
+  }, [mediaProvider]);
 
   // ─── Proactive URL resolution for Yandex (no dependency on resolvedUrls!) ──
   useEffect(() => {
-    if (!order || mediaProvider !== 'yandex_disk') return;
+    if (!order?.id) return;
     const tasks = [];
     const currentResolved = resolvedRef.current;
     for (const cat of MEDIA_CATEGORIES) {
@@ -230,8 +212,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       }
     }
     if (tasks.length) Promise.allSettled(tasks).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order, mediaProvider, inspectSingle]);
+  }, [order, inspectSingle]);
 
   // ─── Clear caches on provider/order switch ──────────────────────
   const clearCaches = useCallback(() => {

@@ -10,12 +10,14 @@ import TagEditorField from '../../../../components/tags/TagEditorField';
 import { TAG_TYPE } from '../../../../components/tags/tagConfig';
 import { useCompanySettings } from '../../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../../lib/permissions';
+import { FieldErrorText, FEEDBACK_CODES, getMessageByCode } from '../../../../src/shared/feedback';
 import { useClient } from '../../../../src/features/clients/queries';
 import { useCreateClientObjectMutation } from '../../../../src/features/objects/queries';
 import { useEntityFieldSettings } from '../../../../src/features/fieldSettings/queries';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
+  getOrderedEntityFields,
   getEntityFieldMap,
 } from '../../../../src/features/fieldSettings/catalog';
 import { useSetObjectTagsMutation } from '../../../../src/features/tags/queries';
@@ -27,6 +29,7 @@ import {
 } from '../../../../src/features/objects/addressing';
 import { useTranslation } from '../../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../../src/shared/display/value';
+import { getRequiredTextFieldError } from '../../../../src/shared/validation/fields';
 import { useTheme } from '../../../../theme/ThemeProvider';
 
 export default function NewClientObjectScreen() {
@@ -39,8 +42,9 @@ export default function NewClientObjectScreen() {
   const { id } = useLocalSearchParams();
   const clientId = Array.isArray(id) ? id[0] : id;
 
-  const canEditClients = has('canEditClients');
-  const { data: client } = useClient(clientId, { enabled: !!clientId });
+  const canCreateObjects = has('canCreateObjects');
+  const canViewClients = has('canViewClients');
+  const { data: client } = useClient(clientId, { enabled: !!clientId && canViewClients });
   const { settings } = useCompanySettings();
   const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
     enabled: !!clientId,
@@ -50,6 +54,7 @@ export default function NewClientObjectScreen() {
   const [draft, setDraft] = React.useState(createEmptyClientObjectDraft());
   const [tags, setTags] = React.useState([]);
   const [saving, setSaving] = React.useState(false);
+  const [fieldErrors, setFieldErrors] = React.useState({});
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const objectFieldSettings = React.useMemo(
     () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
@@ -60,19 +65,32 @@ export default function NewClientObjectScreen() {
     () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled !== false),
     [objectFieldsByKey],
   );
+  const orderedAddressFields = React.useMemo(
+    () =>
+      getOrderedEntityFields(objectFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: CLIENT_OBJECT_ADDRESS_FIELDS,
+      }).map((field) => field.fieldKey),
+    [objectFieldSettings],
+  );
   const withRequiredLabel = React.useCallback(
     (field, label) => (objectFieldsByKey.get(field)?.isRequired ? `${label} *` : label),
     [objectFieldsByKey],
   );
 
   const saveObject = React.useCallback(async () => {
-    if (!clientId || !canEditClients || saving) return;
-    const missingRequiredField = ['name', ...visibleAddressFields].find((field) => {
-      if (!objectFieldsByKey.get(field)?.isRequired) return false;
-      return !String(draft?.[field] || '').trim();
-    });
-    if (missingRequiredField) {
-      toast.warning(t('field_settings_required_fill', 'Заполните обязательные поля'));
+    if (!clientId || !canCreateObjects || saving) return;
+    const nextFieldErrors = ['name', ...visibleAddressFields].reduce((acc, field) => {
+      const message = getRequiredTextFieldError(draft?.[field], {
+        required: objectFieldsByKey.get(field)?.isRequired === true,
+        requiredMessage: getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
+      });
+      if (!message) return acc;
+      return { ...acc, [field]: message };
+    }, {});
+    setFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) {
       return;
     }
     if (!hasClientObjectAddressContent(
@@ -102,13 +120,13 @@ export default function NewClientObjectScreen() {
     } finally {
       setSaving(false);
     }
-  }, [canEditClients, clientId, createMutation, draft, objectFieldsByKey, router, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, visibleAddressFields]);
+  }, [canCreateObjects, clientId, createMutation, draft, objectFieldsByKey, router, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, visibleAddressFields]);
 
-  if (!canEditClients) {
+  if (!canCreateObjects) {
     return (
       <EditScreenTemplate title={t('routes_objects_new')}>
         <View style={styles.blockedWrap}>
-          <Text style={styles.blockedText}>{t('clients_no_edit_permission')}</Text>
+          <Text style={styles.blockedText}>{t('objects_no_create_permission')}</Text>
         </View>
       </EditScreenTemplate>
     );
@@ -133,21 +151,32 @@ export default function NewClientObjectScreen() {
         <TextField
           label={withRequiredLabel('name', t('objects_field_name'))}
           value={draft.name}
-          onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
+          onChangeText={(value) => {
+            setDraft((prev) => ({ ...prev, name: value }));
+            setFieldErrors((prev) => (prev?.name ? { ...prev, name: null } : prev));
+          }}
+          error={fieldErrors?.name ? 'invalid' : undefined}
           style={styles.field}
         />
+        <FieldErrorText message={fieldErrors?.name || null} />
       </Card>
 
       <SectionHeader topSpacing="xs">{t('objects_address_section')}</SectionHeader>
       <Card paddedXOnly>
-        {visibleAddressFields.map((field) => (
-          <TextField
-            key={field}
-            label={withRequiredLabel(field, t(`order_field_${field}`))}
-            value={String(draft[field] || '')}
-            onChangeText={(value) => setDraft((prev) => ({ ...prev, [field]: value }))}
-            style={styles.field}
-          />
+        {orderedAddressFields.map((field) => (
+          <React.Fragment key={field}>
+            <TextField
+              label={withRequiredLabel(field, t(`order_field_${field}`))}
+              value={String(draft[field] || '')}
+              onChangeText={(value) => {
+                setDraft((prev) => ({ ...prev, [field]: value }));
+                setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
+              }}
+              error={fieldErrors?.[field] ? 'invalid' : undefined}
+              style={styles.field}
+            />
+            <FieldErrorText message={fieldErrors?.[field] || null} />
+          </React.Fragment>
         ))}
         {settings?.enable_object_tags ? (
           <TagEditorField

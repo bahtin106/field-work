@@ -233,9 +233,15 @@ export default TextField;
 const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMultiline = false) => {
   const sep = t.components?.input?.separator || {};
   const insetKey = sep.insetX || 'lg';
-  const sepHeight = sep.height ?? t.components?.listItem?.dividerWidth ?? 1;
-  const alpha = isError ? (sep.errorAlpha ?? 0.28) : (sep.alpha ?? 0.18);
-  const sepColor = withAlpha(isError ? t.colors.danger : t.colors.primary, alpha);
+  const baseSeparatorHeight = sep.height ?? t.components?.listItem?.dividerWidth ?? 1;
+  const errorSeparatorMultiplier = sep.errorHeightMultiplier ?? 2;
+  const sepHeight = isError
+    ? Math.max(baseSeparatorHeight * errorSeparatorMultiplier, baseSeparatorHeight + 1)
+    : baseSeparatorHeight;
+  const alpha = isError ? 1 : (sep.alpha ?? 0.18);
+  const sepColor = isError
+    ? t.colors.danger
+    : withAlpha(t.colors.primary, alpha);
   const ml = Number(t.spacing?.[insetKey] ?? 0) || 0;
   const mr = Number(t.spacing?.[insetKey] ?? 0) || 0;
 

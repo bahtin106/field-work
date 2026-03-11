@@ -11,6 +11,7 @@ const PROFILE_LOAD_TIMEOUT_MS = 8000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
 const IS_DEV = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
+const INVALID_REFRESH_TOKEN_RE = /invalid refresh token|refresh token.+already used/i;
 
 const buildProfileFromUser = (user, source = 'user-metadata') => {
   if (!user?.id) return null;
@@ -68,6 +69,9 @@ const isAbortLikeError = (error) => {
   const message = String(error?.message || '');
   return error?.name === 'AbortError' || /abort/i.test(message);
 };
+
+const isInvalidRefreshTokenError = (error) =>
+  INVALID_REFRESH_TOKEN_RE.test(String(error?.message || error || ''));
 
 export function SimpleAuthProvider({ children }) {
   const [state, setState] = useState({
@@ -228,6 +232,15 @@ export function SimpleAuthProvider({ children }) {
     });
   }, [clearProfileRecovery]);
 
+  const recoverFromInvalidRefreshToken = useCallback(async () => {
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {}
+
+    setSignedOutState();
+    await cleanupSessionRuntime('invalid-refresh-token');
+  }, [setSignedOutState]);
+
   const handleAuthChange = useCallback(
     async (event, session) => {
       const user = session?.user ?? null;
@@ -339,6 +352,10 @@ export function SimpleAuthProvider({ children }) {
 
           if (error) {
             console.warn('SimpleAuth: getSession error (attempt %s/%s)', attempt, MAX_ATTEMPTS, error);
+            if (isInvalidRefreshTokenError(error)) {
+              await recoverFromInvalidRefreshToken();
+              return;
+            }
             if (attempt === MAX_ATTEMPTS) {
               setSignedOutState();
             } else {
@@ -360,6 +377,10 @@ export function SimpleAuthProvider({ children }) {
             error,
           );
           if (!mounted) return;
+          if (isInvalidRefreshTokenError(error)) {
+            await recoverFromInvalidRefreshToken();
+            return;
+          }
           if (attempt === MAX_ATTEMPTS) {
             setSignedOutState();
           } else {
@@ -402,7 +423,7 @@ export function SimpleAuthProvider({ children }) {
       clearTimeout(fallbackTimeout);
       subscription?.unsubscribe?.();
     };
-  }, [clearProfileRecovery, handleAuthChange, setSignedOutState]);
+  }, [clearProfileRecovery, handleAuthChange, recoverFromInvalidRefreshToken, setSignedOutState]);
 
   const signOut = useCallback(async () => {
     const currentUserId = state.user?.id || null;

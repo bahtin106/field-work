@@ -345,15 +345,7 @@ async function getCallerAndOrderContext(
     .select('id, company_id, title, object_id, time_window_start, created_at, object:client_objects(id, name, summary)')
     .eq('id', orderId)
     .maybeSingle();
-  
-  // DEBUG: Log order lookup context
-  console.log('[yandex-disk-media] order lookup:', {
-    orderId,
-    orderErr,
-    order,
-    companyId: profile?.company_id,
-  });
-  
+
   if (orderErr || !order) throw new Error('Order not found');
   if (String(order.company_id) !== String(profile.company_id)) throw new Error('Forbidden');
 
@@ -368,7 +360,7 @@ async function getCallerAndOrderContext(
     userId: user.id,
     companyId: String(profile.company_id),
     companyName: String(company.name || 'Company'),
-    mediaProvider: String(company.media_provider || 'app_storage'),
+    mediaProvider: String(company.media_provider || 'beget_s3'),
     order: {
       id: String(order.id),
       title: order.title || null,
@@ -610,18 +602,11 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       mime?: string;
       url?: string;
       urls?: string[];
+      external_path?: string;
     };
     const action = String(body.action || '').trim();
     const orderId = String(body.order_id || '').trim();
-    
-    // DEBUG: Log incoming request
-    console.log('[yandex-disk-media] incoming request:', {
-      action,
-      orderId,
-      category: body.category,
-      hasFile: !!body.file_base64,
-    });
-    
+
     if (!action || !orderId) {
       return json(400, { success: false, message: 'Missing action or order_id' });
     }
@@ -631,8 +616,128 @@ export async function handleYandexDiskMediaRequest(req: Request) {
     const accessToken = connState.accessToken;
     const rootFolder = connState.folderPath;
 
+    const category = String(body.category || '').trim();
+
+    if (action === 'prepare_upload') {
+      if (!ALLOWED_CATEGORIES.has(category)) {
+        return json(400, { success: false, message: 'Invalid category' });
+      }
+      if (ctx.mediaProvider !== 'yandex_disk') {
+        return json(400, { success: false, message: 'Media provider is not Yandex Disk' });
+      }
+      if (!accessToken) {
+        return json(400, { success: false, message: 'Yandex Disk not connected' });
+      }
+
+      const mime = String(body.mime || 'image/jpeg');
+      const ext = getFileExtensionByMime(mime);
+      let folder = '';
+      const { data: previousInCategory } = await admin
+        .from('order_media_external_map')
+        .select('external_path')
+        .eq('company_id', ctx.companyId)
+        .eq('order_id', ctx.order.id)
+        .eq('category', category)
+        .eq('provider', 'yandex_disk')
+        .limit(1)
+        .maybeSingle();
+      if (previousInCategory?.external_path) {
+        folder = parentPath(String(previousInCategory.external_path || ''));
+      }
+      if (!folder) {
+        folder = buildOrderMediaFolder(rootFolder, ctx.companyName, ctx.order, category);
+        await ensureFolderTree(accessToken, folder);
+      }
+
+      const filePath = `${folder}/${Date.now()}-${toBase64UrlSafeName()}.${ext}`;
+      const linkRes = await fetch(
+        `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
+        { headers: { Authorization: `OAuth ${accessToken}` } },
+      );
+      if (!linkRes.ok) {
+        const text = await linkRes.text();
+        const mapped = mapYandexApiError(linkRes.status, text);
+        throw new Error(mapped || `Upload link failed: ${text}`);
+      }
+      const linkData = (await linkRes.json()) as { href?: string };
+      if (!linkData?.href) throw new Error('Upload href missing');
+
+      return json(200, {
+        success: true,
+        provider: 'yandex_disk',
+        upload_url: String(linkData.href),
+        upload_method: 'PUT',
+        upload_headers: { 'Content-Type': mime || 'application/octet-stream' },
+        external_path: filePath,
+      });
+    }
+
+    if (action === 'commit_upload') {
+      if (!ALLOWED_CATEGORIES.has(category)) {
+        return json(400, { success: false, message: 'Invalid category' });
+      }
+      if (!accessToken) {
+        return json(400, { success: false, message: 'Yandex Disk not connected' });
+      }
+
+      const filePath = String(body.external_path || '').trim();
+      if (!filePath) return json(400, { success: false, message: 'external_path is required' });
+
+      const sourceUrl = internalUrlFromPath(filePath);
+      let displayUrl = '';
+      try {
+        displayUrl = await publishAndGetPublicUrl(accessToken, filePath);
+      } catch (_e) {
+        try {
+          displayUrl = await getPathDownloadUrl(accessToken, filePath);
+        } catch (_e2) {
+          displayUrl = sourceUrl;
+        }
+      }
+
+      const { error: mapErr } = await admin.from('order_media_external_map').upsert(
+        {
+          company_id: ctx.companyId,
+          order_id: ctx.order.id,
+          category,
+          provider: 'yandex_disk',
+          source_url: sourceUrl,
+          external_path: filePath,
+          display_url: displayUrl,
+          display_url_updated_at: new Date().toISOString(),
+          created_by: ctx.userId,
+        },
+        { onConflict: 'order_id,category,source_url' },
+      );
+      if (mapErr) throw mapErr;
+
+      const atomicResult = await appendOrderMediaUrlAtomic(
+        admin,
+        ctx.order.id,
+        ctx.companyId,
+        category,
+        sourceUrl,
+      );
+      if (!atomicResult) {
+        return json(200, {
+          success: true,
+          url: sourceUrl,
+          display_url: displayUrl,
+          provider: 'yandex_disk',
+        });
+      }
+
+      return json(200, {
+        success: true,
+        url: sourceUrl,
+        display_url: displayUrl,
+        provider: 'yandex_disk',
+        media_urls: atomicResult.media_urls || [],
+        order_updated_at: atomicResult.updated_at,
+      });
+    }
+
     if (action === 'upload') {
-      const category = String(body.category || '').trim();
       if (!ALLOWED_CATEGORIES.has(category)) {
         return json(400, { success: false, message: 'Invalid category' });
       }
@@ -1027,7 +1132,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
 
       let { data: mapRow, error: mapErr } = await admin
         .from('order_media_external_map')
-        .select('id, source_url, external_path')
+        .select('id, source_url, external_path, display_url')
         .eq('company_id', ctx.companyId)
         .eq('order_id', ctx.order.id)
         .eq('category', category)
@@ -1035,18 +1140,37 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         .eq('source_url', sourceUrl)
         .maybeSingle();
       if (mapErr) throw mapErr;
+      if (!mapRow) {
+        const { data: displayRow, error: displayErr } = await admin
+          .from('order_media_external_map')
+          .select('id, source_url, external_path, display_url')
+          .eq('company_id', ctx.companyId)
+          .eq('order_id', ctx.order.id)
+          .eq('category', category)
+          .eq('provider', 'yandex_disk')
+          .eq('display_url', sourceUrl)
+          .maybeSingle();
+        if (displayErr) throw displayErr;
+        mapRow = displayRow;
+      }
 
       if (!mapRow && accessToken) {
         const { data: candidates, error: listErr } = await admin
           .from('order_media_external_map')
-          .select('id, source_url, external_path')
+          .select('id, source_url, external_path, display_url')
           .eq('company_id', ctx.companyId)
           .eq('order_id', ctx.order.id)
           .eq('category', category)
           .eq('provider', 'yandex_disk');
         if (listErr) throw listErr;
         const needle = canonicalUrl(sourceUrl);
-        mapRow = (candidates || []).find((row) => canonicalUrl(String(row.source_url || '')) === needle) || null;
+        mapRow =
+          (candidates || []).find((row) => {
+            return (
+              canonicalUrl(String(row.source_url || '')) === needle ||
+              canonicalUrl(String((row as any).display_url || '')) === needle
+            );
+          }) || null;
         if (!mapRow && needle) {
           for (const row of candidates || []) {
             const extPath = String((row as any)?.external_path || '').trim();
@@ -1077,6 +1201,16 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         return json(404, { success: false, message: 'Media mapping not found' });
       }
 
+      const externalPath = String((mapRow as any).external_path || '').trim();
+      if (!externalPath) {
+        return json(404, { success: false, message: 'Media mapping not found' });
+      }
+      if (!accessToken) {
+        return json(400, { success: false, message: 'Yandex Disk not connected' });
+      }
+
+      await deleteYandexResourceSafe(accessToken, externalPath);
+
       const preferredSourceUrl = String(mapRow.source_url || '').trim() || sourceUrl;
       let atomicResult = await removeOrderMediaUrlAtomic(
         admin,
@@ -1102,17 +1236,6 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         );
       }
 
-      if (accessToken) {
-        const delRes = await fetch(
-          `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(String(mapRow.external_path))}&permanently=true`,
-          { method: 'DELETE', headers: { Authorization: `OAuth ${accessToken}` } },
-        );
-        if (![202, 204, 404, 423].includes(delRes.status)) {
-          const text = await delRes.text();
-          throw new Error(`Delete failed: ${text}`);
-        }
-      }
-
       if (mapRow.id != null) {
         const { error: delMapErr } = await admin
           .from('order_media_external_map')
@@ -1129,34 +1252,6 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           .eq('provider', 'yandex_disk')
           .eq('source_url', sourceUrl);
         if (delBySourceErr) throw delBySourceErr;
-      }
-
-      if (accessToken) {
-        const deletedFilePath = String(mapRow.external_path || '');
-        const categoryFolder = parentPath(deletedFilePath);
-        const orderFolder = orderFolderPathFromFile(deletedFilePath);
-
-        const { count: categoryCount } = await admin
-          .from('order_media_external_map')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.order.id)
-          .eq('category', category)
-          .eq('provider', 'yandex_disk');
-        if (!categoryCount && categoryFolder) {
-          await deleteYandexResourceSafe(accessToken, categoryFolder);
-        }
-
-        const { count: orderCount } = await admin
-          .from('order_media_external_map')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', ctx.companyId)
-          .eq('order_id', ctx.order.id)
-          .eq('provider', 'yandex_disk');
-        if (!orderCount) {
-          const fallbackOrderFolder = buildOrderFolderPath(rootFolder, ctx.companyName, ctx.order);
-          await deleteYandexResourceSafe(accessToken, orderFolder || fallbackOrderFolder);
-        }
       }
 
       return json(200, {
@@ -1176,21 +1271,16 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       if (rowsErr) throw rowsErr;
 
       const rows = mapRows || [];
+      if (rows.length && !accessToken) {
+        return json(400, { success: false, message: 'Yandex Disk not connected' });
+      }
+
       let removedRemote = 0;
-      const orderFolders = new Set<string>();
       for (const row of rows) {
-        const orderFolder = orderFolderPathFromFile(String(row.external_path || ''));
-        if (orderFolder) orderFolders.add(orderFolder);
-        if (!accessToken) continue;
-        try {
-          const delRes = await fetch(
-            `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(String(row.external_path || ''))}&permanently=true`,
-            { method: 'DELETE', headers: { Authorization: `OAuth ${accessToken}` } },
-          );
-          if ([202, 204, 404, 423].includes(delRes.status)) removedRemote += 1;
-        } catch (_e) {
-          // ignore remote failures; metadata cleanup still proceeds
-        }
+        const externalPath = String(row?.external_path || '').trim();
+        if (!externalPath) continue;
+        await deleteYandexResourceSafe(accessToken, externalPath);
+        removedRemote += 1;
       }
 
       if (rows.length) {
@@ -1202,16 +1292,6 @@ export async function handleYandexDiskMediaRequest(req: Request) {
             .in('id', ids);
           if (delMapErr) throw delMapErr;
         }
-      }
-
-      if (accessToken && orderFolders.size) {
-        for (const folder of orderFolders) {
-          await deleteYandexResourceSafe(accessToken, folder);
-        }
-      }
-      if (accessToken && !orderFolders.size) {
-        const fallbackOrderFolder = buildOrderFolderPath(rootFolder, ctx.companyName, ctx.order);
-        await deleteYandexResourceSafe(accessToken, fallbackOrderFolder);
       }
 
       return json(200, {
@@ -1240,4 +1320,3 @@ export async function handleYandexDiskMediaRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleYandexDiskMediaRequest);
 }
-

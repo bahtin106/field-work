@@ -94,16 +94,74 @@ function pickLang(lang) {
   return code.startsWith('en') ? 'en' : 'ru';
 }
 
-function formatDateByLang(iso, lang) {
+function normalizeTimeZone(zone) {
+  const value = String(zone || '').trim();
+  if (!value) return 'UTC';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date());
+    return value;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function getOffsetMinutes(date, timeZone) {
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) return 0;
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const parts = Object.fromEntries(dtf.formatToParts(d).map((part) => [part.type, part.value]));
+    const zonedUtcMs = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      0,
+      0,
+    );
+    return Math.round((zonedUtcMs - d.getTime()) / 60000);
+  } catch {
+    return 0;
+  }
+}
+
+function formatOffsetLabel(totalMinutes) {
+  const mins = Number.isFinite(totalMinutes) ? Math.trunc(totalMinutes) : 0;
+  const sign = mins >= 0 ? '+' : '-';
+  const abs = Math.abs(mins);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `UTC${sign}${hh}:${mm}`;
+}
+
+function formatDateByLang(iso, lang, timeZone) {
   try {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return String(iso || '');
-    return new Intl.DateTimeFormat(lang === 'en' ? 'en-US' : 'ru-RU', {
+    const locale = lang === 'en' ? 'en-US' : 'ru-RU';
+    const safeZone = normalizeTimeZone(timeZone);
+    const datePart = new Intl.DateTimeFormat(locale, {
       day: '2-digit',
       month: 'long',
       year: 'numeric',
-      timeZone: 'UTC',
+      timeZone: safeZone,
     }).format(d);
+    const timePart = new Intl.DateTimeFormat(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: safeZone,
+    }).format(d);
+    return `${datePart} ${lang === 'en' ? 'at' : 'в'} ${timePart} (${formatOffsetLabel(getOffsetMinutes(d, safeZone))})`;
   } catch {
     return String(iso || '');
   }
@@ -122,7 +180,7 @@ function buildSubscriptionReminderEmail(payload = {}) {
     : eventKeyRaw === 'warning_1d'
       ? 'warning_1d'
       : 'warning_7d';
-  const periodEndText = formatDateByLang(payload.periodEndIso, lang);
+  const periodEndText = formatDateByLang(payload.periodEndIso, lang, payload.timeZone);
   const daysLeft = Number.isFinite(Number(payload.daysLeft)) ? Math.max(0, Number(payload.daysLeft)) : null;
 
   const subject = dict.subjects[normalizedEvent];

@@ -1,13 +1,15 @@
 import React from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import UIButton from '../ui/Button';
 import SectionHeader from '../ui/SectionHeader';
 import TextField from '../ui/TextField';
 import { BaseModal } from '../ui/modals';
+import { FieldErrorText } from '../../src/shared/feedback';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
+  getOrderedEntityFields,
   getEntityFieldMap,
 } from '../../src/features/fieldSettings/catalog';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -65,7 +67,13 @@ export default function ClientObjectEditorModal({
   onSave,
   onClose,
   saving = false,
+  fieldErrors = {},
   saveLabel = null,
+  searchSuggestions = [],
+  searchSuggestionsLoading = false,
+  searchSuggestionsVisible = false,
+  searchSuggestionsEmpty = false,
+  onSelectSuggestion = null,
 }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
@@ -75,19 +83,37 @@ export default function ClientObjectEditorModal({
     [fieldSettings],
   );
   const fieldsByKey = React.useMemo(() => getEntityFieldMap(settings), [settings]);
-  const visiblePrimaryFields = React.useMemo(
+  const _visiblePrimaryFields = React.useMemo(
     () =>
       CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS.filter(
         (field) => fieldsByKey.get(field)?.isEnabled !== false,
       ),
     [fieldsByKey],
   );
-  const visibleAdditionalFields = React.useMemo(
+  const _visibleAdditionalFields = React.useMemo(
     () =>
       CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS.filter(
         (field) => fieldsByKey.get(field)?.isEnabled !== false,
       ),
     [fieldsByKey],
+  );
+  const orderedPrimaryFields = React.useMemo(
+    () =>
+      getOrderedEntityFields(settings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
+      }).map((field) => field.fieldKey),
+    [settings],
+  );
+  const orderedAdditionalFields = React.useMemo(
+    () =>
+      getOrderedEntityFields(settings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
+      }).map((field) => field.fieldKey),
+    [settings],
   );
 
   const withRequiredLabel = React.useCallback(
@@ -126,38 +152,91 @@ export default function ClientObjectEditorModal({
           label={withRequiredLabel('name', t(FIELD_LABEL_KEYS.name))}
           value={String(draft?.name || '')}
           onChangeText={(value) => onChange?.('name', value)}
+          error={fieldErrors?.name ? 'invalid' : undefined}
           style={styles.field}
         />
-        {visiblePrimaryFields.map((field) => (
-          <TextField
-            key={field}
-            label={withRequiredLabel(field, t(FIELD_LABEL_KEYS[field]))}
-            placeholder={FIELD_PLACEHOLDER_KEYS[field] ? t(FIELD_PLACEHOLDER_KEYS[field]) : undefined}
-            value={String(draft?.[field] || '')}
-            onChangeText={(value) => onChange?.(field, value)}
-            keyboardType={NUMERIC_FIELDS.has(field) ? 'decimal-pad' : undefined}
-            multiline={MULTILINE_FIELDS.has(field)}
-            minLines={MULTILINE_FIELDS.has(field) ? 2 : undefined}
-            style={styles.field}
-          />
+        <FieldErrorText message={fieldErrors?.name || null} />
+        {orderedPrimaryFields.map((field) => (
+          <React.Fragment key={field}>
+            <TextField
+              label={withRequiredLabel(field, t(FIELD_LABEL_KEYS[field]))}
+              placeholder={FIELD_PLACEHOLDER_KEYS[field] ? t(FIELD_PLACEHOLDER_KEYS[field]) : undefined}
+              value={String(draft?.[field] || '')}
+              onChangeText={(value) => onChange?.(field, value)}
+              keyboardType={NUMERIC_FIELDS.has(field) ? 'decimal-pad' : undefined}
+              multiline={MULTILINE_FIELDS.has(field)}
+              minLines={MULTILINE_FIELDS.has(field) ? 2 : undefined}
+              error={fieldErrors?.[field] ? 'invalid' : undefined}
+              style={styles.field}
+            />
+            <FieldErrorText message={fieldErrors?.[field] || null} />
+          </React.Fragment>
         ))}
-        {visibleAdditionalFields.length ? (
+        {searchSuggestionsVisible ? (
+          <>
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('order_object_search_title', 'Похожие объекты')}
+            </SectionHeader>
+            <Text style={styles.suggestionHint}>
+              {t(
+                'order_object_search_hint',
+                'Если адрес уже есть в базе, лучше выбрать существующий объект, а не создавать дубль.',
+              )}
+            </Text>
+            {searchSuggestionsLoading ? (
+              <Text style={styles.suggestionStateText}>
+                {t('order_object_search_loading', 'Ищем похожие объекты...')}
+              </Text>
+            ) : null}
+            {!searchSuggestionsLoading && searchSuggestionsEmpty ? (
+              <Text style={styles.suggestionStateText}>
+                {t('order_object_search_empty', 'Совпадений пока не найдено')}
+              </Text>
+            ) : null}
+            {!searchSuggestionsLoading
+              ? searchSuggestions.map((item) => (
+                  <Pressable
+                    key={`${item.objectId}-${item.clientId}`}
+                    style={({ pressed }) => [
+                      styles.suggestionCard,
+                      pressed ? styles.suggestionCardPressed : null,
+                    ]}
+                    onPress={() => onSelectSuggestion?.(item)}
+                  >
+                    <Text style={styles.suggestionTitle} numberOfLines={1}>
+                      {item.objectName || t('objects_new')}
+                    </Text>
+                    <Text style={styles.suggestionSubtitle} numberOfLines={1}>
+                      {item.shortAddress || t('order_details_address_not_specified')}
+                    </Text>
+                    <Text style={styles.suggestionMeta} numberOfLines={1}>
+                      {item.clientName || t('routes_clients_client')}
+                    </Text>
+                  </Pressable>
+                ))
+              : null}
+          </>
+        ) : null}
+        {orderedAdditionalFields.length ? (
           <>
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
               {t('objects_additional_info_section')}
             </SectionHeader>
-            {visibleAdditionalFields.map((field) => (
-              <TextField
-                key={field}
-                label={withRequiredLabel(field, t(FIELD_LABEL_KEYS[field]))}
-                placeholder={FIELD_PLACEHOLDER_KEYS[field] ? t(FIELD_PLACEHOLDER_KEYS[field]) : undefined}
-                value={String(draft?.[field] || '')}
-                onChangeText={(value) => onChange?.(field, value)}
-                keyboardType={NUMERIC_FIELDS.has(field) ? 'decimal-pad' : undefined}
-                multiline={MULTILINE_FIELDS.has(field)}
-                minLines={MULTILINE_FIELDS.has(field) ? 2 : undefined}
-                style={styles.field}
-              />
+            {orderedAdditionalFields.map((field) => (
+              <React.Fragment key={field}>
+                <TextField
+                  label={withRequiredLabel(field, t(FIELD_LABEL_KEYS[field]))}
+                  placeholder={FIELD_PLACEHOLDER_KEYS[field] ? t(FIELD_PLACEHOLDER_KEYS[field]) : undefined}
+                  value={String(draft?.[field] || '')}
+                  onChangeText={(value) => onChange?.(field, value)}
+                  keyboardType={NUMERIC_FIELDS.has(field) ? 'decimal-pad' : undefined}
+                  multiline={MULTILINE_FIELDS.has(field)}
+                  minLines={MULTILINE_FIELDS.has(field) ? 2 : undefined}
+                  error={fieldErrors?.[field] ? 'invalid' : undefined}
+                  style={styles.field}
+                />
+                <FieldErrorText message={fieldErrors?.[field] || null} />
+              </React.Fragment>
             ))}
           </>
         ) : null}
@@ -182,6 +261,43 @@ function createStyles(theme) {
       paddingHorizontal: theme.spacing.lg,
       paddingBottom: theme.spacing.md,
       paddingTop: theme.spacing.sm,
+    },
+    suggestionHint: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      marginBottom: theme.spacing.sm,
+    },
+    suggestionStateText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      marginBottom: theme.spacing.sm,
+    },
+    suggestionCard: {
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.md,
+      backgroundColor: theme.colors.surface,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+      marginBottom: theme.spacing.xs,
+    },
+    suggestionCardPressed: {
+      opacity: 0.85,
+    },
+    suggestionTitle: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.semibold,
+      marginBottom: 2,
+    },
+    suggestionSubtitle: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      marginBottom: 2,
+    },
+    suggestionMeta: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.xs ?? theme.typography.sizes.sm,
     },
   });
 }

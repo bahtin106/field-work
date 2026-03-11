@@ -21,6 +21,7 @@ export const queryKeys = {
   objects: {
     byClient: (clientId) => ['objects', 'by-client', String(clientId || '')],
     byCompany: (companyId) => ['objects', 'by-company', String(companyId || '')],
+    searchForOrder: (params = {}) => ['objects', 'search-for-order', params],
     detail: (id) => ['objects', 'detail', String(id || '')],
   },
   fieldSettings: {

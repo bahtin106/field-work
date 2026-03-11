@@ -317,8 +317,8 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
         success: true,
         connected: !!conn,
         health,
-        media_provider: (company?.media_provider as string) || 'app_storage',
-        profile_media_provider: (company?.profile_media_provider as string) || 'app_storage',
+        media_provider: (company?.media_provider as string) || 'beget_s3',
+        profile_media_provider: (company?.profile_media_provider as string) || 'beget_s3',
         storage,
         account: conn
           ? {
@@ -436,7 +436,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
 
       const { error: upErr } = await admin
         .from('companies')
-        .update({ media_provider: 'app_storage', profile_media_provider: 'app_storage' })
+        .update({ media_provider: 'beget_s3', profile_media_provider: 'beget_s3' })
         .eq('id', caller.companyId);
       if (upErr) throw upErr;
 
@@ -458,7 +458,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
 
     if (action === 'set_provider') {
       const provider = String(body.provider || '').trim();
-      if (!['app_storage', 'yandex_disk'].includes(provider)) {
+      if (!['beget_s3', 'yandex_disk'].includes(provider)) {
         return json(400, { success: false, message: 'Unsupported provider' });
       }
       if (provider === 'yandex_disk') {
@@ -480,7 +480,7 @@ export async function handleYandexDiskIntegrationRequest(req: Request) {
 
     if (action === 'set_profile_provider') {
       const provider = String(body.provider || '').trim();
-      if (!['app_storage', 'yandex_disk'].includes(provider)) {
+      if (!['beget_s3', 'yandex_disk'].includes(provider)) {
         return json(400, { success: false, message: 'Unsupported provider' });
       }
       if (provider === 'yandex_disk') {

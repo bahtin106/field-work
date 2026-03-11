@@ -3,7 +3,7 @@ set -euo pipefail
 
 LOCK_FILE="${SUBSCRIPTION_EMAIL_LOCK_FILE:-/var/lock/subscription-email-worker.lock}"
 BATCH_LIMIT="${SUBSCRIPTION_EMAIL_BATCH_LIMIT:-100}"
-MAX_BATCHES="${SUBSCRIPTION_EMAIL_MAX_BATCHES:-20}"
+MAX_BATCHES="${SUBSCRIPTION_EMAIL_MAX_BATCHES:-5}"
 PROCESSING_TIMEOUT="${SUBSCRIPTION_EMAIL_PROCESSING_TIMEOUT:-15 minutes}"
 EMAIL_API_URL="${EMAIL_API_URL:-http://localhost:3000/send-email}"
 PSQL_CMD="docker exec -i supabase-db psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1"
@@ -40,9 +40,11 @@ SELECT
     'subscriptionEvent', c.event_type,
     'daysLeft', COALESCE((c.payload->>'days_left')::int, 0),
     'periodEndIso', COALESCE(c.payload->>'period_end_iso', c.period_end_iso::text, ''),
+    'timeZone', COALESCE(NULLIF(trim(comp.timezone), ''), c.payload->>'company_timezone', 'UTC'),
     'lang', COALESCE(c.locale, 'ru')
   )::text AS body
 FROM claimed c
+LEFT JOIN public.companies comp ON comp.id = c.company_id
 ORDER BY c.id;
 SQL_EOF
 )

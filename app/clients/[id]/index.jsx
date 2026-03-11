@@ -17,6 +17,12 @@ import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { useClient, useClientOrderCount } from '../../../src/features/clients/queries';
 import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+} from '../../../src/features/fieldSettings/catalog';
+import { createEntityFieldPresentation } from '../../../src/features/fieldSettings/presentation';
+import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
+import {
   buildAdditionalPhoneDisplayLabel,
   getClientAdditionalPhones,
 } from '../../../src/features/clients/additionalPhones';
@@ -54,8 +60,12 @@ export default function ClientViewScreen() {
 
   const canViewClients = has('canViewClients');
   const canEditClients = has('canEditClients');
+  const canViewObjects = has('canViewObjects');
 
   const { data: client } = useClient(clientId, { enabled: !!clientId && canViewClients });
+  const { data: clientFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT, {
+    enabled: !!clientId && canViewClients,
+  });
   const { settings } = useCompanySettings();
   useClientOrderCount(clientId, {
     enabled: !!clientId && canViewClients,
@@ -63,11 +73,31 @@ export default function ClientViewScreen() {
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const toast = useToast();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
+  const clientFieldSettings = React.useMemo(
+    () => clientFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT),
+    [clientFieldSettingsData],
+  );
+  const fieldUi = React.useMemo(
+    () => createEntityFieldPresentation(clientFieldSettings),
+    [clientFieldSettings],
+  );
+  const canShowAvatarImage = fieldUi.isVisible('avatar_url');
   const additionalPhones = React.useMemo(() => getClientAdditionalPhones(client), [client]);
   const visibleAdditionalPhones = React.useMemo(
-    () => additionalPhones.filter((item) => !!item?.phone),
-    [additionalPhones],
+    () =>
+      additionalPhones.filter((item, index) =>
+        fieldUi.isVisible(`additional_phone_${index + 1}`) && !!item?.phone,
+      ),
+    [additionalPhones, fieldUi],
   );
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'middle_name', 'comment']);
+  const canShowContactSection = fieldUi.hasVisibleFields([
+    'email',
+    'phone',
+    'additional_phone_1',
+    'additional_phone_2',
+    'additional_phone_3',
+  ]);
 
   const onCopyEmail = React.useCallback(async () => {
     const email = client?.email || '';
@@ -140,7 +170,7 @@ export default function ClientViewScreen() {
       <ScrollView contentContainerStyle={styles.contentWrap}>
         <View style={styles.avatarWrap}>
           <View style={styles.avatarBox}>
-            {client?.avatarDisplayUrl || client?.avatarUrl ? (
+            {canShowAvatarImage && (client?.avatarDisplayUrl || client?.avatarUrl) ? (
               <ExpoImage
                 source={{ uri: client?.avatarDisplayUrl || client?.avatarUrl }}
                 style={styles.avatarImg}
@@ -171,22 +201,33 @@ export default function ClientViewScreen() {
             </>
           ) : null}
 
-          <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader>
+          {canShowPersonalSection ? <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader> : null}
+          {canShowPersonalSection ? (
           <Card paddedXOnly>
-            <LabelValueRow
-              label={t('label_full_name')}
-              value={
-                [client?.lastName, client?.firstName, client?.middleName]
-                  .filter((p) => !!p && String(p).trim() !== '')
-                  .join(' ') || ''
-              }
-            />
-            <View style={base.sep} />
-            <LabelValueRow label={t('clients_comment_label')} value={client?.comment || ''} />
+            {fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name') || fieldUi.isVisible('middle_name') ? (
+              <>
+                <LabelValueRow
+                  label={t('label_full_name')}
+                  value={
+                    [client?.lastName, client?.firstName, client?.middleName]
+                      .filter((p) => !!p && String(p).trim() !== '')
+                      .join(' ') || ''
+                  }
+                />
+                {fieldUi.isVisible('comment') ? <View style={base.sep} /> : null}
+              </>
+            ) : null}
+            {fieldUi.isVisible('comment') ? (
+              <LabelValueRow label={t('clients_comment_label')} value={client?.comment || ''} />
+            ) : null}
           </Card>
-          <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader>
+          ) : null}
+          {canShowContactSection ? <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
+          {canShowContactSection ? (
           <Card paddedXOnly>
-            <LabelValueRow
+            {fieldUi.isVisible('email') ? (
+              <>
+                <LabelValueRow
               label={t('view_label_email')}
               valueComponent={
                 hasDisplayValue(client?.email) ? (
@@ -218,9 +259,13 @@ export default function ClientViewScreen() {
                   </IconButton>
                 ) : null
               }
-            />
-            <View style={base.sep} />
-            <LabelValueRow
+                />
+                {fieldUi.isVisible('phone') || visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
+              </>
+            ) : null}
+            {fieldUi.isVisible('phone') ? (
+              <>
+                <LabelValueRow
               label={t('view_label_phone')}
               valueComponent={
                 hasDisplayValue(client?.phone) ? (
@@ -252,8 +297,10 @@ export default function ClientViewScreen() {
                   </IconButton>
                 ) : null
               }
-            />
-            {visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
+                />
+                {visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
+              </>
+            ) : null}
             {visibleAdditionalPhones.map((item, index) => {
               const rowLabel = buildAdditionalPhoneDisplayLabel(t, item?.label);
               const isLast = index === visibleAdditionalPhones.length - 1;
@@ -296,6 +343,7 @@ export default function ClientViewScreen() {
               );
             })}
           </Card>
+          ) : null}
 
           <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
           <Card paddedXOnly>
@@ -305,6 +353,7 @@ export default function ClientViewScreen() {
                   <Pressable
                     key={objectItem.id}
                     style={base.row}
+                    disabled={!canViewObjects}
                     onPress={() =>
                       router.push({
                         pathname: `/objects/${objectItem.id}`,
@@ -317,7 +366,7 @@ export default function ClientViewScreen() {
                   >
                     <Text style={base.label}>{t('routes_objects_object')}</Text>
                     <View style={base.rightWrap}>
-                      <Text style={[base.value, styles.link]}>
+                      <Text style={[base.value, canViewObjects ? styles.link : null]}>
                         {objectItem.name || t('objects_unnamed')}
                       </Text>
                     </View>

@@ -1,32 +1,18 @@
-// app/orders/components/OrderPhotosModal.jsx
-// ────────────────────────────────────────────────────────────────────
-// Photo management modal — built on top of the shared BaseModal.
-// Uses the same UI primitives (BaseModal, Button) as every other
-// modal in the app. Zero custom chrome.
-// ────────────────────────────────────────────────────────────────────
-
-import { useCallback, useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
-import { useTheme } from '../../../theme/ThemeProvider';
+
+import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
 import { useTranslation } from '../../../src/i18n/useTranslation';
-import { BaseModal } from '../../../components/ui/modals';
+import { useTheme } from '../../../theme/ThemeProvider';
 import PhotoCaptureFlowModal from './PhotoCaptureFlowModal';
 import PhotoGrid from './PhotoGrid';
 
-// ─── Haptic helpers ───────────────────────────────────────────────
-const hapticTap = () =>
-  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-const hapticMedium = () =>
-  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+const hapticTap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+const hapticMedium = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-/**
- * Bottom-sheet modal for viewing / adding / removing photos of one category.
- * Delegates all modal chrome (handle, header, close, backdrop, animation)
- * to BaseModal — keeps OrderPhotosModal focused on domain logic only.
- */
 export default function OrderPhotosModal({
   visible,
   onClose,
@@ -38,19 +24,68 @@ export default function OrderPhotosModal({
   onUploadUri,
   onUploadMultiple,
   onRemove,
+  onRemoveMany,
   onOpenViewer,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
 
   const [cameraVisible, setCameraVisible] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedUris, setSelectedUris] = useState([]);
+  const [confirmRemoveIndex, setConfirmRemoveIndex] = useState(null);
 
-  // ── Camera: batch save → stay in modal, upload in background ──
+  useEffect(() => {
+    if (!visible) {
+      setSelectionMode(false);
+      setSelectedUris([]);
+      setConfirmRemoveIndex(null);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    setSelectionMode(false);
+    setSelectedUris([]);
+    setConfirmRemoveIndex(null);
+  }, [category]);
+
+  useEffect(() => {
+    const actual = new Set((photos || []).map((value) => String(value)));
+    setSelectedUris((prev) => prev.filter((value) => actual.has(String(value))));
+  }, [photos]);
+
+  const exitSelectionMode = useCallback(() => {
+    setSelectionMode(false);
+    setSelectedUris([]);
+  }, []);
+
+  const enterSelectionMode = useCallback(
+    (actualIndex) => {
+      const nextUrl = String((photos || [])[actualIndex] || '').trim();
+      if (!nextUrl) return;
+      hapticMedium();
+      setSelectionMode(true);
+      setSelectedUris((prev) => (prev.includes(nextUrl) ? prev : [...prev, nextUrl]));
+    },
+    [photos],
+  );
+
+  const toggleSelection = useCallback(
+    (actualIndex) => {
+      const nextUrl = String((photos || [])[actualIndex] || '').trim();
+      if (!nextUrl) return;
+      hapticTap();
+      setSelectedUris((prev) =>
+        prev.includes(nextUrl) ? prev.filter((value) => value !== nextUrl) : [...prev, nextUrl],
+      );
+    },
+    [photos],
+  );
+
   const handleSaveFromCamera = useCallback(
     (uris) => {
       if (!uris || !uris.length) return;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      // Fire-and-forget: uploads happen in parent scope
       if (uris.length === 1) {
         onUploadUri(category, uris[0]).catch((e) =>
           console.warn('[OrderPhotosModal] camera upload error', e),
@@ -61,10 +96,9 @@ export default function OrderPhotosModal({
         );
       }
     },
-    [category, onUploadUri, onUploadMultiple],
+    [category, onUploadMultiple, onUploadUri],
   );
 
-  // ── Gallery: pick → stay in modal, upload in background ──────
   const handleGallery = useCallback(async () => {
     hapticTap();
     try {
@@ -80,11 +114,10 @@ export default function OrderPhotosModal({
       });
       if (!result || result.canceled) return;
 
-      const uris = (result.assets || []).map((a) => a.uri).filter(Boolean);
+      const uris = (result.assets || []).map((asset) => asset.uri).filter(Boolean);
       if (!uris.length) return;
 
       hapticMedium();
-      // Fire-and-forget
       onUploadMultiple(category, uris).catch((e) =>
         console.warn('[OrderPhotosModal] gallery upload error', e),
       );
@@ -104,11 +137,20 @@ export default function OrderPhotosModal({
 
   const handleRemove = useCallback(
     (idx) => {
-      hapticMedium();
-      onRemove?.(category, idx);
+      setConfirmRemoveIndex(idx);
     },
-    [category, onRemove],
+    [],
   );
+
+  const closeRemoveConfirm = useCallback(() => {
+    setConfirmRemoveIndex(null);
+  }, []);
+
+  const confirmRemove = useCallback(() => {
+    if (confirmRemoveIndex == null) return;
+    hapticMedium();
+    onRemove?.(category, confirmRemoveIndex);
+  }, [category, confirmRemoveIndex, onRemove]);
 
   const handleOpenViewer = useCallback(
     (list, idx) => {
@@ -117,17 +159,69 @@ export default function OrderPhotosModal({
     [onOpenViewer],
   );
 
+  const handleDeleteSelected = useCallback(() => {
+    if (!selectedUris.length || !onRemoveMany) return;
+    hapticMedium();
+    onRemoveMany(category, selectedUris);
+    exitSelectionMode();
+  }, [category, exitSelectionMode, onRemoveMany, selectedUris]);
+
   const count = (photos || []).length;
   const unavailableCount = useMemo(
     () => (photos || []).filter((url) => !!getIssue?.(url)).length,
     [getIssue, photos],
   );
-
+  const selectedCount = selectedUris.length;
+  const deleteDisabled = selectedCount === 0;
   const s = useMemo(() => buildStyles(theme), [theme]);
 
-  // ── Footer: "Add photos" section with icon buttons ─────────
-  const footer = useMemo(
-    () => (
+  const footer = useMemo(() => {
+    if (selectionMode) {
+      return (
+        <View style={s.footerWrap}>
+          <Text style={s.footerLabel}>
+            {t('order_photos_selected_hint', 'Выбрано {count}')
+              .replace('{count}', String(selectedCount))}
+          </Text>
+          <View style={s.footerRow}>
+            <Pressable
+              onPress={handleDeleteSelected}
+              disabled={deleteDisabled}
+              style={({ pressed }) => [
+                s.actionBtn,
+                s.actionBtnDanger,
+                deleteDisabled && s.actionBtnDisabled,
+                pressed && !deleteDisabled && s.actionBtnPressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={t('order_photos_delete_selected', 'Удалить')}
+            >
+              <View style={s.actionBtnIcon}>
+                <Feather name="trash-2" size={theme.icons?.sm ?? 18} color={theme.colors.onPrimary} />
+              </View>
+              <Text style={s.actionBtnText}>
+                {t('order_photos_delete_selected', 'Удалить')}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={exitSelectionMode}
+              style={({ pressed }) => [s.actionBtn, pressed && s.actionBtnPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={t('common_cancel')}
+            >
+              <View style={s.actionBtnIcon}>
+                <Feather name="x" size={theme.icons?.sm ?? 18} color={theme.colors.primary} />
+              </View>
+              <Text style={s.actionBtnTextSecondary}>
+                {t('common_cancel')}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      );
+    }
+
+    return (
       <View style={s.footerWrap}>
         <Text style={s.footerLabel}>
           {t('order_photos_add_label', 'Добавить фото')}
@@ -135,35 +229,45 @@ export default function OrderPhotosModal({
         <View style={s.footerRow}>
           <Pressable
             onPress={handleOpenCamera}
-            style={({ pressed }) => [s.addBtn, pressed && s.addBtnPressed]}
+            style={({ pressed }) => [s.actionBtn, pressed && s.actionBtnPressed]}
             accessibilityRole="button"
             accessibilityLabel={t('order_photo_source_camera', 'Камера')}
           >
-            <View style={s.addBtnIcon}>
+            <View style={s.actionBtnIcon}>
               <Feather name="camera" size={theme.icons?.sm ?? 18} color={theme.colors.primary} />
             </View>
-            <Text style={s.addBtnText} numberOfLines={1}>
+            <Text style={s.actionBtnTextSecondary} numberOfLines={1}>
               {t('order_photo_source_camera', 'Камера')}
             </Text>
           </Pressable>
           <Pressable
             onPress={handleGallery}
-            style={({ pressed }) => [s.addBtn, pressed && s.addBtnPressed]}
+            style={({ pressed }) => [s.actionBtn, pressed && s.actionBtnPressed]}
             accessibilityRole="button"
             accessibilityLabel={t('order_photo_source_gallery', 'Галерея')}
           >
-            <View style={s.addBtnIcon}>
+            <View style={s.actionBtnIcon}>
               <Feather name="image" size={theme.icons?.sm ?? 18} color={theme.colors.primary} />
             </View>
-            <Text style={s.addBtnText} numberOfLines={1}>
+            <Text style={s.actionBtnTextSecondary} numberOfLines={1}>
               {t('order_photo_source_gallery', 'Галерея')}
             </Text>
           </Pressable>
         </View>
       </View>
-    ),
-    [s, t, theme, handleOpenCamera, handleGallery],
-  );
+    );
+  }, [
+    deleteDisabled,
+    exitSelectionMode,
+    handleDeleteSelected,
+    handleGallery,
+    handleOpenCamera,
+    s,
+    selectedCount,
+    selectionMode,
+    t,
+    theme,
+  ]);
 
   return (
     <>
@@ -174,9 +278,10 @@ export default function OrderPhotosModal({
         maxHeightRatio={0.85}
         footer={footer}
       >
-        {/* ── Subtitle (count) ── */}
         <Text style={s.subtitle}>
-          {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+          {selectionMode
+            ? t('order_photos_selected_hint', 'Выбрано {count}').replace('{count}', String(selectedCount))
+            : t('order_photos_count', '{count} фото').replace('{count}', String(count))}
         </Text>
         {unavailableCount > 0 ? (
           <Text style={s.warningText}>
@@ -184,7 +289,6 @@ export default function OrderPhotosModal({
           </Text>
         ) : null}
 
-        {/* ── Photo grid ── */}
         <PhotoGrid
           photos={photos}
           pending={pending}
@@ -192,6 +296,10 @@ export default function OrderPhotosModal({
           getIssue={getIssue}
           onOpenViewer={handleOpenViewer}
           onRemove={handleRemove}
+          selectionMode={selectionMode}
+          selectedUris={selectedUris}
+          onEnterSelectionMode={enterSelectionMode}
+          onToggleSelect={toggleSelection}
         />
       </BaseModal>
 
@@ -200,11 +308,21 @@ export default function OrderPhotosModal({
         onClose={handleCloseCamera}
         onSave={handleSaveFromCamera}
       />
+
+      <ConfirmModal
+        visible={confirmRemoveIndex != null}
+        onClose={closeRemoveConfirm}
+        title={t('order_photos_delete_single_title')}
+        message={t('order_photos_delete_single_message')}
+        confirmLabel={t('order_photos_delete_single_confirm')}
+        cancelLabel={t('order_photos_delete_single_cancel')}
+        confirmVariant="destructive"
+        onConfirm={confirmRemove}
+      />
     </>
   );
 }
 
-// ─── Styles (only content-specific, chrome is BaseModal's job) ─────
 function buildStyles(theme) {
   const sp = theme.spacing;
   const ty = theme.typography;
@@ -236,7 +354,7 @@ function buildStyles(theme) {
       flexDirection: 'row',
       gap: sp.md,
     },
-    addBtn: {
+    actionBtn: {
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
@@ -248,16 +366,28 @@ function buildStyles(theme) {
       borderColor: cl.border,
       backgroundColor: cl.surface,
     },
-    addBtnPressed: {
-      opacity: 0.7,
+    actionBtnDanger: {
+      backgroundColor: cl.danger,
+      borderColor: cl.danger,
     },
-    addBtnIcon: {
+    actionBtnDisabled: {
+      opacity: 0.45,
+    },
+    actionBtnPressed: {
+      opacity: 0.75,
+    },
+    actionBtnIcon: {
       width: theme.icons?.md ?? 22,
       height: theme.icons?.md ?? 22,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    addBtnText: {
+    actionBtnText: {
+      fontSize: ty.sizes.md,
+      fontWeight: ty.weight?.semibold || '600',
+      color: cl.onPrimary,
+    },
+    actionBtnTextSecondary: {
       fontSize: ty.sizes.md,
       fontWeight: ty.weight?.semibold || '600',
       color: cl.primary,

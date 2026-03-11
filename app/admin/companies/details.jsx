@@ -27,47 +27,99 @@ function parseDate(value) {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function toUtcDateOnly(value) {
-  const d = parseDate(value);
-  if (!d) return null;
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
-}
-
 function toPickerDate(value) {
-  const d = parseDate(value);
-  if (!d) return null;
-  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+  return parseDate(value);
 }
 
 function clampNumber(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function utcDayDiff(fromDate, toDate) {
-  const fromUtc = toUtcDateOnly(fromDate);
-  const toUtc = toUtcDateOnly(toDate);
-  if (!fromUtc || !toUtc) return 0;
-  return Math.floor((fromUtc.getTime() - toUtc.getTime()) / DAY_MS);
+function preciseDayDiff(fromDate, toDate) {
+  const from = parseDate(fromDate);
+  const to = parseDate(toDate);
+  if (!from || !to) return 0;
+  return Math.floor((from.getTime() - to.getTime()) / DAY_MS);
 }
 
 function toPeriodEndIso(value) {
   const d = parseDate(value);
   if (!d) return null;
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999)).toISOString();
+  return d.toISOString();
 }
 
-function formatDate(value) {
+function normalizeTimeZone(value) {
+  const zone = String(value || '').trim();
+  if (!zone) return 'UTC';
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: zone }).format(new Date());
+    return zone;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function getTimeZoneOffsetMinutes(value, timeZone) {
+  const d = parseDate(value);
+  if (!d) return 0;
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const parts = Object.fromEntries(dtf.formatToParts(d).map((part) => [part.type, part.value]));
+    const zonedUtcMs = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      0,
+      0,
+    );
+    return Math.round((zonedUtcMs - d.getTime()) / 60000);
+  } catch {
+    return 0;
+  }
+}
+
+function formatUtcOffset(totalMinutes) {
+  const mins = Number.isFinite(totalMinutes) ? Math.trunc(totalMinutes) : 0;
+  const sign = mins >= 0 ? '+' : '-';
+  const abs = Math.abs(mins);
+  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
+  const mm = String(abs % 60).padStart(2, '0');
+  return `UTC${sign}${hh}:${mm}`;
+}
+
+function formatDateTime(value, timeZone) {
   const d = parseDate(value);
   if (!d) return '';
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const year = String(d.getUTCFullYear());
-  return `${day}-${month}-${year}`;
+  const safeZone = normalizeTimeZone(timeZone);
+  const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
+  const datePart = new Intl.DateTimeFormat(locale, {
+    timeZone: safeZone,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(d);
+  const timePart = new Intl.DateTimeFormat(locale, {
+    timeZone: safeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(d);
+  return `${datePart}, ${timePart} (${formatUtcOffset(getTimeZoneOffsetMinutes(d, safeZone))})`;
 }
 
 function addDays(baseDate, days) {
-  const baseUtc = toUtcDateOnly(baseDate) || toUtcDateOnly(new Date());
-  return new Date(baseUtc.getTime() + days * DAY_MS);
+  const base = parseDate(baseDate) || new Date();
+  return new Date(base.getTime() + days * DAY_MS);
 }
 
 function toSafeInt(value, fallback = 0) {
@@ -214,8 +266,8 @@ export default function AdminCompanyDetailsScreen() {
   }, [refreshAll]);
 
   const mutation = useMutation({
-    mutationFn: async ({ periodEnd, paidSeatsTotal, applyPeriodEnd = true, applyPaidSeats = false }) => {
-      const periodEndIso = applyPeriodEnd ? toPeriodEndIso(periodEnd) : null;
+    mutationFn: async ({ periodEnd, periodEndIso: rawPeriodEndIso, paidSeatsTotal, applyPeriodEnd = true, applyPaidSeats = false }) => {
+      const periodEndIso = applyPeriodEnd ? (rawPeriodEndIso || toPeriodEndIso(periodEnd)) : null;
       const isActive = applyPeriodEnd
         ? !!periodEndIso && new Date(periodEndIso).getTime() > Date.now()
         : !!periodEnd && parseDate(periodEnd)?.getTime() > Date.now();
@@ -242,7 +294,7 @@ export default function AdminCompanyDetailsScreen() {
       }
       return saveSubscription(payload);
     },
-    onMutate: async ({ periodEnd, paidSeatsTotal, applyPeriodEnd = true, applyPaidSeats = false }) => {
+    onMutate: async ({ periodEnd, periodEndIso: rawPeriodEndIso, paidSeatsTotal, applyPeriodEnd = true, applyPaidSeats = false }) => {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: companyKey }),
         queryClient.cancelQueries({ queryKey: metaKey }),
@@ -258,7 +310,9 @@ export default function AdminCompanyDetailsScreen() {
         : toFiniteInt(prevAccess?.paid_seats_total, 0);
       const nextExtraSeats = Math.max(0, nextPaidSeatsTotal - 1);
       const nextPeriodEnd = applyPeriodEnd ? parseDate(periodEnd) : null;
-      const nextPeriodEndIso = nextPeriodEnd ? toPeriodEndIso(nextPeriodEnd) : null;
+      const nextPeriodEndIso = applyPeriodEnd
+        ? (rawPeriodEndIso || (nextPeriodEnd ? toPeriodEndIso(nextPeriodEnd) : null))
+        : null;
 
       queryClient.setQueryData(companyKey, (old) => {
         if (!old || typeof old !== 'object') return old;
@@ -309,19 +363,19 @@ export default function AdminCompanyDetailsScreen() {
   const periodEndRaw = meta?.current_period_end || data?.current_period_end || access?.period_end || null;
   const periodEnd = parseDate(periodEndRaw);
   const isSubscriptionActive = !!periodEnd && periodEnd.getTime() > Date.now();
+  const companyTimeZone = normalizeTimeZone(data?.timezone);
   const periodEndPickerDate = toPickerDate(periodEnd);
   const createdAt = parseDate(data?.created_at);
 
-  const todayUtc = React.useMemo(() => toUtcDateOnly(new Date()), []);
-  const periodEndUtc = React.useMemo(() => toUtcDateOnly(periodEnd), [periodEnd]);
   const addDaysBaseDate = React.useMemo(() => {
-    if (!periodEndUtc || !todayUtc) return todayUtc;
-    return periodEndUtc.getTime() > todayUtc.getTime() ? periodEndUtc : todayUtc;
-  }, [periodEndUtc, todayUtc]);
+    const currentNow = new Date();
+    if (!periodEnd) return currentNow;
+    return periodEnd.getTime() > currentNow.getTime() ? periodEnd : currentNow;
+  }, [periodEnd]);
   const maxSubtractDays = React.useMemo(() => {
-    if (!addDaysBaseDate || !todayUtc) return 0;
-    return Math.max(0, utcDayDiff(addDaysBaseDate, todayUtc));
-  }, [addDaysBaseDate, todayUtc]);
+    if (!addDaysBaseDate) return 0;
+    return Math.max(0, preciseDayDiff(addDaysBaseDate, new Date()));
+  }, [addDaysBaseDate]);
 
   const parsedDaysDelta = React.useMemo(() => {
     const rawDelta = toSignedInt(daysInput, 0);
@@ -441,17 +495,17 @@ export default function AdminCompanyDetailsScreen() {
       return false;
     }
 
-    const expiredDate = addDays(todayUtc || new Date(), -1);
     openConfirm({
       title: t('admin_company_cancel_subscription_confirm_title'),
       message: t('admin_company_cancel_subscription_confirm_message'),
-      periodEnd: expiredDate,
+      periodEnd: new Date(),
+      periodEndIso: new Date().toISOString(),
       paidSeatsTotal: 0,
       applyPeriodEnd: true,
       applyPaidSeats: false,
     });
     return true;
-  }, [isSubscriptionActive, openConfirm, t, toast, todayUtc]);
+  }, [isSubscriptionActive, openConfirm, t, toast]);
 
   if (guardLoading || !isAllowed) return <Screen background="background" />;
 
@@ -476,7 +530,7 @@ export default function AdminCompanyDetailsScreen() {
             <Card paddedXOnly>
               <LabelValueRow label={t('admin_companies_name')} value={data.name || ''} />
               <View style={base.sep} />
-              <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDate(createdAt) : ''} />
+              <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDateTime(createdAt, companyTimeZone) : ''} />
               <View style={base.sep} />
               <LabelValueRow label={t('admin_companies_employees')} value={String(employeesCount)} />
             </Card>
@@ -499,7 +553,7 @@ export default function AdminCompanyDetailsScreen() {
               <View style={base.sep} />
               <LabelValueRow
                 label={t('admin_company_period_end')}
-                value={periodEnd ? formatDate(periodEnd) : ''}
+                value={periodEnd ? formatDateTime(periodEnd, companyTimeZone) : ''}
               />
               <View style={base.sep} />
               <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
@@ -560,14 +614,14 @@ export default function AdminCompanyDetailsScreen() {
       <DateTimeModal
         visible={datePickerVisible}
         onClose={() => setDatePickerVisible(false)}
-        mode="date"
+        mode="datetime"
         initial={periodEndPickerDate || new Date()}
         onApply={(d) => {
           setDatePickerVisible(false);
           handlePickDate(d);
         }}
         allowFutureDates={true}
-        allowPastDates={false}
+        allowPastDates={true}
       />
 
       <BaseModal
@@ -596,7 +650,7 @@ export default function AdminCompanyDetailsScreen() {
       >
         <LabelValueRow
           label={t('admin_company_period_end_preview')}
-          value={previewPeriodEnd ? formatDate(previewPeriodEnd) : ''}
+          value={previewPeriodEnd ? formatDateTime(previewPeriodEnd, companyTimeZone) : ''}
         />
         <View style={base.sep} />
         <TextField
@@ -717,6 +771,7 @@ export default function AdminCompanyDetailsScreen() {
           if (!confirmState) return;
           await mutation.mutateAsync({
             periodEnd: confirmState.periodEnd,
+            periodEndIso: confirmState.periodEndIso,
             paidSeatsTotal: confirmState.paidSeatsTotal,
             applyPeriodEnd: confirmState.applyPeriodEnd !== false,
             applyPaidSeats: confirmState.applyPaidSeats === true,

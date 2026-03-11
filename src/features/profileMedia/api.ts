@@ -1,7 +1,17 @@
 import { encode as encodeBase64 } from 'base64-arraybuffer';
+import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
+import { Platform } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 
 type EntityType = 'employee' | 'client' | 'object';
+
+function inferMimeFromUri(uri: string) {
+  const raw = String(uri || '').trim().toLowerCase();
+  if (raw.endsWith('.png')) return 'image/png';
+  if (raw.endsWith('.webp')) return 'image/webp';
+  if (raw.endsWith('.heic') || raw.endsWith('.heif')) return 'image/heic';
+  return 'image/jpeg';
+}
 
 async function invokeProfileMedia(action: string, payload: Record<string, any> = {}) {
   const {
@@ -61,20 +71,90 @@ function isRecoverableProfileMediaError(error: unknown) {
 
 export async function uploadProfileMedia(entityType: EntityType, entityId: string, uri: string) {
   if (!entityType || !entityId || !uri) return null;
-  const response = await fetch(uri);
-  const buffer = await response.arrayBuffer();
-  const mime =
-    String(response.headers?.get?.('content-type') || '').trim() ||
-    'image/jpeg';
+  let mime = inferMimeFromUri(uri);
+  let buffer: ArrayBuffer | null = null;
 
+  const ensureFileData = async () => {
+    if (buffer) return;
+    const response = await fetch(uri);
+    if (!response.ok) {
+      throw new Error('Не удалось прочитать файл аватара');
+    }
+    mime = String(response.headers?.get?.('content-type') || '').trim() || mime || 'image/jpeg';
+    buffer = await response.arrayBuffer();
+  };
+
+  const tryDirectUpload = Platform.OS !== 'web';
+  if (tryDirectUpload) {
+    let directUploadCompleted = false;
+    try {
+      const prepared = await invokeProfileMedia('prepare_upload', {
+        entity_type: entityType,
+        entity_id: String(entityId),
+        mime,
+      });
+
+      const uploadUrl = String(prepared?.upload_url || '').trim();
+      const uploadMethod = String(prepared?.upload_method || 'PUT').trim() || 'PUT';
+      const uploadHeaders =
+        prepared?.upload_headers && typeof prepared.upload_headers === 'object'
+          ? Object.fromEntries(
+              Object.entries(prepared.upload_headers)
+                .map(([key, value]) => [String(key || '').trim(), String(value || '').trim()])
+                .filter(([key, value]) => key && value),
+            )
+          : {};
+
+      if (!uploadUrl) {
+        throw new Error('Не удалось подготовить загрузку');
+      }
+
+      const uploadResult = await uploadAsync(uploadUrl, uri, {
+        httpMethod: uploadMethod,
+        headers: uploadHeaders,
+        uploadType: FileSystemUploadType.BINARY_CONTENT,
+      });
+      if (!uploadResult || Number(uploadResult.status || 0) < 200 || Number(uploadResult.status || 0) >= 300) {
+        throw new Error(String(uploadResult?.body || 'Прямая загрузка не удалась'));
+      }
+
+      directUploadCompleted = true;
+
+      const committed = await invokeProfileMedia('commit_upload', {
+        entity_type: entityType,
+        entity_id: String(entityId),
+        object_key: prepared?.object_key || null,
+        public_url: prepared?.public_url || null,
+        external_path: prepared?.external_path || null,
+      });
+
+      const directUrl = String(committed?.url || '').trim();
+      if (!directUrl) {
+        throw new Error('Медиа загружено, но ссылка не сохранена');
+      }
+      return directUrl;
+    } catch (error) {
+      if (directUploadCompleted) {
+        throw error;
+      }
+      console.warn('[profile-media] direct upload fallback:', String((error as { message?: string })?.message || error || 'unknown'));
+    }
+  }
+
+  await ensureFileData();
   const data = await invokeProfileMedia('upload', {
     entity_type: entityType,
     entity_id: String(entityId),
-    file_base64: encodeBase64(buffer),
+    file_base64: encodeBase64(buffer as ArrayBuffer),
     mime,
   });
 
-  return String(data?.url || '').trim() || null;
+  const url = String(data?.url || '').trim();
+  if (!url) {
+    throw new Error('Медиа загружено, но ссылка не сохранена');
+  }
+
+  return url;
 }
 
 export async function deleteProfileMedia(entityType: EntityType, entityId: string) {

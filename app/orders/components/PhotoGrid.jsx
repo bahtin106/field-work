@@ -1,19 +1,21 @@
-// app/orders/components/PhotoGrid.jsx
-// ────────────────────────────────────────────────────────────────────
-// High-performance photo grid. Fully themed — zero hardcoded values.
-// ────────────────────────────────────────────────────────────────────
-
-import { useMemo, memo, useCallback, useEffect } from 'react';
-import { View, Text, Pressable, StyleSheet, FlatList } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import { memo, useCallback, useEffect, useMemo } from 'react';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useTheme } from '../../../theme/ThemeProvider';
-import { useTranslation } from '../../../src/i18n/useTranslation';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
+
 import CachedImage from '../../../components/ui/CachedImage';
+import { useTranslation } from '../../../src/i18n/useTranslation';
+import { useTheme } from '../../../theme/ThemeProvider';
 
 const NUM_COLUMNS = 3;
+const PHOTO_ACTION_HIT_SLOP = { top: 10, right: 10, bottom: 10, left: 10 };
 
-// ─── Upload pulse overlay ──────────────────────────────────────────
 const UploadOverlay = memo(function UploadOverlay({ borderRadius, iconSize, iconColor }) {
   const opacity = useSharedValue(0.18);
   useEffect(() => {
@@ -42,98 +44,140 @@ const UploadOverlay = memo(function UploadOverlay({ borderRadius, iconSize, icon
   );
 });
 
-// ─── PhotoItem (memoized) ──────────────────────────────────────────
 const PhotoItem = memo(function PhotoItem({
   uri,
   displayUri,
   issueMessage,
   isPending,
   actualIndex,
+  isSelectionMode,
+  isSelected,
   s,
   theme,
+  t,
   onPress,
   onRemove,
+  onLongPress,
+  onToggleSelect,
 }) {
   const handlePress = useCallback(() => {
     if (!isPending && onPress) onPress(actualIndex);
-  }, [isPending, actualIndex, onPress]);
+  }, [actualIndex, isPending, onPress]);
 
   const handleRemove = useCallback(() => {
     if (!isPending && onRemove) onRemove(actualIndex);
-  }, [isPending, actualIndex, onRemove]);
+  }, [actualIndex, isPending, onRemove]);
+
+  const handleLongPress = useCallback(() => {
+    if (!isPending && onLongPress) onLongPress(actualIndex);
+  }, [actualIndex, isPending, onLongPress]);
+
+  const handleToggleSelect = useCallback(() => {
+    if (!isPending && onToggleSelect) onToggleSelect(actualIndex);
+  }, [actualIndex, isPending, onToggleSelect]);
 
   const src = displayUri || uri;
-
-  if (issueMessage) {
-    return (
-      <View style={s.item}>
-        <View style={s.imageContainer}>
-          <View style={s.unavailable}>
-            <Feather
-              name="alert-circle"
-              size={theme.icons?.md || 22}
-              color={theme.colors.warning || theme.colors.primary}
-            />
-            <Text style={s.unavailableText} numberOfLines={3}>
-              {issueMessage}
-            </Text>
-          </View>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <View style={s.item}>
       <Pressable
         onPress={handlePress}
+        onLongPress={handleLongPress}
         disabled={isPending}
         accessibilityRole="image"
         style={({ pressed }) => [pressed && s.pressed]}
       >
         <View style={s.imageContainer}>
-          <CachedImage
-            uri={src}
-            width="100%"
-            height="100%"
-            style={{ borderRadius: theme.radii.sm }}
-            contentFit="cover"
-            cachePolicy="memory-disk"
-            transition={theme.timings?.panelToggleMs ?? 200}
-          />
-          {isPending && (
+          {issueMessage ? (
+            <View style={s.unavailable}>
+              <Feather
+                name="alert-circle"
+                size={theme.icons?.md || 22}
+                color={theme.colors.warning || theme.colors.primary}
+              />
+              <Text style={s.unavailableText} numberOfLines={3}>
+                {issueMessage}
+              </Text>
+            </View>
+          ) : (
+            <CachedImage
+              uri={src}
+              width="100%"
+              height="100%"
+              style={{ borderRadius: theme.radii.sm }}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              transition={theme.timings?.panelToggleMs ?? 200}
+            />
+          )}
+          {isPending ? (
             <UploadOverlay
               borderRadius={theme.radii.sm}
               iconSize={theme.icons?.md || 22}
               iconColor={theme.colors.onPrimary}
             />
-          )}
+          ) : null}
         </View>
       </Pressable>
 
-      {onRemove && !isPending && (
+      {!isPending && isSelectionMode ? (
+        <Pressable
+          onPress={handleToggleSelect}
+          hitSlop={PHOTO_ACTION_HIT_SLOP}
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: isSelected }}
+          accessibilityLabel={isSelected ? 'Снять выделение' : 'Выбрать фото'}
+          style={s.selectionBtn}
+        >
+          <View style={[s.selectionBtnBg, isSelected && s.selectionBtnBgActive]}>
+            {isSelected ? (
+              <Feather
+                name="check"
+                size={theme.icons.sm - theme.spacing.xs}
+                color={theme.colors.onPrimary}
+              />
+            ) : null}
+          </View>
+        </Pressable>
+      ) : null}
+
+      {!isPending && !isSelectionMode && onRemove ? (
         <Pressable
           onPress={handleRemove}
-          hitSlop={theme.components?.interactive?.hitSlop}
+          hitSlop={PHOTO_ACTION_HIT_SLOP}
           accessibilityRole="button"
-          accessibilityLabel="Удалить фото"
+          accessibilityLabel={t('order_photos_delete_single_confirm', 'Удалить')}
           style={s.removeBtn}
         >
           <View style={s.removeBtnBg}>
-            <Feather name="x" size={theme.icons.sm - theme.spacing.xs} color={theme.colors.onPrimary} />
+            <Feather
+              name="x"
+              size={theme.icons.sm - theme.spacing.xs}
+              color={theme.colors.onPrimary}
+            />
           </View>
         </Pressable>
-      )}
+      ) : null}
     </View>
   );
 });
 
-// ─── Main component ────────────────────────────────────────────────
-function PhotoGrid({ photos = [], pending = [], getDisplayUrl, getIssue, onOpenViewer, onRemove }) {
+function PhotoGrid({
+  photos = [],
+  pending = [],
+  getDisplayUrl,
+  getIssue,
+  onOpenViewer,
+  onRemove,
+  selectionMode = false,
+  selectedUris = [],
+  onEnterSelectionMode,
+  onToggleSelect,
+}) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-
   const s = useMemo(() => buildStyles(theme), [theme]);
+  const selectedUrlsSet = useMemo(() => new Set((selectedUris || []).map((value) => String(value))), [selectedUris]);
 
   const data = useMemo(() => {
     const mapped = [];
@@ -146,27 +190,41 @@ function PhotoGrid({ photos = [], pending = [], getDisplayUrl, getIssue, onOpenV
         actualIndex: -1,
       });
     }
-    for (let i = 0; i < (photos || []).length; i++) {
+    for (let i = 0; i < (photos || []).length; i += 1) {
       const url = photos[i];
-      const resolved = getDisplayUrl ? getDisplayUrl(url) : url;
-      const issueMessage = getIssue ? getIssue(url) : '';
       mapped.push({
         key: `photo_${String(url)}_${i}`,
         uri: url,
-        displayUri: resolved,
-        issueMessage,
+        displayUri: getDisplayUrl ? getDisplayUrl(url) : url,
+        issueMessage: getIssue ? getIssue(url) : '',
         isPending: false,
         actualIndex: i,
       });
     }
     return mapped;
-  }, [photos, pending, getDisplayUrl, getIssue]);
+  }, [getDisplayUrl, getIssue, pending, photos]);
 
   const handleOpenViewer = useCallback(
     (actualIndex) => {
       if (onOpenViewer && actualIndex >= 0) onOpenViewer(photos, actualIndex);
     },
     [onOpenViewer, photos],
+  );
+
+  const handleEnterSelectionMode = useCallback(
+    (actualIndex) => {
+      if (actualIndex < 0) return;
+      if (onEnterSelectionMode) onEnterSelectionMode(actualIndex);
+    },
+    [onEnterSelectionMode],
+  );
+
+  const handleToggleSelect = useCallback(
+    (actualIndex) => {
+      if (actualIndex < 0 || !onToggleSelect) return;
+      onToggleSelect(actualIndex);
+    },
+    [onToggleSelect],
   );
 
   const renderItem = useCallback(
@@ -177,13 +235,18 @@ function PhotoGrid({ photos = [], pending = [], getDisplayUrl, getIssue, onOpenV
         issueMessage={item.issueMessage}
         isPending={item.isPending}
         actualIndex={item.actualIndex}
+        isSelectionMode={selectionMode}
+        isSelected={!item.isPending && selectedUrlsSet.has(String(item.uri))}
         s={s}
         theme={theme}
+        t={t}
         onPress={handleOpenViewer}
         onRemove={onRemove}
+        onLongPress={handleEnterSelectionMode}
+        onToggleSelect={handleToggleSelect}
       />
     ),
-    [s, theme, handleOpenViewer, onRemove],
+    [handleEnterSelectionMode, handleOpenViewer, handleToggleSelect, onRemove, s, selectedUrlsSet, selectionMode, theme],
   );
 
   const keyExtractor = useCallback((item) => item.key, []);
@@ -220,7 +283,6 @@ function PhotoGrid({ photos = [], pending = [], getDisplayUrl, getIssue, onOpenV
 
 export default memo(PhotoGrid);
 
-// ─── Fully themed styles ───────────────────────────────────────────
 function buildStyles(theme) {
   const sp = theme.spacing;
   const ty = theme.typography;
@@ -264,13 +326,6 @@ function buildStyles(theme) {
       color: cl.textSecondary,
       textAlign: 'center',
     },
-    pendingOverlay: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: cl.overlay,
-      borderRadius: rd.sm,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
     removeBtn: {
       position: 'absolute',
       zIndex: 10,
@@ -284,6 +339,26 @@ function buildStyles(theme) {
       justifyContent: 'center',
       backgroundColor: cl.danger,
       borderRadius: rd.pill,
+    },
+    selectionBtn: {
+      position: 'absolute',
+      zIndex: 10,
+      top: sp.xs,
+      right: sp.xs,
+    },
+    selectionBtnBg: {
+      width: removeBtnSize,
+      height: removeBtnSize,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: cl.overlay,
+      borderRadius: rd.pill,
+      borderWidth: 2,
+      borderColor: cl.surface,
+    },
+    selectionBtnBgActive: {
+      backgroundColor: cl.primary,
+      borderColor: cl.primary,
     },
     emptyState: {
       flex: 1,

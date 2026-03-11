@@ -34,10 +34,16 @@ const ACCESS_SECTIONS = [
     id: 'clients',
     titleKey: 'access_settings_section_clients',
     permissions: [
-      { key: 'canViewClients', labelKey: 'access_settings_perm_view_clients' },
-      { key: 'canCreateClients', labelKey: 'access_settings_perm_create_clients' },
       { key: 'canEditClients', labelKey: 'access_settings_perm_edit_clients' },
       { key: 'canDeleteClients', labelKey: 'access_settings_perm_delete_clients' },
+    ],
+  },
+  {
+    id: 'objects',
+    titleKey: 'access_settings_section_objects',
+    permissions: [
+      { key: 'canEditObjects', labelKey: 'access_settings_perm_edit_objects' },
+      { key: 'canDeleteObjects', labelKey: 'access_settings_perm_delete_objects' },
     ],
   },
 ];

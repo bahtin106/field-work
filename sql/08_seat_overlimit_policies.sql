@@ -397,7 +397,13 @@ BEGIN
     v_sub.current_period_end,
     0 AS grace_period_days,
     public.billing_can_edit_company(p_company_id) AS can_edit,
-    GREATEST(0, CEIL(EXTRACT(EPOCH FROM (v_sub.current_period_end - now())) / 86400.0))::int AS days_left,
+    GREATEST(
+      0,
+      (
+        (date_trunc('day', v_sub.current_period_end AT TIME ZONE 'UTC')::date)
+        - ((now() AT TIME ZONE 'UTC')::date)
+      )::int
+    ) AS days_left,
     CASE WHEN v_is_owner THEN (1 + COALESCE(a.extra_seats, 0))::int ELSE NULL END AS allowed_seats,
     u.used_seats,
     NULL::int AS allowed_storage_gb,
