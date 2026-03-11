@@ -46,6 +46,17 @@ const ACCESS_SECTIONS = [
       { key: 'canDeleteObjects', labelKey: 'access_settings_perm_delete_objects' },
     ],
   },
+  {
+    id: 'finances',
+    titleKey: 'access_settings_section_finances',
+    permissions: [
+      { key: 'canViewFinanceOwn', labelKey: 'access_settings_perm_view_finance_own' },
+      { key: 'canViewFinanceAll', labelKey: 'access_settings_perm_view_finance_all' },
+      { key: 'canEditFinanceEntries', labelKey: 'access_settings_perm_edit_finance_entries' },
+      { key: 'canManageFinanceRules', labelKey: 'access_settings_perm_manage_finance_rules' },
+      { key: 'canViewFinanceStatsAll', labelKey: 'access_settings_perm_view_finance_stats' },
+    ],
+  },
 ];
 const ROLE_LABEL_KEYS = {
   admin: 'role_admin',
@@ -86,8 +97,14 @@ const normalizePermissionDependencies = (matrix) =>
     const rolePerms = { ...(matrix?.[roleId] || {}) };
     if (rolePerms.canEditOrderAmount) rolePerms.canViewOrderAmount = true;
     if (rolePerms.canEditOrderFuelCost) rolePerms.canViewOrderFuelCost = true;
+    if (rolePerms.canEditFinanceEntries) rolePerms.canViewFinanceOwn = true;
+    if (rolePerms.canViewFinanceAll) rolePerms.canViewFinanceOwn = true;
     if (!rolePerms.canViewOrderAmount) rolePerms.canEditOrderAmount = false;
     if (!rolePerms.canViewOrderFuelCost) rolePerms.canEditOrderFuelCost = false;
+    if (!rolePerms.canViewFinanceOwn) {
+      rolePerms.canEditFinanceEntries = false;
+      rolePerms.canViewFinanceAll = false;
+    }
     acc[roleId] = rolePerms;
     return acc;
   }, {});
@@ -95,10 +112,12 @@ const normalizePermissionDependencies = (matrix) =>
 const VIEW_EDIT_LINKS = {
   canEditOrderAmount: 'canViewOrderAmount',
   canEditOrderFuelCost: 'canViewOrderFuelCost',
+  canEditFinanceEntries: 'canViewFinanceOwn',
 };
 const EDIT_VIEW_LINKS = {
   canViewOrderAmount: 'canEditOrderAmount',
   canViewOrderFuelCost: 'canEditOrderFuelCost',
+  canViewFinanceOwn: 'canEditFinanceEntries',
 };
 
 export default function AccessSettingsScreen() {

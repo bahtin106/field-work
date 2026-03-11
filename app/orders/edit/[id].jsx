@@ -118,6 +118,10 @@ export default function EditOrderScreen() {
 
   const { theme } = useTheme();
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
+  const canViewOrderAmount = hasPermission('canViewOrderAmount');
+  const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditOrderAmount');
+  const canViewOrderFuelCost = hasPermission('canViewOrderFuelCost');
+  const canEditOrderFuelCost = canViewOrderFuelCost && hasPermission('canEditOrderFuelCost');
   const formStyles = useEditFormStyles();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const {
@@ -1476,18 +1480,18 @@ export default function EditOrderScreen() {
       setFieldErrors((prev) => ({ ...prev, secondary_phone: { message: T('order_validation_phone_format') } }));
       return showToast(T('order_validation_phone_format'), 'error');
     }
-    const parsedPrice = parseDecimalOrNull(price);
-    const parsedFuelCost = parseDecimalOrNull(fuelCost);
-    if (String(price ?? '').trim() && parsedPrice === null) {
+    const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
+    const parsedFuelCost = canEditOrderFuelCost ? parseDecimalOrNull(fuelCost) : null;
+    if (canEditOrderAmount && String(price ?? '').trim() && parsedPrice === null) {
       return showToast(T('order_validation_amount_format'), 'error');
     }
-    if (String(fuelCost ?? '').trim() && parsedFuelCost === null) {
+    if (canEditOrderFuelCost && String(fuelCost ?? '').trim() && parsedFuelCost === null) {
       return showToast(T('order_validation_fuel_format'), 'error');
     }
-    if (parsedPrice != null && parsedPrice < 0) {
+    if (canEditOrderAmount && parsedPrice != null && parsedPrice < 0) {
       return showToast(T('order_validation_amount_format'), 'error');
     }
-    if (parsedFuelCost != null && parsedFuelCost < 0) {
+    if (canEditOrderFuelCost && parsedFuelCost != null && parsedFuelCost < 0) {
       return showToast(T('order_validation_fuel_format'), 'error');
     }
 
@@ -1534,21 +1538,21 @@ export default function EditOrderScreen() {
       }
 
       const normalizedPhone = toE164MobilePhoneOrNull(phone);
-      const parsedPrice = parseDecimalOrNull(price);
-      const parsedFuelCost = parseDecimalOrNull(fuelCost);
-      if (String(price ?? '').trim() && parsedPrice === null) {
+      const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
+      const parsedFuelCost = canEditOrderFuelCost ? parseDecimalOrNull(fuelCost) : null;
+      if (canEditOrderAmount && String(price ?? '').trim() && parsedPrice === null) {
         showToast(T('order_validation_amount_format'), 'error');
         return;
       }
-      if (String(fuelCost ?? '').trim() && parsedFuelCost === null) {
+      if (canEditOrderFuelCost && String(fuelCost ?? '').trim() && parsedFuelCost === null) {
         showToast(T('order_validation_fuel_format'), 'error');
         return;
       }
-      if (parsedPrice != null && parsedPrice < 0) {
+      if (canEditOrderAmount && parsedPrice != null && parsedPrice < 0) {
         showToast(T('order_validation_amount_format'), 'error');
         return;
       }
-      if (parsedFuelCost != null && parsedFuelCost < 0) {
+      if (canEditOrderFuelCost && parsedFuelCost != null && parsedFuelCost < 0) {
         showToast(T('order_validation_fuel_format'), 'error');
         return;
       }
@@ -1618,8 +1622,8 @@ export default function EditOrderScreen() {
             : null,
         urgent,
         department_id: departmentId || null,
-        price: parsedPrice,
-        fuel_cost: parsedFuelCost,
+        ...(canEditOrderAmount ? { price: parsedPrice } : {}),
+        ...(canEditOrderFuelCost ? { fuel_cost: parsedFuelCost } : {}),
         ...(useWorkTypes && workTypeResolved
           ? {
               work_type_id: normalizeId(workTypeId),
@@ -2104,25 +2108,29 @@ export default function EditOrderScreen() {
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_finances')}</SectionHeader>
-          {(orderFieldsByKey.get('price')?.isEnabled !== false || orderFieldsByKey.get('fuel_cost')?.isEnabled !== false) ? (
+          {((orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount) || (orderFieldsByKey.get('fuel_cost')?.isEnabled !== false && canViewOrderFuelCost)) ? (
           <Card padded={false} style={styles.card}>
-            {orderFieldsByKey.get('price')?.isEnabled !== false ? (
+            {orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount ? (
             <TextField
               label={T('order_details_amount')}
               placeholder={T('order_placeholder_amount')}
               value={price}
               onChangeText={setPrice}
               keyboardType="decimal-pad"
+              pressable={!canEditOrderAmount}
+              onPress={!canEditOrderAmount ? () => {} : undefined}
               style={styles.field}
             />
             ) : null}
-            {orderFieldsByKey.get('fuel_cost')?.isEnabled !== false ? (
+            {orderFieldsByKey.get('fuel_cost')?.isEnabled !== false && canViewOrderFuelCost ? (
             <TextField
               label={T('order_details_fuel')}
               placeholder={T('order_placeholder_amount')}
               value={fuelCost}
               onChangeText={setFuelCost}
               keyboardType="decimal-pad"
+              pressable={!canEditOrderFuelCost}
+              onPress={!canEditOrderFuelCost ? () => {} : undefined}
               style={styles.field}
             />
             ) : null}
