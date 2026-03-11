@@ -10,4 +10,9 @@ export const TBL = {
 
 export const PERM_KEYS = {
   CAN_CREATE_ORDERS: 'canCreateOrders',
+  CAN_VIEW_FINANCE_OWN: 'canViewFinanceOwn',
+  CAN_VIEW_FINANCE_ALL: 'canViewFinanceAll',
+  CAN_EDIT_FINANCE_ENTRIES: 'canEditFinanceEntries',
+  CAN_MANAGE_FINANCE_RULES: 'canManageFinanceRules',
+  CAN_VIEW_FINANCE_STATS_ALL: 'canViewFinanceStatsAll',
 };

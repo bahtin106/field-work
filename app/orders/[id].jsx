@@ -57,6 +57,11 @@ import {
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { updateRequestWithVersion } from '../../src/features/requests/api';
+import {
+  useDeleteOrderFinanceEntryMutation,
+  useOrderFinanceEntries,
+  useUpsertOrderFinanceEntryMutation,
+} from '../../src/features/finance/queries';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import {
@@ -121,6 +126,11 @@ const REQUEST_SYNC_FIELDS = [
   'work_type_id',
   'price',
   'fuel_cost',
+  'finance_income_total',
+  'finance_expense_total',
+  'finance_discount_total',
+  'finance_gross_total',
+  'finance_net_total',
   'urgent',
 ];
 
@@ -276,7 +286,15 @@ export default function OrderDetails() {
   const [departments, setDepartments] = useState([]);
   const [amount, setAmount] = useState('');
   const [gsm, setGsm] = useState('');
-  const canEditFinances = role === 'admin' || role === 'dispatcher';
+  const canViewOrderAmount = has('canViewOrderAmount');
+  const canEditOrderAmount = canViewOrderAmount && has('canEditOrderAmount');
+  const canViewOrderFuelCost = has('canViewOrderFuelCost');
+  const canEditOrderFuelCost = canViewOrderFuelCost && has('canEditOrderFuelCost');
+  const canEditFinances = canEditOrderAmount || canEditOrderFuelCost;
+  const canViewFinanceOwn = has('canViewFinanceOwn');
+  const canViewFinanceAll = has('canViewFinanceAll');
+  const canViewFinanceEntries = canViewFinanceOwn || canViewFinanceAll;
+  const canEditFinanceEntries = has('canEditFinanceEntries');
   const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
   const cloudFallbackActive =
     mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'beget_s3';
@@ -319,6 +337,18 @@ export default function OrderDetails() {
   const [fuelEditModalVisible, setFuelEditModalVisible] = useState(false);
   const [amountDraft, setAmountDraft] = useState('');
   const [fuelDraft, setFuelDraft] = useState('');
+  const [financeEntryModalVisible, setFinanceEntryModalVisible] = useState(false);
+  const [financeEntryDraft, setFinanceEntryDraft] = useState({
+    id: null,
+    kind: 'expense',
+    calc_mode: 'fixed',
+    percent_base: 'gross_after_discount',
+    title: '',
+    note: '',
+    input_amount: '0',
+    input_percent: '0',
+    recipient_user_id: null,
+  });
   const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
@@ -346,6 +376,11 @@ export default function OrderDetails() {
     staleTime: 45 * 1000,
     refetchOnMount: false,
   });
+  const financeEntriesQuery = useOrderFinanceEntries(id, {
+    enabled: !!id && canViewFinanceEntries,
+  });
+  const upsertFinanceEntryMutation = useUpsertOrderFinanceEntryMutation(id);
+  const deleteFinanceEntryMutation = useDeleteOrderFinanceEntryMutation(id);
 
   const initialFormSnapshotRef = useRef('');
   const detailsScrollRef = useRef(null);
@@ -1201,6 +1236,116 @@ export default function OrderDetails() {
       return preferYandex ? await tryBeget() : await tryYandex();
     }
   }, []);
+
+  const financeKindLabel = useCallback(
+    (kind) =>
+      kind === 'income'
+        ? t('finance_kind_income', 'Доход')
+        : kind === 'discount'
+          ? t('finance_kind_discount', 'Скидка')
+          : t('finance_kind_expense', 'Расход'),
+    [t],
+  );
+
+  const financeCalcModeLabel = useCallback(
+    (mode) =>
+      mode === 'percent'
+        ? t('finance_calc_percent', 'Процент')
+        : t('finance_calc_fixed', 'Фиксированная сумма'),
+    [t],
+  );
+
+  const financePercentBaseLabel = useCallback(
+    (baseValue) => {
+      if (baseValue === 'base_price') {
+        return t('finance_percent_base_price', 'От базовой суммы заявки');
+      }
+      if (baseValue === 'gross_before_discount') {
+        return t('finance_percent_gross_before_discount', 'От суммы до скидок');
+      }
+      if (baseValue === 'net_before_expense') {
+        return t('finance_percent_net_before_expense', 'От прибыли до расходов');
+      }
+      return t('finance_percent_gross_after_discount', 'От суммы после скидок');
+    },
+    [t],
+  );
+
+  const openCreateFinanceEntry = useCallback(
+    (kind = 'expense') => {
+      setFinanceEntryDraft({
+        id: null,
+        kind,
+        calc_mode: 'fixed',
+        percent_base: 'gross_after_discount',
+        title: '',
+        note: '',
+        input_amount: '0',
+        input_percent: '0',
+        recipient_user_id: order?.assigned_to || null,
+      });
+      setFinanceEntryModalVisible(true);
+    },
+    [order?.assigned_to],
+  );
+
+  const openEditFinanceEntry = useCallback((entry) => {
+    if (!entry?.id) return;
+    setFinanceEntryDraft({
+      id: entry.id,
+      kind: String(entry.kind || 'expense'),
+      calc_mode: String(entry.calc_mode || 'fixed'),
+      percent_base: String(entry.percent_base || 'gross_after_discount'),
+      title: String(entry.title || ''),
+      note: String(entry.note || ''),
+      input_amount: String(entry.input_amount ?? '0'),
+      input_percent: String(entry.input_percent ?? '0'),
+      recipient_user_id: entry.recipient_user_id || null,
+    });
+    setFinanceEntryModalVisible(true);
+  }, []);
+
+  const saveFinanceEntry = useCallback(async () => {
+    if (!id || !companyId) return;
+    const title = String(financeEntryDraft.title || '').trim();
+    if (!title) {
+      showWarning(t('finance_rule_name_required', 'Укажите название'));
+      return;
+    }
+
+    try {
+      await upsertFinanceEntryMutation.mutateAsync({
+        id: financeEntryDraft.id || undefined,
+        company_id: companyId,
+        order_id: id,
+        kind: financeEntryDraft.kind,
+        calc_mode: financeEntryDraft.calc_mode,
+        percent_base: financeEntryDraft.percent_base,
+        title,
+        note: String(financeEntryDraft.note || '').trim() || null,
+        input_amount: parseMoney(financeEntryDraft.input_amount) || 0,
+        input_percent: parseMoney(financeEntryDraft.input_percent) || 0,
+        recipient_user_id: financeEntryDraft.recipient_user_id || null,
+      });
+      setFinanceEntryModalVisible(false);
+      showToast(t('order_toast_saved'));
+    } catch (error) {
+      showWarning(error?.message || t('order_save_error'));
+    }
+  }, [companyId, financeEntryDraft, id, parseMoney, showToast, showWarning, t, upsertFinanceEntryMutation]);
+
+  const removeFinanceEntry = useCallback(
+    async (entry) => {
+      if (!entry?.id || entry?.is_system) return;
+      try {
+        await deleteFinanceEntryMutation.mutateAsync(entry.id);
+        showToast(t('finance_rule_deleted', 'Запись удалена'));
+      } catch (error) {
+        showWarning(error?.message || t('order_save_error'));
+      }
+    },
+    [deleteFinanceEntryMutation, showToast, showWarning, t],
+  );
 
   const removePhoto = useCallback(
     (category, index) => {
@@ -2285,11 +2430,13 @@ export default function OrderDetails() {
     isFree &&
     !isReadOnlyBySubscription &&
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
-  const canViewOrderAmount = has('canViewOrderAmount');
-  const canEditOrderAmount = canViewOrderAmount && has('canEditOrderAmount');
-  const canViewOrderFuelCost = has('canViewOrderFuelCost');
-  const canEditOrderFuelCost = canViewOrderFuelCost && has('canEditOrderFuelCost');
-  const canViewFinanceSection = canViewOrderAmount || canViewOrderFuelCost;
+  const canViewFinanceSection = canViewOrderAmount || canViewOrderFuelCost || canViewFinanceEntries;
+  const financeEntries = Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : [];
+  const grossTotal = Number(order.finance_gross_total ?? order.price ?? 0) || 0;
+  const discountTotal = Number(order.finance_discount_total ?? 0) || 0;
+  const incomeTotal = Number(order.finance_income_total ?? 0) || 0;
+  const expenseTotal = Number(order.finance_expense_total ?? order.fuel_cost ?? 0) || 0;
+  const netTotal = Number(order.finance_net_total ?? grossTotal + incomeTotal - expenseTotal) || 0;
 
   return (
     <>
@@ -2544,7 +2691,7 @@ export default function OrderDetails() {
               {orderFieldsByKey.get('contact_email')?.isEnabled !== false ? <LabelValueRow label={t('order_field_contact_email')} value={order?.contact_email} /> : null}
             </Card>
 
-            {canViewFinanceSection && (orderFieldsByKey.get('price')?.isEnabled !== false || orderFieldsByKey.get('fuel_cost')?.isEnabled !== false) ? (
+            {canViewFinanceSection && (orderFieldsByKey.get('price')?.isEnabled !== false || orderFieldsByKey.get('fuel_cost')?.isEnabled !== false || canViewFinanceEntries) ? (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_finance_data')}
@@ -2605,6 +2752,138 @@ export default function OrderDetails() {
                           </Pressable>
                         </>
                       ) : null}
+                    </>
+                  ) : null}
+
+                  {canViewFinanceEntries ? <View style={base.sep} /> : null}
+                  {canViewFinanceEntries ? (
+                    <>
+                      <View style={base.row}>
+                        <Text style={base.label}>{t('order_finance_gross_total', 'Валовая сумма')}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={base.value}>{formatMoney(grossTotal, order?.currency || companySettings?.currency)}</Text>
+                        </View>
+                      </View>
+                      <View style={base.sep} />
+                      <View style={base.row}>
+                        <Text style={base.label}>{t('order_finance_discount_total', 'Скидки')}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={base.value}>{formatMoney(discountTotal, order?.currency || companySettings?.currency)}</Text>
+                        </View>
+                      </View>
+                      <View style={base.sep} />
+                      <View style={base.row}>
+                        <Text style={base.label}>{t('order_finance_income_total', 'Доп. доходы')}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={base.value}>{formatMoney(incomeTotal, order?.currency || companySettings?.currency)}</Text>
+                        </View>
+                      </View>
+                      <View style={base.sep} />
+                      <View style={base.row}>
+                        <Text style={base.label}>{t('order_finance_expense_total', 'Расходы')}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={base.value}>{formatMoney(expenseTotal, order?.currency || companySettings?.currency)}</Text>
+                        </View>
+                      </View>
+                      <View style={base.sep} />
+                      <View style={base.row}>
+                        <Text style={base.label}>{t('order_finance_net_total', 'Чистая прибыль')}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={[base.value, { fontWeight: theme.typography?.weight?.semibold || '600' }]}>
+                            {formatMoney(netTotal, order?.currency || companySettings?.currency)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {canEditFinanceEntries ? (
+                        <>
+                          <View style={base.sep} />
+                          <View style={[base.row, { alignItems: 'center' }]}>
+                            <Text style={base.label}>{t('order_finance_entries_title', 'Финансовые статьи')}</Text>
+                            <View style={[base.rightWrap, { flexDirection: 'row', gap: theme.spacing?.xs ?? 6 }]}>
+                              <Pressable
+                                onPress={() => openCreateFinanceEntry('income')}
+                                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                              >
+                                <Text style={[base.value, styles.link]}>{t('order_finance_add_income', '+ доход')}</Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => openCreateFinanceEntry('expense')}
+                                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                              >
+                                <Text style={[base.value, styles.link]}>{t('order_finance_add_expense', '+ расход')}</Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() => openCreateFinanceEntry('discount')}
+                                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                              >
+                                <Text style={[base.value, styles.link]}>{t('order_finance_add_discount', '+ скидка')}</Text>
+                              </Pressable>
+                            </View>
+                          </View>
+                        </>
+                      ) : null}
+
+                      {financeEntriesQuery.isLoading ? (
+                        <>
+                          <View style={base.sep} />
+                          <View style={[base.row, { justifyContent: 'center' }]}>
+                            <ActivityIndicator size="small" color={theme.colors.primary} />
+                          </View>
+                        </>
+                      ) : null}
+
+                      {financeEntries.map((entry) => {
+                        const recipientName = entry?.recipient?.full_name || executorName || '';
+                        const amountLabel =
+                          entry.calc_mode === 'percent'
+                            ? `${Number(entry.input_percent || 0)}% (${financePercentBaseLabel(entry.percent_base)})`
+                            : formatMoney(entry.calculated_amount, order?.currency || companySettings?.currency);
+                        return (
+                          <View key={entry.id}>
+                            <View style={base.sep} />
+                            <View style={base.row}>
+                              <Text style={base.label}>
+                                {financeKindLabel(entry.kind)}: {entry.title}
+                              </Text>
+                              <View style={base.rightWrap}>
+                                <Text style={base.value}>{amountLabel}</Text>
+                              </View>
+                            </View>
+                            {entry.note_visible !== false && String(entry.note || '').trim() ? (
+                              <>
+                                <View style={base.sep} />
+                                <LabelValueRow
+                                  label={t('order_finance_note', 'Комментарий')}
+                                  value={entry.note}
+                                />
+                              </>
+                            ) : null}
+                            {recipientName ? (
+                              <>
+                                <View style={base.sep} />
+                                <LabelValueRow
+                                  label={t('order_finance_recipient', 'Получатель')}
+                                  value={recipientName}
+                                />
+                              </>
+                            ) : null}
+                            {canEditFinanceEntries && entry.is_system !== true ? (
+                              <>
+                                <View style={base.sep} />
+                                <View style={[base.row, { justifyContent: 'flex-end', gap: theme.spacing?.sm ?? 10 }]}>
+                                  <Pressable onPress={() => openEditFinanceEntry(entry)}>
+                                    <Text style={[base.value, styles.link]}>{t('btn_edit')}</Text>
+                                  </Pressable>
+                                  <Pressable onPress={() => removeFinanceEntry(entry)}>
+                                    <Text style={[base.value, { color: theme.colors.danger }]}>{t('btn_delete')}</Text>
+                                  </Pressable>
+                                </View>
+                              </>
+                            ) : null}
+                          </View>
+                        );
+                      })}
                     </>
                   ) : null}
                 </Card>
@@ -2949,6 +3228,123 @@ export default function OrderDetails() {
                   onDone: () => setFuelEditModalVisible(false),
                 })
               }
+            />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        isVisible={financeEntryModalVisible}
+        onBackdropPress={() => setFinanceEntryModalVisible(false)}
+        useNativeDriver
+        backdropOpacity={0.3}
+        onModalHide={applyNavBar}
+      >
+        <View style={styles.modalContainer}>
+          <Text style={styles.modalTitle}>{t('order_finance_entry_modal_title', 'Финансовая статья')}</Text>
+          <TextField
+            label={t('finance_rule_name', 'Название')}
+            value={financeEntryDraft.title}
+            onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, title: value }))}
+            placeholder={t('finance_rule_name', 'Название')}
+          />
+          <TextField
+            label={t('finance_rule_kind', 'Тип')}
+            value={financeKindLabel(financeEntryDraft.kind)}
+            pressable
+            onPress={() =>
+              setFinanceEntryDraft((prev) => {
+                const orderKinds = ['income', 'expense', 'discount'];
+                const current = orderKinds.indexOf(prev.kind);
+                const next = current === -1 ? 0 : (current + 1) % orderKinds.length;
+                return { ...prev, kind: orderKinds[next] };
+              })
+            }
+          />
+          <TextField
+            label={t('finance_rule_calc_mode', 'Формат расчёта')}
+            value={financeCalcModeLabel(financeEntryDraft.calc_mode)}
+            pressable
+            onPress={() =>
+              setFinanceEntryDraft((prev) => ({
+                ...prev,
+                calc_mode: prev.calc_mode === 'percent' ? 'fixed' : 'percent',
+              }))
+            }
+          />
+          {financeEntryDraft.calc_mode === 'percent' ? (
+            <>
+              <TextField
+                label={t('finance_rule_percent_value', 'Процент')}
+                value={String(financeEntryDraft.input_percent || '')}
+                onChangeText={(value) =>
+                  setFinanceEntryDraft((prev) => ({ ...prev, input_percent: value }))
+                }
+                keyboardType="decimal-pad"
+              />
+              <TextField
+                label={t('finance_rule_percent_base', 'Основа процента')}
+                value={financePercentBaseLabel(financeEntryDraft.percent_base)}
+                pressable
+                onPress={() =>
+                  setFinanceEntryDraft((prev) => {
+                    const baseOptions = [
+                      'base_price',
+                      'gross_before_discount',
+                      'gross_after_discount',
+                      'net_before_expense',
+                    ];
+                    const current = baseOptions.indexOf(prev.percent_base);
+                    const next = current === -1 ? 0 : (current + 1) % baseOptions.length;
+                    return { ...prev, percent_base: baseOptions[next] };
+                  })
+                }
+              />
+            </>
+          ) : (
+            <TextField
+              label={t('finance_rule_fixed_amount', 'Сумма')}
+              value={String(financeEntryDraft.input_amount || '')}
+              onChangeText={(value) =>
+                setFinanceEntryDraft((prev) => ({ ...prev, input_amount: value }))
+              }
+              keyboardType="decimal-pad"
+            />
+          )}
+          <TextField
+            label={t('finance_rule_recipient_user', 'Сотрудник')}
+            value={
+              financeEntryDraft.recipient_user_id
+                ? users.find((u) => String(u.id) === String(financeEntryDraft.recipient_user_id))
+                    ?.full_name || executorName || ''
+                : t('common_not_selected', 'Не выбрано')
+            }
+            pressable
+            onPress={() =>
+              setFinanceEntryDraft((prev) => {
+                const ids = [null, ...users.map((u) => u.id)];
+                const current = ids.findIndex((idItem) => String(idItem || '') === String(prev.recipient_user_id || ''));
+                const next = current === -1 ? 0 : (current + 1) % ids.length;
+                return { ...prev, recipient_user_id: ids[next] };
+              })
+            }
+          />
+          <TextField
+            label={t('finance_rule_note_template', 'Комментарий')}
+            value={financeEntryDraft.note}
+            onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, note: value }))}
+            multiline
+          />
+          <View style={styles.modalActions}>
+            <Button
+              title={t('btn_cancel')}
+              onPress={() => setFinanceEntryModalVisible(false)}
+              variant="secondary"
+            />
+            <Button
+              title={t('btn_save')}
+              loading={upsertFinanceEntryMutation.isPending}
+              onPress={saveFinanceEntry}
             />
           </View>
         </View>

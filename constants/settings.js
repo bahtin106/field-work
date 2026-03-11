@@ -37,6 +37,11 @@ export const SETTINGS_SECTIONS = {
         label: T('company_settings_sections_management_items_form_builder'),
         route: '/company_settings/sections/field-editor',
       },
+      {
+        key: 'finance_rules',
+        label: T('company_settings_sections_management_items_finance_rules'),
+        route: '/company_settings/sections/finance-rules',
+      },
       // `work_types` and `departments` moved to REFERENCE section
     ],
   },

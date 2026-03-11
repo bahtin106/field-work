@@ -1,4 +1,4 @@
-// app/stats.jsx
+﻿// app/stats.jsx
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -21,6 +21,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import AppHeader from '../components/navigation/AppHeader';
 import { useCompanySettings } from '../hooks/useCompanySettings';
+import { usePermissions } from '../lib/permissions';
 import { formatCurrencyWithOptions } from '../lib/currency';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../theme/ThemeProvider';
@@ -29,11 +30,11 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ------- Periods -------
 const PERIODS = [
-  { key: '7d', label: '7д', days: 7 },
-  { key: '30d', label: '30д', days: 30 },
-  { key: '90d', label: '90д', days: 90 },
-  { key: 'ytd', label: 'Год', days: null },
-  { key: 'all', label: 'Все', days: null },
+  { key: '7d', label: '7Рґ', days: 7 },
+  { key: '30d', label: '30Рґ', days: 30 },
+  { key: '90d', label: '90Рґ', days: 90 },
+  { key: 'ytd', label: 'Р“РѕРґ', days: null },
+  { key: 'all', label: 'Р’СЃРµ', days: null },
 ];
 
 // ------- Date helpers -------
@@ -55,7 +56,7 @@ const endOfDay = (d) => {
 };
 const iso = (d) => d.toISOString();
 const fmt = (d) =>
-  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'вЂ”';
 const toISODate = (d) => {
   const y = d.getFullYear();
   const m = `0${d.getMonth() + 1}`.slice(-2);
@@ -117,6 +118,7 @@ export default function StatsScreen() {
 
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
+  const { has } = usePermissions();
 
   const [period, setPeriod] = useState('30d');
   const [customModalOpen, setCustomModalOpen] = useState(false);
@@ -126,6 +128,7 @@ export default function StatsScreen() {
   const isAdmin = role === 'admin';
   const isDispatcher = role === 'dispatcher';
   const isManager = isAdmin || isDispatcher;
+  const canViewFinanceStatsAll = has('canViewFinanceStatsAll');
 
   const styles = useMemo(
     () =>
@@ -478,7 +481,7 @@ export default function StatsScreen() {
 
   // Load users (for managers)
   const loadUsers = useCallback(async () => {
-    if (!isManager || !me?.company_id) {
+    if (!isManager || !canViewFinanceStatsAll || !me?.company_id) {
       setUsers([]);
       return;
     }
@@ -489,8 +492,8 @@ export default function StatsScreen() {
       .order('full_name', { ascending: true });
     if (error) throw error;
     const rows = data || [];
-    setUsers([{ id: 'ALL', full_name: 'Все сотрудники', role: 'all' }, ...rows]);
-  }, [isManager, me?.company_id]);
+    setUsers([{ id: 'ALL', full_name: 'Р’СЃРµ СЃРѕС‚СЂСѓРґРЅРёРєРё', role: 'all' }, ...rows]);
+  }, [canViewFinanceStatsAll, isManager, me?.company_id]);
 
   // Period range calculation
   const periodRange = useMemo(() => {
@@ -531,6 +534,7 @@ export default function StatsScreen() {
       efficiency: 0,
       avgRevenuePerOrder: 0,
     },
+    expenseByRecipient: [],
   });
 
   const loadStats = useCallback(async () => {
@@ -540,7 +544,9 @@ export default function StatsScreen() {
       // Load orders data
       let query = supabase
         .from('orders')
-        .select('id, status, time_window_start, fuel_cost, assigned_to')
+        .select(
+          'id, status, time_window_start, assigned_to, price, fuel_cost, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
+        )
         .order('time_window_start', { ascending: false });
 
       if (selectedUserId !== 'ALL') {
@@ -559,24 +565,64 @@ export default function StatsScreen() {
 
       // Calculate statistics
       const totalOrders = orders?.length || 0;
-      const completedOrders = orders?.filter((o) => o.status === 'Завершённая').length || 0;
-      const inProgressOrders = orders?.filter((o) => o.status === 'В работе').length || 0;
-      const newOrders = orders?.filter((o) => o.status === 'Новый').length || 0;
+      const completedOrders = orders?.filter((o) => o.status === 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ').length || 0;
+      const inProgressOrders = orders?.filter((o) => o.status === 'Р’ СЂР°Р±РѕС‚Рµ').length || 0;
+      const newOrders = orders?.filter((o) => o.status === 'РќРѕРІС‹Р№').length || 0;
 
-      const getRevenue = (o) =>
-        Number(
-          o.total_price ?? o.total ?? o.total_amount ?? o.amount_total ?? o.amount ?? o.price ?? 0,
-        );
-      const totalRevenue = orders?.reduce((sum, o) => sum + getRevenue(o), 0) || 0;
-      const totalCosts = orders?.reduce((sum, o) => sum + (Number(o.fuel_cost) || 0), 0) || 0;
-      const netProfit = totalRevenue - totalCosts;
+      const getGross = (o) => Number(o.finance_gross_total ?? o.price ?? 0) || 0;
+      const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
+      const getExpense = (o) => Number(o.finance_expense_total ?? o.fuel_cost ?? 0) || 0;
+      const getNet = (o) =>
+        Number(o.finance_net_total ?? getGross(o) + getExtraIncome(o) - getExpense(o)) || 0;
+
+      const totalRevenue = orders?.reduce((sum, o) => sum + getGross(o) + getExtraIncome(o), 0) || 0;
+      const totalCosts = orders?.reduce((sum, o) => sum + getExpense(o), 0) || 0;
+      const netProfit = orders?.reduce((sum, o) => sum + getNet(o), 0) || 0;
 
       // Status breakdown
-      const statusBreakdown = [
-        { status: 'Завершённая', count: completedOrders, color: TOK.SUCCESS, amount: totalRevenue },
-        { status: 'В работе', count: inProgressOrders, color: TOK.WARNING, amount: 0 },
-        { status: 'Новый', count: newOrders, color: TOK.INFO, amount: 0 },
-      ].filter((item) => item.count > 0);
+      const statusRows = [
+        { status: 'Завершённая', color: TOK.SUCCESS },
+        { status: 'В работе', color: TOK.WARNING },
+        { status: 'Новый', color: TOK.INFO },
+      ];
+      const statusBreakdown = statusRows
+        .map((item) => {
+          const filtered = (orders || []).filter((o) => String(o.status || '').trim() === item.status);
+          return {
+            status: item.status,
+            count: filtered.length,
+            color: item.color,
+            amount: filtered.reduce((sum, o) => sum + getNet(o), 0),
+          };
+        })
+        .filter((item) => item.count > 0);
+
+      let expenseByRecipient = [];
+      const orderIds = (orders || []).map((o) => o.id).filter(Boolean);
+      if (orderIds.length > 0) {
+        const { data: entries } = await supabase
+          .from('order_finance_entries')
+          .select(
+            'kind, calculated_amount, recipient_user_id, recipient:profiles!order_finance_entries_recipient_user_id_fkey(full_name)',
+          )
+          .in('order_id', orderIds);
+        const grouped = new Map();
+        for (const entry of entries || []) {
+          if (String(entry?.kind || '') !== 'expense') continue;
+          const key = String(entry?.recipient_user_id || 'no_recipient');
+          const prev = grouped.get(key) || {
+            key,
+            name: entry?.recipient?.full_name || 'Без получателя',
+            amount: 0,
+          };
+          prev.amount += Number(entry?.calculated_amount || 0) || 0;
+          grouped.set(key, prev);
+        }
+        expenseByRecipient = Array.from(grouped.values())
+          .filter((row) => row.amount > 0)
+          .sort((a, b) => b.amount - a.amount)
+          .slice(0, 6);
+      }
 
       // Performance metrics
       const days =
@@ -603,6 +649,7 @@ export default function StatsScreen() {
           efficiency: completionRate * 100,
           avgRevenuePerOrder,
         },
+        expenseByRecipient,
       });
     } catch (error) {
       console.error('Error loading stats:', error);
@@ -626,28 +673,28 @@ export default function StatsScreen() {
   useFocusEffect(
     useCallback(() => {
       if (me) {
-        if (isManager) loadUsers();
+        if (isManager && canViewFinanceStatsAll) loadUsers();
         loadStats();
       }
-    }, [isManager, loadStats, loadUsers, me]),
+    }, [canViewFinanceStatsAll, isManager, loadStats, loadUsers, me]),
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await loadStats();
-      if (isManager) await loadUsers();
+      if (isManager && canViewFinanceStatsAll) await loadUsers();
     } finally {
       setRefreshing(false);
     }
-  }, [loadStats, isManager, loadUsers]);
+  }, [canViewFinanceStatsAll, loadStats, isManager, loadUsers]);
 
   // User selection
   const openUserPicker = () => setUserPickerOpen(true);
   const closeUserPicker = () => setUserPickerOpen(false);
   const selectUser = (user) => {
     setSelectedUserId(user.id);
-    setSelectedUser(user.id === 'ALL' ? { full_name: 'Все сотрудники', role: 'all' } : user);
+    setSelectedUser(user.id === 'ALL' ? { full_name: 'Р’СЃРµ СЃРѕС‚СЂСѓРґРЅРёРєРё', role: 'all' } : user);
     closeUserPicker();
   };
 
@@ -721,8 +768,8 @@ export default function StatsScreen() {
   }, [users, usersSearch]);
 
   const displayName = isManager
-    ? selectedUser?.full_name || 'Выберите сотрудника'
-    : me?.full_name || 'Моя статистика';
+    ? selectedUser?.full_name || 'Р’С‹Р±РµСЂРёС‚Рµ СЃРѕС‚СЂСѓРґРЅРёРєР°'
+    : me?.full_name || 'РњРѕСЏ СЃС‚Р°С‚РёСЃС‚РёРєР°';
 
   if (loading) {
     return (
@@ -734,7 +781,7 @@ export default function StatsScreen() {
 
   return (
     <View style={styles.container}>
-      <AppHeader options={{ title: 'Статистика' }} back />
+      <AppHeader options={{ title: 'РЎС‚Р°С‚РёСЃС‚РёРєР°' }} back />
 
       <ScrollView
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -743,7 +790,7 @@ export default function StatsScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Статистика</Text>
+          <Text style={styles.headerTitle}>РЎС‚Р°С‚РёСЃС‚РёРєР°</Text>
           <Text style={styles.headerSubtitle}>{displayName}</Text>
         </View>
 
@@ -752,21 +799,21 @@ export default function StatsScreen() {
           <View style={styles.statsGrid}>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{formatNumber(stats.totalOrders)}</Text>
-              <Text style={styles.statLabel}>Всего заявок</Text>
+              <Text style={styles.statLabel}>Р’СЃРµРіРѕ Р·Р°СЏРІРѕРє</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{formatNumber(stats.completedOrders)}</Text>
-              <Text style={styles.statLabel}>Завершено</Text>
+              <Text style={styles.statLabel}>Р—Р°РІРµСЂС€РµРЅРѕ</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={[styles.statValue, { color: TOK.SUCCESS }]}>
                 {fRUB(stats.netProfit)}
               </Text>
-              <Text style={styles.statLabel}>Чистая прибыль</Text>
+              <Text style={styles.statLabel}>Р§РёСЃС‚Р°СЏ РїСЂРёР±С‹Р»СЊ</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{stats.performance.avgOrdersPerDay.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>В день</Text>
+              <Text style={styles.statLabel}>Р’ РґРµРЅСЊ</Text>
             </View>
           </View>
         </View>
@@ -795,11 +842,11 @@ export default function StatsScreen() {
             )}
           </View>
 
-          {isManager && (
+          {isManager && canViewFinanceStatsAll && (
             <TouchableOpacity style={styles.userSelector} onPress={openUserPicker}>
               <Ionicons name="people" size={20} color={TOK.SUBTEXT} />
               <Text style={styles.userText} numberOfLines={1}>
-                {selectedUser?.full_name || 'Выберите сотрудника'}
+                {selectedUser?.full_name || 'Р’С‹Р±РµСЂРёС‚Рµ СЃРѕС‚СЂСѓРґРЅРёРєР°'}
               </Text>
               <Ionicons name="chevron-down" size={16} color={TOK.SUBTEXT} />
             </TouchableOpacity>
@@ -809,7 +856,7 @@ export default function StatsScreen() {
         {/* Status Breakdown */}
         {stats.statusBreakdown.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>По статусам</Text>
+            <Text style={styles.sectionTitle}>РџРѕ СЃС‚Р°С‚СѓСЃР°Рј</Text>
             <View style={styles.chartCard}>
               {stats.statusBreakdown.map((item) => (
                 <View key={item.status} style={styles.statusItem}>
@@ -831,32 +878,32 @@ export default function StatsScreen() {
 
         {/* Performance Metrics */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Эффективность</Text>
+          <Text style={styles.sectionTitle}>Р­С„С„РµРєС‚РёРІРЅРѕСЃС‚СЊ</Text>
           <View style={styles.metricGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>
                 {(stats.performance.completionRate * 100).toFixed(0)}%
               </Text>
-              <Text style={styles.metricLabel}>Выполнено</Text>
+              <Text style={styles.metricLabel}>Р’С‹РїРѕР»РЅРµРЅРѕ</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{fRUB(stats.performance.avgRevenuePerOrder)}</Text>
-              <Text style={styles.metricLabel}>Средний чек</Text>
+              <Text style={styles.metricLabel}>РЎСЂРµРґРЅРёР№ С‡РµРє</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{formatNumber(stats.inProgressOrders)}</Text>
-              <Text style={styles.metricLabel}>В работе</Text>
+              <Text style={styles.metricLabel}>Р’ СЂР°Р±РѕС‚Рµ</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{formatNumber(stats.newOrders)}</Text>
-              <Text style={styles.metricLabel}>Новые</Text>
+              <Text style={styles.metricLabel}>РќРѕРІС‹Рµ</Text>
             </View>
           </View>
         </View>
 
         {/* Financial Summary */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Финансы</Text>
+          <Text style={styles.sectionTitle}>Р¤РёРЅР°РЅСЃС‹</Text>
           <View style={styles.chartCard}>
             <View style={styles.statusItem}>
               <Text style={styles.statusName}>Общий доход</Text>
@@ -874,13 +921,37 @@ export default function StatsScreen() {
             </View>
           </View>
         </View>
+
+        {stats.expenseByRecipient.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Расходы по получателям</Text>
+            <View style={styles.chartCard}>
+              {stats.expenseByRecipient.map((item, index) => (
+                <View
+                  key={item.key}
+                  style={[
+                    styles.statusItem,
+                    index === stats.expenseByRecipient.length - 1 ? { borderBottomWidth: 0 } : null,
+                  ]}
+                >
+                  <Text style={styles.statusName}>{item.name}</Text>
+                  <Text style={styles.statusCount}>{fRUB(item.amount)}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       {/* User Picker Modal */}
-      <Modal visible={userPickerOpen} animationType="slide" onRequestClose={closeUserPicker}>
+      <Modal
+        visible={userPickerOpen && canViewFinanceStatsAll}
+        animationType="slide"
+        onRequestClose={closeUserPicker}
+      >
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Выбор сотрудника</Text>
+            <Text style={styles.modalTitle}>Р’С‹Р±РѕСЂ СЃРѕС‚СЂСѓРґРЅРёРєР°</Text>
             <TouchableOpacity style={styles.closeButton} onPress={closeUserPicker}>
               <Ionicons name="close" size={24} color={TOK.TEXT} />
             </TouchableOpacity>
@@ -888,7 +959,7 @@ export default function StatsScreen() {
 
           <RNTextInput
             style={styles.searchInput}
-            placeholder="Поиск по имени..."
+            placeholder="РџРѕРёСЃРє РїРѕ РёРјРµРЅРё..."
             placeholderTextColor={TOK.SUBTEXT}
             value={usersSearch}
             onChangeText={setUsersSearch}
@@ -916,7 +987,7 @@ export default function StatsScreen() {
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Ionicons name="search" size={48} color={TOK.SUBTEXT} />
-                <Text style={styles.emptyText}>Сотрудники не найдены</Text>
+                <Text style={styles.emptyText}>РЎРѕС‚СЂСѓРґРЅРёРєРё РЅРµ РЅР°Р№РґРµРЅС‹</Text>
               </View>
             }
           />
@@ -927,7 +998,7 @@ export default function StatsScreen() {
       <Modal visible={customModalOpen} animationType="slide" onRequestClose={closeCustomPeriod}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Выбор периода</Text>
+            <Text style={styles.modalTitle}>Р’С‹Р±РѕСЂ РїРµСЂРёРѕРґР°</Text>
             <TouchableOpacity style={styles.closeButton} onPress={closeCustomPeriod}>
               <Ionicons name="close" size={24} color={TOK.TEXT} />
             </TouchableOpacity>
@@ -936,8 +1007,8 @@ export default function StatsScreen() {
           <View style={styles.rangeDisplay}>
             <Text style={styles.rangeText}>
               {rangeStart && rangeEnd
-                ? `${fmt(fromISODate(rangeStart))} — ${fmt(fromISODate(rangeEnd))}`
-                : 'Выберите диапазон дат'}
+                ? `${fmt(fromISODate(rangeStart))} вЂ” ${fmt(fromISODate(rangeEnd))}`
+                : 'Р’С‹Р±РµСЂРёС‚Рµ РґРёР°РїР°Р·РѕРЅ РґР°С‚'}
             </Text>
           </View>
 
@@ -968,7 +1039,7 @@ export default function StatsScreen() {
               style={[styles.actionButton, styles.secondaryAction]}
               onPress={closeCustomPeriod}
             >
-              <Text style={[styles.actionText, styles.secondaryActionText]}>Отмена</Text>
+              <Text style={[styles.actionText, styles.secondaryActionText]}>РћС‚РјРµРЅР°</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
@@ -979,7 +1050,7 @@ export default function StatsScreen() {
               onPress={applyCustomPeriod}
               disabled={!(rangeStart && rangeEnd)}
             >
-              <Text style={[styles.actionText, styles.primaryActionText]}>Применить</Text>
+              <Text style={[styles.actionText, styles.primaryActionText]}>РџСЂРёРјРµРЅРёС‚СЊ</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
