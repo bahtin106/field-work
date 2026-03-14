@@ -354,8 +354,8 @@ const BaseModalImpl = (
       transparent
       presentationStyle="overFullScreen"
       animationType="none"
-      statusBarTranslucent={Platform.OS !== 'android'}
-      navigationBarTranslucent={Platform.OS !== 'android'}
+      statusBarTranslucent
+      navigationBarTranslucent
       onRequestClose={close}
       onShow={() => {
         runOpenAnimation();
