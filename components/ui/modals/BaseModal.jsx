@@ -204,13 +204,12 @@ const BaseModalImpl = (
   const ty = useSharedValue(24);
   const sc = useSharedValue(1);
   const animatedBottomPad = useSharedValue(baseBottomPad + extraBottom);
-  const animatedCardMaxHeight = useSharedValue(sheetMaxH);
 
   const maxAllowedHeight = Math.max(
     minCardHeight,
     windowH - (topSafeInset + minTopGap) - (baseBottomPad + extraBottom),
   );
-  const targetCardMaxHeight = Math.min(sheetMaxH, maxAllowedHeight);
+  const targetCardMaxHeight = Math.max(minCardHeight, Math.min(sheetMaxH, maxAllowedHeight));
 
   useEffect(() => {
     const targetPad = baseBottomPad + extraBottom;
@@ -219,13 +218,8 @@ const BaseModalImpl = (
       duration,
       easing: Easing.out(Easing.cubic),
     });
-    animatedCardMaxHeight.value = withTiming(targetCardMaxHeight, {
-      duration,
-      easing: Easing.out(Easing.cubic),
-    });
   }, [
     animatedBottomPad,
-    animatedCardMaxHeight,
     baseBottomPad,
     extraBottom,
     kbInset,
@@ -286,7 +280,6 @@ const BaseModalImpl = (
   const aCard = useAnimatedStyle(() => ({
     opacity: cardOp.value,
     transform: [{ translateY: ty.value }, { scale: sc.value }],
-    maxHeight: animatedCardMaxHeight.value,
   }));
 
   const dragY = useRef(0);
@@ -400,7 +393,10 @@ const BaseModalImpl = (
         style={[
           s.bottomWrap,
           aWrap,
-          { paddingHorizontal: modalTokens.edgePadding ?? theme.spacing.md },
+          {
+            paddingHorizontal: modalTokens.edgePadding ?? theme.spacing.md,
+            paddingTop: topSafeInset + minTopGap,
+          },
         ]}
         pointerEvents="box-none"
       >
@@ -413,6 +409,7 @@ const BaseModalImpl = (
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
               elevation: 10,
+              maxHeight: targetCardMaxHeight,
             },
           ]}
         >
