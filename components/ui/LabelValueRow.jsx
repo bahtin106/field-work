@@ -44,6 +44,9 @@ export default function LabelValueRow({
   rightActions,
   maxValueLines = 3,
   style,
+  labelContainerStyle,
+  middleSpacerStyle,
+  rightWrapStyle,
   fullRow = false,
   hideWhenEmpty = true,
 }) {
@@ -88,17 +91,16 @@ export default function LabelValueRow({
 
   return (
     <View style={[base.row, style]}>
-      {/* Label: always full width, never truncated */}
-      <View style={{ flexShrink: 0 }}>
+      <View style={[{ flex: 1, minWidth: 0, paddingRight: 8 }, labelContainerStyle]}>
         {renderLabel()}
       </View>
 
-      {/* Spacer: fills available space between label and value */}
-      <View style={base.middleSpacer} />
+      <View style={[base.middleSpacer, middleSpacerStyle]} />
 
-      {/* Right side: value + optional actions */}
-      <View style={[base.rightWrap, { paddingRight: 0 }]}>
-        {renderValue()}
+      <View style={[base.rightWrap, { paddingRight: 0, maxWidth: '56%' }, rightWrapStyle]}>
+        <View style={base.valueWrapper}>
+          {renderValue()}
+        </View>
         {rightActions && (
           <View style={{ marginLeft: 4 }}>
             {rightActions}

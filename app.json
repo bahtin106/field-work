@@ -20,7 +20,7 @@
       "googleServicesFile": "./android/app/google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#8FD2F7"
+        "backgroundColor": "#F2F2F7"
       }
     },
     "jsEngine": "hermes",
@@ -56,7 +56,7 @@
           "backgroundColor": "#F2F2F7",
           "dark": {
             "image": "./assets/splash/splashscreen_logo.png",
-            "backgroundColor": "#0B0B0F"
+            "backgroundColor": "#F2F2F7"
           }
         }
       ],

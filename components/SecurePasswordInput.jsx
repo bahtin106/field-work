@@ -1,7 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { deriveNextPasswordValue, maskPasswordValue } from '../lib/passwordInputMasking';
+import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
+import { useTheme } from '../theme/ThemeProvider';
 
 const SecurePasswordInput = React.forwardRef(
   (
@@ -16,17 +18,35 @@ const SecurePasswordInput = React.forwardRef(
       inputStyle,
       testID,
       showVisibilityToggle = true,
-      toggleIconColor = '#666',
-      toggleIconSize = 22,
+      toggleIconColor,
+      toggleIconSize,
       onEndEditing,
       onFocus,
       onBlur,
+      error,
+      required = false,
+      forceValidation = false,
     },
     ref,
   ) => {
+    const { theme } = useTheme();
     const [isSecure, setIsSecure] = useState(true);
+    const [touched, setTouched] = useState(false);
     const inputRef = useRef(null);
     const lastKeyRef = useRef(null);
+
+    const validationState = getFieldValidationState({
+      label: placeholder,
+      value,
+      error,
+      required,
+      forceValidation,
+      touched,
+    });
+    const styles = useMemo(
+      () => createStyles(theme, validationState.isInvalid),
+      [theme, validationState.isInvalid],
+    );
 
     const effectiveValue = value != null ? String(value) : '';
     const useInstantMasking = Platform.OS === 'android' && isSecure;
@@ -62,7 +82,7 @@ const SecurePasswordInput = React.forwardRef(
           value={displayValue}
           onChangeText={handleChangeText}
           placeholder={placeholder}
-          placeholderTextColor="#999"
+          placeholderTextColor={theme.colors.inputPlaceholder}
           editable={editable}
           secureTextEntry={useInstantMasking ? false : isSecure}
           textContentType="password"
@@ -79,24 +99,31 @@ const SecurePasswordInput = React.forwardRef(
           }}
           onEndEditing={onEndEditing}
           onFocus={onFocus}
-          onBlur={onBlur}
+          onBlur={(e) => {
+            setTouched(true);
+            onBlur?.(e);
+          }}
           testID={testID}
           accessibilityLabel={placeholder}
           accessibilityHint="Защищенное поле ввода пароля"
         />
 
-        {showVisibilityToggle && (
+        {showVisibilityToggle ? (
           <TouchableOpacity
             onPress={toggleSecure}
             style={styles.toggleButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            accessible={true}
+            accessible
             accessibilityRole="button"
             accessibilityLabel={isSecure ? 'Показать пароль' : 'Скрыть пароль'}
           >
-            <Icon name={isSecure ? 'eye-off' : 'eye'} size={toggleIconSize} color={toggleIconColor} />
+            <Icon
+              name={isSecure ? 'eye-off' : 'eye'}
+              size={toggleIconSize ?? (theme.components?.icon?.sizeSm ?? 22)}
+              color={toggleIconColor ?? theme.colors.textSecondary}
+            />
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     );
   },
@@ -104,34 +131,37 @@ const SecurePasswordInput = React.forwardRef(
 
 SecurePasswordInput.displayName = 'SecurePasswordInput';
 
-const styles = StyleSheet.create({
-  container: {
-    position: 'relative',
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    paddingRight: 50,
-    fontSize: 16,
-    color: '#333',
-    fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
-  },
-  toggleButton: {
-    position: 'absolute',
-    right: 12,
-    top: 0,
-    bottom: 0,
-    justifyContent: 'center',
-    padding: 8,
-    zIndex: 10,
-  },
-});
+function createStyles(theme, isError = false) {
+  return StyleSheet.create({
+    container: {
+      position: 'relative',
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    input: {
+      flex: 1,
+      borderWidth: theme.components?.input?.borderWidth ?? 1,
+      borderColor: isError ? theme.colors.danger : theme.colors.border,
+      borderRadius: theme.radii.md ?? 8,
+      paddingVertical: theme.spacing.sm ?? 12,
+      paddingHorizontal: theme.spacing.md ?? 16,
+      paddingRight: 50,
+      fontSize: theme.typography.sizes.md ?? 16,
+      color: theme.colors.text,
+      fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
+      backgroundColor: theme.colors.surface,
+    },
+    toggleButton: {
+      position: 'absolute',
+      right: 12,
+      top: 0,
+      bottom: 0,
+      justifyContent: 'center',
+      padding: 8,
+      zIndex: 10,
+    },
+  });
+}
 
 export default SecurePasswordInput;

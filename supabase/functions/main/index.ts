@@ -7,6 +7,8 @@ import { handleYandexDiskMediaRequest } from '../yandex-disk-media/index.ts';
 import { handleYandexDiskReconcileRequest } from '../yandex-disk-reconcile/index.ts';
 import { handleProfileMediaStorageRequest } from '../profile-media-storage/index.ts';
 import { handleOrderMediaStorageRequest } from '../order-media-storage/index.ts';
+import { handleFinanceEntryMediaStorageRequest } from '../finance-entry-media-storage/index.ts';
+import { handleFinanceEntryYandexMediaRequest } from '../finance-entry-yandex-media/index.ts';
 import { handleMediaCleanupRequest } from '../media-cleanup/index.ts';
 import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
 
@@ -40,6 +42,12 @@ Deno.serve(async (req) => {
   }
   if (path === '/order-media-storage') {
     return handleOrderMediaStorageRequest(req);
+  }
+  if (path === '/finance-entry-media-storage') {
+    return handleFinanceEntryMediaStorageRequest(req);
+  }
+  if (path === '/finance-entry-yandex-media') {
+    return handleFinanceEntryYandexMediaRequest(req);
   }
   if (path === '/media-cleanup') {
     return handleMediaCleanupRequest(req);

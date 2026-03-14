@@ -17,7 +17,7 @@ const styles = (t) =>
     card: {
       backgroundColor: t.colors.surface,
       borderRadius: t.radii.xl,
-      borderWidth: 1,
+      borderWidth: t.components?.card?.borderWidth ?? 1,
       borderColor: t.colors.border,
       ...(Platform.OS === 'ios' ? t.shadows.card.ios : t.shadows.card.android),
     },

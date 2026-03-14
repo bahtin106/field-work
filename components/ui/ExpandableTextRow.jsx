@@ -96,19 +96,12 @@ function ExpandableTextRowComponent({
         <Text style={[base.label, expanded && expandedLabelBold ? styles.expandedLabel : null]}>
           {label}
         </Text>
+        <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
-              {showCollapsedValue ? (
-                onCollapsedPress ? (
-                  <Pressable onPress={onCollapsedPress} hitSlop={theme.components?.interactive?.hitSlop}>
-                    <Text
-                      style={[base.value, styles.collapsedValue, collapsedValueStyle]}
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                    >
-                      {normalizedCollapsedValue}
-                    </Text>
-                  </Pressable>
-                ) : (
+          {showCollapsedValue ? (
+            onCollapsedPress ? (
+              <View style={styles.valueWrap}>
+                <Pressable onPress={onCollapsedPress} hitSlop={theme.components?.interactive?.hitSlop}>
                   <Text
                     style={[base.value, styles.collapsedValue, collapsedValueStyle]}
                     numberOfLines={1}
@@ -116,14 +109,28 @@ function ExpandableTextRowComponent({
                   >
                     {normalizedCollapsedValue}
                   </Text>
-                )
-              ) : null}
+                </Pressable>
+              </View>
+            ) : (
+              <View style={styles.valueWrap}>
+                <Text
+                  style={[base.value, styles.collapsedValue, collapsedValueStyle]}
+                  numberOfLines={1}
+                  ellipsizeMode="tail"
+                >
+                  {normalizedCollapsedValue}
+                </Text>
+              </View>
+            )
+          ) : null}
           {showExpandedAction ? (
-            <Pressable onPress={onValuePress} hitSlop={theme.components?.interactive?.hitSlop}>
-              <Text style={[base.value, styles.collapsedValue, collapsedValueStyle]}> 
-                {normalizedExpandedActionText}
-              </Text>
-            </Pressable>
+            <View style={styles.valueWrap}>
+              <Pressable onPress={onValuePress} hitSlop={theme.components?.interactive?.hitSlop}>
+                <Text style={[base.value, styles.collapsedValue, collapsedValueStyle]}>
+                  {normalizedExpandedActionText}
+                </Text>
+              </Pressable>
+            </View>
           ) : null}
           <Pressable
             onPress={() => {
@@ -176,13 +183,16 @@ function ExpandableTextRowComponent({
 function createStyles(theme) {
   return StyleSheet.create({
     rightWrap: {
-      flex: 1,
-      minWidth: 0,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
-      marginLeft: theme.components?.listItem?.labelValueGap ?? theme.spacing.lg,
+      flexShrink: 1,
+      minWidth: 0,
       paddingRight: theme.spacing.xs,
+    },
+    valueWrap: {
+      flexShrink: 1,
+      minWidth: 0,
     },
     collapsedValue: {
       flexShrink: 1,

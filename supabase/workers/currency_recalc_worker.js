@@ -7,7 +7,7 @@
  *
  * This script is a runnable example for a background worker that:
  *  - listens to NOTIFY channel 'currency_recalc_queue'
- *  - picks pending jobs and processes them in batches, updating price and fuel_cost
+ *  - picks pending jobs and processes them in batches, updating price
  *  - updates job row progress and clears companies.recalc_in_progress when done
  *
  * Note: install dependency `pg` before running: `npm install pg`
@@ -50,7 +50,7 @@ async function processJob(job) {
       // select a batch of ids for update using SKIP LOCKED to avoid conflicts across workers
       const selectSql = `
         WITH cte AS (
-          SELECT id, price, fuel_cost
+          SELECT id, price
           FROM orders
           WHERE company_id = $1
           ORDER BY id
@@ -60,7 +60,6 @@ async function processJob(job) {
         UPDATE orders o
         SET
           price = CASE WHEN cte.price IS NULL OR $4 IS NULL THEN cte.price ELSE round((cte.price::numeric * $4)::numeric, 2) END,
-          fuel_cost = CASE WHEN cte.fuel_cost IS NULL OR $4 IS NULL THEN cte.fuel_cost ELSE round((cte.fuel_cost::numeric * $4)::numeric, 2) END,
           currency = $3
         FROM cte
         WHERE o.id = cte.id

@@ -1,13 +1,12 @@
 // app/orders/all-orders.jsx
 
-import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -22,6 +21,7 @@ import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import TextField from '../../components/ui/TextField';
+import AnimatedFullscreenModal from '../../components/ui/modals/AnimatedFullscreenModal';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
@@ -113,7 +113,6 @@ export default function AllOrdersScreen() {
   const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
   const { has, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
-  const isFocused = useIsFocused();
   const effectiveAllowed = allowed ?? (!permLoading ? has('canViewAllOrders') : null);
 
   useEffect(() => {
@@ -145,20 +144,6 @@ export default function AllOrdersScreen() {
           fontSize: 12,
           fontWeight: '700',
           lineHeight: 12,
-        },
-
-        statusBadge: {
-          paddingHorizontal: 10,
-          paddingVertical: 4,
-          borderRadius: 10,
-        },
-        statusPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
-        statusPillText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
-
-        statusText: {
-          fontSize: 12,
-          fontWeight: '600',
-          color: theme.colors.onPrimary,
         },
 
         executorRowSelected: {
@@ -496,8 +481,6 @@ export default function AllOrdersScreen() {
     allRequestsParams,
     {
       enabled: effectiveAllowed === true,
-      refetchInterval: isFocused ? 60 * 1000 : false,
-      refetchIntervalInBackground: false,
     },
   );
   const { data: executorsData } = useRequestExecutors({ enabled: effectiveAllowed === true });
@@ -547,11 +530,16 @@ export default function AllOrdersScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ['requests'] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.executors(companyId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.filterOptions() }),
+      ]);
       await refetchRequests();
     } finally {
       setRefreshing(false);
     }
-  }, [refetchRequests]);
+  }, [companyId, queryClient, refetchRequests]);
 
   const getStatusLabel = (key) => {
     switch (key) {
@@ -836,12 +824,9 @@ export default function AllOrdersScreen() {
           />
 
           {filterModalVisible ? (
-            <Modal
+            <AnimatedFullscreenModal
               visible={filterModalVisible}
-              animationType="slide"
-              transparent={true}
-              presentationStyle="overFullScreen"
-              statusBarTranslucent={true}
+              animation="slide"
               navigationBarTranslucent={true}
               hardwareAccelerated={true}
               onRequestClose={closeFilterModal}
@@ -977,7 +962,7 @@ export default function AllOrdersScreen() {
                   </ScrollView>
                 </View>
               </View>
-            </Modal>
+            </AnimatedFullscreenModal>
           ) : null}
         </>
       )}

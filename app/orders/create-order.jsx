@@ -42,6 +42,7 @@ import {
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { getLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { withAlpha } from '../../theme/colors';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -124,7 +125,6 @@ export default function CreateOrderScreen() {
   const subscriptionGuard = useSubscriptionGuard(profile?.company_id || null);
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const formStyles = useEditFormStyles();
-  const requiredSuffix = t('common_required_suffix');
   const { banner, showBanner, clearBanner } = useFeedback();
 
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -359,12 +359,8 @@ export default function CreateOrderScreen() {
   }, []);
 
   const withRequiredLabel = useCallback(
-    (label, required) => {
-      if (!required || !label) return label;
-      if (String(label).includes('*')) return label;
-      return `${label}${requiredSuffix}`;
-    },
-    [requiredSuffix],
+    (label, required) => getRequiredFieldLabel(label, required),
+    [],
   );
 
   useEffect(() => {

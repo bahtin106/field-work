@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Dimensions,
   Image,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -13,6 +12,7 @@ import ImageZoom from 'react-native-image-pan-zoom';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import AnimatedFullscreenModal from './modals/AnimatedFullscreenModal';
 
 async function getImageSize(uri) {
   return await new Promise((resolve, reject) => {
@@ -184,7 +184,7 @@ export default function AvatarCropModal({ visible, uri, onCancel, onConfirm }) {
     };
 
     return (
-      <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onCancel}>
+      <AnimatedFullscreenModal visible transparent animation="fade" onRequestClose={onCancel}>
         <View style={styles.editorBackdrop}>
           <View style={styles.editorHeader}>
             <Pressable onPress={onCancel} style={styles.headerBtn}>
@@ -251,12 +251,12 @@ export default function AvatarCropModal({ visible, uri, onCancel, onConfirm }) {
             {cropHint}
           </Text>
         </View>
-      </Modal>
+      </AnimatedFullscreenModal>
     );
   }
 
   return (
-    <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onCancel}>
+    <AnimatedFullscreenModal visible transparent animation="fade" onRequestClose={onCancel}>
       <View style={[styles.loaderBackdrop, { backgroundColor: 'rgba(0,0,0,0.65)' }]}>
         <View
           style={[
@@ -273,7 +273,7 @@ export default function AvatarCropModal({ visible, uri, onCancel, onConfirm }) {
           </Text>
         </View>
       </View>
-    </Modal>
+    </AnimatedFullscreenModal>
   );
 }
 

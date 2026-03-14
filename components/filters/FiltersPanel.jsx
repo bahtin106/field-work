@@ -178,23 +178,25 @@ export default function FiltersPanel({
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      Animated.timing(tx, {
+      Animated.spring(tx, {
         toValue: 0,
-        duration: ANIMATION_DURATION_IN,
-        easing: Easing.out(Easing.cubic),
+        damping: 28,
+        stiffness: 260,
+        mass: 0.85,
         useNativeDriver: true,
+        overshootClamping: true,
       }).start();
     } else {
       Animated.timing(tx, {
         toValue: SCREEN_W,
-        duration: ANIMATION_DURATION_OUT,
+        duration: 280,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
       }).start(({ finished }) => {
         if (finished) setMounted(false);
       });
     }
-  }, [visible, tx, ANIMATION_DURATION_IN, ANIMATION_DURATION_OUT]);
+  }, [visible, tx]);
 
   // Intercept hardware back button and swipe-back when panel is visible
   useEffect(() => {

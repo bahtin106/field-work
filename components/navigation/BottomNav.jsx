@@ -36,13 +36,22 @@ function TabButton({ label, active, onPress, colors, metrics }) {
   const accLabel = typeof label === 'string' ? label : String(label || 'Tab');
   return (
     <Pressable
-      style={styles.btn}
+      style={({ pressed }) => [styles.btn, pressed && styles.btnPressed]}
       onPress={onPress}
-      android_ripple={{ borderless: false }}
+      android_ripple={{ color: colors.ripple, borderless: false }}
       accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
       accessibilityLabel={accLabel}
     >
-      <Text style={[styles.label, { color: active ? colors.active : colors.inactive }]}>
+      <Text
+        style={[
+          styles.label,
+          {
+            color: active ? colors.active : colors.inactive,
+            fontSize: metrics.labelSize,
+          },
+        ]}
+      >
         {typeof label === 'string' ? label : String(label || '')}
       </Text>
       {active ? (
@@ -107,26 +116,23 @@ function BottomNavInner() {
   }, [navVisible, appear]);
 
   const colors = useMemo(() => {
-    const bg =
-      theme?.colors?.backgroundSecondary ??
-      theme?.colors?.card ??
-      theme?.colors?.background ??
-      '#121212';
-    const border = theme?.colors?.border ?? 'rgba(0,0,0,0.12)';
-    const active = theme?.colors?.primary ?? '#4F8EF7';
-    const inactive =
-      theme?.colors?.textSecondary ?? (theme?.mode === 'dark' ? '#A0A0A0' : '#606060');
-    return { bg, border, active, inactive };
+    const bg = theme.colors.navigationBarBg ?? theme.colors.surface;
+    const border = theme.colors.border;
+    const active = theme.colors.primary;
+    const inactive = theme.colors.textSecondary ?? theme.colors.text;
+    const ripple = theme.colors.ripple;
+    return { bg, border, active, inactive, ripple };
   }, [theme]);
 
   const metrics = React.useMemo(() => {
-    const itemHeight = theme?.components?.listItem?.height ?? 56;
+    const itemHeight = theme?.components?.listItem?.height ?? theme.spacing.xxl;
     const ph = theme?.spacing?.sm ?? 10;
-    const indicatorH = theme?.components?.tab?.indicatorHeight ?? 3;
+    const indicatorH = theme?.components?.tab?.indicatorHeight ?? StyleSheet.hairlineWidth * 3;
     const indicatorW = theme?.components?.tab?.indicatorWidth ?? Math.round(itemHeight * 0.43);
-    const indicatorRadius = theme?.radii?.xs ?? 2;
+    const indicatorRadius = theme?.radii?.xs ?? 6;
     const bottomOffset = theme?.spacing?.xs ?? 6;
-    return { itemHeight, ph, indicatorH, indicatorW, indicatorRadius, bottomOffset };
+    const labelSize = theme?.typography?.sizes?.sm ?? 13;
+    return { itemHeight, ph, indicatorH, indicatorW, indicatorRadius, bottomOffset, labelSize };
   }, [theme]);
 
   // Показываем бар синхронно с главной страницей
@@ -166,7 +172,7 @@ function BottomNavInner() {
       style={[
         styles.container,
         {
-          paddingBottom: Math.max(insets.bottom, theme?.spacing?.sm ?? 10),
+          paddingBottom: Math.max(insets.bottom, theme.spacing.sm),
           backgroundColor: colors.bg,
           borderTopColor: colors.border,
         },
@@ -178,7 +184,7 @@ function BottomNavInner() {
         style={[styles.bar, { height: metrics.itemHeight, paddingHorizontal: metrics.ph }]}
         onLayout={(e) => {
           const h = e.nativeEvent.layout.height;
-          if (setAnchorOffset) setAnchorOffset(h + (theme?.spacing?.xl ?? 24));
+          if (setAnchorOffset) setAnchorOffset(h + theme.spacing.xl);
         }}
       >
         <TabButton
@@ -259,6 +265,9 @@ const styles = StyleSheet.create({
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  btnPressed: {
+    opacity: 0.9,
   },
   label: {
     fontWeight: '600',

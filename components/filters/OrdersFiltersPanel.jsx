@@ -47,8 +47,6 @@ function normalizeValues(values = {}) {
     departureTimeTo: values.departureTimeTo || null,
     sumMin: values.sumMin || '',
     sumMax: values.sumMax || '',
-    fuelMin: values.fuelMin || '',
-    fuelMax: values.fuelMax || '',
   };
 }
 
@@ -170,16 +168,18 @@ export default function OrdersFiltersPanel({
   useEffect(() => {
     if (visible) {
       setMounted(true);
-      Animated.timing(tx, {
+      Animated.spring(tx, {
         toValue: 0,
-        duration: 220,
-        easing: Easing.out(Easing.cubic),
+        damping: 28,
+        stiffness: 260,
+        mass: 0.85,
         useNativeDriver: true,
+        overshootClamping: true,
       }).start();
     } else {
       Animated.timing(tx, {
         toValue: SCREEN_W,
-        duration: 200,
+        duration: 280,
         easing: Easing.in(Easing.cubic),
         useNativeDriver: true,
       }).start(({ finished }) => {
@@ -479,27 +479,6 @@ export default function OrdersFiltersPanel({
             </View>
           </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('order_details_fuel')}</Text>
-            <View style={styles.pairRow}>
-              <TextField
-                value={draft.fuelMin}
-                onChangeText={(text) => handleNumericInput('fuelMin', text)}
-                placeholder={t('common_from')}
-                keyboardType="numeric"
-                style={{ flex: 1 }}
-                hideSeparator
-              />
-              <TextField
-                value={draft.fuelMax}
-                onChangeText={(text) => handleNumericInput('fuelMax', text)}
-                placeholder={t('common_to')}
-                keyboardType="numeric"
-                style={{ flex: 1 }}
-                hideSeparator
-              />
-            </View>
-          </View>
         </ScrollView>
 
         {hasChanges && (

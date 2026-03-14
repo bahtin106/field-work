@@ -13,7 +13,7 @@ import {
   TextInput,
   useColorScheme,
 } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
+import { KeyboardAwareScrollView } from '../lib/keyboardControllerCompat';
 import { tokens } from './tokens';
 
 const STORAGE_KEY = 'THEME_MODE_V2';
@@ -89,6 +89,28 @@ function buildTheme(mode, systemScheme = null) {
       dangerBg: base.colors.button?.dangerBg ?? (effective === 'dark' ? '#FF453A' : '#FF3B30'),
       dangerText: base.colors.button?.dangerText ?? '#FFFFFF',
     },
+    status: {
+      feed: base.colors.status?.feed ?? {
+        bg: effective === 'dark' ? '#2B2414' : '#FFF7CC',
+        fg: effective === 'dark' ? '#EBCB6E' : '#8A6D1F',
+      },
+      new: base.colors.status?.new ?? {
+        bg: effective === 'dark' ? '#0F1B2D' : '#E8F0FE',
+        fg: effective === 'dark' ? '#64A3FF' : '#0A84FF',
+      },
+      progress: base.colors.status?.progress ?? {
+        bg: effective === 'dark' ? '#0F2317' : '#E9F7EF',
+        fg: '#34C759',
+      },
+      done: base.colors.status?.done ?? {
+        bg: effective === 'dark' ? '#1A1C22' : '#F2F2F7',
+        fg: effective === 'dark' ? '#A3A3A3' : '#6B7280',
+      },
+      default: base.colors.status?.default ?? {
+        bg: effective === 'dark' ? '#1A1C22' : '#EEF2F6',
+        fg: effective === 'dark' ? '#A3A3A3' : '#6B7280',
+      },
+    },
   };
 
   const normalizedShadows = {
@@ -154,6 +176,16 @@ function buildTheme(mode, systemScheme = null) {
       dividerWidth: base.components?.listItem?.dividerWidth ?? 1,
       disabledOpacity: base.components?.listItem?.disabledOpacity ?? 0.5,
       chevronSize: base.components?.listItem?.chevronSize ?? 20,
+    },
+    orderStatusCapsule: {
+      padX: base.components?.orderStatusCapsule?.padX ?? 10,
+      padY: base.components?.orderStatusCapsule?.padY ?? 6,
+      radius: base.components?.orderStatusCapsule?.radius ?? radii.pill ?? 999,
+      minHeight: base.components?.orderStatusCapsule?.minHeight ?? 28,
+      fontSize: base.components?.orderStatusCapsule?.fontSize ?? typography.sizes?.xs ?? 12,
+      fontWeight:
+        base.components?.orderStatusCapsule?.fontWeight ?? typography.weight?.bold ?? '700',
+      letterSpacing: base.components?.orderStatusCapsule?.letterSpacing ?? 0.3,
     },
     switch: {
       scale: base.components?.switch?.scale ?? 1,

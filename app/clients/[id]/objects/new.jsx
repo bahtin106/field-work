@@ -11,6 +11,7 @@ import { TAG_TYPE } from '../../../../components/tags/tagConfig';
 import { useCompanySettings } from '../../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../../lib/permissions';
 import { FieldErrorText, FEEDBACK_CODES, getMessageByCode } from '../../../../src/shared/feedback';
+import { getRequiredFieldLabel } from '../../../../src/shared/forms/fieldValidation';
 import { useClient } from '../../../../src/features/clients/queries';
 import { useCreateClientObjectMutation } from '../../../../src/features/objects/queries';
 import { useEntityFieldSettings } from '../../../../src/features/fieldSettings/queries';
@@ -75,7 +76,7 @@ export default function NewClientObjectScreen() {
     [objectFieldSettings],
   );
   const withRequiredLabel = React.useCallback(
-    (field, label) => (objectFieldsByKey.get(field)?.isRequired ? `${label} *` : label),
+    (field, label) => getRequiredFieldLabel(label, objectFieldsByKey.get(field)?.isRequired === true),
     [objectFieldsByKey],
   );
 

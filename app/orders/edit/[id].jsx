@@ -68,6 +68,7 @@ import { t as T } from '../../../src/i18n';
 import { formatRuMask } from '../../../components/ui/phone';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
 import { FieldErrorText } from '../../../src/shared/feedback';
+import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation';
 import {
   isValidOptionalMobilePhone,
   toE164MobilePhoneOrNull,
@@ -120,8 +121,6 @@ export default function EditOrderScreen() {
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
   const canViewOrderAmount = hasPermission('canViewOrderAmount');
   const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditOrderAmount');
-  const canViewOrderFuelCost = hasPermission('canViewOrderFuelCost');
-  const canEditOrderFuelCost = canViewOrderFuelCost && hasPermission('canEditOrderFuelCost');
   const formStyles = useEditFormStyles();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const {
@@ -225,7 +224,6 @@ export default function EditOrderScreen() {
   const geoLatRef = useRef(null);
   const geoLngRef = useRef(null);
   const [price, setPrice] = useState('');
-  const [fuelCost, setFuelCost] = useState('');
   const { data: clients = [] } = useClients(
     { companyId, search: '' },
     { enabled: !!companyId },
@@ -285,14 +283,9 @@ export default function EditOrderScreen() {
     if (value === null || value === undefined || value === '') return null;
     return String(value);
   }, []);
-  const requiredSuffix = T('common_required_suffix');
   const withRequiredLabel = useCallback(
-    (label, required) => {
-      if (!required || !label) return label;
-      if (String(label).includes('*')) return label;
-      return `${label}${requiredSuffix}`;
-    },
-    [requiredSuffix],
+    (label, required) => getRequiredFieldLabel(label, required),
+    [],
   );
   const isFieldRequired = useCallback(
     (fieldKey) => orderFieldsByKey.get(fieldKey)?.isRequired === true,
@@ -726,7 +719,6 @@ export default function EditOrderScreen() {
         urgent: !!draft.urgent,
         departmentId: draft.departmentId || null,
         price: String(draft.price ?? '').trim(),
-        fuelCost: String(draft.fuelCost ?? '').trim(),
         workTypeId: draft.workTypeId || null,
         status: draft.status || null,
       }),
@@ -787,8 +779,6 @@ export default function EditOrderScreen() {
         typeof row.work_type_id !== 'undefined' || workTypeIdFromParams !== null;
       const nextStatus = row.status || (nextToFeed ? T('order_status_in_feed') : T('order_status_new'));
       const nextPrice = row.price !== null && row.price !== undefined ? String(row.price) : '';
-      const nextFuelCost =
-        row.fuel_cost !== null && row.fuel_cost !== undefined ? String(row.fuel_cost) : '';
       const fallbackName =
         String(row.work_type_name || row.work_type?.name || workTypeNameFromParams || '').trim() || '';
       let nextAssignedEmployeeLabel = '';
@@ -843,7 +833,6 @@ export default function EditOrderScreen() {
         setStatusKey(null);
       }
       setPrice(nextPrice);
-      setFuelCost(nextFuelCost);
 
       snapshotRef.current = buildSnapshot({
         title: nextTitle,
@@ -878,7 +867,6 @@ export default function EditOrderScreen() {
         urgent: nextUrgent,
         departmentId: nextDepartmentId,
         price: nextPrice,
-        fuelCost: nextFuelCost,
         workTypeId: nextWorkTypeId,
         status: nextStatus,
       });
@@ -941,7 +929,6 @@ export default function EditOrderScreen() {
               urgent: nextUrgent,
               departmentId: nextDepartmentId,
               price: nextPrice,
-              fuelCost: nextFuelCost,
               workTypeId: resolvedWorkTypeId,
               status: nextStatus,
             });
@@ -1021,7 +1008,6 @@ export default function EditOrderScreen() {
       urgent,
       departmentId,
       price,
-      fuelCost,
       workTypeId,
       status: statusLabel,
     });
@@ -1060,7 +1046,6 @@ export default function EditOrderScreen() {
     urgent,
     departmentId,
     price,
-    fuelCost,
     workTypeId,
     statusLabel,
     buildSnapshot,
@@ -1481,18 +1466,11 @@ export default function EditOrderScreen() {
       return showToast(T('order_validation_phone_format'), 'error');
     }
     const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
-    const parsedFuelCost = canEditOrderFuelCost ? parseDecimalOrNull(fuelCost) : null;
     if (canEditOrderAmount && String(price ?? '').trim() && parsedPrice === null) {
       return showToast(T('order_validation_amount_format'), 'error');
     }
-    if (canEditOrderFuelCost && String(fuelCost ?? '').trim() && parsedFuelCost === null) {
-      return showToast(T('order_validation_fuel_format'), 'error');
-    }
     if (canEditOrderAmount && parsedPrice != null && parsedPrice < 0) {
       return showToast(T('order_validation_amount_format'), 'error');
-    }
-    if (canEditOrderFuelCost && parsedFuelCost != null && parsedFuelCost < 0) {
-      return showToast(T('order_validation_fuel_format'), 'error');
     }
 
     await proceedSave();
@@ -1539,21 +1517,12 @@ export default function EditOrderScreen() {
 
       const normalizedPhone = toE164MobilePhoneOrNull(phone);
       const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
-      const parsedFuelCost = canEditOrderFuelCost ? parseDecimalOrNull(fuelCost) : null;
       if (canEditOrderAmount && String(price ?? '').trim() && parsedPrice === null) {
         showToast(T('order_validation_amount_format'), 'error');
         return;
       }
-      if (canEditOrderFuelCost && String(fuelCost ?? '').trim() && parsedFuelCost === null) {
-        showToast(T('order_validation_fuel_format'), 'error');
-        return;
-      }
       if (canEditOrderAmount && parsedPrice != null && parsedPrice < 0) {
         showToast(T('order_validation_amount_format'), 'error');
-        return;
-      }
-      if (canEditOrderFuelCost && parsedFuelCost != null && parsedFuelCost < 0) {
-        showToast(T('order_validation_fuel_format'), 'error');
         return;
       }
       if (isFieldRequired('client_id') && !selectedClientId) {
@@ -1623,7 +1592,6 @@ export default function EditOrderScreen() {
         urgent,
         department_id: departmentId || null,
         ...(canEditOrderAmount ? { price: parsedPrice } : {}),
-        ...(canEditOrderFuelCost ? { fuel_cost: parsedFuelCost } : {}),
         ...(useWorkTypes && workTypeResolved
           ? {
               work_type_id: normalizeId(workTypeId),
@@ -1666,7 +1634,6 @@ export default function EditOrderScreen() {
         urgent,
         departmentId,
         price,
-        fuelCost,
         workTypeId,
         status: statusLabel,
       });
@@ -2108,7 +2075,7 @@ export default function EditOrderScreen() {
           </Card>
 
           <SectionHeader bottomSpacing="xs">{T('order_section_finances')}</SectionHeader>
-          {((orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount) || (orderFieldsByKey.get('fuel_cost')?.isEnabled !== false && canViewOrderFuelCost)) ? (
+          {orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount ? (
           <Card padded={false} style={styles.card}>
             {orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount ? (
             <TextField
@@ -2119,18 +2086,6 @@ export default function EditOrderScreen() {
               keyboardType="decimal-pad"
               pressable={!canEditOrderAmount}
               onPress={!canEditOrderAmount ? () => {} : undefined}
-              style={styles.field}
-            />
-            ) : null}
-            {orderFieldsByKey.get('fuel_cost')?.isEnabled !== false && canViewOrderFuelCost ? (
-            <TextField
-              label={T('order_details_fuel')}
-              placeholder={T('order_placeholder_amount')}
-              value={fuelCost}
-              onChangeText={setFuelCost}
-              keyboardType="decimal-pad"
-              pressable={!canEditOrderFuelCost}
-              onPress={!canEditOrderFuelCost ? () => {} : undefined}
               style={styles.field}
             />
             ) : null}
