@@ -41,6 +41,7 @@ function normalizeValues(values = {}) {
   return {
     workTypes: Array.isArray(values.workTypes) ? values.workTypes.map(String) : [],
     statuses: Array.isArray(values.statuses) ? values.statuses : [],
+    executorId: values.executorId ? String(values.executorId) : null,
     departureDateFrom: values.departureDateFrom || null,
     departureDateTo: values.departureDateTo || null,
     departureTimeFrom: values.departureTimeFrom || null,
@@ -59,6 +60,7 @@ export default function OrdersFiltersPanel({
   workTypes = [],
   useWorkTypes = false,
   statusOptions = [],
+  executorOptions = [],
   onApply,
   onReset,
 }) {
@@ -69,12 +71,14 @@ export default function OrdersFiltersPanel({
   const [baseline, setBaseline] = useState(() => normalizeValues(values));
   const [datePickerField, setDatePickerField] = useState(null);
   const [timePickerField, setTimePickerField] = useState(null);
+  const [executorSearch, setExecutorSearch] = useState('');
 
   useEffect(() => {
     if (!visible) return;
     const snapshot = normalizeValues(values);
     setDraft(snapshot);
     setBaseline(snapshot);
+    setExecutorSearch('');
   }, [visible, values]);
 
   const setDraftValue = (key, val) => {
@@ -95,6 +99,18 @@ export default function OrdersFiltersPanel({
     const filtered = text.replace(/[^0-9.,]/g, '').replace(',', '.');
     setDraftValue(key, filtered);
   };
+
+  const filteredExecutors = useMemo(() => {
+    const list = Array.isArray(executorOptions) ? executorOptions : [];
+    const query = String(executorSearch || '').trim().toLowerCase();
+    if (!query) return list;
+    return list.filter((executor) =>
+      String(executor?.label || executor?.name || '')
+        .trim()
+        .toLowerCase()
+        .includes(query),
+    );
+  }, [executorOptions, executorSearch]);
 
   const handleDatePick = (field, event, selected) => {
     setDatePickerField(null);
@@ -249,11 +265,11 @@ export default function OrdersFiltersPanel({
           fontSize: ty.sizes.md,
           fontWeight: ty.weight.semibold,
           color: c.text,
+          marginBottom: sz.sm,
         },
         chipsRow: {
           flexDirection: 'row',
           flexWrap: 'wrap',
-          marginTop: sz.sm,
           gap: 8,
         },
         chip: {
@@ -293,6 +309,48 @@ export default function OrdersFiltersPanel({
           gap: sz.sm,
           marginTop: sz.sm,
         },
+        optionsList: {
+          marginTop: sz.sm,
+          borderRadius: rad.lg,
+          borderWidth: 1,
+          borderColor: c.border,
+          backgroundColor: c.surface,
+          overflow: 'hidden',
+        },
+        optionRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: sz.md,
+          paddingVertical: sz.md,
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderColor: c.border,
+        },
+        optionRowLast: {
+          borderBottomWidth: 0,
+        },
+        optionTextWrap: {
+          flex: 1,
+          paddingRight: sz.sm,
+        },
+        optionLabel: {
+          color: c.text,
+          fontSize: ty.sizes.md,
+        },
+        optionMeta: {
+          color: c.textSecondary,
+          fontSize: ty.sizes.sm,
+          marginTop: 2,
+        },
+        checkmark: {
+          color: c.primary,
+          fontSize: ty.sizes.md,
+          fontWeight: ty.weight.semibold,
+        },
+        emptyText: {
+          color: c.textSecondary,
+          fontSize: ty.sizes.sm,
+        },
         footer: {
           position: 'absolute',
           left: 0,
@@ -304,14 +362,14 @@ export default function OrdersFiltersPanel({
           borderColor: c.border,
         },
       }),
-    [c, hasChanges, rad.md, sz, ty, sh, APPLY_BUTTON_HEIGHT, theme],
+    [APPLY_BUTTON_HEIGHT, c, hasChanges, rad.lg, rad.md, sh, sz, theme, ty],
   );
 
   if (!mounted && !visible) return null;
 
   const renderSelector = (label, value, onPress) => (
     <Pressable style={styles.selector} onPress={onPress} accessibilityRole="button">
-      <Text style={styles.selectorText}>{value || t('common_select')}</Text>
+      <Text style={styles.selectorText}>{value || label || t('common_select')}</Text>
     </Pressable>
   );
 
@@ -404,26 +462,84 @@ export default function OrdersFiltersPanel({
             </View>
           ) : null}
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>{t('orders_filter_status')}</Text>
-            <View style={styles.chipsRow}>
-              {statusOptions.map((opt) => {
-                const active = draft.statuses.includes(opt.id);
-                return (
-                  <Pressable
-                    key={opt.id}
-                    onPress={() => toggleSelection('statuses', opt.id)}
-                    style={[styles.chip, active && styles.chipActive]}
-                    android_ripple={{ color: withAlpha(c.border, 0.12), borderless: true }}
-                  >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                      {opt.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+          {statusOptions.length > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{t('orders_filter_status')}</Text>
+              <View style={styles.chipsRow}>
+                {statusOptions.map((opt) => {
+                  const active = draft.statuses.includes(opt.id);
+                  return (
+                    <Pressable
+                      key={opt.id}
+                      onPress={() => toggleSelection('statuses', opt.id)}
+                      style={[styles.chip, active && styles.chipActive]}
+                      android_ripple={{ color: withAlpha(c.border, 0.12), borderless: true }}
+                    >
+                      <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
-          </View>
+          ) : null}
+
+          {executorOptions.length > 0 ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{t('orders_filter_executor', 'Исполнитель')}</Text>
+              <TextField
+                value={executorSearch}
+                onChangeText={setExecutorSearch}
+                placeholder={t('common_search')}
+                hideSeparator
+              />
+              <View style={styles.optionsList}>
+                <Pressable
+                  onPress={() => setDraftValue('executorId', null)}
+                  style={[
+                    styles.optionRow,
+                    filteredExecutors.length === 0 ? styles.optionRowLast : null,
+                  ]}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.optionTextWrap}>
+                    <Text style={styles.optionLabel}>{t('users_showAll')}</Text>
+                  </View>
+                  {draft.executorId == null ? <Text style={styles.checkmark}>✓</Text> : null}
+                </Pressable>
+                {filteredExecutors.length > 0 ? (
+                  filteredExecutors.map((executor, index) => {
+                    const id = String(executor?.value ?? executor?.id ?? '');
+                    const active = draft.executorId === id;
+                    return (
+                      <Pressable
+                        key={id}
+                        onPress={() => setDraftValue('executorId', active ? null : id)}
+                        style={[
+                          styles.optionRow,
+                          index === filteredExecutors.length - 1 ? styles.optionRowLast : null,
+                        ]}
+                        accessibilityRole="button"
+                      >
+                        <View style={styles.optionTextWrap}>
+                          <Text style={styles.optionLabel}>{executor?.label || id}</Text>
+                          {executor?.meta ? (
+                            <Text style={styles.optionMeta}>{executor.meta}</Text>
+                          ) : null}
+                        </View>
+                        {active ? <Text style={styles.checkmark}>✓</Text> : null}
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <View style={[styles.optionRow, styles.optionRowLast]}>
+                    <Text style={styles.emptyText}>{t('common_noData')}</Text>
+                  </View>
+                )}
+              </View>
+            </View>
+          ) : null}
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>{t('order_field_departure_date')}</Text>

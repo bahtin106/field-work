@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
-  RefreshControl,
   StyleSheet,
   Text,
   View,
@@ -15,6 +14,11 @@ import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import Card from '../../components/ui/Card';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import { usePermissions } from '../../lib/permissions';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useClients, useClientsRealtimeSync } from '../../src/features/clients/queries';
@@ -39,7 +43,6 @@ export default function ClientsIndexScreen() {
 
   const [search, setSearch] = React.useState('');
   const [debouncedSearch, setDebouncedSearch] = React.useState('');
-  const [refreshing, setRefreshing] = React.useState(false);
   const [sortVisible, setSortVisible] = React.useState(false);
   const [sortKey, setSortKey] = React.useState(CLIENT_SORT.NAME_ASC);
   const selectedTag = React.useMemo(() => {
@@ -118,14 +121,8 @@ export default function ClientsIndexScreen() {
     [filteredClients, sortKey],
   );
 
-  const onRefresh = React.useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refetch();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [refetch]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refetch);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
@@ -171,50 +168,47 @@ export default function ClientsIndexScreen() {
           metaText={`${t('common_total')}: ${clients.length}`}
         />
 
-        <FlatList
-          data={clients}
-          keyExtractor={(item) => String(item.id)}
-          contentContainerStyle={styles.listContent}
-          keyboardShouldPersistTaps="handled"
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={theme.colors.primary}
-            />
-          }
-          renderItem={({ item }) => {
-            const fullName = String(item?.fullName || '').trim();
-            const contactMeta = String(item?.phone || item?.email || '').trim();
-            const objectMeta =
-              String(item?.primaryObjectSummary || '').trim() ||
-              t('clients_objects_count_label').replace('{count}', String(item.objects?.length || 0));
-            return (
-              <Pressable onPress={() => router.push(`/clients/${item.id}`)}>
-                <Card paddedXOnly>
-                  <View style={styles.row}>
-                    {hasDisplayValue(fullName) ? <Text style={styles.nameText}>{fullName}</Text> : null}
-                    {hasDisplayValue(contactMeta) ? (
-                      <Text style={styles.metaText} numberOfLines={1}>
-                        {contactMeta}
-                      </Text>
-                    ) : null}
-                    {hasDisplayValue(objectMeta) ? (
-                      <Text style={styles.metaText} numberOfLines={2}>
-                        {objectMeta}
-                      </Text>
-                    ) : null}
-                  </View>
-                </Card>
-              </Pressable>
-            );
-          }}
-          ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={styles.mutedText}>{t('empty_noData')}</Text>
-            </View>
-          }
-        />
+        <View style={{ flex: 1 }}>
+          {refreshIndicator}
+          <FlatList
+            data={clients}
+            keyExtractor={(item) => String(item.id)}
+            contentContainerStyle={styles.listContent}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+            renderItem={({ item }) => {
+              const fullName = String(item?.fullName || '').trim();
+              const contactMeta = String(item?.phone || item?.email || '').trim();
+              const objectMeta =
+                String(item?.primaryObjectSummary || '').trim() ||
+                t('clients_objects_count_label').replace('{count}', String(item.objects?.length || 0));
+              return (
+                <Pressable onPress={() => router.push(`/clients/${item.id}`)}>
+                  <Card paddedXOnly>
+                    <View style={styles.row}>
+                      {hasDisplayValue(fullName) ? <Text style={styles.nameText}>{fullName}</Text> : null}
+                      {hasDisplayValue(contactMeta) ? (
+                        <Text style={styles.metaText} numberOfLines={1}>
+                          {contactMeta}
+                        </Text>
+                      ) : null}
+                      {hasDisplayValue(objectMeta) ? (
+                        <Text style={styles.metaText} numberOfLines={2}>
+                          {objectMeta}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </Card>
+                </Pressable>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyWrap}>
+                <Text style={styles.mutedText}>{t('empty_noData')}</Text>
+              </View>
+            }
+          />
+        </View>
       </DismissKeyboardArea>
 
       <SortSelectModal

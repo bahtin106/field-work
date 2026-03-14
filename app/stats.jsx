@@ -5,7 +5,6 @@ import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  RefreshControl,
   TextInput as RNTextInput,
   ScrollView,
   StyleSheet,
@@ -18,6 +17,11 @@ import { Calendar } from 'react-native-calendars';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AppHeader from '../components/navigation/AppHeader';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../components/ui/PullToRefreshFeedback';
 import AnimatedFullscreenModal from '../components/ui/modals/AnimatedFullscreenModal';
 import { useCompanySettings } from '../hooks/useCompanySettings';
 import { usePermissions } from '../lib/permissions';
@@ -107,7 +111,6 @@ export default function StatsScreen() {
   );
 
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
   const [me, setMe] = useState(null);
   const [role, setRole] = useState(null);
@@ -689,15 +692,12 @@ export default function StatsScreen() {
     true,
   );
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await loadStats();
-      if (isManager && canViewFinanceStatsAll) await loadUsers();
-    } finally {
-      setRefreshing(false);
-    }
+  const refreshAll = useCallback(async () => {
+    await loadStats();
+    if (isManager && canViewFinanceStatsAll) await loadUsers();
   }, [canViewFinanceStatsAll, loadStats, isManager, loadUsers]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   // User selection
   const openUserPicker = () => setUserPickerOpen(true);
@@ -793,13 +793,15 @@ export default function StatsScreen() {
     <View style={styles.container}>
       <AppHeader options={{ title: 'РЎС‚Р°С‚РёСЃС‚РёРєР°' }} back />
 
-      <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Header */}
-        <View style={styles.header}>
+      <View style={{ flex: 1 }}>
+        {refreshIndicator}
+        <ScrollView
+          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Header */}
+          <View style={styles.header}>
           <Text style={styles.headerTitle}>РЎС‚Р°С‚РёСЃС‚РёРєР°</Text>
           <Text style={styles.headerSubtitle}>{displayName}</Text>
         </View>
@@ -951,7 +953,8 @@ export default function StatsScreen() {
             </View>
           </View>
         )}
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       {/* User Picker Modal */}
       <AnimatedFullscreenModal

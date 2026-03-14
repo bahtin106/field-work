@@ -59,7 +59,7 @@ export const listItemStyles = (theme) => {
       minWidth: 0,
     },
     middleSpacer: {
-      flex: 1,
+      flex: 0,
       minWidth: listItem.labelValueGap ?? theme.spacing?.lg ?? 16,
     },
     switchWrap: {

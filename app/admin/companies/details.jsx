@@ -2,10 +2,15 @@ import { Feather } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import React from 'react';
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../../components/ui/PullToRefreshFeedback';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { ConfirmModal } from '../../../components/ui/modals';
@@ -255,15 +260,8 @@ export default function AdminCompanyDetailsScreen() {
     ]);
   }, [accessState, accessKey, companyKey, metaKey, queryClient, refetchCompany, refetchMeta]);
 
-  const [refreshing, setRefreshing] = React.useState(false);
-  const onRefresh = React.useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refreshAll();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [refreshAll]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const mutation = useMutation({
     mutationFn: async ({ periodEnd, periodEndIso: rawPeriodEndIso, paidSeatsTotal, applyPeriodEnd = true, applyPaidSeats = false }) => {
@@ -511,21 +509,17 @@ export default function AdminCompanyDetailsScreen() {
 
   return (
     <Screen background="background">
-      <ScrollView
-        contentContainerStyle={styles(theme).content}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.colors.primary}
-          />
-        }
-      >
-        {isLoading ? <Text style={styles(theme).muted}>{t('admin_loading')}</Text> : null}
-        {error ? <Text style={styles(theme).error}>{String(error?.message || t('admin_unknown_error'))}</Text> : null}
+      <View style={{ flex: 1 }}>
+        {refreshIndicator}
+        <ScrollView
+          contentContainerStyle={styles(theme).content}
+          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {isLoading ? <Text style={styles(theme).muted}>{t('admin_loading')}</Text> : null}
+          {error ? <Text style={styles(theme).error}>{String(error?.message || t('admin_unknown_error'))}</Text> : null}
 
-        {data ? (
-          <>
+          {data ? (
+            <>
             <SectionHeader>{t('admin_company_about_title')}</SectionHeader>
             <Card paddedXOnly>
               <LabelValueRow label={t('admin_companies_name')} value={data.name || ''} />
@@ -607,9 +601,10 @@ export default function AdminCompanyDetailsScreen() {
                 theme={theme}
               />
             </Card>
-          </>
-        ) : null}
-      </ScrollView>
+            </>
+          ) : null}
+        </ScrollView>
+      </View>
 
       <DateTimeModal
         visible={datePickerVisible}

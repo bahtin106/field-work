@@ -525,73 +525,55 @@ export default function UserView() {
         <Card paddedXOnly>
           {meIsSuperAdmin && (
             <>
-              {hasDisplayValue(companyName || companyId) ? (
-                <>
-                  <View style={base.row}>
-                    <Text style={base.label}>{t('admin_users_company')}</Text>
-                    <View style={base.rightWrap}>
-                      <Text style={base.value}>{companyName || companyId}</Text>
-                    </View>
-                  </View>
-                  <View style={base.sep} />
-                </>
+                {hasDisplayValue(companyName || companyId) ? (
+                  <>
+                    <LabelValueRow label={t('admin_users_company')} value={companyName || companyId} />
+                    <View style={base.sep} />
+                  </>
               ) : null}
             </>
           )}
           {useDepartments && fieldUi.isVisible('department_id') ? (
             <>
-              {hasDisplayValue(departmentName) ? (
-                <>
-                  <View style={base.row}>
-                    <Text style={base.label}>{t('label_department', 'label_department')}</Text>
-                    <View style={base.rightWrap}>
-                      <Text style={base.value}>{departmentName}</Text>
-                    </View>
-                  </View>
-                  <View style={base.sep} />
-                </>
-              ) : null}
-            </>
-          ) : null}
-          {fieldUi.isVisible('role') ? (
-          <View style={base.row}>
-            <Text style={base.label}>{t('label_role', 'label_role')}</Text>
-            <View style={base.rightWrap}>
-              <Text style={base.value}>{roleLabel}</Text>
-            </View>
-          </View>
-          ) : null}
-          {fieldUi.isVisible('role') ? <View style={base.sep} /> : null}
-          <View style={base.row}>
-            <Text style={base.label}>{t('label_status', 'label_status')}</Text>
-            <View style={base.rightWrap}>
-              <Text style={[base.value, { color: statusColor }]}>
-                {isBlocked
-                  ? t('status_blocked', t('status_suspended', 'status_suspended'))
-                  : t('status_active', 'status_active')}
-              </Text>
-            </View>
-          </View>
-          {isBlocked && blockedReasonLabel ? (
-            <>
-              <View style={base.sep} />
-              <View style={base.row}>
-                <Text style={base.label}>{t('label_block_reason', 'label_block_reason')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={base.value}>{blockedReasonLabel}</Text>
-                </View>
-              </View>
-            </>
-          ) : null}
-          <View style={base.sep} />
-          <View style={base.row}>
-            <Text style={base.label}>{t('users_lastSeen_prefix')}</Text>
-            <View style={base.rightWrap}>
-              <Text style={[base.value, isPresenceOnline ? { color: theme.colors.success } : null]}>
-                {presenceLabel}
-              </Text>
-            </View>
-          </View>
+                {hasDisplayValue(departmentName) ? (
+                  <>
+                    <LabelValueRow label={t('label_department', 'label_department')} value={departmentName} />
+                    <View style={base.sep} />
+                  </>
+                ) : null}
+              </>
+            ) : null}
+            {fieldUi.isVisible('role') ? (
+            <LabelValueRow label={t('label_role', 'label_role')} value={roleLabel} />
+            ) : null}
+            {fieldUi.isVisible('role') ? <View style={base.sep} /> : null}
+            <LabelValueRow
+              label={t('label_status', 'label_status')}
+              valueComponent={
+                <Text style={[base.value, { color: statusColor }]}>
+                  {isBlocked
+                    ? t('status_blocked', t('status_suspended', 'status_suspended'))
+                    : t('status_active', 'status_active')}
+                </Text>
+              }
+              hideWhenEmpty={false}
+            />
+            {isBlocked && blockedReasonLabel ? (
+              <>
+                <View style={base.sep} />
+                <LabelValueRow label={t('label_block_reason', 'label_block_reason')} value={blockedReasonLabel} />
+              </>
+            ) : null}
+            <View style={base.sep} />
+            <LabelValueRow
+              label={t('users_lastSeen_prefix')}
+              valueComponent={
+                <Text style={[base.value, isPresenceOnline ? { color: theme.colors.success } : null]}>
+                  {presenceLabel}
+                </Text>
+              }
+              hideWhenEmpty={false}
+            />
         </Card>
         ) : null}
       </ScrollView>

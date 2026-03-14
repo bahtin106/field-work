@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text } from 'react-native';
 import { useTheme } from '../../theme/ThemeProvider';
 import { listItemStyles } from './listItemStyles';
@@ -17,6 +17,28 @@ function isEmptyDisplayValue(value) {
   if (!normalized) return true;
   return EMPTY_PLACEHOLDER_VALUES.has(normalized);
 }
+
+function mergeComponentStyle(existingStyle, nextStyle) {
+  if (typeof existingStyle === 'function') {
+    return (...args) => [existingStyle(...args), nextStyle];
+  }
+  return existingStyle ? [existingStyle, nextStyle] : nextStyle;
+}
+
+const styles = {
+  customValueWrap: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
+    alignItems: 'flex-end',
+  },
+  customValueComponent: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
+    alignSelf: 'flex-end',
+  },
+};
 
 /**
  * Universal label/value row component.
@@ -64,7 +86,24 @@ export default function LabelValueRow({
 
   const renderValue = () => {
     if (valueComponent) {
-      return valueComponent;
+      if (!React.isValidElement(valueComponent)) {
+        return <View style={styles.customValueWrap}>{valueComponent}</View>;
+      }
+
+      const nextProps = {
+        style: mergeComponentStyle(valueComponent.props?.style, styles.customValueComponent),
+      };
+
+      if (valueComponent.type === Text) {
+        if (valueComponent.props?.numberOfLines == null) {
+          nextProps.numberOfLines = maxValueLines;
+        }
+        if (valueComponent.props?.ellipsizeMode == null) {
+          nextProps.ellipsizeMode = 'tail';
+        }
+      }
+
+      return <View style={styles.customValueWrap}>{React.cloneElement(valueComponent, nextProps)}</View>;
     }
     return (
       <Text
@@ -91,13 +130,13 @@ export default function LabelValueRow({
 
   return (
     <View style={[base.row, style]}>
-      <View style={[{ flex: 1, minWidth: 0, paddingRight: 8 }, labelContainerStyle]}>
+      <View style={[{ flexShrink: 1, minWidth: 0 }, labelContainerStyle]}>
         {renderLabel()}
       </View>
 
       <View style={[base.middleSpacer, middleSpacerStyle]} />
 
-      <View style={[base.rightWrap, { paddingRight: 0, maxWidth: '56%' }, rightWrapStyle]}>
+      <View style={[base.rightWrap, { flex: 1, paddingRight: 0 }, rightWrapStyle]}>
         <View style={base.valueWrapper}>
           {renderValue()}
         </View>

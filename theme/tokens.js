@@ -206,6 +206,12 @@ const light = {
       },
     },
     activityIndicator: { size: 'large' },
+    refreshFeedback: {
+      size: 30,
+      iconSize: 16,
+      topOffset: 10,
+      successDurationMs: 820,
+    },
     scrollView: {
       paddingBottom: 24, // Standard scroll bottom padding
     },

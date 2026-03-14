@@ -148,7 +148,7 @@ function createStyles(theme) {
 export default function SearchFiltersBar({
   value = '',
   onChangeText,
-  placeholder: _placeholder,
+  placeholder,
   onClear,
   onOpenFilters,
   onOpenSort,
@@ -184,7 +184,7 @@ export default function SearchFiltersBar({
           <TextField
             value={value}
             onChangeText={onChangeText}
-            placeholder={t('common_search')}
+            placeholder={placeholder || t('common_search')}
             autoCapitalize="none"
             autoCorrect={false}
             hideSeparator
