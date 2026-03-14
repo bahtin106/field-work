@@ -17,7 +17,7 @@ export default function SelectModal({
   renderItem,
   footer,
   initialSearch = '',
-  maxHeightRatio = 0.75,
+  maxHeightRatio = Platform.OS === 'android' ? 0.62 : 0.75,
   selectedId = null,
   initialScrollIndex = null,
   isItemSelected,
