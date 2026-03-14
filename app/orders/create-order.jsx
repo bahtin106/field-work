@@ -122,9 +122,11 @@ function hasMojibake(text) {
   const value = String(text || '').trim();
   if (!value) return false;
   if (value.includes('�') || value.includes('вЂ')) return true;
-  const suspiciousChunks = value.match(/(?:Р[А-Яа-яЁё]|С[А-Яа-яЁё]|Ð|Ñ|Ã)/g) || [];
+  const suspiciousChunks = value.match(/(?:Р\S|С\S|Ð\S|Ñ\S|Ã\S)/g) || [];
+  const rsPairs = value.match(/[РС]\S/g) || [];
   const compactLength = value.replace(/\s+/g, '').length;
-  return suspiciousChunks.length >= 4 && suspiciousChunks.length >= Math.floor(compactLength * 0.28);
+  if (suspiciousChunks.length >= 4 && suspiciousChunks.length >= Math.floor(compactLength * 0.2)) return true;
+  return rsPairs.length >= 5 && rsPairs.length >= Math.floor(compactLength * 0.24);
 }
 
 function sanitizeVisibleText(value, fallback = '') {
