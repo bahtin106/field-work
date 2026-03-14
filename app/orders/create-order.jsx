@@ -2316,7 +2316,7 @@ export default function CreateOrderScreen() {
       <SelectModal
         visible={clientModalVisible}
         title={t('routes_clients_client')}
-        maxHeightRatio={0.68}
+        maxHeightRatio={Platform.OS === 'android' ? 0.58 : 0.68}
         items={clientItems}
         searchable
         searchLabel={null}
