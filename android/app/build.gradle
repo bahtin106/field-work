@@ -98,8 +98,8 @@ android {
         versionName "1.0.1"
         externalNativeBuild {
             cmake {
-                // Windows path-length guard for CMake/Ninja object files.
-                arguments "-DCMAKE_OBJECT_PATH_MAX=128"
+                // Keep object paths under Windows MAX_PATH without over-constraining CMake.
+                arguments "-DCMAKE_OBJECT_PATH_MAX=250"
             }
         }
     }
