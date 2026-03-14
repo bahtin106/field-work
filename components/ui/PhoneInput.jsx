@@ -1,5 +1,6 @@
 // components/ui/PhoneInput.jsx
 import { useCallback, useRef } from 'react';
+import { getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import TextField from './TextField';
 import { maskApply, normalizeRu } from './phone';
 import { t as T } from '../../src/i18n';
@@ -46,13 +47,14 @@ export default function PhoneInput({
 
   return (
     <TextField
-      label={required && !/\*/.test(String(label || '')) ? `${label} *` : label}
+      label={getRequiredFieldLabel(label, required)}
       value={masked}
       onChangeText={handleChange}
       placeholder={placeholder}
       keyboardType="phone-pad"
       maxLength={18} // "+7 (XXX) XXX-XX-XX"
       error={error}
+      required={required}
       style={style}
       {...rest}
     />

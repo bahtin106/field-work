@@ -129,6 +129,7 @@ export default function Button({
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
       accessibilityRole="button"
+      accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
       disabled={disabled || loading}
       onPressIn={onPressIn}
       onPressOut={onPressOut}

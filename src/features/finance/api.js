@@ -13,6 +13,8 @@ const ORDER_FINANCE_SELECT = `
   input_percent,
   percent_base,
   calculated_amount,
+  expense_payer,
+  photo_urls,
   recipient_user_id,
   requires_note,
   note_visible,
@@ -62,6 +64,20 @@ function normalizePercent(value) {
   return Math.max(0, Math.round(n * 10000) / 10000);
 }
 
+function normalizeExpensePayer(value) {
+  return String(value || '').trim() === 'executor' ? 'executor' : 'company';
+}
+
+function normalizePercentBase(kind, value) {
+  const normalizedKind = String(kind || 'expense').trim();
+  const normalizedBase = String(value || 'base_price').trim();
+  const allowed =
+    normalizedKind === 'discount'
+      ? ['base_price', 'gross_before_discount']
+      : ['base_price', 'gross_before_discount', 'gross_after_discount'];
+  return allowed.includes(normalizedBase) ? normalizedBase : 'base_price';
+}
+
 export async function listOrderFinanceEntries(orderId) {
   if (!orderId) return [];
   const { data, error } = await supabase
@@ -84,7 +100,8 @@ export async function upsertOrderFinanceEntry(payload) {
     calc_mode: String(payload?.calc_mode || 'fixed').trim(),
     input_amount: normalizeMoney(payload?.input_amount),
     input_percent: normalizePercent(payload?.input_percent),
-    percent_base: String(payload?.percent_base || 'gross_after_discount').trim(),
+    percent_base: normalizePercentBase(payload?.kind, payload?.percent_base),
+    expense_payer: normalizeExpensePayer(payload?.expense_payer),
     recipient_user_id: normalizeId(payload?.recipient_user_id),
     requires_note: payload?.requires_note === true,
     note_visible: payload?.note_visible !== false,
@@ -136,7 +153,7 @@ export async function upsertCompanyFinanceRule(payload) {
     calc_mode: String(payload?.calc_mode || 'fixed').trim(),
     fixed_amount: normalizeMoney(payload?.fixed_amount),
     percent_value: normalizePercent(payload?.percent_value),
-    percent_base: String(payload?.percent_base || 'gross_after_discount').trim(),
+    percent_base: normalizePercentBase(payload?.kind, payload?.percent_base),
     recipient_mode: String(payload?.recipient_mode || 'none').trim(),
     recipient_user_id: normalizeId(payload?.recipient_user_id),
     note_template: payload?.note_template ? String(payload.note_template).trim() : null,

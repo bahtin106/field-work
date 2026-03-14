@@ -223,9 +223,6 @@ export default function OrderPhotosModal({
 
     return (
       <View style={s.footerWrap}>
-        <Text style={s.footerLabel}>
-          {t('order_photos_add_label', 'Добавить фото')}
-        </Text>
         <View style={s.footerRow}>
           <Pressable
             onPress={handleOpenCamera}

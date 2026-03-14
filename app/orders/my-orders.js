@@ -39,6 +39,7 @@ import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters
 import { startFpsProbe, trackRender } from '../../src/shared/perf/devMetrics';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -118,8 +119,6 @@ export default function MyOrdersScreen() {
     departureTimeTo: null,
     sumMin: '',
     sumMax: '',
-    fuelMin: '',
-    fuelMax: '',
   };
 
   function normalizeForFingerprint(values = {}) {
@@ -174,7 +173,6 @@ export default function MyOrdersScreen() {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);
 
-  // Р В Р’ВР В Р’В· Р В Р вЂ Р В РЎвЂќР В Р’В»Р В Р’В°Р В РўвЂР В РЎвЂќР В РЎвЂ Р вЂ™Р’В«Р В РЎС™Р В РЎвЂўР В РЎвЂР вЂ™Р’В» Р В РЎвЂќР В Р вЂ¦Р В РЎвЂўР В РЎвЂ”Р В РЎвЂќР В Р’В° Р В РЎСљР В Р’В°Р В Р’В·Р В Р’В°Р В РўвЂ Р В Р вЂ Р В Р’ВµР В РўвЂР РЋРІР‚ВР РЋРІР‚С™ Р В Р вЂ¦Р В Р’В° Р В РІР‚СљР В Р’В»Р В Р’В°Р В Р вЂ Р В Р вЂ¦Р РЋРЎвЂњР РЋР вЂ№
 
   const { companyId } = useMyCompanyId();
   const [useWorkTypesFlag, setUseWorkTypesFlag] = useState(false);
@@ -215,8 +213,6 @@ export default function MyOrdersScreen() {
       departureTimeTo,
       sumMin,
       sumMax,
-      fuelMin,
-      fuelMax,
     } = filters.values;
 
     if (selectedWorkTypes?.length) {
@@ -255,9 +251,9 @@ export default function MyOrdersScreen() {
     };
 
     if (departureDateFrom || departureDateTo) {
-      const fromLabel = formatDate(departureDateFrom) || 'РІР‚вЂќ';
-      const toLabel = formatDate(departureDateTo) || 'РІР‚вЂќ';
-      const part = `${t('order_field_departure_date')}: ${fromLabel} РІР‚вЂќ ${toLabel}`;
+      const fromLabel = formatDate(departureDateFrom) || '-';
+      const toLabel = formatDate(departureDateTo) || '-';
+      const part = t('order_field_departure_date') + ': ' + fromLabel + ' - ' + toLabel;
       fullParts.push(part);
       compactParts.push(part);
     }
@@ -274,30 +270,23 @@ export default function MyOrdersScreen() {
     };
 
     if (departureTimeFrom || departureTimeTo) {
-      const fromLabel = formatTime(departureTimeFrom) || 'РІР‚вЂќ';
-      const toLabel = formatTime(departureTimeTo) || 'РІР‚вЂќ';
-      const part = `${t('order_field_departure_time')}: ${fromLabel} РІР‚вЂќ ${toLabel}`;
+      const fromLabel = formatTime(departureTimeFrom) || '-';
+      const toLabel = formatTime(departureTimeTo) || '-';
+      const part = t('order_field_departure_time') + ': ' + fromLabel + ' - ' + toLabel;
       fullParts.push(part);
       compactParts.push(part);
     }
 
     const formatRange = (min, max) => {
-      if (min && max) return `${min} РІР‚вЂќ ${max}`;
-      if (min) return `РІвЂ°Тђ ${min}`;
-      if (max) return `РІвЂ°В¤ ${max}`;
+      if (min && max) return String(min) + ' - ' + String(max);
+      if (min) return 'From ' + String(min);
+      if (max) return 'Up to ' + String(max);
       return null;
     };
 
     const amountRange = formatRange(sumMin, sumMax);
     if (amountRange) {
       const part = `${t('order_details_amount')}: ${amountRange}`;
-      fullParts.push(part);
-      compactParts.push(part);
-    }
-
-    const fuelRange = formatRange(fuelMin, fuelMax);
-    if (fuelRange) {
-      const part = `${t('order_details_fuel')}: ${fuelRange}`;
       fullParts.push(part);
       compactParts.push(part);
     }
@@ -319,19 +308,15 @@ export default function MyOrdersScreen() {
     [],
   );
 
-  // Р В Р’ВР В Р вЂ¦Р В РЎвЂР РЋРІР‚В Р В РЎвЂР В Р’В°Р В Р’В»Р В РЎвЂР В Р’В·Р В РЎвЂР РЋР вЂљР РЋРЎвЂњР В Р’ВµР В РЎВ orders Р В РЎвЂР В Р’В· prefetch Р В РЎвЂќР РЋР РЉР РЋРІвЂљВ¬Р В Р’В° Р В Р’ВµР РЋР С“Р В Р’В»Р В РЎвЂ Р В Р’ВµР РЋР С“Р РЋРІР‚С™Р РЋР Р‰
   const [orders, setOrders] = useState(() => {
-    // Р В РЎСџР РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’ВµР РЋР вЂљР РЋР РЏР В Р’ВµР В РЎВ prefetch Р В РЎвЂќР РЋР РЉР РЋРІвЂљВ¬ Р В РўвЂР В Р’В»Р РЋР РЏ "Р В РЎС™Р В РЎвЂўР В РЎвЂР РЋРІР‚В¦ Р В Р’В·Р В Р’В°Р В РЎвЂќР В Р’В°Р В Р’В·Р В РЎвЂўР В Р вЂ "
     const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
       return prefetchData;
     }
     return [];
   });
-  // Р В РЎСљР В Р’В°Р РЋРІР‚РЋР В Р’В°Р В Р’В»Р РЋР Р‰Р В Р вЂ¦Р РЋРІР‚в„–Р В РІвЂћвЂ“ Р РЋРІР‚С›Р В РЎвЂР В Р’В»Р РЋР Р‰Р РЋРІР‚С™Р РЋР вЂљ Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р В Р вЂ Р В РЎвЂР В РЎВ 'all' (Р В РЎВР В РЎвЂўР В РЎвЂ Р В Р’В·Р В Р’В°Р В РЎвЂќР В Р’В°Р В Р’В·Р РЋРІР‚в„–), Р РЋРІР‚РЋР РЋРІР‚С™Р В РЎвЂўР В Р’В±Р РЋРІР‚в„– Р РЋР С“Р В РЎвЂўР В Р вЂ Р В РЎвЂ”Р В Р’В°Р В РўвЂР В Р’В°Р В Р’В» Р РЋР С“ Р В РЎвЂ”Р РЋР вЂљР В Р’ВµР В РўвЂР В Р’В·Р В Р’В°Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В¶Р В Р’ВµР В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В РЎВР В РЎвЂ Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В Р вЂ Р РЋРІР‚в„–Р В РЎВР В РЎвЂ 10
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(() => {
-    // Р В РІР‚СћР РЋР С“Р В Р’В»Р В РЎвЂ Р В Р’ВµР РЋР С“Р РЋРІР‚С™Р РЋР Р‰ Р В РўвЂР В Р’В°Р В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В Р’Вµ Р В Р вЂ  prefetch - Р В Р вЂ¦Р В Р’Вµ Р В РЎвЂ”Р В РЎвЂўР В РЎвЂќР В Р’В°Р В Р’В·Р РЋРІР‚в„–Р В Р вЂ Р В Р’В°Р В Р’ВµР В РЎВ loader
     const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
       return false;
@@ -344,13 +329,13 @@ export default function MyOrdersScreen() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const hydratedRef = useRef(false);
 
-  // Р В РЎСџР В Р’В°Р В РЎвЂ“Р В РЎвЂР В Р вЂ¦Р В Р’В°Р РЋРІР‚В Р В РЎвЂР РЋР РЏ (Р В РЎвЂќР В Р’В°Р В РЎвЂќ Р В Р вЂ  Instagram/Telegram)
+  // Pagination state
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const PAGE_SIZE = 10;
 
-  // Feed indicator state (cached preview of "Р В РІР‚С”Р В Р’ВµР В Р вЂ¦Р РЋРІР‚С™Р В Р’В°")
+  // Feed indicator state (cached preview of feed)
   const FEED_SEEN_STORAGE_KEY = 'myorders_feed_seen_fp';
   const FEED_LAST_FP_STORAGE_KEY = 'myorders_feed_last_fp';
   const [feedFingerprint, setFeedFingerprint] = useState(() => globalThis.__MYORDERS_FEED_FP || '');
@@ -434,7 +419,7 @@ export default function MyOrdersScreen() {
     } catch {}
   }, []);
 
-  // Prefetch Р вЂ™Р’В«Р В РІР‚С”Р В Р’ВµР В Р вЂ¦Р РЋРІР‚С™Р В Р’В°Р вЂ™Р’В» Р В Р вЂ¦Р В Р’В° Р В Р вЂ Р РЋРІР‚В¦Р В РЎвЂўР В РўвЂР В Р’Вµ, Р РЋРІР‚РЋР РЋРІР‚С™Р В РЎвЂўР В Р’В±Р РЋРІР‚в„– Р В РЎвЂР В Р вЂ¦Р В РўвЂР В РЎвЂР В РЎвЂќР В Р’В°Р РЋРІР‚С™Р В РЎвЂўР РЋР вЂљ Р В Р’В±Р РЋРІР‚в„–Р В Р’В» Р В Р вЂ Р В РЎвЂР В РўвЂР В Р’ВµР В Р вЂ¦ Р РЋР С“Р РЋР вЂљР В Р’В°Р В Р’В·Р РЋРЎвЂњ Р В Р вЂ¦Р В Р’В° Р В Р вЂ Р В РЎвЂќР В Р’В»Р В Р’В°Р В РўвЂР В РЎвЂќР В Р’Вµ Р вЂ™Р’В«Р В РІР‚в„ўР РЋР С“Р В Р’ВµР вЂ™Р’В»
+  // Prefetch feed metadata from the first page when the screen is focused
   useEffect(() => {
     if (!isFocused) return;
     const prefetchFeed = async () => {
@@ -464,7 +449,7 @@ export default function MyOrdersScreen() {
     prefetchFeed();
   }, [isFocused, updateFeedMeta, listCacheMy]);
 
-  // Р В РІР‚СћР РЋР С“Р В Р’В»Р В РЎвЂ Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р РЋР Р‰Р В Р’В·Р В РЎвЂўР В Р вЂ Р В Р’В°Р РЋРІР‚С™Р В Р’ВµР В Р’В»Р РЋР Р‰ Р В Р’В·Р В Р’В°Р РЋРІвЂљВ¬Р РЋРІР‚ВР В Р’В» Р В Р вЂ  Р вЂ™Р’В«Р В РІР‚С”Р В Р’ВµР В Р вЂ¦Р РЋРІР‚С™Р РЋРЎвЂњР вЂ™Р’В» Р Р†Р вЂљРІР‚Сњ Р РЋР С“Р РЋРІР‚РЋР В РЎвЂР РЋРІР‚С™Р В Р’В°Р В Р’ВµР В РЎВ, Р РЋРІР‚РЋР РЋРІР‚С™Р В РЎвЂў Р В РЎвЂўР В Р вЂ¦ Р РЋРЎвЂњР В Р вЂ Р В РЎвЂР В РўвЂР В Р’ВµР В Р’В» Р РЋРІР‚С™Р В Р’ВµР В РЎвЂќР РЋРЎвЂњР РЋРІР‚В°Р В РЎвЂР В Р’Вµ Р В Р’В·Р В Р’В°Р РЋР РЏР В Р вЂ Р В РЎвЂќР В РЎвЂ
+  // Mark feed as seen after opening the feed tab
   useEffect(() => {
     if (filter !== 'feed') return;
     if (!feedHasAny || !feedFingerprint) return;
@@ -477,7 +462,7 @@ export default function MyOrdersScreen() {
       AsyncStorage.setItem(FEED_SEEN_STORAGE_KEY, feedFingerprint);
     } catch {}
   }, [filter, feedHasAny, feedFingerprint, feedSeenFingerprint]);
-  // Р В РІР‚СћР РЋР С“Р В Р’В»Р В РЎвЂ Р В РЎВР РЋРІР‚в„– Р РЋР С“Р РЋРІР‚С™Р В Р’В°Р РЋР вЂљР РЋРІР‚С™Р РЋРЎвЂњР В Р’ВµР В РЎВ Р В Р вЂ¦Р В Р’В° Р РЋРІР‚С›Р В РЎвЂР В Р’В»Р РЋР Р‰Р РЋРІР‚С™Р РЋР вЂљР В Р’Вµ 'all' Р В РЎвЂ Р РЋРЎвЂњР В Р’В¶Р В Р’Вµ Р В Р’ВµР РЋР С“Р РЋРІР‚С™Р РЋР Р‰ prefetch Р В РўвЂР В Р’В°Р В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В Р’Вµ Р Р†Р вЂљРІР‚Сљ Р РЋР С“Р РЋРІР‚РЋР В РЎвЂР РЋРІР‚С™Р В Р’В°Р В Р’ВµР В РЎВ Р РЋР РЉР В РЎвЂќР РЋР вЂљР В Р’В°Р В Р вЂ¦ Р В РЎвЂ“Р В РЎвЂР В РўвЂР РЋР вЂљР В Р’В°Р РЋРІР‚С™Р В РЎвЂР РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’В°Р В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В РЎВ
+  // Hydrate the all-orders tab from prefetch cache once
   useEffect(() => {
     if (filter === 'all' && !hydratedRef.current) {
       const prefetchData = queryClient.getQueryData(['orders', 'my', 'recent']);
@@ -542,7 +527,7 @@ export default function MyOrdersScreen() {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
       const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
 
-      // Р В РЎСџР В Р’ВµР РЋР вЂљР В Р вЂ Р В Р’В°Р РЋР РЏ Р РЋР С“Р РЋРІР‚С™Р РЋР вЂљР В Р’В°Р В Р вЂ¦Р В РЎвЂР РЋРІР‚В Р В Р’В° - Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’ВµР РЋР вЂљР РЋР РЏР В Р’ВµР В РЎВ Р В РЎвЂќР РЋР РЉР РЋРІвЂљВ¬
+      // Serve cached first page immediately, then revalidate in the background
       if (pageNum === 1) {
         const cached = listCacheMy[cacheKey];
         if (cached && cached.length) {
@@ -596,15 +581,6 @@ export default function MyOrdersScreen() {
       if (!Number.isNaN(sumMax)) {
         query = query.lte('price', sumMax);
       }
-      const fuelMin = parseFloat(filterValues.fuelMin);
-      if (!Number.isNaN(fuelMin)) {
-        query = query.gte('fuel_cost', fuelMin);
-      }
-      const fuelMax = parseFloat(filterValues.fuelMax);
-      if (!Number.isNaN(fuelMax)) {
-        query = query.lte('fuel_cost', fuelMax);
-      }
-
       const toIsoDate = (value, startVal) => {
         if (!value) return null;
         const d = new Date(value);
@@ -641,7 +617,7 @@ export default function MyOrdersScreen() {
         clientId: relationClientId,
         objectIds: relationObjectIds,
       });
-      // Р В РЎСџР В РЎвЂ™Р В РІР‚СљР В Р’ВР В РЎСљР В РЎвЂ™Р В Р’В¦Р В Р’ВР В Р вЂЎ: Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В·Р В РЎвЂР В РЎВ Р РЋРІР‚С™Р В РЎвЂўР В Р’В»Р РЋР Р‰Р В РЎвЂќР В РЎвЂў Р В Р вЂ¦Р РЋРЎвЂњР В Р’В¶Р В Р вЂ¦Р РЋРЎвЂњР РЋР вЂ№ Р В РЎвЂ”Р В РЎвЂўР РЋР вЂљР РЋРІР‚В Р В РЎвЂР РЋР вЂ№
+      // Paginate on the server and fetch only the current window
       const from = (pageNum - 1) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
@@ -660,26 +636,26 @@ export default function MyOrdersScreen() {
           seenFilterRef.current.add(cacheKey);
           if (key === 'feed') updateFeedMeta(normalized);
         } else {
-          // Р В РІР‚СњР В РЎвЂўР В Р’В±Р В Р’В°Р В Р вЂ Р В Р’В»Р РЋР РЏР В Р’ВµР В РЎВ Р В РЎвЂќ Р РЋР С“Р РЋРЎвЂњР РЋРІР‚В°Р В Р’ВµР РЋР С“Р РЋРІР‚С™Р В Р вЂ Р РЋРЎвЂњР РЋР вЂ№Р РЋРІР‚В°Р В РЎвЂР В РЎВ (Р В РЎвЂ”Р В Р’В°Р В РЎвЂ“Р В РЎвЂР В Р вЂ¦Р В Р’В°Р РЋРІР‚В Р В РЎвЂР РЋР РЏ)
+          // Append the next page without discarding the already rendered items
           setOrders((prev) => [...prev, ...normalized]);
         }
         hydratedRef.current = true;
 
-        // Р В РЎСџР РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’ВµР РЋР вЂљР РЋР РЏР В Р’ВµР В РЎВ, Р В Р’ВµР РЋР С“Р РЋРІР‚С™Р РЋР Р‰ Р В Р’В»Р В РЎвЂ Р В Р’ВµР РЋРІР‚В°Р РЋРІР‚В Р В РўвЂР В Р’В°Р В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В Р’Вµ
+        // Update pagination state after a successful page fetch
         setHasMore(data.length === PAGE_SIZE);
       }
       setLoading(false);
       setLoadingMore(false);
     };
 
-    // Р В РІР‚СљР В Р’В°Р РЋР вЂљР В РўвЂ: Р В Р’ВµР РЋР С“Р В Р’В»Р В РЎвЂ Р РЋРЎвЂњР В Р’В¶Р В Р’Вµ Р В РЎвЂ“Р В РЎвЂР В РўвЂР РЋР вЂљР В Р’В°Р РЋРІР‚С™Р В РЎвЂР РЋР вЂљР В РЎвЂўР В Р вЂ Р В Р’В°Р В Р вЂ¦Р В РЎвЂў Р В РЎвЂР В Р’В· prefetch Р В РЎвЂ Р В Р вЂ Р РЋРІР‚в„–Р В Р’В±Р РЋР вЂљР В Р’В°Р В Р вЂ¦ 'all', Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР В РЎвЂ”Р РЋРЎвЂњР РЋР С“Р В РЎвЂќР В Р’В°Р В Р’ВµР В РЎВ Р В РЎВР В РЎвЂ“Р В Р вЂ¦Р В РЎвЂўР В Р вЂ Р В Р’ВµР В Р вЂ¦Р В Р вЂ¦Р РЋРІР‚в„–Р В РІвЂћвЂ“ Р РЋР С“Р В Р’ВµР РЋРІР‚С™Р В Р’ВµР В Р вЂ Р В РЎвЂўР В РІвЂћвЂ“ Р В Р вЂ Р РЋРІР‚в„–Р В Р’В·Р В РЎвЂўР В Р вЂ 
+    // When hydrated from prefetch, refresh quietly in the background for all-orders
     if (
       filter === 'all' &&
       hydratedRef.current &&
       orders.length > 0 &&
       Array.isArray(queryClient.getQueryData(['orders', 'my', 'recent']))
     ) {
-      // Р В Р’В¤Р В РЎвЂўР В Р вЂ¦Р В РЎвЂўР В Р вЂ Р В РЎвЂўР В Р’Вµ Р В РЎвЂўР В Р’В±Р В Р вЂ¦Р В РЎвЂўР В Р вЂ Р В Р’В»Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В Р’Вµ Р В РЎвЂ”Р В РЎвЂўР В Р’В»Р В Р вЂ¦Р В РЎвЂўР В РЎвЂ“Р В РЎвЂў Р РЋР С“Р В РЎвЂ”Р В РЎвЂР РЋР С“Р В РЎвЂќР В Р’В° Р РЋРІР‚РЋР В Р’ВµР РЋР вЂљР В Р’ВµР В Р’В· Р В Р вЂ¦Р В Р’ВµР В Р’В±Р В РЎвЂўР В Р’В»Р РЋР Р‰Р РЋРІвЂљВ¬Р РЋРЎвЂњР РЋР вЂ№ Р В Р’В·Р В Р’В°Р В РўвЂР В Р’ВµР РЋР вЂљР В Р’В¶Р В РЎвЂќР РЋРЎвЂњ
+      // Small delay to avoid competing with initial navigation work
       const timer = setTimeout(() => {
         // Background refresh
         fetchUserAndOrders(true);
@@ -687,13 +663,13 @@ export default function MyOrdersScreen() {
       return () => clearTimeout(timer);
     }
 
-    // Р В Р Р‹Р В Р’В±Р РЋР вЂљР В Р’В°Р РЋР С“Р РЋРІР‚в„–Р В Р вЂ Р В Р’В°Р В Р’ВµР В РЎВ Р В РЎвЂ”Р В Р’В°Р В РЎвЂ“Р В РЎвЂР В Р вЂ¦Р В Р’В°Р РЋРІР‚В Р В РЎвЂР РЋР вЂ№ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂ Р РЋР С“Р В РЎВР В Р’ВµР В Р вЂ¦Р В Р’Вµ Р РЋРІР‚С›Р В РЎвЂР В Р’В»Р РЋР Р‰Р РЋРІР‚С™Р РЋР вЂљР В Р’В°
+    // First load for the active filter
     setPage(1);
     setHasMore(true);
     fetchUserAndOrders();
   }, [filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, orders.length, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta, useWorkTypesFlag]);
 
-  // Р В РІР‚вЂќР В Р’В°Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В·Р В РЎвЂќР В Р’В° Р РЋР С“Р В Р’В»Р В Р’ВµР В РўвЂР РЋРЎвЂњР РЋР вЂ№Р РЋРІР‚В°Р В Р’ВµР В РІвЂћвЂ“ Р РЋР С“Р РЋРІР‚С™Р РЋР вЂљР В Р’В°Р В Р вЂ¦Р В РЎвЂР РЋРІР‚В Р РЋРІР‚в„– Р В РЎвЂ”Р РЋР вЂљР В РЎвЂ Р В РўвЂР В РЎвЂўР РЋР С“Р РЋРІР‚С™Р В РЎвЂР В Р’В¶Р В Р’ВµР В Р вЂ¦Р В РЎвЂР В РЎвЂ Р В РЎвЂќР В РЎвЂўР В Р вЂ¦Р РЋРІР‚В Р В Р’В° Р РЋР С“Р В РЎвЂ”Р В РЎвЂР РЋР С“Р В РЎвЂќР В Р’В°
+  // Infinite scroll: fetch the next page only when needed
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore || loading) return;
 
@@ -718,11 +694,11 @@ export default function MyOrdersScreen() {
     } else {
       query = query.eq('assigned_to', uid);
       if (key === 'new') {
-        query = query.or('status.is.null,status.eq.Р В РЎСљР В РЎвЂўР В Р вЂ Р РЋРІР‚в„–Р В РІвЂћвЂ“');
+        query = query.or('status.is.null,status.eq.' + mapStatusToDb('new'));
       } else if (key === 'progress') {
-        query = query.eq('status', 'Р В РІР‚в„ў Р РЋР вЂљР В Р’В°Р В Р’В±Р В РЎвЂўР РЋРІР‚С™Р В Р’Вµ');
+        query = query.eq('status', mapStatusToDb('in_progress'));
       } else if (key === 'done') {
-        query = query.eq('status', 'Р В РІР‚вЂќР В Р’В°Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋРІвЂљВ¬Р РЋРІР‚ВР В Р вЂ¦Р В Р вЂ¦Р В Р’В°Р РЋР РЏ');
+        query = query.eq('status', mapStatusToDb('done'));
       }
     }
     query = applyOrderRelationFilters(query, {
@@ -867,7 +843,7 @@ export default function MyOrdersScreen() {
     ),
   );
 
-  // Р В Р’В¤Р РЋРЎвЂњР РЋРІР‚С™Р В Р’ВµР РЋР вЂљ Р РЋР С“Р В РЎвЂў Р РЋР С“Р В РЎвЂ”Р В РЎвЂР В Р вЂ¦Р В Р вЂ¦Р В Р’ВµР РЋР вЂљР В РЎвЂўР В РЎВ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂ Р В Р’В·Р В Р’В°Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В·Р В РЎвЂќР В Р’Вµ
+  // Footer spinner for pagination
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
     return (
@@ -877,7 +853,7 @@ export default function MyOrdersScreen() {
     );
   }, [loadingMore, theme.colors.primary]);
 
-  // Р В РІР‚вЂќР В Р’В°Р В РЎвЂ“Р В РЎвЂўР В Р’В»Р В РЎвЂўР В Р вЂ Р В РЎвЂўР В РЎвЂќ Р РЋР С“ Р РЋРІР‚С›Р В РЎвЂР В Р’В»Р РЋР Р‰Р РЋРІР‚С™Р РЋР вЂљР В Р’В°Р В РЎВР В РЎвЂ Р В РЎвЂ Р В РЎвЂ”Р В РЎвЂўР В РЎвЂР РЋР С“Р В РЎвЂќР В РЎвЂўР В РЎВ
+  // Feed badge state
   const feedState = !feedHasAny
     ? 'none'
     : feedFingerprint && feedFingerprint === feedSeenFingerprint
@@ -934,11 +910,11 @@ export default function MyOrdersScreen() {
                   <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
                     {
                       {
-                        feed: 'Р В РІР‚С”Р В Р’ВµР В Р вЂ¦Р РЋРІР‚С™Р В Р’В°',
-                        all: 'Р В РІР‚в„ўР РЋР С“Р В Р’Вµ',
-                        new: 'Р В РЎСљР В РЎвЂўР В Р вЂ Р РЋРІР‚в„–Р В Р’Вµ',
-                        progress: 'Р В РІР‚в„ў Р РЋР вЂљР В Р’В°Р В Р’В±Р В РЎвЂўР РЋРІР‚С™Р В Р’Вµ',
-                        done: 'Р В РІР‚СљР В РЎвЂўР РЋРІР‚С™Р В РЎвЂўР В Р вЂ Р В РЎвЂў',
+                        feed: 'Feed',
+                        all: 'All',
+                        new: 'New',
+                        progress: 'In progress',
+                        done: 'Done',
                       }[key]
                     }
                   </Text>
@@ -1001,14 +977,14 @@ export default function MyOrdersScreen() {
     ],
   );
 
-  // Р В РЎСџР РЋРЎвЂњР РЋР С“Р РЋРІР‚С™Р В РЎвЂўР В РІвЂћвЂ“ Р РЋР С“Р В РЎвЂ”Р В РЎвЂР РЋР С“Р В РЎвЂўР В РЎвЂќ
+  // Empty state
   const ListEmptyComponent = useCallback(
     () => (
       <View style={{ paddingVertical: 40, alignItems: 'center' }}>
         {loading && !hydratedRef.current ? (
           <ActivityIndicator size="large" color={theme.colors.primary} />
         ) : (
-          <Text style={styles.emptyText}>Р В Р в‚¬ Р В Р вЂ Р В Р’В°Р РЋР С“ Р В РЎвЂ”Р В РЎвЂўР В РЎвЂќР В Р’В° Р В Р вЂ¦Р В Р’ВµР РЋРІР‚С™ Р В Р’В·Р В Р’В°Р В РЎвЂќР В Р’В°Р В Р’В·Р В РЎвЂўР В Р вЂ </Text>
+          <Text style={styles.emptyText}>No orders found</Text>
         )}
       </View>
     ),
@@ -1017,14 +993,18 @@ export default function MyOrdersScreen() {
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  // Pull-to-refresh
-  const onRefresh = useCallback(async () => {
-    setBgRefreshing(true);
+  const refreshCurrentList = useCallback(async ({ showIndicator = false } = {}) => {
+    if (showIndicator) setBgRefreshing(true);
     setPage(1);
     setHasMore(true);
 
     const key = (typeof filter === 'string' ? filter : 'all') || 'all';
     const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
+    delete listCacheMy[cacheKey];
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: ['requests'] }),
+      queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
+    ]);
     const { data: sessionData } = await supabase.auth.getSession();
     const uid = sessionData?.session?.user?.id;
     if (!uid) {
@@ -1042,11 +1022,11 @@ export default function MyOrdersScreen() {
     } else {
       query = query.eq('assigned_to', uid);
       if (key === 'new') {
-        query = query.or('status.is.null,status.eq.Р В РЎСљР В РЎвЂўР В Р вЂ Р РЋРІР‚в„–Р В РІвЂћвЂ“');
+        query = query.or('status.is.null,status.eq.' + mapStatusToDb('new'));
       } else if (key === 'progress') {
-        query = query.eq('status', 'Р В РІР‚в„ў Р РЋР вЂљР В Р’В°Р В Р’В±Р В РЎвЂўР РЋРІР‚С™Р В Р’Вµ');
+        query = query.eq('status', mapStatusToDb('in_progress'));
       } else if (key === 'done') {
-        query = query.eq('status', 'Р В РІР‚вЂќР В Р’В°Р В Р вЂ Р В Р’ВµР РЋР вЂљР РЋРІвЂљВ¬Р РЋРІР‚ВР В Р вЂ¦Р В Р вЂ¦Р В Р’В°Р РЋР РЏ');
+        query = query.eq('status', mapStatusToDb('done'));
       }
     }
     query = applyOrderRelationFilters(query, {
@@ -1068,8 +1048,18 @@ export default function MyOrdersScreen() {
       if (key === 'feed') updateFeedMeta(normalized);
       setHasMore(normalized.length === PAGE_SIZE);
     }
-    setBgRefreshing(false);
-  }, [filter, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
+    if (showIndicator) setBgRefreshing(false);
+  }, [filter, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
+
+  const onRefresh = useCallback(async () => {
+    await refreshCurrentList({ showIndicator: true });
+  }, [refreshCurrentList]);
+
+  useScreenRefreshRegistration(
+    'orders.my',
+    () => refreshCurrentList({ showIndicator: false }),
+    true,
+  );
 
   if (loading && orders.length === 0) {
     return (

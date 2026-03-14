@@ -4,21 +4,7 @@ import { Pressable, Animated, StyleSheet, Platform, Easing, Keyboard } from 'rea
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../theme';
-
-function withAlpha(color, a) {
-  if (typeof color === 'string') {
-    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-    if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
-        .toString(16)
-        .padStart(2, '0');
-      return color + alpha;
-    }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
-  }
-  return `rgba(0,0,0,${a})`;
-}
+import { withAlpha } from '../../theme/colors';
 
 const resolveTokenColor = (theme, token) => {
   if (!token) return null;
@@ -220,6 +206,7 @@ export default function IconButton({
       onPressIn={onPressIn}
       onPressOut={onPressOut}
       accessibilityRole="button"
+      accessibilityState={{ disabled: !!disabled }}
       accessibilityLabel={
         accessibilityLabel || (typeof children === 'string' ? children : undefined)
       }

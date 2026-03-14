@@ -2,7 +2,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
-import { useTheme } from '../../theme/ThemeProvider';
+import { useTheme } from '../../theme';
 
 /**
  * Универсальная кнопка очистки (крестик) с анимацией нажатия
@@ -74,6 +74,7 @@ export default function ClearButton({
         style={styles.button}
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
+        accessibilityState={{ disabled: false }}
         hitSlop={{
           top: theme.spacing.sm,
           bottom: theme.spacing.sm,
