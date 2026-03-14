@@ -36,8 +36,9 @@ export function getFieldValidationState({
   const isRequired = !!required || hasRequiredMarker(label);
   const shouldShowValidation = !!(touched || forceValidation);
   const requiredEmpty = isRequired && shouldShowValidation && isValueEmpty(value);
+  // Explicit validation errors come from the parent form state and must be rendered
+  // even for pressable/date/select fields that never receive a native blur event.
   const explicitError = hasValidationError(error);
-
   return {
     isRequired,
     shouldShowValidation,

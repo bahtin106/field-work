@@ -2,7 +2,7 @@
 import { Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
@@ -78,7 +78,6 @@ export default function UserView() {
     data: userData,
     isLoading: loading,
     error: loadError,
-    refetch,
   } = useEmployee(userId, {
     enabled: !!userId,
     staleTime: 2 * 60 * 1000,
@@ -88,23 +87,6 @@ export default function UserView() {
     enabled: !!userId,
   });
   useEmployeesRealtimeSync({ enabled: !!userId });
-
-  // Гарантируем обновление при возврате на экран (после редактирования)
-  // Используем ref для refresh чтобы избежать бесконечной перезагрузки
-  const refreshRef = React.useRef(refetch);
-  React.useEffect(() => {
-    refreshRef.current = refetch;
-  }, [refetch]);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      if (userId && refreshRef.current) {
-        try {
-          refreshRef.current();
-        } catch {}
-      }
-    }, [userId]),
-  );
 
   const avatarUrl = userData?.avatarDisplayUrl || userData?.avatarUrl || null;
   const firstName = userData?.firstName || '';

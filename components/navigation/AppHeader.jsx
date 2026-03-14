@@ -1,28 +1,114 @@
 // components/navigation/AppHeader.jsx
 import { Feather } from '@expo/vector-icons';
 import { router, useNavigation, usePathname } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../theme';
+import { withAlpha } from '../../theme/colors';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
 
-// alpha utility (consistent with SelectModal): supports #RRGGBB and rgb(R,G,B)
-function withAlpha(color, a) {
-  if (typeof color === 'string') {
-    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-    if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
-        .toString(16)
-        .padStart(2, '0');
-      return color + alpha;
-    }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
-  }
-  return `rgba(0,0,0,${a})`;
-}
 const EMPTY_ROUTE_PARAMS = {};
+
+const getHeaderMetrics = (theme, titleStyleOverride = {}) => {
+  const header = theme?.components?.header ?? {};
+  const marquee = header.marquee ?? {};
+
+  return {
+    height: header.height ?? theme?.sizes?.header ?? 56,
+    sidePadding: header.sidePadding ?? theme?.spacing?.sm ?? 8,
+    edgePadding: header.edgePadding ?? theme?.spacing?.md ?? 12,
+    rightMinWidth: header.rightMinWidth ?? 64,
+    controlHeight: header.controlHeight ?? 32,
+    controlRadius: header.controlRadius ?? 16,
+    controlPaddingX: header.controlPaddingX ?? theme?.spacing?.sm ?? 8,
+    controlPaddingY: header.controlPaddingY ?? 6,
+    iconTouchPadding: header.iconTouchPadding ?? 4,
+    iconCircleSize: header.iconCircleSize ?? 36,
+    iconSize: header.iconSize ?? theme?.icons?.md ?? 22,
+    titleGap: header.titleGap ?? theme?.spacing?.sm ?? 8,
+    closeTitleGap: header.closeTitleGap ?? 6,
+    backLabelGap: header.backLabelGap ?? 2,
+    actionFontSize: header.actionFontSize ?? 15,
+    marqueeGap: marquee.gap ?? theme?.spacing?.lg ?? 24,
+    marqueeMsPerPixel: marquee.msPerPixel ?? 12,
+    marqueeStartDelay: marquee.startDelay ?? 700,
+    marqueeEndPause: marquee.endPause ?? 900,
+    titleFontSize:
+      titleStyleOverride?.fontSize ?? marquee.titleFontSize ?? theme?.typography?.sizes?.lg ?? 17,
+    titleFontWeight:
+      titleStyleOverride?.fontWeight ??
+      marquee.titleFontWeight ??
+      theme?.typography?.weight?.semibold ??
+      '600',
+  };
+};
+
+const createStyles = (theme, metrics) =>
+  StyleSheet.create({
+    container: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: 'transparent',
+      borderBottomWidth: 0,
+      position: 'relative',
+      paddingHorizontal: metrics.sidePadding,
+    },
+    leftRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    right: {
+      minWidth: metrics.rightMinWidth,
+      alignItems: 'flex-end',
+      paddingRight: metrics.edgePadding,
+    },
+    title: {
+      fontSize: metrics.titleFontSize,
+      fontWeight: metrics.titleFontWeight,
+      marginLeft: metrics.titleGap,
+    },
+    backText: {
+      fontSize: Math.max(metrics.actionFontSize, theme.typography?.sizes?.md ?? 16),
+      fontWeight: theme.typography?.weight?.semibold ?? '600',
+      marginLeft: metrics.backLabelGap,
+    },
+    backTouchable: {
+      padding: metrics.iconTouchPadding,
+      borderRadius: metrics.controlRadius + metrics.iconTouchPadding,
+    },
+    backCircle: {
+      width: metrics.iconCircleSize,
+      height: metrics.iconCircleSize,
+      borderRadius: metrics.iconCircleSize / 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    textControl: {
+      paddingHorizontal: metrics.controlPaddingX,
+      paddingVertical: metrics.controlPaddingY,
+      borderRadius: metrics.controlRadius,
+      minHeight: metrics.controlHeight,
+      justifyContent: 'center',
+    },
+    outlinedAction: {
+      paddingHorizontal: theme.spacing?.md ?? 12,
+      height: metrics.controlHeight,
+      borderRadius: metrics.controlRadius,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      justifyContent: 'center',
+      alignItems: 'center',
+      alignSelf: 'flex-end',
+      backgroundColor: theme.colors.surface,
+    },
+    actionText: {
+      color: theme.colors.primary,
+      fontWeight: theme.typography?.weight?.semibold ?? '600',
+      fontSize: metrics.actionFontSize,
+    },
+  });
 
 export default function AppHeader({ options = {}, back, route, onBackPress: onBackPressProp }) {
   const { theme } = useTheme();
@@ -57,6 +143,11 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     () => options?.headerTitleStyle ?? routeParams?.headerTitleStyle ?? {},
     [options?.headerTitleStyle, routeParams?.headerTitleStyle],
   );
+  const headerMetrics = useMemo(
+    () => getHeaderMetrics(theme, titleStyleOverride),
+    [theme, titleStyleOverride],
+  );
+  const s = useMemo(() => createStyles(theme, headerMetrics), [theme, headerMetrics]);
   const backFallbackTo = useMemo(
     () => options?.backFallbackTo ?? routeParams?.backFallbackTo ?? '/orders',
     [options?.backFallbackTo, routeParams?.backFallbackTo],
@@ -164,9 +255,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   });
 
   // Используем фиксированную высоту хедера для стабильности
-  const headerHeight = React.useMemo(() => {
-    return theme?.components?.header?.height ?? theme?.sizes?.header ?? 56;
-  }, [theme?.components?.header?.height, theme?.sizes?.header]);
+  const headerHeight = headerMetrics.height;
 
   // Измерения лев/прав зон, чтобы marquee не заходил на кнопки
   const leftControlsRef = useRef(null);
@@ -183,29 +272,15 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   // Включаем marquee для любого заголовка (автоматически)
 
   // Глобальные настройки marquee и отступов из темы
-  const headerTheme = theme?.components?.header ?? {};
-  const marqueeTheme = headerTheme?.marquee ?? {};
   // gap между дубликатами текста для плавного прохода
-  const MARQUEE_GAP = useMemo(
-    () => marqueeTheme.gap ?? theme?.spacing?.lg ?? 24,
-    [marqueeTheme.gap, theme?.spacing?.lg],
-  );
+  const MARQUEE_GAP = headerMetrics.marqueeGap;
   // дополнительный безопасный отступ слева/справа между бегущей строкой и зонами кнопок
-  const EDGE_PADDING = useMemo(
-    () => headerTheme.edgePadding ?? theme?.spacing?.md ?? 12,
-    [headerTheme.edgePadding, theme?.spacing?.md],
-  );
-  const TITLE_FONT_SIZE = useMemo(
-    () => titleStyleOverride?.fontSize ?? marqueeTheme.titleFontSize ?? 17,
-    [marqueeTheme.titleFontSize, titleStyleOverride?.fontSize],
-  );
-  const TITLE_FONT_WEIGHT = useMemo(
-    () => titleStyleOverride?.fontWeight ?? marqueeTheme.titleFontWeight ?? '600',
-    [marqueeTheme.titleFontWeight, titleStyleOverride?.fontWeight],
-  );
-  const MS_PER_PIXEL = useMemo(() => marqueeTheme.msPerPixel ?? 12, [marqueeTheme.msPerPixel]);
-  const START_DELAY = useMemo(() => marqueeTheme.startDelay ?? 700, [marqueeTheme.startDelay]);
-  const END_PAUSE = useMemo(() => marqueeTheme.endPause ?? 900, [marqueeTheme.endPause]);
+  const EDGE_PADDING = headerMetrics.edgePadding;
+  const TITLE_FONT_SIZE = headerMetrics.titleFontSize;
+  const TITLE_FONT_WEIGHT = headerMetrics.titleFontWeight;
+  const MS_PER_PIXEL = headerMetrics.marqueeMsPerPixel;
+  const START_DELAY = headerMetrics.marqueeStartDelay;
+  const END_PAUSE = headerMetrics.marqueeEndPause;
 
   useEffect(() => {
     // start/stop marquee based on measured widths
@@ -273,22 +348,25 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             onLayout={(e) => setLeftWidth(e.nativeEvent.layout.width || 0)}
             hitSlop={12}
             onPress={onClose}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              paddingHorizontal: 8,
-              paddingVertical: 6,
-              borderRadius: 16,
-            }}
+            style={[s.textControl, { flexDirection: 'row', alignItems: 'center' }]}
             accessibilityRole="button"
             accessibilityLabel={String(
               route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? 'Закрыть'),
             )}
           >
-            <View style={[s.backCircle, { width: 32, height: 32 }]}>
-              <Feather name="x" size={20} color={theme.colors.text} />
+            <View
+              style={[
+                s.backCircle,
+                {
+                  width: headerMetrics.controlHeight,
+                  height: headerMetrics.controlHeight,
+                  borderRadius: headerMetrics.controlHeight / 2,
+                },
+              ]}
+            >
+              <Feather name="x" size={headerMetrics.iconSize} color={theme.colors.text} />
             </View>
-            <Text style={[s.title, { marginLeft: 6 }]}>
+            <Text style={[s.title, { marginLeft: headerMetrics.closeTitleGap, color: theme.colors.text }]}>
               {String(route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? 'Закрыть'))}
             </Text>
           </Pressable>
@@ -302,7 +380,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
                 onPressIn={onLeftIn}
                 onPressOut={onLeftOut}
                 onPress={onBack}
-                style={{ paddingHorizontal: 8, paddingVertical: 6, borderRadius: 16 }}
+                style={s.textControl}
                 accessibilityRole="button"
                 accessibilityLabel={String(
                   backLabel ||
@@ -311,7 +389,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
                 )}
               >
                 <Animated.View style={[leftCapsuleAnim]}>
-                  <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
+                  <Text style={s.backText} numberOfLines={1}>
                     {String(
                       route?.params?.headerBackTitle ??
                         backLabel ??
@@ -335,10 +413,10 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
                   accessibilityLabel={String(backLabel || (globalThis?.S?.('back') ?? 'Назад'))}
                 >
                   <Animated.View style={[s.backCircle, { backgroundColor: bg }]}>
-                    <Feather name="chevron-left" size={22} color={theme.colors.text} />
+                    <Feather name="chevron-left" size={headerMetrics.iconSize} color={theme.colors.text} />
                   </Animated.View>
                   {backLabel ? (
-                    <Text style={[s.backText, { color: theme.colors.primary }]} numberOfLines={1}>
+                    <Text style={s.backText} numberOfLines={1}>
                       {String(backLabel)}
                     </Text>
                   ) : null}
@@ -487,7 +565,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             <Animated.View style={[rightCapsuleAnim]}>
               <Text
                 numberOfLines={1}
-                style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}
+                style={s.actionText}
               >
                 {String(rightLabel)}
               </Text>
@@ -504,25 +582,21 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
           >
             <Animated.View
               style={[
-                {
-                  paddingHorizontal: 12,
-                  height: 32,
-                  borderRadius: 16,
-                  borderWidth: 1,
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  alignSelf: 'flex-end',
-                },
+                s.outlinedAction,
                 rightCapsuleAnim,
               ]}
             >
               <Animated.View
                 pointerEvents="none"
-                style={[StyleSheet.absoluteFillObject, { borderRadius: 16 }, rightCapsuleOverlay]}
+                style={[
+                  StyleSheet.absoluteFillObject,
+                  { borderRadius: headerMetrics.controlRadius },
+                  rightCapsuleOverlay,
+                ]}
               />
               <Text
                 numberOfLines={1}
-                style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}
+                style={s.actionText}
               >
                 {String(route.params.rightActionLabel ?? '')}
               </Text>
@@ -540,7 +614,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             <Animated.View style={[rightCapsuleAnim]}>
               <Text
                 numberOfLines={1}
-                style={{ color: theme.colors.primary, fontWeight: '600', fontSize: 15 }}
+                style={s.actionText}
               >
                 {String(route.params.headerButtonLabel)}
               </Text>
@@ -552,7 +626,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   );
 }
 
-const s = StyleSheet.create({
+/* legacy static styles replaced by theme-driven factory
   container: {
     // height задаётся из темы через inline-override
     flexDirection: 'row',
@@ -580,4 +654,4 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-});
+*/

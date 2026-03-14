@@ -1,6 +1,5 @@
-﻿import React from 'react';
+import React from 'react';
 import {
-  Animated,
   Modal,
   Pressable,
   StyleSheet,
@@ -8,12 +7,19 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import Animated, {
+  Easing,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { withAlpha } from './BaseModal';
 
-const ENTER_MS = 140;
-const EXIT_MS = 100;
 const ANCHOR_GAP = 8;
+const EMERGE_SPRING = { damping: 22, stiffness: 280, mass: 0.65 };
 
 export default function QuickPreviewModal({
   visible,
@@ -34,46 +40,40 @@ export default function QuickPreviewModal({
   const tagPadX = Math.max(6, Number(theme.spacing?.xs ?? 6));
   const tagFontSize = Math.max(10, (theme.typography.sizes.xs ?? 12) - 1);
 
-  const opacity = React.useRef(new Animated.Value(0)).current;
-  const scale = React.useRef(new Animated.Value(0.96)).current;
+  const opacity = useSharedValue(0);
+  const scale = useSharedValue(0.88);
+  const slideY = useSharedValue(20);
   const [rendered, setRendered] = React.useState(visible);
   const [cardSize, setCardSize] = React.useState({ width: 0, height: 0 });
   const [tagsColumnWidth, setTagsColumnWidth] = React.useState(0);
   const [measuredTagWidths, setMeasuredTagWidths] = React.useState({});
 
+  const setNotRendered = React.useCallback(() => setRendered(false), []);
+
+  // ── "Material Emerge" — fade + slide-up + scale-up ──────────
   React.useEffect(() => {
     if (visible) {
       setRendered(true);
-      Animated.parallel([
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: ENTER_MS,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scale, {
-          toValue: 1,
-          duration: ENTER_MS,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      opacity.value = withTiming(1, { duration: 200, easing: Easing.out(Easing.quad) });
+      scale.value = withSpring(1, EMERGE_SPRING);
+      slideY.value = withSpring(0, EMERGE_SPRING);
       return;
     }
 
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: EXIT_MS,
-        useNativeDriver: true,
-      }),
-      Animated.timing(scale, {
-        toValue: 0.96,
-        duration: EXIT_MS,
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (finished) setRendered(false);
+    const dur = 180;
+    const ease = Easing.bezier(0.3, 0, 0.8, 0.15);
+    opacity.value = withTiming(0, { duration: dur, easing: ease }, (finished) => {
+      if (finished) runOnJS(setNotRendered)();
     });
-  }, [opacity, scale, visible]);
+    scale.value = withTiming(0.88, { duration: dur, easing: ease });
+    slideY.value = withTiming(16, { duration: dur, easing: ease });
+  }, [opacity, scale, slideY, visible, setNotRendered]);
+
+  const aBackdrop = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const aCard = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateY: slideY.value }, { scale: scale.value }],
+  }));
 
   const maxWidth = Math.min(520, screenWidth - horizontalMargin * 2);
   const preferredWidth = Math.min(maxWidth, Math.max(340, Math.round(screenWidth * 0.84)));
@@ -153,7 +153,7 @@ export default function QuickPreviewModal({
       presentationStyle="overFullScreen"
       onRequestClose={onClose}
     >
-      <Animated.View style={[StyleSheet.absoluteFillObject, { opacity }]}>
+      <Animated.View style={[StyleSheet.absoluteFillObject, aBackdrop]}>
         <Pressable
           style={[
             StyleSheet.absoluteFillObject,
@@ -171,9 +171,8 @@ export default function QuickPreviewModal({
             maxWidth,
             left: centeredLeft,
             top: clampedTop,
-            opacity,
-            transform: [{ scale }],
           },
+          aCard,
         ]}
         onLayout={(event) => {
           const nextWidth = event?.nativeEvent?.layout?.width || 0;

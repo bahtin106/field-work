@@ -927,18 +927,14 @@ export default function CompanySettings() {
 
             <View style={s.sep} />
             <SelectField
-              label={<Text style={s.itemLabel}>{t('settings_company_timezone')}</Text>}
+              label={t('settings_company_timezone')}
               value={timeZoneLabel}
               onPress={() => setTzOpen(true)}
             />
 
             <View style={s.sep} />
             <SelectField
-              label={
-                <Text style={s.itemLabel}>
-                  {t('company_settings_sections_company_items_telegram_bot')}
-                </Text>
-              }
+              label={t('company_settings_sections_company_items_telegram_bot')}
               showValue={false}
               onPress={telegramBotRoute ? go(telegramBotRoute) : undefined}
               disabled={!telegramBotRoute}
@@ -951,7 +947,7 @@ export default function CompanySettings() {
               <>
                 <View style={s.sep} />
                 <SelectField
-                  label={<Text style={s.itemLabel}>{t('settings_company_billing')}</Text>}
+                  label={t('settings_company_billing')}
                   showValue={false}
                   onPress={billingRoute ? go(billingRoute) : undefined}
                   disabled={!billingRoute}
@@ -962,7 +958,7 @@ export default function CompanySettings() {
 
             <View style={s.sep} />
             <SelectField
-              label={<Text style={s.itemLabel}>{t('settings_company_exchange_orders')}</Text>}
+              label={t('settings_company_exchange_orders')}
               showValue={false}
               disabled
               onDisabledPress={onSoonPress}
@@ -980,7 +976,7 @@ export default function CompanySettings() {
               <React.Fragment key={it.key}>
                 {idx > 0 ? <View style={s.sep} /> : null}
                 <SelectField
-                  label={<Text style={s.itemLabel}>{it.label || t(`settings_sections_reference_items_${it.key}`)}</Text>}
+                  label={it.label || t(`settings_sections_reference_items_${it.key}`)}
                   showValue={false}
                   onPress={it.route ? go(it.route) : undefined}
                   disabled={!it.route}
@@ -999,7 +995,7 @@ export default function CompanySettings() {
               <React.Fragment key={it.key}>
                 {idx > 0 ? <View style={s.sep} /> : null}
                 <SelectField
-                  label={<Text style={s.itemLabel}>{t(`settings_integrations_${it.key}`)}</Text>}
+                  label={t(`settings_integrations_${it.key}`)}
                   showValue={false}
                   onPress={it.route ? go(it.route) : undefined}
                   disabled={!it.route}
@@ -1020,7 +1016,7 @@ export default function CompanySettings() {
                 <React.Fragment key={it.key}>
                   {idx > 0 ? <View style={s.sep} /> : null}
                   <SelectField
-                    label={<Text style={s.itemLabel}>{t(`settings_management_${it.key}`)}</Text>}
+                    label={t(`settings_management_${it.key}`)}
                     showValue={false}
                     onPress={go(it.route)}
                     disabled={disabledManagementKeys.has(it.key)}
@@ -1044,7 +1040,7 @@ export default function CompanySettings() {
             </View>
             <View style={s.sep} />
             <SelectField
-              label={<Text style={s.itemLabel}>{t('settings_phone_mode')}</Text>}
+              label={t('settings_phone_mode')}
               value={phoneModeLabel}
               onPress={() => setPhoneModeOpen(true)}
             />
@@ -1056,14 +1052,8 @@ export default function CompanySettings() {
           <Text style={s.sectionTitle}>{t('company_settings_sections_finances_title')}</Text>
           <View style={s.card}>
             <SelectField
-              label={
-                <Text style={s.itemLabel}>
-                  {t('settings_company_currency_label')}
-                </Text>
-              }
-              value={
-                fixedCurrencyLabel
-              }
+              label={t('settings_company_currency_label')}
+              value={fixedCurrencyLabel}
               valueNumberOfLines={3}
               disabled
               onDisabledPress={onSoonPress}

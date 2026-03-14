@@ -5,6 +5,8 @@ import { useTheme } from '../../../theme';
 import TextField from '../TextField';
 import BaseModal from './BaseModal';
 
+const NOOP = () => {};
+
 export default function SelectModal({
   visible,
   title = T('modal_select_title'),
@@ -28,6 +30,9 @@ export default function SelectModal({
   emptyComponent = null,
   filterFn,
   onItemLongPress,
+  itemTitleNumberOfLines = 1,
+  itemSubtitleNumberOfLines = 1,
+  multilineItems = false,
 }) {
   const { theme } = useTheme();
   const s = useMemo(() => styles(theme), [theme]);
@@ -114,11 +119,17 @@ export default function SelectModal({
         <View style={s.itemLeft}>
           {item.icon ? <View style={{ marginRight: theme.spacing.sm }}>{item.icon}</View> : null}
           <View style={{ flex: 1 }}>
-            <Text numberOfLines={1} style={[s.itemTitle, { color: theme.colors.text }]}>
+            <Text
+              numberOfLines={itemTitleNumberOfLines}
+              style={[s.itemTitle, multilineItems ? s.itemTitleMultiline : null, { color: theme.colors.text }]}
+            >
               {String(item.label || '')}
             </Text>
             {item.subtitle ? (
-              <Text numberOfLines={1} style={[s.itemSub, { color: theme.colors.textSecondary }]}>
+              <Text
+                numberOfLines={itemSubtitleNumberOfLines}
+                style={[s.itemSub, { color: theme.colors.textSecondary }]}
+              >
                 {String(item.subtitle || '')}
               </Text>
             ) : null}
@@ -160,11 +171,15 @@ export default function SelectModal({
             ? initialScrollIndex
             : undefined
         }
-        getItemLayout={(_items, index) => ({
-          length: itemHeight,
-          offset: rowStride * index,
-          index,
-        })}
+        getItemLayout={
+          multilineItems
+            ? undefined
+            : (_items, index) => ({
+                length: itemHeight,
+                offset: rowStride * index,
+                index,
+              })
+        }
         initialNumToRender={Math.max(1, data.length)}
         maxToRenderPerBatch={Math.max(1, data.length)}
         windowSize={Math.max(3, data.length)}
@@ -183,7 +198,7 @@ export default function SelectModal({
         }}
         ListFooterComponent={listFooter || <View style={{ height: bottomInset }} />}
         ListEmptyComponent={emptyComponent || null}
-        onScrollToIndexFailed={() => {}}
+        onScrollToIndexFailed={NOOP}
         keyboardShouldPersistTaps="handled"
       />
       <View style={{ height: listBottomGap }} />
@@ -201,7 +216,7 @@ const styles = (t) => {
   const radioBorder = t.components?.radio?.borderWidth ?? 1.5;
   return StyleSheet.create({
     item: {
-      height: t.components?.listItem?.height ?? 52,
+      minHeight: t.components?.listItem?.height ?? 52,
       paddingHorizontal: t.spacing.lg,
       paddingVertical: 10,
       flexDirection: 'row',
@@ -219,6 +234,10 @@ const styles = (t) => {
     },
     itemLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 8 },
     itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
+    itemTitleMultiline: {
+      lineHeight: Math.round((t.typography.sizes.md ?? 16) * (t.typography.lineHeights?.normal ?? 1.35)),
+      flexShrink: 1,
+    },
     itemTitleSelected: { color: t.colors.text },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
     itemRight: { marginLeft: t.spacing.sm, alignSelf: 'center' },

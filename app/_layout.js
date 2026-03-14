@@ -1,15 +1,23 @@
 import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, Image, LogBox, Platform, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { installDevWarnFilters } from '../src/utils/devWarnFilter';
 
-LogBox.ignoreLogs([/No route named/]);
+installDevWarnFilters();
+
+LogBox.ignoreLogs([
+  /No route named/,
+  /`expo-notifications` functionality is not fully supported in Expo Go/i,
+  /expo-notifications: Android Push notifications \(remote notifications\) functionality provided/i,
+  /Expo Go can no longer provide full access to the media library/i,
+]);
 
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
+import appReadyState from '../lib/appReadyState';
 import { applyAndroidSystemBars } from '../lib/systemBars';
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
@@ -23,20 +31,24 @@ import { initI18n, setLocale } from '../src/i18n';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { FeedbackProvider } from '../src/shared/feedback';
 import QueryProvider from '../src/shared/query/QueryProvider';
+import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
+import { KeyboardProvider } from '../lib/keyboardControllerCompat';
 
 function LastSeenTracker() {
   useAppLastSeen(30_000);
   return null;
 }
 
+const ACCESS_REVALIDATE_INTERVAL_MS = 2 * 60 * 1000;
+
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
   SplashScreen.preventAutoHideAsync().catch(() => {});
 }
 
-function BrandedLoadingScreen({ theme }) {
+function _BrandedLoadingScreen({ theme }) {
   const isDark = theme?.mode === 'dark';
   const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.92)';
   const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(16,24,40,0.08)';
@@ -91,6 +103,7 @@ function RootLayoutInner() {
   const segments = useSegments();
   const pathname = usePathname();
   const splashHiddenRef = useRef(false);
+  const [appBootReady, setAppBootReady] = useState(() => appReadyState.isReady());
   const segmentsRef = useRef(segments);
   const accessCheckInFlightRef = useRef(false);
   const pushSyncInFlightRef = useRef(false);
@@ -105,6 +118,13 @@ function RootLayoutInner() {
   useEffect(() => {
     segmentsRef.current = segments;
   }, [segments]);
+
+  useEffect(() => {
+    const unsubscribe = appReadyState.subscribe((state) => {
+      setAppBootReady(state === 'ready');
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     try {
@@ -148,10 +168,13 @@ function RootLayoutInner() {
     applyAndroidSystemBars(theme).catch(() => {});
   }, [theme]);
 
+  const shouldHoldNativeSplash =
+    isInitializing || (isAuthenticated && !isBlockedScreen && !appBootReady);
+
   useEffect(() => {
-    if (isInitializing) return;
+    if (shouldHoldNativeSplash) return;
     hideSplash();
-  }, [isInitializing, hideSplash]);
+  }, [hideSplash, shouldHoldNativeSplash]);
 
   useEffect(() => {
     if (isInitializing) return;
@@ -240,7 +263,7 @@ function RootLayoutInner() {
     enforceAccess();
     const intervalId = setInterval(() => {
       enforceAccess();
-    }, 30000);
+    }, ACCESS_REVALIDATE_INTERVAL_MS);
 
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') enforceAccess();
@@ -596,10 +619,7 @@ function RootLayoutInner() {
       <SafeAreaView
         edges={['top', 'left', 'right']}
         style={{ flex: 1, backgroundColor: theme.colors.background }}
-        onLayout={hideSplash}
-      >
-        <BrandedLoadingScreen theme={theme} />
-      </SafeAreaView>
+      />
     );
   }
 
@@ -659,6 +679,7 @@ function RootLayoutInner() {
               <Stack.Screen name="admin/server/index" />
               <Stack.Screen name="stats" options={{ title: 'Stats' }} />
             </Stack>
+            {isAuthenticated ? <RouteFreshnessBoundary /> : null}
             {isAuthenticated && !isBlockedScreen && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}
           </SafeAreaView>

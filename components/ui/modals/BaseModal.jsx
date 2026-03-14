@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Animated, {
   Easing,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withSpring,
@@ -23,20 +24,13 @@ import { Feather } from '@expo/vector-icons';
 import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme';
+import { withAlpha as withThemeAlpha } from '../../../theme/colors';
+
+const OPEN_SPRING = { damping: 28, stiffness: 500, mass: 0.5 };
 
 export function withAlpha(color, a) {
-  if (typeof color === 'string') {
-    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-    if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
-        .toString(16)
-        .padStart(2, '0');
-      return color + alpha;
-    }
-    const rgb = color.match(/^rgb\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)$/i);
-    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
-  }
-  return `rgba(0,0,0,${a})`;
+  const next = withThemeAlpha(color, a);
+  return next === color ? `rgba(0,0,0,${Math.max(0, Math.min(1, Number(a)))})` : next;
 }
 
 const baseSheetStyles = (t) =>
@@ -51,27 +45,44 @@ const baseSheetStyles = (t) =>
     },
     cardWrap: {
       width: '100%',
-      borderRadius: t.radii.xl,
-      borderWidth: 1,
+      borderRadius: t.components?.modal?.radius ?? t.radii.xl,
+      borderWidth: t.components?.card?.borderWidth ?? 1,
       overflow: 'hidden',
       ...(Platform.OS === 'ios' ? t.shadows.card.ios : t.shadows.card.android),
     },
     handleHit: { alignItems: 'center', paddingVertical: t.spacing.md },
-    handle: { width: 48, height: 5, borderRadius: 3 },
-    header: {
-      minHeight: 44,
-      paddingHorizontal: t.spacing.lg,
-      alignItems: 'center',
-      justifyContent: 'center',
+    handle: {
+      width: t.components?.modal?.handleWidth ?? 48,
+      height: t.components?.modal?.handleHeight ?? 5,
+      borderRadius: t.radii.xs,
     },
-    title: { fontSize: t.typography.sizes.lg, fontWeight: '700' },
-    closeBtn: { position: 'absolute', right: 8, top: 6, padding: 8, borderRadius: 16 },
+    header: {
+      minHeight: t.components?.input?.height ?? 44,
+      paddingHorizontal: t.spacing.lg,
+      alignItems: 'stretch',
+      justifyContent: 'center',
+      position: 'relative',
+    },
+    titleWrap: {
+      paddingLeft: (t.components?.modal?.closeIconSize ?? 20) + (t.spacing.lg * 2),
+      paddingRight: (t.components?.modal?.closeIconSize ?? 20) + (t.spacing.lg * 2),
+      minWidth: 0,
+    },
+    title: { fontSize: t.typography.sizes.lg, fontWeight: '700', textAlign: 'center' },
+    closeBtn: {
+      position: 'absolute',
+      right: t.components?.modal?.closeInset ?? t.spacing.sm,
+      top: Math.max(t.spacing.xs, 6),
+      padding: t.components?.modal?.closeInset ?? t.spacing.sm,
+      borderRadius: t.radii.lg,
+    },
   });
 
 const BaseModalImpl = (
   {
     visible,
     onClose,
+    onShow,
     title = '',
     children,
     footer = null,
@@ -88,6 +99,7 @@ const BaseModalImpl = (
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => baseSheetStyles(theme), [theme]);
+  const modalTokens = theme.components?.modal || {};
 
   const [rnVisible, setRnVisible] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
@@ -126,8 +138,12 @@ const BaseModalImpl = (
   }, [rnVisible]);
 
   const windowH = Dimensions.get('window').height;
-  const minCardHeight = 220;
-  const sheetMaxH = Math.max(220, Math.min(windowH * maxHeightRatio, windowH - (insets.top + 48)));
+  const minCardHeight = theme.spacing.xxxl * 3 + theme.spacing.xl;
+  const topInsetAllowance = theme.components?.input?.height ?? 48;
+  const sheetMaxH = Math.max(
+    minCardHeight,
+    Math.min(windowH * maxHeightRatio, windowH - (insets.top + topInsetAllowance)),
+  );
   const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
   const feedbackMessage =
     typeof feedback === 'string' ? feedback : String(feedback?.message || '').trim();
@@ -164,11 +180,12 @@ const BaseModalImpl = (
   const baseBottomPad = theme.spacing.md + (insets?.bottom || 0);
 
   // Clamp to prevent the modal from moving beyond the top safe area.
-  const minTopGap = Math.max(12, theme.spacing.sm);
+  const minTopGap = Math.max(modalTokens.edgePadding ?? theme.spacing.md, theme.spacing.sm);
   const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
   const extraBottom = kbInset > 0 ? kbInset + extraPad : 0;
 
   const op = useSharedValue(0);
+  const cardOp = useSharedValue(0);
   const ty = useSharedValue(24);
   const sc = useSharedValue(1);
   const animatedBottomPad = useSharedValue(baseBottomPad + extraBottom);
@@ -200,22 +217,50 @@ const BaseModalImpl = (
     targetCardMaxHeight,
   ]);
 
+  const doUnmount = () => {
+    setRnVisible(false);
+    try {
+      onClose?.();
+    } catch {}
+  };
+
+  // ── "Material Emerge" animation ──────────────────────────────
+  // Open:  fade-in + slide-up + scale-up — card materializes from below
+  // Close: fade-out + slide-down + scale-down — card dissolves downward
+  // All three properties share matched spring configs for cohesion.
+
+  const runOpenAnimation = () => {
+    op.value = withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
+    cardOp.value = withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
+    ty.value = withSpring(0, OPEN_SPRING);
+    sc.value = withSpring(1, OPEN_SPRING);
+  };
+
   const open = () => {
+    // Set invisible starting position, then mount
+    op.value = 0;
+    cardOp.value = 0;
+    ty.value = 64;
+    sc.value = 0.93;
     if (!rnVisible) setRnVisible(true);
-    op.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) });
-    ty.value = withTiming(0, { duration: 220, easing: Easing.out(Easing.cubic) });
+    // Animation triggered by <Modal onShow> — guarantees native mount is done
   };
 
   const close = () => {
-    const offY = Math.max(260, sheetMaxH * 0.9);
-    ty.value = withTiming(offY, { duration: 200, easing: Easing.in(Easing.cubic) });
-    op.value = withTiming(0, { duration: 220, easing: Easing.in(Easing.cubic) });
-    setTimeout(() => {
-      setRnVisible(false);
-      try {
-        onClose?.();
-      } catch {}
-    }, 250);
+    // Card slides down off-screen — no scale, no card fade.
+    // M3 "emphasized accelerate": starts slow, accelerates away like gravity.
+    const exitY = sheetMaxH + 40;
+    ty.value = withTiming(exitY, {
+      duration: 250,
+      easing: Easing.bezier(0.3, 0, 0.8, 0.15),
+    });
+    // Backdrop fades out slightly faster — card is already moving
+    op.value = withTiming(0, {
+      duration: 200,
+      easing: Easing.out(Easing.quad),
+    }, (fin) => {
+      if (fin) runOnJS(doUnmount)();
+    });
   };
   useImperativeHandle(ref, () => ({ close }));
 
@@ -224,6 +269,7 @@ const BaseModalImpl = (
     paddingBottom: animatedBottomPad.value,
   }));
   const aCard = useAnimatedStyle(() => ({
+    opacity: cardOp.value,
     transform: [{ translateY: ty.value }, { scale: sc.value }],
     maxHeight: animatedCardMaxHeight.value,
   }));
@@ -243,21 +289,25 @@ const BaseModalImpl = (
         const dy = Math.max(0, g.dy);
         dragY.current = dy;
         ty.value = dy * 0.85;
+        // Subtle scale-down while dragging for tactile feel
+        const dragRatio = Math.min(dy / sheetMaxH, 1);
+        sc.value = 1 - dragRatio * 0.06;
       },
       onPanResponderRelease: (_e, g) => {
         if (disablePanClose) return;
-        const shouldClose = g.vy > 1.0 || dragY.current > sheetMaxH * 0.22;
-        if (shouldClose) close();
-        else ty.value = withSpring(0, { damping: 22, stiffness: 420, mass: 0.6 });
+        const shouldClose = g.vy > 0.7 || dragY.current > sheetMaxH * 0.2;
+        if (shouldClose) {
+          close();
+        } else {
+          ty.value = withSpring(0, OPEN_SPRING);
+          sc.value = withSpring(1, OPEN_SPRING);
+        }
       },
     }),
   ).current;
 
   useEffect(() => {
     if (visible) {
-      op.value = 0;
-      ty.value = 24;
-      sc.value = 1;
       open();
     } else if (rnVisible) {
       close();
@@ -299,11 +349,15 @@ const BaseModalImpl = (
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={close}
-      onDismiss={() => {
-        setRnVisible(false);
+      onShow={() => {
+        runOpenAnimation();
         try {
-          onClose?.();
+          onShow?.();
         } catch {}
+      }}
+      onDismiss={() => {
+        // Safety-net: ensure state is reset even if native dismisses unexpectedly
+        setRnVisible(false);
       }}
     >
       {/* Backdrop - handles taps outside card */}
@@ -331,7 +385,7 @@ const BaseModalImpl = (
         style={[
           s.bottomWrap,
           aWrap,
-          { paddingHorizontal: theme.spacing.md },
+          { paddingHorizontal: modalTokens.edgePadding ?? theme.spacing.md },
         ]}
         pointerEvents="box-none"
       >
@@ -356,16 +410,22 @@ const BaseModalImpl = (
 
             {/* Header */}
             <View style={s.header}>
-              <Text numberOfLines={1} style={[s.title, { color: theme.colors.text }]}>
-                {title}
-              </Text>
+              <View style={s.titleWrap}>
+                <Text numberOfLines={3} ellipsizeMode="tail" style={[s.title, { color: theme.colors.text }]}>
+                  {title}
+                </Text>
+              </View>
               <Pressable
-                hitSlop={10}
+                hitSlop={modalTokens.closeHitSlop ?? 10}
                 onPress={close}
                 style={s.closeBtn}
                 accessibilityLabel={T('btn_close')}
               >
-                <Feather name="x" size={20} color={theme.colors.textSecondary} />
+                <Feather
+                  name="x"
+                  size={modalTokens.closeIconSize ?? 20}
+                  color={theme.colors.textSecondary}
+                />
               </Pressable>
             </View>
 

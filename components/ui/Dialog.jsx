@@ -11,6 +11,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTheme } from '../../theme/ThemeProvider';
 
+const EMERGE_SPRING = { damping: 22, stiffness: 480, mass: 0.45 };
+
 export default function Dialog({
   visible,
   onClose,
@@ -21,32 +23,55 @@ export default function Dialog({
 }) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const dialogTokens = theme.components?.dialog || {};
+  const dialogMaxWidth = maxWidth ?? dialogTokens.maxWidth ?? 420;
+  const dialogPad = dialogTokens.pad ?? theme.spacing.xl;
+  const dialogRadius = dialogTokens.radius ?? theme.radii.xl;
+  const dialogEdgePadding = dialogTokens.edgePadding ?? theme.spacing.lg;
+  const backdropOpacity =
+    Platform.OS === 'ios'
+      ? dialogTokens.backdropOpacity?.ios ?? 0.38
+      : dialogTokens.backdropOpacity?.android ?? 0.42;
 
   // локальный mount, чтобы плавно убирать из дерева после анимации скрытия
   const [mounted, setMounted] = useState(visible);
-  const progress = useSharedValue(0); // 0..1 — для прозрачности оверлея
-  const scale = useSharedValue(0.96); // лёгкий zoom-in
+  const progress = useSharedValue(0);  // opacity / backdrop
+  const scale = useSharedValue(0.88);
+  const translateY = useSharedValue(28);
 
+  // ── "Material Emerge" — fade + slide-up + scale-up ──────────
   useEffect(() => {
     if (visible) {
+      // Reset to invisible starting position
+      progress.value = 0;
+      scale.value = 0.88;
+      translateY.value = 28;
       setMounted(true);
-      progress.value = withTiming(1, { duration: 160, easing: Easing.out(Easing.quad) });
-      scale.value = withSpring(1, { mass: 0.6, damping: 14, stiffness: 180 });
+      // Start animation on next frame — after View has committed
+      requestAnimationFrame(() => {
+        progress.value = withTiming(1, { duration: 130, easing: Easing.out(Easing.quad) });
+        scale.value = withSpring(1, EMERGE_SPRING);
+        translateY.value = withSpring(0, EMERGE_SPRING);
+      });
     } else if (mounted) {
-      progress.value = withTiming(0, { duration: 140, easing: Easing.in(Easing.quad) }, (f) => {
+      // Dialog shrinks + fades: M3 emphasized-accelerate easing
+      const dur = 200;
+      const ease = Easing.bezier(0.3, 0, 0.8, 0.15);
+      progress.value = withTiming(0, { duration: dur, easing: ease }, (f) => {
         if (f) runOnJS(setMounted)(false);
       });
-      scale.value = withTiming(0.96, { duration: 140, easing: Easing.inOut(Easing.quad) });
+      scale.value = withTiming(0.85, { duration: dur, easing: ease });
+      translateY.value = withTiming(12, { duration: dur, easing: ease });
     }
-  }, [mounted, progress, scale, visible]);
+  }, [mounted, progress, scale, translateY, visible]);
 
   const overlayStyle = useAnimatedStyle(() => ({
-    opacity: progress.value * (Platform.OS === 'ios' ? 0.38 : 0.42),
+    opacity: progress.value * backdropOpacity,
     backgroundColor: theme.colors.overlay,
   }));
 
   const cardStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+    transform: [{ translateY: translateY.value }, { scale: scale.value }],
     opacity: progress.value,
   }));
 
@@ -66,13 +91,24 @@ export default function Dialog({
 
       <View
         pointerEvents="box-none"
-        style={[styles.centerWrap, { paddingBottom: Math.max(16, insets?.bottom || 0) }]}
+        style={[
+          styles.centerWrap,
+          {
+            paddingHorizontal: dialogEdgePadding,
+            paddingBottom: Math.max(dialogEdgePadding, insets?.bottom || 0),
+          },
+        ]}
       >
         <Animated.View
           style={[
             styles.card,
-            { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, maxWidth },
-            ,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+              maxWidth: dialogMaxWidth,
+              borderRadius: dialogRadius,
+              padding: dialogPad,
+            },
             theme.shadows?.md || {},
             contentStyle,
             cardStyle,
@@ -93,12 +129,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 16,
   },
   card: {
     width: '100%',
-    borderRadius: 16,
     borderWidth: 1,
-    padding: 20,
   },
 });
