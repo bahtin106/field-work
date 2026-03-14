@@ -187,7 +187,15 @@ const BaseModalImpl = (
   const baseBottomPad = theme.spacing.md + (insets?.bottom || 0);
 
   // Clamp to prevent the modal from moving beyond the top safe area.
-  const minTopGap = Math.max(modalTokens.edgePadding ?? theme.spacing.md, theme.spacing.sm);
+  const platformTopGap =
+    Platform.OS === 'android'
+      ? Number(modalTokens.topOffsetAndroid ?? 56)
+      : Number(modalTokens.topOffset ?? theme.spacing.lg);
+  const minTopGap = Math.max(
+    modalTokens.edgePadding ?? theme.spacing.md,
+    theme.spacing.sm,
+    Number.isFinite(platformTopGap) ? platformTopGap : 0,
+  );
   const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
   const extraBottom = kbInset > 0 ? kbInset + extraPad : 0;
 
