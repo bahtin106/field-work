@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const TELEGRAM_PROVIDER = 'telegram';
 const FEED_STATUS = '\u0412 \u043b\u0435\u043d\u0442\u0435';
-const NEW_STATUS = '\u041d\u043e\u0432\u0430\u044f';
+const NEW_STATUS = '\u041d\u043e\u0432\u044b\u0439';
 const CONFIRM_TEXT = '✅ \u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438';
 const RESTART_TEXT = '\u041d\u0430\u0447\u0430\u0442\u044c \u0437\u0430\u043d\u043e\u0432\u043e';
 const BACK_TEXT = '\u041d\u0430\u0437\u0430\u0434';
@@ -143,6 +143,13 @@ function isUniqueViolation(error: unknown) {
   if (code === '23505') return true;
   const message = toErrorMessage(error).toLowerCase();
   return message.includes('duplicate key') || message.includes('unique');
+}
+
+function normalizeUuidOrNull(value: unknown) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRe.test(text) ? text : null;
 }
 
 function normalizeText(raw: unknown) {
@@ -1410,6 +1417,11 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
 async function createOrderFromConversation(admin: AdminClient, integration: IntegrationRow, values: Record<string, string>) {
   const clientId = await createClientIfNeeded(admin, integration, values);
   const object = await createObjectIfNeeded(admin, integration, clientId, values);
+  const assignedTo =
+    integration.destination_type === 'assignee'
+      ? normalizeUuidOrNull(integration.destination_user_id)
+      : null;
+  const orderStatus = assignedTo ? NEW_STATUS : FEED_STATUS;
   const { data: company, error: companyError } = await admin
     .from('companies')
     .select('currency')
@@ -1426,8 +1438,8 @@ async function createOrderFromConversation(admin: AdminClient, integration: Inte
       object_id: object.objectId,
       address_mode: object.addressMode,
       object_name_snapshot: object.objectName,
-      assigned_to: integration.destination_type === 'assignee' ? integration.destination_user_id : null,
-      status: integration.destination_type === 'assignee' ? NEW_STATUS : FEED_STATUS,
+      assigned_to: assignedTo,
+      status: orderStatus,
       urgent: false,
       currency: company?.currency || null,
     })
