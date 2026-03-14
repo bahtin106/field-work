@@ -5,6 +5,9 @@ export default {
   btn_ok: 'OK',
   btn_done: 'Done',
   common_refresh: 'Refresh',
+  refresh_slow: 'Refreshing is taking longer than usual. Check your connection.',
+  refresh_timeout: 'Could not refresh the data. Check your connection and try again.',
+  refresh_failed: 'Could not refresh the data',
   routes: {
     'app_settings/sections/events': 'Notification events',
     'company_settings/sections/tags': 'Tags',

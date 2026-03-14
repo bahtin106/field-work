@@ -1,7 +1,7 @@
 import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -10,7 +10,6 @@ import {
   InteractionManager,
   Platform,
   Pressable,
-  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,11 +18,17 @@ import {
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
-import OrdersFiltersPanel from '../../components/filters/OrdersFiltersPanel';
+import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
@@ -177,6 +182,8 @@ export default function MyOrdersScreen() {
   const { companyId } = useMyCompanyId();
   const [useWorkTypesFlag, setUseWorkTypesFlag] = useState(false);
   const [workTypeOptions, setWorkTypeOptions] = useState([]);
+  const [sortVisible, setSortVisible] = useState(false);
+  const [sortKey, setSortKey] = useState('date_desc');
   useEffect(() => {
     let alive = true;
     if (!companyId) {
@@ -473,7 +480,6 @@ export default function MyOrdersScreen() {
       }
     }
   }, [filter, orders.length, queryClient]);
-  const [bgRefreshing, setBgRefreshing] = useState(false);
 
   const {
     seedFilter,
@@ -761,6 +767,42 @@ export default function MyOrdersScreen() {
     });
   }, [orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
 
+  const sortOptions = useMemo(
+    () => [
+      { id: 'date_desc', label: t('orders_sort_date_desc', 'Сначала новые') },
+      { id: 'date_asc', label: t('orders_sort_date_asc', 'Сначала старые') },
+      { id: 'amount_desc', label: t('orders_sort_amount_desc', 'Сумма: по убыванию') },
+      { id: 'amount_asc', label: t('orders_sort_amount_asc', 'Сумма: по возрастанию') },
+    ],
+    [t],
+  );
+
+  const sortedFilteredOrders = useMemo(() => {
+    const parseOrderDate = (item) => {
+      const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
+      return Number.isFinite(ts) ? ts : 0;
+    };
+    const parseAmount = (item) => {
+      const value = Number(item?.price ?? item?.sum ?? 0);
+      return Number.isFinite(value) ? value : 0;
+    };
+    const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case 'date_asc':
+          return parseOrderDate(a) - parseOrderDate(b);
+        case 'amount_desc':
+          return parseAmount(b) - parseAmount(a);
+        case 'amount_asc':
+          return parseAmount(a) - parseAmount(b);
+        case 'date_desc':
+        default:
+          return parseOrderDate(b) - parseOrderDate(a);
+      }
+    });
+    return arr;
+  }, [filteredOrders, sortKey]);
+
   useEffect(() => {
     if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
     const idsKey = filteredOrders
@@ -930,6 +972,8 @@ export default function MyOrdersScreen() {
           onClear={() => setSearchQuery('')}
           placeholder={t('common_search')}
           onOpenFilters={filters.open}
+          onOpenSort={() => setSortVisible(true)}
+          style={{ marginHorizontal: -16 }}
           filterSummary={
             hasLinkedRelationFilter
               ? [
@@ -958,7 +1002,7 @@ export default function MyOrdersScreen() {
             const resetValues = filters.reset();
             await filters.apply(resetValues);
           }}
-          metaText={`${t('common_total')}: ${filteredOrders.length}`}
+          metaText={`${t('common_total')}: ${sortedFilteredOrders.length}`}
         />
       </View>
     ),
@@ -970,7 +1014,7 @@ export default function MyOrdersScreen() {
       feedPulse,
       filters,
       filterSummaryData,
-      filteredOrders.length,
+      sortedFilteredOrders.length,
       hasLinkedRelationFilter,
       relationLabel,
       t,
@@ -993,8 +1037,7 @@ export default function MyOrdersScreen() {
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  const refreshCurrentList = useCallback(async ({ showIndicator = false } = {}) => {
-    if (showIndicator) setBgRefreshing(true);
+  const refreshCurrentList = useCallback(async () => {
     setPage(1);
     setHasMore(true);
 
@@ -1005,12 +1048,11 @@ export default function MyOrdersScreen() {
       queryClient.invalidateQueries({ queryKey: ['requests'] }),
       queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
     ]);
-    const { data: sessionData } = await supabase.auth.getSession();
-    const uid = sessionData?.session?.user?.id;
-    if (!uid) {
-      setBgRefreshing(false);
-      return;
-    }
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id;
+      if (!uid) {
+        return;
+      }
 
     let query = supabase.from('orders_secure_v2').select('*');
     if (key === 'all' && hasLinkedRelationFilter) {
@@ -1048,17 +1090,18 @@ export default function MyOrdersScreen() {
       if (key === 'feed') updateFeedMeta(normalized);
       setHasMore(normalized.length === PAGE_SIZE);
     }
-    if (showIndicator) setBgRefreshing(false);
-  }, [filter, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
+    }, [filter, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
 
-  const onRefresh = useCallback(async () => {
-    await refreshCurrentList({ showIndicator: true });
+  const refreshWithIndicator = useCallback(async () => {
+    await refreshCurrentList();
   }, [refreshCurrentList]);
+  const { refreshing: bgRefreshing, didSucceed, onRefresh } = useManagedRefresh(refreshWithIndicator);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(bgRefreshing, { didSucceed });
 
   useScreenRefreshRegistration(
     'orders.my',
-    () => refreshCurrentList({ showIndicator: false }),
-    true,
+      () => refreshCurrentList(),
+      true,
   );
 
   if (loading && orders.length === 0) {
@@ -1089,46 +1132,59 @@ export default function MyOrdersScreen() {
           title: t('routes.orders/my-orders'),
         }}
       />
-      <FlatList
-        data={filteredOrders}
-        renderItem={renderItem}
-        keyExtractor={keyExtractor}
-        initialNumToRender={8}
-        maxToRenderPerBatch={6}
-        updateCellsBatchingPeriod={34}
-        windowSize={9}
-        removeClippedSubviews={Platform.OS === 'android'}
-        ListHeaderComponent={listHeader}
-        ListFooterComponent={renderFooter}
-        ListEmptyComponent={ListEmptyComponent}
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        onEndReached={loadMore}
-        onEndReachedThreshold={0.5}
-        refreshControl={
-          <RefreshControl
-            refreshing={bgRefreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.colors.primary}
-            colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
-          />
-        }
-      />
+      <View style={{ flex: 1 }}>
+        {refreshIndicator}
+        <FlatList
+          data={sortedFilteredOrders}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={34}
+          windowSize={9}
+          removeClippedSubviews={Platform.OS === 'android'}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={renderFooter}
+          ListEmptyComponent={ListEmptyComponent}
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          refreshControl={<ThemedRefreshControl refreshing={bgRefreshing} onRefresh={onRefresh} />}
+        />
+      </View>
       {filters.visible ? (
-        <OrdersFiltersPanel
+        <FiltersPanel
           visible={filters.visible}
           onClose={filters.close}
+          mode="orders"
+          showSearchCategory={false}
+          inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors'] }}
+          ordersFilters={{
+            statuses: orderStatusOptions,
+            workTypes: useWorkTypesFlag ? workTypeOptions : [],
+            executors: [],
+            showDate: true,
+            showTime: true,
+            showAmount: true,
+          }}
           values={filters.values}
           setValue={filters.setValue}
           defaults={ORDER_FILTER_DEFAULTS}
-          workTypes={workTypeOptions}
-          useWorkTypes={useWorkTypesFlag}
-          statusOptions={orderStatusOptions}
           onReset={() => filters.reset()}
           onApply={(nextValues) => filters.apply(nextValues)}
         />
       ) : null}
+      <SortSelectModal
+        visible={sortVisible}
+        onClose={() => setSortVisible(false)}
+        options={sortOptions}
+        value={sortKey}
+        onChange={(nextSort) => {
+          if (nextSort) setSortKey(nextSort);
+        }}
+      />
     </Screen>
   );
 }

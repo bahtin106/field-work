@@ -6,8 +6,6 @@ import {
   ActivityIndicator,
   FlatList,
   InteractionManager,
-  Platform,
-  RefreshControl,
   StyleSheet,
   Text,
   View,
@@ -17,6 +15,11 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 // Unified filter system: import our reusable components
@@ -76,7 +79,6 @@ export default function UsersIndex() {
   const [sortKey, setSortKey] = useState(EMPLOYEE_SORT.NAME_ASC);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
   const openUserNavGuardRef = useRef({ userId: null, startedAt: 0, inFlight: false });
 
   const filters = useFilters({
@@ -206,14 +208,8 @@ export default function UsersIndex() {
   }, [q, theme?.timings?.backDelayMs]);
 
   // Pull-to-refresh handler
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await refreshAll();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [refreshAll]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const onViewableItemsChanged = useMemo(
     () => ({ viewableItems }) => {
@@ -680,24 +676,20 @@ export default function UsersIndex() {
             {/* Removed error display - errors now handled by hooks */}
           </View>
 
-          <FlatList
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.listContent}
-            data={sortedFiltered}
-            keyExtractor={keyExtractor}
-            renderItem={renderItem}
-            onViewableItemsChanged={onViewableItemsChanged}
-            viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={theme.colors.primary}
-                colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
-              />
-            }
-            ListEmptyComponent={<EmptyState />}
-          />
+          <View style={{ flex: 1 }}>
+            {refreshIndicator}
+            <FlatList
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={styles.listContent}
+              data={sortedFiltered}
+              keyExtractor={keyExtractor}
+              renderItem={renderItem}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+              refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+              ListEmptyComponent={<EmptyState />}
+            />
+          </View>
         </View>
       </DismissKeyboardArea>
 

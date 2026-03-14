@@ -9,7 +9,9 @@ def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
  * By default you don't need to apply any configuration, just uncomment the lines you need.
  */
 react {
-    entryFile = file(["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim())
+    def resolvedEntryFile = ["node", "-e", "require('expo/scripts/resolveAppEntry')", projectRoot, "android", "absolute"].execute(null, rootDir).text.trim()
+    def forcedRouterEntryFile = new File(projectRoot, "node_modules/expo-router/entry.js").absolutePath
+    entryFile = file(resolvedEntryFile?.toLowerCase()?.contains("expo-router\\entry.js") ? forcedRouterEntryFile : resolvedEntryFile)
     reactNativeDir = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
     hermesCommand = new File(["node", "--print", "require.resolve('react-native/package.json')"].execute(null, rootDir).text.trim()).getParentFile().getAbsolutePath() + "/sdks/hermesc/%OS-BIN%/hermesc"
     codegenDir = new File(["node", "--print", "require.resolve('@react-native/codegen/package.json', { paths: [require.resolve('react-native/package.json')] })"].execute(null, rootDir).text.trim()).getParentFile().getAbsoluteFile()
@@ -94,6 +96,12 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.1"
+        externalNativeBuild {
+            cmake {
+                // Windows path-length guard for CMake/Ninja object files.
+                arguments "-DCMAKE_OBJECT_PATH_MAX=128"
+            }
+        }
     }
     signingConfigs {
         debug {

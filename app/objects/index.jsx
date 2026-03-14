@@ -10,6 +10,11 @@ import FiltersPanel from '../../components/filters/FiltersPanel';
 import DismissKeyboardArea from '../../components/layout/DismissKeyboardArea';
 import { useFilters } from '../../components/hooks/useFilters';
 import ObjectCard from '../../components/objects/ObjectCard';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
@@ -319,11 +324,8 @@ export default function ObjectsIndex() {
     };
   }, [clientById, filters.values.cities, filters.values.clientIds, filters.values.streets]);
 
-  const onRefresh = useCallback(async () => {
-    try {
-      await refetchObjects();
-    } catch {}
-  }, [refetchObjects]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refetchObjects);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const renderItem = useCallback(
     ({ item }) => (
@@ -385,15 +387,17 @@ export default function ObjectsIndex() {
           />
         </View>
 
-        <FlatList
-          data={sortedFiltered}
-          contentContainerStyle={{ paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.xl }}
-          keyExtractor={keyExtractor}
-          renderItem={renderItem}
-          onRefresh={onRefresh}
-          refreshing={objectsLoading}
-          keyboardShouldPersistTaps="handled"
-        />
+        <View style={{ flex: 1 }}>
+          {refreshIndicator}
+          <FlatList
+            data={sortedFiltered}
+            contentContainerStyle={{ paddingHorizontal: theme.spacing.lg, paddingBottom: theme.spacing.xl }}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          />
+        </View>
       </DismissKeyboardArea>
 
       <SortSelectModal

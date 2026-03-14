@@ -11,7 +11,6 @@ import {
   InteractionManager,
   Keyboard,
   Pressable,
-  RefreshControl,
   Animated as RNAnimated,
   ScrollView,
   StyleSheet,
@@ -22,6 +21,11 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../../components/hooks/useAuth';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useFinanceEntryMedia } from '../../hooks/useFinanceEntryMedia';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
@@ -388,7 +392,6 @@ export default function OrderDetails() {
 
   const [order, setOrder] = useState(null);
   const [orderReady, setOrderReady] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const [workTypesReady, setWorkTypesReady] = useState(false);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
@@ -1262,22 +1265,19 @@ export default function OrderDetails() {
     [id, canEdit, queryClient, companyId, order?.assigned_to, requestData?.assigned_to],
   );
 
-  const onRefresh = useCallback(async () => {
-    if (!id || refreshing) return;
-    setRefreshing(true);
-    try {
-      await Promise.allSettled([
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) }),
-        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(id) }),
-        queryClient.invalidateQueries({ queryKey: ['requests'] }),
-        refetchRequestData?.(),
-        financeEntriesQuery.refetch?.(),
-      ]);
-      await fetchData();
-    } finally {
-      setRefreshing(false);
-    }
-  }, [fetchData, financeEntriesQuery, id, queryClient, refetchRequestData, refreshing]);
+  const refreshAll = useCallback(async () => {
+    if (!id) return;
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) }),
+      queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(id) }),
+      queryClient.invalidateQueries({ queryKey: ['requests'] }),
+      refetchRequestData?.(),
+      financeEntriesQuery.refetch?.(),
+    ]);
+    await fetchData();
+  }, [fetchData, financeEntriesQuery, id, queryClient, refetchRequestData]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const uploadLocalUri = useCallback(
     async (category, uri, opts) => {
@@ -3391,27 +3391,22 @@ export default function OrderDetails() {
               : undefined,
         }}
       />
-      <ScrollView
-        ref={detailsScrollRef}
-        contentContainerStyle={[
-          styles.contentWrap,
-          {
-            paddingBottom:
-              (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
-              (insets?.bottom ?? 0),
-          },
-        ]}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={theme.colors.primary}
-            colors={[theme.colors.primary]}
-          />
-        }
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
+      <View style={{ flex: 1 }}>
+        {refreshIndicator}
+        <ScrollView
+          ref={detailsScrollRef}
+          contentContainerStyle={[
+            styles.contentWrap,
+            {
+              paddingBottom:
+                (theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl) +
+                (insets?.bottom ?? 0),
+            },
+          ]}
+          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
             {isReadOnlyBySubscription ? (
               <>
                 <Card style={{ marginBottom: theme.spacing?.sm ?? 8 }}>
@@ -3447,9 +3442,8 @@ export default function OrderDetails() {
               <View style={base.sep} />
 
               {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? (
-              <Pressable
-                style={base.row}
-                onPress={() => {
+                <Pressable
+                  onPress={() => {
                   const assignee = order?.assigned_to || null;
                   if (!assignee) return;
                   // allow opening own profile always; others require permission
@@ -3459,38 +3453,45 @@ export default function OrderDetails() {
                 }}
                 disabled={!order?.assigned_to || !(String(order?.assigned_to) === String(auth.user?.id) || has('canViewClients'))}
               >
-                <Text style={base.label}>{t('order_details_executor')}</Text>
-                <View style={base.rightWrap}>
-                  {deriveExecutorNameInstant(order) || executorName ? (
-                    <Text style={[base.value, order?.assigned_to && (String(order?.assigned_to) === String(auth.user?.id) || has('canViewClients')) ? styles.link : null]}>
-                      {deriveExecutorNameInstant(order) || executorName}
-                    </Text>
-                  ) : (
-                    <Text style={[base.value, { color: theme.colors.textSecondary }]}>
-                      {t('order_details_not_assigned')}
-                    </Text>
-                  )}
-                </View>
-              </Pressable>
+                  <LabelValueRow
+                    label={t('order_details_executor')}
+                    valueComponent={
+                      deriveExecutorNameInstant(order) || executorName ? (
+                        <Text
+                          style={[
+                            base.value,
+                            order?.assigned_to &&
+                            (String(order?.assigned_to) === String(auth.user?.id) || has('canViewClients'))
+                              ? styles.link
+                              : null,
+                          ]}
+                        >
+                          {deriveExecutorNameInstant(order) || executorName}
+                        </Text>
+                      ) : (
+                        <Text style={[base.value, { color: theme.colors.textSecondary }]}>
+                          {t('order_details_not_assigned')}
+                        </Text>
+                      )
+                    }
+                    hideWhenEmpty={false}
+                  />
+                </Pressable>
               ) : null}
               {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
               {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? (
-              <View style={base.row}>
-                <Text style={base.label}>{t('order_details_work_type')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={base.value}>
-                    {workTypeName || t('order_details_work_type_not_selected')}
-                  </Text>
-                </View>
-              </View>
+                <LabelValueRow
+                  label={t('order_details_work_type')}
+                  value={workTypeName || t('order_details_work_type_not_selected')}
+                  hideWhenEmpty={false}
+                />
               ) : null}
               {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
               {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? (
-              <Pressable
-                style={base.row}
-                onPress={() => {
+                <Pressable
+                  onPress={() => {
                   const dateStr = order.time_window_start
                     ? new Date(order.time_window_start).toISOString().slice(0, 10)
                     : undefined;
@@ -3506,26 +3507,29 @@ export default function OrderDetails() {
                   });
                 }}
               >
-                <Text style={base.label}>{t('order_details_departure_date')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={[base.value, styles.link]}>
-                    {(() => {
-                      if (!order.time_window_start) return t('order_details_departure_not_specified');
-                      const startDate = new Date(order.time_window_start);
-                      const hasRangeEnd = !!order.time_window_end;
-                      if (!hasRangeEnd) {
-                        return format(
-                          startDate,
-                          useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
-                          { locale: ru },
-                        );
-                      }
-                      const endDate = new Date(order.time_window_end);
-                      return `${format(startDate, 'd MMMM yyyy', { locale: ru })} вЂ” ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
-                    })()}
-                  </Text>
-                </View>
-              </Pressable>
+                  <LabelValueRow
+                    label={t('order_details_departure_date')}
+                    valueComponent={
+                      <Text style={[base.value, styles.link]}>
+                        {(() => {
+                          if (!order.time_window_start) return t('order_details_departure_not_specified');
+                          const startDate = new Date(order.time_window_start);
+                          const hasRangeEnd = !!order.time_window_end;
+                          if (!hasRangeEnd) {
+                            return format(
+                              startDate,
+                              useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
+                              { locale: ru },
+                            );
+                          }
+                          const endDate = new Date(order.time_window_end);
+                          return `${format(startDate, 'd MMMM yyyy', { locale: ru })} вЂ” ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
+                        })()}
+                      </Text>
+                    }
+                    hideWhenEmpty={false}
+                  />
+                </Pressable>
               ) : null}
               {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
@@ -3542,32 +3546,38 @@ export default function OrderDetails() {
             </SectionHeader>
             <Card paddedXOnly>
               {orderFieldsByKey.get('client_id')?.isEnabled !== false ? (
-              <Pressable style={base.row} onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
-                <Text style={base.label}>{t('order_details_customer')}</Text>
-                <View style={base.rightWrap}>
-                  <Text style={[base.value, linkedClientId && canViewClients ? styles.link : null]}>
-                    {customerDisplayName}
-                  </Text>
-                </View>
-              </Pressable>
+                <Pressable onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
+                  <LabelValueRow
+                    label={t('order_details_customer')}
+                    valueComponent={
+                      <Text style={[base.value, linkedClientId && canViewClients ? styles.link : null]}>
+                        {customerDisplayName}
+                      </Text>
+                    }
+                    hideWhenEmpty={false}
+                  />
+                </Pressable>
               ) : null}
               {orderFieldsByKey.get('client_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
               {orderFieldsByKey.get('object_id')?.isEnabled !== false ? (
-              <Pressable style={base.row} onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
-                <Text style={base.label}>{t('routes_objects_object')}</Text>
-                <View style={base.rightWrap}>
-                  <Text
-                    style={[
-                      base.value,
-                      linkedObjectId && canViewObjects ? styles.link : null,
-                      isObjectDeleted ? styles.deletedObjectText : null,
-                    ]}
-                  >
-                    {objectRowValue}
-                  </Text>
-                </View>
-              </Pressable>
+                <Pressable onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
+                  <LabelValueRow
+                    label={t('routes_objects_object')}
+                    valueComponent={
+                      <Text
+                        style={[
+                          base.value,
+                          linkedObjectId && canViewObjects ? styles.link : null,
+                          isObjectDeleted ? styles.deletedObjectText : null,
+                        ]}
+                      >
+                        {objectRowValue}
+                      </Text>
+                    }
+                    hideWhenEmpty={false}
+                  />
+                </Pressable>
               ) : null}
               {(orderFieldsByKey.get('object_id')?.isEnabled !== false && orderAddressItems.length > 0) ? <View style={base.sep} /> : null}
               {orderAddressItems.length > 0 ? (
@@ -3664,13 +3674,11 @@ export default function OrderDetails() {
                                     setPaymentStatusModalVisible(true);
                                   }}
                                 >
-                                  <LabelValueRow
-                                    label={t('order_details_payment_status', 'Статус оплаты')}
-                                    middleSpacerStyle={styles.financeCompactSpacer}
-                                    rightWrapStyle={styles.financeTightRightWrap}
-                                    valueComponent={
-                                      <Text
-                                        style={[
+                                    <LabelValueRow
+                                      label={t('order_details_payment_status', 'Статус оплаты')}
+                                      valueComponent={
+                                        <Text
+                                          style={[
                                           base.value,
                                           {
                                             color: isOrderPaid
@@ -3708,14 +3716,12 @@ export default function OrderDetails() {
                                     setPaymentMethodModalVisible(true);
                                   }}
                                 >
-                                  <LabelValueRow
-                                    label={t('order_details_payment_method', 'Способ оплаты')}
-                                    value={paymentMethodLabel(normalizedPaymentMethod)}
-                                    middleSpacerStyle={styles.financeCompactSpacer}
-                                    rightWrapStyle={styles.financeTightRightWrap}
-                                    hideWhenEmpty={false}
-                                    rightActions={
-                                      canEditFinances ? (
+                                    <LabelValueRow
+                                      label={t('order_details_payment_method', 'Способ оплаты')}
+                                      value={paymentMethodLabel(normalizedPaymentMethod)}
+                                      hideWhenEmpty={false}
+                                      rightActions={
+                                        canEditFinances ? (
                                         <Feather
                                           name="chevron-right"
                                           size={theme.icons?.sm ?? 18}
@@ -3742,8 +3748,6 @@ export default function OrderDetails() {
                                 <LabelValueRow
                                   label={t('order_finance_initial_cost', 'Изначальная стоимость')}
                                   value={formatMoney(order.price, currency)}
-                                  middleSpacerStyle={styles.financeCompactSpacer}
-                                  rightWrapStyle={styles.financeTightRightWrap}
                                   hideWhenEmpty={false}
                                   rightActions={
                                     canEditOrderAmount ? (
@@ -3769,8 +3773,6 @@ export default function OrderDetails() {
                                 >
                                   <LabelValueRow
                                     label={entry.title || t('finance_rule_name', 'Название')}
-                                    middleSpacerStyle={styles.financeCompactSpacer}
-                                    rightWrapStyle={styles.financeEntryRightWrap}
                                     valueComponent={
                                       <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
                                         {`+ ${formatMoney(entry.calculated_amount, currency)}`}
@@ -3800,8 +3802,6 @@ export default function OrderDetails() {
                                 >
                                   <LabelValueRow
                                     label={entry.title || t('finance_rule_name', 'Название')}
-                                    middleSpacerStyle={styles.financeCompactSpacer}
-                                    rightWrapStyle={styles.financeEntryRightWrap}
                                     valueComponent={
                                       <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
                                         {`- ${formatMoney(entry.calculated_amount, currency)}`}
@@ -3854,8 +3854,6 @@ export default function OrderDetails() {
                                     >
                                       <LabelValueRow
                                         label={entry.title || t('finance_rule_name', 'Название')}
-                                        middleSpacerStyle={styles.financeCompactSpacer}
-                                        rightWrapStyle={styles.financeEntryRightWrap}
                                         valueComponent={
                                           <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
                                             {`- ${formatMoney(entry.calculated_amount, currency)}`}
@@ -3903,20 +3901,16 @@ export default function OrderDetails() {
                               <LabelValueRow
                                 label={t('order_finance_customer_section', 'Общая сумма')}
                                 value={formatMoney(customerFinanceTotal, currency)}
-                                middleSpacerStyle={styles.financeCompactSpacer}
-                                rightWrapStyle={styles.financeTightRightWrap}
                                 hideWhenEmpty={false}
                               />
                               {financeCompanyPaidExpenseTotal > 0 ? (
                                 <>
                                   <View style={base.sep} />
-                                  <LabelValueRow
-                                    label={t('order_finance_company_expense_total', 'Расходы компании')}
-                                    middleSpacerStyle={styles.financeCompactSpacer}
-                                    rightWrapStyle={styles.financeTightRightWrap}
-                                    valueComponent={
-                                      <Text style={base.value}>
-                                        {`- ${formatMoney(financeCompanyPaidExpenseTotal, currency)}`}
+                                    <LabelValueRow
+                                      label={t('order_finance_company_expense_total', 'Расходы компании')}
+                                      valueComponent={
+                                        <Text style={base.value}>
+                                          {`- ${formatMoney(financeCompanyPaidExpenseTotal, currency)}`}
                                       </Text>
                                     }
                                     hideWhenEmpty={false}
@@ -3926,13 +3920,11 @@ export default function OrderDetails() {
                               {financeExecutorPaidExpenseTotal > 0 ? (
                                 <>
                                   <View style={base.sep} />
-                                  <LabelValueRow
-                                    label={t('order_finance_executor_reimbursement_total', 'Расходы исполнителя')}
-                                    middleSpacerStyle={styles.financeCompactSpacer}
-                                    rightWrapStyle={styles.financeTightRightWrap}
-                                    valueComponent={
-                                      <Text style={base.value}>
-                                        {formatMoney(financeExecutorPaidExpenseTotal, currency)}
+                                    <LabelValueRow
+                                      label={t('order_finance_executor_reimbursement_total', 'Расходы исполнителя')}
+                                      valueComponent={
+                                        <Text style={base.value}>
+                                          {formatMoney(financeExecutorPaidExpenseTotal, currency)}
                                       </Text>
                                     }
                                     hideWhenEmpty={false}
@@ -4106,7 +4098,8 @@ export default function OrderDetails() {
                 </Text>
               </Pressable>
             )}
-          </ScrollView>
+        </ScrollView>
+      </View>
     </SafeAreaView>
 
       <SelectModal

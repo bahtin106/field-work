@@ -1,5 +1,3 @@
-// app/orders/all-orders.jsx
-
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -9,33 +7,35 @@ import {
   FlatList,
   Platform,
   Pressable,
-  RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
 import DynamicOrderCard from '../../components/DynamicOrderCard';
+import FiltersPanel from '../../components/filters/FiltersPanel';
+import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
+import SortSelectModal from '../../components/filters/SortSelectModal';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
-import Button from '../../components/ui/Button';
-import TextField from '../../components/ui/TextField';
-import AnimatedFullscreenModal from '../../components/ui/modals/AnimatedFullscreenModal';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
-import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import {
   ensureRequestPrefetch,
   useAllRequests,
   useRequestExecutors,
-  useRequestFilterOptions,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import {
   markFirstContent,
   markScreenMount,
@@ -44,36 +44,47 @@ import {
 } from '../../src/shared/perf/devMetrics';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
 const EMPTY_ARRAY = [];
+const ORDER_FILTER_DEFAULTS = {
+  workTypes: [],
+  statuses: [],
+  executorId: null,
+  departureDateFrom: null,
+  departureDateTo: null,
+  departureTimeFrom: null,
+  departureTimeTo: null,
+  sumMin: '',
+  sumMax: '',
+};
 
-// ===== HARD PERMISSION GUARD (independent from usePermissions) =====
 async function checkCanViewAll() {
   try {
     const { data: userRes } = await supabase.auth.getUser();
     const uid = userRes?.user?.id;
     if (!uid) return false;
-    // 1) get current user's role + company from profiles
-    const { data: me, error: e1 } = await supabase
+
+    const { data: me, error: profileError } = await supabase
       .from('profiles')
       .select('role, company_id')
       .eq('id', uid)
       .maybeSingle();
-    if (e1 || !me?.role || !me?.company_id) return false;
-    // 2) check role permission
-    const { data: perm, error: e2 } = await supabase
+    if (profileError || !me?.role || !me?.company_id) return false;
+
+    const { data: perm, error: permError } = await supabase
       .from('app_role_permissions')
       .select('value')
       .eq('company_id', me.company_id)
       .eq('role', me.role)
       .eq('key', 'canViewAllOrders')
       .maybeSingle();
-    if (e2) return false;
-    // default allow when explicit row is absent (same behavior as orders/index)
+    if (permError) return false;
+
     if (perm?.value === null || perm?.value === undefined) return true;
     if (typeof perm.value === 'boolean') return perm.value;
     if (typeof perm.value === 'number') return perm.value === 1;
@@ -88,11 +99,12 @@ async function checkCanViewAll() {
 
 export default function AllOrdersScreen() {
   trackRender('AllRequests', 30);
-  // local, definitive permission flag
+
   const [allowed, setAllowed] = useState(() => {
     const rec = PERM_CACHE.canViewAll;
     return rec && Date.now() - (rec.ts || 0) < PERM_TTL_MS ? rec.value : null;
   });
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -110,7 +122,6 @@ export default function AllOrdersScreen() {
 
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
   const { has, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
   const effectiveAllowed = allowed ?? (!permLoading ? has('canViewAllOrders') : null);
@@ -119,203 +130,9 @@ export default function AllOrdersScreen() {
     markScreenMount('AllRequests');
   }, []);
 
-  const styles = useMemo(
-    () =>
-      StyleSheet.create({
-        // ВНИМАНИЕ: стили карточки из старой реализации остаются, но карточку теперь рендерит DynamicOrderCard
-        titleRow: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 8,
-        },
+  useEffect(() => startFpsProbe('AllRequests', 3500), []);
 
-        urgentDot: {
-          width: 18,
-          height: 18,
-          borderRadius: 9,
-          backgroundColor: theme.colors.danger,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginRight: 6,
-        },
-        urgentDotText: {
-          color: theme.colors.onPrimary,
-          fontSize: 12,
-          fontWeight: '700',
-          lineHeight: 12,
-        },
-
-        executorRowSelected: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 10,
-          paddingVertical: 10,
-          paddingHorizontal: 12,
-        },
-
-        searchInput: {
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          marginBottom: 12,
-          fontSize: 15,
-          backgroundColor: theme.colors.inputBg,
-        },
-        executorOption: {
-          paddingVertical: 10,
-          paddingHorizontal: 6,
-        },
-        executorText: {
-          fontSize: 15,
-          color: theme.colors.text,
-        },
-
-        executorRow: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        },
-        checkmark: {
-          fontSize: 16,
-          color: theme.colors.primary,
-          fontWeight: '600',
-        },
-        separator: {
-          height: 1,
-          backgroundColor: theme.colors.border,
-          marginVertical: 4,
-        },
-
-        dropdownButton: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 10,
-          paddingVertical: 10,
-          paddingHorizontal: 14,
-          marginBottom: 16,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-        },
-        dropdownButtonText: {
-          color: theme.colors.text,
-          fontSize: 14,
-        },
-        modalOverlay: {
-          flex: 1,
-          backgroundColor: theme.colors.overlay,
-          justifyContent: 'flex-end',
-        },
-        modalContent: {
-          backgroundColor: theme.colors.surface,
-          padding: 16,
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
-          maxHeight: '70%',
-        },
-        clearButton: {
-          marginTop: 12,
-          backgroundColor: theme.colors.border,
-          paddingVertical: 10,
-          borderRadius: 10,
-          alignItems: 'center',
-        },
-        clearButtonText: {
-          color: theme.colors.primary,
-          fontWeight: '500',
-        },
-
-        container: { padding: 16, paddingBottom: 40, backgroundColor: theme.colors.background },
-        header: { fontSize: 22, fontWeight: '700', marginBottom: 16, color: theme.colors.text },
-
-        filterContainer: {
-          flexDirection: 'row',
-          gap: 8,
-          marginBottom: 16,
-          flexWrap: 'wrap',
-        },
-        chip: {
-          paddingVertical: 8,
-          paddingHorizontal: 14,
-          backgroundColor: theme.colors.inputBg,
-          borderRadius: 20,
-        },
-        chipActive: {
-          backgroundColor: theme.colors.primary,
-        },
-        chipText: {
-          fontSize: 14,
-          color: theme.colors.text,
-        },
-        chipTextActive: {
-          color: theme.colors.onPrimary,
-          fontWeight: '600',
-        },
-        executorScroll: {
-          marginBottom: 20,
-        },
-        chipSmall: {
-          paddingVertical: 6,
-          paddingHorizontal: 12,
-          borderRadius: 16,
-          backgroundColor: theme.colors.inputBg,
-          marginRight: 8,
-        },
-        chipSmallActive: {
-          backgroundColor: theme.colors.primary,
-        },
-        chipSmallText: {
-          fontSize: 13,
-          color: theme.colors.text,
-        },
-        chipSmallTextActive: {
-          color: theme.colors.onPrimary,
-          fontWeight: '500',
-        },
-
-        card: {
-          backgroundColor: theme.colors.surface,
-          borderRadius: 14,
-          padding: 16,
-          marginBottom: 12,
-          ...(theme.shadows?.card?.[Platform.OS] || {}),
-        },
-        cardTitle: {
-          fontSize: 16,
-          fontWeight: '600',
-          marginBottom: 6,
-          color: theme.colors.text,
-        },
-        cardSubtitle: {
-          fontSize: 14,
-          color: mutedColor,
-          marginBottom: 2,
-        },
-
-        bottomRow: {
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginTop: 6,
-        },
-        dateRow: {
-          flexDirection: 'row',
-          alignItems: 'center',
-        },
-        cardDate: {
-          fontSize: 13,
-          color: mutedColor,
-        },
-        cardExecutor: { fontSize: 13, color: mutedColor },
-        emptyText: {
-          textAlign: 'center',
-          marginTop: 32,
-          fontSize: 16,
-          color: mutedColor,
-        },
-      }),
-    [theme, mutedColor],
-  );
+  const styles = useMemo(() => createStyles(theme), [theme]);
 
   const router = useRouter();
   const navigation = useNavigation();
@@ -323,18 +140,17 @@ export default function AllOrdersScreen() {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);
 
-  // Из вкладки «Все» аппаратная Назад ведёт на Главную
   const {
     filter,
     executor,
     department,
     search,
     work_type,
-    materials,
     relation_client_id,
     relation_object_ids,
     relation_label,
   } = useLocalSearchParams();
+
   const relationClientId = useMemo(
     () =>
       Array.isArray(relation_client_id)
@@ -365,44 +181,35 @@ export default function AllOrdersScreen() {
           ? 'new'
           : filter || 'all',
   );
-
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [executorFilter, setExecutorFilter] = useState(executor || null);
   const [_hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [sortVisible, setSortVisible] = useState(false);
+  const [sortKey, setSortKey] = useState('date_desc');
+  const [departmentFilter] = useState(department ? Number(department) : null);
+  const [orderFilters, setOrderFilters] = useState(() => ({
+    ...ORDER_FILTER_DEFAULTS,
+    workTypes: work_type
+      ? String(work_type)
+          .split(',')
+          .map((value) => String(value).trim())
+          .filter(Boolean)
+      : [],
+    executorId: executor ? String(executor) : null,
+  }));
+  const [searchQuery, setSearchQuery] = useState(String(search || '').trim());
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const detailNavLockRef = useRef({ id: '', ts: 0 });
   const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
 
-  useEffect(() => startFpsProbe('AllRequests', 3500), []);
+  const executorFilter = orderFilters.executorId;
+  const workTypeFilter = orderFilters.workTypes;
+  const setOrderFilterValue = useCallback((key, value) => {
+    setOrderFilters((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
-  const [departmentFilter, setDepartmentFilter] = useState(null);
-  const [departmentFilterInit] = useState(department ? Number(department) : null);
-  useEffect(() => {
-    if (departmentFilterInit != null && !Number.isNaN(departmentFilterInit))
-      setDepartmentFilter(Number(departmentFilterInit));
-  }, [departmentFilterInit]);
-  const [workTypeFilter, setWorkTypeFilter] = useState(
-    work_type
-      ? String(work_type)
-          .split(',')
-          .map((s) => Number(s))
-          .filter((n) => !Number.isNaN(n))
-      : [],
-  );
-  const [materialsFilter, _setMaterialsFilter] = useState(
-    materials
-      ? String(materials)
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : [],
-  );
-  const [searchQuery, setSearchQuery] = useState(String(search || '').trim());
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-
-  // Work types bootstrap
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   useEffect(() => {
@@ -411,16 +218,17 @@ export default function AllOrdersScreen() {
       try {
         const cid = await getMyCompanyId();
         if (!alive) return;
-        if (cid) {
-          const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
-          if (!alive) return;
-          setUseWorkTypesFlag(!!flag);
-          setWorkTypes(types || []);
-        } else {
+        if (!cid) {
           setUseWorkTypesFlag(false);
           setWorkTypes([]);
+          return;
         }
+        const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
+        if (!alive) return;
+        setUseWorkTypesFlag(!!flag);
+        setWorkTypes(types || []);
       } catch {
+        if (!alive) return;
         setUseWorkTypesFlag(false);
         setWorkTypes([]);
       }
@@ -429,32 +237,6 @@ export default function AllOrdersScreen() {
       alive = false;
     };
   }, []);
-
-  // ✅ FIX: missing states causing ReferenceError
-  const [filterModalVisible, setFilterModalVisible] = useState(false);
-  const [_filterOptions, setFilterOptions] = useState({ work_type: [], materials: [] });
-  const [tmpWorkType, setTmpWorkType] = useState(workTypeFilter || []);
-  const [_tmpMaterials, setTmpMaterials] = useState(materialsFilter || []);
-  const [tmpExecutor, setTmpExecutor] = useState(executorFilter || null);
-  const [executorSearch, setExecutorSearch] = useState('');
-
-  const closeFilterModal = useCallback(() => {
-    setFilterModalVisible(false);
-    applyAndroidSystemBars(theme).catch(() => {});
-  }, [theme]);
-
-  const filteredExecutors = useMemo(() => {
-    let list = executors || [];
-    // constrain by department when selected
-    if (departmentFilter != null) {
-      list = list.filter((e) => Number(e.department_id) === Number(departmentFilter));
-    }
-    const q = (executorSearch || '').trim().toLowerCase();
-    if (!q) return list;
-    return list.filter((e) =>
-      ([e.first_name, e.last_name].filter(Boolean).join(' ') || '').toLowerCase().includes(q),
-    );
-  }, [executors, executorSearch, departmentFilter]);
 
   const { data: companyId } = useMyCompanyIdQuery();
   const allRequestsParams = useMemo(() => {
@@ -477,28 +259,21 @@ export default function AllOrdersScreen() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useAllRequests(
-    allRequestsParams,
-    {
-      enabled: effectiveAllowed === true,
-    },
-  );
+  } = useAllRequests(allRequestsParams, { enabled: effectiveAllowed === true });
+
   const { data: executorsData } = useRequestExecutors({ enabled: effectiveAllowed === true });
   const executors = useMemo(() => executorsData ?? EMPTY_ARRAY, [executorsData]);
-  const { data: filterOptionsData } = useRequestFilterOptions({ enabled: effectiveAllowed === true });
 
   useRequestRealtimeSync({ enabled: effectiveAllowed === true, companyId });
 
-  // Ensure executor selection is consistent with selected department
   useEffect(() => {
     if (departmentFilter == null || !executorFilter) return;
-    const ex = executors.find((e) => e.id === executorFilter);
-    if (ex && Number(ex.department_id) !== Number(departmentFilter)) {
-      setExecutorFilter(null);
+    const selectedExecutor = executors.find((item) => String(item.id) === String(executorFilter));
+    if (selectedExecutor && Number(selectedExecutor.department_id) !== Number(departmentFilter)) {
+      setOrderFilterValue('executorId', null);
     }
-  }, [departmentFilter, executorFilter, executors]);
+  }, [departmentFilter, executorFilter, executors, setOrderFilterValue]);
 
-  // ✅ Serve cached data immediately when filters change (fix for stale list after toggling chips)
   const lastItemsSignatureRef = useRef('');
   useEffect(() => {
     const signature = Array.isArray(requestItems)
@@ -513,85 +288,180 @@ export default function AllOrdersScreen() {
     setLoadingMore(isFetchingNextPage);
   }, [hasNextPage, isFetchingNextPage, requestItems, requestsLoading]);
 
-  useEffect(() => {
-    if (filterOptionsData) {
-      setFilterOptions(filterOptionsData);
-    }
-  }, [filterOptionsData]);
-
   const firstContentMarkedRef = useRef(false);
   useEffect(() => {
-    if (firstContentMarkedRef.current) return;
-    if (requestsLoading) return;
+    if (firstContentMarkedRef.current || requestsLoading) return;
     firstContentMarkedRef.current = true;
     markFirstContent('AllRequests');
   }, [requestsLoading]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await Promise.allSettled([
-        queryClient.invalidateQueries({ queryKey: ['requests'] }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.executors(companyId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.filterOptions() }),
-      ]);
-      await refetchRequests();
-    } finally {
-      setRefreshing(false);
-    }
+  const refreshAll = useCallback(async () => {
+    await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: ['requests'] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests.executors(companyId) }),
+      queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
+    ]);
+    await refetchRequests();
   }, [companyId, queryClient, refetchRequests]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshAll);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
-  const getStatusLabel = (key) => {
-    switch (key) {
-      case 'feed':
-        return 'Лента';
-      case 'all':
-        return 'Все';
-      case 'new':
-        return 'Новые';
-      case 'in_progress':
-        return 'В работе';
-      case 'done':
-        return 'Завершённые';
-      default:
-        return '';
+  const getStatusLabel = useCallback(
+    (key) => {
+      switch (key) {
+        case 'feed':
+          return t('orders_feed_tab', 'Лента');
+        case 'all':
+          return t('common_all', 'Все');
+        case 'new':
+          return t('order_status_new');
+        case 'in_progress':
+          return t('order_status_in_progress');
+        case 'done':
+          return t('order_status_completed');
+        default:
+          return '';
+      }
+    },
+    [t],
+  );
+
+  const executorOptions = useMemo(() => {
+    let list = executors;
+    if (departmentFilter != null) {
+      list = list.filter((item) => Number(item.department_id) === Number(departmentFilter));
     }
-  };
+    return list
+      .map((item) => {
+        const id = String(item?.id || '').trim();
+        if (!id) return null;
+        const label =
+          String(item?.full_name || '').trim() ||
+          [item?.first_name, item?.last_name].filter(Boolean).join(' ').trim() ||
+          item?.email ||
+          id;
+        return {
+          id,
+          value: id,
+          label,
+          meta: item?.role ? t(`role_${item.role}`, item.role) : '',
+        };
+      })
+      .filter(Boolean);
+  }, [departmentFilter, executors, t]);
 
-  const _normalizeStatus = (raw) => {
-    if (raw === 'completed') return 'done';
-    if (raw === 'in_progress') return 'in_progress';
-    if (raw === 'new') return 'new';
-    return 'all';
-  };
-  // Поиск: используем phone_visible вместо phone
+  const filterSummaryData = useMemo(() => {
+    const fullParts = [];
+    const compactParts = [];
+
+    if (useWorkTypes && workTypeFilter.length) {
+      const workTypeNames = workTypeFilter
+        .map((id) => workTypes.find((item) => String(item.id) === String(id))?.name)
+        .filter(Boolean);
+      if (workTypeNames.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('order_field_work_type'),
+            values: workTypeNames,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('order_field_work_type'),
+            values: workTypeNames,
+            countWhenMany: true,
+          }),
+        );
+      }
+    }
+
+    if (executorFilter) {
+      const executorLabel = executorOptions.find((item) => item.id === executorFilter)?.label;
+      if (executorLabel) {
+        fullParts.push(`${t('orders_filter_executor', 'Исполнитель')}: ${executorLabel}`);
+        compactParts.push(`${t('orders_filter_executor', 'Исполнитель')}: ${executorLabel}`);
+      }
+    }
+
+    return {
+      full: joinFilterSummary(fullParts, t('common_bullet')),
+      compact: joinFilterSummary(compactParts, t('common_bullet')),
+    };
+  }, [executorFilter, executorOptions, t, useWorkTypes, workTypeFilter, workTypes]);
+
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
-    return (orders || []).filter((o) => {
+    return (orders || []).filter((order) => {
       if (!q) return true;
-      const haystack = [
-        o.title,
-        o.fio,
-        o.customer_phone_visible,
-        o.region,
-        o.city,
-        o.street,
-        o.house,
-      ]
-        .filter(Boolean)
-        .map(String)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(q);
+      return matchesSearch(
+        buildSearchIndex({
+          texts: [
+            order?.title,
+            order?.fio,
+            order?.region,
+            order?.city,
+            order?.street,
+            order?.house,
+            order?.status,
+            order?.description,
+            order?.comment,
+            order?.object_name,
+            order?.object_summary,
+          ],
+          phones: [
+            order?.customer_phone_visible,
+            order?.customer_phone,
+            order?.phone,
+            order?.secondary_phone,
+          ],
+        }),
+        q,
+      );
     });
-  }, [orders, deferredSearchQuery]);
-  // Ленивая загрузка при скролле (как в Instagram/Telegram)
+  }, [deferredSearchQuery, orders]);
+
+  const sortOptions = useMemo(
+    () => [
+      { id: 'date_desc', label: t('orders_sort_date_desc', 'Сначала новые') },
+      { id: 'date_asc', label: t('orders_sort_date_asc', 'Сначала старые') },
+      { id: 'amount_desc', label: t('orders_sort_amount_desc', 'Сумма: по убыванию') },
+      { id: 'amount_asc', label: t('orders_sort_amount_asc', 'Сумма: по возрастанию') },
+    ],
+    [t],
+  );
+
+  const sortedFilteredOrders = useMemo(() => {
+    const parseOrderDate = (item) => {
+      const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
+      return Number.isFinite(ts) ? ts : 0;
+    };
+    const parseAmount = (item) => {
+      const value = Number(item?.price ?? item?.sum ?? 0);
+      return Number.isFinite(value) ? value : 0;
+    };
+    const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case 'date_asc':
+          return parseOrderDate(a) - parseOrderDate(b);
+        case 'amount_desc':
+          return parseAmount(b) - parseAmount(a);
+        case 'amount_asc':
+          return parseAmount(a) - parseAmount(b);
+        case 'date_desc':
+        default:
+          return parseOrderDate(b) - parseOrderDate(a);
+      }
+    });
+    return arr;
+  }, [filteredOrders, sortKey]);
+
   const loadMore = useCallback(async () => {
     if (isFetchingNextPage || !hasNextPage || loading) return;
     await fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, loading]);
 
-  // Рендер элемента списка
   const returnParamsRef = useRef({
     filter: statusFilter,
     executor: executorFilter,
@@ -612,6 +482,7 @@ export default function AllOrdersScreen() {
       ...(relationLabel ? { relation_label: relationLabel } : {}),
     };
   }, [departmentFilter, executorFilter, relationClientId, relationLabel, relationObjectIds, searchQuery, statusFilter]);
+
   const openOrderDetails = useCallback(
     (orderIdRaw) => {
       const orderId = String(orderIdRaw || '').trim();
@@ -634,18 +505,14 @@ export default function AllOrdersScreen() {
     },
     [queryClient, router],
   );
+
   const renderItem = useCallback(
     ({ item: order }) => (
-      <DynamicOrderCard
-        order={order}
-        context="all_orders"
-        onPress={openOrderDetails}
-      />
+      <DynamicOrderCard order={order} context="all_orders" onPress={openOrderDetails} />
     ),
     [openOrderDetails],
   );
 
-  // Футер со спиннером при загрузке
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
     return (
@@ -666,19 +533,14 @@ export default function AllOrdersScreen() {
       if (!ids.length) return;
       const key = ids.join('|');
       const now = Date.now();
-      if (
-        viewabilityPrefetchRef.current.key === key &&
-        now - viewabilityPrefetchRef.current.ts < 2500
-      ) {
+      if (viewabilityPrefetchRef.current.key === key && now - viewabilityPrefetchRef.current.ts < 2500) {
         return;
       }
       viewabilityPrefetchRef.current = { key, ts: now };
       const registry = getPrefetchRegistry();
       ids.forEach((id) => {
-          registry
-            .run(`request-detail:${id}`, () => ensureRequestPrefetch(queryClient, id))
-            .catch(() => {});
-        });
+        registry.run(`request-detail:${id}`, () => ensureRequestPrefetch(queryClient, id)).catch(() => {});
+      });
     },
     [queryClient],
   );
@@ -688,24 +550,15 @@ export default function AllOrdersScreen() {
       () => () => {
         queryClient.cancelQueries({ queryKey: ['requests', 'all'] });
         queryClient.cancelQueries({ queryKey: ['requests', 'executors'] });
-        queryClient.cancelQueries({ queryKey: queryKeys.requests.filterOptions() });
         queryClient.cancelQueries({ queryKey: ['requests', 'detail'] });
       },
       [queryClient],
     ),
   );
 
-  // Заголовок списка с фильтрами
   const listHeader = useMemo(
     () => (
-      <View style={{ padding: 16 }}>
-        {hasLinkedRelationFilter ? (
-          <Text style={[styles.cardSubtitle, { marginBottom: 10 }]}>
-            {relationLabel
-              ? `${t('orders_related_filter')}: ${relationLabel}`
-              : t('orders_related_filter_hint')}
-          </Text>
-        ) : null}
+      <View style={styles.listHeader}>
         <Text style={styles.header}>Все заявки</Text>
 
         <View style={styles.filterContainer}>
@@ -726,34 +579,104 @@ export default function AllOrdersScreen() {
           ))}
         </View>
 
-        <TextField
-          placeholder="Поиск по названию, городу, телефону..."
+        <SearchFiltersBar
           value={searchQuery}
           onChangeText={setSearchQuery}
-          style={{ marginBottom: 12 }}
-        />
-
-        <Button
-          variant="secondary"
-          onPress={() => {
-            setTmpWorkType(workTypeFilter || []);
-            setTmpMaterials([]);
-            setTmpExecutor(executorFilter || null);
-            setFilterModalVisible(true);
-          }}
-          style={{ marginBottom: 16 }}
-          title={
-            useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length
-              ? `${t('order_section_work_type')}: ${workTypeFilter.length}`
-              : executorFilter
-                ? 'Сотрудник выбран'
-                : 'Фильтры'
+          onClear={() => setSearchQuery('')}
+          placeholder={t('common_search')}
+          onOpenFilters={() => setFiltersVisible(true)}
+          onOpenSort={() => setSortVisible(true)}
+          style={{ marginHorizontal: -16 }}
+          filterSummary={
+            hasLinkedRelationFilter
+              ? [
+                  relationLabel
+                    ? `${t('orders_related_filter')}: ${relationLabel}`
+                    : t('orders_related_filter_hint'),
+                  filterSummaryData.full,
+                ]
+                  .filter(Boolean)
+                  .join(` ${t('common_bullet')} `)
+              : filterSummaryData.full
           }
+          filterSummaryCompact={
+            hasLinkedRelationFilter
+              ? [
+                  relationLabel
+                    ? `${t('orders_related_filter')}: ${relationLabel}`
+                    : t('orders_related_filter_hint'),
+                  filterSummaryData.compact,
+                ]
+                  .filter(Boolean)
+                  .join(` ${t('common_bullet')} `)
+              : filterSummaryData.compact
+          }
+          onResetFilters={() => {
+            setOrderFilters({ ...ORDER_FILTER_DEFAULTS });
+            router.setParams({ executor: undefined, work_type: undefined });
+          }}
+          metaText={`${t('common_total')}: ${sortedFilteredOrders.length}`}
         />
       </View>
     ),
-    [executorFilter, hasLinkedRelationFilter, relationLabel, router, searchQuery, statusFilter, styles, t, useWorkTypes, workTypeFilter],
+    [
+      filterSummaryData.compact,
+      filterSummaryData.full,
+      getStatusLabel,
+      hasLinkedRelationFilter,
+      relationLabel,
+      router,
+      searchQuery,
+      statusFilter,
+      sortedFilteredOrders.length,
+      styles.chip,
+      styles.chipActive,
+      styles.chipText,
+      styles.chipTextActive,
+      styles.filterContainer,
+      styles.header,
+      styles.listHeader,
+      t,
+    ],
   );
+
+  if (loading || effectiveAllowed === null) {
+    return (
+      <Screen scroll={false} headerOptions={{ headerShown: false }}>
+        <AppHeader
+          back
+          onBackPress={handleBackPress}
+          options={{
+            headerTitleAlign: 'left',
+            title: t('routes.orders/all-orders'),
+          }}
+        />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (!effectiveAllowed) {
+    return (
+      <Screen scroll={false} headerOptions={{ headerShown: false }}>
+        <AppHeader
+          back
+          onBackPress={handleBackPress}
+          options={{
+            headerTitleAlign: 'left',
+            title: t('routes.orders/all-orders'),
+          }}
+        />
+        <View style={styles.centered}>
+          <Text style={styles.blockedText}>
+            Админ вашей компании отключил доступ ко всем заявкам
+          </Text>
+        </View>
+      </Screen>
+    );
+  }
 
   return (
     <Screen scroll={false} headerOptions={{ headerShown: false }}>
@@ -765,209 +688,148 @@ export default function AllOrdersScreen() {
           title: t('routes.orders/all-orders'),
         }}
       />
-      {loading || effectiveAllowed === null ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
-      ) : !effectiveAllowed ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text
-            style={{
-              fontSize: 16,
-              color: theme.colors.textSecondary,
-              textAlign: 'center',
-              paddingHorizontal: 24,
-            }}
-          >
-            Админ вашей компании отключил доступ ко всем заявкам
-          </Text>
-        </View>
-      ) : (
-        <>
-          <FlatList
-            data={filteredOrders}
-            renderItem={renderItem}
-            keyExtractor={keyExtractor}
-            initialNumToRender={8}
-            maxToRenderPerBatch={6}
-            updateCellsBatchingPeriod={34}
-            windowSize={9}
-            removeClippedSubviews={Platform.OS === 'android'}
-            onViewableItemsChanged={onViewableItemsChanged}
-            viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
-            ListHeaderComponent={listHeader}
-            ListFooterComponent={renderFooter}
-            ListEmptyComponent={
-              loading ? (
-                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                  <ActivityIndicator size="large" color={theme.colors.primary} />
-                </View>
-              ) : (
-                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                  <Text style={styles.emptyText}>Заявок не найдено</Text>
-                </View>
-              )
-            }
-            contentContainerStyle={[styles.container, filteredOrders.length === 0 && { flex: 1 }]}
-            style={{ flex: 1, backgroundColor: theme.colors.background }}
-            showsVerticalScrollIndicator={false}
-            onEndReached={loadMore}
-            onEndReachedThreshold={0.5}
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                tintColor={theme.colors.primary}
-                colors={Platform.OS === 'android' ? [theme.colors.primary] : undefined}
-              />
-            }
-          />
 
-          {filterModalVisible ? (
-            <AnimatedFullscreenModal
-              visible={filterModalVisible}
-              animation="slide"
-              navigationBarTranslucent={true}
-              hardwareAccelerated={true}
-              onRequestClose={closeFilterModal}
-              onDismiss={closeFilterModal}
-            >
-              <View style={styles.modalOverlay}>
-                <View style={styles.modalContent}>
-                  <ScrollView
-                    keyboardShouldPersistTaps="handled"
-                    nestedScrollEnabled={true}
-                    contentContainerStyle={{ paddingBottom: 12 }}
-                  >
-                  {/* Work types block is shown only if feature enabled */}
-                  {useWorkTypes && (
-                    <View>
-                      <Text
-                        style={{
-                          fontSize: 16,
-                          fontWeight: '600',
-                          marginBottom: 8,
-                          color: theme.colors.text,
-                        }}
-                      >
-                        {t('work_types_settings_title')}
-                      </Text>
-                      {Array.isArray(workTypes) && workTypes.length
-                        ? workTypes.map((t) => {
-                            const active = (tmpWorkType || []).includes(t.id);
-                            return (
-                              <Pressable
-                                key={String(t.id)}
-                                style={styles.executorOption}
-                                onPress={() => {
-                                  setTmpWorkType((prev) => {
-                                    const set = new Set(prev || []);
-                                    if (set.has(t.id)) set.delete(t.id);
-                                    else set.add(t.id);
-                                    return Array.from(set);
-                                  });
-                                }}
-                              >
-                                <View style={styles.executorRow}>
-                                  <Text style={styles.executorText}>{t.name}</Text>
-                                  {active && <Text style={styles.checkmark}>✓</Text>}
-                                </View>
-                              </Pressable>
-                            );
-                          })
-                        : null}
-
-                      <Button
-                        style={{ marginTop: 12 }}
-                        variant="secondary"
-                        onPress={() => setTmpWorkType([])}
-                        title={t('orders_filters_reset_work_types')}
-                      />
-
-                      <View style={{ height: 12 }} />
-                    </View>
-                  )}
-
-                  <Text
-                    style={{
-                      fontSize: 16,
-                      fontWeight: '600',
-                      marginBottom: 8,
-                      color: theme.colors.text,
-                    }}
-                  >
-                    Сотрудник
-                  </Text>
-                  <TextField
-                    placeholder="Поиск сотрудника..."
-                    value={executorSearch}
-                    onChangeText={setExecutorSearch}
-                    style={{ marginBottom: 8 }}
-                  />
-                  {filteredExecutors.length ? (
-                    filteredExecutors.map((ex) => {
-                      const name =
-                        [ex.first_name, ex.last_name].filter(Boolean).join(' ').trim() ||
-                        'Без имени';
-                      const active = tmpExecutor === ex.id;
-                      return (
-                        <Pressable
-                          key={String(ex.id)}
-                          style={styles.executorOption}
-                          onPress={() => setTmpExecutor(active ? null : ex.id)}
-                        >
-                          <View style={styles.executorRow}>
-                            <Text style={styles.executorText}>{name}</Text>
-                            {active && <Text style={styles.checkmark}>✓</Text>}
-                          </View>
-                        </Pressable>
-                      );
-                    })
-                  ) : (
-                    <Text
-                      style={[
-                        styles.executorText,
-                        { opacity: 0.6, textAlign: 'center', paddingVertical: 8 },
-                      ]}
-                    >
-                      Сотрудники не найдены
-                    </Text>
-                  )}
-
-                  <Button
-                    style={{ marginTop: 12 }}
-                    variant="secondary"
-                    onPress={() => {
-                      setTmpExecutor(null);
-                    }}
-                    title="Сбросить сотрудника"
-                  />
-
-                  <Button
-                    style={{ marginTop: 10 }}
-                    onPress={() => {
-                      setWorkTypeFilter(Array.isArray(tmpWorkType) ? tmpWorkType : []);
-                      setExecutorFilter(tmpExecutor || null);
-                      closeFilterModal();
-                      // Only pass work_type param when feature enabled
-                      router.setParams({
-                        ...(useWorkTypes && Array.isArray(tmpWorkType) && tmpWorkType.length
-                          ? { work_type: tmpWorkType.join(',') }
-                          : {}),
-                        executor: tmpExecutor || undefined,
-                      });
-                    }}
-                    title="Применить"
-                  />
-                  </ScrollView>
-                </View>
+      <View style={{ flex: 1 }}>
+        {refreshIndicator}
+        <FlatList
+          data={sortedFilteredOrders}
+          renderItem={renderItem}
+          keyExtractor={keyExtractor}
+          initialNumToRender={8}
+          maxToRenderPerBatch={6}
+          updateCellsBatchingPeriod={34}
+          windowSize={9}
+          removeClippedSubviews={Platform.OS === 'android'}
+          onViewableItemsChanged={onViewableItemsChanged}
+          viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={renderFooter}
+          ListEmptyComponent={
+            loading ? (
+              <View style={styles.emptyWrap}>
+                <ActivityIndicator size="large" color={theme.colors.primary} />
               </View>
-            </AnimatedFullscreenModal>
-          ) : null}
-        </>
-      )}
+            ) : (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>Заявок не найдено</Text>
+              </View>
+            )
+          }
+          contentContainerStyle={[styles.container, sortedFilteredOrders.length === 0 && { flex: 1 }]}
+          style={{ flex: 1, backgroundColor: theme.colors.background }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.5}
+          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        />
+      </View>
+
+      <FiltersPanel
+        visible={filtersVisible}
+        onClose={() => setFiltersVisible(false)}
+        mode="orders"
+        showSearchCategory={false}
+        inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors'] }}
+        ordersFilters={{
+          statuses: [],
+          workTypes: useWorkTypes ? workTypes : [],
+          executors: executorOptions,
+          showDate: false,
+          showTime: false,
+          showAmount: false,
+        }}
+        values={orderFilters}
+        setValue={setOrderFilterValue}
+        defaults={ORDER_FILTER_DEFAULTS}
+        onReset={() => {
+          setOrderFilters({ ...ORDER_FILTER_DEFAULTS });
+          router.setParams({ executor: undefined, work_type: undefined });
+        }}
+        onApply={(nextValues) => {
+          setOrderFilters(nextValues);
+          router.setParams({
+            executor: nextValues?.executorId || undefined,
+            work_type:
+              useWorkTypes && Array.isArray(nextValues?.workTypes) && nextValues.workTypes.length
+                ? nextValues.workTypes.join(',')
+                : undefined,
+          });
+        }}
+      />
+      <SortSelectModal
+        visible={sortVisible}
+        onClose={() => setSortVisible(false)}
+        options={sortOptions}
+        value={sortKey}
+        onChange={(nextSort) => {
+          if (nextSort) setSortKey(nextSort);
+        }}
+      />
     </Screen>
   );
 }
 
-
+function createStyles(theme) {
+  const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
+  return StyleSheet.create({
+    centered: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+    },
+    blockedText: {
+      fontSize: 16,
+      color: theme.colors.textSecondary,
+      textAlign: 'center',
+    },
+    container: {
+      padding: 16,
+      paddingBottom: 40,
+      backgroundColor: theme.colors.background,
+    },
+    listHeader: {
+      paddingBottom: 16,
+    },
+    header: {
+      fontSize: 22,
+      fontWeight: '700',
+      marginBottom: 16,
+      color: theme.colors.text,
+    },
+    filterContainer: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 8,
+      flexWrap: 'wrap',
+    },
+    chip: {
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      backgroundColor: theme.colors.inputBg,
+      borderRadius: 20,
+    },
+    chipActive: {
+      backgroundColor: theme.colors.primary,
+    },
+    chipText: {
+      fontSize: 14,
+      color: theme.colors.text,
+    },
+    chipTextActive: {
+      color: theme.colors.onPrimary,
+      fontWeight: '600',
+    },
+    emptyWrap: {
+      paddingVertical: 40,
+      alignItems: 'center',
+    },
+    emptyText: {
+      textAlign: 'center',
+      marginTop: 32,
+      fontSize: 16,
+      color: mutedColor,
+    },
+  });
+}

@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
-import { Dimensions, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
@@ -15,6 +15,11 @@ import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import Button from '../../components/ui/Button';
+import {
+  ThemedRefreshControl,
+  useManagedRefresh,
+  usePullToRefreshFeedback,
+} from '../../components/ui/PullToRefreshFeedback';
 import SectionHeader from '../../components/ui/SectionHeader';
 import BaseModal from '../../components/ui/modals/BaseModal';
 import SelectModal from '../../components/ui/modals/SelectModal';
@@ -484,21 +489,17 @@ export default function BillingScreen() {
 
   useScreenRefreshRegistration('billing.screen', () => refreshAll(), !!companyId);
 
-  const [refreshing, setRefreshing] = React.useState(false);
-  const onRefresh = React.useCallback(async () => {
+  const refreshWithMinDelay = React.useCallback(async () => {
     const startedAt = Date.now();
-    setRefreshing(true);
-    try {
-      await refreshAll();
-    } finally {
-      const elapsed = Date.now() - startedAt;
-      const minSpinnerMs = 450;
-      if (elapsed < minSpinnerMs) {
-        await new Promise((resolve) => setTimeout(resolve, minSpinnerMs - elapsed));
-      }
-      setRefreshing(false);
+    await refreshAll();
+    const elapsed = Date.now() - startedAt;
+    const minSpinnerMs = 450;
+    if (elapsed < minSpinnerMs) {
+      await new Promise((resolve) => setTimeout(resolve, minSpinnerMs - elapsed));
     }
   }, [refreshAll]);
+  const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refreshWithMinDelay);
+  const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
   const filteredManageMembers = React.useMemo(() => {
     const q = txt(manageSearch);
@@ -876,11 +877,13 @@ export default function BillingScreen() {
       background="background"
       headerOptions={{ headerShown: !manageFilters.visible }}
     >
-      <ScrollView
-        contentContainerStyle={styles(theme).content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
-      >
-        {isLoading && !entitlements ? (
+      <View style={{ flex: 1 }}>
+        {refreshIndicator}
+        <ScrollView
+          contentContainerStyle={styles(theme).content}
+          refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {isLoading && !entitlements ? (
           <Card>
             <Text style={styles(theme).title}>{t('billing_loading_title')}</Text>
             <Text style={styles(theme).muted}>{t('billing_loading_subtitle')}</Text>
@@ -1047,7 +1050,8 @@ export default function BillingScreen() {
             )}
           </>
         ) : null}
-      </ScrollView>
+        </ScrollView>
+      </View>
 
       <BaseModal
         visible={manageVisible}
