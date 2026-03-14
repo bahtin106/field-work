@@ -395,7 +395,8 @@ const BaseModalImpl = (
           aWrap,
           {
             paddingHorizontal: modalTokens.edgePadding ?? theme.spacing.md,
-            paddingTop: topSafeInset + minTopGap,
+            top: topSafeInset + minTopGap,
+            overflow: 'hidden',
           },
         ]}
         pointerEvents="box-none"
