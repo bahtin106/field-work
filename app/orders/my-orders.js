@@ -601,6 +601,12 @@ export default function MyOrdersScreen() {
         query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
       } else if (key === 'feed') {
         query = query.is('assigned_to', null);
+        const feedStatusAliases = getStatusDbAliases('feed');
+        if (feedStatusAliases.length === 1) {
+          query = query.eq('status', feedStatusAliases[0]);
+        } else if (feedStatusAliases.length > 1) {
+          query = query.in('status', feedStatusAliases);
+        }
       } else {
         query = query.eq('assigned_to', uid);
         if (key !== 'all') {
@@ -743,6 +749,12 @@ export default function MyOrdersScreen() {
       query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
     } else if (key === 'feed') {
       query = query.is('assigned_to', null);
+      const feedStatusAliases = getStatusDbAliases('feed');
+      if (feedStatusAliases.length === 1) {
+        query = query.eq('status', feedStatusAliases[0]);
+      } else if (feedStatusAliases.length > 1) {
+        query = query.in('status', feedStatusAliases);
+      }
     } else if (key === 'all') {
       query = query.eq('assigned_to', uid);
     } else {
@@ -1111,6 +1123,12 @@ export default function MyOrdersScreen() {
       query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
     } else if (key === 'feed') {
       query = query.is('assigned_to', null);
+      const feedStatusAliases = getStatusDbAliases('feed');
+      if (feedStatusAliases.length === 1) {
+        query = query.eq('status', feedStatusAliases[0]);
+      } else if (feedStatusAliases.length > 1) {
+        query = query.in('status', feedStatusAliases);
+      }
     } else if (key === 'all') {
       query = query.eq('assigned_to', uid);
     } else {

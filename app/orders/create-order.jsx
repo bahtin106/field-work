@@ -117,6 +117,22 @@ const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
 
 const SCROLL_ANIMATION_DELAY = 200;
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
+
+function hasMojibake(text) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (value.includes('�') || value.includes('вЂ')) return true;
+  const suspiciousChunks = value.match(/(?:Р[А-Яа-яЁё]|С[А-Яа-яЁё]|Ð|Ñ|Ã)/g) || [];
+  const compactLength = value.replace(/\s+/g, '').length;
+  return suspiciousChunks.length >= 4 && suspiciousChunks.length >= Math.floor(compactLength * 0.28);
+}
+
+function sanitizeVisibleText(value, fallback = '') {
+  const text = String(value || '').trim();
+  if (!text) return String(fallback || '').trim();
+  return hasMojibake(text) ? String(fallback || '').trim() : text;
+}
+
 export default function CreateOrderScreen() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
@@ -481,8 +497,6 @@ export default function CreateOrderScreen() {
   const getFieldLabel = useCallback(
     (fieldKey, fallback) => {
       const field = getField(fieldKey);
-      if (field?.label) return field.label;
-
       const labelMap = {
         title: t('order_field_title'),
         fio: t('order_field_customer_name'),
@@ -503,8 +517,11 @@ export default function CreateOrderScreen() {
         time_window_start: t('create_order_label_date'),
         assigned_to: t('create_order_label_executor'),
       };
+      const fallbackLabel = labelMap[fieldKey] || fallback || fieldKey;
+      const fieldLabel = sanitizeVisibleText(field?.label, '');
+      if (fieldLabel) return fieldLabel;
 
-      return labelMap[fieldKey] || fallback || fieldKey;
+      return fallbackLabel;
     },
     [getField, t],
   );
@@ -523,41 +540,41 @@ export default function CreateOrderScreen() {
         if (k === 'phone') {
           const normalized = normalizePhone(form.phone);
           if (!normalized) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (k === 'time_window_start') {
           if (!departureDate) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (k === 'assigned_to') {
           if (!toFeed && !assigneeId) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (k === 'client_id') {
           if (!selectedClientId) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (k === 'object_id') {
           if (!selectedClientObjectId && !draftClientObject) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (k === 'work_type_id') {
           if (useWorkTypes && !workTypeId) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (k === 'comment') {
           if (!String(description || '').trim()) {
-            missing.push(f.label || getFieldLabel(k));
+            missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
         } else if (v === null || v === undefined || String(v).trim() === '') {
-          missing.push(f.label || getFieldLabel(k));
+          missing.push(getFieldLabel(k));
           missingKeys.push(k);
         }
       }
@@ -1756,7 +1773,7 @@ export default function CreateOrderScreen() {
     if (!isDepartureRange) return startLabel;
     const endLabel = formatDate(departureEndDate);
     if (!endLabel) return startLabel;
-    return `${startLabel} ? ${endLabel}`;
+    return `${startLabel} — ${endLabel}`;
   }, [departureDate, departureEndDate, isDepartureRange, formatDate]);
 
   const workTypeItems = useMemo(() => {
@@ -1769,7 +1786,10 @@ export default function CreateOrderScreen() {
         },
       ];
     }
-    return workTypes.map((wt) => ({ id: wt.id, label: wt.name }));
+    return workTypes.map((wt) => ({
+      id: wt.id,
+      label: sanitizeVisibleText(wt?.name, t('common_noName')),
+    }));
   }, [workTypes, t]);
 
   const assigneeItems = useMemo(() => {
@@ -1805,7 +1825,7 @@ export default function CreateOrderScreen() {
     }
     return clients.map((client) => ({
       id: client.id,
-      label: client.fullName || t('common_noName'),
+      label: sanitizeVisibleText(client.fullName, t('common_noName')),
       subtitle: collectClientPhoneSearchValues(client).find(Boolean) || undefined,
       clientRaw: client,
       searchIndex: buildSearchIndex({
@@ -1987,7 +2007,7 @@ export default function CreateOrderScreen() {
     if (draftClientObject) {
       items.push({
         id: 'draft-object',
-        label: String(draftClientObject.name || '').trim() || t('objects_new'),
+        label: sanitizeVisibleText(String(draftClientObject.name || '').trim(), t('objects_new')),
         subtitle: buildClientObjectShortAddress(draftClientObject) || undefined,
         onPress: () => {
           setClientObjectModalVisible(false);
@@ -2005,8 +2025,8 @@ export default function CreateOrderScreen() {
       ...clientObjects.map((objectItem) => ({
         id: objectItem.id,
         label: objectItem.is_primary
-          ? [objectItem.name, t('objects_primary')].filter(Boolean).join(' - ')
-          : objectItem.name,
+          ? sanitizeVisibleText([objectItem.name, t('objects_primary')].filter(Boolean).join(' - '), t('objects_new'))
+          : sanitizeVisibleText(objectItem.name, t('objects_new')),
         subtitle: buildClientObjectShortAddress(objectItem) || undefined,
         objectRaw: objectItem,
         onPress: () => {
@@ -2294,6 +2314,7 @@ export default function CreateOrderScreen() {
       <SelectModal
         visible={clientModalVisible}
         title={t('routes_clients_client')}
+        maxHeightRatio={0.68}
         items={clientItems}
         searchable
         searchLabel={null}

@@ -253,6 +253,9 @@ export async function listRequests(params = {}) {
 
     if (status === 'feed') {
       query = query.is('assigned_to', null);
+      const feedStatusValues = getStatusDbAliases('feed');
+      if (feedStatusValues.length === 1) query = query.eq('status', feedStatusValues[0]);
+      if (feedStatusValues.length > 1) query = query.in('status', feedStatusValues);
     } else {
       const statusValues = getStatusDbAliases(status);
       if (statusValues.length === 1) query = query.eq('status', statusValues[0]);
@@ -299,6 +302,9 @@ export async function listRequests(params = {}) {
 
       if (status === 'feed') {
         fallbackQuery = fallbackQuery.is('assigned_to', null);
+        const feedStatusValues = getStatusDbAliases('feed');
+        if (feedStatusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', feedStatusValues[0]);
+        if (feedStatusValues.length > 1) fallbackQuery = fallbackQuery.in('status', feedStatusValues);
       } else {
         const statusValues = getStatusDbAliases(status);
         if (statusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', statusValues[0]);

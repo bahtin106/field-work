@@ -1213,6 +1213,41 @@ async function findExistingClient(admin: AdminClient, companyId: string, phone: 
   ) || null;
 }
 
+async function findExistingClientByIdentity(
+  admin: AdminClient,
+  companyId: string,
+  values: Record<string, string>,
+) {
+  const phone = trimToNull(values.phone);
+  if (phone) {
+    const byPhone = await findExistingClient(admin, companyId, phone);
+    if (byPhone) return byPhone;
+  }
+
+  const name = splitCustomerName(values.customer_name);
+  const firstName = trimToNull(name.first_name);
+  const lastName = trimToNull(name.last_name);
+  const middleName = trimToNull(name.middle_name);
+  const email = trimToNull(values.email);
+
+  const hasIdentity = Boolean(firstName || lastName || middleName || email);
+  if (!hasIdentity) return null;
+
+  let query = admin
+    .from('clients')
+    .select('id, phone, first_name, last_name, middle_name, email, created_at')
+    .eq('company_id', companyId);
+
+  if (firstName) query = query.eq('first_name', firstName);
+  if (lastName) query = query.eq('last_name', lastName);
+  if (middleName) query = query.eq('middle_name', middleName);
+  if (email) query = query.eq('email', email);
+
+  const { data, error } = await query.order('created_at', { ascending: false }).limit(1);
+  if (error) throw error;
+  return Array.isArray(data) && data.length ? data[0] : null;
+}
+
 async function enrichExistingClientIfNeeded(
   admin: AdminClient,
   clientId: string,
@@ -1265,7 +1300,7 @@ async function enrichExistingClientIfNeeded(
 }
 
 async function createClientIfNeeded(admin: AdminClient, integration: IntegrationRow, values: Record<string, string>) {
-  const existing = await findExistingClient(admin, integration.company_id, values.phone);
+  const existing = await findExistingClientByIdentity(admin, integration.company_id, values);
   if (existing) {
     const clientId = String(existing.id);
     await enrichExistingClientIfNeeded(admin, clientId, values);
@@ -1290,7 +1325,7 @@ async function createClientIfNeeded(admin: AdminClient, integration: Integration
     .single();
   if (error) {
     if (!isUniqueViolation(error)) throw error;
-    const conflictClient = await findExistingClient(admin, integration.company_id, values.phone);
+    const conflictClient = await findExistingClientByIdentity(admin, integration.company_id, values);
     if (!conflictClient?.id) throw error;
     const clientId = String(conflictClient.id);
     await enrichExistingClientIfNeeded(admin, clientId, values);
