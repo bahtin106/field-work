@@ -2237,7 +2237,7 @@ export default function CreateOrderScreen() {
 
           <View style={styles.buttonContainer}>
             {!subscriptionGuard.canEdit ? (
-              <Text style={styles.permissionText}>{t('subscription_read_only_notice', '� � � µ� ¶� ё� ј С‡С‚� µ� Ѕ� ёСЏ: � ё� ·� ј� µ� Ѕ� µ� Ѕ� ё� µ � Ѕ� µ� ґ� ѕСЃС‚Сѓ� ї� Ѕ� ѕ � ґ� ѕ � їСЂ� ѕ� ґ� »� µ� Ѕ� ёСЏ � ї� ѕ� ґ� ї� ёСЃ� є� ё')}</Text>
+              <Text style={styles.permissionText}>{t('subscription_read_only_notice')}</Text>
             ) : null}
             <Button
               title={t('create_order_btn_create')}

@@ -34,11 +34,11 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // ------- Periods -------
 const PERIODS = [
-  { key: '7d', label: '7Рґ', days: 7 },
-  { key: '30d', label: '30Рґ', days: 30 },
-  { key: '90d', label: '90Рґ', days: 90 },
-  { key: 'ytd', label: 'Р“РѕРґ', days: null },
-  { key: 'all', label: 'Р’СЃРµ', days: null },
+  { key: '7d', label: '7д', days: 7 },
+  { key: '30d', label: '30д', days: 30 },
+  { key: '90d', label: '90д', days: 90 },
+  { key: 'ytd', label: 'Год', days: null },
+  { key: 'all', label: 'Все', days: null },
 ];
 
 // ------- Date helpers -------
@@ -60,7 +60,7 @@ const endOfDay = (d) => {
 };
 const iso = (d) => d.toISOString();
 const fmt = (d) =>
-  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'вЂ”';
+  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const toISODate = (d) => {
   const y = d.getFullYear();
   const m = `0${d.getMonth() + 1}`.slice(-2);
@@ -495,7 +495,7 @@ export default function StatsScreen() {
       .order('full_name', { ascending: true });
     if (error) throw error;
     const rows = data || [];
-    setUsers([{ id: 'ALL', full_name: 'Р’СЃРµ СЃРѕС‚СЂСѓРґРЅРёРєРё', role: 'all' }, ...rows]);
+    setUsers([{ id: 'ALL', full_name: 'Все сотрудники', role: 'all' }, ...rows]);
   }, [canViewFinanceStatsAll, isManager, me?.company_id]);
 
   // Period range calculation
@@ -568,9 +568,9 @@ export default function StatsScreen() {
 
       // Calculate statistics
       const totalOrders = orders?.length || 0;
-      const completedOrders = orders?.filter((o) => o.status === 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ').length || 0;
-      const inProgressOrders = orders?.filter((o) => o.status === 'Р’ СЂР°Р±РѕС‚Рµ').length || 0;
-      const newOrders = orders?.filter((o) => o.status === 'РќРѕРІС‹Р№').length || 0;
+      const completedOrders = orders?.filter((o) => o.status === 'Завершённая').length || 0;
+      const inProgressOrders = orders?.filter((o) => o.status === 'В работе').length || 0;
+      const newOrders = orders?.filter((o) => o.status === 'Новый' || o.status === 'Новая').length || 0;
 
       const getGross = (o) => Number(o.finance_gross_total ?? o.price ?? 0) || 0;
       const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
@@ -704,7 +704,7 @@ export default function StatsScreen() {
   const closeUserPicker = () => setUserPickerOpen(false);
   const selectUser = (user) => {
     setSelectedUserId(user.id);
-    setSelectedUser(user.id === 'ALL' ? { full_name: 'Р’СЃРµ СЃРѕС‚СЂСѓРґРЅРёРєРё', role: 'all' } : user);
+    setSelectedUser(user.id === 'ALL' ? { full_name: 'Все сотрудники', role: 'all' } : user);
     closeUserPicker();
   };
 
@@ -778,8 +778,8 @@ export default function StatsScreen() {
   }, [users, usersSearch]);
 
   const displayName = isManager
-    ? selectedUser?.full_name || 'Р’С‹Р±РµСЂРёС‚Рµ СЃРѕС‚СЂСѓРґРЅРёРєР°'
-    : me?.full_name || 'РњРѕСЏ СЃС‚Р°С‚РёСЃС‚РёРєР°';
+    ? selectedUser?.full_name || 'Выберите сотрудника'
+    : me?.full_name || 'Моя статистика';
 
   if (loading) {
     return (
@@ -791,7 +791,7 @@ export default function StatsScreen() {
 
   return (
     <View style={styles.container}>
-      <AppHeader options={{ title: 'РЎС‚Р°С‚РёСЃС‚РёРєР°' }} back />
+      <AppHeader options={{ title: 'Статистика' }} back />
 
       <View style={{ flex: 1 }}>
         {refreshIndicator}
@@ -802,7 +802,7 @@ export default function StatsScreen() {
         >
           {/* Header */}
           <View style={styles.header}>
-          <Text style={styles.headerTitle}>РЎС‚Р°С‚РёСЃС‚РёРєР°</Text>
+          <Text style={styles.headerTitle}>Статистика</Text>
           <Text style={styles.headerSubtitle}>{displayName}</Text>
         </View>
 
@@ -811,21 +811,21 @@ export default function StatsScreen() {
           <View style={styles.statsGrid}>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{formatNumber(stats.totalOrders)}</Text>
-              <Text style={styles.statLabel}>Р’СЃРµРіРѕ Р·Р°СЏРІРѕРє</Text>
+              <Text style={styles.statLabel}>Всего заявок</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{formatNumber(stats.completedOrders)}</Text>
-              <Text style={styles.statLabel}>Р—Р°РІРµСЂС€РµРЅРѕ</Text>
+              <Text style={styles.statLabel}>Завершено</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={[styles.statValue, { color: TOK.SUCCESS }]}>
                 {fRUB(stats.netProfit)}
               </Text>
-              <Text style={styles.statLabel}>Р§РёСЃС‚Р°СЏ РїСЂРёР±С‹Р»СЊ</Text>
+              <Text style={styles.statLabel}>Чистая прибыль</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{stats.performance.avgOrdersPerDay.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>Р’ РґРµРЅСЊ</Text>
+              <Text style={styles.statLabel}>В день</Text>
             </View>
           </View>
         </View>
@@ -858,7 +858,7 @@ export default function StatsScreen() {
             <TouchableOpacity style={styles.userSelector} onPress={openUserPicker}>
               <Ionicons name="people" size={20} color={TOK.SUBTEXT} />
               <Text style={styles.userText} numberOfLines={1}>
-                {selectedUser?.full_name || 'Р’С‹Р±РµСЂРёС‚Рµ СЃРѕС‚СЂСѓРґРЅРёРєР°'}
+                {selectedUser?.full_name || 'Выберите сотрудника'}
               </Text>
               <Ionicons name="chevron-down" size={16} color={TOK.SUBTEXT} />
             </TouchableOpacity>
@@ -868,7 +868,7 @@ export default function StatsScreen() {
         {/* Status Breakdown */}
         {stats.statusBreakdown.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>РџРѕ СЃС‚Р°С‚СѓСЃР°Рј</Text>
+            <Text style={styles.sectionTitle}>По статусам</Text>
             <View style={styles.chartCard}>
               {stats.statusBreakdown.map((item) => (
                 <View key={item.status} style={styles.statusItem}>
@@ -890,32 +890,32 @@ export default function StatsScreen() {
 
         {/* Performance Metrics */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Р­С„С„РµРєС‚РёРІРЅРѕСЃС‚СЊ</Text>
+          <Text style={styles.sectionTitle}>Эффективность</Text>
           <View style={styles.metricGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>
                 {(stats.performance.completionRate * 100).toFixed(0)}%
               </Text>
-              <Text style={styles.metricLabel}>Р’С‹РїРѕР»РЅРµРЅРѕ</Text>
+              <Text style={styles.metricLabel}>Выполнено</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{fRUB(stats.performance.avgRevenuePerOrder)}</Text>
-              <Text style={styles.metricLabel}>РЎСЂРµРґРЅРёР№ С‡РµРє</Text>
+              <Text style={styles.metricLabel}>Средний чек</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{formatNumber(stats.inProgressOrders)}</Text>
-              <Text style={styles.metricLabel}>Р’ СЂР°Р±РѕС‚Рµ</Text>
+              <Text style={styles.metricLabel}>В работе</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{formatNumber(stats.newOrders)}</Text>
-              <Text style={styles.metricLabel}>РќРѕРІС‹Рµ</Text>
+              <Text style={styles.metricLabel}>Новые</Text>
             </View>
           </View>
         </View>
 
         {/* Financial Summary */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Р¤РёРЅР°РЅСЃС‹</Text>
+          <Text style={styles.sectionTitle}>Финансы</Text>
           <View style={styles.chartCard}>
             <View style={styles.statusItem}>
               <Text style={styles.statusName}>Общий доход</Text>
@@ -964,7 +964,7 @@ export default function StatsScreen() {
       >
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Р’С‹Р±РѕСЂ СЃРѕС‚СЂСѓРґРЅРёРєР°</Text>
+            <Text style={styles.modalTitle}>Выбор сотрудника</Text>
             <TouchableOpacity style={styles.closeButton} onPress={closeUserPicker}>
               <Ionicons name="close" size={24} color={TOK.TEXT} />
             </TouchableOpacity>
@@ -972,7 +972,7 @@ export default function StatsScreen() {
 
           <RNTextInput
             style={styles.searchInput}
-            placeholder="РџРѕРёСЃРє РїРѕ РёРјРµРЅРё..."
+            placeholder="Поиск по имени..."
             placeholderTextColor={TOK.SUBTEXT}
             value={usersSearch}
             onChangeText={setUsersSearch}
@@ -1000,7 +1000,7 @@ export default function StatsScreen() {
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Ionicons name="search" size={48} color={TOK.SUBTEXT} />
-                <Text style={styles.emptyText}>РЎРѕС‚СЂСѓРґРЅРёРєРё РЅРµ РЅР°Р№РґРµРЅС‹</Text>
+                <Text style={styles.emptyText}>Сотрудники не найдены</Text>
               </View>
             }
           />
@@ -1011,7 +1011,7 @@ export default function StatsScreen() {
       <AnimatedFullscreenModal visible={customModalOpen} animation="slide" onRequestClose={closeCustomPeriod}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Р’С‹Р±РѕСЂ РїРµСЂРёРѕРґР°</Text>
+            <Text style={styles.modalTitle}>Выбор периода</Text>
             <TouchableOpacity style={styles.closeButton} onPress={closeCustomPeriod}>
               <Ionicons name="close" size={24} color={TOK.TEXT} />
             </TouchableOpacity>
@@ -1020,8 +1020,8 @@ export default function StatsScreen() {
           <View style={styles.rangeDisplay}>
             <Text style={styles.rangeText}>
               {rangeStart && rangeEnd
-                ? `${fmt(fromISODate(rangeStart))} вЂ” ${fmt(fromISODate(rangeEnd))}`
-                : 'Р’С‹Р±РµСЂРёС‚Рµ РґРёР°РїР°Р·РѕРЅ РґР°С‚'}
+                ? `${fmt(fromISODate(rangeStart))} — ${fmt(fromISODate(rangeEnd))}`
+                : 'Выберите диапазон дат'}
             </Text>
           </View>
 
@@ -1052,7 +1052,7 @@ export default function StatsScreen() {
               style={[styles.actionButton, styles.secondaryAction]}
               onPress={closeCustomPeriod}
             >
-              <Text style={[styles.actionText, styles.secondaryActionText]}>РћС‚РјРµРЅР°</Text>
+              <Text style={[styles.actionText, styles.secondaryActionText]}>Отмена</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
@@ -1063,7 +1063,7 @@ export default function StatsScreen() {
               onPress={applyCustomPeriod}
               disabled={!(rangeStart && rangeEnd)}
             >
-              <Text style={[styles.actionText, styles.primaryActionText]}>РџСЂРёРјРµРЅРёС‚СЊ</Text>
+              <Text style={[styles.actionText, styles.primaryActionText]}>Применить</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>

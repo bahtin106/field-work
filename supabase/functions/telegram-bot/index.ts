@@ -138,6 +138,13 @@ function toErrorMessage(error: unknown) {
   return 'Unknown error';
 }
 
+function isUniqueViolation(error: unknown) {
+  const code = String((error as Record<string, unknown>)?.code || '').trim();
+  if (code === '23505') return true;
+  const message = toErrorMessage(error).toLowerCase();
+  return message.includes('duplicate key') || message.includes('unique');
+}
+
 function normalizeText(raw: unknown) {
   return String(raw ?? '').replace(/\s+/g, ' ').trim();
 }
@@ -1180,13 +1187,30 @@ function mapFieldValue(field: EffectiveField, text: string, contactPhone: string
 
 async function findExistingClient(admin: AdminClient, companyId: string, phone: string) {
   if (!phone) return null;
+  const normalizedPhone = String(phone).trim();
   const { data, error } = await admin.rpc('find_company_client_by_phone', {
     p_company_id: companyId,
-    p_phone: phone,
+    p_phone: normalizedPhone,
   });
-  if (error) throw error;
-  const row = Array.isArray(data) ? data[0] : data;
-  return row || null;
+  if (!error) {
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row) return row;
+  }
+
+  // Fallback when RPC is unavailable/missing or does not find a match.
+  const { data: fallbackRows, error: fallbackError } = await admin
+    .from('clients')
+    .select('id, phone')
+    .eq('company_id', companyId)
+    .limit(2000);
+  if (fallbackError) {
+    if (error) throw error;
+    throw fallbackError;
+  }
+  const targetDigits = normalizePhoneDigits(normalizedPhone);
+  return (Array.isArray(fallbackRows) ? fallbackRows : []).find(
+    (row) => normalizePhoneDigits(row?.phone) === targetDigits,
+  ) || null;
 }
 
 async function enrichExistingClientIfNeeded(
@@ -1264,7 +1288,14 @@ async function createClientIfNeeded(admin: AdminClient, integration: Integration
     })
     .select('id')
     .single();
-  if (error) throw error;
+  if (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const conflictClient = await findExistingClient(admin, integration.company_id, values.phone);
+    if (!conflictClient?.id) throw error;
+    const clientId = String(conflictClient.id);
+    await enrichExistingClientIfNeeded(admin, clientId, values);
+    return clientId;
+  }
   return String(data.id);
 }
 
@@ -1327,7 +1358,17 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
     })
     .select('id, name')
     .single();
-  if (error) throw error;
+  if (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const conflictObject = await findExistingObject(admin, clientId, address);
+    if (!conflictObject?.id) throw error;
+    return {
+      objectId: String(conflictObject.id),
+      address,
+      addressMode: 'object',
+      objectName: normalizeText(conflictObject.name) || objectName,
+    };
+  }
   return { objectId: String(data.id), address, addressMode: 'object', objectName: normalizeText(data.name) || objectName };
 }
 

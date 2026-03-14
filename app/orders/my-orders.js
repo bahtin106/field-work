@@ -31,9 +31,14 @@ import {
 } from '../../components/ui/PullToRefreshFeedback';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import goBackSmart from '../../lib/navigation/goBackSmart';
-import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../lib/orderFilters';
+import {
+  getOrderIdsByWorkTypes,
+  getStatusDbAliases,
+  normalizeOrderStatusFilterKey,
+} from '../../lib/orderFilters';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
+import { useClients } from '../../src/features/clients/queries';
 import { ensureRequestPrefetch } from '../../src/features/requests/queries';
 import {
   applyOrderRelationFilters,
@@ -118,6 +123,7 @@ export default function MyOrdersScreen() {
   const ORDER_FILTER_DEFAULTS = {
     workTypes: [],
     statuses: [],
+    clientIds: [],
     departureDateFrom: null,
     departureDateTo: null,
     departureTimeFrom: null,
@@ -180,6 +186,26 @@ export default function MyOrdersScreen() {
 
 
   const { companyId } = useMyCompanyId();
+  const { data: companyClients = [] } = useClients(
+    { companyId, search: '' },
+    { enabled: !!companyId },
+  );
+  const clientOptions = useMemo(
+    () =>
+      (Array.isArray(companyClients) ? companyClients : [])
+        .map((row) => {
+          const id = String(row?.id || '').trim();
+          if (!id) return null;
+          const label =
+            String(row?.full_name || '').trim() ||
+            [row?.last_name, row?.first_name, row?.middle_name].filter(Boolean).join(' ').trim() ||
+            String(row?.phone || '').trim() ||
+            id;
+          return { id, value: id, label };
+        })
+        .filter(Boolean),
+    [companyClients],
+  );
   const [useWorkTypesFlag, setUseWorkTypesFlag] = useState(false);
   const [workTypeOptions, setWorkTypeOptions] = useState([]);
   const [sortVisible, setSortVisible] = useState(false);
@@ -214,6 +240,7 @@ export default function MyOrdersScreen() {
     const {
       workTypes: selectedWorkTypes,
       statuses,
+      clientIds,
       departureDateFrom,
       departureDateTo,
       departureTimeFrom,
@@ -246,6 +273,19 @@ export default function MyOrdersScreen() {
         );
         compactParts.push(
           summarizeFilterPart({ label: t('orders_filter_status'), values: labels, countWhenMany: true }),
+        );
+      }
+    }
+    if (clientIds?.length) {
+      const labels = clientIds
+        .map((id) => clientOptions.find((item) => String(item.id) === String(id))?.label)
+        .filter(Boolean);
+      if (labels.length) {
+        fullParts.push(
+          summarizeFilterPart({ label: t('common_client', 'Клиент'), values: labels, countWhenMany: false }),
+        );
+        compactParts.push(
+          summarizeFilterPart({ label: t('common_client', 'Клиент'), values: labels, countWhenMany: true }),
         );
       }
     }
@@ -302,7 +342,7 @@ export default function MyOrdersScreen() {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [filters.values, orderStatusOptions, workTypeOptions, t]);
+  }, [clientOptions, filters.values, orderStatusOptions, workTypeOptions, t]);
 
   // Shared caches
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
@@ -564,19 +604,27 @@ export default function MyOrdersScreen() {
       } else {
         query = query.eq('assigned_to', uid);
         if (key !== 'all') {
-          const statusValue = mapStatusToDb(key);
-          if (statusValue) {
-            query = query.eq('status', statusValue);
+          const statusAliases = getStatusDbAliases(normalizeOrderStatusFilterKey(key));
+          if (statusAliases.length === 1) {
+            query = query.eq('status', statusAliases[0]);
+          } else if (statusAliases.length > 1) {
+            query = query.in('status', statusAliases);
           }
         }
       }
 
       const filterValues = filters.values;
       const statusFilters = Array.isArray(filterValues.statuses)
-        ? filterValues.statuses.map(mapStatusToDb).filter(Boolean)
+        ? filterValues.statuses.flatMap((code) => getStatusDbAliases(code)).filter(Boolean)
         : [];
       if (statusFilters.length) {
         query = query.in('status', statusFilters);
+      }
+      const clientIds = Array.isArray(filterValues.clientIds)
+        ? filterValues.clientIds.map(String).filter(Boolean)
+        : [];
+      if (clientIds.length) {
+        query = query.in('client_id', clientIds);
       }
 
       const sumMin = parseFloat(filterValues.sumMin);
@@ -699,18 +747,24 @@ export default function MyOrdersScreen() {
       query = query.eq('assigned_to', uid);
     } else {
       query = query.eq('assigned_to', uid);
-      if (key === 'new') {
-        query = query.or('status.is.null,status.eq.' + mapStatusToDb('new'));
-      } else if (key === 'progress') {
-        query = query.eq('status', mapStatusToDb('in_progress'));
-      } else if (key === 'done') {
-        query = query.eq('status', mapStatusToDb('done'));
+      const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
+      const statusAliases = getStatusDbAliases(normalizedStatusKey);
+      if (statusAliases.length === 1) {
+        query = query.eq('status', statusAliases[0]);
+      } else if (statusAliases.length > 1) {
+        query = query.in('status', statusAliases);
       }
     }
     query = applyOrderRelationFilters(query, {
       clientId: relationClientId,
       objectIds: relationObjectIds,
     });
+    const selectedClientIds = Array.isArray(filters.values?.clientIds)
+      ? filters.values.clientIds.map(String).filter(Boolean)
+      : [];
+    if (selectedClientIds.length) {
+      query = query.in('client_id', selectedClientIds);
+    }
 
     const from = (nextPage - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
@@ -731,7 +785,7 @@ export default function MyOrdersScreen() {
     }
 
     setLoadingMore(false);
-  }, [filter, hasLinkedRelationFilter, hasMore, loading, loadingMore, page, relationClientId, relationObjectIds]);
+  }, [filter, filters.values?.clientIds, hasLinkedRelationFilter, hasMore, loading, loadingMore, page, relationClientId, relationObjectIds]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -950,15 +1004,13 @@ export default function MyOrdersScreen() {
                       <View style={[styles.feedDotBase, styles.feedDotSeen]} />
                     ))}
                   <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
-                    {
-                      {
-                        feed: 'Feed',
-                        all: 'All',
-                        new: 'New',
-                        progress: 'In progress',
-                        done: 'Done',
-                      }[key]
-                    }
+                    {{
+                      feed: t('order_status_in_feed'),
+                      all: t('common_all'),
+                      new: t('order_status_new'),
+                      progress: t('order_status_in_progress'),
+                      done: t('order_status_completed'),
+                    }[key]}
                   </Text>
                 </View>
               </Pressable>
@@ -1028,11 +1080,11 @@ export default function MyOrdersScreen() {
         {loading && !hydratedRef.current ? (
           <ActivityIndicator size="large" color={theme.colors.primary} />
         ) : (
-          <Text style={styles.emptyText}>No orders found</Text>
+          <Text style={styles.emptyText}>{t('orders_empty')}</Text>
         )}
       </View>
     ),
-    [loading, styles.emptyText, theme.colors.primary],
+    [loading, styles.emptyText, t, theme.colors.primary],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
@@ -1063,18 +1115,24 @@ export default function MyOrdersScreen() {
       query = query.eq('assigned_to', uid);
     } else {
       query = query.eq('assigned_to', uid);
-      if (key === 'new') {
-        query = query.or('status.is.null,status.eq.' + mapStatusToDb('new'));
-      } else if (key === 'progress') {
-        query = query.eq('status', mapStatusToDb('in_progress'));
-      } else if (key === 'done') {
-        query = query.eq('status', mapStatusToDb('done'));
+      const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
+      const statusAliases = getStatusDbAliases(normalizedStatusKey);
+      if (statusAliases.length === 1) {
+        query = query.eq('status', statusAliases[0]);
+      } else if (statusAliases.length > 1) {
+        query = query.in('status', statusAliases);
       }
     }
     query = applyOrderRelationFilters(query, {
       clientId: relationClientId,
       objectIds: relationObjectIds,
     });
+    const selectedClientIds = Array.isArray(filters.values?.clientIds)
+      ? filters.values.clientIds.map(String).filter(Boolean)
+      : [];
+    if (selectedClientIds.length) {
+      query = query.in('client_id', selectedClientIds);
+    }
 
     const { data, error } = await query
       .order('time_window_start', { ascending: false })
@@ -1090,7 +1148,7 @@ export default function MyOrdersScreen() {
       if (key === 'feed') updateFeedMeta(normalized);
       setHasMore(normalized.length === PAGE_SIZE);
     }
-    }, [filter, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
+    }, [filter, filters.values?.clientIds, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
 
   const refreshWithIndicator = useCallback(async () => {
     await refreshCurrentList();
@@ -1160,10 +1218,11 @@ export default function MyOrdersScreen() {
           onClose={filters.close}
           mode="orders"
           showSearchCategory={false}
-          inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors'] }}
+          inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
           ordersFilters={{
             statuses: orderStatusOptions,
             workTypes: useWorkTypesFlag ? workTypeOptions : [],
+            clients: clientOptions,
             executors: [],
             showDate: true,
             showTime: true,
