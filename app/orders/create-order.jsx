@@ -10,6 +10,7 @@ import {
   BackHandler,
   findNodeHandle,
   Keyboard,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
