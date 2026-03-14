@@ -37,6 +37,7 @@ import { financeEntryMediaStorage, financeEntryYandexMedia } from '../../lib/fin
 import { orderMediaStorage } from '../../lib/orderMediaStorage';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
+import { mapStatusToDb } from '../../lib/orderFilters';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -1082,13 +1083,13 @@ export default function OrderDetails() {
 
       // в”Ђв”Ђ 4. Auto-status "РќРѕРІС‹Р№"в†’"Р’ СЂР°Р±РѕС‚Рµ" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       let effectiveOrder = fetchedOrder;
-      if (uid && fetchedOrder.status === 'РќРѕРІС‹Р№' && fetchedOrder.assigned_to === uid) {
+      if (uid && fetchedOrder.status === mapStatusToDb('new') && fetchedOrder.assigned_to === uid) {
         try {
-          await updateRequestWithVersion(id, { status: 'Р’ СЂР°Р±РѕС‚Рµ' }, fetchedOrder?.updated_at || null);
+          await updateRequestWithVersion(id, { status: mapStatusToDb('in_progress') }, fetchedOrder?.updated_at || null);
           queryClient.invalidateQueries({ queryKey: ['requests'] });
           queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
           const refreshed = await ensureRequestPrefetch(queryClient, id);
-          effectiveOrder = refreshed || { ...fetchedOrder, status: 'Р’ СЂР°Р±РѕС‚Рµ' };
+          effectiveOrder = refreshed || { ...fetchedOrder, status: mapStatusToDb('in_progress') };
         } catch (e) {
           console.warn('Persist status error:', e);
           effectiveOrder = fetchedOrder;
@@ -2455,7 +2456,7 @@ export default function OrderDetails() {
 
     let error = null;
     try {
-      await updateRequestWithVersion(order.id, { status: 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ' }, order?.updated_at || null);
+      await updateRequestWithVersion(order.id, { status: mapStatusToDb('done') }, order?.updated_at || null);
     } catch (e) {
       error = e;
     }
@@ -2509,7 +2510,7 @@ export default function OrderDetails() {
 
       if (!accepted && latestOrder && !latestOrder.assigned_to && userId) {
         const latestStatus = String(latestOrder.status || '');
-        const isInFeed = latestStatus === t('order_status_in_feed') || latestStatus === 'Р’ Р»РµРЅС‚Рµ';
+        const isInFeed = latestStatus === t('order_status_in_feed') || latestStatus === mapStatusToDb('feed');
         if (isInFeed) {
           try {
             const fallbackOrder = await updateRequestWithVersion(
@@ -3299,7 +3300,7 @@ export default function OrderDetails() {
 
   const _selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
-  const isInFeedStatus = order.status === 'Р’ Р»РµРЅС‚Рµ' || order.status === t('order_status_in_feed');
+  const isInFeedStatus = order.status === mapStatusToDb('feed') || order.status === t('order_status_in_feed');
   const canAcceptOrder =
     isInFeedStatus &&
     isFree &&
@@ -3347,8 +3348,7 @@ export default function OrderDetails() {
     financeCompanyPaidExpenseTotal > 0 || financeExecutorPaidExpenseTotal > 0;
   const showInitialCostLine =
     canViewOrderAmount &&
-    orderFieldsByKey.get('price')?.isEnabled !== false &&
-    (financeIncomeTotal > 0 || financeDiscountTotal > 0);
+    orderFieldsByKey.get('price')?.isEnabled !== false;
   return (
     <>
       <SafeAreaView
@@ -4070,7 +4070,7 @@ export default function OrderDetails() {
               </Pressable>
             )}
 
-            {order.status !== 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ' && !isFree && canEdit() && (
+            {order.status !== mapStatusToDb('done') && !isFree && canEdit() && (
               <Pressable
                 style={({ pressed }) => [
                   styles.finishButton,

@@ -33,6 +33,7 @@ import {
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { useClients } from '../../src/features/clients/queries';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
@@ -54,6 +55,7 @@ const EMPTY_ARRAY = [];
 const ORDER_FILTER_DEFAULTS = {
   workTypes: [],
   statuses: [],
+  clientIds: [],
   executorId: null,
   departureDateFrom: null,
   departureDateTo: null,
@@ -146,6 +148,7 @@ export default function AllOrdersScreen() {
     department,
     search,
     work_type,
+    client_ids,
     relation_client_id,
     relation_object_ids,
     relation_label,
@@ -197,6 +200,12 @@ export default function AllOrdersScreen() {
           .map((value) => String(value).trim())
           .filter(Boolean)
       : [],
+    clientIds: client_ids
+      ? String(client_ids)
+          .split(',')
+          .map((value) => String(value).trim())
+          .filter(Boolean)
+      : [],
     executorId: executor ? String(executor) : null,
   }));
   const [searchQuery, setSearchQuery] = useState(String(search || '').trim());
@@ -239,6 +248,26 @@ export default function AllOrdersScreen() {
   }, []);
 
   const { data: companyId } = useMyCompanyIdQuery();
+  const { data: companyClients = [] } = useClients(
+    { companyId, search: '' },
+    { enabled: !!companyId },
+  );
+  const clientOptions = useMemo(
+    () =>
+      (Array.isArray(companyClients) ? companyClients : [])
+        .map((row) => {
+          const id = String(row?.id || '').trim();
+          if (!id) return null;
+          const label =
+            String(row?.full_name || '').trim() ||
+            [row?.last_name, row?.first_name, row?.middle_name].filter(Boolean).join(' ').trim() ||
+            String(row?.phone || '').trim() ||
+            id;
+          return { id, value: id, label };
+        })
+        .filter(Boolean),
+    [companyClients],
+  );
   const allRequestsParams = useMemo(() => {
     const next = {};
     if (statusFilter && statusFilter !== 'all') next.status = statusFilter;
@@ -247,10 +276,13 @@ export default function AllOrdersScreen() {
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
       next.workTypeIds = workTypeFilter;
     }
+    if (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length) {
+      next.clientIds = orderFilters.clientIds.map(String);
+    }
     if (relationClientId) next.relationClientId = relationClientId;
     if (relationObjectIds.length) next.relationObjectIds = relationObjectIds;
     return next;
-  }, [departmentFilter, executorFilter, relationClientId, relationObjectIds, statusFilter, useWorkTypes, workTypeFilter]);
+  }, [departmentFilter, executorFilter, orderFilters.clientIds, relationClientId, relationObjectIds, statusFilter, useWorkTypes, workTypeFilter]);
 
   const {
     items: requestItems = [],
@@ -384,11 +416,33 @@ export default function AllOrdersScreen() {
       }
     }
 
+    if (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length) {
+      const labels = orderFilters.clientIds
+        .map((id) => clientOptions.find((item) => String(item.id) === String(id))?.label)
+        .filter(Boolean);
+      if (labels.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('common_client', 'Клиент'),
+            values: labels,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('common_client', 'Клиент'),
+            values: labels,
+            countWhenMany: true,
+          }),
+        );
+      }
+    }
+
     return {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [executorFilter, executorOptions, t, useWorkTypes, workTypeFilter, workTypes]);
+  }, [clientOptions, executorFilter, executorOptions, orderFilters.clientIds, t, useWorkTypes, workTypeFilter, workTypes]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -467,6 +521,7 @@ export default function AllOrdersScreen() {
     executor: executorFilter,
     department: departmentFilter,
     search: searchQuery,
+    client_ids: Array.isArray(orderFilters.clientIds) ? orderFilters.clientIds.join(',') : '',
     relation_client_id: relationClientId,
     relation_object_ids: relationObjectIds.join(','),
     relation_label: relationLabel,
@@ -477,11 +532,14 @@ export default function AllOrdersScreen() {
       executor: executorFilter,
       department: departmentFilter,
       search: searchQuery,
+      ...(Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length
+        ? { client_ids: orderFilters.clientIds.join(',') }
+        : {}),
       ...(relationClientId ? { relation_client_id: relationClientId } : {}),
       ...(relationObjectIds.length ? { relation_object_ids: relationObjectIds.join(',') } : {}),
       ...(relationLabel ? { relation_label: relationLabel } : {}),
     };
-  }, [departmentFilter, executorFilter, relationClientId, relationLabel, relationObjectIds, searchQuery, statusFilter]);
+  }, [departmentFilter, executorFilter, orderFilters.clientIds, relationClientId, relationLabel, relationObjectIds, searchQuery, statusFilter]);
 
   const openOrderDetails = useCallback(
     (orderIdRaw) => {
@@ -613,7 +671,7 @@ export default function AllOrdersScreen() {
           }
           onResetFilters={() => {
             setOrderFilters({ ...ORDER_FILTER_DEFAULTS });
-            router.setParams({ executor: undefined, work_type: undefined });
+            router.setParams({ executor: undefined, work_type: undefined, client_ids: undefined });
           }}
           metaText={`${t('common_total')}: ${sortedFilteredOrders.length}`}
         />
@@ -730,10 +788,11 @@ export default function AllOrdersScreen() {
         onClose={() => setFiltersVisible(false)}
         mode="orders"
         showSearchCategory={false}
-        inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors'] }}
+        inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
         ordersFilters={{
           statuses: [],
           workTypes: useWorkTypes ? workTypes : [],
+          clients: clientOptions,
           executors: executorOptions,
           showDate: false,
           showTime: false,
@@ -744,7 +803,7 @@ export default function AllOrdersScreen() {
         defaults={ORDER_FILTER_DEFAULTS}
         onReset={() => {
           setOrderFilters({ ...ORDER_FILTER_DEFAULTS });
-          router.setParams({ executor: undefined, work_type: undefined });
+          router.setParams({ executor: undefined, work_type: undefined, client_ids: undefined });
         }}
         onApply={(nextValues) => {
           setOrderFilters(nextValues);
@@ -753,6 +812,10 @@ export default function AllOrdersScreen() {
             work_type:
               useWorkTypes && Array.isArray(nextValues?.workTypes) && nextValues.workTypes.length
                 ? nextValues.workTypes.join(',')
+                : undefined,
+            client_ids:
+              Array.isArray(nextValues?.clientIds) && nextValues.clientIds.length
+                ? nextValues.clientIds.join(',')
                 : undefined,
           });
         }}

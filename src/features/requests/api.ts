@@ -1,5 +1,5 @@
 import { supabase } from '../../../lib/supabase';
-import { getOrderIdsByWorkTypes, mapStatusToDb } from '../../../lib/orderFilters';
+import { getOrderIdsByWorkTypes, getStatusDbAliases, mapStatusToDb } from '../../../lib/orderFilters';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import {
   buildOrderAddressNavigatorQuery,
@@ -236,6 +236,7 @@ export async function listRequests(params = {}) {
       workTypeIds = [],
       relationClientId = '',
       relationObjectIds = [],
+      clientIds = [],
       page = 1,
       pageSize = DEFAULT_PAGE_SIZE,
     } = params;
@@ -253,8 +254,13 @@ export async function listRequests(params = {}) {
     if (status === 'feed') {
       query = query.is('assigned_to', null);
     } else {
-      const statusValue = mapStatusToDb(status);
-      if (statusValue) query = query.eq('status', statusValue);
+      const statusValues = getStatusDbAliases(status);
+      if (statusValues.length === 1) query = query.eq('status', statusValues[0]);
+      if (statusValues.length > 1) query = query.in('status', statusValues);
+      if (statusValues.length === 0) {
+        const statusValue = mapStatusToDb(status);
+        if (statusValue) query = query.eq('status', statusValue);
+      }
       if (executorId) query = query.eq('assigned_to', executorId);
     }
 
@@ -266,6 +272,9 @@ export async function listRequests(params = {}) {
       const ids = await getOrderIdsByWorkTypes(workTypeIds);
       if (!ids.length) return [];
       query = query.in('id', ids);
+    }
+    if (Array.isArray(clientIds) && clientIds.length) {
+      query = query.in('client_id', clientIds.map(String));
     }
 
     query = applyOrderRelationFilters(query, {
@@ -291,8 +300,13 @@ export async function listRequests(params = {}) {
       if (status === 'feed') {
         fallbackQuery = fallbackQuery.is('assigned_to', null);
       } else {
-        const statusValue = mapStatusToDb(status);
-        if (statusValue) fallbackQuery = fallbackQuery.eq('status', statusValue);
+        const statusValues = getStatusDbAliases(status);
+        if (statusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', statusValues[0]);
+        if (statusValues.length > 1) fallbackQuery = fallbackQuery.in('status', statusValues);
+        if (statusValues.length === 0) {
+          const statusValue = mapStatusToDb(status);
+          if (statusValue) fallbackQuery = fallbackQuery.eq('status', statusValue);
+        }
         if (executorId) fallbackQuery = fallbackQuery.eq('assigned_to', executorId);
       }
 
@@ -304,6 +318,9 @@ export async function listRequests(params = {}) {
         const ids = await getOrderIdsByWorkTypes(workTypeIds);
         if (!ids.length) return [];
         fallbackQuery = fallbackQuery.in('id', ids);
+      }
+      if (Array.isArray(clientIds) && clientIds.length) {
+        fallbackQuery = fallbackQuery.in('client_id', clientIds.map(String));
       }
 
       fallbackQuery = applyOrderRelationFilters(fallbackQuery, {

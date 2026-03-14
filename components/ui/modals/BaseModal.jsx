@@ -7,6 +7,7 @@ import {
   PanResponder,
   Platform,
   Pressable,
+  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -140,9 +141,13 @@ const BaseModalImpl = (
   const windowH = Dimensions.get('window').height;
   const minCardHeight = theme.spacing.xxxl * 3 + theme.spacing.xl;
   const topInsetAllowance = theme.components?.input?.height ?? 48;
+  const topSafeInset = Math.max(
+    insets.top || 0,
+    Platform.OS === 'android' ? Number(StatusBar.currentHeight || 0) : 0,
+  );
   const sheetMaxH = Math.max(
     minCardHeight,
-    Math.min(windowH * maxHeightRatio, windowH - (insets.top + topInsetAllowance)),
+    Math.min(windowH * maxHeightRatio, windowH - (topSafeInset + topInsetAllowance)),
   );
   const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
   const feedbackMessage =
@@ -193,7 +198,7 @@ const BaseModalImpl = (
 
   const maxAllowedHeight = Math.max(
     minCardHeight,
-    windowH - (insets.top + minTopGap) - (baseBottomPad + extraBottom),
+    windowH - (topSafeInset + minTopGap) - (baseBottomPad + extraBottom),
   );
   const targetCardMaxHeight = Math.min(sheetMaxH, maxAllowedHeight);
 

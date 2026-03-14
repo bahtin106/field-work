@@ -1278,7 +1278,9 @@ export default function CalendarScreen() {
     for (const order of filteredOrders) {
       const dateField = order?.time_window_start;
       if (!dateField) continue;
-      const key = formatDateKey(new Date(dateField));
+      const parsedDate = new Date(dateField);
+      if (Number.isNaN(parsedDate.getTime())) continue;
+      const key = formatDateKey(parsedDate);
       if (!key) continue;
 
       if (!byDate[key]) byDate[key] = [];
@@ -1312,7 +1314,12 @@ export default function CalendarScreen() {
     [displayedOrders.length, effectiveSelectedDate],
   );
   const ordersTitleDateLabel = useMemo(
-    () => (effectiveSelectedDate ? format(new Date(effectiveSelectedDate), 'd MMMM', { locale: dfnsRu }) : ''),
+    () => {
+      if (!effectiveSelectedDate) return '';
+      const parsedDate = new Date(effectiveSelectedDate);
+      if (Number.isNaN(parsedDate.getTime())) return '';
+      return format(parsedDate, 'd MMMM', { locale: dfnsRu });
+    },
     [effectiveSelectedDate],
   );
   const ordersListContentContainerStyle = useMemo(

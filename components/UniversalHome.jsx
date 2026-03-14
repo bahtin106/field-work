@@ -8,6 +8,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
+import { getStatusDbAliases, mapStatusToDb } from '../lib/orderFilters';
 import { supabase } from '../lib/supabase';
 import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
@@ -71,6 +72,8 @@ async function fetchProfile(uid) {
 
 async function fetchCountsMy(uid) {
   if (!uid) return { feed: 0, new: 0, progress: 0, all: 0 };
+  const newStatuses = getStatusDbAliases('new');
+  const inProgressStatus = mapStatusToDb('in_progress');
   const fetchCount = async (filterCb) => {
     let q = supabase.from('orders_secure_v2').select('id', { count: 'exact' });
     q = filterCb(q);
@@ -80,13 +83,15 @@ async function fetchCountsMy(uid) {
   const [feedMy, allMy, newMy, progressMy] = await Promise.all([
     fetchCount((q) => q.is('assigned_to', null)),
     fetchCount((q) => q.eq('assigned_to', uid)),
-    fetchCount((q) => q.eq('assigned_to', uid).or('status.is.null,status.eq.Р СњР С•Р Р†РЎвЂ№Р в„–')),
-    fetchCount((q) => q.eq('assigned_to', uid).eq('status', 'Р вЂ™ РЎР‚Р В°Р В±Р С•РЎвЂљР Вµ')),
+    fetchCount((q) => q.eq('assigned_to', uid).in('status', newStatuses)),
+    fetchCount((q) => q.eq('assigned_to', uid).eq('status', inProgressStatus)),
   ]);
   return { feed: feedMy, new: newMy, progress: progressMy, all: allMy };
 }
 
 async function fetchCountsAll() {
+  const newStatuses = getStatusDbAliases('new');
+  const inProgressStatus = mapStatusToDb('in_progress');
   const fetchCount = async (filterCb) => {
     let q = supabase.from('orders_secure_v2').select('id', { count: 'exact' });
     q = filterCb(q);
@@ -96,8 +101,8 @@ async function fetchCountsAll() {
   const [feedAll, allAll, newAll, progressAll] = await Promise.all([
     fetchCount((q) => q.is('assigned_to', null)),
     fetchCount((q) => q),
-    fetchCount((q) => q.or('status.is.null,status.eq.Р СњР С•Р Р†РЎвЂ№Р в„–')),
-    fetchCount((q) => q.eq('status', 'Р вЂ™ РЎР‚Р В°Р В±Р С•РЎвЂљР Вµ')),
+    fetchCount((q) => q.in('status', newStatuses)),
+    fetchCount((q) => q.eq('status', inProgressStatus)),
   ]);
   return { feed: feedAll, new: newAll, progress: progressAll, all: allAll };
 }
@@ -335,9 +340,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   );
   const openCreateOrder = useCallback(() => {
     if (isReadOnlyBySubscription) {
-      toast.warning(
-        t('subscription_create_unavailable_toast', 'РЎРѕР·РґР°РЅРёРµ Р·Р°СЏРІРєРё РЅРµРґРѕСЃС‚СѓРїРЅРѕ'),
-      );
+      toast.warning(t('subscription_create_unavailable_toast'));
       return;
     }
     runSingleNavigation(() => router.push('/orders/create-order'));
@@ -499,7 +502,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       .map((s) => s.slice(0, 1))
       .slice(0, 2)
       .join('');
-    return (a + b || fromFull || 'РІР‚Сћ').toUpperCase();
+    return (a + b || fromFull || '??').toUpperCase();
   }, [firstName, lastName, fullName]);
 
   const counts = scope === 'all' && canViewAll ? allCounts : myCounts;

@@ -35,7 +35,9 @@ function RefreshFeedbackOverlay({ topOffset = 0, successValue }) {
             borderColor,
             transform: [{ scale: containerScale }],
           },
-          theme.shadows?.card?.[Platform.OS] || null,
+          Platform.OS === 'ios'
+            ? { shadowColor: theme.colors.success, shadowOpacity: 0.08, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } }
+            : { elevation: 0 },
         ]}
       >
         <Animated.View

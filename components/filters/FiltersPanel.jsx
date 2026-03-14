@@ -311,6 +311,7 @@ export default function FiltersPanel({
     if (isOrdersMode) {
       const ordersStatusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
       const ordersWorkTypes = Array.isArray(ordersFilters?.workTypes) ? ordersFilters.workTypes : [];
+      const ordersClients = Array.isArray(ordersFilters?.clients) ? ordersFilters.clients : [];
       const ordersExecutors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
       const showDate = ordersFilters?.showDate !== false;
       const showTime = ordersFilters?.showTime !== false;
@@ -318,6 +319,7 @@ export default function FiltersPanel({
       const cats = [];
       if (ordersStatusOptions.length) cats.push({ key: 'orders_statuses', label: t('orders_filter_status') });
       if (ordersWorkTypes.length) cats.push({ key: 'orders_workTypes', label: t('order_field_work_type') });
+      if (ordersClients.length) cats.push({ key: 'orders_clients', label: t('common_client', 'Клиент') });
       if (ordersExecutors.length) cats.push({ key: 'orders_executors', label: t('orders_filter_executor', 'Исполнитель') });
       if (showDate) cats.push({ key: 'orders_departure_date', label: t('order_field_departure_date') });
       if (showTime) cats.push({ key: 'orders_departure_time', label: t('order_field_departure_time') });
@@ -475,6 +477,7 @@ export default function FiltersPanel({
     if (isOrdersMode) {
       if (!eqArrays(draft.workTypes || [], baseline.workTypes || [])) return true;
       if (!eqArrays(draft.statuses || [], baseline.statuses || [])) return true;
+      if (!eqArrays(draft.clientIds || [], baseline.clientIds || [])) return true;
       if ((draft.executorId ?? null) !== (baseline.executorId ?? null)) return true;
       if ((draft.departureDateFrom ?? null) !== (baseline.departureDateFrom ?? null)) return true;
       if ((draft.departureDateTo ?? null) !== (baseline.departureDateTo ?? null)) return true;
@@ -515,6 +518,7 @@ export default function FiltersPanel({
     if (isOrdersMode) {
       const defaultWorkTypes = Array.isArray(defaults.workTypes) ? defaults.workTypes.map(String) : [];
       const defaultStatuses = Array.isArray(defaults.statuses) ? defaults.statuses.map(String) : [];
+      const defaultClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
       const defaultExecutorId =
         defaults.executorId === null || defaults.executorId === undefined ? null : String(defaults.executorId);
       const defaultDateFrom = defaults.departureDateFrom || null;
@@ -526,6 +530,7 @@ export default function FiltersPanel({
 
       if (!eqArrays(draft.workTypes || [], defaultWorkTypes)) return true;
       if (!eqArrays(draft.statuses || [], defaultStatuses)) return true;
+      if (!eqArrays(draft.clientIds || [], defaultClientIds)) return true;
       if ((draft.executorId ?? null) !== defaultExecutorId) return true;
       if ((draft.departureDateFrom ?? null) !== defaultDateFrom) return true;
       if ((draft.departureDateTo ?? null) !== defaultDateTo) return true;
@@ -1274,6 +1279,65 @@ export default function FiltersPanel({
           </>
         );
       }
+      case 'orders_clients': {
+        const clientsRaw = Array.isArray(ordersFilters?.clients) ? ordersFilters.clients : [];
+        const clients = normalizedInlineSearch
+          ? clientsRaw.filter((client) =>
+              String(client?.label ?? client?.name ?? client?.value ?? client?.id ?? '')
+                .toLowerCase()
+                .includes(normalizedInlineSearch),
+            )
+          : clientsRaw;
+        const allSelected = !Array.isArray(draft.clientIds) || draft.clientIds.length === 0;
+        return (
+          <>
+            {renderInlineOptionsSearch()}
+            <Pressable
+              key="all_orders_clients"
+              onPress={() => setDraft((d) => ({ ...d, clientIds: [] }))}
+              style={({ pressed }) => [
+                optionRow,
+                pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+              ]}
+            >
+              <View style={[checkboxBase, allSelected && checkboxSelected]}>
+                {allSelected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+              </View>
+              <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
+                {t('users_showAll')}
+              </Text>
+            </Pressable>
+            {clients.length === 0 ? (
+              <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
+                <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>{t('common_noData')}</Text>
+              </View>
+            ) : (
+              clients.map((client) => {
+                const id = String(client?.value ?? client?.id ?? client?.label ?? '').trim();
+                const label = String(client?.label ?? client?.name ?? id).trim();
+                const selected = Array.isArray(draft.clientIds) ? draft.clientIds.includes(id) : false;
+                return (
+                  <Pressable
+                    key={`orders_client_${id}`}
+                    onPress={() => toggleOrdersMulti('clientIds', id)}
+                    style={({ pressed }) => [
+                      optionRow,
+                      pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
+                    ]}
+                  >
+                    <View style={[checkboxBase, selected && checkboxSelected]}>
+                      {selected ? <Feather name="check" size={ICON_SIZE_CHECK} color={c.onPrimary} /> : null}
+                    </View>
+                    <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </>
+        );
+      }
       case 'orders_executors': {
         const executors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
         const allSelected = draft.executorId == null;
@@ -1592,6 +1656,7 @@ export default function FiltersPanel({
                   const snapshot = {
                     workTypes: Array.isArray(defaults.workTypes) ? defaults.workTypes.map(String) : [],
                     statuses: Array.isArray(defaults.statuses) ? defaults.statuses.map(String) : [],
+                    clientIds: Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [],
                     executorId:
                       defaults.executorId === null || defaults.executorId === undefined
                         ? null
@@ -1608,6 +1673,7 @@ export default function FiltersPanel({
                   if (setValue) {
                     setValue('workTypes', snapshot.workTypes);
                     setValue('statuses', snapshot.statuses);
+                    setValue('clientIds', snapshot.clientIds);
                     setValue('executorId', snapshot.executorId);
                     setValue('departureDateFrom', snapshot.departureDateFrom);
                     setValue('departureDateTo', snapshot.departureDateTo);
@@ -1742,6 +1808,7 @@ export default function FiltersPanel({
                   const ordersSnapshot = {
                     workTypes: Array.isArray(draft.workTypes) ? draft.workTypes : [],
                     statuses: Array.isArray(draft.statuses) ? draft.statuses : [],
+                    clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
                     executorId: draft.executorId ?? null,
                     departureDateFrom: draft.departureDateFrom ?? null,
                     departureDateTo: draft.departureDateTo ?? null,
@@ -1753,6 +1820,7 @@ export default function FiltersPanel({
                   if (setValue) {
                     setValue('workTypes', ordersSnapshot.workTypes);
                     setValue('statuses', ordersSnapshot.statuses);
+                    setValue('clientIds', ordersSnapshot.clientIds);
                     setValue('executorId', ordersSnapshot.executorId);
                     setValue('departureDateFrom', ordersSnapshot.departureDateFrom);
                     setValue('departureDateTo', ordersSnapshot.departureDateTo);
