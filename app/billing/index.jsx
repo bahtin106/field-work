@@ -39,6 +39,7 @@ import { STORAGE_LIMITS } from '../../lib/constants';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { useDepartmentsQuery, useEmployees } from '../../src/features/employees/queries';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
+import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { TBL } from '../../lib/constants';
 import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/shared/sorting/employeeSort';
@@ -256,10 +257,8 @@ export default function BillingScreen() {
       if (rpcError) throw rpcError;
       return asIntOrNull(Array.isArray(rpcData) ? rpcData?.[0] : rpcData) ?? 0;
     },
-    staleTime: 0,
-    refetchInterval: companyId ? 5 * 1000 : false,
-    refetchIntervalInBackground: false,
-    refetchOnMount: 'always',
+    staleTime: 60 * 1000,
+    refetchOnMount: 'stale',
     refetchOnReconnect: true,
   });
 
@@ -482,6 +481,8 @@ export default function BillingScreen() {
       queryClient.refetchQueries({ queryKey: ['billingMemberStats', companyId], exact: true, type: 'active' }),
     ]);
   }, [accessRefresh, companyId, queryClient, refetchPaidSeatsRpc, refresh, refreshStorageUsage]);
+
+  useScreenRefreshRegistration('billing.screen', () => refreshAll(), !!companyId);
 
   const [refreshing, setRefreshing] = React.useState(false);
   const onRefresh = React.useCallback(async () => {

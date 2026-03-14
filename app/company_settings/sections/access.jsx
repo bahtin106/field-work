@@ -26,8 +26,6 @@ const ACCESS_SECTIONS = [
       { key: 'canAddCameraPhotos', labelKey: 'access_settings_perm_add_camera_photos' },
       { key: 'canViewOrderAmount', labelKey: 'access_settings_perm_view_order_amount' },
       { key: 'canEditOrderAmount', labelKey: 'access_settings_perm_edit_order_amount' },
-      { key: 'canViewOrderFuelCost', labelKey: 'access_settings_perm_view_order_fuel' },
-      { key: 'canEditOrderFuelCost', labelKey: 'access_settings_perm_edit_order_fuel' },
     ],
   },
   {
@@ -96,11 +94,9 @@ const normalizePermissionDependencies = (matrix) =>
   ROLE_IDS.reduce((acc, roleId) => {
     const rolePerms = { ...(matrix?.[roleId] || {}) };
     if (rolePerms.canEditOrderAmount) rolePerms.canViewOrderAmount = true;
-    if (rolePerms.canEditOrderFuelCost) rolePerms.canViewOrderFuelCost = true;
     if (rolePerms.canEditFinanceEntries) rolePerms.canViewFinanceOwn = true;
     if (rolePerms.canViewFinanceAll) rolePerms.canViewFinanceOwn = true;
     if (!rolePerms.canViewOrderAmount) rolePerms.canEditOrderAmount = false;
-    if (!rolePerms.canViewOrderFuelCost) rolePerms.canEditOrderFuelCost = false;
     if (!rolePerms.canViewFinanceOwn) {
       rolePerms.canEditFinanceEntries = false;
       rolePerms.canViewFinanceAll = false;
@@ -111,12 +107,10 @@ const normalizePermissionDependencies = (matrix) =>
 
 const VIEW_EDIT_LINKS = {
   canEditOrderAmount: 'canViewOrderAmount',
-  canEditOrderFuelCost: 'canViewOrderFuelCost',
   canEditFinanceEntries: 'canViewFinanceOwn',
 };
 const EDIT_VIEW_LINKS = {
   canViewOrderAmount: 'canEditOrderAmount',
-  canViewOrderFuelCost: 'canEditOrderFuelCost',
   canViewFinanceOwn: 'canEditFinanceEntries',
 };
 

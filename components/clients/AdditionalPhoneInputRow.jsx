@@ -21,7 +21,8 @@ export default function AdditionalPhoneInputRow({
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const hasPhoneError = !!phoneError;
+  const styles = React.useMemo(() => createStyles(theme, hasPhoneError), [theme, hasPhoneError]);
   const inputRef = React.useRef(null);
   const fieldIdRef = React.useRef(Symbol('additional-phone-title-field'));
   const mountOrderRef = React.useRef(Date.now() + Math.random());
@@ -119,7 +120,7 @@ export default function AdditionalPhoneInputRow({
                 <Feather
                   name={APP_ICON_NAMES.EDIT_PENCIL}
                   size={theme.components?.icon?.sizeXs ?? Math.round((theme.icons?.sm ?? 18) * 0.75)}
-                  color={theme.colors.textSecondary}
+                  color={hasPhoneError ? theme.colors.danger : theme.colors.textSecondary}
                   style={styles.editIcon}
                 />
               </Pressable>
@@ -137,7 +138,7 @@ export default function AdditionalPhoneInputRow({
             <Feather
               name="x"
               size={theme.components?.icon?.sizeXs ?? Math.round((theme.icons?.sm ?? 18) * 0.75)}
-              color={theme.colors.textSecondary}
+              color={hasPhoneError ? theme.colors.danger : theme.colors.textSecondary}
             />
           </Pressable>
         ) : null}
@@ -155,7 +156,7 @@ export default function AdditionalPhoneInputRow({
   );
 }
 
-function createStyles(theme) {
+function createStyles(theme, hasPhoneError = false) {
   const sep = theme.components?.input?.separator || {};
   const insetKey = sep.insetX || 'lg';
   const horizontalInset = Number(theme.spacing?.[insetKey] ?? theme.spacing.lg ?? 0) || 0;
@@ -182,7 +183,7 @@ function createStyles(theme) {
       maxWidth: '100%',
     },
     baseLabel: {
-      color: theme.colors.textSecondary,
+      color: hasPhoneError ? theme.colors.danger : theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.medium,
       lineHeight,

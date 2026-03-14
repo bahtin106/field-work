@@ -696,6 +696,7 @@ export default function EditUser() {
   const canManageAvatar = fieldUi.isVisible('avatar_url');
   const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
   const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
+  const canEditDepartmentField = meIsAdmin && useDepartments && fieldUi.isVisible('department_id');
   const canShowCompanySection =
     fieldUi.hasVisibleFields(['department_id', 'role']) &&
     ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role'));
@@ -728,10 +729,14 @@ export default function EditUser() {
   );
   const firstNameError =
     fieldErrors.firstName?.message ||
-    (shouldShowError('firstName') && fieldUi.isRequired('first_name') && !firstName.trim() ? requiredMsg : null);
+    (fieldUi.isVisible('first_name') && shouldShowError('firstName') && fieldUi.isRequired('first_name') && !firstName.trim()
+      ? requiredMsg
+      : null);
   const lastNameError =
     fieldErrors.lastName?.message ||
-    (shouldShowError('lastName') && fieldUi.isRequired('last_name') && !lastName.trim() ? requiredMsg : null);
+    (fieldUi.isVisible('last_name') && shouldShowError('lastName') && fieldUi.isRequired('last_name') && !lastName.trim()
+      ? requiredMsg
+      : null);
   const emailError =
     fieldErrors.email?.message ||
     ((fieldUi.isVisible('email') && shouldShowError('email'))
@@ -757,7 +762,7 @@ export default function EditUser() {
       : null);
   const departmentError =
     fieldErrors.department_id?.message ||
-    (useDepartments && fieldUi.isVisible('department_id') && shouldShowError('department_id') && fieldUi.isRequired('department_id') && !departmentId
+    (canEditDepartmentField && shouldShowError('department_id') && fieldUi.isRequired('department_id') && !departmentId
       ? requiredMsg
       : null);
 
@@ -1175,7 +1180,7 @@ export default function EditUser() {
     clearBanner();
     setFieldErrors({});
     setSubmittedAttempt(true);
-    if (fieldUi.isRequired('first_name') && !firstName.trim()) {
+    if (fieldUi.isVisible('first_name') && fieldUi.isRequired('first_name') && !firstName.trim()) {
       setFieldErrors({ firstName: { message: requiredMsg } });
       ensureVisibleField({
         fieldRef: firstNameRef,
@@ -1187,7 +1192,7 @@ export default function EditUser() {
       firstNameRef.current?.focus?.();
       return;
     }
-    if (fieldUi.isRequired('last_name') && !lastName.trim()) {
+    if (fieldUi.isVisible('last_name') && fieldUi.isRequired('last_name') && !lastName.trim()) {
       setFieldErrors({ lastName: { message: requiredMsg } });
       ensureVisibleField({
         fieldRef: lastNameRef,
@@ -1216,7 +1221,7 @@ export default function EditUser() {
       emailRef.current?.focus?.();
       return;
     }
-    if (fieldUi.isRequired('phone') && !hasPhoneValue(phone)) {
+    if (fieldUi.isVisible('phone') && fieldUi.isRequired('phone') && !hasPhoneValue(phone)) {
       setFieldErrors({ phone: { message: requiredMsg } });
       ensureVisibleField({
         fieldRef: phoneRef,
@@ -1240,11 +1245,11 @@ export default function EditUser() {
       phoneRef.current?.focus?.();
       return;
     }
-    if (fieldUi.isRequired('birthdate') && !birthdate) {
+    if (fieldUi.isVisible('birthdate') && fieldUi.isRequired('birthdate') && !birthdate) {
       setFieldErrors({ birthdate: { message: requiredMsg } });
       return;
     }
-    if (useDepartments && fieldUi.isRequired('department_id') && !departmentId) {
+    if (canEditDepartmentField && fieldUi.isRequired('department_id') && !departmentId) {
       setFieldErrors({ department_id: { message: requiredMsg } });
       return;
     }

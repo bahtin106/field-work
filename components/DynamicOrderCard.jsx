@@ -7,23 +7,8 @@ import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../providers/SettingsProvider';
 import { useTranslation } from '../src/i18n/useTranslation';
+import OrderStatusCapsule from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
-
-/* ===== Color helpers ===== */
-function withAlpha(color, a) {
-  if (typeof color === 'string') {
-    const hex = color.match(/^#([0-9a-fA-F]{6})$/);
-    if (hex) {
-      const alpha = Math.round(Math.max(0, Math.min(1, a)) * 255)
-        .toString(16)
-        .padStart(2, '0');
-      return color + alpha;
-    }
-    const rgb = color.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
-    if (rgb) return `rgba(${rgb[1]},${rgb[2]},${rgb[3]},${a})`;
-  }
-  return `rgba(0,0,0,${a})`;
-}
 
 /* ===== Utils ===== */
 
@@ -223,18 +208,6 @@ function DynamicOrderCard({
     () => extractStatus(order, getFieldByKey, pills),
     [order, pills, getFieldByKey],
   );
-  const statusBadge = useMemo(() => {
-    if (!statusTitle) return null;
-    let color = theme.colors.primary;
-    if (/лент/i.test(statusTitle)) {
-      color = theme.colors.warning || theme.colors.primary;
-    } else if (/заверш/i.test(statusTitle)) {
-      color = theme.colors.textSecondary;
-    } else if (/работ/i.test(statusTitle)) {
-      color = theme.colors.success || theme.colors.primary;
-    }
-    return { title: statusTitle, bg: withAlpha(color, 0.14), text: color };
-  }, [statusTitle, theme]);
 
   // Executor name (bottom-right)
   const executorName = useMemo(() => {
@@ -495,27 +468,7 @@ function DynamicOrderCard({
         >
           {title || '—'}
         </Text>
-        {statusBadge && (
-          <View
-            style={{
-              backgroundColor: statusBadge.bg,
-              borderRadius: 999,
-              paddingHorizontal: 10,
-              paddingVertical: 6,
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 12,
-                fontWeight: '700',
-                letterSpacing: 0.3,
-                color: statusBadge.text,
-              }}
-            >
-              {statusBadge.title}
-            </Text>
-          </View>
-        )}
+        <OrderStatusCapsule status={statusTitle} />
       </View>
 
       {/* Details under title (no datetime here) */}
@@ -600,3 +553,4 @@ function areCardPropsEqual(prev, next) {
 
 const MemoizedDynamicOrderCard = memo(DynamicOrderCard, areCardPropsEqual);
 export default MemoizedDynamicOrderCard;
+

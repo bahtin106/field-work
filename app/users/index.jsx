@@ -89,8 +89,6 @@ export default function UsersIndex() {
   const { useDepartments } = useCompanySettings(companyId || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
 
-  // Р СџР С’Р В Р С’Р вЂєР вЂєР вЂўР вЂєР В¬Р СњР С’Р Р‡ Р вЂ”Р С’Р вЂњР В Р Р€Р вЂ”Р С™Р С’: Р С•Р В±Р В° РЎвЂ¦РЎС“Р С”Р В° Р Р†РЎвЂ№Р В·РЎвЂ№Р Р†Р В°РЎР‹РЎвЂљРЎРѓРЎРЏ Р С•Р Т‘Р Р…Р С•Р Р†РЎР‚Р ВµР СР ВµР Р…Р Р…Р С• Р Р…Р В° Р Р†Р ВµРЎР‚РЎвЂ¦Р Р…Р ВµР С РЎС“РЎР‚Р С•Р Р†Р Р…Р Вµ Р С”Р С•Р СР С—Р С•Р Р…Р ВµР Р…РЎвЂљР В°
-  // Р В­РЎвЂљР С• Р С•Р В±Р ВµРЎРѓР С—Р ВµРЎвЂЎР С‘Р Р†Р В°Р ВµРЎвЂљ Р С—Р В°РЎР‚Р В°Р В»Р В»Р ВµР В»РЎРЉР Р…РЎС“РЎР‹ Р В·Р В°Р С–РЎР‚РЎС“Р В·Р С”РЎС“ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦
   const {
     data: users = [],
     isLoading: usersLoading,
@@ -111,38 +109,22 @@ export default function UsersIndex() {
   });
   useEmployeesRealtimeSync({ enabled: true, companyId });
 
-  // Р вЂ™Р С”Р В»РЎР‹РЎвЂЎР В°Р ВµР С РЎвЂћР С‘Р В»РЎРЉРЎвЂљРЎР‚Р В°РЎвЂ Р С‘РЎР‹ Р С—Р С• Р С•РЎвЂљР Т‘Р ВµР В»Р В°Р С, Р С”Р С•Р С–Р Т‘Р В° Р С•Р Р…Р С‘ Р В·Р В°Р С–РЎР‚РЎС“Р В¶Р ВµР Р…РЎвЂ№
   // Combined loading state - wait for initial data from both sources
   // Once cached data is available, show it immediately (stale-while-revalidate pattern)
-  // Р С™Р В Р ВР СћР ВР В§Р СњР С›: Р СџР С•Р С”Р В°Р В·РЎвЂ№Р Р†Р В°Р ВµР С loader РЎвЂљР С•Р В»РЎРЉР С”Р С• Р ВµРЎРѓР В»Р С‘ Р С›Р вЂР С’ Р С‘РЎРѓРЎвЂљР С•РЎвЂЎР Р…Р С‘Р С”Р В° Р С–РЎР‚РЎС“Р В·РЎРЏРЎвЂљРЎРѓРЎРЏ Р В Р Р…Р ВµРЎвЂљ Р Т‘Р В°Р Р…Р Р…РЎвЂ№РЎвЂ¦
   const hasAnyData = users.length > 0 || departments.length > 0;
   const isLoading = (usersLoading || departmentsLoading) && !hasAnyData;
 
-  // Pull-to-refresh Р С•Р В±Р Р…Р С•Р Р†Р В»РЎРЏР ВµРЎвЂљ Р С•Р В±Р В° Р С‘РЎРѓРЎвЂљР С•РЎвЂЎР Р…Р С‘Р С”Р В° Р С•Р Т‘Р Р…Р С•Р Р†РЎР‚Р ВµР СР ВµР Р…Р Р…Р С•
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshUsers(), refreshDepartments()]);
   }, [refreshUsers, refreshDepartments]);
 
-  // Р С›Р В±Р Р…Р С•Р Р†Р В»РЎРЏР ВµР С Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ Р С—РЎР‚Р С‘ Р Р†Р С•Р В·Р Р†РЎР‚Р В°РЎвЂљР Вµ Р Р…Р В° РЎРЊР С”РЎР‚Р В°Р Р… (Apple-style: РЎРѓР Р†Р ВµР В¶Р С‘Р Вµ Р Т‘Р В°Р Р…Р Р…РЎвЂ№Р Вµ, Р Р…Р С• Р В±Р ВµР В· РЎРѓР С—Р В°Р СР В°)
-  const lastRefreshRef = React.useRef(0);
-  
   useFocusEffect(
     useCallback(() => {
       revalidateFilters({ extend: true });
-      const now = Date.now();
-      const timeSinceLastRefresh = now - lastRefreshRef.current;
-      
-      // Refresh once on focus with small guard window.
-      if (timeSinceLastRefresh > 1000) {
-        lastRefreshRef.current = now;
-        refreshAll();
-      }
-    }, [revalidateFilters, refreshAll]),
+    }, [revalidateFilters]),
   );
 
-  // Р СџРЎР‚Р С•Р С”РЎРѓР С‘РЎР‚РЎС“РЎР‹РЎвЂ°Р В°РЎРЏ РЎвЂћРЎС“Р Р…Р С”РЎвЂ Р С‘РЎРЏ Р Т‘Р В»РЎРЏ РЎРѓР С•Р Р†Р СР ВµРЎРѓРЎвЂљР С‘Р СР С•РЎРѓРЎвЂљР С‘ РЎРѓ РЎвЂћР С‘Р В»РЎРЉРЎвЂљРЎР‚Р В°Р СР С‘
   const setFilterValue = filters.setValue;
-  // Р С›РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљРЎРЉ Р С—Р В°Р Р…Р ВµР В»РЎРЉ РЎвЂћР С‘Р В»РЎРЉРЎвЂљРЎР‚Р С•Р Р†
   const openFiltersPanel = () => setFiltersVisible(true);
 
   const c = theme.colors;
@@ -374,7 +356,7 @@ export default function UsersIndex() {
     };
   }, [theme.colors, ALPHA_PILL_BG, ALPHA_PILL_BORDER, styles.rolePill, styles.rolePillText]);
 
-  // Robust Postgres timestamptz РІвЂ вЂ™ Date parser (handles most common variants, treats no-TZ as UTC)
+  // Robust Postgres timestamptz parser
   function parsePgTs(ts) {
     if (!ts) return null;
     if (ts instanceof Date) return isNaN(ts) ? null : ts;
@@ -526,7 +508,7 @@ export default function UsersIndex() {
 
   /**
    * Helper: Format relative time for last seen
-   * Returns: "2 Р СР С‘Р Р…РЎС“РЎвЂљРЎвЂ№ Р Р…Р В°Р В·Р В°Р Т‘", "22 РЎвЂЎР В°РЎРѓР В° Р Р…Р В°Р В·Р В°Р Т‘", "1 Р Т‘Р ВµР Р…РЎРЉ Р Р…Р В°Р В·Р В°Р Т‘", etc.
+   * Returns a human-readable relative time string.
    * Up to 3 days uses relative format, 4+ days shows date only
    */
   const getRelativeTime = React.useCallback((now, past) => {
@@ -536,43 +518,43 @@ export default function UsersIndex() {
     const diffHour = Math.floor(diffMin / 60);
     const diffDay = Math.floor(diffHour / 24);
 
-    // Р РЋР ВµР в„–РЎвЂЎР В°РЎРѓ (Р СР ВµР Р…РЎРЉРЎв‚¬Р Вµ Р СР С‘Р Р…РЎС“РЎвЂљРЎвЂ№)
+    // Less than a minute
     if (diffMin < 1) {
       return t('users_relativeTime_now');
     }
 
-    // Р СљР С‘Р Р…РЎС“РЎвЂљРЎвЂ№ (1-59 Р СР С‘Р Р…)
+    // Minutes (1-59)
     if (diffMin < 60) {
       const n = diffMin;
       const word = pluralizeRu(
         n,
-        t('users_relativeTime_min_1'), // Р СР С‘Р Р…РЎС“РЎвЂљРЎС“
-        t('users_relativeTime_min_2_4'), // Р СР С‘Р Р…РЎС“РЎвЂљРЎвЂ№
-        t('users_relativeTime_min_5'), // Р СР С‘Р Р…РЎС“РЎвЂљ
+        t('users_relativeTime_min_1'),
+        t('users_relativeTime_min_2_4'),
+        t('users_relativeTime_min_5'),
       );
       return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
-    // Р В§Р В°РЎРѓРЎвЂ№ (1-23 РЎвЂЎР В°РЎРѓР В°)
+    // Hours (1-23)
     if (diffHour < 24) {
       const n = diffHour;
       const word = pluralizeRu(
         n,
-        t('users_relativeTime_hour_1'), // РЎвЂЎР В°РЎРѓ
-        t('users_relativeTime_hour_2_4'), // РЎвЂЎР В°РЎРѓР В°
-        t('users_relativeTime_hour_5'), // РЎвЂЎР В°РЎРѓР С•Р Р†
+        t('users_relativeTime_hour_1'),
+        t('users_relativeTime_hour_2_4'),
+        t('users_relativeTime_hour_5'),
       );
       return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
 
-    // Р вЂќР Р…Р С‘ (1-3 Р Т‘Р Р…РЎРЏ)
+    // Days (1-3)
     if (diffDay <= 3) {
       const n = diffDay;
       const word = pluralizeRu(
         n,
-        t('users_relativeTime_day_1'), // Р Т‘Р ВµР Р…РЎРЉ
-        t('users_relativeTime_day_2_4'), // Р Т‘Р Р…РЎРЏ
-        t('users_relativeTime_day_5'), // Р Т‘Р Р…Р ВµР в„–
+        t('users_relativeTime_day_1'),
+        t('users_relativeTime_day_2_4'),
+        t('users_relativeTime_day_5'),
       );
       return `${n} ${word} ${t('users_relativeTime_ago')}`;
     }
@@ -583,7 +565,7 @@ export default function UsersIndex() {
 
   const formatPresence = React.useCallback(
     (ts) => {
-      // Returns either "Р вЂ™ РЎРѓР ВµРЎвЂљР С‘" or "Р вЂРЎвЂ№Р В» Р Р† РЎРѓР ВµРЎвЂљР С‘: [relative_time]" or "Р вЂРЎвЂ№Р В» Р Р† РЎРѓР ВµРЎвЂљР С‘: [date]" or "Р вЂРЎвЂ№Р В» Р Р† РЎРѓР ВµРЎвЂљР С‘: Р Р…Р С‘Р С”Р С•Р С–Р Т‘Р В°"
+      // Online or last-seen label
       if (isOnlineNow(ts)) return t('users_online');
 
       if (!ts) return `${t('users_lastSeen_prefix')} ${t('users_lastLogin_never')}`;
@@ -668,7 +650,7 @@ export default function UsersIndex() {
                   toast.warning(
                     t(
                       'subscription_edit_unavailable_toast',
-                      'Р ВР В·Р СР ВµР Р…Р ВµР Р…Р С‘Р Вµ Р Р…Р ВµР Т‘Р С•РЎРѓРЎвЂљРЎС“Р С—Р Р…Р С•. Р СџРЎР‚Р С•Р Т‘Р В»Р С‘РЎвЂљР Вµ Р С—Р С•Р Т‘Р С—Р С‘РЎРѓР С”РЎС“',
+      // Show the exact date when relative formatting is no longer useful
                     ),
                   );
                   return;

@@ -26,7 +26,6 @@ import {
   Pressable,
   FlatList,
   Image,
-  Modal,
   StyleSheet,
   StatusBar,
   Platform,
@@ -47,7 +46,7 @@ import Animated, {
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import Button from '../../../components/ui/Button';
-import { BaseModal } from '../../../components/ui/modals';
+import { BaseModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
 
 // ─── Haptic helpers ───────────────────────────────────────────────
 const hapticShutter = () =>
@@ -243,11 +242,9 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
 
   // ── Main camera UI ─────────────────────────────────────────
   return (
-    <Modal
+    <AnimatedFullscreenModal
       visible={visible}
-      animationType="slide"
-      presentationStyle="fullScreen"
-      statusBarTranslucent
+      animation="slide"
       onRequestClose={handleDiscard}
     >
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -365,7 +362,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
           ) : null
         }
       />
-    </Modal>
+    </AnimatedFullscreenModal>
   );
 }
 

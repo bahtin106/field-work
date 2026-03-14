@@ -1,12 +1,10 @@
 ﻿// app/stats.jsx
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
   FlatList,
-  Modal,
   RefreshControl,
   TextInput as RNTextInput,
   ScrollView,
@@ -20,10 +18,12 @@ import { Calendar } from 'react-native-calendars';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import AppHeader from '../components/navigation/AppHeader';
+import AnimatedFullscreenModal from '../components/ui/modals/AnimatedFullscreenModal';
 import { useCompanySettings } from '../hooks/useCompanySettings';
 import { usePermissions } from '../lib/permissions';
 import { formatCurrencyWithOptions } from '../lib/currency';
 import { supabase } from '../lib/supabase';
+import { useScreenRefreshRegistration } from '../src/shared/query/screenRefreshRegistry';
 import { useTheme } from '../theme/ThemeProvider';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -545,7 +545,7 @@ export default function StatsScreen() {
       let query = supabase
         .from('orders')
         .select(
-          'id, status, time_window_start, assigned_to, price, fuel_cost, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
+          'id, status, time_window_start, assigned_to, price, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
         )
         .order('time_window_start', { ascending: false });
 
@@ -571,7 +571,7 @@ export default function StatsScreen() {
 
       const getGross = (o) => Number(o.finance_gross_total ?? o.price ?? 0) || 0;
       const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
-      const getExpense = (o) => Number(o.finance_expense_total ?? o.fuel_cost ?? 0) || 0;
+      const getExpense = (o) => Number(o.finance_expense_total ?? 0) || 0;
       const getNet = (o) =>
         Number(o.finance_net_total ?? getGross(o) + getExtraIncome(o) - getExpense(o)) || 0;
 
@@ -669,14 +669,24 @@ export default function StatsScreen() {
     initialize();
   }, [loadMe]);
 
-  // Reload when dependencies change
-  useFocusEffect(
-    useCallback(() => {
-      if (me) {
-        if (isManager && canViewFinanceStatsAll) loadUsers();
-        loadStats();
-      }
-    }, [canViewFinanceStatsAll, isManager, loadStats, loadUsers, me]),
+  useEffect(() => {
+    if (!me) return;
+    if (isManager && canViewFinanceStatsAll) {
+      loadUsers().catch(() => {});
+    }
+    loadStats().catch(() => {});
+  }, [canViewFinanceStatsAll, isManager, loadStats, loadUsers, me]);
+
+  useScreenRefreshRegistration(
+    'stats.screen',
+    async () => {
+      if (!me) return;
+      await Promise.allSettled([
+        loadStats(),
+        isManager && canViewFinanceStatsAll ? loadUsers() : Promise.resolve(),
+      ]);
+    },
+    true,
   );
 
   const onRefresh = useCallback(async () => {
@@ -944,9 +954,9 @@ export default function StatsScreen() {
       </ScrollView>
 
       {/* User Picker Modal */}
-      <Modal
+      <AnimatedFullscreenModal
         visible={userPickerOpen && canViewFinanceStatsAll}
-        animationType="slide"
+        animation="slide"
         onRequestClose={closeUserPicker}
       >
         <SafeAreaView style={styles.modal}>
@@ -992,10 +1002,10 @@ export default function StatsScreen() {
             }
           />
         </SafeAreaView>
-      </Modal>
+      </AnimatedFullscreenModal>
 
       {/* Custom Period Modal */}
-      <Modal visible={customModalOpen} animationType="slide" onRequestClose={closeCustomPeriod}>
+      <AnimatedFullscreenModal visible={customModalOpen} animation="slide" onRequestClose={closeCustomPeriod}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Р’С‹Р±РѕСЂ РїРµСЂРёРѕРґР°</Text>
@@ -1054,7 +1064,7 @@ export default function StatsScreen() {
             </TouchableOpacity>
           </View>
         </SafeAreaView>
-      </Modal>
+      </AnimatedFullscreenModal>
     </View>
   );
 }

@@ -8,10 +8,10 @@ import { BackHandler, Image, Keyboard, Platform, Pressable, StyleSheet, Text, Vi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import Card from '../../components/ui/Card';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
 import PhoneInput from '../../components/ui/PhoneInput';

@@ -43,6 +43,7 @@ import { uploadClientObjectPhoto } from '../../../src/features/objects/photo';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useSetObjectTagsMutation } from '../../../src/features/tags/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation';
 import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
 import { useTheme } from '../../../theme/ThemeProvider';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
@@ -244,7 +245,7 @@ export default function EditObjectScreen() {
     [objectFieldSettings],
   );
   const withRequiredLabel = React.useCallback(
-    (field, label) => (objectFieldsByKey.get(field)?.isRequired ? `${label} *` : label),
+    (field, label) => getRequiredFieldLabel(label, objectFieldsByKey.get(field)?.isRequired === true),
     [objectFieldsByKey],
   );
   const chevronIconSize = theme.icons?.sm ?? 18;

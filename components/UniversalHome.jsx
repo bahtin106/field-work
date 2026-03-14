@@ -117,7 +117,7 @@ function HomeWarningCard({
         <View style={styles.subscriptionWarningBadge}>
           <FeatherIcon
             name={icon}
-            size={14}
+            size={theme.icons?.sm ?? theme.typography.sizes.sm + theme.spacing.xs}
             color={theme.colors.warning || theme.colors.primary}
           />
         </View>
@@ -128,14 +128,14 @@ function HomeWarningCard({
       </View>
       <Pressable
         onPress={onPress}
-        android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+        android_ripple={{ color: theme.colors.ripple, borderless: false }}
         style={({ pressed }) => [styles.subscriptionWarningLinkRow, pressed && styles.rowPressed]}
         accessibilityRole="button"
       >
         <Text style={styles.subscriptionWarningLinkText}>{cta}</Text>
         <FeatherIcon
           name="chevron-right"
-          size={16}
+          size={theme.components?.listItem?.chevronSize ?? theme.icons?.sm ?? theme.typography.sizes.md}
           color={theme.colors.textSecondary || theme.colors.text}
         />
       </Pressable>
@@ -143,7 +143,7 @@ function HomeWarningCard({
   );
 }
 
-export default function UniversalHome({ role, user, profile: providedProfile }) {
+export default function UniversalHome({ role, user, profile: providedProfile, onInitialReady }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const router = useRouter();
@@ -216,7 +216,11 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   const uid =
     user?.id && isUuid(user.id) ? user.id : isUuid(session?.user?.id) ? session.user.id : null;
 
-  const { data: profileData, isLoading: profileLoading } = useQuery({
+  const {
+    data: profileData,
+    isLoading: profileLoading,
+    isFetched: profileFetched,
+  } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
@@ -277,7 +281,10 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     });
   }, [uid, resolvedRole, readyForCounts, canViewAll]);
 
-  const { data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
+  const {
+    data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 },
+    isFetched: myCountsFetched,
+  } = useQuery({
     queryKey: ['counts', 'my', uid],
     queryFn: () => fetchCountsMy(uid),
     enabled: readyForCounts,
@@ -335,23 +342,32 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
     }
     runSingleNavigation(() => router.push('/orders/create-order'));
   }, [isReadOnlyBySubscription, router, runSingleNavigation, t, toast]);
-  const { data: cloudIntegrationStatus } = useQuery({
+  const shouldCheckCloudHealth =
+    isAdmin && !!companyId && companySettings?.media_provider === 'yandex_disk';
+  const {
+    data: cloudIntegrationStatus,
+    isFetched: cloudStatusFetched,
+    isFetching: cloudStatusFetching,
+    isError: cloudStatusError,
+  } = useQuery({
     queryKey: ['cloud-storage-status', companyId],
     queryFn: () => yandexDiskIntegration('status'),
-    enabled: isAdmin && !!companyId && companySettings?.media_provider === 'yandex_disk',
+    enabled: shouldCheckCloudHealth,
     staleTime: 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnMount: true,
     placeholderData: (prev) => prev,
   });
   const cloudHealthCode = String(
-    cloudIntegrationStatus?.health ||
-      (cloudIntegrationStatus?.connected ? 'unknown' : 'not_connected'),
+    cloudStatusError
+      ? 'error'
+      : cloudIntegrationStatus?.health ||
+          (cloudIntegrationStatus?.connected ? 'unknown' : 'not_connected'),
   );
   const hasCloudIssue =
-    isAdmin &&
-    companySettings?.media_provider === 'yandex_disk' &&
-    !!companyId &&
+    shouldCheckCloudHealth &&
+    cloudStatusFetched &&
+    !cloudStatusFetching &&
     cloudHealthCode !== 'ok';
 
   const handleLogout = async () => {
@@ -444,7 +460,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   );
 
   // Fetch company name if companyId is available
-  const { data: companyRow } = useQuery({
+  const { data: companyRow, isFetched: companyFetched } = useQuery({
     queryKey: ['company', companyId],
     queryFn: async () => {
       if (!companyId) return null;
@@ -460,7 +476,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
   // Fetch department name if department id available
   const departmentIdToUse = deptIdFromProfile;
-  const { data: departmentRow } = useQuery({
+  const { data: departmentRow, isFetched: departmentFetched } = useQuery({
     queryKey: ['department', departmentIdToUse],
     queryFn: async () => {
       if (!departmentIdToUse) return null;
@@ -494,6 +510,23 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
         ? t('role_dispatcher')
         : t('role_worker');
 
+  const hasProfileSeed = !!currentProfile?.id;
+  const companyReady = !companyId || companyFetched;
+  const departmentReady = !useDepartments || !departmentIdToUse || departmentFetched;
+  const homeCriticalReady =
+    !!uid &&
+    hasProfileSeed &&
+    (profileFetched || !profileLoading) &&
+    !permsLoading &&
+    myCountsFetched &&
+    companyReady &&
+    departmentReady;
+
+  useEffect(() => {
+    if (!homeCriticalReady) return;
+    onInitialReady?.();
+  }, [homeCriticalReady, onInitialReady]);
+
   // Render UI immediately even if profile is still loading.
 
   return (
@@ -501,7 +534,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
       <Card style={styles.cardRounded} padded={false}>
           <Pressable
           onPress={openSelfProfileEdit}
-          android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+          android_ripple={{ color: theme.colors.ripple, borderless: false }}
           accessibilityRole="button"
           style={({ pressed }) => [
             styles.profileRow,
@@ -520,7 +553,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
 
           <View style={styles.profileInfo}>
             <Text style={styles.profileName} numberOfLines={1}>
-              {profileLoading ? '' : (fullName || '')}
+              {fullName || ''}
             </Text>
             <View style={styles.metaRows}>
               <Text style={styles.companyText} numberOfLines={1}>
@@ -544,7 +577,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
           <View style={styles.profileMenuDotsWrap}>
             <FeatherIcon
               name="more-horizontal"
-              size={18}
+              size={theme.icons?.sm ?? theme.typography.sizes.sm + theme.spacing.xs}
               color={theme.colors.textSecondary || theme.colors.text}
             />
           </View>
@@ -585,7 +618,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
             <Pressable
               key={item.key}
               onPress={item.onPress}
-              android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+              android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
                 styles.menuRow,
                 pressed && styles.rowPressed,
@@ -596,7 +629,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
               <View style={styles.menuContent}>
                 <FeatherIcon
                   name={item.icon}
-                  size={20}
+                  size={theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs}
                   color={theme.colors.text}
                   style={styles.menuIcon}
                 />
@@ -604,7 +637,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
               </View>
               <FeatherIcon
                 name="chevron-right"
-                size={20}
+                size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? theme.typography.sizes.md}
                 color={theme.colors.textSecondary || theme.colors.text}
               />
             </Pressable>
@@ -620,7 +653,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
               <Pressable
                 key={s}
                 onPress={() => setScope(s)}
-                android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+                android_ripple={{ color: theme.colors.ripple, borderless: false }}
                 style={({ pressed }) => [
                   styles.scopePill,
                   active && styles.scopePillActive,
@@ -630,13 +663,13 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
               >
                 <FeatherIcon
                   name={s === 'my' ? 'user' : 'users'}
-                  size={14}
+                  size={theme.icons?.sm ?? theme.typography.sizes.sm + theme.spacing.xs}
                   color={
                     active
-                      ? theme.colors.onPrimary || '#fff'
+                      ? theme.colors.onPrimary
                       : theme.colors.textSecondary || theme.colors.text
                   }
-                  style={{ marginRight: 6 }}
+                  style={styles.scopeIcon}
                 />
                 <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
                   {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
@@ -662,7 +695,7 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
             <Pressable
               key={key}
               onPress={() => openOrdersWithFilter(key)}
-              android_ripple={{ color: theme.colors.ripple || '#00000014', borderless: false }}
+              android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [styles.summaryItem, pressed && styles.rowPressed]}
               accessibilityRole="button"
             >
@@ -684,205 +717,253 @@ export default function UniversalHome({ role, user, profile: providedProfile }) 
   );
 }
 
-const createStyles = (theme) =>
-  StyleSheet.create({
-    container: { padding: theme.spacing.lg },
-    rowPressed: { opacity: 0.6 },
+const createStyles = (theme) => {
+  const colors = theme.colors;
+  const spacing = theme.spacing;
+  const radii = theme.radii;
+  const type = theme.typography;
+  const avatarSize = theme.components?.avatar?.md
+    ? theme.components.avatar.md + spacing.xs
+    : spacing.xxl + spacing.xl;
+  const avatarRadius = avatarSize / 2;
+  const menuRowMinHeight =
+    theme.components?.listItem?.height ?? theme.components?.row?.minHeight ?? spacing.xxl;
+  const profileMinHeight = avatarSize + spacing.xl * 2;
+  const iconButtonSize = theme.components?.iconButton?.size ?? spacing.xxl;
+  const badgeSize = spacing.xl;
+  const summaryNumberSize = type.sizes.xl + spacing.xs;
+  const compactTextSize = type.sizes.sm - 1;
+  const pillVertical = spacing.xs;
+  const pillHorizontal = spacing.md;
+
+  return StyleSheet.create({
+    container: {
+      padding: spacing.lg,
+      paddingBottom:
+        (theme.components?.scrollView?.paddingBottom ?? spacing.xl) + spacing.lg,
+    },
+    rowPressed: {
+      opacity: theme.components?.listItem?.disabledOpacity ?? 0.6,
+    },
     cardRounded: {
-      marginBottom: theme.spacing.lg,
-      borderRadius: theme.radii.xl || theme.radii.lg || 16,
+      marginBottom: spacing.lg,
+      borderRadius: radii.xl,
       overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
     },
     profileRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: theme.spacing.lg,
-      paddingVertical: theme.spacing.md,
       justifyContent: 'flex-start',
-      backgroundColor: '#FFFFFF',
-      borderWidth: 1,
-      borderColor: withAlpha(theme.colors.border, 0.9),
-      borderRadius: theme.radii.lg,
-      minHeight: 112,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+      minHeight: profileMinHeight,
+      backgroundColor: colors.surface,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: withAlpha(colors.border, 0.9),
+      borderRadius: radii.lg,
     },
     avatarWrap: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarRadius,
       overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.surface,
-      marginRight: theme.spacing.md,
-      marginTop: 0,
+      borderWidth: theme.components?.avatar?.border ?? 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      marginRight: spacing.md,
       alignSelf: 'center',
     },
     avatarImg: { width: '100%', height: '100%' },
     avatarFallback: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarRadius,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.colors.inputBg || theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      marginRight: theme.spacing.md,
-      marginTop: 0,
+      backgroundColor: colors.inputBg || colors.surface,
+      borderWidth: theme.components?.avatar?.border ?? 1,
+      borderColor: colors.border,
+      marginRight: spacing.md,
       alignSelf: 'center',
     },
-    avatarText: { fontSize: 18, fontWeight: '700', color: theme.colors.primary },
-    profileInfo: { flex: 1, paddingRight: theme.spacing.xl * 2 },
+    avatarText: {
+      fontSize: type.sizes.lg,
+      fontWeight: type.weight.bold,
+      color: colors.primary,
+    },
+    profileInfo: {
+      flex: 1,
+      paddingRight: spacing.xl + spacing.md,
+    },
     profileName: {
-      fontSize: theme.typography.sizes.lg,
-      fontWeight: theme.typography.weight.semibold,
-      color: theme.colors.text,
-      paddingRight: theme.spacing.md,
+      fontSize: type.sizes.lg,
+      fontWeight: type.weight.semibold,
+      color: colors.text,
+      paddingRight: spacing.md,
     },
     profileRoleText: {
-      fontSize: theme.typography.sizes.sm,
-      color: theme.colors.textSecondary || theme.colors.text,
+      fontSize: type.sizes.sm,
+      color: colors.textSecondary || colors.text,
     },
     metaRows: {
-      marginTop: 6,
-      marginLeft: 0,
+      marginTop: spacing.xs,
+      gap: spacing.xs,
     },
     companyText: {
-      fontSize: theme.typography.sizes.sm,
-      color: theme.colors.text,
-      fontWeight: theme.typography.weight.semibold,
-      paddingLeft: 0,
+      fontSize: type.sizes.sm,
+      color: colors.text,
+      fontWeight: type.weight.semibold,
     },
-    roleRow: {
-      marginTop: 4,
-      marginLeft: 0,
-      paddingLeft: 0,
-    },
-    departmentRow: {
-      marginTop: 4,
-      marginLeft: 0,
-      paddingLeft: 0,
-    },
+    roleRow: {},
+    departmentRow: {},
     departmentText: {
-      fontSize: theme.typography.sizes.sm,
-      color: theme.colors.textSecondary || theme.colors.text,
+      fontSize: type.sizes.sm,
+      color: colors.textSecondary || colors.text,
     },
     profileMenuDotsWrap: {
       position: 'absolute',
-      top: theme.spacing.sm,
-      right: theme.spacing.sm,
-      width: 24,
-      height: 24,
+      top: spacing.sm,
+      right: spacing.sm,
+      width: iconButtonSize,
+      height: iconButtonSize,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'transparent',
+      backgroundColor: colors.transparent || 'transparent',
     },
     menuCard: {},
     subscriptionWarningCard: {
-      marginBottom: theme.spacing.lg,
-      borderRadius: theme.radii.xl || theme.radii.lg || 16,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.colors.warning || theme.colors.primary, 0.2),
-      backgroundColor: theme.colors.surface,
-      paddingHorizontal: theme.spacing.lg,
-      paddingVertical: theme.spacing.md,
+      marginBottom: spacing.lg,
+      borderRadius: radii.xl,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: withAlpha(colors.warning || colors.primary, 0.2),
+      backgroundColor: colors.surface,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
     },
     subscriptionWarningHeader: {
       flexDirection: 'row',
       alignItems: 'flex-start',
-      marginBottom: theme.spacing.xs,
-      gap: theme.spacing.xs,
+      marginBottom: spacing.xs,
+      gap: spacing.xs,
     },
     subscriptionWarningBadge: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
+      width: badgeSize,
+      height: badgeSize,
+      borderRadius: badgeSize / 2,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: withAlpha(theme.colors.warning || theme.colors.primary, 0.14),
-      marginTop: 1,
+      backgroundColor: withAlpha(colors.warning || colors.primary, 0.14),
     },
-    subscriptionWarningBody: {
-      flex: 1,
-    },
+    subscriptionWarningBody: { flex: 1 },
     subscriptionWarningTitle: {
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
-      color: theme.colors.text,
+      fontSize: type.sizes.md,
+      fontWeight: type.weight.semibold,
+      color: colors.text,
     },
     subscriptionWarningText: {
-      fontSize: theme.typography.sizes.sm,
-      color: theme.colors.textSecondary || theme.colors.text,
-      lineHeight: 19,
+      fontSize: type.sizes.sm,
+      color: colors.textSecondary || colors.text,
+      lineHeight: Math.round(type.sizes.sm * 1.35),
     },
     subscriptionWarningLinkRow: {
-      marginTop: theme.spacing.sm,
-      paddingTop: theme.spacing.sm,
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.colors.border, 0.65),
+      marginTop: spacing.sm,
+      paddingTop: spacing.sm,
+      borderTopWidth: theme.components?.listItem?.dividerWidth ?? 1,
+      borderTopColor: withAlpha(colors.border, 0.65),
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
     },
     subscriptionWarningLinkText: {
-      fontSize: theme.typography.sizes.sm,
-      color: theme.colors.text,
-      fontWeight: theme.typography.weight.semibold,
+      fontSize: type.sizes.sm,
+      color: colors.text,
+      fontWeight: type.weight.semibold,
     },
     menuRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: theme.spacing.lg,
-      paddingVertical: theme.spacing.md,
-      backgroundColor: theme.colors.surface,
+      minHeight: menuRowMinHeight + spacing.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+      backgroundColor: colors.surface,
     },
-    menuRowBorder: { borderBottomWidth: 1, borderColor: theme.colors.border },
-    menuContent: { flexDirection: 'row', alignItems: 'center' },
-    menuIcon: { marginRight: theme.spacing.md },
-    menuLabel: { fontSize: theme.typography.sizes.md, color: theme.colors.text },
+    menuRowBorder: {
+      borderBottomWidth: theme.components?.listItem?.dividerWidth ?? 1,
+      borderColor: colors.border,
+    },
+    menuContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    menuIcon: { marginRight: spacing.md },
+    menuLabel: {
+      fontSize: type.sizes.md,
+      color: colors.text,
+    },
     scopeSwitch: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      marginBottom: theme.spacing.md,
+      gap: spacing.sm,
+      marginBottom: spacing.md,
     },
     scopePill: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      backgroundColor: theme.colors.onPrimary,
+      paddingVertical: pillVertical,
+      paddingHorizontal: pillHorizontal,
+      borderRadius: radii.pill,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
     },
-    scopePillActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-    scopeText: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
-    scopeTextActive: { color: theme.colors.onPrimary || '#fff', fontWeight: '600' },
+    scopePillActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    scopeText: {
+      fontSize: compactTextSize,
+      color: colors.textSecondary || colors.text,
+    },
+    scopeTextActive: {
+      color: colors.onPrimary,
+      fontWeight: type.weight.semibold,
+    },
+    scopeIcon: {
+      marginRight: spacing.xs,
+    },
     summaryContainer: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       flexWrap: 'wrap',
-      marginBottom: theme.spacing.lg,
+      marginBottom: spacing.lg,
     },
     summaryItem: {
       flexBasis: '48%',
-      backgroundColor: theme.colors.surface,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
-      borderRadius: theme.radii.lg,
-      paddingVertical: theme.spacing.md,
-      paddingHorizontal: theme.spacing.lg,
-      marginBottom: theme.spacing.md,
+      backgroundColor: colors.surface,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: colors.border,
+      borderRadius: radii.lg,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
+      marginBottom: spacing.md,
+      minHeight: menuRowMinHeight + spacing.xl,
     },
-    summaryNumber: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
-    summaryLabel: { fontSize: 13, color: theme.colors.textSecondary || theme.colors.text },
-    actionWrapper: { marginBottom: theme.spacing.md },
+    summaryNumber: {
+      fontSize: summaryNumberSize,
+      fontWeight: type.weight.bold,
+      marginBottom: spacing.xs,
+    },
+    summaryLabel: {
+      fontSize: compactTextSize,
+      color: colors.textSecondary || colors.text,
+    },
+    actionWrapper: { marginBottom: spacing.md },
   });
+};
 
 
 

@@ -5,3 +5,4 @@ export { ConfirmModal, AlertModal } from './ConfirmAlertModals';
 export { default as DateTimeModal } from './DateTimeModal';
 export { default as Wheel } from './Wheel';
 export { default as QuickPreviewModal } from './QuickPreviewModal';
+export { default as AnimatedFullscreenModal } from './AnimatedFullscreenModal';

@@ -242,6 +242,24 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     });
   }, []);
 
+  const setDisplayUrl = useCallback((sourceUrl, displayUrl) => {
+    const source = String(sourceUrl || '').trim();
+    if (!source) return;
+    const nextDisplay = String(displayUrl || '').trim();
+    if (!nextDisplay) {
+      _globalResolvedCache.delete(source);
+      setResolvedUrls((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, source)) return prev;
+        const next = { ...prev };
+        delete next[source];
+        return next;
+      });
+      return;
+    }
+    _globalResolvedCache.set(source, nextDisplay);
+    setResolvedUrls((prev) => ({ ...prev, [source]: nextDisplay }));
+  }, []);
+
   return {
     resolvedUrls,
     issues,
@@ -252,6 +270,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     inspectSingle,
     clearCaches,
     removeFromCache,
+    setDisplayUrl,
     isLikelyYandexLink,
     MEDIA_CATEGORIES,
   };
