@@ -6,29 +6,30 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
-  Dimensions,
+  Easing,
   findNodeHandle,
   InteractionManager,
-  Platform,
+  Keyboard,
   Pressable,
+  RefreshControl,
   Animated as RNAnimated,
   ScrollView,
   StyleSheet,
   Text,
-  ToastAndroid,
   UIManager,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import Modal from 'react-native-modal';
 import { useAuth } from '../../components/hooks/useAuth';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { useFinanceEntryMedia } from '../../hooks/useFinanceEntryMedia';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { useOrderMedia } from '../../hooks/useOrderMedia';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
+import { financeEntryMediaStorage, financeEntryYandexMedia } from '../../lib/financeEntryMedia';
 import { orderMediaStorage } from '../../lib/orderMediaStorage';
 import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
@@ -41,10 +42,13 @@ import { encode as encodeBase64 } from 'base64-arraybuffer';
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
+import ClearButton from '../../components/ui/ClearButton';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
+import OrderStatusCapsule from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
+import { BaseModal, ConfirmModal, AlertModal, SelectModal } from '../../components/ui/modals';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { buildAddressForNavigator, openAddressInYandex } from '../../components/ui/map';
 import { usePermissions } from '../../lib/permissions';
@@ -58,12 +62,15 @@ import {
 } from '../../src/features/requests/queries';
 import { updateRequestWithVersion } from '../../src/features/requests/api';
 import {
+  financeQueryKeys,
   useDeleteOrderFinanceEntryMutation,
   useOrderFinanceEntries,
   useUpsertOrderFinanceEntryMutation,
 } from '../../src/features/finance/queries';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
+import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
+import FieldErrorText from '../../src/shared/feedback/FieldErrorText';
 import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
@@ -82,11 +89,11 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useQueryClient } from '@tanstack/react-query';
-import { Feather } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import OrderPhotosModal from './components/OrderPhotosModal';
 import FullscreenImageViewer from './components/FullscreenImageViewer';
+import { useToast } from '../../components/ui/ToastProvider';
 
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
 const PHOTO_MIME_TYPE = 'image/jpeg';
@@ -125,13 +132,18 @@ const REQUEST_SYNC_FIELDS = [
   'department_id',
   'work_type_id',
   'price',
-  'fuel_cost',
+  'payment_status',
+  'payment_method',
   'finance_income_total',
   'finance_expense_total',
   'finance_discount_total',
   'finance_gross_total',
   'finance_net_total',
   'urgent',
+  'contract_file',
+  'photo_before',
+  'photo_after',
+  'act_file',
 ];
 
 function isYandexMediaUrl(url) {
@@ -169,9 +181,145 @@ function shouldRetryDeleteWithAlternateProvider(rawMessage) {
   );
 }
 
+function FinanceAccordionRow({
+  label,
+  summaryValue,
+  summaryIcon = null,
+  summaryIconOnPress = null,
+  summaryIconAccessibilityLabel = null,
+  summaryTone = 'default',
+  hideSummaryWhenCollapsed = false,
+  hideSummary = false,
+  expanded,
+  onToggle,
+  children,
+  base,
+  styles,
+  theme,
+}) {
+  const summaryColor =
+    summaryTone === 'success'
+      ? theme.colors.success
+      : summaryTone === 'warning'
+        ? theme.colors.warning || theme.colors.primary
+      : summaryTone === 'danger'
+        ? theme.colors.danger
+        : summaryTone === 'primary'
+          ? theme.colors.primary
+          : theme.colors.text;
+
+  return (
+    <View>
+      <Pressable
+        style={({ pressed }) => [base.row, pressed && styles.financeSectionRowPressed]}
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+      >
+        <Text style={[base.label, expanded ? styles.financeSectionLabelExpanded : null]}>{label}</Text>
+        <View style={base.middleSpacer} />
+        <View style={styles.financeSectionRight}>
+          {!hideSummary && (!hideSummaryWhenCollapsed || expanded) ? (
+            <View style={[base.valueWrapper, styles.financeSectionSummaryWrap]}>
+              {summaryIcon ? (
+                summaryIconOnPress ? (
+                  <FinanceSummaryIconButton
+                    icon={summaryIcon}
+                    onPress={summaryIconOnPress}
+                    accessibilityLabel={summaryIconAccessibilityLabel}
+                    styles={styles}
+                  />
+                ) : (
+                  <View style={styles.financeSectionSummaryIcon}>{summaryIcon}</View>
+                )
+              ) : null}
+              <Text
+                style={[base.value, styles.financeSectionSummaryValue, { color: summaryColor }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {summaryValue}
+              </Text>
+            </View>
+          ) : null}
+          <View
+            style={[
+              styles.financeSectionChevronWrap,
+              expanded ? styles.financeSectionChevronWrapExpanded : null,
+            ]}
+          >
+            <Feather
+              name="chevron-down"
+              size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? 18}
+              color={theme.colors.textSecondary}
+            />
+          </View>
+        </View>
+      </Pressable>
+
+      {expanded ? <View style={styles.financeSectionExpanded}>{children}</View> : null}
+    </View>
+  );
+}
+
+function FinanceSummaryIconButton({ icon, onPress, accessibilityLabel, styles }) {
+  const progress = useRef(new RNAnimated.Value(0)).current;
+
+  const runPressAnimation = useCallback(() => {
+    progress.stopAnimation(() => {
+      progress.setValue(0);
+      RNAnimated.timing(progress, {
+        toValue: 1,
+        duration: 520,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start(() => {
+        progress.setValue(0);
+      });
+    });
+  }, [progress]);
+
+  const animatedStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          scale: progress.interpolate({
+            inputRange: [0, 0.2, 0.55, 1],
+            outputRange: [1, 0.9, 1.04, 1],
+          }),
+        },
+        {
+          rotate: progress.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['0deg', '360deg'],
+          }),
+        },
+      ],
+    }),
+    [progress],
+  );
+
+  return (
+    <Pressable
+      onPress={(event) => {
+        event?.stopPropagation?.();
+        runPressAnimation();
+        onPress?.();
+      }}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel || undefined}
+      style={styles.financeSectionSummaryIconButton}
+    >
+      <RNAnimated.View style={animatedStyle}>{icon}</RNAnimated.View>
+    </Pressable>
+  );
+}
+
 export default function OrderDetails() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const toast = useToast();
   const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const auth = useAuth();
@@ -240,11 +388,11 @@ export default function OrderDetails() {
 
   const [order, setOrder] = useState(null);
   const [orderReady, setOrderReady] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [workTypesReady, setWorkTypesReady] = useState(false);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [executorName, setExecutorName] = useState(null);
-  const [bannerMessage, setBannerMessage] = useState('');
   const [effectiveMediaProvider, setEffectiveMediaProvider] = useState(mediaProvider);
   const [cloudHealth, setCloudHealth] = useState('unknown');
   const [editMode, setEditMode] = useState(false);
@@ -285,12 +433,9 @@ export default function OrderDetails() {
   const [workTypeId, setWorkTypeId] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [amount, setAmount] = useState('');
-  const [gsm, setGsm] = useState('');
   const canViewOrderAmount = has('canViewOrderAmount');
   const canEditOrderAmount = canViewOrderAmount && has('canEditOrderAmount');
-  const canViewOrderFuelCost = has('canViewOrderFuelCost');
-  const canEditOrderFuelCost = canViewOrderFuelCost && has('canEditOrderFuelCost');
-  const canEditFinances = canEditOrderAmount || canEditOrderFuelCost;
+  const canEditFinances = canEditOrderAmount;
   const canViewFinanceOwn = has('canViewFinanceOwn');
   const canViewFinanceAll = has('canViewFinanceAll');
   const canViewFinanceEntries = canViewFinanceOwn || canViewFinanceAll;
@@ -310,6 +455,13 @@ export default function OrderDetails() {
     if (value === null || value === undefined || value === '') return null;
     return String(value);
   }, []);
+  const isOrderFieldVisible = useCallback(
+    (fieldKey) => {
+      const field = orderFieldsByKey.get(String(fieldKey || ''));
+      return !field || field.isEnabled !== false;
+    },
+    [orderFieldsByKey],
+  );
   const workTypeName = useMemo(() => {
     const normalized = normalizeId(workTypeId);
     const fallbackName =
@@ -334,23 +486,81 @@ export default function OrderDetails() {
   const [deleteEnabled, setDeleteEnabled] = useState(false);
   const [orderPhotosModal, setOrderPhotosModal] = useState({ visible: false, category: null });
   const [amountEditModalVisible, setAmountEditModalVisible] = useState(false);
-  const [fuelEditModalVisible, setFuelEditModalVisible] = useState(false);
+  const [paymentStatusModalVisible, setPaymentStatusModalVisible] = useState(false);
+  const [paymentMethodModalVisible, setPaymentMethodModalVisible] = useState(false);
+  const [financeKindModalVisible, setFinanceKindModalVisible] = useState(false);
+  const [financeCalcModeModalVisible, setFinanceCalcModeModalVisible] = useState(false);
+  const [financeExpensePayerModalVisible, setFinanceExpensePayerModalVisible] = useState(false);
+  const [financePercentBaseModalVisible, setFinancePercentBaseModalVisible] = useState(false);
   const [amountDraft, setAmountDraft] = useState('');
-  const [fuelDraft, setFuelDraft] = useState('');
+  const amountEditInputRef = useRef(null);
   const [financeEntryModalVisible, setFinanceEntryModalVisible] = useState(false);
+  const [financeEntryViewModalVisible, setFinanceEntryViewModalVisible] = useState(false);
+  const [financeEntryDeleteConfirmVisible, setFinanceEntryDeleteConfirmVisible] = useState(false);
+  const [financeEntryPhotosModalVisible, setFinanceEntryPhotosModalVisible] = useState(false);
+  const [financeEntryLocalPending, setFinanceEntryLocalPending] = useState([]);
+  const [financeEntryViewCommentExpanded, setFinanceEntryViewCommentExpanded] = useState(false);
+  const [financeEntryViewCommentExpandable, setFinanceEntryViewCommentExpandable] = useState(false);
+  const [financeEntryViewCommentMeasureWidth, setFinanceEntryViewCommentMeasureWidth] = useState(0);
+  const [expandedFinanceSections, setExpandedFinanceSections] = useState({
+    customer: false,
+    internal: false,
+    executor: false,
+  });
+  const [selectedFinanceEntry, setSelectedFinanceEntry] = useState(null);
   const [financeEntryDraft, setFinanceEntryDraft] = useState({
     id: null,
     kind: 'expense',
     calc_mode: 'fixed',
-    percent_base: 'gross_after_discount',
+    percent_base: 'base_price',
+    expense_payer: 'executor',
     title: '',
     note: '',
-    input_amount: '0',
-    input_percent: '0',
+    input_amount: '',
+    input_percent: '',
+    photo_urls: [],
   });
+  const [financeEntryFieldErrors, setFinanceEntryFieldErrors] = useState({});
+  const [financeEntrySubmitAttempt, setFinanceEntrySubmitAttempt] = useState(false);
+  const financeAmountInputRef = useRef(null);
+  const financePercentInputRef = useRef(null);
+  const financeCommentInputRef = useRef(null);
+  const financeEntryInitialPhotoUrlsRef = useRef([]);
   const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
+  const [financeViewerVisible, setFinanceViewerVisible] = useState(false);
+  const [financeViewerPhotos, setFinanceViewerPhotos] = useState([]);
+  const [financeViewerIndex, setFinanceViewerIndex] = useState(0);
+  const financeViewerRawPhotosRef = useRef([]);
+  const financeEntryInspectSignatureRef = useRef('');
+  const [financeViewerCategoryLabel, setFinanceViewerCategoryLabel] = useState('');
+  const financeEntryViewCommentText = useMemo(
+    () => String(selectedFinanceEntry?.note || '').trim(),
+    [selectedFinanceEntry?.note],
+  );
+  const financeEntryViewHasComment = financeEntryViewCommentText.length > 0;
+  const financeEntryViewPhotoCount = useMemo(
+    () =>
+      Array.isArray(selectedFinanceEntry?.photo_urls)
+        ? selectedFinanceEntry.photo_urls.map((value) => String(value || '')).filter(Boolean).length
+        : 0,
+    [selectedFinanceEntry?.photo_urls],
+  );
+  const financeEntryViewHasPhotos = financeEntryViewPhotoCount > 0;
+  const normalizeFinanceTextInput = useCallback((value) => String(value ?? '').replace(/\s*[\r\n]+\s*/g, ' '), []);
+  const clearFinanceEntryFieldError = useCallback((fieldKey) => {
+    if (!fieldKey) return;
+    setFinanceEntryFieldErrors((prev) => {
+      if (!prev?.[fieldKey]) return prev;
+      const next = { ...prev };
+      delete next[fieldKey];
+      return next;
+    });
+  }, []);
+  const focusAmountEditInput = useCallback(() => {
+    amountEditInputRef.current?.focus?.();
+  }, []);
   const [viewerIndex, setViewerIndex] = useState(0);
   const viewerRawPhotosRef = useRef([]);
   const viewerCategoryRef = useRef(null);
@@ -365,6 +575,13 @@ export default function OrderDetails() {
   // Stable ref so fetchData doesn't re-create when orderMedia resolves URLs
   const orderMediaRef = useRef(orderMedia);
   useEffect(() => { orderMediaRef.current = orderMedia; }, [orderMedia]);
+  const financeEntryMedia = useFinanceEntryMedia({
+    financeEntryId: financeEntryDraft.id,
+    photoUrls: financeEntryDraft.photo_urls,
+    mediaProvider,
+    t,
+    enabled: financeEntryPhotosModalVisible && !!financeEntryDraft.id,
+  });
 
   // Always-current order ref вЂ” prevents stale closures in parallel uploads
   const orderRef = useRef(order);
@@ -380,6 +597,44 @@ export default function OrderDetails() {
   });
   const upsertFinanceEntryMutation = useUpsertOrderFinanceEntryMutation(id);
   const deleteFinanceEntryMutation = useDeleteOrderFinanceEntryMutation(id);
+  const financeEntries = useMemo(
+    () => (Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : []),
+    [financeEntriesQuery.data],
+  );
+  const orderedFinanceEntries = useMemo(
+    () =>
+      [...financeEntries].sort((a, b) => {
+        const rank = (kind) => (kind === 'income' ? 0 : 1);
+        return rank(a?.kind) - rank(b?.kind);
+      }),
+    [financeEntries],
+  );
+  const financeIncomeEntries = useMemo(
+    () => orderedFinanceEntries.filter((entry) => entry?.kind === 'income'),
+    [orderedFinanceEntries],
+  );
+  const financeDiscountEntries = useMemo(
+    () => orderedFinanceEntries.filter((entry) => entry?.kind === 'discount'),
+    [orderedFinanceEntries],
+  );
+  const financeExpenseEntries = useMemo(
+    () => orderedFinanceEntries.filter((entry) => entry?.kind === 'expense'),
+    [orderedFinanceEntries],
+  );
+  const isLocalFinancePhotoUrl = useCallback((value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return false;
+    return (
+      raw.startsWith('file:') ||
+      raw.startsWith('content:') ||
+      raw.startsWith('ph:') ||
+      raw.startsWith('asset-library:')
+    );
+  }, []);
+  const formatFinancePhotoCount = useCallback(
+    (count) => t('order_photos_count', '{count} фото').replace('{count}', String(Number(count) || 0)),
+    [t],
+  );
 
   const initialFormSnapshotRef = useRef('');
   const detailsScrollRef = useRef(null);
@@ -403,22 +658,14 @@ export default function OrderDetails() {
   }, [buildOrderSyncToken]);
 
   const showToast = useCallback((msg) => {
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(msg, ToastAndroid.SHORT);
-    } else {
-      setBannerMessage(msg);
-      setTimeout(() => setBannerMessage(''), 2000);
-    }
-  }, []);
+    toast.info(String(msg || ''));
+  }, [toast]);
 
   const notifyCloudFallback = useCallback(() => {
+    if (!isAdminUser) return;
     if (cloudFallbackNoticeShownRef.current) return;
     cloudFallbackNoticeShownRef.current = true;
-    showToast(
-      isAdminUser
-        ? t('order_cloud_fallback_admin_notice')
-        : t('order_cloud_fallback_worker_notice'),
-    );
+    showToast(t('order_cloud_fallback_admin_notice'));
   }, [isAdminUser, showToast, t]);
 
   useEffect(() => {
@@ -433,6 +680,12 @@ export default function OrderDetails() {
     useCallback(() => {
       let cancelled = false;
       if (mediaProvider !== 'yandex_disk') return undefined;
+      if (!isAdminUser) {
+        setCloudHealth('unknown');
+        setEffectiveMediaProvider('yandex_disk');
+        cloudFallbackNoticeShownRef.current = false;
+        return undefined;
+      }
 
       (async () => {
         try {
@@ -448,7 +701,7 @@ export default function OrderDetails() {
             setEffectiveMediaProvider('yandex_disk');
             cloudFallbackNoticeShownRef.current = false;
           }
-        } catch (_e) {
+        } catch {
           if (cancelled) return;
           setCloudHealth('error');
           setEffectiveMediaProvider('beget_s3');
@@ -459,7 +712,7 @@ export default function OrderDetails() {
       return () => {
         cancelled = true;
       };
-    }, [mediaProvider, notifyCloudFallback]),
+    }, [isAdminUser, mediaProvider, notifyCloudFallback]),
   );
 
   const deriveExecutorNameInstant = useCallback((o) => {
@@ -513,8 +766,6 @@ export default function OrderDetails() {
           return toFeed ? null : assigneeId;
         case 'price':
           return canEditFinances ? amount : amount || '';
-        case 'fuel_cost':
-          return canEditFinances ? gsm : gsm || '';
         case 'department_id':
           return departmentId;
         default:
@@ -534,7 +785,6 @@ export default function OrderDetails() {
       assigneeId,
       toFeed,
       amount,
-      gsm,
       canEditFinances,
       departmentId,
     ],
@@ -579,6 +829,11 @@ export default function OrderDetails() {
     const n = parseFloat(v);
     return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
   }, []);
+  const isValidFinanceNumericInput = useCallback((s) => {
+    const raw = String(s ?? '').trim();
+    if (!raw) return true;
+    return /^\d+(?:[.,]\d+)?$/.test(raw);
+  }, []);
 
   const formatMoney = useCallback(
     (v, currency = null) => {
@@ -617,7 +872,6 @@ export default function OrderDetails() {
         );
         setOrder(updatedOrder || order);
         if (field === 'price') setAmount(String(parsed));
-        if (field === 'fuel_cost') setGsm(String(parsed));
         onDone?.();
         showToast(t('order_toast_saved'));
       } catch (e) {
@@ -633,6 +887,32 @@ export default function OrderDetails() {
     },
     [order, parseMoney, showToast, showWarning, t],
   );
+
+  const saveOrderPaymentField = useCallback(
+    async (patch) => {
+      if (!order?.id || !patch || typeof patch !== 'object') return;
+      setFinanceSaving(true);
+      try {
+        const updatedOrder = await updateRequestWithVersion(order.id, patch, order?.updated_at || null);
+        setOrder(updatedOrder || order);
+        showToast(t('order_toast_saved'));
+      } catch (e) {
+        if (e?.code === 'CONFLICT' && e?.latest) {
+          setOrder(e.latest);
+          showToast(t('order_toast_status_updated'));
+        } else {
+          showToast(e?.message || t('order_save_error'));
+        }
+      } finally {
+        setFinanceSaving(false);
+      }
+    },
+    [order, showToast, t],
+  );
+
+  const handleQrPaymentPress = useCallback(() => {
+    showToast(t('order_payment_qr_soon', 'Скоро добавим'));
+  }, [showToast, t]);
 
   const makeSnapshotFromOrder = useCallback((o) => {
     if (!o) return '';
@@ -652,7 +932,8 @@ export default function OrderDetails() {
       assigned_to: o.assigned_to || null,
       department_id: o.department_id || null,
       price: o.price ?? null,
-      fuel_cost: o.fuel_cost ?? null,
+      payment_status: o.payment_status ?? null,
+      payment_method: o.payment_method ?? null,
     });
   }, []);
 
@@ -669,7 +950,13 @@ export default function OrderDetails() {
       time_window_start: departureDate ? departureDate.toISOString() : null,
       assigned_to: assigneeId || null,
       department_id: departmentId || null,
-      ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
+      ...(canEditFinances
+        ? {
+            price: parseMoney(amount),
+            payment_status: order?.payment_status ?? null,
+            payment_method: order?.payment_method ?? null,
+          }
+        : {}),
     });
   }, [
     title,
@@ -684,7 +971,8 @@ export default function OrderDetails() {
     departmentId,
     canEditFinances,
     amount,
-    gsm,
+    order?.payment_method,
+    order?.payment_status,
     parseMoney,
   ]);
 
@@ -719,7 +1007,6 @@ export default function OrderDetails() {
     setUrgent(!!o.urgent);
     setDepartmentId(o.department_id || null);
     setAmount(o.price !== null && o.price !== undefined ? String(o.price) : '');
-    setGsm(o.fuel_cost !== null && o.fuel_cost !== undefined ? String(o.fuel_cost) : '');
     // Executor name from cache (instant)
     const cachedExecName = deriveExecutorNameInstant(o);
     if (cachedExecName) setExecutorName(cachedExecName);
@@ -923,6 +1210,15 @@ export default function OrderDetails() {
     [canEditByRole, isReadOnlyBySubscription],
   );
 
+  useScreenRefreshRegistration(
+    'orders.detail',
+    () => {
+      if (editMode) return undefined;
+      return fetchData();
+    },
+    !!id,
+  );
+
   const warmEditScreenCache = useCallback(
     async ({ force = false } = {}) => {
       if (!id || !canEdit()) return;
@@ -965,6 +1261,23 @@ export default function OrderDetails() {
     },
     [id, canEdit, queryClient, companyId, order?.assigned_to, requestData?.assigned_to],
   );
+
+  const onRefresh = useCallback(async () => {
+    if (!id || refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) }),
+        queryClient.invalidateQueries({ queryKey: financeQueryKeys.orderEntries(id) }),
+        queryClient.invalidateQueries({ queryKey: ['requests'] }),
+        refetchRequestData?.(),
+        financeEntriesQuery.refetch?.(),
+      ]);
+      await fetchData();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchData, financeEntriesQuery, id, queryClient, refetchRequestData, refreshing]);
 
   const uploadLocalUri = useCallback(
     async (category, uri, opts) => {
@@ -1160,7 +1473,7 @@ export default function OrderDetails() {
             return { ...old, [category]: buildUpdated(old[category]) };
           });
           return true;
-        } catch (e) {
+        } catch {
           if (replaceUrl && publicUrl) {
             try {
               const payload = { order_id: orderId, category, url: publicUrl };
@@ -1245,6 +1558,15 @@ export default function OrderDetails() {
           : t('finance_kind_expense', 'Р Р°СЃС…РѕРґ'),
     [t],
   );
+  const financeDeleteTitle = useCallback(
+    (kind) =>
+      kind === 'income'
+        ? t('order_finance_delete_income_title', 'Удалить доход?')
+        : kind === 'discount'
+          ? t('order_finance_delete_discount_title', 'Удалить скидку?')
+          : t('order_finance_delete_expense_title', 'Удалить расход?'),
+    [t],
+  );
 
   const financeCalcModeLabel = useCallback(
     (mode) =>
@@ -1257,79 +1579,673 @@ export default function OrderDetails() {
   const financePercentBaseLabel = useCallback(
     (baseValue) => {
       if (baseValue === 'base_price') {
-        return t('finance_percent_base_price', 'РћС‚ Р±Р°Р·РѕРІРѕР№ СЃСѓРјРјС‹ Р·Р°СЏРІРєРё');
+        return t('finance_percent_base_price', 'От изначальной стоимости');
       }
       if (baseValue === 'gross_before_discount') {
-        return t('finance_percent_gross_before_discount', 'РћС‚ СЃСѓРјРјС‹ РґРѕ СЃРєРёРґРѕРє');
+        return t('finance_percent_gross_before_discount', 'От изначальной стоимости + доп. доходы');
       }
-      if (baseValue === 'net_before_expense') {
-        return t('finance_percent_net_before_expense', 'РћС‚ РїСЂРёР±С‹Р»Рё РґРѕ СЂР°СЃС…РѕРґРѕРІ');
-      }
-      return t('finance_percent_gross_after_discount', 'РћС‚ СЃСѓРјРјС‹ РїРѕСЃР»Рµ СЃРєРёРґРѕРє');
+      return t('finance_percent_gross_after_discount', 'От общей суммы');
     },
     [t],
   );
 
+  const allowedFinancePercentBases = useCallback((kind) => {
+    if (String(kind || 'expense') === 'discount') {
+      return ['base_price', 'gross_before_discount'];
+    }
+    return ['base_price', 'gross_before_discount', 'gross_after_discount'];
+  }, []);
+
+  const normalizeFinancePercentBase = useCallback(
+    (kind, percentBase) => {
+      const normalizedBase = String(percentBase || 'base_price');
+      const allowed = allowedFinancePercentBases(kind);
+      return allowed.includes(normalizedBase) ? normalizedBase : 'base_price';
+    },
+    [allowedFinancePercentBases],
+  );
+
+  const getDefaultFinanceEntryTitle = useCallback(
+    (kind) => {
+      if (kind === 'discount') return t('order_finance_default_title_discount', 'Новая скидка');
+      if (kind === 'income') return t('order_finance_default_title_income', 'Новый доход');
+      return t('order_finance_default_title_expense', 'Новый расход');
+    },
+    [t],
+  );
+
+  const getFinanceEntryModalTitle = useCallback(
+    (kind, isEdit = false) => {
+      if (isEdit) {
+        if (kind === 'discount') return t('order_finance_modal_edit_discount', 'Редактировать скидку');
+        if (kind === 'income') return t('order_finance_modal_edit_income', 'Редактировать доход');
+        return t('order_finance_modal_edit_expense', 'Редактировать расход');
+      }
+      if (kind === 'discount') return t('order_finance_modal_add_discount', 'Добавить скидку');
+      if (kind === 'income') return t('order_finance_modal_add_income', 'Добавить доход');
+      return t('order_finance_modal_add_expense', 'Добавить расход');
+    },
+    [t],
+  );
+
+  const financeKindSelectItems = useMemo(
+    () => [
+      {
+        id: 'expense',
+        label: t('finance_kind_expense', 'Расход'),
+        right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
+      },
+      {
+        id: 'income',
+        label: t('finance_kind_income', 'Доход'),
+        right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
+      },
+      {
+        id: 'discount',
+        label: t('finance_kind_discount', 'Скидка'),
+        right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
+      },
+    ],
+    [t, theme.colors.textSecondary, theme.icons?.sm],
+  );
+
+  const financeCalcModeItems = useMemo(
+    () => [
+      {
+        id: 'fixed',
+        label: t('finance_calc_fixed', 'Фиксированная сумма'),
+      },
+      {
+        id: 'percent',
+        label: t('finance_calc_percent', 'Процент'),
+      },
+    ],
+    [t],
+  );
+
+  const financePercentBaseItems = useMemo(
+    () =>
+      allowedFinancePercentBases(financeEntryDraft.kind).map((id) => ({
+        id,
+        label: financePercentBaseLabel(id),
+      })),
+    [allowedFinancePercentBases, financeEntryDraft.kind, financePercentBaseLabel],
+  );
+
+  const financeExpensePayerLabel = useCallback(
+    (payer) =>
+      payer === 'executor'
+        ? t('finance_expense_payer_executor', 'Исполнитель')
+        : t('finance_expense_payer_company', 'Компания'),
+    [t],
+  );
+
+  const financeExpensePayerItems = useMemo(
+    () => [
+      {
+        id: 'executor',
+        label: financeExpensePayerLabel('executor'),
+      },
+      {
+        id: 'company',
+        label: financeExpensePayerLabel('company'),
+      },
+    ],
+    [financeExpensePayerLabel],
+  );
+
+  const normalizePaymentStatus = useCallback((value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return 'unpaid';
+    if (
+      raw === 'paid' ||
+      raw === 'оплачено' ||
+      raw === 'оплачен' ||
+      (raw.includes('оплач') && !raw.includes('не'))
+    ) {
+      return 'paid';
+    }
+    return 'unpaid';
+  }, []);
+
+  const normalizePaymentMethod = useCallback((value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'cashless' || raw === 'безнал' || raw === 'безналичный') return 'cashless';
+    return 'cash';
+  }, []);
+
+  const paymentStatusLabel = useCallback(
+    (value) =>
+      normalizePaymentStatus(value) === 'paid'
+        ? t('order_payment_status_paid', 'Оплачено')
+        : t('order_payment_status_unpaid', 'Не оплачено'),
+    [normalizePaymentStatus, t],
+  );
+
+  const paymentMethodLabel = useCallback(
+    (value) =>
+      normalizePaymentMethod(value) === 'cashless'
+        ? t('order_payment_method_cashless', 'Безнал')
+        : t('order_payment_method_cash', 'Наличные'),
+    [normalizePaymentMethod, t],
+  );
+
+  const paymentStatusItems = useMemo(
+    () => [
+      { id: 'unpaid', label: paymentStatusLabel('unpaid') },
+      { id: 'paid', label: paymentStatusLabel('paid') },
+    ],
+    [paymentStatusLabel],
+  );
+
+  const paymentMethodItems = useMemo(
+    () => [
+      { id: 'cash', label: paymentMethodLabel('cash') },
+      { id: 'cashless', label: paymentMethodLabel('cashless') },
+    ],
+    [paymentMethodLabel],
+  );
+
   const openCreateFinanceEntry = useCallback(
     (kind = 'expense') => {
+      financeEntryInitialPhotoUrlsRef.current = [];
+      setFinanceEntryFieldErrors({});
+      setFinanceEntrySubmitAttempt(false);
       setFinanceEntryDraft({
         id: null,
         kind,
         calc_mode: 'fixed',
-        percent_base: 'gross_after_discount',
-        title: '',
+        percent_base: normalizeFinancePercentBase(kind, 'base_price'),
+        expense_payer: kind === 'expense' ? 'executor' : 'company',
+        title: getDefaultFinanceEntryTitle(kind),
         note: '',
-        input_amount: '0',
-        input_percent: '0',
+        input_amount: '',
+        input_percent: '',
+        photo_urls: [],
       });
       setFinanceEntryModalVisible(true);
     },
-    [],
+    [getDefaultFinanceEntryTitle, normalizeFinancePercentBase],
   );
 
   const openEditFinanceEntry = useCallback((entry) => {
     if (!entry?.id) return;
+    financeEntryInitialPhotoUrlsRef.current = Array.isArray(entry.photo_urls)
+      ? entry.photo_urls.map((value) => String(value || '')).filter(Boolean)
+      : [];
+    setFinanceEntryFieldErrors({});
+    setFinanceEntrySubmitAttempt(false);
     setFinanceEntryDraft({
       id: entry.id,
       kind: String(entry.kind || 'expense'),
       calc_mode: String(entry.calc_mode || 'fixed'),
-      percent_base: String(entry.percent_base || 'gross_after_discount'),
+      percent_base: normalizeFinancePercentBase(entry.kind, entry.percent_base),
+      expense_payer: String(entry.expense_payer || 'company'),
       title: String(entry.title || ''),
       note: String(entry.note || ''),
-      input_amount: String(entry.input_amount ?? '0'),
-      input_percent: String(entry.input_percent ?? '0'),
+      input_amount: String(entry.input_amount ?? ''),
+      input_percent: String(entry.input_percent ?? ''),
+      photo_urls: Array.isArray(entry.photo_urls)
+        ? entry.photo_urls.map((value) => String(value || '')).filter(Boolean)
+        : [],
     });
     setFinanceEntryModalVisible(true);
+  }, [normalizeFinancePercentBase]);
+
+  const openFinanceEntryView = useCallback((entry) => {
+    if (!entry?.id) return;
+    setSelectedFinanceEntry(entry);
+    setFinanceEntryViewCommentExpanded(false);
+    setFinanceEntryViewCommentExpandable(false);
+    setFinanceEntryViewModalVisible(true);
+  }, []);
+
+  const startEditFinanceEntryFromView = useCallback(() => {
+    if (!selectedFinanceEntry) return;
+    setFinanceEntryViewModalVisible(false);
+    openEditFinanceEntry(selectedFinanceEntry);
+  }, [openEditFinanceEntry, selectedFinanceEntry]);
+
+  const openFinanceEntryPhotosFromView = useCallback(() => {
+    if (!selectedFinanceEntry) return;
+    financeEntryInitialPhotoUrlsRef.current = Array.isArray(selectedFinanceEntry.photo_urls)
+      ? selectedFinanceEntry.photo_urls.map((value) => String(value || '')).filter(Boolean)
+      : [];
+    setFinanceEntryDraft({
+      id: selectedFinanceEntry.id,
+      kind: String(selectedFinanceEntry.kind || 'expense'),
+      calc_mode: String(selectedFinanceEntry.calc_mode || 'fixed'),
+      percent_base: normalizeFinancePercentBase(selectedFinanceEntry.kind, selectedFinanceEntry.percent_base),
+      expense_payer: String(selectedFinanceEntry.expense_payer || 'company'),
+      title: String(selectedFinanceEntry.title || ''),
+      note: String(selectedFinanceEntry.note || ''),
+      input_amount: String(selectedFinanceEntry.input_amount ?? ''),
+      input_percent: String(selectedFinanceEntry.input_percent ?? ''),
+      photo_urls: Array.isArray(selectedFinanceEntry.photo_urls)
+        ? selectedFinanceEntry.photo_urls.map((value) => String(value || '')).filter(Boolean)
+        : [],
+    });
+    setFinanceEntryPhotosModalVisible(true);
+  }, [normalizeFinancePercentBase, selectedFinanceEntry]);
+
+  useEffect(() => {
+    if (!financeEntryPhotosModalVisible || !financeEntryDraft.id || effectiveMediaProvider !== 'yandex_disk') {
+      financeEntryInspectSignatureRef.current = '';
+      return;
+    }
+    const remoteUrls = (financeEntryDraft.photo_urls || []).filter((url) => !isLocalFinancePhotoUrl(url));
+    if (!remoteUrls.length) {
+      financeEntryInspectSignatureRef.current = '';
+      return;
+    }
+    const signature = `${financeEntryDraft.id}:${remoteUrls.join('|')}`;
+    if (financeEntryInspectSignatureRef.current === signature) return;
+    financeEntryInspectSignatureRef.current = signature;
+    financeEntryMedia
+      .inspectUrls(remoteUrls)
+      .then((data) => {
+        const cleanedRemoteUrls = Array.isArray(data?.photo_urls)
+          ? data.photo_urls.map((value) => String(value || '')).filter(Boolean)
+          : remoteUrls;
+        const hasCleanup =
+          Array.isArray(data?.cleaned_urls) &&
+          data.cleaned_urls.map((value) => String(value || '')).filter(Boolean).length > 0;
+        if (!hasCleanup) return;
+        setFinanceEntryDraft((prev) => {
+          const localUrls = (prev.photo_urls || []).filter((url) => isLocalFinancePhotoUrl(url));
+          const nextUrls = [...cleanedRemoteUrls, ...localUrls];
+          const same =
+            nextUrls.length === (prev.photo_urls || []).length &&
+            nextUrls.every((value, index) => value === prev.photo_urls[index]);
+          return same ? prev : { ...prev, photo_urls: nextUrls };
+        });
+      })
+      .catch(() => {});
+  }, [
+    effectiveMediaProvider,
+    financeEntryDraft.id,
+    financeEntryDraft.photo_urls,
+    financeEntryMedia,
+    financeEntryPhotosModalVisible,
+    isLocalFinancePhotoUrl,
+  ]);
+
+  const openFinanceEntryPhotosModal = useCallback(() => {
+    setFinanceEntryPhotosModalVisible(true);
+  }, []);
+
+  const closeFinanceEntryPhotosModal = useCallback(() => {
+    setFinanceEntryPhotosModalVisible(false);
+    financeEntryInspectSignatureRef.current = '';
+    setFinanceEntryLocalPending([]);
+  }, []);
+
+  const handleFinanceEntryPhotoUploadUri = useCallback(async (_category, uri) => {
+    if (!uri) return;
+    setFinanceEntryDraft((prev) => ({
+      ...prev,
+      photo_urls: [...(prev.photo_urls || []), String(uri)],
+    }));
+  }, []);
+
+  const handleFinanceEntryPhotoUploadMultiple = useCallback(async (_category, uris = []) => {
+    const nextUris = (uris || []).map((value) => String(value || '')).filter(Boolean);
+    if (!nextUris.length) return;
+    setFinanceEntryDraft((prev) => ({
+      ...prev,
+      photo_urls: [...(prev.photo_urls || []), ...nextUris],
+    }));
+  }, []);
+
+  const handleFinanceEntryPhotoRemove = useCallback((_category, index) => {
+    setFinanceEntryDraft((prev) => {
+      const nextUrl = (prev.photo_urls || [])[index];
+      if (nextUrl) financeEntryMedia.removeFromCache(nextUrl);
+      return {
+        ...prev,
+        photo_urls: (prev.photo_urls || []).filter((_, itemIndex) => itemIndex !== index),
+      };
+    });
+  }, [financeEntryMedia]);
+
+  const handleFinanceEntryPhotoRemoveMany = useCallback((_category, urls = []) => {
+    const selected = new Set((urls || []).map((value) => String(value || '')).filter(Boolean));
+    selected.forEach((url) => financeEntryMedia.removeFromCache(url));
+    setFinanceEntryDraft((prev) => ({
+      ...prev,
+      photo_urls: (prev.photo_urls || []).filter((value) => !selected.has(String(value || ''))),
+    }));
+  }, [financeEntryMedia]);
+
+  const openFinanceEntryViewer = useCallback((photos, index) => {
+    if (!Array.isArray(photos) || !photos.length) return;
+    const pairs = photos
+      .map((raw) => ({ raw, display: financeEntryMedia.getDisplayUrl(raw) || raw }))
+      .filter((pair) => pair.display);
+    financeViewerRawPhotosRef.current = pairs.map((pair) => pair.raw);
+    setFinanceViewerPhotos(pairs.map((pair) => pair.display));
+    setFinanceViewerIndex(Math.min(index, pairs.length - 1));
+    setFinanceViewerCategoryLabel(
+      String(financeEntryDraft.title || '').trim() || t('order_finance_entry_modal_title', 'Финансовая статья'),
+    );
+    setFinanceViewerVisible(true);
+  }, [financeEntryDraft.title, financeEntryMedia, t]);
+
+  const closeFinanceEntryViewer = useCallback(() => {
+    setFinanceViewerVisible(false);
+  }, []);
+
+  const handleFinanceViewerDelete = useCallback((viewerIdx) => {
+    const rawUrl = financeViewerRawPhotosRef.current?.[viewerIdx];
+    if (!rawUrl) return;
+    financeEntryMedia.removeFromCache(rawUrl);
+    setFinanceEntryDraft((prev) => ({
+      ...prev,
+      photo_urls: (prev.photo_urls || []).filter((value) => value !== rawUrl),
+    }));
+  }, [financeEntryMedia]);
+
+  const handleFinanceViewerRotateSave = useCallback((rotationsMap) => {
+    const rawPhotos = [...(financeViewerRawPhotosRef.current || [])];
+    if (!rawPhotos.length) return;
+
+    (async () => {
+      for (const [indexStr, degrees] of Object.entries(rotationsMap || {})) {
+        if (!degrees) continue;
+        const idx = Number(indexStr);
+        const rawUrl = rawPhotos[idx];
+        if (!rawUrl) continue;
+        const previousDisplayUrl = financeEntryMedia.getDisplayUrl(rawUrl) || rawUrl;
+        try {
+          const localPath = `${cacheDirectory}finance_rotate_${Date.now()}_${idx}.jpg`;
+          const { uri: localUri } = await downloadAsync(previousDisplayUrl, localPath);
+          const manipulated = await ImageManipulator.manipulateAsync(
+            localUri,
+            [{ rotate: degrees }],
+            { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+          );
+
+          // Optimistic UI: show rotated image immediately.
+          financeEntryMedia.setDisplayUrl(rawUrl, manipulated.uri);
+
+          const financeEntryId = String(financeEntryDraft.id || '').trim();
+          if (!financeEntryId) {
+            financeEntryMedia.setDisplayUrl(rawUrl, previousDisplayUrl);
+            continue;
+          }
+
+          const uploaded = await uploadFinanceEntryLocalUri(financeEntryId, manipulated.uri);
+          const uploadedUrl = String(uploaded?.url || '').trim();
+
+          if (!uploadedUrl) {
+            financeEntryMedia.setDisplayUrl(rawUrl, previousDisplayUrl);
+            continue;
+          }
+
+          setFinanceEntryDraft((prev) => ({
+            ...prev,
+            photo_urls: (prev.photo_urls || []).map((value) => (value === rawUrl ? uploadedUrl : value)),
+          }));
+          financeViewerRawPhotosRef.current = (financeViewerRawPhotosRef.current || []).map((value) =>
+            value === rawUrl ? uploadedUrl : value,
+          );
+          financeEntryMedia.removeFromCache(rawUrl);
+        } catch (error) {
+          console.warn('[FinanceViewer] rotate save error:', error);
+          financeEntryMedia.setDisplayUrl(rawUrl, previousDisplayUrl);
+        }
+      }
+    })();
+  }, [financeEntryDraft.id, financeEntryMedia, uploadFinanceEntryLocalUri]);
+
+  const uploadFinanceEntryLocalUri = useCallback(
+    async (financeEntryIdValue, uri) => {
+      if (!financeEntryIdValue || !uri) return null;
+
+      const manipulated = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: PHOTO_MAX_WIDTH } }],
+        { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+      );
+
+      let arrayBuffer = null;
+      const ensureArrayBuffer = async () => {
+        if (arrayBuffer) return arrayBuffer;
+        const response = await fetch(manipulated.uri);
+        arrayBuffer = await response.arrayBuffer();
+        return arrayBuffer;
+      };
+
+      if (effectiveMediaProvider === 'yandex_disk') {
+        try {
+          let data = null;
+          let directUploadCompleted = false;
+          try {
+            const prepared = await financeEntryYandexMedia('prepare_upload', {
+              finance_entry_id: financeEntryIdValue,
+              mime: PHOTO_MIME_TYPE,
+            });
+            const uploadUrl = String(prepared?.upload_url || '').trim();
+            const uploadMethod = String(prepared?.upload_method || 'PUT').trim() || 'PUT';
+            const uploadHeaders =
+              prepared?.upload_headers && typeof prepared.upload_headers === 'object'
+                ? Object.fromEntries(
+                    Object.entries(prepared.upload_headers)
+                      .map(([key, value]) => [String(key || '').trim(), String(value || '').trim()])
+                      .filter(([key, value]) => key && value),
+                  )
+                : {};
+            if (!uploadUrl) throw new Error('prepare upload failed');
+
+            const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
+              httpMethod: uploadMethod,
+              headers: uploadHeaders,
+              uploadType: FileSystemUploadType.BINARY_CONTENT,
+            });
+            if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
+              throw new Error(String(uploadRes?.body || 'direct upload failed'));
+            }
+            directUploadCompleted = true;
+
+            data = await financeEntryYandexMedia('commit_upload', {
+              finance_entry_id: financeEntryIdValue,
+              external_path: prepared?.external_path || null,
+            });
+          } catch (directError) {
+            if (directUploadCompleted) throw directError;
+            const fallbackBuffer = await ensureArrayBuffer();
+            data = await financeEntryYandexMedia('upload', {
+              finance_entry_id: financeEntryIdValue,
+              file_base64: encodeBase64(fallbackBuffer),
+              mime: PHOTO_MIME_TYPE,
+            });
+          }
+          return data;
+        } catch (error) {
+          if (!isYandexProviderFailureMessage(error?.message || error)) throw error;
+          setCloudHealth('error');
+          setEffectiveMediaProvider('beget_s3');
+          notifyCloudFallback();
+        }
+      }
+
+      let data = null;
+      let directUploadCompleted = false;
+      try {
+        const prepared = await financeEntryMediaStorage('prepare_upload', {
+          finance_entry_id: financeEntryIdValue,
+          mime: PHOTO_MIME_TYPE,
+        });
+        const uploadUrl = String(prepared?.upload_url || '').trim();
+        const uploadMethod = String(prepared?.upload_method || 'PUT').trim() || 'PUT';
+        const uploadHeaders =
+          prepared?.upload_headers && typeof prepared.upload_headers === 'object'
+            ? Object.fromEntries(
+                Object.entries(prepared.upload_headers)
+                  .map(([key, value]) => [String(key || '').trim(), String(value || '').trim()])
+                  .filter(([key, value]) => key && value),
+              )
+            : {};
+        if (!uploadUrl) throw new Error('prepare upload failed');
+
+        const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
+          httpMethod: uploadMethod,
+          headers: uploadHeaders,
+          uploadType: FileSystemUploadType.BINARY_CONTENT,
+        });
+        if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
+          throw new Error(String(uploadRes?.body || 'direct upload failed'));
+        }
+        directUploadCompleted = true;
+
+        data = await financeEntryMediaStorage('commit_upload', {
+          finance_entry_id: financeEntryIdValue,
+          object_key: prepared?.object_key || null,
+          public_url: prepared?.public_url || null,
+        });
+      } catch (directError) {
+        if (directUploadCompleted) throw directError;
+        const fallbackBuffer = await ensureArrayBuffer();
+        data = await financeEntryMediaStorage('upload', {
+          finance_entry_id: financeEntryIdValue,
+          file_base64: encodeBase64(fallbackBuffer),
+          mime: PHOTO_MIME_TYPE,
+        });
+      }
+
+      return data;
+    },
+    [effectiveMediaProvider, notifyCloudFallback],
+  );
+
+  const deleteFinanceEntryPhotoByUrl = useCallback(async (financeEntryIdValue, url) => {
+    const payload = { finance_entry_id: financeEntryIdValue, url };
+    const tryYandex = () => financeEntryYandexMedia('delete', payload);
+    const tryBeget = () => financeEntryMediaStorage('delete', payload);
+    const preferYandex = isYandexMediaUrl(url);
+
+    try {
+      return preferYandex ? await tryYandex() : await tryBeget();
+    } catch (primaryError) {
+      if (!shouldRetryDeleteWithAlternateProvider(primaryError?.message || primaryError)) {
+        throw primaryError;
+      }
+      return preferYandex ? await tryBeget() : await tryYandex();
+    }
   }, []);
 
   const saveFinanceEntry = useCallback(async () => {
     if (!id || !companyId) return;
     const title = String(financeEntryDraft.title || '').trim();
+    const rawAmount = String(financeEntryDraft.input_amount ?? '').trim();
+    const rawPercent = String(financeEntryDraft.input_percent ?? '').trim();
+    const parsedAmount = parseMoney(financeEntryDraft.input_amount);
+    const parsedPercent = parseMoney(financeEntryDraft.input_percent);
+    const nextErrors = {};
+    setFinanceEntrySubmitAttempt(true);
     if (!title) {
-      showWarning(t('finance_rule_name_required', 'РЈРєР°Р¶РёС‚Рµ РЅР°Р·РІР°РЅРёРµ'));
+      nextErrors.title = { message: t('finance_rule_name_required', 'Укажите название правила') };
+    }
+    if (financeEntryDraft.calc_mode === 'percent') {
+      if (rawPercent && !isValidFinanceNumericInput(rawPercent)) {
+        nextErrors.input_percent = { message: t('order_validation_amount_format', 'Введите корректную сумму') };
+      } else if (!rawPercent || parsedPercent === 0) {
+        nextErrors.input_percent = { message: t('field_settings_required_fill', 'Заполните обязательные поля') };
+      }
+    } else if (rawAmount && !isValidFinanceNumericInput(rawAmount)) {
+      nextErrors.input_amount = { message: t('order_validation_amount_format', 'Введите корректную сумму') };
+    } else if (!rawAmount || parsedAmount === 0) {
+      nextErrors.input_amount = { message: t('field_settings_required_fill', 'Заполните обязательные поля') };
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setFinanceEntryFieldErrors(nextErrors);
       return;
     }
+    setFinanceEntryFieldErrors({});
 
     try {
-      await upsertFinanceEntryMutation.mutateAsync({
+      const savedEntry = await upsertFinanceEntryMutation.mutateAsync({
         id: financeEntryDraft.id || undefined,
         company_id: companyId,
         order_id: id,
         kind: financeEntryDraft.kind,
         calc_mode: financeEntryDraft.calc_mode,
         percent_base: financeEntryDraft.percent_base,
+        expense_payer: financeEntryDraft.kind === 'expense' ? financeEntryDraft.expense_payer : 'company',
         title,
         note: String(financeEntryDraft.note || '').trim() || null,
-        input_amount: parseMoney(financeEntryDraft.input_amount) || 0,
-        input_percent: parseMoney(financeEntryDraft.input_percent) || 0,
+        input_amount: parsedAmount || 0,
+        input_percent: parsedPercent || 0,
         recipient_user_id: null,
       });
+      const savedEntryId = savedEntry?.id || financeEntryDraft.id;
+      if (!savedEntryId) throw new Error(t('order_save_error'));
+
+      const draftPhotos = Array.isArray(financeEntryDraft.photo_urls)
+        ? financeEntryDraft.photo_urls.map((value) => String(value || '')).filter(Boolean)
+        : [];
+      const initialRemotePhotos = financeEntryInitialPhotoUrlsRef.current || [];
+      const localDraftPhotos = draftPhotos.filter((value) => isLocalFinancePhotoUrl(value));
+      const remoteDraftPhotos = draftPhotos.filter((value) => !isLocalFinancePhotoUrl(value));
+      const removedRemotePhotos = initialRemotePhotos.filter((value) => !remoteDraftPhotos.includes(value));
+      const mediaErrors = [];
+
+      for (const removedUrl of removedRemotePhotos) {
+        try {
+          await deleteFinanceEntryPhotoByUrl(savedEntryId, removedUrl);
+          financeEntryMedia.removeFromCache(removedUrl);
+        } catch (error) {
+          mediaErrors.push(error?.message || t('order_toast_delete_error'));
+        }
+      }
+
+      for (const localUri of localDraftPhotos) {
+        try {
+          await uploadFinanceEntryLocalUri(savedEntryId, localUri);
+        } catch (error) {
+          mediaErrors.push(error?.message || t('order_toast_upload_error'));
+        }
+      }
+
+      await financeEntriesQuery.refetch();
+      financeEntryInitialPhotoUrlsRef.current = [];
+      setFinanceEntryLocalPending([]);
+      setFinanceEntryPhotosModalVisible(false);
       setFinanceEntryModalVisible(false);
-      showToast(t('order_toast_saved'));
+      setFinanceEntrySubmitAttempt(false);
+      setFinanceEntryFieldErrors({});
+      setSelectedFinanceEntry(null);
+      if (mediaErrors.length > 0) {
+        showWarning(
+          t(
+            'finance_entry_media_partial_save',
+            'Статья сохранена, но часть фотографий не удалось обработать.',
+          ),
+        );
+      } else {
+        showToast(t('order_toast_saved'));
+      }
     } catch (error) {
       showWarning(error?.message || t('order_save_error'));
     }
-  }, [companyId, financeEntryDraft, id, parseMoney, showToast, showWarning, t, upsertFinanceEntryMutation]);
+  }, [
+    companyId,
+    deleteFinanceEntryPhotoByUrl,
+    financeEntriesQuery,
+    financeEntryDraft,
+    financeEntryMedia,
+    id,
+    isValidFinanceNumericInput,
+    isLocalFinancePhotoUrl,
+    parseMoney,
+    showToast,
+    showWarning,
+    setFinanceEntryFieldErrors,
+    setFinanceEntrySubmitAttempt,
+    t,
+    uploadFinanceEntryLocalUri,
+    upsertFinanceEntryMutation,
+  ]);
 
   const removeFinanceEntry = useCallback(
     async (entry) => {
@@ -1343,6 +2259,21 @@ export default function OrderDetails() {
     },
     [deleteFinanceEntryMutation, showToast, showWarning, t],
   );
+
+  const confirmDeleteFinanceEntry = useCallback(async () => {
+    if (!selectedFinanceEntry?.id) return;
+    await removeFinanceEntry(selectedFinanceEntry);
+    setFinanceEntryDeleteConfirmVisible(false);
+    setFinanceEntryViewModalVisible(false);
+    setSelectedFinanceEntry(null);
+  }, [removeFinanceEntry, selectedFinanceEntry]);
+
+  const toggleFinanceSection = useCallback((sectionKey) => {
+    setExpandedFinanceSections((prev) => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey],
+    }));
+  }, []);
 
   const removePhoto = useCallback(
     (category, index) => {
@@ -1662,7 +2593,7 @@ export default function OrderDetails() {
       status: nextStatus,
       urgent,
       department_id: departmentId || null,
-      ...(canEditFinances ? { price: parseMoney(amount), fuel_cost: parseMoney(gsm) } : {}),
+      ...(canEditFinances ? { price: parseMoney(amount) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
 
@@ -1712,7 +2643,6 @@ export default function OrderDetails() {
       setToFeed(!data.assigned_to);
       setUrgent(!!data.urgent);
       setAmount(data.price !== null && data.price !== undefined ? String(data.price) : '');
-      setGsm(data.fuel_cost !== null && data.fuel_cost !== undefined ? String(data.fuel_cost) : '');
       setDepartmentId(data.department_id || null);
       setWorkTypeId(data.work_type_id || null);
 
@@ -1753,7 +2683,6 @@ export default function OrderDetails() {
     departmentId,
     canEditFinances,
     amount,
-    gsm,
     parseMoney,
     useWorkTypes,
     workTypeId,
@@ -1795,9 +2724,6 @@ export default function OrderDetails() {
       setDepartmentId(order.department_id || null);
       setWorkTypeId(order.work_type_id || null);
       setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
-      setGsm(
-        order.fuel_cost !== null && order.fuel_cost !== undefined ? String(order.fuel_cost) : '',
-      );
     }
   }, [order, makeSnapshotFromOrder, applyNavBar]);
 
@@ -1840,7 +2766,7 @@ export default function OrderDetails() {
       console.warn('Delete error:', e);
       showToast(t('order_toast_delete_error'));
     }
-  }, [order, resolvedClientId, queryClient, navigation, router, showToast, t, mediaProvider, backTargetPath, returnParams]);
+  }, [order, resolvedClientId, queryClient, navigation, router, showToast, t, backTargetPath, returnParams]);
 
   const goBack = useCallback(() => {
     if (editMode) {
@@ -1932,11 +2858,11 @@ export default function OrderDetails() {
           const idx = Number(indexStr);
           const rawUrl = rawPhotos[idx];
           if (!rawUrl) continue;
+          const previousDisplayUrl = orderMediaRef.current.getDisplayUrl(rawUrl) || rawUrl;
 
           try {
-            const displayUrl = orderMediaRef.current.getDisplayUrl(rawUrl) || rawUrl;
             const localPath = `${cacheDirectory}rotate_src_${Date.now()}.jpg`;
-            const { uri: localUri } = await downloadAsync(displayUrl, localPath);
+            const { uri: localUri } = await downloadAsync(previousDisplayUrl, localPath);
 
             const manipulated = await ImageManipulator.manipulateAsync(
               localUri,
@@ -1944,8 +2870,14 @@ export default function OrderDetails() {
               { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
             );
 
+            // Optimistic UI: show rotated image immediately.
+            orderMediaRef.current.setDisplayUrl(rawUrl, manipulated.uri);
+
             // Replace in place вЂ” the old URL is swapped for the new one at the same index
-            const success = await uploadLocalUri(category, manipulated.uri, { replaceUrl: rawUrl });
+            const success = await uploadLocalUri(category, manipulated.uri, {
+              replaceUrl: rawUrl,
+              silent: true,
+            });
             if (success) {
               // Delete old file from storage in background
               const orderId = orderRef.current?.id;
@@ -1961,70 +2893,17 @@ export default function OrderDetails() {
                 }
               }
               orderMediaRef.current.removeFromCache(rawUrl);
+            } else {
+              orderMediaRef.current.setDisplayUrl(rawUrl, previousDisplayUrl);
             }
           } catch (e) {
             console.warn('[Viewer] rotate save error:', e);
+            orderMediaRef.current.setDisplayUrl(rawUrl, previousDisplayUrl);
           }
         }
       })();
     },
     [uploadLocalUri],
-  );
-
-  const getStatusMeta = useCallback(
-    (status) => {
-      const statusSet = theme?.colors?.status || theme?._raw?.colors?.status;
-      switch (status) {
-        case 'Р’ Р»РµРЅС‚Рµ': {
-          const c = statusSet?.feed;
-          return {
-            bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
-            fg: c?.fg ?? theme.colors.warning ?? theme.colors.primary,
-          };
-        }
-        case 'РќРѕРІС‹Р№': {
-          const c = statusSet?.new;
-          return {
-            bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
-            fg: c?.fg ?? theme.colors.primary,
-          };
-        }
-        case 'Р’ СЂР°Р±РѕС‚Рµ': {
-          const c = statusSet?.progress;
-          return {
-            bg: c?.bg ?? theme.colors.inputBg ?? theme.colors.surface,
-            fg: c?.fg ?? theme.colors.success ?? theme.colors.primary,
-          };
-        }
-        case 'Р—Р°РІРµСЂС€С‘РЅРЅР°СЏ': {
-          const c = statusSet?.done;
-          return {
-            bg: c?.bg ?? theme.colors.surface,
-            fg: c?.fg ?? theme.colors.textSecondary,
-          };
-        }
-        default:
-          return { bg: theme.colors.surface, fg: theme.colors.text };
-      }
-    },
-    [theme],
-  );
-
-  // в”Ђв”Ђв”Ђ Photo permissions (must be before handlePhotoRowAdd!) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-  const canAddCameraPhotos = has('canAddCameraPhotos');
-  const canAddGalleryPhotos = has('canAddGalleryPhotos');
-  const canAddAnyPhotos = canAddCameraPhotos || canAddGalleryPhotos;
-
-  // в”Ђв”Ђв”Ђ Photo row add handler в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-  const handlePhotoRowAdd = useCallback(
-    (category) => {
-      if (!canAddAnyPhotos) {
-        showToast(t('order_photo_add_not_allowed'));
-        return;
-      }
-      setOrderPhotosModal({ visible: true, category });
-    },
-    [canAddAnyPhotos, showToast, t],
   );
 
   useEffect(() => {
@@ -2418,7 +3297,6 @@ export default function OrderDetails() {
     );
   }
 
-  const statusMeta = getStatusMeta(order.status);
   const _selectedAssignee = (users || []).find((u) => u.id === assigneeId) || null;
   const isFree = !order.assigned_to;
   const isInFeedStatus = order.status === 'Р’ Р»РµРЅС‚Рµ' || order.status === t('order_status_in_feed');
@@ -2427,14 +3305,50 @@ export default function OrderDetails() {
     isFree &&
     !isReadOnlyBySubscription &&
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
-  const canViewFinanceSection = canViewOrderAmount || canViewOrderFuelCost || canViewFinanceEntries;
-  const financeEntries = Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : [];
-  const grossTotal = Number(order.finance_gross_total ?? order.price ?? 0) || 0;
-  const discountTotal = Number(order.finance_discount_total ?? 0) || 0;
-  const incomeTotal = Number(order.finance_income_total ?? 0) || 0;
-  const expenseTotal = Number(order.finance_expense_total ?? order.fuel_cost ?? 0) || 0;
-  const netTotal = Number(order.finance_net_total ?? grossTotal + incomeTotal - expenseTotal) || 0;
-
+  const canViewFinanceSection = canViewOrderAmount || canViewFinanceEntries;
+  const currency = order?.currency || companySettings?.currency;
+  const grossTotal = Number(order.price ?? 0) || 0;
+  const financeIncomeTotal = financeEntries.reduce(
+    (sum, entry) => (entry?.kind === 'income' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
+    0,
+  );
+  const financeExpenseTotal = financeEntries.reduce(
+    (sum, entry) => (entry?.kind === 'expense' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
+    0,
+  );
+  const financeCompanyPaidExpenseTotal = financeEntries.reduce(
+    (sum, entry) =>
+      entry?.kind === 'expense' && String(entry?.expense_payer || 'company') === 'company'
+        ? sum + (Number(entry?.calculated_amount) || 0)
+        : sum,
+    0,
+  );
+  const financeExecutorPaidExpenseTotal = financeEntries.reduce(
+    (sum, entry) =>
+      entry?.kind === 'expense' && String(entry?.expense_payer || 'company') === 'executor'
+        ? sum + (Number(entry?.calculated_amount) || 0)
+        : sum,
+    0,
+  );
+  const financeDiscountTotal = financeEntries.reduce(
+    (sum, entry) => (entry?.kind === 'discount' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
+    0,
+  );
+  const customerFinanceTotal =
+    Number(order.finance_gross_total ?? grossTotal + financeIncomeTotal - financeDiscountTotal) || 0;
+  const internalFinanceTotal = Number(financeExpenseTotal) || 0;
+  const normalizedPaymentStatus = normalizePaymentStatus(order?.payment_status);
+  const normalizedPaymentMethod = normalizePaymentMethod(order?.payment_method);
+  const isOrderPaid = normalizedPaymentStatus === 'paid';
+  const executorAccruedTotal =
+    Number(customerFinanceTotal - financeCompanyPaidExpenseTotal + financeExecutorPaidExpenseTotal) || 0;
+  const executorFinanceTotal = isOrderPaid ? executorAccruedTotal : 0;
+  const hasExecutorFinanceBreakdown =
+    financeCompanyPaidExpenseTotal > 0 || financeExecutorPaidExpenseTotal > 0;
+  const showInitialCostLine =
+    canViewOrderAmount &&
+    orderFieldsByKey.get('price')?.isEnabled !== false &&
+    (financeIncomeTotal > 0 || financeDiscountTotal > 0);
   return (
     <>
       <SafeAreaView
@@ -2487,6 +3401,14 @@ export default function OrderDetails() {
               (insets?.bottom ?? 0),
           },
         ]}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={theme.colors.primary}
+            colors={[theme.colors.primary]}
+          />
+        }
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -2519,11 +3441,7 @@ export default function OrderDetails() {
                       <Text style={styles.urgentPillText}>{t('order_details_urgent')}</Text>
                     </View>
                   )}
-                  <View style={[styles.statusChip, { backgroundColor: statusMeta.bg, opacity: 0.6 }]}>
-                    <Text style={[styles.statusChipText, { color: statusMeta.fg }]}>
-                      {order.status}
-                    </Text>
-                  </View>
+                  <OrderStatusCapsule status={order.status} />
                 </View>
               </View>
               <View style={base.sep} />
@@ -2656,7 +3574,7 @@ export default function OrderDetails() {
               <ExpandableTextRow
                 label={t('order_details_address')}
                 value={orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')}
-                collapsedValue={buildOrderAddressDisplay(orderAddress) || shortOrderAddress || t('order_details_address_not_specified')}
+                collapsedValue={shortOrderAddress || buildOrderAddressDisplay(orderAddress) || t('order_details_address_not_specified')}
                 expandedKeyValueItems={orderAddressItems}
                 expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
                 collapsedValueStyle={styles.link}
@@ -2688,191 +3606,397 @@ export default function OrderDetails() {
               {orderFieldsByKey.get('contact_email')?.isEnabled !== false ? <LabelValueRow label={t('order_field_contact_email')} value={order?.contact_email} /> : null}
             </Card>
 
-            {canViewFinanceSection && (orderFieldsByKey.get('price')?.isEnabled !== false || orderFieldsByKey.get('fuel_cost')?.isEnabled !== false || canViewFinanceEntries) ? (
+            {canViewFinanceSection && (orderFieldsByKey.get('price')?.isEnabled !== false || canViewFinanceEntries) ? (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_finance_data')}
                 </SectionHeader>
                 <Card paddedXOnly>
-                  {canViewOrderAmount && orderFieldsByKey.get('price')?.isEnabled !== false ? (
-                    <>
-                      <LabelValueRow
-                        label={t('order_details_amount')}
-                        value={formatMoney(order.price, order?.currency || companySettings?.currency)}
-                      />
-                      {canEditOrderAmount ? (
-                        <>
-                          <View style={base.sep} />
-                          <Pressable
-                            style={base.row}
-                            onPress={() => {
-                              setAmountDraft(String(order?.price ?? ''));
-                              setAmountEditModalVisible(true);
-                            }}
-                          >
-                            <Text style={base.label}>{t('order_details_edit_amount_action')}</Text>
-                            <View style={base.rightWrap}>
-                              <Text style={[base.value, styles.link]}>{t('btn_edit')}</Text>
-                            </View>
-                          </Pressable>
-                        </>
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  {canViewOrderAmount && orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderFuelCost && orderFieldsByKey.get('fuel_cost')?.isEnabled !== false ? <View style={base.sep} /> : null}
-
-                  {canViewOrderFuelCost && orderFieldsByKey.get('fuel_cost')?.isEnabled !== false ? (
-                    <>
-                      <View style={base.row}>
-                        <Text style={base.label}>{t('order_details_fuel')}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={base.value}>
-                            {formatMoney(order.fuel_cost, order?.currency || companySettings?.currency)}
-                          </Text>
-                        </View>
-                      </View>
-                      {canEditOrderFuelCost ? (
-                        <>
-                          <View style={base.sep} />
-                          <Pressable
-                            style={base.row}
-                            onPress={() => {
-                              setFuelDraft(String(order?.fuel_cost ?? ''));
-                              setFuelEditModalVisible(true);
-                            }}
-                          >
-                            <Text style={base.label}>{t('order_details_edit_fuel_action')}</Text>
-                            <View style={base.rightWrap}>
-                              <Text style={[base.value, styles.link]}>{t('btn_edit')}</Text>
-                            </View>
-                          </Pressable>
-                        </>
-                      ) : null}
-                    </>
-                  ) : null}
-
-                  {canViewFinanceEntries ? <View style={base.sep} /> : null}
                   {canViewFinanceEntries ? (
                     <>
-                      <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_gross_total', 'Р’Р°Р»РѕРІР°СЏ СЃСѓРјРјР°')}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={base.value}>{formatMoney(grossTotal, order?.currency || companySettings?.currency)}</Text>
-                        </View>
-                      </View>
-                      <View style={base.sep} />
-                      <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_discount_total', 'РЎРєРёРґРєРё')}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={base.value}>{formatMoney(discountTotal, order?.currency || companySettings?.currency)}</Text>
-                        </View>
-                      </View>
-                      <View style={base.sep} />
-                      <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_income_total', 'Р”РѕРї. РґРѕС…РѕРґС‹')}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={base.value}>{formatMoney(incomeTotal, order?.currency || companySettings?.currency)}</Text>
-                        </View>
-                      </View>
-                      <View style={base.sep} />
-                      <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_expense_total', 'Р Р°СЃС…РѕРґС‹')}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={base.value}>{formatMoney(expenseTotal, order?.currency || companySettings?.currency)}</Text>
-                        </View>
-                      </View>
-                      <View style={base.sep} />
-                      <View style={base.row}>
-                        <Text style={base.label}>{t('order_finance_net_total', 'Р§РёСЃС‚Р°СЏ РїСЂРёР±С‹Р»СЊ')}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={[base.value, { fontWeight: theme.typography?.weight?.semibold || '600' }]}>
-                            {formatMoney(netTotal, order?.currency || companySettings?.currency)}
-                          </Text>
-                        </View>
-                      </View>
+                      <FinanceAccordionRow
+                        label={t('order_finance_customer_section', 'Общая сумма')}
+                        summaryValue={formatMoney(customerFinanceTotal, currency)}
+                        summaryTone={isOrderPaid ? 'success' : 'warning'}
+                        summaryIcon={
+                          isOrderPaid ? (
+                            <View
+                              style={[
+                                styles.financeStatusCircle,
+                                { borderColor: theme.colors.success },
+                              ]}
+                            >
+                              <Feather
+                                name="check"
+                                size={Math.max(10, (theme.icons?.xs ?? 12))}
+                                color={theme.colors.success}
+                              />
+                            </View>
+                          ) : (
+                            <MaterialCommunityIcons
+                              name="qrcode"
+                              size={theme.icons?.sm ?? 18}
+                              color={theme.colors.warning || theme.colors.primary}
+                            />
+                          )
+                        }
+                        summaryIconOnPress={isOrderPaid ? null : handleQrPaymentPress}
+                        summaryIconAccessibilityLabel={isOrderPaid ? null : t('order_payment_qr_soon', 'Скоро добавим')}
+                        expanded={expandedFinanceSections.customer}
+                        onToggle={() => toggleFinanceSection('customer')}
+                        base={base}
+                        styles={styles}
+                        theme={theme}
+                      >
+                        {financeEntriesQuery.isLoading ? (
+                          <View style={styles.financeSectionLoader}>
+                            <ActivityIndicator size="small" color={theme.colors.primary} />
+                          </View>
+                        ) : (
+                          <>
+                            {isOrderFieldVisible('payment_status') ? (
+                              <>
+                                <Pressable
+                                  style={({ pressed }) => [canEditFinances && pressed && { opacity: 0.7 }]}
+                                  disabled={!canEditFinances}
+                                  onPress={() => {
+                                    if (!canEditFinances) return;
+                                    setPaymentStatusModalVisible(true);
+                                  }}
+                                >
+                                  <LabelValueRow
+                                    label={t('order_details_payment_status', 'Статус оплаты')}
+                                    middleSpacerStyle={styles.financeCompactSpacer}
+                                    rightWrapStyle={styles.financeTightRightWrap}
+                                    valueComponent={
+                                      <Text
+                                        style={[
+                                          base.value,
+                                          {
+                                            color: isOrderPaid
+                                              ? theme.colors.success
+                                              : theme.colors.warning || theme.colors.primary,
+                                          },
+                                        ]}
+                                      >
+                                        {paymentStatusLabel(normalizedPaymentStatus)}
+                                      </Text>
+                                    }
+                                    hideWhenEmpty={false}
+                                    rightActions={
+                                      canEditFinances ? (
+                                        <Feather
+                                          name="chevron-right"
+                                          size={theme.icons?.sm ?? 18}
+                                          color={theme.colors.textSecondary}
+                                        />
+                                      ) : null
+                                    }
+                                  />
+                                </Pressable>
+                                {isOrderFieldVisible('payment_method') || showInitialCostLine ? <View style={base.sep} /> : null}
+                              </>
+                            ) : null}
+
+                            {isOrderFieldVisible('payment_method') ? (
+                              <>
+                                <Pressable
+                                  style={({ pressed }) => [canEditFinances && pressed && { opacity: 0.7 }]}
+                                  disabled={!canEditFinances}
+                                  onPress={() => {
+                                    if (!canEditFinances) return;
+                                    setPaymentMethodModalVisible(true);
+                                  }}
+                                >
+                                  <LabelValueRow
+                                    label={t('order_details_payment_method', 'Способ оплаты')}
+                                    value={paymentMethodLabel(normalizedPaymentMethod)}
+                                    middleSpacerStyle={styles.financeCompactSpacer}
+                                    rightWrapStyle={styles.financeTightRightWrap}
+                                    hideWhenEmpty={false}
+                                    rightActions={
+                                      canEditFinances ? (
+                                        <Feather
+                                          name="chevron-right"
+                                          size={theme.icons?.sm ?? 18}
+                                          color={theme.colors.textSecondary}
+                                        />
+                                      ) : null
+                                    }
+                                  />
+                                </Pressable>
+                                {showInitialCostLine ? <View style={base.sep} /> : null}
+                              </>
+                            ) : null}
+
+                            {showInitialCostLine ? (
+                              <Pressable
+                                style={({ pressed }) => [canEditOrderAmount && pressed && { opacity: 0.7 }]}
+                                disabled={!canEditOrderAmount}
+                                onPress={() => {
+                                  if (!canEditOrderAmount) return;
+                                  setAmountDraft(String(order?.price ?? ''));
+                                  setAmountEditModalVisible(true);
+                                }}
+                              >
+                                <LabelValueRow
+                                  label={t('order_finance_initial_cost', 'Изначальная стоимость')}
+                                  value={formatMoney(order.price, currency)}
+                                  middleSpacerStyle={styles.financeCompactSpacer}
+                                  rightWrapStyle={styles.financeTightRightWrap}
+                                  hideWhenEmpty={false}
+                                  rightActions={
+                                    canEditOrderAmount ? (
+                                      <Feather
+                                        name="chevron-right"
+                                        size={theme.icons?.sm ?? 18}
+                                        color={theme.colors.textSecondary}
+                                      />
+                                    ) : null
+                                  }
+                                />
+                              </Pressable>
+                            ) : null}
+
+                            {showInitialCostLine ? <View style={base.sep} /> : null}
+
+                            {financeIncomeEntries.map((entry, index) => (
+                              <View key={entry.id}>
+                                {index > 0 ? <View style={base.sep} /> : null}
+                                <Pressable
+                                  style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                                  onPress={() => openFinanceEntryView(entry)}
+                                >
+                                  <LabelValueRow
+                                    label={entry.title || t('finance_rule_name', 'Название')}
+                                    middleSpacerStyle={styles.financeCompactSpacer}
+                                    rightWrapStyle={styles.financeEntryRightWrap}
+                                    valueComponent={
+                                      <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
+                                        {`+ ${formatMoney(entry.calculated_amount, currency)}`}
+                                      </Text>
+                                    }
+                                    hideWhenEmpty={false}
+                                    rightActions={
+                                      <Feather
+                                        name="chevron-right"
+                                        size={theme.icons?.sm ?? 18}
+                                        color={theme.colors.textSecondary}
+                                      />
+                                    }
+                                  />
+                                </Pressable>
+                              </View>
+                            ))}
+
+                            {financeIncomeEntries.length > 0 && financeDiscountEntries.length > 0 ? <View style={base.sep} /> : null}
+
+                            {financeDiscountEntries.map((entry, index) => (
+                              <View key={entry.id}>
+                                {index > 0 ? <View style={base.sep} /> : null}
+                                <Pressable
+                                  style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                                  onPress={() => openFinanceEntryView(entry)}
+                                >
+                                  <LabelValueRow
+                                    label={entry.title || t('finance_rule_name', 'Название')}
+                                    middleSpacerStyle={styles.financeCompactSpacer}
+                                    rightWrapStyle={styles.financeEntryRightWrap}
+                                    valueComponent={
+                                      <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
+                                        {`- ${formatMoney(entry.calculated_amount, currency)}`}
+                                      </Text>
+                                    }
+                                    hideWhenEmpty={false}
+                                    rightActions={
+                                      <Feather
+                                        name="chevron-right"
+                                        size={theme.icons?.sm ?? 18}
+                                        color={theme.colors.textSecondary}
+                                      />
+                                    }
+                                  />
+                                </Pressable>
+                              </View>
+                            ))}
+
+                          </>
+                        )}
+                      </FinanceAccordionRow>
+
+                      {internalFinanceTotal > 0 ? (
+                        <>
+                          <View style={base.sep} />
+
+                          <FinanceAccordionRow
+                            label={t('order_finance_internal_section', 'Расходы')}
+                            summaryValue={`- ${formatMoney(internalFinanceTotal, currency)}`}
+                            summaryTone="default"
+                            hideSummaryWhenCollapsed={true}
+                            expanded={expandedFinanceSections.internal}
+                            onToggle={() => toggleFinanceSection('internal')}
+                            base={base}
+                            styles={styles}
+                            theme={theme}
+                          >
+                            {financeEntriesQuery.isLoading ? (
+                              <View style={styles.financeSectionLoader}>
+                                <ActivityIndicator size="small" color={theme.colors.primary} />
+                              </View>
+                            ) : (
+                              <>
+                                {financeExpenseEntries.map((entry, index) => (
+                                  <View key={entry.id}>
+                                    {index > 0 ? <View style={base.sep} /> : null}
+                                    <Pressable
+                                      style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                                      onPress={() => openFinanceEntryView(entry)}
+                                    >
+                                      <LabelValueRow
+                                        label={entry.title || t('finance_rule_name', 'Название')}
+                                        middleSpacerStyle={styles.financeCompactSpacer}
+                                        rightWrapStyle={styles.financeEntryRightWrap}
+                                        valueComponent={
+                                          <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
+                                            {`- ${formatMoney(entry.calculated_amount, currency)}`}
+                                          </Text>
+                                        }
+                                        hideWhenEmpty={false}
+                                        rightActions={
+                                          <Feather
+                                            name="chevron-right"
+                                            size={theme.icons?.sm ?? 18}
+                                            color={theme.colors.textSecondary}
+                                          />
+                                        }
+                                      />
+                                    </Pressable>
+                                  </View>
+                                ))}
+
+                              </>
+                            )}
+                          </FinanceAccordionRow>
+
+                          <View style={base.sep} />
+                        </>
+                      ) : null}
+
+                      {hasExecutorFinanceBreakdown ? (
+                        <FinanceAccordionRow
+                          label={t('order_finance_executor_section', 'Исполнителю')}
+                          summaryValue={formatMoney(executorFinanceTotal, currency)}
+                          summaryTone="default"
+                          hideSummaryWhenCollapsed={true}
+                          expanded={expandedFinanceSections.executor}
+                          onToggle={() => toggleFinanceSection('executor')}
+                          base={base}
+                          styles={styles}
+                          theme={theme}
+                        >
+                          {financeEntriesQuery.isLoading ? (
+                            <View style={styles.financeSectionLoader}>
+                              <ActivityIndicator size="small" color={theme.colors.primary} />
+                            </View>
+                          ) : (
+                            <>
+                              <LabelValueRow
+                                label={t('order_finance_customer_section', 'Общая сумма')}
+                                value={formatMoney(customerFinanceTotal, currency)}
+                                middleSpacerStyle={styles.financeCompactSpacer}
+                                rightWrapStyle={styles.financeTightRightWrap}
+                                hideWhenEmpty={false}
+                              />
+                              {financeCompanyPaidExpenseTotal > 0 ? (
+                                <>
+                                  <View style={base.sep} />
+                                  <LabelValueRow
+                                    label={t('order_finance_company_expense_total', 'Расходы компании')}
+                                    middleSpacerStyle={styles.financeCompactSpacer}
+                                    rightWrapStyle={styles.financeTightRightWrap}
+                                    valueComponent={
+                                      <Text style={base.value}>
+                                        {`- ${formatMoney(financeCompanyPaidExpenseTotal, currency)}`}
+                                      </Text>
+                                    }
+                                    hideWhenEmpty={false}
+                                  />
+                                </>
+                              ) : null}
+                              {financeExecutorPaidExpenseTotal > 0 ? (
+                                <>
+                                  <View style={base.sep} />
+                                  <LabelValueRow
+                                    label={t('order_finance_executor_reimbursement_total', 'Расходы исполнителя')}
+                                    middleSpacerStyle={styles.financeCompactSpacer}
+                                    rightWrapStyle={styles.financeTightRightWrap}
+                                    valueComponent={
+                                      <Text style={base.value}>
+                                        {formatMoney(financeExecutorPaidExpenseTotal, currency)}
+                                      </Text>
+                                    }
+                                    hideWhenEmpty={false}
+                                  />
+                                </>
+                              ) : null}
+                            </>
+                          )}
+                        </FinanceAccordionRow>
+                      ) : null}
 
                       {canEditFinanceEntries ? (
                         <>
                           <View style={base.sep} />
-                          <View style={[base.row, { alignItems: 'center' }]}>
-                            <Text style={base.label}>{t('order_finance_entries_title', 'Р¤РёРЅР°РЅСЃРѕРІС‹Рµ СЃС‚Р°С‚СЊРё')}</Text>
-                            <View style={[base.rightWrap, { flexDirection: 'row', gap: theme.spacing?.xs ?? 6 }]}>
-                              <Pressable
-                                onPress={() => openCreateFinanceEntry('income')}
-                                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
-                              >
-                                <Text style={[base.value, styles.link]}>{t('order_finance_add_income', '+ РґРѕС…РѕРґ')}</Text>
-                              </Pressable>
-                              <Pressable
-                                onPress={() => openCreateFinanceEntry('expense')}
-                                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
-                              >
-                                <Text style={[base.value, styles.link]}>{t('order_finance_add_expense', '+ СЂР°СЃС…РѕРґ')}</Text>
-                              </Pressable>
-                              <Pressable
-                                onPress={() => openCreateFinanceEntry('discount')}
-                                style={({ pressed }) => [pressed && { opacity: 0.7 }]}
-                              >
-                                <Text style={[base.value, styles.link]}>{t('order_finance_add_discount', '+ СЃРєРёРґРєР°')}</Text>
-                              </Pressable>
+                          <Pressable
+                            style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+                            onPress={() => setFinanceKindModalVisible(true)}
+                          >
+                            <Text style={base.label}>
+                              {t('order_finance_add_entry_action', 'Добавить расход/доход/скидку')}
+                            </Text>
+                            <View style={base.rightWrap}>
+                              <Feather
+                                name="chevron-right"
+                                size={theme.icons?.sm ?? 18}
+                                color={theme.colors.textSecondary}
+                                style={{ marginLeft: theme.spacing.xs }}
+                              />
                             </View>
-                          </View>
+                          </Pressable>
                         </>
                       ) : null}
-
-                      {financeEntriesQuery.isLoading ? (
-                        <>
-                          <View style={base.sep} />
-                          <View style={[base.row, { justifyContent: 'center' }]}>
-                            <ActivityIndicator size="small" color={theme.colors.primary} />
-                          </View>
-                        </>
-                      ) : null}
-
-                      {financeEntries.map((entry) => {
-                        const amountLabel =
-                          entry.calc_mode === 'percent'
-                            ? `${Number(entry.input_percent || 0)}% (${financePercentBaseLabel(entry.percent_base)})`
-                            : formatMoney(entry.calculated_amount, order?.currency || companySettings?.currency);
-                        return (
-                          <View key={entry.id}>
-                            <View style={base.sep} />
-                            <View style={base.row}>
-                              <Text style={base.label}>
-                                {financeKindLabel(entry.kind)}: {entry.title}
-                              </Text>
-                              <View style={base.rightWrap}>
-                                <Text style={base.value}>{amountLabel}</Text>
-                              </View>
-                            </View>
-                            {entry.note_visible !== false && String(entry.note || '').trim() ? (
-                              <>
-                                <View style={base.sep} />
-                                <LabelValueRow
-                                  label={t('order_finance_note', 'РљРѕРјРјРµРЅС‚Р°СЂРёР№')}
-                                  value={entry.note}
-                                />
-                              </>
-                            ) : null}
-                            {canEditFinanceEntries && entry.is_system !== true ? (
-                              <>
-                                <View style={base.sep} />
-                                <View style={[base.row, { justifyContent: 'flex-end', gap: theme.spacing?.sm ?? 10 }]}>
-                                  <Pressable onPress={() => openEditFinanceEntry(entry)}>
-                                    <Text style={[base.value, styles.link]}>{t('btn_edit')}</Text>
-                                  </Pressable>
-                                  <Pressable onPress={() => removeFinanceEntry(entry)}>
-                                    <Text style={[base.value, { color: theme.colors.danger }]}>{t('btn_delete')}</Text>
-                                  </Pressable>
-                                </View>
-                              </>
-                            ) : null}
-                          </View>
-                        );
-                      })}
                     </>
-                  ) : null}
+                  ) : (
+                    <>
+                      {showInitialCostLine ? (
+                        <Pressable
+                          style={({ pressed }) => [canEditOrderAmount && pressed && { opacity: 0.7 }]}
+                          disabled={!canEditOrderAmount}
+                          onPress={() => {
+                            if (!canEditOrderAmount) return;
+                            setAmountDraft(String(order?.price ?? ''));
+                            setAmountEditModalVisible(true);
+                          }}
+                        >
+                          <LabelValueRow
+                            label={t('order_finance_initial_cost', 'Изначальная стоимость')}
+                            value={formatMoney(order.price, currency)}
+                            hideWhenEmpty={false}
+                            rightActions={
+                              canEditOrderAmount ? (
+                                <Feather
+                                  name="chevron-right"
+                                  size={theme.icons?.sm ?? 18}
+                                  color={theme.colors.textSecondary}
+                                />
+                              ) : null
+                            }
+                          />
+                        </Pressable>
+                      ) : null}
+
+                    </>
+                  )}
                 </Card>
               </>
             ) : null}
@@ -2882,11 +4006,9 @@ export default function OrderDetails() {
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_photos_section', 'Р¤РѕС‚Рѕ')}
                 </SectionHeader>
-                {cloudFallbackActive ? (
+                {cloudFallbackActive && isAdminUser ? (
                   <Text style={styles.cloudWarningText}>
-                    {isAdminUser
-                      ? `${t('order_cloud_fallback_admin_notice')} (${cloudHealthLabel})`
-                      : t('order_cloud_fallback_worker_notice')}
+                    {`${t('order_cloud_fallback_admin_notice')} (${cloudHealthLabel})`}
                   </Text>
                 ) : null}
                 <Card paddedXOnly>
@@ -2895,7 +4017,7 @@ export default function OrderDetails() {
                     { key: 'photo_before', label: t('order_details_photo_before') },
                     { key: 'photo_after', label: t('order_details_photo_after') },
                     { key: 'act_file', label: t('order_details_act') },
-                  ].map((row, idx, arr) => {
+                  ].map((row, idx) => {
                     const count = (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length;
                     return (
                       <View key={row.key}>
@@ -2985,41 +4107,24 @@ export default function OrderDetails() {
               </Pressable>
             )}
           </ScrollView>
-      {Platform.OS === 'ios' && !!bannerMessage && (
-        <View pointerEvents="none" style={styles.banner}>
-          <Text style={styles.bannerText}>{bannerMessage}</Text>
-        </View>
-      )}
     </SafeAreaView>
 
-      <Modal
-        isVisible={workTypeModalVisible}
-        onBackdropPress={() => setWorkTypeModalVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_work_type_select')}</Text>
-          {(workTypes || []).filter((item) => item?.is_enabled !== false).length === 0 ? (
-            <Text style={styles.modalText}>{t('order_modal_work_type_empty')}</Text>
-          ) : (
-            (workTypes || [])
-              .filter((item) => item?.is_enabled !== false)
-              .map((t) => (
-              <Pressable
-                key={t.id}
-                onPress={() => {
-                  setWorkTypeId(t.id);
-                  setWorkTypeModalVisible(false);
-                }}
-                style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.8 }]}
-              >
-                <Text style={styles.assigneeText}>{t.name}</Text>
-              </Pressable>
-            ))
-          )}
-        </View>
-      </Modal>
+      <SelectModal
+        visible={workTypeModalVisible}
+        title={t('order_modal_work_type_select')}
+        searchable={false}
+        items={(workTypes || [])
+          .filter((item) => item?.is_enabled !== false)
+          .map((wt) => ({ id: wt.id, label: wt.name }))}
+        onSelect={(item) => {
+          setWorkTypeId(item.id);
+          setWorkTypeModalVisible(false);
+        }}
+        onClose={() => setWorkTypeModalVisible(false)}
+        emptyComponent={
+          <Text style={styles.modalText}>{t('order_modal_work_type_empty')}</Text>
+        }
+      />
 
       <FullscreenImageViewer
         visible={viewerVisible}
@@ -3031,283 +4136,398 @@ export default function OrderDetails() {
         categoryLabel={viewerCategoryLabel}
       />
 
-      <Modal
-        isVisible={cancelVisible}
-        onBackdropPress={() => setCancelVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_cancel_edit_title')}</Text>
-          <Text style={styles.modalText}>{t('order_modal_cancel_edit_msg')}</Text>
-          <View style={styles.modalActions}>
-            <Button
-              title={t('order_modal_cancel_stay')}
-              onPress={() => setCancelVisible(false)}
-              variant="primary"
-            />
-            <Button
-              title={t('order_modal_cancel_leave')}
-              onPress={confirmCancel}
-              variant="destructive"
-            />
-          </View>
-        </View>
-      </Modal>
+      <ConfirmModal
+        visible={cancelVisible}
+        title={t('order_modal_cancel_edit_title')}
+        message={t('order_modal_cancel_edit_msg')}
+        confirmLabel={t('order_modal_cancel_leave')}
+        cancelLabel={t('order_modal_cancel_stay')}
+        confirmVariant="destructive"
+        onClose={() => setCancelVisible(false)}
+        onConfirm={confirmCancel}
+      />
 
-      <Modal
-        isVisible={assigneeModalVisible}
-        onBackdropPress={() => setAssigneeModalVisible(false)}
-        useNativeDriver
-        animationIn="slideInUp"
-        animationOut="slideOutDown"
-        animationInTiming={200}
-        animationOutTiming={200}
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_select_executor')}</Text>
-          <Pressable
-            onPress={() => {
-              setToFeed(true);
-              setAssigneeId(null);
-              setAssigneeModalVisible(false);
-            }}
-            style={({ pressed }) => [
-              styles.assigneeOption,
-              pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
-            ]}
-          >
-            <Text style={styles.assigneeText}>{t('order_modal_to_feed')}</Text>
-          </Pressable>
-          <View style={{ height: 8 }} />
-          {users.map((user) => (
-            <Pressable
-              key={user.id}
-              onPress={() => {
-                setAssigneeId(user.id);
-                setExecutorName(`${user.first_name || ''} ${user.last_name || ''}`.trim());
-                setToFeed(false);
-                setAssigneeModalVisible(false);
-              }}
-              style={({ pressed }) => [
-                styles.assigneeOption,
-                pressed && { backgroundColor: theme.colors.inputBg || theme.colors.surface },
-              ]}
-            >
-              <Text style={styles.assigneeText}>
-                {[user.first_name, user.last_name].filter(Boolean).join(' ')}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </Modal>
+      <SelectModal
+        visible={assigneeModalVisible}
+        title={t('order_modal_select_executor')}
+        searchable={false}
+        items={[
+          { id: '__feed__', label: t('order_modal_to_feed') },
+          ...users.map((user) => ({
+            id: user.id,
+            label: [user.first_name, user.last_name].filter(Boolean).join(' '),
+          })),
+        ]}
+        onSelect={(item) => {
+          if (item.id === '__feed__') {
+            setToFeed(true);
+            setAssigneeId(null);
+          } else {
+            setAssigneeId(item.id);
+            setExecutorName(item.label);
+            setToFeed(false);
+          }
+          setAssigneeModalVisible(false);
+        }}
+        onClose={() => setAssigneeModalVisible(false)}
+      />
 
       {useDepartments ? (
-        <Modal
-          isVisible={departmentModalVisible}
-          onBackdropPress={() => setDepartmentModalVisible(false)}
-          useNativeDriver
-          animationIn="slideInUp"
-          animationOut="slideOutDown"
-          animationInTiming={200}
-          animationOutTiming={200}
-          backdropOpacity={0.3}
-          onModalHide={applyNavBar}
-        >
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>{t('order_modal_select_department')}</Text>
-            {departments.length > 0 ? (
-              departments.map((d) => (
-                <Pressable
-                  key={d.id}
-                  onPress={() => {
-                    setDepartmentId(d.id);
-                    setDepartmentModalVisible(false);
-                  }}
-                  style={({ pressed }) => [styles.assigneeOption, pressed && { opacity: 0.7 }]}
-                >
-                  <Text style={styles.assigneeText}>{d.name}</Text>
-                </Pressable>
-              ))
-            ) : (
-              <Text style={styles.modalText}>{t('order_modal_no_departments')}</Text>
-            )}
-            <View style={[styles.modalActions, { marginTop: theme.spacing?.sm || 8 }]}>
-              <Button
-                title={t('btn_cancel')}
-                onPress={() => setDepartmentModalVisible(false)}
-                variant="secondary"
-              />
-            </View>
-          </View>
-        </Modal>
+        <SelectModal
+          visible={departmentModalVisible}
+          title={t('order_modal_select_department')}
+          searchable={false}
+          items={departments.map((d) => ({ id: d.id, label: d.name }))}
+          onSelect={(item) => {
+            setDepartmentId(item.id);
+            setDepartmentModalVisible(false);
+          }}
+          onClose={() => setDepartmentModalVisible(false)}
+          emptyComponent={
+            <Text style={styles.modalText}>{t('order_modal_no_departments')}</Text>
+          }
+        />
       ) : null}
 
-      <Modal
-        isVisible={amountEditModalVisible}
-        onBackdropPress={() => setAmountEditModalVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
+      <BaseModal
+        visible={amountEditModalVisible}
+        onClose={() => setAmountEditModalVisible(false)}
+        onOpened={focusAmountEditInput}
+        onOpenedDelayMs={170}
+        title={t('order_modal_edit_amount_title')}
+        maxHeightRatio={0.45}
       >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_edit_amount_title')}</Text>
-          <TextField
-            label={t('order_modal_edit_amount_label')}
-            value={amountDraft}
-            onChangeText={setAmountDraft}
-            keyboardType="decimal-pad"
-            placeholder={t('order_placeholder_amount')}
+        <TextField
+          ref={amountEditInputRef}
+          showSoftInputOnFocus
+          label={t('order_modal_edit_amount_label')}
+          value={amountDraft}
+          onChangeText={setAmountDraft}
+          keyboardType="decimal-pad"
+          placeholder={t('order_placeholder_amount')}
+          returnKeyType="done"
+          onSubmitEditing={() =>
+            saveInlineFinanceField({
+              field: 'price',
+              rawValue: amountDraft,
+              onDone: () => setAmountEditModalVisible(false),
+            })
+          }
+        />
+        <View style={styles.financeEntryModalActions}>
+          <Button
+            title={t('btn_cancel')}
+            onPress={() => setAmountEditModalVisible(false)}
+            variant="secondary"
           />
-          <View style={styles.modalActions}>
-            <Button
-              title={t('btn_cancel')}
-              onPress={() => setAmountEditModalVisible(false)}
-              variant="secondary"
-            />
-            <Button
-              title={t('order_modal_edit_save')}
-              loading={financeSaving}
-              onPress={() =>
-                saveInlineFinanceField({
-                  field: 'price',
-                  rawValue: amountDraft,
-                  onDone: () => setAmountEditModalVisible(false),
-                })
-              }
-            />
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        isVisible={fuelEditModalVisible}
-        onBackdropPress={() => setFuelEditModalVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_edit_fuel_title')}</Text>
-          <TextField
-            label={t('order_modal_edit_fuel_label')}
-            value={fuelDraft}
-            onChangeText={setFuelDraft}
-            keyboardType="decimal-pad"
-            placeholder={t('order_placeholder_amount')}
-          />
-          <View style={styles.modalActions}>
-            <Button
-              title={t('btn_cancel')}
-              onPress={() => setFuelEditModalVisible(false)}
-              variant="secondary"
-            />
-            <Button
-              title={t('order_modal_edit_save')}
-              loading={financeSaving}
-              onPress={() =>
-                saveInlineFinanceField({
-                  field: 'fuel_cost',
-                  rawValue: fuelDraft,
-                  onDone: () => setFuelEditModalVisible(false),
-                })
-              }
-            />
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        isVisible={financeEntryModalVisible}
-        onBackdropPress={() => setFinanceEntryModalVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_finance_entry_modal_title', 'Р¤РёРЅР°РЅСЃРѕРІР°СЏ СЃС‚Р°С‚СЊСЏ')}</Text>
-          <TextField
-            label={t('finance_rule_name', 'РќР°Р·РІР°РЅРёРµ')}
-            value={financeEntryDraft.title}
-            onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, title: value }))}
-            placeholder={t('finance_rule_name', 'РќР°Р·РІР°РЅРёРµ')}
-          />
-          <TextField
-            label={t('finance_rule_kind', 'РўРёРї')}
-            value={financeKindLabel(financeEntryDraft.kind)}
-            pressable
+          <Button
+            title={t('order_modal_edit_save')}
+            loading={financeSaving}
             onPress={() =>
-              setFinanceEntryDraft((prev) => {
-                const orderKinds = ['income', 'expense', 'discount'];
-                const current = orderKinds.indexOf(prev.kind);
-                const next = current === -1 ? 0 : (current + 1) % orderKinds.length;
-                return { ...prev, kind: orderKinds[next] };
+              saveInlineFinanceField({
+                field: 'price',
+                rawValue: amountDraft,
+                onDone: () => setAmountEditModalVisible(false),
               })
             }
           />
-          <TextField
-            label={t('finance_rule_calc_mode', 'Р¤РѕСЂРјР°С‚ СЂР°СЃС‡С‘С‚Р°')}
-            value={financeCalcModeLabel(financeEntryDraft.calc_mode)}
-            pressable
-            onPress={() =>
-              setFinanceEntryDraft((prev) => ({
-                ...prev,
-                calc_mode: prev.calc_mode === 'percent' ? 'fixed' : 'percent',
-              }))
-            }
+        </View>
+      </BaseModal>
+
+      <SelectModal
+        visible={paymentStatusModalVisible}
+        title={t('order_details_payment_status', 'Статус оплаты')}
+        searchable={false}
+        items={paymentStatusItems}
+        selectedId={normalizedPaymentStatus}
+        onSelect={async (item) => {
+          const nextStatus = String(item?.id || 'unpaid');
+          setPaymentStatusModalVisible(false);
+          await saveOrderPaymentField({ payment_status: nextStatus });
+        }}
+        onClose={() => setPaymentStatusModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={paymentMethodModalVisible}
+        title={t('order_details_payment_method', 'Способ оплаты')}
+        searchable={false}
+        items={paymentMethodItems}
+        selectedId={normalizedPaymentMethod}
+        onSelect={async (item) => {
+          const nextMethod = String(item?.id || 'cash');
+          setPaymentMethodModalVisible(false);
+          await saveOrderPaymentField({ payment_method: nextMethod });
+        }}
+        onClose={() => setPaymentMethodModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={financeKindModalVisible}
+        title={t('common_add', 'Добавить')}
+        searchable={false}
+        items={financeKindSelectItems}
+        onSelect={(item) => {
+          setFinanceKindModalVisible(false);
+          openCreateFinanceEntry(item?.id || 'expense');
+        }}
+        onClose={() => setFinanceKindModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={financeCalcModeModalVisible}
+        title={t('finance_rule_calc_mode', 'Формат расчёта')}
+        searchable={false}
+        items={financeCalcModeItems}
+        selectedId={financeEntryDraft.calc_mode}
+        onSelect={(item) => {
+          setFinanceEntryDraft((prev) => ({ ...prev, calc_mode: String(item?.id || 'fixed') }));
+          setFinanceCalcModeModalVisible(false);
+        }}
+        onClose={() => setFinanceCalcModeModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={financePercentBaseModalVisible}
+        title={t('finance_rule_percent_base', 'Основа процента')}
+        searchable={false}
+        items={financePercentBaseItems}
+        itemTitleNumberOfLines={2}
+        multilineItems
+        selectedId={normalizeFinancePercentBase(financeEntryDraft.kind, financeEntryDraft.percent_base)}
+        onSelect={(item) => {
+          setFinanceEntryDraft((prev) => ({
+            ...prev,
+            percent_base: normalizeFinancePercentBase(prev.kind, item?.id || 'base_price'),
+          }));
+          setFinancePercentBaseModalVisible(false);
+        }}
+        onClose={() => setFinancePercentBaseModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={financeExpensePayerModalVisible}
+        title={t('finance_expense_payer', 'Кто оплатил')}
+        searchable={false}
+        items={financeExpensePayerItems}
+        selectedId={financeEntryDraft.expense_payer}
+        onSelect={(item) => {
+          setFinanceEntryDraft((prev) => ({
+            ...prev,
+            expense_payer: String(item?.id || 'executor'),
+          }));
+          setFinanceExpensePayerModalVisible(false);
+        }}
+        onClose={() => setFinanceExpensePayerModalVisible(false)}
+      />
+
+      <BaseModal
+        visible={financeEntryViewModalVisible}
+        onClose={() => setFinanceEntryViewModalVisible(false)}
+        title={String(selectedFinanceEntry?.title || '').trim() || t('order_finance_entry_modal_title', 'Финансовая статья')}
+        maxHeightRatio={0.7}
+      >
+        <LabelValueRow
+          label={t('finance_rule_kind', 'Тип')}
+          value={financeKindLabel(selectedFinanceEntry?.kind)}
+          middleSpacerStyle={styles.financeModalCompactSpacer}
+          rightWrapStyle={styles.financeModalRightWrap}
+        />
+        <View style={base.sep} />
+        {selectedFinanceEntry?.calc_mode === 'percent' ? (
+          <LabelValueRow
+            label={t('finance_rule_percent_value', 'Процент')}
+            value={`${Number(selectedFinanceEntry?.input_percent || 0)}% (${financePercentBaseLabel(selectedFinanceEntry?.percent_base)})`}
+            maxValueLines={2}
+            middleSpacerStyle={styles.financeModalTightSpacer}
+            rightWrapStyle={styles.financeModalPercentRightWrap}
           />
-          {financeEntryDraft.calc_mode === 'percent' ? (
-            <>
-              <TextField
-                label={t('finance_rule_percent_value', 'РџСЂРѕС†РµРЅС‚')}
-                value={String(financeEntryDraft.input_percent || '')}
-                onChangeText={(value) =>
-                  setFinanceEntryDraft((prev) => ({ ...prev, input_percent: value }))
-                }
-                keyboardType="decimal-pad"
-              />
-              <TextField
-                label={t('finance_rule_percent_base', 'РћСЃРЅРѕРІР° РїСЂРѕС†РµРЅС‚Р°')}
-                value={financePercentBaseLabel(financeEntryDraft.percent_base)}
-                pressable
-                onPress={() =>
-                  setFinanceEntryDraft((prev) => {
-                    const baseOptions = [
-                      'base_price',
-                      'gross_before_discount',
-                      'gross_after_discount',
-                      'net_before_expense',
-                    ];
-                    const current = baseOptions.indexOf(prev.percent_base);
-                    const next = current === -1 ? 0 : (current + 1) % baseOptions.length;
-                    return { ...prev, percent_base: baseOptions[next] };
-                  })
-                }
-              />
-            </>
-          ) : (
-            <TextField
-              label={t('finance_rule_fixed_amount', 'РЎСѓРјРјР°')}
-              value={String(financeEntryDraft.input_amount || '')}
-              onChangeText={(value) =>
-                setFinanceEntryDraft((prev) => ({ ...prev, input_amount: value }))
-              }
-              keyboardType="decimal-pad"
+        ) : (
+          <LabelValueRow
+            label={t('finance_rule_fixed_amount', 'Сумма')}
+            value={formatMoney(selectedFinanceEntry?.calculated_amount, order?.currency || companySettings?.currency)}
+            middleSpacerStyle={styles.financeModalCompactSpacer}
+            rightWrapStyle={styles.financeModalRightWrap}
+          />
+        )}
+        {selectedFinanceEntry?.kind === 'expense' ? (
+          <>
+            <View style={base.sep} />
+            <LabelValueRow
+              label={t('finance_expense_payer', 'Кто оплатил')}
+              value={financeExpensePayerLabel(selectedFinanceEntry?.expense_payer)}
+              middleSpacerStyle={styles.financeModalCompactSpacer}
+              rightWrapStyle={styles.financeModalRightWrap}
             />
-          )}
-          <TextField
-            label={t('finance_rule_note_template', 'РљРѕРјРјРµРЅС‚Р°СЂРёР№')}
-            value={financeEntryDraft.note}
-            onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, note: value }))}
-            multiline
-          />
-          <View style={styles.modalActions}>
+          </>
+        ) : null}
+        {financeEntryViewHasComment ? (
+          <>
+            <View style={base.sep} />
+            <Pressable
+              onPress={() => {
+                if (!financeEntryViewCommentExpandable && !financeEntryViewCommentExpanded) return;
+                setFinanceEntryViewCommentExpanded((prev) => !prev);
+              }}
+              style={({ pressed }) => [pressed && (financeEntryViewCommentExpandable || financeEntryViewCommentExpanded) ? { opacity: 0.7 } : null]}
+            >
+              <View
+                onLayout={(event) => {
+                  const width = Number(event?.nativeEvent?.layout?.width) || 0;
+                  setFinanceEntryViewCommentMeasureWidth((prev) => (prev === width ? prev : width));
+                }}
+              >
+                {financeEntryViewCommentExpanded ? (
+                  <View style={styles.financeEntryCommentBlock}>
+                    <View style={styles.financeEntryCommentHeader}>
+                      <Text style={base.label}>{t('order_finance_note', 'Комментарий')}</Text>
+                      {financeEntryViewCommentExpandable ? (
+                        <Feather
+                          name="chevron-up"
+                          size={theme.icons?.sm ?? 18}
+                          color={theme.colors.textSecondary}
+                        />
+                      ) : null}
+                    </View>
+                    <Text
+                      style={[
+                        base.value,
+                        styles.financeEntryCommentValue,
+                        styles.financeEntryExpandedComment,
+                        styles.financeEntryCommentPressable,
+                      ]}
+                    >
+                      {financeEntryViewCommentText}
+                    </Text>
+                  </View>
+                ) : (
+                  <LabelValueRow
+                    label={t('order_finance_note', 'Комментарий')}
+                    middleSpacerStyle={styles.financeModalCompactSpacer}
+                    rightWrapStyle={styles.financeCommentCollapsedRightWrap}
+                    valueComponent={
+                      <Text
+                        style={[base.value, styles.financeCommentCollapsedValue, styles.financeEntryCommentPressable]}
+                        numberOfLines={financeEntryViewCommentExpandable ? 1 : 2}
+                        ellipsizeMode="tail"
+                      >
+                        {financeEntryViewCommentText}
+                      </Text>
+                    }
+                    rightActions={
+                      financeEntryViewCommentExpandable ? (
+                        <Feather
+                          name="chevron-down"
+                          size={theme.icons?.sm ?? 18}
+                          color={theme.colors.textSecondary}
+                        />
+                      ) : null
+                    }
+                    hideWhenEmpty={false}
+                  />
+                )}
+              </View>
+            </Pressable>
+            {financeEntryViewCommentMeasureWidth > 0 ? (
+              <View style={styles.financeEntryCommentMeasureWrap} pointerEvents="none">
+                <View style={{ width: financeEntryViewCommentMeasureWidth }}>
+                  <View style={styles.financeEntryCommentMeasureInner}>
+                  <Text
+                    style={[base.value, styles.financeEntryCommentMeasureText]}
+                    onTextLayout={(event) => {
+                      const lines = event?.nativeEvent?.lines;
+                      const nextExpandable = Array.isArray(lines) && lines.length > 2;
+                      setFinanceEntryViewCommentExpandable((prev) =>
+                        prev === nextExpandable ? prev : nextExpandable
+                      );
+                    }}
+                  >
+                    {financeEntryViewCommentText}
+                  </Text>
+                  </View>
+                </View>
+              </View>
+            ) : null}
+          </>
+        ) : null}
+        {financeEntryViewHasPhotos ? (
+          <>
+            <View style={base.sep} />
+            <Pressable
+              style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+              onPress={openFinanceEntryPhotosFromView}
+            >
+              <LabelValueRow
+                label={t('order_details_photos_section', 'Фото')}
+                value={formatFinancePhotoCount(financeEntryViewPhotoCount)}
+                middleSpacerStyle={styles.financeModalCompactSpacer}
+                rightWrapStyle={styles.financeModalRightWrap}
+                hideWhenEmpty={false}
+                rightActions={
+                  <Feather
+                    name="chevron-right"
+                    size={theme.icons?.sm ?? 18}
+                    color={theme.colors.textSecondary}
+                  />
+                }
+              />
+            </Pressable>
+          </>
+        ) : null}
+        {canEditFinanceEntries && selectedFinanceEntry?.is_system !== true ? (
+          <View style={styles.financeEntryModalActions}>
+            <Button
+              title={t('btn_edit')}
+              variant="secondary"
+              onPress={startEditFinanceEntryFromView}
+            />
+            <Button
+              title={t('btn_delete')}
+              variant="destructive"
+              onPress={() => setFinanceEntryDeleteConfirmVisible(true)}
+            />
+          </View>
+        ) : null}
+      </BaseModal>
+
+      <ConfirmModal
+        visible={financeEntryDeleteConfirmVisible}
+        title={financeDeleteTitle(selectedFinanceEntry?.kind)}
+        message={t('order_finance_delete_message', 'Это значение будет удалено без возможности восстановления')}
+        confirmLabel={t('btn_delete')}
+        confirmVariant="destructive"
+        loading={deleteFinanceEntryMutation.isPending}
+        onClose={() => setFinanceEntryDeleteConfirmVisible(false)}
+        onConfirm={confirmDeleteFinanceEntry}
+      />
+
+      <BaseModal
+        visible={financeEntryModalVisible}
+        onClose={() => {
+          setFinanceEntrySubmitAttempt(false);
+          setFinanceEntryFieldErrors({});
+          setFinanceEntryModalVisible(false);
+        }}
+        onShow={() => {
+          const targetRef =
+            financeEntryDraft.calc_mode === 'percent'
+              ? financePercentInputRef.current
+              : financeAmountInputRef.current;
+          setTimeout(() => {
+            targetRef?.focus?.();
+          }, 40);
+        }}
+        title={getFinanceEntryModalTitle(financeEntryDraft.kind, !!financeEntryDraft.id)}
+        maxHeightRatio={0.82}
+        footer={
+          <View style={styles.financeEntryModalActions}>
             <Button
               title={t('btn_cancel')}
-              onPress={() => setFinanceEntryModalVisible(false)}
+              onPress={() => {
+                setFinanceEntrySubmitAttempt(false);
+                setFinanceEntryFieldErrors({});
+                setFinanceEntryModalVisible(false);
+              }}
               variant="secondary"
             />
             <Button
@@ -3316,55 +4536,175 @@ export default function OrderDetails() {
               onPress={saveFinanceEntry}
             />
           </View>
-        </View>
-      </Modal>
-
-      <Modal
-        isVisible={warningVisible}
-        onBackdropPress={() => setWarningVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
+        }
       >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_warning_title')}</Text>
-          <Text style={styles.modalText}>{warningMessage}</Text>
-          <View style={styles.modalActions}>
-            <Button title={t('btn_ok')} onPress={() => setWarningVisible(false)} />
-          </View>
-        </View>
-      </Modal>
+        <ScrollView
+          style={styles.financeEntryModalScroll}
+          contentContainerStyle={styles.financeEntryModalScrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="none"
+        >
+          <TextField
+            label={`${t('finance_rule_name', 'Название')}${t('common_required_suffix', ' *')}`}
+            value={financeEntryDraft.title}
+            onChangeText={(value) => {
+              clearFinanceEntryFieldError('title');
+              setFinanceEntryDraft((prev) => ({ ...prev, title: value }));
+            }}
+            placeholder={t('finance_rule_name', 'Название')}
+            multiline
+            autoGrow
+            minLines={2}
+            filterInput={normalizeFinanceTextInput}
+            maxLength={50}
+            forceValidation={financeEntrySubmitAttempt}
+            error={financeEntryFieldErrors?.title ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={financeEntryFieldErrors?.title?.message} />
+          <TextField
+            label={t('finance_rule_calc_mode', 'Р¤РѕСЂРјР°С‚ СЂР°СЃС‡С‘С‚Р°')}
+            value={financeCalcModeLabel(financeEntryDraft.calc_mode)}
+            pressable
+            onPress={() => setFinanceCalcModeModalVisible(true)}
+          />
+          {financeEntryDraft.calc_mode === 'percent' ? (
+            <>
+              <TextField
+                ref={financePercentInputRef}
+                label={`${t('finance_rule_percent_value', 'Процент')}${t('common_required_suffix', ' *')}`}
+                value={String(financeEntryDraft.input_percent || '')}
+                onChangeText={(value) => {
+                  clearFinanceEntryFieldError('input_percent');
+                  setFinanceEntryDraft((prev) => ({ ...prev, input_percent: value }));
+                }}
+                keyboardType="decimal-pad"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  financeCommentInputRef.current?.focus?.();
+                }}
+                forceValidation={financeEntrySubmitAttempt}
+                error={financeEntryFieldErrors?.input_percent ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={financeEntryFieldErrors?.input_percent?.message} />
+              <TextField
+                label={t('finance_rule_percent_base', 'РћСЃРЅРѕРІР° РїСЂРѕС†РµРЅС‚Р°')}
+                value={financePercentBaseLabel(financeEntryDraft.percent_base)}
+                multiline
+                numberOfLines={2}
+                pressable
+                onPress={() => setFinancePercentBaseModalVisible(true)}
+              />
+            </>
+          ) : (
+            <>
+              <TextField
+                ref={financeAmountInputRef}
+                label={`${t('finance_rule_fixed_amount', 'Сумма')}${t('common_required_suffix', ' *')}`}
+                value={String(financeEntryDraft.input_amount || '')}
+                onChangeText={(value) => {
+                  clearFinanceEntryFieldError('input_amount');
+                  setFinanceEntryDraft((prev) => ({ ...prev, input_amount: value }));
+                }}
+                keyboardType="decimal-pad"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  financeCommentInputRef.current?.focus?.();
+                }}
+                forceValidation={financeEntrySubmitAttempt}
+                error={financeEntryFieldErrors?.input_amount ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={financeEntryFieldErrors?.input_amount?.message} />
+            </>
+          )}
+          {financeEntryDraft.kind === 'expense' ? (
+            <TextField
+              label={t('finance_expense_payer', 'Кто оплатил')}
+              value={financeExpensePayerLabel(financeEntryDraft.expense_payer)}
+              pressable
+              onPress={() => setFinanceExpensePayerModalVisible(true)}
+            />
+          ) : null}
+          <TextField
+            ref={financeCommentInputRef}
+            label={t('finance_rule_note_template', 'РљРѕРјРјРµРЅС‚Р°СЂРёР№')}
+            value={financeEntryDraft.note}
+            multiline
+            autoGrow
+            minLines={2}
+            filterInput={normalizeFinanceTextInput}
+            onChangeText={(value) => setFinanceEntryDraft((prev) => ({ ...prev, note: value }))}
+            maxLength={200}
+            returnKeyType="done"
+            rightSlot={
+              financeEntryDraft.note ? (
+                <ClearButton
+                  accessibilityLabel={t('common_clear', 'Очистить')}
+                  onPress={() => setFinanceEntryDraft((prev) => ({ ...prev, note: '' }))}
+                  style={styles.financeCommentClearButton}
+                />
+              ) : null
+            }
+            onSubmitEditing={() => {
+              Keyboard.dismiss();
+            }}
+          />
+          <TextField
+            label={t('order_details_photos_section', 'Фото')}
+            value={formatFinancePhotoCount((financeEntryDraft.photo_urls || []).length)}
+            pressable
+            onPress={openFinanceEntryPhotosModal}
+          />
+        </ScrollView>
+      </BaseModal>
 
-      <Modal
-        isVisible={deleteModalVisible}
-        onBackButtonPress={() => setDeleteModalVisible(false)}
-        onBackdropPress={() => setDeleteModalVisible(false)}
-        useNativeDriver
-        backdropOpacity={0.3}
-        onModalHide={applyNavBar}
-      >
-        <View style={styles.modalContainer}>
-          <Text style={styles.modalTitle}>{t('order_modal_delete_title')}</Text>
-          <Text style={styles.modalText}>{t('order_modal_delete_msg')}</Text>
-          <View style={styles.modalActions}>
-            <Button
-              title={t('order_modal_cancel_stay')}
-              onPress={() => setDeleteModalVisible(false)}
-              variant="primary"
-            />
-            <Button
-              title={
-                deleteEnabled
-                  ? t('order_modal_delete_confirm')
-                  : t('order_modal_delete_countdown').replace('{n}', deleteCountdown)
-              }
-              onPress={deleteOrderCompletely}
-              disabled={!deleteEnabled}
-              variant="destructive"
-            />
-          </View>
-        </View>
-      </Modal>
+      <OrderPhotosModal
+        visible={financeEntryPhotosModalVisible}
+        onClose={closeFinanceEntryPhotosModal}
+        category="finance_entry_photo"
+        photos={financeEntryDraft.photo_urls || []}
+        pending={financeEntryLocalPending}
+        getDisplayUrl={financeEntryMedia.getDisplayUrl}
+        getIssue={financeEntryMedia.getIssue}
+        onUploadUri={handleFinanceEntryPhotoUploadUri}
+        onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
+        onRemove={handleFinanceEntryPhotoRemove}
+        onRemoveMany={handleFinanceEntryPhotoRemoveMany}
+        onOpenViewer={openFinanceEntryViewer}
+      />
+
+      <FullscreenImageViewer
+        visible={financeViewerVisible}
+        images={financeViewerPhotos}
+        initialIndex={financeViewerIndex}
+        onClose={closeFinanceEntryViewer}
+        onDelete={handleFinanceViewerDelete}
+        onRotateSave={handleFinanceViewerRotateSave}
+        categoryLabel={financeViewerCategoryLabel}
+      />
+
+      <AlertModal
+        visible={warningVisible}
+        title={t('order_modal_warning_title')}
+        message={warningMessage}
+        buttonLabel={t('btn_ok')}
+        onClose={() => setWarningVisible(false)}
+      />
+
+      <ConfirmModal
+        visible={deleteModalVisible}
+        title={t('order_modal_delete_title')}
+        message={t('order_modal_delete_msg')}
+        confirmLabel={
+          deleteEnabled
+            ? t('order_modal_delete_confirm')
+            : t('order_modal_delete_countdown').replace('{n}', deleteCountdown)
+        }
+        cancelLabel={t('order_modal_cancel_stay')}
+        confirmVariant="destructive"
+        onClose={() => setDeleteModalVisible(false)}
+        onConfirm={deleteOrderCompletely}
+      />
     </>
   );
 }
@@ -3373,7 +4713,6 @@ function createStyles(theme) {
   const sp = theme.spacing || {};
   const rad = theme.radii || {};
   const typo = theme.typography || {};
-  const shadows = theme.shadows || {};
 
   return StyleSheet.create({
     contentWrap: {
@@ -3417,16 +4756,6 @@ function createStyles(theme) {
       color: theme.colors.onPrimary,
       fontWeight: typo.weight?.bold || '700',
       fontSize: typo.sizes?.xs || 12,
-    },
-    statusChip: {
-      paddingHorizontal: sp.md || 10,
-      paddingVertical: sp.xs || 6,
-      borderRadius: rad.pill || 999,
-    },
-    statusChipText: {
-      fontSize: typo.sizes?.xs || 12,
-      fontWeight: typo.weight?.bold || '700',
-      letterSpacing: 0.3,
     },
     link: { color: theme.colors.primary },
     deletedObjectText: {
@@ -3482,6 +4811,156 @@ function createStyles(theme) {
       justifyContent: 'flex-end',
       gap: sp.md || 12,
     },
+    financeEntryModalActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: sp.md || 12,
+      marginTop: sp.md || 12,
+      paddingTop: sp.xs || 6,
+      paddingBottom: sp.sm || 10,
+    },
+    financeEntryModalScroll: {
+      flexGrow: 0,
+      minHeight: 0,
+    },
+    financeEntryModalScrollContent: {
+      paddingBottom: sp.xl || 20,
+    },
+    financeSectionRowPressed: {
+      opacity: 0.7,
+    },
+    financeSectionLabelExpanded: {
+      fontWeight: typo.weight?.semibold || '600',
+      color: theme.colors.text,
+    },
+    financeSectionRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      flexShrink: 1,
+      minWidth: 0,
+      paddingRight: sp.xs || 6,
+    },
+    financeSectionSummaryValue: {
+      flexShrink: 1,
+      minWidth: 0,
+      fontWeight: typo.weight?.bold || '700',
+    },
+    financeSectionSummaryWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+      minWidth: 0,
+    },
+    financeCompactRightWrap: {
+      maxWidth: '44%',
+    },
+    financeEntryRightWrap: {
+      maxWidth: '34%',
+    },
+    financeTightRightWrap: {
+      maxWidth: '36%',
+    },
+    financeCompactSpacer: {
+      flex: 0,
+      minWidth: sp.sm || 8,
+    },
+    financeModalCompactSpacer: {
+      flex: 0,
+      minWidth: sp.xs || 6,
+    },
+    financeModalTightSpacer: {
+      flex: 0,
+      minWidth: 4,
+    },
+    financeModalRightWrap: {
+      maxWidth: '42%',
+    },
+    financeModalWideRightWrap: {
+      maxWidth: '52%',
+    },
+    financeModalPercentRightWrap: {
+      maxWidth: '68%',
+    },
+    financeCommentCollapsedRightWrap: {
+      maxWidth: '62%',
+    },
+    financeSectionSummaryIcon: {
+      marginRight: sp.xs || 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    financeSectionSummaryIconButton: {
+      marginRight: sp.xs || 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    financeStatusCircle: {
+      width: 18,
+      height: 18,
+      borderRadius: 999,
+      borderWidth: 1.5,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    financeSectionChevronWrap: {
+      marginLeft: sp.sm || 8,
+    },
+    financeSectionChevronWrapExpanded: {
+      transform: [{ rotate: '180deg' }],
+    },
+    financeSectionExpanded: {
+      paddingLeft: sp.md || 12,
+      paddingRight: sp.xs || 6,
+      paddingBottom: sp.xs || 6,
+    },
+    financeSectionLoader: {
+      minHeight: 52,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    financeEntryExpandedComment: {
+      textAlign: 'left',
+    },
+    financeEntryCommentBlock: {
+      paddingVertical: 2,
+    },
+    financeEntryCommentHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: sp.xs || 6,
+      gap: sp.xs || 6,
+    },
+    financeCommentCollapsedValue: {
+      textAlign: 'right',
+    },
+    financeEntryCommentValue: {
+      textAlign: 'left',
+      width: '100%',
+    },
+    financeEntryCommentPressable: {
+      color: theme.colors.text,
+    },
+    financeEntryCommentMeasureWrap: {
+      position: 'absolute',
+      opacity: 0,
+      left: -10000,
+      top: -10000,
+    },
+    financeEntryCommentMeasureInner: {
+      width: '62%',
+      marginLeft: 'auto',
+    },
+    financeEntryCommentMeasureText: {
+      textAlign: 'right',
+    },
+    financeSectionFooterAction: {
+      color: theme.colors.primary,
+    },
+    financeCommentClearButton: {
+      marginTop: sp.sm || 8,
+    },
     assigneeOption: { paddingVertical: sp.md || 10 },
     assigneeText: { fontSize: typo.sizes?.md || 16, color: theme.colors.text },
     cloudWarningText: {
@@ -3489,22 +4968,6 @@ function createStyles(theme) {
       fontSize: typo.sizes?.sm || 14,
       marginBottom: sp.sm || 8,
       marginTop: -(sp.xs || 4),
-    },
-    banner: {
-      position: 'absolute',
-      left: sp.lg || 16,
-      right: sp.lg || 16,
-      bottom: sp.xxl || 24,
-      backgroundColor: theme.colors.bannerBg || theme.colors.text,
-      borderRadius: rad.lg || 12,
-      paddingVertical: sp.md || 12,
-      paddingHorizontal: sp.lg || 16,
-      ...(Platform.OS === 'ios' ? shadows?.card?.ios || {} : shadows?.card?.android || {}),
-    },
-    bannerText: {
-      color: theme.colors.onPrimary,
-      textAlign: 'center',
-      fontWeight: typo.weight?.semibold || '600',
     },
   });
 }

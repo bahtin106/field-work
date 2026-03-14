@@ -1,11 +1,11 @@
 // components/ui/modals/DateTimeModal.jsx
 import React from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { t as T, getDict } from '../../../src/i18n';
 import { useTheme } from '../../../theme';
-import UIButton from '../Button';
 import ThemedSwitch from '../ThemedSwitch';
 import BaseModal, { withAlpha } from './BaseModal';
+import ModalActionsRow from './ModalActionsRow';
 import Wheel, { ITEM_HEIGHT_DP, VISIBLE_COUNT_DP } from './Wheel';
 
 export default function DateTimeModal({
@@ -240,27 +240,22 @@ export default function DateTimeModal({
   };
 
   const footer = (
-    <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-      <Pressable
-        onPress={() => modalRef.current?.close()}
-        style={({ pressed }) => [
-          {
-            paddingVertical: 12,
-            paddingHorizontal: 16,
-            borderRadius: 10,
-            alignItems: 'center',
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            backgroundColor: 'transparent',
-            flex: 1,
-          },
-          pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
-        ]}
-      >
-        <Text style={{ color: theme.colors.text, fontSize: 16, fontWeight: '500' }}>{T('btn_cancel')}</Text>
-      </Pressable>
-      <UIButton variant="primary" size="md" onPress={handleApply} title={T('btn_ok')} />
-    </View>
+    <ModalActionsRow
+      actions={[
+        {
+          key: 'cancel',
+          title: T('btn_cancel'),
+          variant: 'secondary',
+          onPress: () => modalRef.current?.close(),
+        },
+        {
+          key: 'confirm',
+          title: T('btn_ok'),
+          variant: 'primary',
+          onPress: handleApply,
+        },
+      ]}
+    />
   );
 
   const Segmented = () => (

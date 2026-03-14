@@ -1,20 +1,39 @@
 import { useMemo, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useAutoScrollOnInvalid } from '../../src/shared/forms/FormAutoScrollContext';
+import { getFieldValidationState } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme';
 
 export default function RadioGroupField({
   options = [],
   value,
   onChange,
+  error,
+  required = false,
+  forceValidation = false,
   disabled = false,
   style,
   renderExpanded,
   fullBleed = true,
 }) {
   const { theme } = useTheme();
-  const styles = useMemo(() => createStyles(theme), [theme]);
+  const containerRef = useRef(null);
+  const validationState = getFieldValidationState({
+    value,
+    error,
+    required,
+    forceValidation,
+    touched: false,
+  });
+  const styles = useMemo(() => createStyles(theme, validationState.isInvalid), [theme, validationState.isInvalid]);
+  useAutoScrollOnInvalid({
+    fieldRef: containerRef,
+    isInvalid: validationState.isInvalid,
+    shouldAutoScroll: true,
+    focus: false,
+  });
   return (
-    <View style={[styles.container, style]}>
+    <View ref={containerRef} style={[styles.container, style]}>
       {options.map((opt, idx) => {
         const selected = String(value) === String(opt.id);
         return (
@@ -107,7 +126,7 @@ function RadioRow({
   );
 }
 
-function createStyles(t) {
+function createStyles(t, isError = false) {
   const RADIO_SIZE = t.components?.radio?.size ?? 20;
   const DOT_SIZE =
     t.components?.radio?.dot ??
@@ -176,7 +195,7 @@ function createStyles(t) {
       height: RADIO_SIZE,
       borderRadius: RADIO_SIZE / 2,
       borderWidth: 2,
-      borderColor: t.colors.border,
+      borderColor: isError ? t.colors.danger : t.colors.border,
       alignItems: 'center',
       justifyContent: 'center',
       marginRight: t.spacing.sm,
@@ -192,19 +211,19 @@ function createStyles(t) {
     content: { flex: 1 },
     title: {
       fontSize: t.typography.sizes.md,
-      fontWeight: t.typography.weight.semibold,
-      color: t.colors.text,
+      fontWeight: isError ? t.typography.weight.bold : t.typography.weight.semibold,
+      color: isError ? t.colors.danger : t.colors.text,
       marginBottom: t.spacing.xs / 2,
     },
     subtitle: {
       fontSize: t.typography.sizes.sm,
-      color: t.colors.textSecondary,
+      color: isError ? t.colors.danger : t.colors.textSecondary,
       lineHeight: Math.round(t.typography.sizes.sm * 1.3),
     },
     separator: {
       height: SEP_H,
-      backgroundColor: t.colors.border,
-      opacity: SEP_ALPHA,
+      backgroundColor: isError ? t.colors.danger : t.colors.border,
+      opacity: isError ? 1 : SEP_ALPHA,
       marginLeft: ML,
       marginRight: MR,
     },
