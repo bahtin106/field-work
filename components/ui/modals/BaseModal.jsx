@@ -141,12 +141,12 @@ const BaseModalImpl = (
   const windowH = Dimensions.get('window').height;
   const minCardHeight = theme.spacing.xxxl * 3 + theme.spacing.xl;
   const topInsetAllowance = theme.components?.input?.height ?? 48;
-  const androidTopFallbackInset = Platform.OS === 'android' ? Number(theme.spacing?.xxl ?? 24) : 0;
-  const topSafeInset = Math.max(
-    insets.top || 0,
-    Platform.OS === 'android' ? Number(StatusBar.currentHeight || 0) : 0,
-    androidTopFallbackInset,
-  );
+  const androidStatusInset = Platform.OS === 'android' ? Number(StatusBar.currentHeight || 0) : 0;
+  const androidTopFallbackInset = Platform.OS === 'android' ? Number(theme.spacing?.xl ?? 16) : 0;
+  const topSafeInset =
+    Platform.OS === 'android'
+      ? Math.max(0, Number(insets.top || 0)) + Math.max(0, androidStatusInset) + androidTopFallbackInset
+      : Math.max(0, Number(insets.top || 0));
   const sheetMaxH = Math.max(
     minCardHeight,
     Math.min(windowH * maxHeightRatio, windowH - (topSafeInset + topInsetAllowance)),
