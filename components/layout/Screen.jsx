@@ -3,9 +3,10 @@ import { useRoute } from '@react-navigation/native';
 import { useNavigation, usePathname, useSegments } from 'expo-router';
 import React from 'react';
 import { View } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { useI18nVersion } from '../../src/i18n';
+import { FormAutoScrollProvider } from '../../src/shared/forms/FormAutoScrollContext';
 import { useTheme } from '../../theme/ThemeProvider';
 import DismissKeyboardArea from './DismissKeyboardArea';
 import GlobalCurrencyRecalcBanner from '../GlobalCurrencyRecalcBanner';
@@ -33,6 +34,10 @@ export default function Screen({
   const useScroll = scroll !== false && !isAuthScreen;
   const keyboardBottomOffset = theme.components?.keyboardAware?.bottomOffset ?? 40;
   const extraKeyboardSpace = theme.components?.keyboardAware?.extraKeyboardSpace ?? 0;
+  const internalScrollRef = React.useRef(null);
+  const internalScrollYRef = React.useRef(0);
+  const resolvedScrollRef = scrollRef || internalScrollRef;
+  const headerHeight = theme.components?.header?.height ?? theme.sizes?.header ?? 56;
   useI18nVersion(); // subscribe to i18n changes to re-render screen
 
   // Объединяем route params с переданными headerOptions, но не копируем
@@ -65,31 +70,42 @@ export default function Screen({
       edges={edges}
       style={[{ flex: 1, backgroundColor: theme.colors.background }, style]}
     >
-      {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />}
-      {useScroll ? (
-        <KeyboardAwareScrollView
-          ref={scrollRef}
-          contentContainerStyle={[
-            { flexGrow: 1, paddingBottom: insets.bottom + 20 },
-            contentContainerStyle,
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
-          showsVerticalScrollIndicator={false}
-          bottomOffset={keyboardBottomOffset}
-          extraKeyboardSpace={extraKeyboardSpace}
-          onScroll={onScroll}
-          scrollEventThrottle={scrollEventThrottle}
-        >
-          {showHeader && <GlobalCurrencyRecalcBanner />}
-          <DismissKeyboardArea style={{ flex: 1 }}>{children}</DismissKeyboardArea>
-        </KeyboardAwareScrollView>
-      ) : (
-        <>
-          {showHeader && <GlobalCurrencyRecalcBanner />}
-          <View style={{ flex: 1 }}>{children}</View>
-        </>
-      )}
+      <FormAutoScrollProvider
+        enabled={useScroll}
+        scrollRef={resolvedScrollRef}
+        scrollYRef={internalScrollYRef}
+        insetsBottom={insets.bottom}
+        headerHeight={showHeader ? headerHeight : 0}
+      >
+        {showHeader && <AppHeader back={nav.canGoBack()} route={mergedRoute} options={headerOptions} />}
+        {useScroll ? (
+          <KeyboardAwareScrollView
+            ref={resolvedScrollRef}
+            contentContainerStyle={[
+              { flexGrow: 1, paddingBottom: insets.bottom + 20 },
+              contentContainerStyle,
+            ]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="none"
+            showsVerticalScrollIndicator={false}
+            bottomOffset={keyboardBottomOffset}
+            extraKeyboardSpace={extraKeyboardSpace}
+            onScroll={(event) => {
+              internalScrollYRef.current = event?.nativeEvent?.contentOffset?.y || 0;
+              onScroll?.(event);
+            }}
+            scrollEventThrottle={scrollEventThrottle}
+          >
+            {showHeader && <GlobalCurrencyRecalcBanner />}
+            <DismissKeyboardArea style={{ flex: 1 }}>{children}</DismissKeyboardArea>
+          </KeyboardAwareScrollView>
+        ) : (
+          <>
+            {showHeader && <GlobalCurrencyRecalcBanner />}
+            <View style={{ flex: 1 }}>{children}</View>
+          </>
+        )}
+      </FormAutoScrollProvider>
     </SafeAreaView>
   );
 }

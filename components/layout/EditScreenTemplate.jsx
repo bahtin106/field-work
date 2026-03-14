@@ -1,7 +1,8 @@
 import React from 'react';
 import { Platform, View } from 'react-native';
-import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
+import { FormAutoScrollProvider } from '../../src/shared/forms/FormAutoScrollContext';
 import { useTheme } from '../../theme/ThemeProvider';
 import DismissKeyboardArea from './DismissKeyboardArea';
 import AppHeader from '../navigation/AppHeader';
@@ -22,6 +23,10 @@ export default function EditScreenTemplate({
 }) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const internalScrollRef = React.useRef(null);
+  const internalScrollYRef = React.useRef(0);
+  const resolvedScrollRef = scrollRef || internalScrollRef;
+  const headerHeight = theme.components?.header?.height ?? theme.sizes?.header ?? 56;
 
   const basePaddingBottom = Math.max(
     24,
@@ -48,35 +53,46 @@ export default function EditScreenTemplate({
       style={{ flex: 1, backgroundColor: theme.colors.background }}
       edges={['left', 'right']}
     >
-      <AppHeader back options={mergedOptions} onBackPress={onBack} />
-      <KeyboardAwareScrollView
-        ref={scrollRef}
-        contentContainerStyle={[
-          {
-            paddingHorizontal: theme.spacing?.lg ?? 16,
-            flexGrow: 1,
-            paddingBottom: basePaddingBottom,
-          },
-          contentContainerStyle,
-        ]}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="none"
-        showsVerticalScrollIndicator={false}
-        contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
-        scrollEnabled={scrollEnabled}
-        bottomOffset={keyboardBottomOffset}
-        extraKeyboardSpace={extraKeyboardSpace}
-        onScroll={onScroll}
-        scrollEventThrottle={scrollEventThrottle}
+      <FormAutoScrollProvider
+        enabled={scrollEnabled}
+        scrollRef={resolvedScrollRef}
+        scrollYRef={internalScrollYRef}
+        insetsBottom={insets.bottom}
+        headerHeight={headerHeight}
       >
-        {dismissKeyboardOnPress ? (
-          <DismissKeyboardArea>
+        <AppHeader back options={mergedOptions} onBackPress={onBack} />
+        <KeyboardAwareScrollView
+          ref={resolvedScrollRef}
+          contentContainerStyle={[
+            {
+              paddingHorizontal: theme.spacing?.lg ?? 16,
+              flexGrow: 1,
+              paddingBottom: basePaddingBottom,
+            },
+            contentContainerStyle,
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="none"
+          showsVerticalScrollIndicator={false}
+          contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
+          scrollEnabled={scrollEnabled}
+          bottomOffset={keyboardBottomOffset}
+          extraKeyboardSpace={extraKeyboardSpace}
+          onScroll={(event) => {
+            internalScrollYRef.current = event?.nativeEvent?.contentOffset?.y || 0;
+            onScroll?.(event);
+          }}
+          scrollEventThrottle={scrollEventThrottle}
+        >
+          {dismissKeyboardOnPress ? (
+            <DismissKeyboardArea>
+              <View>{children}</View>
+            </DismissKeyboardArea>
+          ) : (
             <View>{children}</View>
-          </DismissKeyboardArea>
-        ) : (
-          <View>{children}</View>
-        )}
-      </KeyboardAwareScrollView>
+          )}
+        </KeyboardAwareScrollView>
+      </FormAutoScrollProvider>
     </SafeAreaView>
   );
 }

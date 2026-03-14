@@ -31,8 +31,8 @@ import { View, Text, Pressable, FlatList, Platform, StyleSheet } from 'react-nat
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../../theme';
 import BaseModal from './BaseModal';
+import ModalActionsRow from './ModalActionsRow';
 import TextField from '../TextField';
-import Button from '../Button';
 import { t as T } from '../../../src/i18n';
 
 export default function MultiSelectModal({
@@ -89,7 +89,7 @@ export default function MultiSelectModal({
       <Pressable
         onPress={() => !disabled && toggleItem(item.value)}
         disabled={disabled}
-        android_ripple={{ color: theme.colors.ripple || '#00000014' }}
+        android_ripple={{ color: theme.colors.ripple }}
         style={({ pressed }) => [
           s.item,
           disabled && { opacity: 0.5 },
@@ -113,7 +113,14 @@ export default function MultiSelectModal({
         </View>
         <View style={s.itemRight}>
           <View style={[s.checkbox, isChecked && s.checkboxChecked]}>
-            {isChecked && <Feather name="check" size={14} color="#FFFFFF" strokeWidth={3} />}
+            {isChecked && (
+              <Feather
+                name="check"
+                size={theme.typography?.sizes?.sm ?? 14}
+                color={theme.colors.onPrimary}
+                strokeWidth={3}
+              />
+            )}
           </View>
         </View>
       </Pressable>
@@ -121,25 +128,27 @@ export default function MultiSelectModal({
   };
 
   const footer = (
-    <View style={{ flexDirection: 'row', gap: theme.spacing.md }}>
-      <Button
-        variant="secondary"
-        size="md"
-        title={T('btn_cancel', 'Отмена')}
-        onPress={() => {
-          onClose?.();
-        }}
-      />
-      <Button
-        variant="primary"
-        size="md"
-        title={T('btn_done', 'Готово')}
-        onPress={() => {
-          onChange?.(selected);
-          onClose?.();
-        }}
-      />
-    </View>
+    <ModalActionsRow
+      actions={[
+        {
+          key: 'cancel',
+          title: T('btn_cancel', 'Отмена'),
+          variant: 'secondary',
+          onPress: () => {
+            onClose?.();
+          },
+        },
+        {
+          key: 'confirm',
+          title: T('btn_done', 'Готово'),
+          variant: 'primary',
+          onPress: () => {
+            onChange?.(selected);
+            onClose?.();
+          },
+        },
+      ]}
+    />
   );
 
   return (
@@ -177,7 +186,7 @@ export default function MultiSelectModal({
 const styles = (t) =>
   StyleSheet.create({
     item: {
-      minHeight: 52,
+      minHeight: t.components?.listItem?.height ?? 52,
       paddingHorizontal: t.spacing.lg,
       paddingVertical: 10,
       flexDirection: 'row',
@@ -186,18 +195,18 @@ const styles = (t) =>
       borderWidth: 1,
       borderColor: t.colors.border,
       backgroundColor: t.colors.surface,
-      borderRadius: 12,
+      borderRadius: t.radii.lg,
     },
-    itemLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: 8 },
-    itemTitle: { fontSize: t.typography.sizes.md, fontWeight: '600' },
-    itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
-    itemRight: { marginLeft: 8, alignSelf: 'center' },
+    itemLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, paddingRight: t.spacing.sm },
+    itemTitle: { fontSize: t.typography.sizes.md, fontWeight: t.typography.weight.semibold },
+    itemSub: { marginTop: Math.max(2, Math.floor((t.spacing.xs ?? 4) / 2)), fontSize: t.typography.sizes.sm },
+    itemRight: { marginLeft: t.spacing.sm, alignSelf: 'center' },
     checkbox: {
-      width: 20,
-      height: 20,
-      borderRadius: 6,
-      borderWidth: 1.5,
-      borderColor: '#C7C7CC',
+      width: t.components?.checkbox?.size ?? 20,
+      height: t.components?.checkbox?.size ?? 20,
+      borderRadius: t.components?.checkbox?.radius ?? t.radii.xs ?? 6,
+      borderWidth: t.components?.checkbox?.borderWidth ?? 1.5,
+      borderColor: t.colors.inputBorder,
       alignItems: 'center',
       justifyContent: 'center',
     },

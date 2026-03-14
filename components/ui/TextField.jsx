@@ -1,14 +1,42 @@
 // components/ui/TextField.jsx
 import FeatherIcon from '@expo/vector-icons/Feather';
 import React, { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  Keyboard,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { deriveNextPasswordValue, maskPasswordValue } from '../../lib/passwordInputMasking';
 import { t as T } from '../../src/i18n';
+import { useAutoScrollOnInvalid } from '../../src/shared/forms/FormAutoScrollContext';
+import { getFieldValidationState, getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { focusNextInput, registerInput, unregisterInput } from './inputFocusRegistry';
 import { CHEVRON_GAP, listItemStyles } from './listItemStyles';
 import ThemedSwitch from './ThemedSwitch';
+
+const isTextLikeNode = (node) => typeof node === 'string' || typeof node === 'number';
+
+const getAccessibilityText = (node) => {
+  if (isTextLikeNode(node)) return String(node);
+  return '';
+};
+
+const buildAccessibilityLabel = (...parts) =>
+  parts.map(getAccessibilityText).filter(Boolean).join(' - ');
+
+const resolveSpacing = (theme, value, fallback) => {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') return theme.spacing?.[value] ?? fallback;
+  return fallback;
+};
 
 const TextField = forwardRef(function TextField(
   {
@@ -26,6 +54,8 @@ const TextField = forwardRef(function TextField(
     style,
     maxLength,
     autoCapitalize,
+    autoFocus = false,
+    showSoftInputOnFocus = true,
     returnKeyType,
     onSubmitEditing,
     onFocus,
@@ -33,6 +63,7 @@ const TextField = forwardRef(function TextField(
     pressable = false,
     onPress,
     forceValidation = false,
+    required = false,
     hideSeparator = false,
     filterInput, // Функция для фильтрации ввода (например, для паролей)
     onInvalidInput, // Callback когда пользователь вводит недопустимый символ
@@ -42,6 +73,7 @@ const TextField = forwardRef(function TextField(
   ref,
 ) {
   const { theme } = useTheme();
+  const containerRef = useRef(null);
   const [focused, setFocused] = useState(false);
   const [touched, setTouched] = useState(false);
   const lastKeyRef = useRef(null);
@@ -70,13 +102,37 @@ const TextField = forwardRef(function TextField(
   const minContentHeight = Math.max(baseInputHeight, lineHeightValue * minLinesValue);
   const maxContentHeight = Math.max(minContentHeight, lineHeightValue * maxRows);
 
-  const isRequired = /\*/.test(String(label || ''));
-  const requiredEmpty = isRequired && (touched || forceValidation) && !String(value || '').trim();
-  const isErr = (touched || forceValidation) && (!!error || requiredEmpty);
+  const validationState = getFieldValidationState({
+    label,
+    value,
+    error,
+    required,
+    touched,
+    forceValidation,
+  });
+  const resolvedLabel = getRequiredFieldLabel(label, validationState.isRequired);
+  const isErr = validationState.isInvalid;
+  useAutoScrollOnInvalid({
+    fieldRef: containerRef,
+    isInvalid: isErr,
+    shouldAutoScroll: !focused,
+    focus: false,
+  });
   const s = styles(theme, isErr, focused, autoGrowEnabled, minContentHeight, effectiveMultiline);
   const inputRef = useRef(null);
+  const [contentHeight, setContentHeight] = useState(minContentHeight);
+
+  useEffect(() => {
+    if (!effectiveMultiline || !autoGrowEnabled) {
+      setContentHeight(minContentHeight);
+    }
+  }, [autoGrowEnabled, effectiveMultiline, minContentHeight]);
 
   React.useImperativeHandle(ref, () => ({
+    focus: () => inputRef.current?.focus?.(),
+    blur: () => inputRef.current?.blur?.(),
+    clear: () => inputRef.current?.clear?.(),
+    isFocused: () => inputRef.current?.isFocused?.() || false,
     ...inputRef.current,
     togglePasswordVisibility: () => setShowPassword((prev) => !prev),
     showPassword: () => setShowPassword(true),
@@ -160,11 +216,25 @@ const TextField = forwardRef(function TextField(
   }, [effectiveMultiline, pressable]);
 
   return (
-    <View style={style}>
-      {label && <Text style={s.topLabel}>{String(label)}</Text>}
-      <View style={s.wrap}>
+    <View ref={containerRef} style={style}>
+      {resolvedLabel ? <Text style={s.topLabel}>{String(resolvedLabel)}</Text> : null}
+      <View
+        style={[
+          s.wrap,
+          effectiveMultiline && autoGrowEnabled
+            ? { minHeight: Math.max(baseInputHeight, contentHeight) }
+            : null,
+        ]}
+      >
         {leftSlot && <View style={s.slot}>{leftSlot}</View>}
-        <View style={s.inputBox}>
+        <View
+          style={[
+            s.inputBox,
+            effectiveMultiline && autoGrowEnabled
+              ? { minHeight: Math.max(baseInputHeight, contentHeight) }
+              : null,
+          ]}
+        >
           <TextInput
             ref={inputRef}
             value={displayedValue}
@@ -186,7 +256,13 @@ const TextField = forwardRef(function TextField(
             multiline={effectiveMultiline}
             numberOfLines={numberOfLines}
             underlineColorAndroid="transparent"
-            scrollEnabled={effectiveMultiline}
+            scrollEnabled={effectiveMultiline && !autoGrowEnabled}
+            onContentSizeChange={(e) => {
+              if (!effectiveMultiline || !autoGrowEnabled) return;
+              const nextHeight = Number(e?.nativeEvent?.contentSize?.height) || minContentHeight;
+              const clampedHeight = Math.max(minContentHeight, Math.min(nextHeight, maxContentHeight));
+              setContentHeight((prev) => (Math.abs(prev - clampedHeight) > 1 ? clampedHeight : prev));
+            }}
             onFocus={(e) => {
               setFocused(true);
               onFocus?.(e);
@@ -198,14 +274,20 @@ const TextField = forwardRef(function TextField(
             }}
             maxLength={maxLength}
             autoCapitalize={autoCapitalize}
+            autoFocus={autoFocus}
+            showSoftInputOnFocus={showSoftInputOnFocus}
             blurOnSubmit={false}
             returnKeyType={effectiveReturnKeyType}
             onSubmitEditing={handleSubmitEditing}
             style={[
               s.input,
               effectiveMultiline && {
+                flex: undefined,
+                width: '100%',
+                minHeight: autoGrowEnabled ? contentHeight : undefined,
                 maxHeight: autoGrowEnabled ? maxContentHeight : undefined,
               },
+              !effectiveMultiline && { flex: 1 },
             ]}
             includeFontPadding={false}
             textAlignVertical={effectiveMultiline ? 'top' : 'center'}
@@ -217,7 +299,7 @@ const TextField = forwardRef(function TextField(
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               hitSlop={{ top: 6, bottom: 6 }}
               accessibilityRole="button"
-              accessibilityLabel={String(label || placeholder || value || '')}
+              accessibilityLabel={buildAccessibilityLabel(label, placeholder, value)}
             />
           ) : null}
         </View>
@@ -232,6 +314,7 @@ export default TextField;
 
 const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMultiline = false) => {
   const sep = t.components?.input?.separator || {};
+  const input = t.components?.input || {};
   const insetKey = sep.insetX || 'lg';
   const baseSeparatorHeight = sep.height ?? t.components?.listItem?.dividerWidth ?? 1;
   const errorSeparatorMultiplier = sep.errorHeightMultiplier ?? 2;
@@ -249,7 +332,8 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
     baseHeightOverride ?? t.components?.input?.height ?? t.components?.listItem?.height ?? 48;
 
   // Используем labelSpacing из токенов или fallback
-  const labelSpacing = t.components?.input?.labelSpacing ?? t.spacing?.xs ?? 4;
+  const labelSpacing = input.labelSpacing ?? t.spacing?.xs ?? 4;
+  const slotGap = resolveSpacing(t, input.slotGap, t.spacing?.xs ?? 4);
 
   return StyleSheet.create({
     wrap: {
@@ -264,7 +348,7 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
       minHeight: baseHeight,
     },
     topLabel: {
-      fontWeight: '500',
+      fontWeight: isError ? '700' : '500',
       marginBottom: labelSpacing,
       marginTop: 0,
       color: isError ? t.colors.danger : t.colors.textSecondary,
@@ -273,14 +357,13 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
       marginRight: mr,
     },
     input: {
-      flex: 1,
       color: t.colors.text,
       fontSize: t.typography.sizes.md,
       minHeight: baseHeight,
       paddingVertical: Math.max(4, Math.round(baseHeight * 0.25)),
       paddingLeft: 0,
     },
-    slot: { marginHorizontal: 4 },
+    slot: { marginHorizontal: slotGap },
     inputBox: {
       flex: 1,
       justifyContent: isMultiline ? 'flex-start' : 'center',
@@ -304,6 +387,9 @@ export function SelectField({
   value,
   onPress,
   onDisabledPress,
+  error,
+  required = false,
+  forceValidation = false,
   right, // optional custom right ReactNode
   showValue = true, // when false -> only chevron shown
   disabled = false,
@@ -313,8 +399,30 @@ export function SelectField({
   valueNumberOfLines = 1,
 }) {
   const { theme } = useTheme();
+  const rowRef = React.useRef(null);
   const base = listItemStyles(theme);
-  const s = selectStyles(theme);
+  const validationState = getFieldValidationState({
+    label,
+    value,
+    error,
+    required,
+    forceValidation,
+    touched: false,
+  });
+  const resolvedLabel = isTextLikeNode(label)
+    ? getRequiredFieldLabel(label, validationState.isRequired)
+    : label;
+  const accessibilityLabelText = getAccessibilityText(
+    isTextLikeNode(label) ? getRequiredFieldLabel(label, validationState.isRequired) : label,
+  );
+  const accessibilityValueText = getAccessibilityText(value);
+  const s = selectStyles(theme, validationState.isInvalid);
+  useAutoScrollOnInvalid({
+    fieldRef: rowRef,
+    isInvalid: validationState.isInvalid,
+    shouldAutoScroll: true,
+    focus: false,
+  });
   const resolvedOnPress = disabled ? onDisabledPress : onPress;
   const isPressDisabled = typeof resolvedOnPress !== 'function';
   const [isPressed, setIsPressed] = React.useState(false);
@@ -342,25 +450,34 @@ export function SelectField({
     }),
     [pressAnim],
   );
-  const labelColor = isPressed ? theme.colors.textSecondary : (theme.colors.textStrong ?? theme.colors.text);
-  const valueColor = isPressed ? theme.colors.textSecondary : theme.colors.text;
-  const chevronColor = isPressed ? theme.colors.textSecondary : theme.colors.textSecondary;
+  const baseLabelColor = validationState.isInvalid
+    ? theme.colors.danger
+    : (theme.colors.textStrong ?? theme.colors.text);
+  const baseValueColor = validationState.isInvalid ? theme.colors.danger : theme.colors.text;
+  const baseChevronColor = validationState.isInvalid ? theme.colors.danger : theme.colors.textSecondary;
+  const listItem = theme.components?.listItem || {};
+  const valueGap = theme.spacing?.sm ?? 8;
+  const compactHeight = listItem.compactHeight ?? Math.max(36, theme.components?.input?.height ?? 36);
+  const leftAlignedValueGap = Math.max(2, Math.floor((theme.spacing?.xs ?? 4) / 2));
+  const labelColor = isPressed ? theme.colors.textSecondary : baseLabelColor;
+  const valueColor = isPressed ? theme.colors.textSecondary : baseValueColor;
+  const chevronColor = isPressed ? theme.colors.textSecondary : baseChevronColor;
   const computedValueMaxWidth = React.useMemo(() => {
     if (!rowWidth) return undefined;
-    // Reserve space for chevron + paddings; use ~45% for value max width as adaptive fallback
-    const reserve = chevronSize + 24; // chevron + margins
+    const reserve = chevronSize + (listItem.valueReserve ?? 24);
     const avail = Math.max(0, rowWidth - reserve);
     return Math.max(80, Math.floor(avail * 0.45));
-  }, [rowWidth, chevronSize]);
+  }, [rowWidth, chevronSize, listItem.valueReserve]);
   return (
     <Pressable
+      ref={rowRef}
       onPress={resolvedOnPress}
       disabled={isPressDisabled}
       android_ripple={undefined}
       onPressIn={() => setIsPressed(true)}
       onPressOut={() => setIsPressed(false)}
       accessibilityRole="button"
-      accessibilityLabel={String((label || '') + ' - ' + (value || ''))}
+      accessibilityLabel={buildAccessibilityLabel(accessibilityLabelText, accessibilityValueText)}
     >
       <Animated.View
         onLayout={(e) => {
@@ -373,21 +490,21 @@ export function SelectField({
           animatedScaleStyle,
           base.row,
           disabled && s.disabled,
-          dense && { height: Math.max(36, theme.components?.input?.height ?? 36) },
+          dense && { height: compactHeight, minHeight: compactHeight },
           style,
         ]}
       >
         {alignValueLeft ? (
           <>
             <View style={{ flexDirection: 'column', alignItems: 'flex-start', flex: 1 }}>
-              {label ? (
+              {resolvedLabel ? (
                 <Text
                   style={[base.label, s.label, { paddingRight: 0, color: labelColor }]}
                   numberOfLines={1}
                   ellipsizeMode="tail"
                   allowFontScaling
                 >
-                  {label}
+                  {resolvedLabel}
                 </Text>
               ) : null}
               {showValue ? (
@@ -395,8 +512,12 @@ export function SelectField({
                   style={[
                     base.value,
                     s.value,
-                    { textAlign: 'left', marginTop: 2, marginRight: 8, color: valueColor },
-                    computedValueMaxWidth ? { maxWidth: computedValueMaxWidth } : null,
+                    {
+                      textAlign: 'left',
+                      marginTop: leftAlignedValueGap,
+                      marginRight: valueGap,
+                      color: valueColor,
+                    },
                   ]}
                   numberOfLines={1}
                   ellipsizeMode="tail"
@@ -421,7 +542,7 @@ export function SelectField({
               ellipsizeMode="tail"
               allowFontScaling
             >
-              {label}
+              {resolvedLabel}
             </Text>
             <View style={s.rightWrap}>
               {right ? (
@@ -451,6 +572,7 @@ export function SelectField({
           </>
         )}
       </Animated.View>
+      {validationState.isInvalid ? <View style={s.separator} /> : null}
     </Pressable>
   );
 }
@@ -489,7 +611,7 @@ export function SwitchField({
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               hitSlop={{ top: 6, bottom: 6 }}
               accessibilityRole="button"
-              accessibilityLabel={String(label || placeholder || value || '')}
+              accessibilityLabel={buildAccessibilityLabel(label, placeholder, value)}
             />
           ) : null}
         </View>
@@ -498,19 +620,46 @@ export function SwitchField({
   );
 }
 
-const selectStyles = (t) =>
-  StyleSheet.create({
-    disabled: { opacity: t.components.listItem.disabledOpacity || 0.5 },
-    label: { flexShrink: 1, paddingRight: 8 },
-    value: { flexShrink: 1, marginLeft: 8, marginRight: 8, maxWidth: '48%', textAlign: 'right' },
+const selectStyles = (t, isError = false) => {
+  const listItem = t.components?.listItem || {};
+  const valueGap = t.spacing?.sm ?? 8;
+
+  return StyleSheet.create({
+    disabled: { opacity: listItem.disabledOpacity || 0.5 },
+    label: {
+      flexShrink: 1,
+      paddingRight: valueGap,
+      fontWeight: isError ? t.typography.weight.bold : t.typography.weight.medium,
+    },
+    value: {
+      flexShrink: 1,
+      marginLeft: valueGap,
+      marginRight: valueGap,
+      maxWidth: '48%',
+      textAlign: 'right',
+    },
     rightWrap: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
       minWidth: 0,
     },
-    chevron: { marginLeft: CHEVRON_GAP },
+    chevron: { marginLeft: listItem.chevronGap ?? CHEVRON_GAP },
+    separator: {
+      height: isError
+        ? Math.max(
+            (t.components?.input?.separator?.height ?? t.components?.listItem?.dividerWidth ?? 1) * 2,
+            (t.components?.input?.separator?.height ?? t.components?.listItem?.dividerWidth ?? 1) + 1,
+          )
+        : (t.components?.input?.separator?.height ?? t.components?.listItem?.dividerWidth ?? 1),
+      backgroundColor: isError
+        ? t.colors.danger
+        : withAlpha(t.colors.primary, t.components?.input?.separator?.alpha ?? 0.18),
+      marginLeft: Number(t.spacing?.[t.components?.input?.separator?.insetX ?? 'lg'] ?? 0) || 0,
+      marginRight: Number(t.spacing?.[t.components?.input?.separator?.insetX ?? 'lg'] ?? 0) || 0,
+    },
   });
+};
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
@@ -528,12 +677,33 @@ export function serializeDobForSupabase(v) {
 export const DateOfBirthField = ({
   label = T('fields.dob'),
   value,
+  error,
+  required = false,
+  forceValidation = false,
   onChange: _onChange, // kept for API compatibility (not used internally)
   style,
 }) => {
   const { theme } = useTheme();
-  const isErr = false;
+  const containerRef = React.useRef(null);
+  const validationState = getFieldValidationState({
+    label,
+    value,
+    error,
+    required,
+    forceValidation,
+    touched: false,
+  });
+  const isErr = validationState.isInvalid;
+  useAutoScrollOnInvalid({
+    fieldRef: containerRef,
+    isInvalid: isErr,
+    shouldAutoScroll: true,
+    focus: false,
+  });
   const s = styles(theme, isErr, false);
+  const sepConfig = theme.components?.input?.separator || {};
+  const sepHeight = sepConfig.height ?? theme.components?.listItem?.dividerWidth ?? 1;
+  const sepEnabled = sepConfig.enabled ?? sepHeight > 0;
 
   const display = () => {
     if (!value?.day || !value?.month) return '';
@@ -543,8 +713,8 @@ export const DateOfBirthField = ({
 
   return (
     <View style={style}>
-      <View style={s.wrap}>
-        <Text style={s.topLabel}>{label}</Text>
+      <View ref={containerRef} style={s.wrap}>
+        <Text style={s.topLabel}>{getRequiredFieldLabel(label, validationState.isRequired)}</Text>
         <View style={s.inputBox}>
           <Text
             style={[

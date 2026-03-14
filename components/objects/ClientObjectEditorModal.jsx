@@ -1,10 +1,11 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import UIButton from '../ui/Button';
 import SectionHeader from '../ui/SectionHeader';
 import TextField from '../ui/TextField';
 import { BaseModal } from '../ui/modals';
+import ModalActionsRow from '../ui/modals/ModalActionsRow';
 import { FieldErrorText } from '../../src/shared/feedback';
+import { getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import {
   ENTITY_FIELD_TYPES,
@@ -117,20 +118,23 @@ export default function ClientObjectEditorModal({
   );
 
   const withRequiredLabel = React.useCallback(
-    (fieldKey, label) => {
-      if (fieldsByKey.get(fieldKey)?.isRequired !== true) return label;
-      if (String(label || '').includes('*')) return label;
-      return `${label} *`;
-    },
+    (fieldKey, label) => getRequiredFieldLabel(label, fieldsByKey.get(fieldKey)?.isRequired === true),
     [fieldsByKey],
   );
 
   const footer = (
     <View style={styles.footer}>
-      <UIButton
-        title={saveLabel || t('btn_save')}
-        onPress={onSave}
-        disabled={saving}
+      <ModalActionsRow
+        actions={[
+          {
+            key: 'save',
+            title: saveLabel || t('btn_save'),
+            variant: 'primary',
+            loading: saving,
+            disabled: saving,
+            onPress: onSave,
+          },
+        ]}
       />
     </View>
   );

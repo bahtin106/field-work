@@ -1,8 +1,8 @@
 import React from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import UIButton from '../ui/Button';
 import TextField from '../ui/TextField';
 import { BaseModal } from '../ui/modals';
+import ModalActionsRow from '../ui/modals/ModalActionsRow';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { CLIENT_ADDRESS_FIELDS } from '../../src/features/clients/addressing';
@@ -63,10 +63,17 @@ export default function ClientAddressEditorModal({
 
   const footer = (
     <View style={styles.footer}>
-      <UIButton
-        title={saveLabel || t('btn_save')}
-        onPress={onSave}
-        disabled={saving}
+      <ModalActionsRow
+        actions={[
+          {
+            key: 'save',
+            title: saveLabel || t('btn_save'),
+            variant: 'primary',
+            loading: saving,
+            disabled: saving,
+            onPress: onSave,
+          },
+        ]}
       />
     </View>
   );
