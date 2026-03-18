@@ -18,3 +18,12 @@ ios/build/
 .env.*
 backups/
 node_modules.backup/
+
+# Local temp/debug artifacts
+.tmp_*
+tmp_*
+root.html
+root2.html
+CON
+.codex-backups/
+build/
