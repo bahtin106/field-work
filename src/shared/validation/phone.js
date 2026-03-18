@@ -6,7 +6,7 @@ function normalizeInput(raw) {
 
 export function normalizeOptionalMobilePhone(raw) {
   const normalized = normalizeInput(raw);
-  if (!normalized || normalized.length <= 1) return null;
+  if (!normalized) return null;
   return normalized;
 }
 

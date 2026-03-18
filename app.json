@@ -18,6 +18,9 @@
     "android": {
       "package": "com.monitorapp.monitor",
       "googleServicesFile": "./android/app/google-services.json",
+      "permissions": [
+        "CAMERA"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F2F2F7"

@@ -22,6 +22,7 @@ import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
+import ListSeparator from '../../../components/ui/ListSeparator';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { pluralizeRu } from '../../../lib/pluralize';
 import {
@@ -398,7 +399,7 @@ export default function UserView() {
           />
           ) : null}
           {(fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name')) && fieldUi.isVisible('birthdate') ? (
-            <View style={base.sep} />
+            <ListSeparator />
           ) : null}
 
           {fieldUi.isVisible('birthdate') ? (
@@ -476,7 +477,7 @@ export default function UserView() {
                   ) : null
                 }
               />
-              {fieldUi.isVisible('phone') ? <View style={base.sep} /> : null}
+              {fieldUi.isVisible('phone') ? <ListSeparator /> : null}
             </>
           ) : null}
           {fieldUi.isVisible('phone') ? (
@@ -528,25 +529,24 @@ export default function UserView() {
                 {hasDisplayValue(companyName || companyId) ? (
                   <>
                     <LabelValueRow label={t('admin_users_company')} value={companyName || companyId} />
-                    <View style={base.sep} />
+                    <ListSeparator />
                   </>
               ) : null}
             </>
           )}
           {useDepartments && fieldUi.isVisible('department_id') ? (
             <>
-                {hasDisplayValue(departmentName) ? (
-                  <>
-                    <LabelValueRow label={t('label_department', 'label_department')} value={departmentName} />
-                    <View style={base.sep} />
-                  </>
-                ) : null}
-              </>
-            ) : null}
+              <LabelValueRow
+                label={t('label_department', 'label_department')}
+                value={departmentName || t('placeholder_department', 'placeholder_department')}
+              />
+              <ListSeparator />
+            </>
+          ) : null}
             {fieldUi.isVisible('role') ? (
             <LabelValueRow label={t('label_role', 'label_role')} value={roleLabel} />
             ) : null}
-            {fieldUi.isVisible('role') ? <View style={base.sep} /> : null}
+            {fieldUi.isVisible('role') ? <ListSeparator /> : null}
             <LabelValueRow
               label={t('label_status', 'label_status')}
               valueComponent={
@@ -560,11 +560,11 @@ export default function UserView() {
             />
             {isBlocked && blockedReasonLabel ? (
               <>
-                <View style={base.sep} />
+                <ListSeparator />
                 <LabelValueRow label={t('label_block_reason', 'label_block_reason')} value={blockedReasonLabel} />
               </>
             ) : null}
-            <View style={base.sep} />
+            <ListSeparator />
             <LabelValueRow
               label={t('users_lastSeen_prefix')}
               valueComponent={

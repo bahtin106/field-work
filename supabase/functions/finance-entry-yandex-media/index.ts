@@ -635,14 +635,31 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
       }
       if (!folder) {
         folder = buildFinanceEntryMediaFolder(rootFolder, ctx.companyName, ctx.order, ctx.financeEntry);
-        await ensureFolderTree(accessToken, folder);
       }
+      // Folder can be deleted directly in Yandex Disk; always ensure it exists before requesting upload URL.
+      await ensureFolderTree(accessToken, folder);
 
       const filePath = `${folder}/${Date.now()}-${toBase64UrlSafeName()}.${ext}`;
-      const linkRes = await fetch(
+      let linkRes = await fetch(
         `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
         { headers: { Authorization: `OAuth ${accessToken}` } },
       );
+      if (!linkRes.ok) {
+        const text = await linkRes.text();
+        const isMissing =
+          linkRes.status === 404 ||
+          String(text || '').toLowerCase().includes('diskpathdoesntexistserror');
+        if (isMissing) {
+          await ensureFolderTree(accessToken, folder);
+          linkRes = await fetch(
+            `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
+            { headers: { Authorization: `OAuth ${accessToken}` } },
+          );
+        } else {
+          const mapped = mapYandexApiError(linkRes.status, text);
+          throw new Error(mapped || `Upload link failed: ${text}`);
+        }
+      }
       if (!linkRes.ok) {
         const text = await linkRes.text();
         const mapped = mapYandexApiError(linkRes.status, text);

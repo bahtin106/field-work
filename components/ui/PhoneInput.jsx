@@ -11,7 +11,7 @@ export default function PhoneInput({
   onChangeText,
   error,
   style,
-  placeholder = T('fields_phone_placeholder'),
+  placeholder = '+7 (9XX) XXX-XX-XX',
   required = false,
   ...rest
 }) {
@@ -19,23 +19,10 @@ export default function PhoneInput({
 
   const handleChange = useCallback(
     (raw) => {
-      const prevMasked = prevMaskedRef.current || '';
-      const prevDigits = normalizeRu(prevMasked); // "7XXXXXXXXXX" или "7", или ""
       const currDigits = normalizeRu(raw);
-
-      // Если пользователь стёр форматный символ (пробел/скобку/дефис),
-      // а цифры не изменились -> удаляем ещё и предыдущую цифру
-      if (raw.length < prevMasked.length && currDigits === prevDigits) {
-        const shaved = prevDigits.length > 1 ? prevDigits.slice(0, -1) : '';
-        const { masked, e164, valid } = maskApply(shaved);
-        prevMaskedRef.current = masked;
-        onChangeText?.(e164 || masked, { masked, e164, valid });
-        return;
-      }
-
       const { masked, e164, valid } = maskApply(raw);
       prevMaskedRef.current = masked;
-      onChangeText?.(e164 || masked, { masked, e164, valid });
+      onChangeText?.(currDigits, { masked, e164, valid });
     },
     [onChangeText],
   );

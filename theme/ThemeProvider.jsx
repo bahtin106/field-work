@@ -2,6 +2,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
+  AppState,
   Appearance,
   findNodeHandle,
   FlatList,
@@ -321,9 +322,69 @@ const ThemeContext = createContext({
 });
 
 export const ThemeProvider = ({ children }) => {
-  const systemScheme = useColorScheme();
+  const colorSchemeFromHook = useColorScheme();
+  const [systemSchemeState, setSystemSchemeState] = useState(
+    () => Appearance.getColorScheme?.() || 'light',
+  );
   const [mode, setMode] = useState('system');
   const [_hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    if (colorSchemeFromHook === 'light' || colorSchemeFromHook === 'dark') {
+      setSystemSchemeState(colorSchemeFromHook);
+    }
+  }, [colorSchemeFromHook]);
+
+  useEffect(() => {
+    const refreshSystemScheme = () => {
+      const next = Appearance.getColorScheme?.();
+      if (next === 'light' || next === 'dark') {
+        setSystemSchemeState(next);
+      }
+    };
+
+    refreshSystemScheme();
+
+    const appearanceSub =
+      typeof Appearance.addChangeListener === 'function'
+        ? Appearance.addChangeListener(({ colorScheme }) => {
+            if (colorScheme === 'light' || colorScheme === 'dark') {
+              setSystemSchemeState(colorScheme);
+            }
+          })
+        : null;
+
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') refreshSystemScheme();
+    });
+
+    return () => {
+      appearanceSub?.remove?.();
+      appStateSub?.remove?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'system') return;
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 8;
+    const tick = () => {
+      if (cancelled) return;
+      const next = Appearance.getColorScheme?.();
+      if (next === 'light' || next === 'dark') {
+        setSystemSchemeState(next);
+      }
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        setTimeout(tick, 250);
+      }
+    };
+    tick();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
 
   useEffect(() => {
     let alive = true;
@@ -346,7 +407,25 @@ export const ThemeProvider = ({ children }) => {
     AsyncStorage.setItem(STORAGE_KEY, mode).catch(() => {});
   }, [mode]);
 
-  const theme = useMemo(() => buildTheme(mode, systemScheme), [mode, systemScheme]);
+  useEffect(() => {
+    // Keep native and JS theme sources in sync.
+    // `null` means "follow system" in React Native Appearance API.
+    if (typeof Appearance.setColorScheme !== 'function') return;
+    try {
+      if (mode === 'system') {
+        try {
+          Appearance.setColorScheme(null);
+        } catch {
+          Appearance.setColorScheme('unspecified');
+        }
+      } else if (mode === 'light' || mode === 'dark') {
+        Appearance.setColorScheme(mode);
+      }
+    } catch {}
+  }, [mode]);
+
+  const resolvedSystemScheme = colorSchemeFromHook || systemSchemeState || 'light';
+  const theme = useMemo(() => buildTheme(mode, resolvedSystemScheme), [mode, resolvedSystemScheme]);
 
   const toggle = useCallback(() => {
     setMode((m) => (m === 'light' ? 'dark' : 'light'));

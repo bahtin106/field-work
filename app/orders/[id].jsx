@@ -2729,6 +2729,48 @@ export default function OrderDetails() {
   }, [order, makeSnapshotFromOrder, applyNavBar]);
 
   const deleteOrderCompletely = useCallback(async () => {
+    const deletedOrderId = String(order?.id || '').trim();
+    const pruneDeletedOrderFromCache = (cache) => {
+      if (!cache || !deletedOrderId) return cache;
+      if (Array.isArray(cache)) {
+        return cache.filter((item) => String(item?.id || '') !== deletedOrderId);
+      }
+      if (typeof cache !== 'object') return cache;
+
+      if (Array.isArray(cache?.items)) {
+        return {
+          ...cache,
+          items: cache.items.filter((item) => String(item?.id || '') !== deletedOrderId),
+        };
+      }
+
+      if (Array.isArray(cache?.pages)) {
+        return {
+          ...cache,
+          pages: cache.pages.map((page) => pruneDeletedOrderFromCache(page)),
+        };
+      }
+
+      return cache;
+    };
+
+    const applyDeletedOrderToLocalCaches = () => {
+      if (!deletedOrderId) return;
+      queryClient.setQueriesData({ queryKey: ['requests'] }, (old) =>
+        pruneDeletedOrderFromCache(old),
+      );
+      queryClient.removeQueries({ queryKey: queryKeys.requests.detail(deletedOrderId), exact: true });
+
+      const listCacheMy = globalThis?.LIST_CACHE?.my;
+      if (listCacheMy && typeof listCacheMy === 'object') {
+        Object.keys(listCacheMy).forEach((key) => {
+          const value = listCacheMy[key];
+          if (!Array.isArray(value)) return;
+          listCacheMy[key] = value.filter((item) => String(item?.id || '') !== deletedOrderId);
+        });
+      }
+    };
+
     try {
       const { data, error: delErr } = await supabase
         .from('orders')
@@ -2737,12 +2779,14 @@ export default function OrderDetails() {
         .select('id');
 
       if (delErr) {
-        showToast('РћС€РёР±РєР° СѓРґР°Р»РµРЅРёСЏ');
+        showToast(t('order_toast_delete_error'));
         return;
       }
       if (!Array.isArray(data) || data.length === 0) {
-        showToast('РЈРґР°Р»РµРЅРёРµ Р·Р°РїСЂРµС‰РµРЅРѕ RLS РёР»Рё Р·Р°РїРёСЃСЊ РЅРµ РЅР°Р№РґРµРЅР°');
-        return;
+        // Record is already gone (stale detail screen) - treat as successful delete UX.
+        applyDeletedOrderToLocalCaches();
+      } else {
+        applyDeletedOrderToLocalCaches();
       }
 
       const deletedOrderClientId = String(order?.client_id || resolvedClientId || '').trim();
@@ -2754,6 +2798,10 @@ export default function OrderDetails() {
       queryClient.invalidateQueries({
         queryKey: ['clients', 'delete-blockers'],
       });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      if (deletedOrderId) {
+        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(deletedOrderId) });
+      }
 
       showToast(t('order_toast_order_deleted'));
       setDeleteModalVisible(false);

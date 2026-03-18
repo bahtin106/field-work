@@ -246,7 +246,7 @@ function PhotoGrid({
         onToggleSelect={handleToggleSelect}
       />
     ),
-    [handleEnterSelectionMode, handleOpenViewer, handleToggleSelect, onRemove, s, selectedUrlsSet, selectionMode, theme],
+    [handleEnterSelectionMode, handleOpenViewer, handleToggleSelect, onRemove, s, selectedUrlsSet, selectionMode, t, theme],
   );
 
   const keyExtractor = useCallback((item) => item.key, []);

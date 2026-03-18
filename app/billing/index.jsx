@@ -192,7 +192,7 @@ function formatRemainingLabel(targetDate, now = new Date(), locale) {
   return `Осталось ${totalDays} ${formatRuUnit(totalDays, ['день', 'дня', 'дней'])}`;
 }
 
-function formatStorage(valueBytes) {
+function _formatStorage(valueBytes) {
   const bytes = Number(valueBytes || 0);
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const gb = 1024 * 1024 * 1024;
@@ -441,6 +441,7 @@ export default function BillingScreen() {
   const dataStorageBytes = Number(storageUsage?.data_bytes ?? 0);
   const mediaStorageBytes = Number(storageUsage?.media_bytes ?? 0);
   const mediaOrdersBytes = Number(storageUsage?.media_orders_bytes ?? 0);
+  const combinedMediaBytes = Math.max(0, mediaStorageBytes + mediaOrdersBytes);
   const storageUsedPercent = Math.max(
     0,
     Math.min(
@@ -972,9 +973,9 @@ export default function BillingScreen() {
                     <Text style={base.label}>{t('billing_storage_used_space_label')}</Text>
                     <View style={[base.rightWrap, styles(theme).issuedWrap]}>
                       <Text style={[base.value, styles(theme).lineValueStrong, { color: storageTone }]}>
-                        {hasStorageUsage
-                          ? `${formatStorage(usedStorageBytes)} / ${formatStorage(storageLimitBytes)}`
-                          : ''}
+                          {hasStorageUsage
+                            ? `${storageUsedPercent.toFixed(2)}%`
+                            : ''}
                       </Text>
                       <Feather
                         name={storageExpanded ? 'chevron-up' : 'chevron-down'}
@@ -1000,8 +1001,8 @@ export default function BillingScreen() {
                       />
                     </View>
                     <View style={styles(theme).storageScaleRow}>
-                      <Text style={styles(theme).storageScaleText}>0</Text>
-                      <Text style={styles(theme).storageScaleText}>{`${STORAGE_LIMITS.COMPANY_TOTAL_GB} GB`}</Text>
+                      <Text style={styles(theme).storageScaleText}>0%</Text>
+                      <Text style={styles(theme).storageScaleText}>100%</Text>
                     </View>
                     <Text style={[styles(theme).muted, styles(theme).storageUsageCaption]}>
                       {(storageLoading && !hasStorageUsage) || (storageFetching && !hasStorageUsage)
@@ -1022,15 +1023,13 @@ export default function BillingScreen() {
                   {storageExpanded ? (
                     <>
                       <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_total_used')} value={formatStorage(usedStorageBytes)} />
+                      <LabelValueRow label={t('billing_storage_total_used')} value={`${storageUsedPercent.toFixed(2)}%`} />
                       <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_remaining')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: storageTone }]}>{formatStorage(storageLeftBytes)}</Text>} />
+                      <LabelValueRow label={t('billing_storage_remaining')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: storageTone }]}>{`${Math.max(0, storageLimitBytes > 0 ? ((storageLeftBytes / storageLimitBytes) * 100) : 0).toFixed(2)}%`}</Text>} />
                       <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_data')} value={formatStorage(dataStorageBytes)} />
+                      <LabelValueRow label={t('billing_storage_data')} value={`${(storageLimitBytes > 0 ? (dataStorageBytes / storageLimitBytes) * 100 : 0).toFixed(2)}%`} />
                       <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_media')} value={formatStorage(mediaStorageBytes)} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_media_orders')} value={formatStorage(mediaOrdersBytes)} />
+                      <LabelValueRow label={t('billing_storage_media')} value={`${(storageLimitBytes > 0 ? (combinedMediaBytes / storageLimitBytes) * 100 : 0).toFixed(2)}%`} />
                     </>
                   ) : null}
                 </Card>

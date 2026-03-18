@@ -130,14 +130,14 @@ export default function LabelValueRow({
 
   return (
     <View style={[base.row, style]}>
-      <View style={[{ flex: 1, flexShrink: 1, minWidth: 0 }, labelContainerStyle]}>
+      <View style={[{ flexShrink: 0, minWidth: 0 }, labelContainerStyle]}>
         {renderLabel()}
       </View>
 
       <View style={[base.middleSpacer, middleSpacerStyle]} />
 
-      <View style={[base.rightWrap, { flexShrink: 0, minWidth: 72, maxWidth: '56%', paddingRight: 0 }, rightWrapStyle]}>
-        <View style={base.valueWrapper}>
+      <View style={[base.rightWrap, { flexShrink: 1, minWidth: 0, maxWidth: '100%', paddingRight: 0 }, rightWrapStyle]}>
+        <View style={[base.valueWrapper, { minWidth: 0 }]}>
           {renderValue()}
         </View>
         {rightActions && (

@@ -302,9 +302,9 @@ function AvatarSheetModal({
   const items = [
     { id: 'camera', label: t('profile_photo_take'), right: chevron(theme.colors.textSecondary) },
     { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
-    ...(hasAvatar
+          ...(hasAvatar
       ? [
-          { id: 'view', label: 'РџСЂРѕСЃРјРѕС‚СЂ С„РѕС‚Рѕ', right: chevron(theme.colors.textSecondary) },
+          { id: 'view', label: 'Просмотреть фото', right: chevron(theme.colors.textSecondary) },
           { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
         ]
       : []),
@@ -1161,6 +1161,12 @@ export default function EditUser() {
       refetchEmployee().catch(() => {});
       allowLeaveRef.current = true;
       showSuccessToast(t('toast_success'));
+      // После успешного сохранения возвращаемся на предыдущую страницу
+      if (navigation && typeof navigation.goBack === 'function') {
+        navigation.goBack();
+      } else if (router && typeof router.back === 'function') {
+        router.back();
+      }
     } catch (e) {
       const msg = mapSaveErrorToMessage(e, t);
       setErr(msg);
@@ -2509,7 +2515,32 @@ export default function EditUser() {
                     if (!isNaN(tmp))
                       d = makeLocalNoon(tmp.getFullYear(), tmp.getMonth(), tmp.getDate());
                   }
-                  if (d && !isNaN(d)) setBirthdate(d);
+                  if (d && !isNaN(d)) {
+                    // Если пользователь указал, что год опущен (withYear=false),
+                    // не перезаписываем год на 1900 в локальном состоянии, если
+                    // ранее был выбран реальный год — сохраним его, чтобы при
+                    // повторном включении года пользователь увидел ожидаемое значение.
+                    try {
+                      if (extra && typeof extra.withYear === 'boolean' && extra.withYear === false) {
+                        if (birthdate instanceof Date && !isNaN(birthdate) && birthdate.getFullYear() !== 1900) {
+                          // preserve previous year
+                          const preserved = new Date(birthdate.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
+                          setBirthdate(preserved);
+                        } else {
+                          // no previous real year — keep provided date (may use sentinel)
+                          setBirthdate(d);
+                        }
+                      } else {
+                        setBirthdate(d);
+                      }
+                    } catch {
+                      setBirthdate(d);
+                    }
+                  }
+                  // После выбора даты очищаем возможную ошибку валидации для этого поля
+                  try {
+                    clearFieldError('birthdate');
+                  } catch {}
                   if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
                 } finally {
                   setDobModalVisible(false);

@@ -37,6 +37,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 // Safer fallback for minute step (prevents ReferenceError if APP_DEFAULTS missing or timeStep is not a number)
 const TIME_PICKER_MINUTE_STEP = Number(APP_DEFAULTS?.timeStep) || 5;
 const DEFAULT_REMINDER_DELAY_MINUTES = 20;
+const DEFAULT_QUIET_TIMEZONE = 'UTC';
 
 function parseMissingNotifPrefsColumn(error) {
   const message = String(error?.message || '').toLowerCase();
@@ -66,6 +67,46 @@ function isTransientPushSyncError(message) {
     normalized.includes('fetch failed') ||
     normalized.includes('network')
   );
+}
+
+function resolveDeviceTimeZone() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof tz === 'string' && tz.trim()) return tz.trim();
+  } catch {}
+  return DEFAULT_QUIET_TIMEZONE;
+}
+
+function parseTimeMinutes(value) {
+  if (typeof value !== 'string') return null;
+  const m = value.trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+function minutesToHHMM(totalMinutes) {
+  const m = ((Number(totalMinutes) % 1440) + 1440) % 1440;
+  const hh = String(Math.floor(m / 60)).padStart(2, '0');
+  const mm = String(m % 60).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function _localTimeToUtcHHMM(localHHMM) {
+  const localMinutes = parseTimeMinutes(localHHMM);
+  if (localMinutes == null) return null;
+  const offsetMinutes = new Date().getTimezoneOffset();
+  return minutesToHHMM(localMinutes + offsetMinutes);
+}
+
+function utcTimeToLocalHHMM(utcHHMM) {
+  const utcMinutes = parseTimeMinutes(utcHHMM);
+  if (utcMinutes == null) return null;
+  const offsetMinutes = new Date().getTimezoneOffset();
+  return minutesToHHMM(utcMinutes - offsetMinutes);
 }
 
 // Defaults for quiet hours (robust parsing with sane fallback)
@@ -257,7 +298,6 @@ export default function AppSettings() {
       return availableLocales[0] || 'ru';
     }
   })();
-  const currentLangLabel = t(`language_${currentLocale}`);
   const currentThemeLabel = t(`settings_theme_${mode || 'system'}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -270,6 +310,7 @@ export default function AppSettings() {
     reminder_delay_minutes: 20,
     quiet_start: null,
     quiet_end: null,
+    quiet_timezone: DEFAULT_QUIET_TIMEZONE,
   });
   const [timePickerOpen, setTimePickerOpen] = useState(null);
   const [timeValue, setTimeValue] = useState(new Date());
@@ -329,11 +370,21 @@ export default function AppSettings() {
           reminder_delay_minutes: DEFAULT_REMINDER_DELAY_MINUTES,
           quiet_start: APP_DEFAULTS?.quietStart,
           quiet_end: APP_DEFAULTS?.quietEnd,
+          quiet_timezone: resolveDeviceTimeZone(),
         };
       }
 
-      const qs = data.quiet_start;
-      const qe = data.quiet_end;
+      const storedTz =
+        typeof data.quiet_timezone === 'string' && data.quiet_timezone.trim()
+          ? data.quiet_timezone.trim()
+          : DEFAULT_QUIET_TIMEZONE;
+      const qsRaw = typeof data.quiet_start === 'string' ? (data.quiet_start.trim() || null) : (data.quiet_start ?? null);
+      const qeRaw = typeof data.quiet_end === 'string' ? (data.quiet_end.trim() || null) : (data.quiet_end ?? null);
+      // Legacy: if times were stored as UTC, convert them to local for display.
+      // New saves use the device IANA timezone and store times as local — no conversion needed.
+      const isLegacyUtc = storedTz === 'UTC';
+      const qs = isLegacyUtc ? (utcTimeToLocalHHMM(qsRaw) || qsRaw) : qsRaw;
+      const qe = isLegacyUtc ? (utcTimeToLocalHHMM(qeRaw) || qeRaw) : qeRaw;
       return {
         allow: data.allow !== false,
         new_orders: data.new_orders !== false,
@@ -342,8 +393,9 @@ export default function AppSettings() {
         reminder_delay_minutes: Number.isFinite(data.reminder_delay_minutes)
           ? data.reminder_delay_minutes
           : DEFAULT_REMINDER_DELAY_MINUTES,
-        quiet_start: typeof qs === 'string' ? (qs.trim() || null) : (qs ?? null),
-        quiet_end: typeof qe === 'string' ? (qe.trim() || null) : (qe ?? null),
+        quiet_start: qs,
+        quiet_end: qe,
+        quiet_timezone: storedTz,
       };
     },
     gcTime: 5 * 60 * 1000,
@@ -570,9 +622,11 @@ export default function AppSettings() {
       return;
     }
 
+    const deviceTz = resolveDeviceTimeZone();
     const { ok, message } = await savePrefs({
-      quiet_start: next.quiet_start,
-      quiet_end: next.quiet_end,
+      quiet_start: toTimeStr(next.quiet_start),
+      quiet_end: toTimeStr(next.quiet_end),
+      quiet_timezone: deviceTz,
     });
     if (!ok) {
       setPrefs(prevPrefs);
@@ -801,12 +855,19 @@ export default function AppSettings() {
     return SETTINGS_SECTIONS.map((section) => ({
       ...section,
       title: t(`settings_sections_${section.key}_title`),
-      items: section.items.map((item) => ({
-        ...item,
-        label: t(`settings_sections_${section.key}_items_${item.key}`),
-        onPress: item.switch ? undefined : resolvePressHandler(section.key, item.key),
-        onValueChange: item.switch ? resolveToggleHandler(section.key, item.key) : undefined,
-      })),
+      items: section.items.map((item) => {
+        const mapped = {
+          ...item,
+          label: t(`settings_sections_${section.key}_items_${item.key}`),
+          onPress: item.switch ? undefined : resolvePressHandler(section.key, item.key),
+          onValueChange: item.switch ? resolveToggleHandler(section.key, item.key) : undefined,
+        };
+        // Mark language row as a future feature (no hardcoded locale here)
+        if (section.key === 'appearance' && item.key === 'language') {
+          mapped.comingSoon = true;
+        }
+        return mapped;
+      }),
     }));
   }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openTimePicker, router, t]);
 
@@ -829,7 +890,8 @@ export default function AppSettings() {
             return { ...it, value: toTimeStr(prefs.quiet_end) || t('common_off') };
           }
           if (sec.key === 'appearance' && it.key === 'language') {
-            return { ...it, value: currentLangLabel };
+            // Show first available locale as the default (no hardcoded 'ru')
+            return { ...it, value: t(`language_${availableLocales[0]}`), disabled: true };
           }
           if (sec.key === 'appearance' && it.key === 'theme') {
             return { ...it, value: currentThemeLabel };
@@ -837,7 +899,7 @@ export default function AppSettings() {
           return it;
         }),
       })),
-    [sectionBase, prefs, isLoadingPrefs, currentLangLabel, currentThemeLabel, t],
+    [sectionBase, prefs, isLoadingPrefs, currentThemeLabel, t],
   );
 
   return (
@@ -959,4 +1021,3 @@ const styles = (t) =>
     sectionWrap: { marginBottom: t.spacing.sm },
     loadingWrap: { paddingVertical: t.spacing.sm },
   });
-

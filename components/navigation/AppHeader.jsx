@@ -3,6 +3,7 @@ import { Feather } from '@expo/vector-icons';
 import { router, useNavigation, usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
@@ -148,10 +149,24 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     [theme, titleStyleOverride],
   );
   const s = useMemo(() => createStyles(theme, headerMetrics), [theme, headerMetrics]);
-  const backFallbackTo = useMemo(
-    () => options?.backFallbackTo ?? routeParams?.backFallbackTo ?? '/orders',
-    [options?.backFallbackTo, routeParams?.backFallbackTo],
-  );
+  const backFallbackTo = useMemo(() => {
+    const explicit = options?.backFallbackTo ?? routeParams?.backFallbackTo;
+    if (explicit) return explicit;
+
+    const returnTo = String(routeParams?.returnTo || '').trim();
+    if (returnTo) {
+      let returnParams = undefined;
+      if (typeof routeParams?.returnParams === 'string' && routeParams.returnParams.trim()) {
+        try {
+          const parsed = JSON.parse(routeParams.returnParams);
+          if (parsed && typeof parsed === 'object') returnParams = parsed;
+        } catch {}
+      }
+      return returnParams ? { pathname: returnTo, params: returnParams } : returnTo;
+    }
+
+    return '/orders';
+  }, [options?.backFallbackTo, routeParams?.backFallbackTo, routeParams?.returnParams, routeParams?.returnTo]);
 
   const safeGoBack = useCallback(() => {
     try {
@@ -159,13 +174,16 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
         nav.goBack();
         return;
       }
-      if (backFallbackTo) {
-        router.replace(String(backFallbackTo));
+      if (typeof router?.canGoBack === 'function' && router.canGoBack()) {
+        router.back();
         return;
       }
     } catch {}
+
+    if (backFallbackTo && dismissToRoute(router, backFallbackTo)) return;
+
     try {
-      router.replace('/orders');
+      dismissToRoute(router, '/orders');
     } catch {}
   }, [backFallbackTo, nav]);
 

@@ -270,7 +270,7 @@ export default function AccessSettingsScreen() {
           } else if (typeof channel.send === 'function') {
             await channel.send(message);
           }
-        } catch (e) {
+        } catch {
           // best-effort broadcast; ignore errors
         }
         setTimeout(() => {
@@ -328,7 +328,7 @@ export default function AccessSettingsScreen() {
           } else if (typeof channel.send === 'function') {
             await channel.send(message);
           }
-        } catch (e) {
+        } catch {
           // best-effort broadcast; ignore errors
         }
         setTimeout(() => {

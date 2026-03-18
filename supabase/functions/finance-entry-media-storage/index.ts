@@ -393,7 +393,8 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       const publicUrl = String(body.public_url || '').trim() || buildBegetPublicUrl(objectKey);
       if (!objectKey) return json(400, { success: false, message: 'object_key is required' });
 
-      await headBegetObject(objectKey);
+      const headResult = await headBegetObject(objectKey);
+      const fileSizeBytes = Number(headResult?.ContentLength || 0);
 
       try {
         const { error: mapErr } = await admin.from('finance_entry_media_external_map').upsert(
@@ -407,6 +408,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
             display_url: publicUrl,
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
+            file_size_bytes: fileSizeBytes,
           },
           { onConflict: 'finance_entry_id,source_url' },
         );
@@ -459,6 +461,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
             display_url: publicUrl,
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
+            file_size_bytes: bytes.length,
           },
           { onConflict: 'finance_entry_id,source_url' },
         );

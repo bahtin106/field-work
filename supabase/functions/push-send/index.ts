@@ -51,6 +51,23 @@ type NotificationEvent = {
   attempt_count: number;
 };
 
+function normalizedId(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.toLowerCase();
+}
+
+function normalizeTimeZone(value: unknown): string | null {
+  const tz = String(value || '').trim();
+  if (!tz) return null;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz }).format(new Date());
+    return tz;
+  } catch {
+    return null;
+  }
+}
+
 type NotificationPrefs = {
   user_id: string;
   allow: boolean;
@@ -60,6 +77,7 @@ type NotificationPrefs = {
   reminder_delay_minutes: number;
   quiet_start: string | null;
   quiet_end: string | null;
+  quiet_timezone: string | null;
 };
 
 type PushTokenRow = {
@@ -101,12 +119,46 @@ function parseTimeToMinutes(value: string | null): number | null {
   return hh * 60 + mm;
 }
 
-function isInQuietHours(nowUtc: Date, quietStart: string | null, quietEnd: string | null): boolean {
+const timeZoneFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getMinutesForTimeZone(nowUtc: Date, timeZone: string | null): number {
+  const zone = String(timeZone || '').trim() || 'UTC';
+  let formatter = timeZoneFormatterCache.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    });
+    timeZoneFormatterCache.set(zone, formatter);
+  }
+
+  const parts = formatter.formatToParts(nowUtc);
+  const hourPart = parts.find((part) => part.type === 'hour')?.value ?? '0';
+  const minutePart = parts.find((part) => part.type === 'minute')?.value ?? '0';
+  const hh = Number(hourPart);
+  const mm = Number(minutePart);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) {
+    return nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes();
+  }
+  return hh * 60 + mm;
+}
+
+function isInQuietHours(
+  nowUtc: Date,
+  quietStart: string | null,
+  quietEnd: string | null,
+  quietTimeZone: string | null,
+): boolean {
   const start = parseTimeToMinutes(quietStart);
   const end = parseTimeToMinutes(quietEnd);
   if (start == null || end == null) return false;
 
-  const nowMinutes = nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes();
+  let nowMinutes = nowUtc.getUTCHours() * 60 + nowUtc.getUTCMinutes();
+  try {
+    nowMinutes = getMinutesForTimeZone(nowUtc, quietTimeZone);
+  } catch {}
   if (start === end) return false;
   if (start < end) return nowMinutes >= start && nowMinutes < end;
   return nowMinutes >= start || nowMinutes < end;
@@ -171,17 +223,44 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
     p_company_id: event.company_id,
   });
   if (error) throw new Error(`profiles recipients fetch failed: ${error.message}`);
-  return (data ?? []).map((r: any) => r.user_id).filter(Boolean);
+  const excluded = new Set<string>();
+  excluded.add(normalizedId((event.payload as any)?.creator_user_id));
+  excluded.add(normalizedId((event.payload as any)?.actor_user_id));
+  excluded.add(normalizedId((event.payload as any)?.updated_by_user_id));
+
+  try {
+    const { data: orderRow, error: orderError } = await sb
+      .from('orders')
+      .select('created_by_user_id, updated_by')
+      .eq('id', event.order_id)
+      .limit(1)
+      .maybeSingle();
+    if (!orderError && orderRow) {
+      excluded.add(normalizedId((orderRow as any).created_by_user_id));
+      excluded.add(normalizedId((orderRow as any).updated_by));
+    }
+  } catch {}
+  excluded.delete('');
+
+  return (data ?? [])
+    .map((r: any) => String(r.user_id || '').trim())
+    .filter((userId) => userId && !excluded.has(normalizedId(userId)));
 }
 
 async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventType): Promise<string[]> {
   if (!recipientIds.length) return [];
   const { data, error } = await sb.rpc('get_notification_prefs_bulk', { p_user_ids: recipientIds });
   if (error) throw new Error(`notification_prefs fetch failed: ${error.message}`);
+  const { data: tzRows, error: tzError } = await sb.from('profiles').select('id, timezone').in('id', recipientIds);
+  if (tzError) throw new Error(`profiles timezone fetch failed: ${tzError.message}`);
 
   const prefByUser = new Map<string, NotificationPrefs>();
   for (const row of (data ?? []) as NotificationPrefs[]) {
     prefByUser.set(row.user_id, row);
+  }
+  const profileTzByUser = new Map<string, string | null>();
+  for (const row of (tzRows ?? []) as Array<{ id: string; timezone: string | null }>) {
+    profileTzByUser.set(String(row.id), normalizeTimeZone(row.timezone));
   }
 
   const nowUtc = new Date();
@@ -196,7 +275,10 @@ async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventT
     }
     if (!prefs.allow) continue;
     if (!prefs[prefKey]) continue;
-    if (isInQuietHours(nowUtc, prefs.quiet_start, prefs.quiet_end)) continue;
+    const prefTimeZone = normalizeTimeZone(prefs.quiet_timezone);
+    const profileTimeZone = profileTzByUser.get(userId) || null;
+    const effectiveTimeZone = prefTimeZone || profileTimeZone || 'UTC';
+    if (isInQuietHours(nowUtc, prefs.quiet_start, prefs.quiet_end, effectiveTimeZone)) continue;
     eligible.push(userId);
   }
   return eligible;

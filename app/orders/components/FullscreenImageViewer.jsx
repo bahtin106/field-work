@@ -28,7 +28,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../../src/i18n/useTranslation';
-import { BaseModal, ConfirmModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
+import { BaseModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
+import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
 
 const VIEWER_BG = '#000000';
@@ -321,6 +322,7 @@ const ViewerContent = memo(function ViewerContent({
   const [menuOpen, setMenuOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rotations, setRotations] = useState({});
 
@@ -336,6 +338,7 @@ const ViewerContent = memo(function ViewerContent({
     setMenuOpen(false);
     setInfoOpen(false);
     setConfirmDelete(false);
+    setDeleting(false);
     setBusy(false);
     setRotations({});
     rotationsRef.current = {};
@@ -555,12 +558,22 @@ const ViewerContent = memo(function ViewerContent({
     setConfirmDelete(true);
   }, []);
 
-  const handleDeleteConfirm = useCallback(() => {
+  const handleDeleteConfirm = useCallback(async () => {
+    if (deleting) return;
+    setDeleting(true);
     const idx = localIndex;
-    onDelete?.(idx);
+    try {
+      await Promise.resolve(onDelete?.(idx));
+    } catch {
+      setDeleting(false);
+      toast.error(t('order_toast_delete_error', 'Ошибка удаления'));
+      return;
+    }
 
     const remaining = localImages.filter((_, imageIndex) => imageIndex !== idx);
     if (!remaining.length) {
+      setDeleting(false);
+      setConfirmDelete(false);
       handleClose();
       return;
     }
@@ -576,9 +589,14 @@ const ViewerContent = memo(function ViewerContent({
     setLocalImages(remaining);
     setLocalIndex(Math.min(idx, remaining.length - 1));
     setListKey((value) => value + 1);
-  }, [handleClose, localImages, localIndex, onDelete, rotations]);
+    setConfirmDelete(false);
+    setDeleting(false);
+  }, [deleting, handleClose, localImages, localIndex, onDelete, rotations, t, toast]);
 
-  const handleDeleteCancel = useCallback(() => setConfirmDelete(false), []);
+  const handleDeleteCancel = useCallback(() => {
+    setDeleting(false);
+    setConfirmDelete(false);
+  }, []);
   const toggleMenu = useCallback(() => {
     haptic();
     setInfoOpen(false);
@@ -625,7 +643,7 @@ const ViewerContent = memo(function ViewerContent({
 
   return (
     <View style={ds.root}>
-      <StatusBar hidden animated />
+      <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
 
       <GestureDetector gesture={closeSwipeGesture}>
         <Animated.View style={[ds.gallery, dismissAnimatedStyle]}>
@@ -763,16 +781,34 @@ const ViewerContent = memo(function ViewerContent({
         ))}
       </BaseModal>
 
-      <ConfirmModal
+      <BaseModal
         visible={confirmDelete}
-        title={t('order_photos_delete_single_title')}
-        message={t('order_photos_delete_single_message')}
-        confirmLabel={t('order_photos_delete_single_confirm')}
-        confirmVariant="destructive"
-        cancelLabel={t('order_photos_delete_single_cancel')}
-        onConfirm={handleDeleteConfirm}
         onClose={handleDeleteCancel}
-      />
+        title={t('order_photos_delete_single_title')}
+        maxHeightRatio={0.42}
+        footer={
+          <ModalActionsRow
+            actions={[
+              {
+                key: 'cancel',
+                title: t('order_photos_delete_single_cancel'),
+                variant: 'secondary',
+                disabled: deleting,
+                onPress: handleDeleteCancel,
+              },
+              {
+                key: 'confirm',
+                title: t('order_photos_delete_single_confirm'),
+                variant: 'destructive',
+                loading: deleting,
+                onPress: handleDeleteConfirm,
+              },
+            ]}
+          />
+        }
+      >
+        <Text style={ds.infoLabel}>{t('order_photos_delete_single_message')}</Text>
+      </BaseModal>
     </View>
   );
 });

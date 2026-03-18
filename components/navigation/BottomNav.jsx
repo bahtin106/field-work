@@ -4,6 +4,7 @@ import React, { memo, useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import appReadyState from '../../lib/appReadyState';
+import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useToast } from '../ui/ToastProvider';
@@ -93,6 +94,27 @@ function BottomNavInner() {
   // Локальная видимость бара (для плавной анимации появления)
   const [navVisible, setNavVisible] = React.useState(false);
   const appear = useRef(new Animated.Value(0)).current;
+  const tabNavInFlightRef = useRef(false);
+  const navigateTab = React.useCallback((target, { dismiss = false } = {}) => {
+    if (!target || tabNavInFlightRef.current) return;
+    tabNavInFlightRef.current = true;
+
+    try {
+      if (dismiss) {
+        if (typeof router?.dismissTo === 'function') {
+          router.dismissTo(target);
+        } else if (!dismissToRoute(router, target)) {
+          router.navigate(target);
+        }
+      } else {
+        router.navigate(target);
+      }
+    } catch {}
+
+    setTimeout(() => {
+      tabNavInFlightRef.current = false;
+    }, 280);
+  }, []);
 
   // При изменении appReady на false (логаут/новый логин) - скрываем бар
   React.useEffect(() => {
@@ -192,7 +214,7 @@ function BottomNavInner() {
           label={t('bottomNav.home', 'Главная')}
           active={activeKey === 'home'}
           onPress={() => {
-            if (activeKey !== 'home') router.replace(PATHS.home);
+            if (activeKey !== 'home') navigateTab(PATHS.home, { dismiss: true });
           }}
           colors={colors}
           metrics={metrics}
@@ -205,7 +227,7 @@ function BottomNavInner() {
               label={t('bottomNav.my', 'Мои')}
               active={activeKey === 'orders'}
               onPress={() => {
-                if (activeKey !== 'orders') router.replace(PATHS.orders);
+                if (activeKey !== 'orders') navigateTab(PATHS.orders);
               }}
               colors={colors}
               metrics={metrics}
@@ -215,7 +237,7 @@ function BottomNavInner() {
               label={t('bottomNav.all', 'Все')}
               active={activeKey === 'all'}
               onPress={() => {
-                if (activeKey !== 'all') router.replace(PATHS.all);
+                if (activeKey !== 'all') navigateTab(PATHS.all);
               }}
               colors={colors}
               metrics={metrics}
@@ -227,7 +249,7 @@ function BottomNavInner() {
             label={t('bottomNav.myOrders', 'Мои заявки')}
             active={activeKey === 'orders'}
             onPress={() => {
-              if (activeKey !== 'orders') router.replace(PATHS.orders);
+              if (activeKey !== 'orders') navigateTab(PATHS.orders);
             }}
             colors={colors}
             metrics={metrics}
@@ -239,7 +261,7 @@ function BottomNavInner() {
           label={t('bottomNav.calendar', 'Календарь')}
           active={activeKey === 'calendar'}
           onPress={() => {
-            if (activeKey !== 'calendar') router.replace(PATHS.calendar);
+            if (activeKey !== 'calendar') navigateTab(PATHS.calendar);
           }}
           colors={colors}
           metrics={metrics}
@@ -276,3 +298,5 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
 });
+
+

@@ -168,6 +168,22 @@ export async function handlePushTokenSyncRequest(req: Request) {
         throw upErr;
       }
 
+      if (deviceId) {
+        const { error: invalidateOldErr } = await admin
+          .from('push_tokens')
+          .update({
+            is_valid: false,
+            invalid_reason: 'ReplacedByNewerToken',
+          })
+          .eq('user_id', user.id)
+          .eq('device_id', deviceId)
+          .neq('token', pushToken)
+          .eq('is_valid', true);
+        if (invalidateOldErr) {
+          console.warn('[push-token-sync][invalidate-old-device-tokens]', normalizeError(invalidateOldErr));
+        }
+      }
+
       if (body.enable_notifications !== false) await upsertAllowPrefs(true);
 
       return json(200, { ok: true });
