@@ -177,6 +177,36 @@ export async function listBegetKeys(prefix: string) {
   return keys;
 }
 
+export async function listBegetObjectsWithSize(prefix: string) {
+  const cfg = getBegetS3Config();
+  const client = getBegetS3Client();
+  const safePrefix = String(prefix || '').replace(/^\/+/, '').replace(/\/+$/, '');
+  const result = new Map<string, number>();
+  if (!safePrefix) return result;
+
+  let continuationToken: string | undefined;
+
+  while (true) {
+    const resp = await client.send(
+      new ListObjectsV2Command({
+        Bucket: cfg.bucket,
+        Prefix: safePrefix,
+        ContinuationToken: continuationToken,
+      }),
+    );
+
+    for (const item of resp.Contents || []) {
+      const key = String(item.Key || '').trim();
+      if (key) result.set(key, Number(item.Size || 0));
+    }
+
+    if (!resp.IsTruncated || !resp.NextContinuationToken) break;
+    continuationToken = resp.NextContinuationToken;
+  }
+
+  return result;
+}
+
 export async function deleteBegetKeys(keys: string[]) {
   const cfg = getBegetS3Config();
   const client = getBegetS3Client();

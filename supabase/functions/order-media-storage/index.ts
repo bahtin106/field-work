@@ -399,7 +399,8 @@ export async function handleOrderMediaStorageRequest(req: Request) {
       const publicUrl = String(body.public_url || '').trim() || buildBegetPublicUrl(objectKey);
       if (!objectKey) return json(400, { success: false, message: 'object_key is required' });
 
-      await headBegetObject(objectKey);
+      const headResult = await headBegetObject(objectKey);
+      const fileSizeBytes = Number(headResult?.ContentLength || 0);
 
       try {
         const { error: mapErr } = await admin.from('order_media_external_map').upsert(
@@ -413,6 +414,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
             display_url: publicUrl,
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
+            file_size_bytes: fileSizeBytes,
           },
           { onConflict: 'order_id,category,source_url' },
         );
@@ -462,6 +464,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
             display_url: publicUrl,
             display_url_updated_at: new Date().toISOString(),
             created_by: ctx.userId,
+            file_size_bytes: bytes.length,
           },
           { onConflict: 'order_id,category,source_url' },
         );

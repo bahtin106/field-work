@@ -21,14 +21,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   View,
   Text,
   Pressable,
   FlatList,
   Image,
+  Linking,
   StyleSheet,
   StatusBar,
-  Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -63,8 +64,9 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
 
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const cameraRef = useRef(null);
+  const permissionPromptedForThisOpenRef = useRef(false);
 
   // Session photos: [{ id, uri }]
   const [photos, setPhotos] = useState([]);
@@ -96,10 +98,42 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
 
   // ── Request permission on mount ────────────────────────────
   useEffect(() => {
-    if (visible && permission && !permission.granted && permission.canAskAgain) {
-      requestPermission();
+    if (!visible) return;
+    let active = true;
+
+    if (!permissionPromptedForThisOpenRef.current) {
+      permissionPromptedForThisOpenRef.current = true;
+      requestPermission().catch(() => {});
     }
-  }, [visible, permission]);
+
+    const syncPermission = async ({ promptIfPossible = false } = {}) => {
+      try {
+        const latest = (await getPermission?.()) || permission;
+        const granted = latest?.granted === true;
+        if (promptIfPossible && !granted) {
+          await requestPermission();
+        }
+      } catch {}
+    };
+
+    syncPermission({ promptIfPossible: false }).catch(() => {});
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (!active || state !== 'active') return;
+      syncPermission({ promptIfPossible: false }).catch(() => {});
+    });
+
+    return () => {
+      active = false;
+      sub?.remove?.();
+    };
+  }, [getPermission, permission, requestPermission, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      permissionPromptedForThisOpenRef.current = false;
+    }
+  }, [visible]);
 
   // ── Take picture ───────────────────────────────────────────
   const handleTakePicture = useCallback(async () => {
@@ -175,8 +209,15 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     const list = photosRef.current;
     if (idx >= 0 && idx < list.length) {
       const id = list[idx].id;
-      setPhotos((prev) => prev.filter((p) => p.id !== id));
-      setPreviewIndex(-1);
+      setPhotos((prev) => {
+        const next = prev.filter((p) => p.id !== id);
+        if (!next.length) {
+          setPreviewIndex(-1);
+          return next;
+        }
+        setPreviewIndex(Math.min(idx, next.length - 1));
+        return next;
+      });
     }
   }, []);
 
@@ -221,7 +262,8 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   // ── No permission ──────────────────────────────────────────
   if (!visible) return null;
 
-  if (permission && !permission.granted) {
+  if (!permission || !permission.granted) {
+    const canAskAgain = permission?.canAskAgain !== false;
     return (
       <BaseModal visible={visible} onClose={onClose} title={t('order_photos_no_camera_title', 'Нет доступа к камере')}>
         <View style={s.permContent}>
@@ -231,6 +273,25 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
           </Text>
           <Button
             variant="primary"
+            size="md"
+            title={
+              canAskAgain
+                ? t('order_photos_camera_grant', 'Разрешить доступ')
+                : t('order_photos_camera_settings', 'Открыть настройки')
+            }
+            onPress={() => {
+              requestPermission()
+                .then((res) => {
+                  if (res?.granted) return;
+                  if (res?.canAskAgain === false) {
+                    Linking.openSettings().catch(() => {});
+                  }
+                })
+                .catch(() => {});
+            }}
+          />
+          <Button
+            variant="secondary"
             size="md"
             title={t('order_photos_close', 'Закрыть')}
             onPress={onClose}
@@ -348,6 +409,21 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
         doubleTapToZoomEnabled
         presentationStyle="overFullScreen"
         backgroundColor={theme.colors.background}
+        HeaderComponent={({ imageIndex }) => (
+          <View style={s.previewHeader}>
+            <Pressable
+              onPress={handleClosePreview}
+              style={s.previewHeaderBtn}
+              hitSlop={theme.spacing.sm}
+            >
+              <Feather name="x" size={theme.icons.md} color={theme.colors.onPrimary} />
+            </Pressable>
+            <Text style={s.previewHeaderText}>
+              {`${Math.max(0, Number(imageIndex) + 1)} / ${previewImages.length}`}
+            </Text>
+            <View style={s.previewHeaderSpacer} />
+          </View>
+        )}
         FooterComponent={() =>
           previewIndex >= 0 ? (
             <View style={s.previewFooter}>
@@ -372,8 +448,6 @@ function buildStyles(theme, insets) {
   const ty = theme.typography;
   const cl = theme.colors;
   const rd = theme.radii;
-  const ic = theme.icons;
-
   const topPad = Math.max(insets.top, sp.xl) + sp.xs;
   const bottomPad = Math.max(insets.bottom, sp.lg) + sp.sm;
   const overlayBg = cl.overlay;
@@ -527,8 +601,34 @@ function buildStyles(theme, insets) {
       paddingBottom: bottomPad,
       alignItems: 'center',
     },
+    previewHeader: {
+      paddingTop: Math.max(insets.top, sp.md),
+      paddingHorizontal: sp.lg,
+      paddingBottom: sp.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    previewHeaderBtn: {
+      width: topBtnSize,
+      height: topBtnSize,
+      borderRadius: rd.pill,
+      backgroundColor: overlayBg,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    previewHeaderText: {
+      color: cl.onPrimary,
+      fontSize: ty.sizes.sm,
+      fontWeight: ty.weight?.semibold || '600',
+    },
+    previewHeaderSpacer: {
+      width: topBtnSize,
+      height: topBtnSize,
+    },
     previewDeleteBtn: {
       minWidth: sp.xxl * 6,
     },
   });
 }
+

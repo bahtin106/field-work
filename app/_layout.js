@@ -1,7 +1,7 @@
 import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Image, LogBox, Platform, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Image, LogBox, Platform, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { installDevWarnFilters } from '../src/utils/devWarnFilter';
@@ -21,6 +21,7 @@ import appReadyState from '../lib/appReadyState';
 import { applyAndroidSystemBars } from '../lib/systemBars';
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
+import dismissToRoute from '../lib/navigation/dismissToRoute';
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
@@ -35,6 +36,29 @@ import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 import { KeyboardProvider } from '../lib/keyboardControllerCompat';
+
+function ensureForegroundNotificationHandler() {
+  if (Platform.OS === 'web') return;
+  if (globalThis.__foregroundNotifHandlerConfigured) return;
+  globalThis.__foregroundNotifHandlerConfigured = true;
+
+  import('expo-notifications')
+    .then((Notifications) => {
+      Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: true,
+          shouldSetBadge: false,
+        }),
+      });
+    })
+    .catch(() => {
+      globalThis.__foregroundNotifHandlerConfigured = false;
+    });
+}
+
+ensureForegroundNotificationHandler();
 
 function LastSeenTracker() {
   useAppLastSeen(30_000);
@@ -110,7 +134,7 @@ function RootLayoutInner() {
   const pushSyncDoneForUserRef = useRef(null);
   const notificationOpenInFlightRef = useRef(false);
   const lastHandledNotificationKeyRef = useRef('');
-  const presentedCleanupInFlightRef = useRef(false);
+  const notificationIdsByOrderRef = useRef(new Map());
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const isBlockedScreen = inAuthGroup && authScreen === 'blocked';
@@ -187,6 +211,27 @@ function RootLayoutInner() {
       router.replace('/orders');
     }
   }, [inAuthGroup, isAuthenticated, isBlockedScreen, isInitializing, router]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (isInitializing || !isAuthenticated || isBlockedScreen) return false;
+
+      const current = String(pathname || '').trim();
+      if (!current || current === '/orders' || current === '/orders/' || current.startsWith('/(auth)')) {
+        return false;
+      }
+
+      const canGoBack = typeof router?.canGoBack === 'function' && router.canGoBack();
+      if (canGoBack) return false;
+
+      dismissToRoute(router, '/orders');
+      return true;
+    });
+
+    return () => sub.remove();
+  }, [isAuthenticated, isBlockedScreen, isInitializing, pathname, router]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated) return;
@@ -379,35 +424,22 @@ function RootLayoutInner() {
     return null;
   }, []);
 
-  const extractEventTypeFromNotificationContent = useCallback((notification) => {
-    const rawData = notification?.request?.content?.data;
-    let data = rawData;
-    if (typeof data === 'string') {
-      try {
-        data = JSON.parse(data);
-      } catch {
-        data = {};
-      }
-    }
-    if (!data || typeof data !== 'object') return '';
-    return String(data.event_type || '').trim();
-  }, []);
-
   const dismissPresentedNotificationsForOrder = useCallback(
     async (orderId, Notifications) => {
       const normalized = String(orderId || '').trim();
       if (!normalized) return;
 
       const moduleRef = Notifications || (await import('expo-notifications'));
+      const rememberedIds = notificationIdsByOrderRef.current.get(normalized) || new Set();
+      const toDismiss = new Set(rememberedIds);
       const list = await moduleRef.getPresentedNotificationsAsync?.();
-      if (!Array.isArray(list) || !list.length) return;
-
-      const toDismiss = [];
-      for (const item of list) {
-        const itemOrderId = extractOrderIdFromNotificationContent(item);
-        if (itemOrderId && itemOrderId === normalized) {
-          const identifier = String(item?.request?.identifier || '').trim();
-          if (identifier) toDismiss.push(identifier);
+      if (Array.isArray(list) && list.length) {
+        for (const item of list) {
+          const itemOrderId = extractOrderIdFromNotificationContent(item);
+          if (itemOrderId && itemOrderId === normalized) {
+            const identifier = String(item?.request?.identifier || '').trim();
+            if (identifier) toDismiss.add(identifier);
+          }
         }
       }
 
@@ -416,72 +448,11 @@ function RootLayoutInner() {
           await moduleRef.dismissNotificationAsync?.(id);
         } catch {}
       }
+
+      notificationIdsByOrderRef.current.delete(normalized);
     },
     [extractOrderIdFromNotificationContent],
   );
-
-  const cleanupStalePresentedNotifications = useCallback(async () => {
-    if (presentedCleanupInFlightRef.current) return;
-    if (Platform.OS === 'web' || !user?.id) return;
-
-    presentedCleanupInFlightRef.current = true;
-    try {
-      const Notifications = await import('expo-notifications');
-      const presented = await Notifications.getPresentedNotificationsAsync?.();
-      if (!Array.isArray(presented) || presented.length === 0) return;
-
-      const entries = [];
-      const orderIds = new Set();
-      for (const item of presented) {
-        const orderId = extractOrderIdFromNotificationContent(item);
-        if (!orderId) continue;
-        const eventType = extractEventTypeFromNotificationContent(item);
-        const identifier = String(item?.request?.identifier || '').trim();
-        if (!identifier) continue;
-        entries.push({ identifier, orderId, eventType });
-        orderIds.add(orderId);
-      }
-      if (!entries.length || !orderIds.size) return;
-
-      const { data: rows, error } = await supabase
-        .from('orders_secure_v2')
-        .select('id, assigned_to')
-        .in('id', Array.from(orderIds));
-      if (error) return;
-
-      const byId = new Map((rows || []).map((row) => [String(row.id), row]));
-      const dismissIds = new Set();
-
-      for (const item of entries) {
-        const row = byId.get(item.orderId);
-        if (!row) {
-          dismissIds.add(item.identifier);
-          continue;
-        }
-
-        if (item.eventType === 'feed_new_order' || item.eventType === 'feed_stale_reminder') {
-          if (row.assigned_to != null) dismissIds.add(item.identifier);
-          continue;
-        }
-
-        if (item.eventType === 'assigned_new_order') {
-          if (!row.assigned_to || String(row.assigned_to) !== String(user.id)) {
-            dismissIds.add(item.identifier);
-          }
-        }
-      }
-
-      for (const id of dismissIds) {
-        try {
-          await Notifications.dismissNotificationAsync?.(id);
-        } catch {}
-      }
-    } catch {
-      // noop
-    } finally {
-      presentedCleanupInFlightRef.current = false;
-    }
-  }, [extractEventTypeFromNotificationContent, extractOrderIdFromNotificationContent, user?.id]);
 
   const getActiveOrderIdFromPathname = useCallback((currentPathname) => {
     const normalized = String(currentPathname || '').trim();
@@ -539,6 +510,17 @@ function RootLayoutInner() {
 
     let active = true;
     let responseSub = null;
+    let receivedSub = null;
+
+    const rememberNotificationIdentifier = (notification) => {
+      const orderId = String(extractOrderIdFromNotificationContent(notification) || '').trim();
+      if (!orderId) return;
+      const identifier = String(notification?.request?.identifier || '').trim();
+      if (!identifier) return;
+      const next = notificationIdsByOrderRef.current.get(orderId) || new Set();
+      next.add(identifier);
+      notificationIdsByOrderRef.current.set(orderId, next);
+    };
 
     const handleResponse = async (response, Notifications) => {
       if (!active || !response) return;
@@ -558,7 +540,16 @@ function RootLayoutInner() {
     const init = async () => {
       try {
         const Notifications = await import('expo-notifications');
+        const presented = await Notifications.getPresentedNotificationsAsync?.();
+        if (Array.isArray(presented)) {
+          for (const item of presented) rememberNotificationIdentifier(item);
+        }
+
+        receivedSub = Notifications.addNotificationReceivedListener((notification) => {
+          rememberNotificationIdentifier(notification);
+        });
         responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+          rememberNotificationIdentifier(response?.notification);
           handleResponse(response, Notifications).catch(() => {});
         });
 
@@ -576,8 +567,10 @@ function RootLayoutInner() {
     return () => {
       active = false;
       responseSub?.remove?.();
+      receivedSub?.remove?.();
     };
   }, [
+    extractOrderIdFromNotificationContent,
     extractOrderIdFromNotificationResponse,
     getNotificationResponseKey,
     isAuthenticated,
@@ -587,24 +580,20 @@ function RootLayoutInner() {
   ]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen || !user?.id) {
-      return undefined;
-    }
-
-    cleanupStalePresentedNotifications().catch(() => {});
-    const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        cleanupStalePresentedNotifications().catch(() => {});
-      }
-    });
-    return () => appStateSub?.remove?.();
-  }, [cleanupStalePresentedNotifications, isAuthenticated, isBlockedScreen, isInitializing, user?.id]);
-
-  useEffect(() => {
     if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return;
     const orderId = getActiveOrderIdFromPathname(pathname);
     if (!orderId) return;
     dismissPresentedNotificationsForOrder(orderId).catch(() => {});
+    const t1 = setTimeout(() => {
+      dismissPresentedNotificationsForOrder(orderId).catch(() => {});
+    }, 450);
+    const t2 = setTimeout(() => {
+      dismissPresentedNotificationsForOrder(orderId).catch(() => {});
+    }, 1200);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [
     dismissPresentedNotificationsForOrder,
     getActiveOrderIdFromPathname,

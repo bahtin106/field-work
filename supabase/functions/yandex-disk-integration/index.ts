@@ -84,17 +84,19 @@ async function getCallerContext(admin: ReturnType<typeof createClient>, token: s
   profile = byId;
 
   if (!profile && user.email) {
+    const email = String(user.email).trim();
     const { data: byEmail, error: byEmailErr } = await admin
       .from('profiles')
       .select('id, role, company_id')
-      .eq('email', String(user.email).toLowerCase())
+      .ilike('email', email)
       .maybeSingle();
     if (byEmailErr) throw byEmailErr;
     profile = byEmail;
   }
 
   if (!profile) throw new Error('Profile not found');
-  if (String(profile.role || '').toLowerCase() !== 'admin') throw new Error('Forbidden');
+  const role = String(profile.role || '').trim().toLowerCase();
+  if (!['admin', 'super_admin'].includes(role)) throw new Error('Forbidden');
   if (!profile.company_id) throw new Error('Company not found');
   return {
     userId: user.id,

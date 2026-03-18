@@ -37,6 +37,8 @@ import { useAuth } from '../../components/hooks/useAuth';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
 import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
+import goBackSmart from '../../lib/navigation/goBackSmart';
+import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { usePermissions } from '../../lib/permissions';
 import {
   ensureRequestPrefetch,
@@ -302,7 +304,7 @@ export default function CalendarScreen() {
     if (perfMountStartedRef.current) return;
     perfMountStartedRef.current = true;
     perfMountStartMsRef.current = nowMs();
-    console.time('calendar-mount');
+    if (__DEV__) console.debug?.('[perf] calendar-mount.start');
   }, []);
 
   useEffect(() => {
@@ -313,10 +315,7 @@ export default function CalendarScreen() {
     if (!perfFirstContentLoggedRef.current) {
       perfFirstContentLoggedRef.current = true;
       const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
-      console.log(`[perf] calendar.first-content.now: ${Math.round(elapsedMs)}ms`);
-      try {
-        console.timeEnd('calendar-mount');
-      } catch {}
+      if (__DEV__) console.debug?.(`[perf] calendar.first-content.now: ${Math.round(elapsedMs)}ms`);
     }
   }, [isCalendarLoading]);
 
@@ -514,7 +513,7 @@ export default function CalendarScreen() {
     [dynamicYears.length, layoutMetrics.cardWidth],
   );
 
-  const commitVisibleMonthIndex = useCallback(
+  const _commitVisibleMonthIndex = useCallback(
     (pageIndex) => {
       visibleMonthIndex.value = pageIndex;
       settledMonthOffsetX.value = layoutMetrics.cardWidth * pageIndex;
@@ -546,7 +545,7 @@ export default function CalendarScreen() {
       if (!Number.isFinite(nextYear)) return;
       if (perfYearMountStartedRef.current) {
         const elapsedMs = Math.max(0, nowMs() - perfYearMountStartMsRef.current);
-        console.log(`[perf] calendar.year.page-change.now: ${Math.round(elapsedMs)}ms`);
+        if (__DEV__) console.debug?.(`[perf] calendar.year.page-change.now: ${Math.round(elapsedMs)}ms`);
       }
       setCurrentMonth((prev) => startOfMonth(new Date(nextYear, prev.getMonth(), 1)));
     },
@@ -572,7 +571,7 @@ export default function CalendarScreen() {
     if (perfYearMountStartedRef.current) return;
     perfYearMountStartedRef.current = true;
     perfYearMountStartMsRef.current = nowMs();
-    console.time('calendar-year-mount');
+    if (__DEV__) console.debug?.('[perf] calendar-year-mount.start');
   }, [viewMode]);
 
   useEffect(() => {
@@ -698,7 +697,7 @@ export default function CalendarScreen() {
       if (!perfGridLoggedRef.current) {
         perfGridLoggedRef.current = true;
         const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
-        console.log(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
+        if (__DEV__) console.debug?.(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
       }
     },
     [setMeasuredWeekRowHeight],
@@ -978,7 +977,7 @@ export default function CalendarScreen() {
           flex: 1,
         },
       }),
-    [theme, layoutMetrics],
+    [theme, layoutMetrics, indicatorSlotBaseHeight],
   );
 
   const stageAtoBProgress = useDerivedValue(() => {
@@ -1230,15 +1229,16 @@ export default function CalendarScreen() {
   useFocusEffect(
     useCallback(() => {
       const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-        if (returnTo) {
-          router.replace({ pathname: returnTo, params: returnParams });
-        } else {
-          router.replace('/orders');
-        }
+        goBackSmart(
+          navigation,
+          router,
+          returnTo ? { pathname: returnTo, params: returnParams } : null,
+          '/orders',
+        );
         return true;
       });
       return () => sub.remove();
-    }, [returnParams, returnTo, router]),
+    }, [navigation, returnParams, returnTo, router]),
   );
 
   useFocusEffect(
@@ -1253,12 +1253,17 @@ export default function CalendarScreen() {
         ) {
           return;
         }
+        const navCanGoBack = typeof navigation?.canGoBack === 'function' && navigation.canGoBack();
+        const routerCanGoBack = typeof router?.canGoBack === 'function' && router.canGoBack();
+
+        if (navCanGoBack || routerCanGoBack) return;
+
         e.preventDefault();
         if (returnTo) {
-          router.replace({ pathname: returnTo, params: returnParams });
-        } else {
-          router.replace('/orders');
+          dismissToRoute(router, { pathname: returnTo, params: returnParams });
+          return;
         }
+        dismissToRoute(router, '/orders');
       });
       return removeSub;
     }, [navigation, returnParams, returnTo, router]),
@@ -1417,11 +1422,12 @@ export default function CalendarScreen() {
       <AppHeader
         back
         onBackPress={() => {
-          if (returnTo) {
-            router.replace({ pathname: returnTo, params: returnParams });
-          } else {
-            router.replace('/orders');
-          }
+          goBackSmart(
+            navigation,
+            router,
+            returnTo ? { pathname: returnTo, params: returnParams } : null,
+            '/orders',
+          );
         }}
         options={{
           headerTitleAlign: 'left',
@@ -1657,10 +1663,7 @@ export default function CalendarScreen() {
                 if (!perfYearMountStartedRef.current || perfYearFirstContentLoggedRef.current) return;
                 perfYearFirstContentLoggedRef.current = true;
                 const elapsedMs = Math.max(0, nowMs() - perfYearMountStartMsRef.current);
-                console.log(`[perf] calendar.year.first-content.now: ${Math.round(elapsedMs)}ms`);
-                try {
-                  console.timeEnd('calendar-year-mount');
-                } catch {}
+                if (__DEV__) console.debug?.(`[perf] calendar.year.first-content.now: ${Math.round(elapsedMs)}ms`);
               }}
               data={dynamicYears}
               horizontal

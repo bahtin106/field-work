@@ -5,15 +5,20 @@ const onlyDigits = (s = '') => (s.match(/\d/g) || []).join('');
 /** Приводим ввод к российскому набору цифр с кодом страны 7 */
 export function normalizeRu(raw = '') {
   let d = onlyDigits(raw);
+  if (!d) return '';
 
-  // если 8XXXXXXXXXX -> 7XXXXXXXXXX
-  if (d.length >= 1 && d[0] === '8') d = '7' + d.slice(1);
+  // 8… → 7… (в РФ «8» = выход на межгород, эквивалент +7)
+  if (d[0] === '8') {
+    d = '7' + d.slice(1);
+  // 9… → 79… (мобильный без кода страны)
+  } else if (d[0] === '9') {
+    d = '7' + d;
+  // любая другая первая цифра, кроме 7 — добавляем код страны
+  } else if (d[0] !== '7') {
+    d = '7' + d;
+  }
 
-  // если начинается с 7 или 9 (часто вводят 9XXXXXXXXX)
-  if (d[0] === '9') d = '7' + d; // 9XXXXXXXXX -> 79XXXXXXXXX
-  if (d[0] !== '7') d = (d[0] ? '7' : '') + d.slice(1);
-
-  // оставляем максимум 11 цифр
+  // Российский номер: 7 + 10 цифр = максимум 11
   if (d.length > 11) d = d.slice(0, 11);
 
   return d;
@@ -24,27 +29,27 @@ export function formatRuMask(raw = '') {
   const d = normalizeRu(raw);
   if (!d) return '';
 
-  const local = d.slice(1); // без кода страны
-  const a = local.slice(0, 3);
-  const b = local.slice(3, 6);
-  const c = local.slice(6, 8);
-  const e = local.slice(8, 10);
+  const local = d.slice(1); // цифры после кода страны
+  if (!local) return '+7';
 
-  let out = '+7';
-  out += ' ';
-  out += '(' + a;
-  if (a.length === 3) out += ')';
-  if (b) out += ' ' + b;
-  if (c) out += '-' + c;
-  if (e) out += '-' + e;
+  const code = local.slice(0, 3);
+  const p1   = local.slice(3, 6);
+  const p2   = local.slice(6, 8);
+  const p3   = local.slice(8, 10);
+
+  let out = '+7 (' + code;
+  if (code.length === 3 && (p1 || p2 || p3)) out += ')';
+  if (p1) out += ' ' + p1;
+  if (p2) out += '-' + p2;
+  if (p3) out += '-' + p3;
 
   return out;
 }
 
-/** Валиден ли номер РФ: ровно 11 цифр и начинается на 79 */
+/** Валиден ли номер РФ: ровно 11 цифр, код страны 7 (мобильный, городской, 8-800 и т.д.) */
 export function isValidRu(raw = '') {
   const d = normalizeRu(raw);
-  return d.length === 11 && d.startsWith('79');
+  return d.length === 11 && d[0] === '7';
 }
 
 /** Возвращает e164 или null, если номер ещё не полон/невалиден */

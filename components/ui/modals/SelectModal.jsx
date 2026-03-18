@@ -33,6 +33,7 @@ export default function SelectModal({
   itemTitleNumberOfLines = 1,
   itemSubtitleNumberOfLines = 1,
   multilineItems = false,
+  minTopGapFromStatusBar,
 }) {
   const { theme } = useTheme();
   const s = useMemo(() => styles(theme), [theme]);
@@ -149,7 +150,13 @@ export default function SelectModal({
   };
 
   return (
-    <BaseModal visible={visible} onClose={onClose} title={title} maxHeightRatio={maxHeightRatio}>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={title}
+      maxHeightRatio={maxHeightRatio}
+      minTopGapFromStatusBar={minTopGapFromStatusBar}
+    >
       {searchable ? (
         <View style={{ marginBottom: theme.spacing.sm }}>
           <TextField

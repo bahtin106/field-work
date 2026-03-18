@@ -171,8 +171,17 @@ export default function DateTimeModal({
     if (!visible) return;
 
     const y = years.indexOf(baseDate.getFullYear());
-    const yearIdx = y >= 0 ? y : 0;
+    let yearIdx = y >= 0 ? y : 0;
     const year = years[yearIdx] || currentYear;
+
+    // Если год опущен (omitYearDefault === false) и baseDate был подставлен как currentYear
+    // — переключаем дефолтный индекс года на более вероятный (currentYear - 30),
+    // чтобы не заставлять пользователя листать десятилетия назад.
+    if (allowOmitYear && omitYearDefault === false && baseDate.getFullYear() === currentYear) {
+      const preferredYear = Math.max(years[0] || 1900, currentYear - 30);
+      const prefIdx = years.indexOf(preferredYear);
+      if (prefIdx >= 0) yearIdx = prefIdx;
+    }
 
     setDYearIdx(yearIdx);
     setWithYear(allowOmitYear ? omitYearDefault : true);
@@ -193,6 +202,28 @@ export default function DateTimeModal({
     setTab('date');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible]);
+
+  // Когда пользователь включает переключатель года (с false → true),
+  // если год заранее был подставлен в текущий год (sentinel flow),
+  // сдвинем позицию колеса к более вероятному значению (currentYear - 30).
+  const prevWithYearRef = React.useRef(withYear);
+  React.useEffect(() => {
+    if (!visible) {
+      prevWithYearRef.current = withYear;
+      return;
+    }
+    if (!prevWithYearRef.current && withYear) {
+      // just turned on
+      const currentYearIdx = years.indexOf(currentYear);
+      const isAtCurrentYear = dYearIdx === currentYearIdx || baseDate.getFullYear() === currentYear;
+      if (isAtCurrentYear) {
+        const preferredYear = Math.max(years[0] || 1900, currentYear - 30);
+        const prefIdx = years.indexOf(preferredYear);
+        if (prefIdx >= 0) setDYearIdx(prefIdx);
+      }
+    }
+    prevWithYearRef.current = withYear;
+  }, [withYear, visible, years, dYearIdx, baseDate, currentYear]);
 
   React.useEffect(() => {
     setDDayIdx((idx) => Math.max(0, Math.min(idx, Math.max(0, days.length - 1))));
@@ -349,27 +380,33 @@ export default function DateTimeModal({
                   }}
                   width={W3}
                 />
-                <Wheel
-                  data={years.map(String)}
-                  activeColor={theme.colors.primary}
-                  inactiveColor={theme.colors.textSecondary}
-                  index={dYearIdx}
-                  onIndexChange={(i) => {
-                    setDYearIdx(i);
-                    const newYear = years[i] || currentYear;
-                    const safeMonth = clampMonthForYear(dMonthIdx, newYear);
-                    if (safeMonth !== dMonthIdx) setDMonthIdx(safeMonth);
-                    setDDayIdx((d) => {
-                      const prevDay = days[d] ?? days[0] ?? 1;
-                      const clampedDay = clampDayForYearMonth(prevDay, safeMonth, newYear);
-                      const nextDays = getDayRange(newYear, safeMonth);
-                      const nextIdx = nextDays.indexOf(clampedDay);
-                      return Math.max(0, nextIdx);
-                    });
-                  }}
-                  width={W3}
-                  enabled={withYear}
-                />
+                {withYear ? (
+                  <Wheel
+                    data={years.map(String)}
+                    activeColor={theme.colors.primary}
+                    inactiveColor={theme.colors.textSecondary}
+                    index={dYearIdx}
+                    onIndexChange={(i) => {
+                      setDYearIdx(i);
+                      const newYear = years[i] || currentYear;
+                      const safeMonth = clampMonthForYear(dMonthIdx, newYear);
+                      if (safeMonth !== dMonthIdx) setDMonthIdx(safeMonth);
+                      setDDayIdx((d) => {
+                        const prevDay = days[d] ?? days[0] ?? 1;
+                        const clampedDay = clampDayForYearMonth(prevDay, safeMonth, newYear);
+                        const nextDays = getDayRange(newYear, safeMonth);
+                        const nextIdx = nextDays.indexOf(clampedDay);
+                        return Math.max(0, nextIdx);
+                      });
+                    }}
+                    width={W3}
+                    enabled={withYear}
+                  />
+                ) : (
+                  <View style={{ width: W3, justifyContent: 'center', alignItems: 'center' }}>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.md }}>---</Text>
+                  </View>
+                )}
               </View>
               <View
                 pointerEvents="none"

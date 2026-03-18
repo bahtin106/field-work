@@ -1,6 +1,16 @@
 import Router from 'expo-router';
+import * as Notifications from 'expo-notifications';
 import { findNodeHandle, Keyboard, TextInput, View } from 'react-native';
 import { useAppLastSeen } from './useAppLastSeen';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 function getFocusedInputHandle() {
   try {

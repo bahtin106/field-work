@@ -829,7 +829,8 @@ async function commitBegetDirectUpload(args: {
   objectKey: string;
   publicUrl: string;
 }) {
-  await headBegetObject(args.objectKey);
+  const headResult = await headBegetObject(args.objectKey);
+  const fileSizeBytes = Number(headResult?.ContentLength || 0);
   const accessToken =
     args.existingMap?.provider === 'yandex_disk'
       ? (await getValidAccessToken(args.admin, args.companyId)).accessToken
@@ -857,6 +858,7 @@ async function commitBegetDirectUpload(args: {
       external_path: args.objectKey,
       created_by: args.callerUserId,
       updated_at: new Date().toISOString(),
+      file_size_bytes: fileSizeBytes,
     },
     { onConflict: 'entity_type,entity_id' },
   );
@@ -935,6 +937,7 @@ async function commitYandexDirectUpload(args: {
         external_path: args.filePath,
         created_by: args.callerUserId,
         updated_at: new Date().toISOString(),
+        file_size_bytes: 0,
       },
       { onConflict: 'entity_type,entity_id' },
     );
@@ -1290,6 +1293,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
             external_path: filePath,
             created_by: caller.userId,
             updated_at: new Date().toISOString(),
+            file_size_bytes: bytes.length,
           },
           { onConflict: 'entity_type,entity_id' },
         );
@@ -1335,6 +1339,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
           external_path: uploadResult.path,
           created_by: caller.userId,
           updated_at: new Date().toISOString(),
+          file_size_bytes: bytes.length,
         },
         { onConflict: 'entity_type,entity_id' },
       );

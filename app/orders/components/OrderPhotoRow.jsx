@@ -4,7 +4,7 @@
 // Fully themed – no hardcoded colors or dimensions.
 
 import { memo, useCallback, useEffect, useMemo } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Platform } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../../theme';
@@ -54,7 +54,7 @@ const PendingPhotoTile = memo(function PendingPhotoTile({ uri, thumbSize, border
 
 // ─── Single thumbnail tile ─────────────────────────────────────────
 const PhotoTile = memo(function PhotoTile({
-  url,
+  url: _url,
   displayUrl,
   issueMessage,
   index,

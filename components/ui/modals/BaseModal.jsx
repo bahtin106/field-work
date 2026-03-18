@@ -28,6 +28,7 @@ import { useTheme } from '../../../theme';
 import { withAlpha as withThemeAlpha } from '../../../theme/colors';
 
 const OPEN_SPRING = { damping: 28, stiffness: 500, mass: 0.5 };
+const MIN_TOP_GAP_FROM_STATUS_BAR_DP = 38;
 
 export function withAlpha(color, a) {
   const next = withThemeAlpha(color, a);
@@ -41,6 +42,7 @@ const baseSheetStyles = (t) =>
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'flex-end',
       alignItems: 'center',
+      overflow: 'hidden',
       zIndex: 1,
       elevation: 11,
     },
@@ -94,6 +96,7 @@ const BaseModalImpl = (
     disablePanClose = false,
     keyboardExtraPadding = 0,
     disableContentShrink = false,
+    minTopGapFromStatusBar = null,
   },
   ref,
 ) => {
@@ -196,6 +199,11 @@ const BaseModalImpl = (
     theme.spacing.sm,
     Number.isFinite(platformTopGap) ? platformTopGap : 0,
   );
+  const minTopGapFromStatusBarValue = Math.max(
+    minTopGap,
+    Number(modalTokens.minTopGapFromStatusBar ?? MIN_TOP_GAP_FROM_STATUS_BAR_DP) || MIN_TOP_GAP_FROM_STATUS_BAR_DP,
+    Number.isFinite(minTopGapFromStatusBar) ? Number(minTopGapFromStatusBar) : 0,
+  );
   const extraPad = Number.isFinite(keyboardExtraPadding) ? keyboardExtraPadding : 0;
   const extraBottom = kbInset > 0 ? kbInset + extraPad : 0;
 
@@ -207,7 +215,7 @@ const BaseModalImpl = (
 
   const maxAllowedHeight = Math.max(
     minCardHeight,
-    windowH - (topSafeInset + minTopGap) - (baseBottomPad + extraBottom),
+    windowH - (topSafeInset + minTopGapFromStatusBarValue) - (baseBottomPad + extraBottom),
   );
   const targetCardMaxHeight = Math.max(minCardHeight, Math.min(sheetMaxH, maxAllowedHeight));
 
@@ -395,7 +403,7 @@ const BaseModalImpl = (
           aWrap,
           {
             paddingHorizontal: modalTokens.edgePadding ?? theme.spacing.md,
-            paddingTop: topSafeInset + minTopGap,
+            paddingTop: topSafeInset + minTopGapFromStatusBarValue,
           },
         ]}
         pointerEvents="box-none"
@@ -406,6 +414,8 @@ const BaseModalImpl = (
             aCard,
             {
               alignSelf: 'stretch',
+              flexShrink: 1,
+              minHeight: 0,
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
               elevation: 10,
