@@ -152,6 +152,13 @@ function normalizeUuidOrNull(value: unknown) {
   return uuidRe.test(text) ? text : null;
 }
 
+function isOrderStatusConstraintError(error: unknown) {
+  const code = String((error as Record<string, unknown>)?.code || '').trim();
+  if (code !== '23514') return false;
+  const message = toErrorMessage(error).toLowerCase();
+  return message.includes('status') || message.includes('orders_status');
+}
+
 function normalizeText(raw: unknown) {
   return String(raw ?? '').replace(/\s+/g, ' ').trim();
 }
@@ -197,8 +204,19 @@ function formatPhoneMask(raw: unknown) {
 
 function toE164PhoneOrNull(raw: unknown) {
   const digits = normalizePhoneDigits(raw);
-  if (digits.length !== 11 || !digits.startsWith('79')) return null;
+  if (digits.length !== 11 || !digits.startsWith('7')) return null;
   return `+${digits}`;
+}
+
+function trimCommentText(raw: unknown) {
+  return String(raw ?? '').replace(/\r/g, '').trim();
+}
+
+function appendOrderCommentNote(baseComment: unknown, note: string | null) {
+  const base = trimCommentText(baseComment);
+  const normalizedNote = trimCommentText(note);
+  if (!normalizedNote) return base || null;
+  return base ? `${base}\n\n${normalizedNote}` : normalizedNote;
 }
 
 function getWebhookUrl() {
@@ -219,6 +237,41 @@ function secureCompare(left: string, right: string) {
   let diff = 0;
   for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i];
   return diff === 0;
+}
+
+function levenshteinDistance(left: string, right: string) {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  const current = new Array(right.length + 1);
+
+  for (let i = 0; i < left.length; i += 1) {
+    current[0] = i + 1;
+    for (let j = 0; j < right.length; j += 1) {
+      const substitutionCost = left[i] === right[j] ? 0 : 1;
+      current[j + 1] = Math.min(
+        current[j] + 1,
+        previous[j + 1] + 1,
+        previous[j] + substitutionCost,
+      );
+    }
+    for (let j = 0; j < current.length; j += 1) previous[j] = current[j];
+  }
+
+  return previous[right.length];
+}
+
+function similarityScore(leftRaw: unknown, rightRaw: unknown) {
+  const left = normalizeText(leftRaw);
+  const right = normalizeText(rightRaw);
+  if (!left && !right) return 1;
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const maxLength = Math.max(left.length, right.length);
+  if (!maxLength) return 1;
+  return 1 - levenshteinDistance(left, right) / maxLength;
 }
 
 function buildObjectSummary(address: Record<string, string>) {
@@ -969,8 +1022,29 @@ function buildFieldPromptRich(
   return parts.filter(Boolean).join('\n\n');
 }
 
-function buildConfirmationTextRich(fields: EffectiveField[], values: Record<string, string>) {
-  return `<b>\u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0434\u0430\u043d\u043d\u044b\u0435</b>\n\n${buildSummaryRich(fields, values)}\n\n\u0415\u0441\u043b\u0438 \u0432\u0441\u0451 \u0432\u0435\u0440\u043d\u043e, \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u0435 \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438 \u0438\u043b\u0438 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u043d\u0430 \u043f\u0443\u043d\u043a\u0442, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0445\u043e\u0442\u0438\u0442\u0435 \u043e\u0442\u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c`;
+function buildConfirmationValidationNoteRich(ui: Record<string, unknown>) {
+  const note = normalizeText(ui.address_validation_note);
+  if (!note) return '';
+  return `<i>[${escapeHtml(note)}]</i>`;
+}
+
+function buildConfirmationTextRich(
+  fields: EffectiveField[],
+  values: Record<string, string>,
+  validationNoteRich = '',
+) {
+  const note = String(validationNoteRich || '').trim();
+  return `<b>\u041f\u0440\u043e\u0432\u0435\u0440\u044c\u0442\u0435 \u0434\u0430\u043d\u043d\u044b\u0435</b>\n\n${buildSummaryRich(fields, values)}${note ? `\n\n${note}` : ''}\n\n\u0415\u0441\u043b\u0438 \u0432\u0441\u0451 \u0432\u0435\u0440\u043d\u043e, \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438\u0442\u0435 \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438 \u0438\u043b\u0438 \u043d\u0430\u0436\u043c\u0438\u0442\u0435 \u043d\u0430 \u043f\u0443\u043d\u043a\u0442, \u043a\u043e\u0442\u043e\u0440\u044b\u0439 \u0445\u043e\u0442\u0438\u0442\u0435 \u043e\u0442\u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c`;
+}
+
+function buildPostSubmitNoticeText(
+  integration: IntegrationRow,
+  result: { addressText?: string | null },
+) {
+  const base =
+    integration.success_message ||
+    `\u0413\u043e\u0442\u043e\u0432\u043e. \u0417\u0430\u044f\u0432\u043a\u0430 \u0441\u043e\u0437\u0434\u0430\u043d\u0430${result.addressText ? ` \u043f\u043e \u0430\u0434\u0440\u0435\u0441\u0443: ${result.addressText}` : ''}.`;
+  return `${base}\n\n\u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u00ab${CREATE_NEW_REQUEST_TEXT}\u00bb, \u0447\u0442\u043e\u0431\u044b \u0441\u043e\u0437\u0434\u0430\u0442\u044c \u0435\u0449\u0451 \u043e\u0434\u043d\u0443 \u0437\u0430\u044f\u0432\u043a\u0443.`;
 }
 
 function buildFieldPromptText(
@@ -1159,6 +1233,327 @@ function splitCustomerName(raw: string) {
 
   candidates.sort((left, right) => scoreNameCandidate(right) - scoreNameCandidate(left));
   return candidates[0];
+}
+
+const NAME_EQUIVALENTS: Record<string, string> = {
+  саша: 'александр',
+  саня: 'александр',
+  alex: 'александр',
+  алекс: 'александр',
+  лёша: 'алексей',
+  леша: 'алексей',
+  дима: 'дмитрий',
+  миша: 'михаил',
+  серёжа: 'сергей',
+  сережа: 'сергей',
+  вова: 'владимир',
+  женя: 'евгений',
+  катя: 'екатерина',
+  оля: 'ольга',
+};
+
+function normalizeNameTokenForCompare(raw: unknown) {
+  const token = normalizeText(raw)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9-]+/g, '')
+    .trim();
+  if (!token) return '';
+  return NAME_EQUIVALENTS[token] || token;
+}
+
+function nameTokenSimilarity(leftRaw: unknown, rightRaw: unknown) {
+  const left = normalizeNameTokenForCompare(leftRaw);
+  const right = normalizeNameTokenForCompare(rightRaw);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.length === 1 || right.length === 1) return left[0] === right[0] ? 0.85 : 0;
+  if (left.length >= 3 && right.length >= 3 && (left.startsWith(right) || right.startsWith(left))) {
+    return 0.9;
+  }
+  const similarity = similarityScore(left, right);
+  if (left.length >= 4 && right.length >= 4 && left.slice(0, 4) === right.slice(0, 4)) {
+    return Math.max(similarity, 0.82);
+  }
+  return similarity;
+}
+
+function buildClientNameFromRow(row: Record<string, unknown> | null) {
+  if (!row) return '';
+  return [row.last_name, row.first_name, row.middle_name]
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+function compareClientNamesSmart(inputNameRaw: unknown, dbNameRaw: unknown) {
+  const inputTokens = tokenizeCustomerName(String(inputNameRaw || ''))
+    .map((token) => normalizeNameTokenForCompare(token))
+    .filter(Boolean);
+  const dbTokens = tokenizeCustomerName(String(dbNameRaw || ''))
+    .map((token) => normalizeNameTokenForCompare(token))
+    .filter(Boolean);
+
+  if (!inputTokens.length || !dbTokens.length) return 'uncertain' as const;
+
+  const meaningfulInput = inputTokens.filter((token) => token.length > 1 || /^[a-zа-я0-9]$/i.test(token));
+  if (!meaningfulInput.length) return 'uncertain' as const;
+
+  let strongMatches = 0;
+  let weakMatches = 0;
+  let misses = 0;
+
+  for (const token of meaningfulInput) {
+    if (token.length === 1) {
+      const hasInitialMatch = dbTokens.some((candidate) => candidate.startsWith(token));
+      if (hasInitialMatch) weakMatches += 1;
+      else misses += 1;
+      continue;
+    }
+
+    const best = dbTokens.reduce((score, candidate) => {
+      const next = nameTokenSimilarity(token, candidate);
+      return next > score ? next : score;
+    }, 0);
+
+    if (best >= 0.9) strongMatches += 1;
+    else if (best >= 0.76) weakMatches += 1;
+    else misses += 1;
+  }
+
+  const total = meaningfulInput.length || 1;
+  const coverage = (strongMatches + weakMatches * 0.6) / total;
+
+  if (coverage >= 0.75) return 'match' as const;
+  if (misses === total || coverage <= 0.35) return 'mismatch' as const;
+  return 'uncertain' as const;
+}
+
+async function buildClientNameDiscrepancyNote(
+  admin: AdminClient,
+  companyId: string,
+  clientId: string | null,
+  values: Record<string, string>,
+) {
+  const enteredName = normalizeText(values.customer_name);
+  const phone = trimToNull(values.phone);
+  if (!enteredName || !phone || !clientId) return null;
+
+  const matchedByPhone = await findExistingClient(admin, companyId, phone);
+  if (!matchedByPhone?.id || String(matchedByPhone.id) !== String(clientId)) return null;
+
+  const { data: clientRow, error } = await admin
+    .from('clients')
+    .select('id, first_name, last_name, middle_name')
+    .eq('id', clientId)
+    .maybeSingle();
+  if (error) throw error;
+  const dbName = buildClientNameFromRow(clientRow as Record<string, unknown> | null);
+  if (!dbName) return null;
+
+  const verdict = compareClientNamesSmart(enteredName, dbName);
+  if (verdict === 'match') return null;
+  if (verdict === 'mismatch') {
+    return `[ _Клиент указал другое имя: "${enteredName}" (в базе: "${dbName}")._ ]`;
+  }
+  return `[ _Клиент указал имя: "${enteredName}". Не удалось однозначно сопоставить с именем в базе: "${dbName}"._ ]`;
+}
+
+const ADDRESS_TEXT_MATCH_FIELDS = ['country', 'region', 'district', 'city', 'street', 'postal_code'] as const;
+const ADDRESS_EXACT_MATCH_FIELDS = ['house', 'office', 'entrance', 'apartment', 'floor'] as const;
+const ADDRESS_STREET_SYNONYMS = new Map<string, string>([
+  ['ул', 'улица'],
+  ['ул.', 'улица'],
+  ['пр', 'проспект'],
+  ['пр.', 'проспект'],
+  ['пр-т', 'проспект'],
+  ['просп', 'проспект'],
+  ['д', 'дом'],
+  ['д.', 'дом'],
+]);
+
+function normalizeAddressTextForMatch(raw: unknown) {
+  const base = normalizeText(raw)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[.,/#!$%^&*;:{}=_`~()"'\[\]-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!base) return '';
+  return base
+    .split(' ')
+    .map((token) => ADDRESS_STREET_SYNONYMS.get(token) || token)
+    .join(' ')
+    .trim();
+}
+
+function normalizeAddressNumberLike(raw: unknown) {
+  return normalizeText(raw)
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[^\p{L}\p{N}/-]+/gu, '');
+}
+
+function buildAddressForMatch(addressLike: Record<string, unknown>) {
+  const normalized: Record<string, string> = {};
+  for (const field of ADDRESS_TEXT_MATCH_FIELDS) {
+    normalized[field] = normalizeAddressTextForMatch(addressLike?.[field]);
+  }
+  for (const field of ADDRESS_EXACT_MATCH_FIELDS) {
+    normalized[field] = normalizeAddressNumberLike(addressLike?.[field]);
+  }
+  return normalized;
+}
+
+function buildAddressShortForPrompt(addressLike: Record<string, unknown>) {
+  return [addressLike?.city, addressLike?.street, addressLike?.house]
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(', ')
+    .trim();
+}
+
+async function applyAddressValidationForConfirmation(
+  admin: AdminClient,
+  integration: IntegrationRow,
+  values: Record<string, string>,
+  ui: Record<string, unknown>,
+) {
+  const nextValues = { ...values };
+  const nextUi = { ...ui };
+
+  if (nextUi.address_manual_override === true) {
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  const phone = trimToNull(values.phone);
+  if (!phone) {
+    nextUi.address_validation_note = null;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  const matchedClient = await findExistingClient(admin, integration.company_id, phone);
+  const clientId = normalizeText(matchedClient?.id);
+  if (!clientId) {
+    nextUi.address_validation_note = null;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  const { data: objectRows, error } = await admin
+    .from('client_objects')
+    .select('id, country, region, district, city, street, house, postal_code, office, floor, entrance, apartment')
+    .eq('client_id', clientId)
+    .limit(300);
+  if (error) throw error;
+
+  const objects = Array.isArray(objectRows) ? objectRows : [];
+  if (!objects.length) {
+    nextUi.address_validation_note = null;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  const draft = buildAddressForMatch(values as Record<string, unknown>);
+  if (!draft.street || !draft.house) {
+    nextUi.address_validation_note = null;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  let bestMatch: {
+    row: Record<string, unknown>;
+    score: number;
+    streetScore: number;
+    cityScore: number;
+  } | null = null;
+
+  for (const objectRow of objects) {
+    const candidate = buildAddressForMatch(objectRow as Record<string, unknown>);
+    if (!candidate.street || !candidate.house) continue;
+    if (candidate.house !== draft.house) continue;
+
+    const streetScore = similarityScore(draft.street, candidate.street);
+    const cityScore = draft.city && candidate.city ? similarityScore(draft.city, candidate.city) : 0.82;
+    const score = streetScore * 0.72 + cityScore * 0.28;
+
+    if (!bestMatch || score > bestMatch.score) {
+      bestMatch = {
+        row: objectRow as Record<string, unknown>,
+        score,
+        streetScore,
+        cityScore,
+      };
+    }
+  }
+
+  if (!bestMatch) {
+    nextUi.address_validation_note = null;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  const shouldAutocorrect =
+    bestMatch.score >= 0.92 &&
+    bestMatch.streetScore >= 0.93 &&
+    bestMatch.cityScore >= 0.9;
+
+  if (shouldAutocorrect) {
+    let changed = false;
+    for (const field of [...ADDRESS_TEXT_MATCH_FIELDS, ...ADDRESS_EXACT_MATCH_FIELDS]) {
+      const fromDb = normalizeText(bestMatch.row?.[field]);
+      if (!fromDb) continue;
+      if (normalizeText(nextValues[field]) === fromDb) continue;
+      nextValues[field] = fromDb;
+      changed = true;
+    }
+    if (changed) {
+      nextUi.address_autocorrect_applied = true;
+      nextUi.address_validation_note = `Адрес уточнен автоматически: ${buildAddressShortForPrompt(bestMatch.row)}.`;
+      return { values: nextValues, ui: nextUi };
+    }
+    nextUi.address_validation_note = null;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  const shouldWarn =
+    bestMatch.score >= 0.74 &&
+    bestMatch.streetScore >= 0.68 &&
+    bestMatch.cityScore >= 0.62;
+
+  if (shouldWarn) {
+    nextUi.address_validation_note = `Проверьте адрес: возможно имелся в виду «${buildAddressShortForPrompt(bestMatch.row)}».`;
+    nextUi.address_autocorrect_applied = false;
+    return { values: nextValues, ui: nextUi };
+  }
+
+  nextUi.address_validation_note = null;
+  nextUi.address_autocorrect_applied = false;
+  return { values: nextValues, ui: nextUi };
+}
+
+async function moveConversationToConfirmation(
+  admin: AdminClient,
+  conversation: ConversationRow,
+  integration: IntegrationRow,
+  values: Record<string, string>,
+  ui: Record<string, unknown>,
+) {
+  const prepared = await applyAddressValidationForConfirmation(admin, integration, values, ui);
+  return saveConversation(admin, {
+    ...conversation,
+    status: 'confirming',
+    current_field_key: null,
+    state: buildConversationState(prepared.values, {
+      ...prepared.ui,
+      return_to_confirmation: false,
+    }),
+    last_message_at: new Date().toISOString(),
+  });
 }
 
 function titleFromValues(values: Record<string, string>) {
@@ -1417,36 +1812,65 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
 async function createOrderFromConversation(admin: AdminClient, integration: IntegrationRow, values: Record<string, string>) {
   const clientId = await createClientIfNeeded(admin, integration, values);
   const object = await createObjectIfNeeded(admin, integration, clientId, values);
+  const nameDiscrepancyNote = await buildClientNameDiscrepancyNote(
+    admin,
+    integration.company_id,
+    clientId,
+    values,
+  );
+  const finalComment = appendOrderCommentNote(values.comment, nameDiscrepancyNote);
   const assignedTo =
     integration.destination_type === 'assignee'
       ? normalizeUuidOrNull(integration.destination_user_id)
       : null;
-  const orderStatus = assignedTo ? NEW_STATUS : FEED_STATUS;
+  const statusCandidates = assignedTo ? [NEW_STATUS, 'Новая'] : [FEED_STATUS];
   const { data: company, error: companyError } = await admin
     .from('companies')
     .select('currency')
     .eq('id', integration.company_id)
     .maybeSingle();
   if (companyError) throw companyError;
-  const { data, error } = await admin
-    .from('orders')
-    .insert({
-      company_id: integration.company_id,
-      title: titleFromValues(values),
-      comment: normalizeText(values.comment) || null,
-      client_id: clientId,
-      object_id: object.objectId,
-      address_mode: object.addressMode,
-      object_name_snapshot: object.objectName,
-      assigned_to: assignedTo,
-      status: orderStatus,
-      urgent: false,
-      currency: company?.currency || null,
-    })
-    .select('id')
-    .single();
-  if (error) throw error;
-  return { orderId: String(data.id), clientId, objectId: object.objectId, addressText: buildFullAddress(object.address) };
+  let createdOrderId: string | null = null;
+  let lastInsertError: unknown = null;
+
+  for (let index = 0; index < statusCandidates.length; index += 1) {
+    const status = statusCandidates[index];
+    const { data, error } = await admin
+      .from('orders')
+      .insert({
+        company_id: integration.company_id,
+        title: titleFromValues(values),
+        comment: finalComment,
+        client_id: clientId,
+        object_id: object.objectId,
+        address_mode: object.addressMode,
+        object_name_snapshot: object.objectName,
+        assigned_to: assignedTo,
+        status,
+        urgent: false,
+        currency: company?.currency || null,
+      })
+      .select('id')
+      .single();
+
+    if (!error && data?.id) {
+      createdOrderId = String(data.id);
+      break;
+    }
+
+    lastInsertError = error;
+    const canRetryWithLegacyStatus =
+      assignedTo &&
+      index === 0 &&
+      status === NEW_STATUS &&
+      isOrderStatusConstraintError(error);
+    if (!canRetryWithLegacyStatus) {
+      throw error;
+    }
+  }
+
+  if (!createdOrderId) throw lastInsertError || new Error('ORDER_CREATE_FAILED');
+  return { orderId: createdOrderId, clientId, objectId: object.objectId, addressText: buildFullAddress(object.address) };
 }
 
 async function promptField(
@@ -1492,15 +1916,17 @@ async function promptConfirmation(
   values: Record<string, string>,
 ) {
   const nextUi = await syncProgressMessage(chatId, conversation, null, values, { hide: true });
+  const { ui } = readConversationState(conversation);
+  const validationNote = normalizeText(ui.address_validation_note);
+  const noteText = validationNote ? `\n\n[${validationNote}]` : '';
   const botMessageId = await sendManagedConversationMessage(
     chatId,
     conversation,
-    `Проверьте данные:\n\n${buildSummary(fields, values)}\n\nЕсли всё верно, подтвердите создание заявки.`,
+    `Проверьте данные:\n\n${buildSummary(fields, values)}${noteText}\n\nЕсли всё верно, подтвердите создание заявки.`,
     {
       inlineKeyboard: buildConfirmationInlineKeyboard(fields, values),
     },
   );
-  const { ui } = readConversationState(conversation);
   return saveConversation(admin, {
     ...conversation,
     state: buildConversationState(values, {
@@ -1522,10 +1948,11 @@ async function promptConfirmationRich(
   const { ui } = readConversationState(conversation);
   const nextMenu = options.menu || 'main';
   const nextUi = await syncProgressMessage(chatId, conversation, null, values, { hide: true });
+  const validationNoteRich = buildConfirmationValidationNoteRich(ui);
   const botMessageId = await sendManagedConversationMessage(
     chatId,
     conversation,
-    buildConfirmationTextRich(fields, values),
+    buildConfirmationTextRich(fields, values, validationNoteRich),
     {
       inlineKeyboard: buildConfirmationInlineKeyboard(fields, values, nextMenu),
     },
@@ -1645,8 +2072,8 @@ async function handleConfirmationCallback(
         admin,
         conversation,
         callback.chatId,
-        integration.success_message || `Готово. Заявка создана${result.addressText ? ` по адресу: ${result.addressText}` : ''}.`,
-        { removeKeyboard: true },
+        buildPostSubmitNoticeText(integration, result),
+        { keyboard: newRequestKeyboard() },
       );
       await safeDeleteTelegramMessage(callback.chatId, callback.messageId);
       await answerTelegramCallback(callback.callbackId);
@@ -2139,8 +2566,8 @@ async function handleWebhook(admin: AdminClient, req: Request) {
         admin,
         conversation,
         message.chatId,
-        integration.success_message || `Готово. Заявка создана${result.addressText ? ` по адресу: ${result.addressText}` : ''}.`,
-        { removeKeyboard: true },
+        buildPostSubmitNoticeText(integration, result),
+        { keyboard: newRequestKeyboard() },
       );
       await safeDeleteTelegramMessage(message.chatId, message.messageId);
     } catch (error) {
@@ -2191,17 +2618,15 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     }
 
     if (ui.return_to_confirmation === true) {
-      conversation = await saveConversation(admin, {
-        ...conversation,
-        status: 'confirming',
-        current_field_key: null,
-        state: buildConversationState(values, {
-          ...ui,
-          return_to_confirmation: false,
-        }),
-        last_message_at: new Date().toISOString(),
-      });
-      await promptConfirmationRich(admin, conversation, message.chatId, fields, values);
+      conversation = await moveConversationToConfirmation(
+        admin,
+        conversation,
+        integration,
+        values,
+        ui,
+      );
+      const { values: confirmedValues } = readConversationState(conversation);
+      await promptConfirmationRich(admin, conversation, message.chatId, fields, confirmedValues);
       await safeDeleteTelegramMessage(message.chatId, message.messageId);
       return json(200, { success: true });
     }
@@ -2220,17 +2645,15 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       });
       await promptField(admin, conversation, message.chatId, fields, next, values);
     } else {
-      conversation = await saveConversation(admin, {
-        ...conversation,
-        status: 'confirming',
-        current_field_key: null,
-        state: buildConversationState(values, {
-          ...ui,
-          return_to_confirmation: false,
-        }),
-        last_message_at: new Date().toISOString(),
-      });
-      await promptConfirmationRich(admin, conversation, message.chatId, fields, values);
+      conversation = await moveConversationToConfirmation(
+        admin,
+        conversation,
+        integration,
+        values,
+        ui,
+      );
+      const { values: confirmedValues } = readConversationState(conversation);
+      await promptConfirmationRich(admin, conversation, message.chatId, fields, confirmedValues);
     }
     await safeDeleteTelegramMessage(message.chatId, message.messageId);
     return json(200, { success: true });
@@ -2256,18 +2679,28 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     values[currentField.field_key] = String(parsed.value || '');
   }
 
+  const uiAfterInput =
+    ui.return_to_confirmation === true &&
+    ADDRESS_FIELD_KEYS.has(currentField.field_key) &&
+    ui.address_autocorrect_applied === true
+      ? {
+          ...ui,
+          address_manual_override: true,
+          address_autocorrect_applied: false,
+          address_validation_note: null,
+        }
+      : ui;
+
   if (ui.return_to_confirmation === true) {
-    conversation = await saveConversation(admin, {
-      ...conversation,
-      status: 'confirming',
-      current_field_key: null,
-      state: buildConversationState(values, {
-        ...ui,
-        return_to_confirmation: false,
-      }),
-      last_message_at: new Date().toISOString(),
-    });
-    await promptConfirmationRich(admin, conversation, message.chatId, fields, values);
+    conversation = await moveConversationToConfirmation(
+      admin,
+      conversation,
+      integration,
+      values,
+      uiAfterInput,
+    );
+    const { values: confirmedValues } = readConversationState(conversation);
+    await promptConfirmationRich(admin, conversation, message.chatId, fields, confirmedValues);
     await safeDeleteTelegramMessage(message.chatId, message.messageId);
     return json(200, { success: true });
   }
@@ -2279,7 +2712,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       status: 'collecting',
       current_field_key: next.field_key,
       state: buildConversationState(values, {
-        ...ui,
+        ...uiAfterInput,
         return_to_confirmation: false,
       }),
       last_message_at: new Date().toISOString(),
@@ -2289,17 +2722,15 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     return json(200, { success: true });
   }
 
-  conversation = await saveConversation(admin, {
-    ...conversation,
-    status: 'confirming',
-    current_field_key: null,
-    state: buildConversationState(values, {
-      ...ui,
-      return_to_confirmation: false,
-    }),
-    last_message_at: new Date().toISOString(),
-  });
-  await promptConfirmationRich(admin, conversation, message.chatId, fields, values);
+  conversation = await moveConversationToConfirmation(
+    admin,
+    conversation,
+    integration,
+    values,
+    uiAfterInput,
+  );
+  const { values: confirmedValues } = readConversationState(conversation);
+  await promptConfirmationRich(admin, conversation, message.chatId, fields, confirmedValues);
   await safeDeleteTelegramMessage(message.chatId, message.messageId);
   return json(200, { success: true });
 }

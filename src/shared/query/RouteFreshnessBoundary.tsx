@@ -1,7 +1,7 @@
 import { onlineManager, useQueryClient } from '@tanstack/react-query';
 import { usePathname } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { AppState } from 'react-native';
+import { AppState, InteractionManager } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
 import { financeQueryKeys } from '../../features/finance/queries';
 import { queryKeys } from './queryKeys';
@@ -19,6 +19,8 @@ function normalizePath(pathname: string | null | undefined) {
   if (!raw) return '';
   return raw.replace(/\/+$/, '') || '/';
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
   const path = normalizePath(pathname);
@@ -70,6 +72,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
   const orderDetailMatch = path.match(/^\/orders\/([^/]+)$/);
   if (orderDetailMatch?.[1] && !['my-orders', 'all-orders', 'calendar', 'create-order'].includes(orderDetailMatch[1])) {
     const orderId = String(orderDetailMatch[1]).trim();
+    if (!UUID_RE.test(orderId)) return null;
     return {
       intervalKey: `orders-detail:${orderId}`,
       minIntervalMs: 20_000,
@@ -90,6 +93,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
   const clientDetailMatch = path.match(/^\/clients\/([^/]+)$/);
   if (clientDetailMatch?.[1] && !['new'].includes(clientDetailMatch[1])) {
     const clientId = String(clientDetailMatch[1]).trim();
+    if (!UUID_RE.test(clientId)) return null;
     return {
       intervalKey: `clients-detail:${clientId}`,
       minIntervalMs: 30_000,
@@ -114,6 +118,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
   const objectDetailMatch = path.match(/^\/objects\/([^/]+)$/);
   if (objectDetailMatch?.[1]) {
     const objectId = String(objectDetailMatch[1]).trim();
+    if (!UUID_RE.test(objectId)) return null;
     return {
       intervalKey: `objects-detail:${objectId}`,
       minIntervalMs: 30_000,
@@ -134,6 +139,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
   const userDetailMatch = path.match(/^\/users\/([^/]+)$/);
   if (userDetailMatch?.[1] && !['new'].includes(userDetailMatch[1])) {
     const userId = String(userDetailMatch[1]).trim();
+    if (!UUID_RE.test(userId)) return null;
     return {
       intervalKey: `users-detail:${userId}`,
       minIntervalMs: 30_000,
@@ -238,7 +244,7 @@ export function RouteFreshnessBoundary() {
     lastRunRef.current.set(plan.intervalKey, now);
 
     const invalidateTasks = (plan.queryKeys || []).map((queryKey) =>
-      queryClient.invalidateQueries({ queryKey, refetchType: 'active' }),
+      queryClient.invalidateQueries({ queryKey, refetchType: 'none' }),
     );
 
     Promise.allSettled([
@@ -251,7 +257,10 @@ export function RouteFreshnessBoundary() {
   }, [pathname, plan, queryClient]);
 
   useEffect(() => {
-    runPlan('route-focus');
+    const task = InteractionManager.runAfterInteractions(() => {
+      runPlan('route-focus');
+    });
+    return () => task.cancel();
   }, [runPlan]);
 
   useEffect(() => {

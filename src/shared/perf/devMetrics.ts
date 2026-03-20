@@ -9,6 +9,15 @@ const isDev = () => {
   }
 };
 
+const isPerfLoggingEnabled = () => {
+  if (!isDev()) return false;
+  try {
+    return globalThis?.__DEV_PERF_METRICS__ === true;
+  } catch {
+    return false;
+  }
+};
+
 export function markScreenMount(screenName) {
   if (!isDev() || !screenName) return;
   marks.set(`screen:${screenName}`, Date.now());
@@ -20,7 +29,9 @@ export function markFirstContent(screenName) {
   const startedAt = marks.get(key);
   if (!startedAt) return;
   const ms = Date.now() - startedAt;
-  console.log(`[perf] ${screenName} first-content: ${ms}ms`);
+  if (isPerfLoggingEnabled()) {
+    console.log(`[perf] ${screenName} first-content: ${ms}ms`);
+  }
   marks.delete(key);
 }
 
@@ -29,14 +40,14 @@ export async function measureNetwork(label, fn) {
   try {
     return await fn();
   } finally {
-    if (isDev() && label) {
+    if (isPerfLoggingEnabled() && label) {
       console.log(`[perf] ${label} fetch: ${Date.now() - startedAt}ms`);
     }
   }
 }
 
 export function trackRender(screenName, logEvery = 20) {
-  if (!isDev() || !screenName) return;
+  if (!isPerfLoggingEnabled() || !screenName) return;
   const key = `render:${screenName}`;
   const prev = renderCounters.get(key) || { count: 0, startedAt: Date.now() };
   const next = { count: prev.count + 1, startedAt: prev.startedAt };
@@ -49,7 +60,7 @@ export function trackRender(screenName, logEvery = 20) {
 }
 
 export function startFpsProbe(screenName, durationMs = 3000) {
-  if (!isDev() || !screenName || durationMs <= 0) return () => {};
+  if (!isPerfLoggingEnabled() || !screenName || durationMs <= 0) return () => {};
   let rafId = 0;
   let frames = 0;
   const startedAt = Date.now();

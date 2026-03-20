@@ -1,4 +1,4 @@
-﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,14 +21,15 @@ const json = (status: number, body: Record<string, Json>) =>
   });
 
 const DEFAULT_YANDEX_ROOT = '/\u041c\u043e\u043d\u0438\u0442\u043e\u0440';
-const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file']);
+const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5']);
 const ORDERS_ROOT_DIR = '\u0417\u0430\u044f\u0432\u043a\u0438';
 const INTERNAL_URL_PREFIX = 'yadisk://';
 const CATEGORY_DIR: Record<string, string> = {
-  contract_file: '\u0414\u043e\u0433\u043e\u0432\u043e\u0440',
-  photo_before: '\u0414\u043e',
-  photo_after: '\u041f\u043e\u0441\u043b\u0435',
-  act_file: '\u0410\u043a\u0442',
+  contract_file: 'Media_1',
+  photo_before: 'Media_2',
+  photo_after: 'Media_3',
+  act_file: 'Media_4',
+  media_file_5: 'Media_5',
 };
 
 function toErrorMessage(error: unknown) {
@@ -135,7 +136,7 @@ function mapYandexApiError(status: number, payload: string) {
   if (status === 401 || status === 403 || text.includes('unauthorized') || text.includes('invalid_grant')) {
     return 'Yandex authorization expired. Reconnect disk';
   }
-  if (status === 423 || text.includes('resource is locked') || text.includes('ресурс заблокирован')) {
+  if (status === 423 || text.includes('resource is locked') || text.includes('������ ������������')) {
     return 'Yandex resource is temporarily locked';
   }
   if (
@@ -416,6 +417,8 @@ async function deleteYandexResourceSafe(accessToken: string, path: string) {
   const normalized = String(path || '').trim();
   if (!normalized) return;
   const maxAttempts = 8;
+  let lastStatus = 0;
+  let lastPayload = '';
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const res = await fetch(
       `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(normalized)}&permanently=true`,
@@ -425,11 +428,19 @@ async function deleteYandexResourceSafe(accessToken: string, path: string) {
       return;
     }
     if (res.status === 202 || res.status === 409 || res.status === 423) {
+      lastStatus = res.status;
+      try {
+        lastPayload = await res.text();
+      } catch (_e) {
+        lastPayload = '';
+      }
       if (attempt < maxAttempts) {
         await sleep(120 * attempt);
         continue;
       }
-      return;
+      // Never silently continue with DB cleanup when Yandex deletion is not confirmed.
+      // This keeps remote and DB states consistent.
+      throw new Error(`Delete not confirmed (status ${lastStatus}): ${lastPayload || 'pending/locked'}`);
     }
     const text = await res.text();
     throw new Error(`Delete failed: ${text}`);
@@ -448,7 +459,7 @@ async function appendOrderMediaUrlAtomic(
   category: string,
   url: string,
 ) {
-  const { data, error } = await admin.rpc('append_order_media_url', {
+  const { data, error } = await admin.rpc('append_order_media_url_v2', {
     p_order_id: orderId,
     p_company_id: companyId,
     p_category: category,
@@ -473,7 +484,7 @@ async function removeOrderMediaUrlAtomic(
   category: string,
   url: string,
 ) {
-  const { data, error } = await admin.rpc('remove_order_media_url', {
+  const { data, error } = await admin.rpc('remove_order_media_url_v2', {
     p_order_id: orderId,
     p_company_id: companyId,
     p_category: category,
@@ -631,22 +642,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
 
       const mime = String(body.mime || 'image/jpeg');
       const ext = getFileExtensionByMime(mime);
-      let folder = '';
-      const { data: previousInCategory } = await admin
-        .from('order_media_external_map')
-        .select('external_path')
-        .eq('company_id', ctx.companyId)
-        .eq('order_id', ctx.order.id)
-        .eq('category', category)
-        .eq('provider', 'yandex_disk')
-        .limit(1)
-        .maybeSingle();
-      if (previousInCategory?.external_path) {
-        folder = parentPath(String(previousInCategory.external_path || ''));
-      }
-      if (!folder) {
-        folder = buildOrderMediaFolder(rootFolder, ctx.companyName, ctx.order, category);
-      }
+      const folder = buildOrderMediaFolder(rootFolder, ctx.companyName, ctx.order, category);
       // Folder can be deleted directly in Yandex Disk; always ensure it exists before requesting upload URL.
       await ensureFolderTree(accessToken, folder);
 
@@ -772,23 +768,8 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       const mime = String(body.mime || 'image/jpeg');
       const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
       const ext = getFileExtensionByMime(mime);
-      let folder = '';
-      const { data: previousInCategory } = await admin
-        .from('order_media_external_map')
-        .select('external_path')
-        .eq('company_id', ctx.companyId)
-        .eq('order_id', ctx.order.id)
-        .eq('category', category)
-        .eq('provider', 'yandex_disk')
-        .limit(1)
-        .maybeSingle();
-      if (previousInCategory?.external_path) {
-        folder = parentPath(String(previousInCategory.external_path || ''));
-      }
-      if (!folder) {
-        folder = buildOrderMediaFolder(rootFolder, ctx.companyName, ctx.order, category);
-        await ensureFolderTree(accessToken, folder);
-      }
+      const folder = buildOrderMediaFolder(rootFolder, ctx.companyName, ctx.order, category);
+      await ensureFolderTree(accessToken, folder);
 
       const filePath = `${folder}/${Date.now()}-${toBase64UrlSafeName()}.${ext}`;
       try {
@@ -1337,3 +1318,4 @@ export async function handleYandexDiskMediaRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleYandexDiskMediaRequest);
 }
+

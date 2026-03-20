@@ -5,6 +5,7 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { AppState } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
 
+const DEFAULT_REFOCUS_ENABLED = false;
 const QUERY_CACHE_MAX_ENTRIES = 350;
 const INACTIVE_QUERY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const CACHE_MAINTENANCE_INTERVAL_MS = 3 * 60 * 1000;
@@ -67,9 +68,9 @@ export const queryClient = new QueryClient({
       gcTime: DEFAULT_QUERY_GC_MS,
       retry: shouldRetryQuery,
       retryDelay,
-      refetchOnMount: 'stale',
-      refetchOnWindowFocus: true,
-      refetchOnReconnect: true,
+      refetchOnMount: false,
+      refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
+      refetchOnReconnect: false,
       networkMode: 'online',
     },
     mutations: {
@@ -104,72 +105,72 @@ queryClient.setQueryDefaults(['employees', 'departments'], {
 queryClient.setQueryDefaults(['clients'], {
   staleTime: 45 * 1000,
   gcTime: 45 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['objects'], {
   staleTime: 45 * 1000,
   gcTime: 45 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['finance'], {
   staleTime: 30 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['appSettings'], {
   staleTime: 2 * 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyEntitlements'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyStorageUsage'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyAccessState'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyPaidSeatsTotal'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['billingMemberStats'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminCompanies'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminCompany'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminCompanySubscriptionMeta'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminUsers'], {
   staleTime: 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['tags'], {
   staleTime: 30 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['field-settings'], {
   staleTime: 5 * 60 * 1000,
@@ -179,7 +180,7 @@ queryClient.setQueryDefaults(['field-settings'], {
 queryClient.setQueryDefaults(COMPANY_SETTINGS_QUERY_KEY, {
   staleTime: 5 * 60 * 1000,
   gcTime: 30 * 60 * 1000,
-  refetchOnWindowFocus: true,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 
 queryClient.setQueryDefaults(['session'], { retry: 0, gcTime: 0, cacheTime: 0 });

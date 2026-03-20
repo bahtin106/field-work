@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
   Easing,
@@ -32,7 +32,6 @@ import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 import { withAlpha } from '../../theme/colors';
 import { useTranslation } from '../../src/i18n/useTranslation';
-import { useI18nVersion } from '../../src/i18n';
 import { ROLE } from '../../constants/roles';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
@@ -89,72 +88,15 @@ function diffPreciseDays(targetDate, now = new Date()) {
   return Math.max(0, Math.ceil((targetDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
 }
 
-function normalizeTimeZone(value) {
-  const zone = String(value || '').trim();
-  if (!zone) return 'UTC';
-  try {
-    new Intl.DateTimeFormat(undefined, { timeZone: zone }).format(new Date());
-    return zone;
-  } catch {
-    return 'UTC';
-  }
-}
-
-function getTimeZoneOffsetMinutes(date, timeZone) {
-  try {
-    const d = date instanceof Date ? date : new Date(date);
-    if (Number.isNaN(d.getTime())) return 0;
-    const dtf = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hour12: false,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    const parts = Object.fromEntries(dtf.formatToParts(d).map((part) => [part.type, part.value]));
-    const zonedUtcMs = Date.UTC(
-      Number(parts.year),
-      Number(parts.month) - 1,
-      Number(parts.day),
-      Number(parts.hour),
-      Number(parts.minute),
-      0,
-      0,
-    );
-    return Math.round((zonedUtcMs - d.getTime()) / 60000);
-  } catch {
-    return 0;
-  }
-}
-
-function formatUtcOffset(totalMinutes) {
-  const mins = Number.isFinite(totalMinutes) ? Math.trunc(totalMinutes) : 0;
-  const sign = mins >= 0 ? '+' : '-';
-  const abs = Math.abs(mins);
-  const hh = String(Math.floor(abs / 60)).padStart(2, '0');
-  const mm = String(abs % 60).padStart(2, '0');
-  return `UTC${sign}${hh}:${mm}`;
-}
-
-function formatPeriodEndLabel(date, timeZone) {
+function formatPeriodEndLabel(date) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-  const safeZone = normalizeTimeZone(timeZone);
   const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
-  const datePart = new Intl.DateTimeFormat(locale, {
-    timeZone: safeZone,
+  return new Intl.DateTimeFormat(locale, {
+    timeZone: 'Europe/Moscow',
     day: '2-digit',
     month: 'long',
     year: 'numeric',
   }).format(date);
-  const timePart = new Intl.DateTimeFormat(locale, {
-    timeZone: safeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
-  return `${datePart} ${String(locale || '').toLowerCase().startsWith('en') ? 'at' : 'в'} ${timePart} (${formatUtcOffset(getTimeZoneOffsetMinutes(date, safeZone))})`;
 }
 
 function formatRuUnit(value, forms) {
@@ -173,20 +115,8 @@ function formatRemainingLabel(targetDate, now = new Date(), locale) {
     return String(locale || '').toLowerCase().startsWith('en') ? 'Expired' : 'Истекла';
   }
 
-  const totalMinutes = Math.ceil(diffMs / (60 * 1000));
-  const totalHours = Math.ceil(diffMs / (60 * 60 * 1000));
   const totalDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
   const isEn = String(locale || '').toLowerCase().startsWith('en');
-
-  if (totalMinutes < 60) {
-    if (isEn) return `${totalMinutes} min left`;
-    return `Осталось ${totalMinutes} ${formatRuUnit(totalMinutes, ['минута', 'минуты', 'минут'])}`;
-  }
-
-  if (totalHours < 24) {
-    if (isEn) return `${totalHours} h left`;
-    return `Осталось ${totalHours} ${formatRuUnit(totalHours, ['час', 'часа', 'часов'])}`;
-  }
 
   if (isEn) return `${totalDays} days left`;
   return `Осталось ${totalDays} ${formatRuUnit(totalDays, ['день', 'дня', 'дней'])}`;
@@ -203,13 +133,11 @@ function _formatStorage(valueBytes) {
 }
 
 export default function BillingScreen() {
-  const nav = useNavigation();
   const router = useRouter();
   const queryClient = useQueryClient();
   const { theme } = useTheme();
   const toast = useToast();
   const { t } = useTranslation();
-  const ver = useI18nVersion();
   const { profile } = useAuthContext();
 
   const profileCompanyId = profile?.company_id || null;
@@ -237,7 +165,7 @@ export default function BillingScreen() {
   const authUserId = profileFallback?.id || null;
   const normalizedCurrentUserId = String(currentUserId || authUserId || '').trim();
   const { data: entitlements, isLoading, error, refresh } = useCompanyEntitlements(companyId);
-  const { settings: companySettings, useDepartments } = useCompanySettings(companyId || null);
+  const { useDepartments } = useCompanySettings(companyId || null);
   const {
     data: storageUsage,
     isLoading: storageLoading,
@@ -317,7 +245,6 @@ export default function BillingScreen() {
   const [selectUserForReassign, setSelectUserForReassign] = React.useState(null);
   const [bulkSuccessorModalVisible, setBulkSuccessorModalVisible] = React.useState(false);
   const [licensesExpanded, setLicensesExpanded] = React.useState(false);
-  const [storageExpanded, setStorageExpanded] = React.useState(false);
   const [restoreManageAfterFilters, setRestoreManageAfterFilters] = React.useState(false);
   const manageInitDoneRef = React.useRef(false);
   const [manageModalToast, setManageModalToast] = React.useState(null);
@@ -388,12 +315,6 @@ export default function BillingScreen() {
     setManageError('');
     manageInitDoneRef.current = true;
   }, [isMemberLicenseActive, manageVisible, mergedMembers]);
-
-  React.useLayoutEffect(() => {
-    try {
-      nav.setParams({ headerTitle: t('routes.billing/index') || t('routes.billing') || 'billing' });
-    } catch {}
-  }, [nav, ver, t]);
 
   React.useEffect(() => {
     const defaultOffset = theme.components?.toast?.anchorOffset ?? 120;
@@ -821,14 +742,10 @@ export default function BillingScreen() {
     () => (entitlements?.current_period_end ? new Date(entitlements.current_period_end) : null),
     [entitlements?.current_period_end],
   );
-  const companyTimeZone = React.useMemo(
-    () => normalizeTimeZone(companySettings?.timezone),
-    [companySettings?.timezone],
-  );
   const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
   const periodEndLabel = React.useMemo(
-    () => formatPeriodEndLabel(periodEndDate, companyTimeZone),
-    [companyTimeZone, periodEndDate],
+    () => formatPeriodEndLabel(periodEndDate),
+    [periodEndDate],
   );
   const remainingLabel = React.useMemo(
     () => formatRemainingLabel(periodEndDate, new Date(), locale),
@@ -876,7 +793,10 @@ export default function BillingScreen() {
   return (
     <Screen
       background="background"
-      headerOptions={{ headerShown: !manageFilters.visible }}
+      headerOptions={{
+        headerShown: !manageFilters.visible,
+        title: t('routes.billing/index') || t('routes.billing') || 'Подписка и лицензии',
+      }}
     >
       <View style={{ flex: 1 }}>
         {refreshIndicator}
@@ -922,11 +842,6 @@ export default function BillingScreen() {
               />
               <View style={base.sep} />
               <LabelValueRow
-                label={t('settings_company_timezone')}
-                value={companyTimeZone}
-              />
-              <View style={base.sep} />
-              <LabelValueRow
                 label={t('billing_remaining_label', 'Осталось')}
                 valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: daysLeftColor }]}>{remainingLabel || `${daysLeft} ${t('billing_days_left_unit')}`}</Text>}
               />
@@ -966,29 +881,16 @@ export default function BillingScreen() {
                 </Card>
                 <SectionHeader>{t('billing_storage_title')}</SectionHeader>
                 <Card paddedXOnly>
-                  <Pressable
-                    onPress={() => setStorageExpanded((v) => !v)}
-                    style={({ pressed }) => [base.row, pressed ? styles(theme).pressed : null]}
-                  >
+                  <View style={base.row}>
                     <Text style={base.label}>{t('billing_storage_used_space_label')}</Text>
                     <View style={[base.rightWrap, styles(theme).issuedWrap]}>
                       <Text style={[base.value, styles(theme).lineValueStrong, { color: storageTone }]}>
-                          {hasStorageUsage
-                            ? `${storageUsedPercent.toFixed(2)}%`
-                            : ''}
+                        {hasStorageUsage ? `${storageUsedPercent.toFixed(2)}%` : ''}
                       </Text>
-                      <Feather
-                        name={storageExpanded ? 'chevron-up' : 'chevron-down'}
-                        size={18}
-                        color={theme.colors.textSecondary}
-                      />
                     </View>
-                  </Pressable>
+                  </View>
                   <View style={base.sep} />
-                  <Pressable
-                    onPress={() => setStorageExpanded((v) => !v)}
-                    style={({ pressed }) => [styles(theme).storageBarWrap, pressed ? styles(theme).pressed : null]}
-                  >
+                  <View style={styles(theme).storageBarWrap}>
                     <View style={styles(theme).storageBarTrack}>
                       <View
                         style={[
@@ -1007,29 +909,17 @@ export default function BillingScreen() {
                     <Text style={[styles(theme).muted, styles(theme).storageUsageCaption]}>
                       {(storageLoading && !hasStorageUsage) || (storageFetching && !hasStorageUsage)
                         ? t('billing_storage_loading')
-                        : hasStorageUsage
-                          ? `${t('billing_storage_used')}: ${storageUsedPercent.toFixed(2)}%`
+                            : hasStorageUsage
+                            ? `${t('billing_storage_remaining')}: ${Math.max(0, storageLimitBytes > 0 ? ((storageLeftBytes / storageLimitBytes) * 100) : 0).toFixed(2)}%`
                           : t('billing_storage_no_data')}
                     </Text>
-                  </Pressable>
+                  </View>
                   {storageError ? (
                     <>
                       <View style={base.sep} />
                       <Text style={styles(theme).error}>
                         {String(storageError?.message || t('billing_unknown_error'))}
                       </Text>
-                    </>
-                  ) : null}
-                  {storageExpanded ? (
-                    <>
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_total_used')} value={`${storageUsedPercent.toFixed(2)}%`} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_remaining')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: storageTone }]}>{`${Math.max(0, storageLimitBytes > 0 ? ((storageLeftBytes / storageLimitBytes) * 100) : 0).toFixed(2)}%`}</Text>} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_data')} value={`${(storageLimitBytes > 0 ? (dataStorageBytes / storageLimitBytes) * 100 : 0).toFixed(2)}%`} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_storage_media')} value={`${(storageLimitBytes > 0 ? (combinedMediaBytes / storageLimitBytes) * 100 : 0).toFixed(2)}%`} />
                     </>
                   ) : null}
                 </Card>
@@ -1378,4 +1268,3 @@ const styles = (theme) => StyleSheet.create({
   storageScaleText: { color: theme.colors.textSecondary, fontSize: theme.typography.sizes.xs, fontWeight: theme.typography.weight.semibold },
   storageUsageCaption: { marginTop: theme.spacing.xs },
 });
-

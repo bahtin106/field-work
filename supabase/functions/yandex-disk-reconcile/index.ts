@@ -20,7 +20,7 @@ const json = (status: number, body: Record<string, Json>) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
-const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file']);
+const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5']);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function toErrorMessage(error: unknown) {
@@ -142,6 +142,7 @@ function isMappingReferenced(row: {
     photo_before: string[] | null;
     photo_after: string[] | null;
     act_file: string[] | null;
+    media_file_5: string[] | null;
   };
 }) {
   const target = String(row.source_url || '').trim();
@@ -156,6 +157,8 @@ function isMappingReferenced(row: {
           ? order.photo_after
           : row.category === 'act_file'
             ? order.act_file
+            : row.category === 'media_file_5'
+              ? order.media_file_5
             : null;
   if (!Array.isArray(list) || !list.length) return false;
   return list.some((x) => String(x || '').trim() === target);
@@ -214,7 +217,7 @@ export async function handleYandexDiskReconcileRequest(req: Request) {
     let query = admin
       .from('order_media_external_map')
       .select(
-        'id, company_id, order_id, category, source_url, external_path, order:orders!inner(contract_file,photo_before,photo_after,act_file)',
+        'id, company_id, order_id, category, source_url, external_path, order:orders!inner(contract_file,photo_before,photo_after,act_file,media_file_5)',
       )
       .eq('provider', 'yandex_disk')
       .in('category', Array.from(ALLOWED_CATEGORIES))
@@ -318,4 +321,3 @@ export async function handleYandexDiskReconcileRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleYandexDiskReconcileRequest);
 }
-

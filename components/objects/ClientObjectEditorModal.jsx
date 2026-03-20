@@ -1,5 +1,7 @@
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
+import AdditionalPhoneInputRow from '../clients/AdditionalPhoneInputRow';
 import SectionHeader from '../ui/SectionHeader';
 import TextField from '../ui/TextField';
 import { BaseModal } from '../ui/modals';
@@ -18,6 +20,14 @@ import {
   CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
 } from '../../src/features/objects/addressing';
+import {
+  getAddableAdditionalObjectPhoneSlotIds,
+  getObjectAdditionalPhones,
+  getVisibleAdditionalObjectPhoneSlotIds,
+  OBJECT_ADDITIONAL_PHONE_SLOT_COUNT,
+  resolveVisibleAdditionalObjectPhoneSlotIds,
+} from '../../src/features/objects/additionalPhones';
+import { hasMobilePhoneValue, isValidOptionalMobilePhone } from '../../src/shared/validation/phone';
 
 const FIELD_LABEL_KEYS = {
   name: 'objects_field_name',
@@ -75,6 +85,7 @@ export default function ClientObjectEditorModal({
   searchSuggestionsVisible = false,
   searchSuggestionsEmpty = false,
   onSelectSuggestion = null,
+  enableAdditionalPhones = false,
 }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
@@ -116,6 +127,49 @@ export default function ClientObjectEditorModal({
       }).map((field) => field.fieldKey),
     [settings],
   );
+  const enabledAdditionalPhoneSlots = React.useMemo(
+    () => [1, 2, 3].filter((slotId) => fieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    [fieldsByKey],
+  );
+  const requiredAdditionalPhoneSlots = React.useMemo(
+    () => [1, 2, 3].filter((slotId) => fieldsByKey.get(`additional_phone_${slotId}`)?.isRequired === true),
+    [fieldsByKey],
+  );
+  const addableAdditionalPhoneSlots = React.useMemo(
+    () => getAddableAdditionalObjectPhoneSlotIds(enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots),
+    [enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots],
+  );
+  const additionalPhones = React.useMemo(() => getObjectAdditionalPhones(draft), [draft]);
+  const [explicitVisibleAdditionalPhoneSlots, setExplicitVisibleAdditionalPhoneSlots] = React.useState([]);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    setExplicitVisibleAdditionalPhoneSlots((prev) =>
+      resolveVisibleAdditionalObjectPhoneSlotIds({
+        enabledSlotIds: enabledAdditionalPhoneSlots,
+        requiredSlotIds: requiredAdditionalPhoneSlots,
+        explicitVisibleSlotIds: prev,
+        valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(additionalPhones),
+      }),
+    );
+  }, [additionalPhones, enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots, visible]);
+  const visibleAdditionalPhoneSlots = React.useMemo(
+    () =>
+      resolveVisibleAdditionalObjectPhoneSlotIds({
+        enabledSlotIds: enabledAdditionalPhoneSlots,
+        requiredSlotIds: requiredAdditionalPhoneSlots,
+        explicitVisibleSlotIds: explicitVisibleAdditionalPhoneSlots,
+        valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(additionalPhones),
+      }),
+    [additionalPhones, enabledAdditionalPhoneSlots, explicitVisibleAdditionalPhoneSlots, requiredAdditionalPhoneSlots],
+  );
+  const hiddenEnabledAdditionalPhoneSlots = React.useMemo(
+    () => addableAdditionalPhoneSlots.filter((slotId) => !visibleAdditionalPhoneSlots.includes(slotId)),
+    [addableAdditionalPhoneSlots, visibleAdditionalPhoneSlots],
+  );
+  const canAddAdditionalPhone =
+    hiddenEnabledAdditionalPhoneSlots.length > 0 &&
+    visibleAdditionalPhoneSlots.length < OBJECT_ADDITIONAL_PHONE_SLOT_COUNT;
 
   const withRequiredLabel = React.useCallback(
     (fieldKey, label) => getRequiredFieldLabel(label, fieldsByKey.get(fieldKey)?.isRequired === true),
@@ -221,6 +275,67 @@ export default function ClientObjectEditorModal({
               : null}
           </>
         ) : null}
+        {enableAdditionalPhones ? (
+          <>
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('clients_contacts_section')}
+            </SectionHeader>
+            {visibleAdditionalPhoneSlots.map((slotId) => {
+              const slotIndex = slotId - 1;
+              const entry = additionalPhones[slotIndex] || { phone: '', label: '' };
+              return (
+                <AdditionalPhoneInputRow
+                  key={`object-additional-phone-${slotId}`}
+                  phoneValue={entry.phone || ''}
+                  onPhoneChange={(value) => onChange?.(`additional_phone_${slotId}`, value)}
+                  designationValue={entry.label || ''}
+                  onDesignationChange={(value) => onChange?.(`additional_phone_${slotId}_label`, value)}
+                  phoneRequired={requiredAdditionalPhoneSlots.includes(slotId)}
+                  phoneError={
+                    fieldErrors?.[`additional_phone_${slotId}`] ||
+                    (requiredAdditionalPhoneSlots.includes(slotId) && !hasMobilePhoneValue(entry.phone || '')
+                      ? t('clients_required_phone')
+                      : hasMobilePhoneValue(entry.phone || '') && !isValidOptionalMobilePhone(entry.phone || '')
+                        ? t('err_phone')
+                        : null)
+                  }
+                  onRemove={requiredAdditionalPhoneSlots.includes(slotId)
+                    ? undefined
+                    : () => {
+                        onChange?.(`additional_phone_${slotId}`, '');
+                        onChange?.(`additional_phone_${slotId}_label`, '');
+                        setExplicitVisibleAdditionalPhoneSlots((prev) =>
+                          prev.filter((value) => value !== slotId),
+                        );
+                      }}
+                  style={styles.additionalPhoneGroup}
+                />
+              );
+            })}
+            {canAddAdditionalPhone ? (
+              <View style={styles.additionalPhoneAddRow}>
+                <Text style={styles.additionalPhoneAddText}>{t('clients_additional_phone_add')}</Text>
+                <Pressable
+                  onPress={() => {
+                    const nextSlotId = hiddenEnabledAdditionalPhoneSlots[0] || null;
+                    if (!nextSlotId) return;
+                    setExplicitVisibleAdditionalPhoneSlots((prev) => [...prev, nextSlotId].sort((a, b) => a - b));
+                  }}
+                  style={styles.additionalPhoneAddButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('clients_additional_phone_a11y_add')}
+                >
+                  <Feather
+                    name="plus"
+                    size={theme.components?.icon?.sizeXs ?? Math.round((theme.icons?.sm ?? 18) * 0.75)}
+                    color={theme.colors.textSecondary}
+                  />
+                </Pressable>
+              </View>
+            ) : null}
+          </>
+        ) : null}
         {orderedAdditionalFields.length ? (
           <>
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
@@ -302,6 +417,28 @@ function createStyles(theme) {
     suggestionMeta: {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.xs ?? theme.typography.sizes.sm,
+    },
+    additionalPhoneGroup: {
+      marginBottom: theme.spacing.xs,
+    },
+    additionalPhoneAddRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: Number(theme.spacing?.lg ?? 16),
+      paddingVertical: theme.spacing.xs,
+      marginBottom: theme.spacing.xs,
+    },
+    additionalPhoneAddText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
+    },
+    additionalPhoneAddButton: {
+      minWidth: 24,
+      minHeight: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
   });
 }

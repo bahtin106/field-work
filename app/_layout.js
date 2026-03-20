@@ -152,11 +152,11 @@ function RootLayoutInner() {
 
   useEffect(() => {
     try {
-      patchRouter(router);
+      patchRouter(router, { pendingMs: 0 });
     } catch {}
 
     try {
-      patchRouter(globalRouter);
+      patchRouter(globalRouter, { pendingMs: 0 });
     } catch {}
   }, [router]);
 
@@ -627,10 +627,11 @@ function RootLayoutInner() {
               initialRouteName={isAuthenticated ? 'orders' : '(auth)'}
               screenOptions={{
                 headerShown: false,
-                animation: 'simple_push',
+                animation: 'none',
                 animationTypeForReplace: 'push',
                 gestureEnabled: true,
                 fullScreenGestureEnabled: true,
+                freezeOnBlur: true,
                 contentStyle: { backgroundColor: theme.colors.background },
               }}
             >
@@ -656,7 +657,7 @@ function RootLayoutInner() {
               <Stack.Screen name="clients/new" options={{ title: 'New Client' }} />
               <Stack.Screen name="clients/[id]/index" options={{ title: 'Client' }} />
               <Stack.Screen name="clients/[id]/edit" options={{ title: 'Edit Client' }} />
-              <Stack.Screen name="billing/index" options={{ title: 'Subscription & Licenses' }} />
+              <Stack.Screen name="billing/index" options={{ title: 'Подписка и лицензии' }} />
               <Stack.Screen name="admin/index" />
               <Stack.Screen name="admin/users/index" />
               <Stack.Screen name="admin/users/[id]/index" />

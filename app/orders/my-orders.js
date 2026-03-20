@@ -29,6 +29,7 @@ import {
   useManagedRefresh,
   usePullToRefreshFeedback,
 } from '../../components/ui/PullToRefreshFeedback';
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import {
@@ -39,6 +40,12 @@ import {
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes } from '../../lib/workTypes';
 import { useClients } from '../../src/features/clients/queries';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+} from '../../src/features/fieldSettings/catalog';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { ensureRequestPrefetch } from '../../src/features/requests/queries';
 import {
   applyOrderRelationFilters,
@@ -52,8 +59,20 @@ import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 
-export default function MyOrdersScreen() {
+const LIST_CACHE_MAX_ENTRIES = 24;
+
+function pruneObjectCache(cacheObj, maxEntries = LIST_CACHE_MAX_ENTRIES) {
+  const keys = Object.keys(cacheObj || {});
+  if (keys.length <= maxEntries) return;
+  const overflow = keys.length - maxEntries;
+  keys.slice(0, overflow).forEach((key) => {
+    delete cacheObj[key];
+  });
+}
+
+function MyOrdersContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -180,12 +199,30 @@ export default function MyOrdersScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
+  useEffect(() => {
+    try {
+      router?.prefetch?.('/orders/[id]');
+    } catch {}
+  }, [router]);
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);
 
 
   const { companyId } = useMyCompanyId();
+  const { settings: companySettings } = useCompanySettings(companyId);
+  const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
+    enabled: !!companyId,
+  });
+  const orderFieldSettings = useMemo(
+    () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
+    [orderFieldSettingsData],
+  );
+  const orderFieldsByKey = useMemo(
+    () => getEntityFieldMap(orderFieldSettings),
+    [orderFieldSettings],
+  );
+  const departureTimeEnabled = orderFieldsByKey.get('departure_time')?.isEnabled !== false;
   const { data: companyClients = [] } = useClients(
     { companyId, search: '' },
     { enabled: !!companyId },
@@ -348,6 +385,14 @@ export default function MyOrdersScreen() {
   const LIST_CACHE = (globalThis.LIST_CACHE ||= {});
   LIST_CACHE.my ||= {};
   const listCacheMy = LIST_CACHE.my;
+  const setListCacheEntry = useCallback(
+    (cacheKey, value) => {
+      if (!cacheKey) return;
+      listCacheMy[cacheKey] = value;
+      pruneObjectCache(listCacheMy, LIST_CACHE_MAX_ENTRIES);
+    },
+    [listCacheMy],
+  );
   const seenFilterRef = useRef(new Set());
   const makeCacheKey = useCallback(
     (key, fp, relationFp = '') =>
@@ -488,13 +533,13 @@ export default function MyOrdersScreen() {
         .range(0, PAGE_SIZE - 1);
 
       if (!error && Array.isArray(data)) {
-        listCacheMy.feed = data;
+        setListCacheEntry('feed', data);
         updateFeedMeta(data);
       }
     };
 
     prefetchFeed();
-  }, [isFocused, updateFeedMeta, listCacheMy]);
+  }, [isFocused, setListCacheEntry, updateFeedMeta, listCacheMy]);
 
   // Mark feed as seen after opening the feed tab
   useEffect(() => {
@@ -665,7 +710,7 @@ export default function MyOrdersScreen() {
           if (!alive) return;
           const emptyResult = [];
           setOrders(emptyResult);
-          listCacheMy[cacheKey] = emptyResult;
+          setListCacheEntry(cacheKey, emptyResult);
           queryClient.setQueryData(['orders', 'my', 'recent'], emptyResult);
           setHasMore(false);
           setLoading(false);
@@ -692,7 +737,7 @@ export default function MyOrdersScreen() {
       if (!error && Array.isArray(normalized)) {
         if (pageNum === 1) {
           setOrders(normalized);
-          listCacheMy[cacheKey] = normalized;
+          setListCacheEntry(cacheKey, normalized);
           seenFilterRef.current.add(cacheKey);
           if (key === 'feed') updateFeedMeta(normalized);
         } else {
@@ -727,7 +772,7 @@ export default function MyOrdersScreen() {
     setPage(1);
     setHasMore(true);
     fetchUserAndOrders();
-  }, [filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, orders.length, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta, useWorkTypesFlag]);
+  }, [filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, orders.length, queryClient, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta, useWorkTypesFlag]);
 
   // Infinite scroll: fetch the next page only when needed
   const loadMore = useCallback(async () => {
@@ -736,67 +781,72 @@ export default function MyOrdersScreen() {
     // Loading next page silently
 
     setLoadingMore(true);
-    const nextPage = page + 1;
-    setPage(nextPage);
+    try {
+      const nextPage = page + 1;
+      setPage(nextPage);
 
-    const key = (typeof filter === 'string' ? filter : 'all') || 'all';
-    const { data: sessionData } = await supabase.auth.getSession();
-    const uid = sessionData?.session?.user?.id;
-    if (!uid) return;
-
-    let query = supabase.from('orders_secure_v2').select('*');
-    if (key === 'all' && hasLinkedRelationFilter) {
-      query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
-    } else if (key === 'feed') {
-      query = query.is('assigned_to', null);
-      const feedStatusAliases = getStatusDbAliases('feed');
-      if (feedStatusAliases.length === 1) {
-        query = query.eq('status', feedStatusAliases[0]);
-      } else if (feedStatusAliases.length > 1) {
-        query = query.in('status', feedStatusAliases);
+      const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData?.session?.user?.id;
+      if (!uid) {
+        setHasMore(false);
+        return;
       }
-    } else if (key === 'all') {
-      query = query.eq('assigned_to', uid);
-    } else {
-      query = query.eq('assigned_to', uid);
-      const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
-      const statusAliases = getStatusDbAliases(normalizedStatusKey);
-      if (statusAliases.length === 1) {
-        query = query.eq('status', statusAliases[0]);
-      } else if (statusAliases.length > 1) {
-        query = query.in('status', statusAliases);
+
+      let query = supabase.from('orders_secure_v2').select('*');
+      if (key === 'all' && hasLinkedRelationFilter) {
+        query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
+      } else if (key === 'feed') {
+        query = query.is('assigned_to', null);
+        const feedStatusAliases = getStatusDbAliases('feed');
+        if (feedStatusAliases.length === 1) {
+          query = query.eq('status', feedStatusAliases[0]);
+        } else if (feedStatusAliases.length > 1) {
+          query = query.in('status', feedStatusAliases);
+        }
+      } else if (key === 'all') {
+        query = query.eq('assigned_to', uid);
+      } else {
+        query = query.eq('assigned_to', uid);
+        const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
+        const statusAliases = getStatusDbAliases(normalizedStatusKey);
+        if (statusAliases.length === 1) {
+          query = query.eq('status', statusAliases[0]);
+        } else if (statusAliases.length > 1) {
+          query = query.in('status', statusAliases);
+        }
       }
+      query = applyOrderRelationFilters(query, {
+        clientId: relationClientId,
+        objectIds: relationObjectIds,
+      });
+      const selectedClientIds = Array.isArray(filters.values?.clientIds)
+        ? filters.values.clientIds.map(String).filter(Boolean)
+        : [];
+      if (selectedClientIds.length) {
+        query = query.in('client_id', selectedClientIds);
+      }
+
+      const from = (nextPage - 1) * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data, error } = await query
+        .order('time_window_start', { ascending: false })
+        .range(from, to);
+
+      if (!error && Array.isArray(data)) {
+        const normalized = data.map((o) => ({
+          ...o,
+          time_window_start: o.time_window_start ?? null,
+        }));
+        setOrders((prev) => [...prev, ...normalized]);
+        setHasMore(normalized.length === PAGE_SIZE);
+
+        // Loaded successfully
+      }
+    } finally {
+      setLoadingMore(false);
     }
-    query = applyOrderRelationFilters(query, {
-      clientId: relationClientId,
-      objectIds: relationObjectIds,
-    });
-    const selectedClientIds = Array.isArray(filters.values?.clientIds)
-      ? filters.values.clientIds.map(String).filter(Boolean)
-      : [];
-    if (selectedClientIds.length) {
-      query = query.in('client_id', selectedClientIds);
-    }
-
-    const from = (nextPage - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
-    const { data, error } = await query
-      .order('time_window_start', { ascending: false })
-      .range(from, to);
-
-    if (!error && Array.isArray(data)) {
-      const normalized = data.map((o) => ({
-        ...o,
-        time_window_start: o.time_window_start ?? null,
-      }));
-      setOrders((prev) => [...prev, ...normalized]);
-      setHasMore(normalized.length === PAGE_SIZE);
-
-      // Loaded successfully
-    }
-
-    setLoadingMore(false);
   }, [filter, filters.values?.clientIds, hasLinkedRelationFilter, hasMore, loading, loadingMore, page, relationClientId, relationObjectIds]);
 
   const filteredOrders = useMemo(() => {
@@ -917,16 +967,18 @@ export default function MyOrdersScreen() {
       const prev = detailNavLockRef.current;
       if (prev.id === orderId && now - prev.ts < 1200) return;
       detailNavLockRef.current = { id: orderId, ts: now };
-      const registry = getPrefetchRegistry();
-      registry
-        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
-        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
           returnTo: '/orders/my-orders',
           returnParams: JSON.stringify(returnParamsRef.current),
         },
+      });
+      InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        registry
+          .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+          .catch(() => {});
       });
     },
     [queryClient, router],
@@ -937,9 +989,11 @@ export default function MyOrdersScreen() {
         order={order}
         context="my_orders"
         onPress={openOrderDetails}
+        departureTimeEnabled={departureTimeEnabled}
+        companyCurrency={companySettings?.currency || null}
       />
     ),
-    [openOrderDetails],
+    [companySettings?.currency, departureTimeEnabled, openOrderDetails],
   );
 
   useFocusEffect(
@@ -1162,11 +1216,11 @@ export default function MyOrdersScreen() {
         time_window_start: o.time_window_start ?? null,
       }));
       setOrders(normalized);
-      listCacheMy[cacheKey] = normalized;
+      setListCacheEntry(cacheKey, normalized);
       if (key === 'feed') updateFeedMeta(normalized);
       setHasMore(normalized.length === PAGE_SIZE);
     }
-    }, [filter, filters.values?.clientIds, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, updateFeedMeta]);
+    }, [filter, filters.values?.clientIds, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta]);
 
   const refreshWithIndicator = useCallback(async () => {
     await refreshCurrentList();
@@ -1263,6 +1317,14 @@ export default function MyOrdersScreen() {
         }}
       />
     </Screen>
+  );
+}
+
+export default function MyOrdersScreen() {
+  return (
+    <DeferredScreen>
+      <MyOrdersContent />
+    </DeferredScreen>
   );
 }
 

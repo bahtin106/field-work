@@ -73,10 +73,10 @@ import {
   isValidOptionalMobilePhone,
   toE164MobilePhoneOrNull,
 } from '../../../src/shared/validation/phone';
-import { getEmailFieldError, normalizeOptionalEmail } from '../../../src/shared/validation/fields';
 import { parseClientPrefillFromSearch } from '../../../src/features/clients/prefillFromSearch';
 import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matching';
 import { useTheme } from '../../../theme/ThemeProvider';
+import DeferredScreen from '../../../src/shared/perf/DeferredScreen';
 
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
@@ -84,7 +84,7 @@ const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
 
-export default function EditOrderScreen() {
+function EditOrderContent() {
   const navigation = useNavigation();
   const router = useRouter();
   const {
@@ -122,7 +122,7 @@ export default function EditOrderScreen() {
   const canViewOrderAmount = hasPermission('canViewOrderAmount');
   const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditOrderAmount');
   const formStyles = useEditFormStyles();
-  const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const { settings: companySettings } = useCompanySettings();
   const {
     success: toastSuccess,
     error: toastError,
@@ -169,8 +169,6 @@ export default function EditOrderScreen() {
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [addressModalDraft, setAddressModalDraft] = useState(() => extractOrderAddress({}));
   const [phone, setPhone] = useState('');
-  const [secondaryPhone, setSecondaryPhone] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
   const [entranceInfo, setEntranceInfo] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
   const [departureEndDate, setDepartureEndDate] = useState(null);
@@ -189,7 +187,6 @@ export default function EditOrderScreen() {
   const [previewObjectVisible, setPreviewObjectVisible] = useState(false);
   const [previewAnchor, setPreviewAnchor] = useState({ x: 0, y: 0 });
   const [objectModalVisible, setObjectModalVisible] = useState(false);
-  const [departmentId, setDepartmentId] = useState(null);
   const [parkingNotes, setParkingNotes] = useState('');
   const [geoLat, setGeoLat] = useState('');
   const [geoLng, setGeoLng] = useState('');
@@ -217,8 +214,6 @@ export default function EditOrderScreen() {
   const entranceRef = useRef(null);
   const apartmentRef = useRef(null);
   const customerNameRef = useRef(null);
-  const secondaryPhoneRef = useRef(null);
-  const contactEmailRef = useRef(null);
   const entranceInfoRef = useRef(null);
   const parkingNotesRef = useRef(null);
   const geoLatRef = useRef(null);
@@ -234,6 +229,7 @@ export default function EditOrderScreen() {
   const updateClientMutation = useUpdateClientMutation();
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
+  const [departureTimeTouched, setDepartureTimeTouched] = useState(false);
   const orderFieldSettings = useMemo(
     () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
     [orderFieldSettingsData],
@@ -258,7 +254,7 @@ export default function EditOrderScreen() {
       getOrderedEntityFields(orderFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['client_id', 'object_id', 'phone', 'secondary_phone', 'contact_email'],
+        fieldKeys: ['client_id', 'object_id', 'phone'],
       }).map((field) => field.fieldKey),
     [orderFieldSettings],
   );
@@ -267,7 +263,7 @@ export default function EditOrderScreen() {
       getOrderedEntityFields(orderFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['time_window_start'],
+        fieldKeys: ['time_window_start', 'departure_time'],
       }).map((field) => field.fieldKey),
     [orderFieldSettings],
   );
@@ -388,8 +384,6 @@ export default function EditOrderScreen() {
         setSelectedObjectId(null);
         setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
         setPhone(String(client.phone || ''));
-        setSecondaryPhone(String(client.secondaryPhone || ''));
-        setContactEmail(String(client.email || ''));
         setClientModalVisible(false);
       },
     }));
@@ -675,6 +669,15 @@ export default function EditOrderScreen() {
     const d = input instanceof Date ? input : new Date(input);
     return Number.isNaN(d?.getTime?.()) ? null : d;
   }, []);
+  const hasDepartureTimeValue = useCallback(
+    (input, touched = false) => {
+      const value = normalizeDateOrNull(input);
+      if (!value) return false;
+      if (touched) return true;
+      return value.getHours() !== 0 || value.getMinutes() !== 0;
+    },
+    [normalizeDateOrNull],
+  );
   const displayDepartureDate = useMemo(
     () => normalizeDateOrNull(departureDate),
     [departureDate, normalizeDateOrNull],
@@ -705,8 +708,6 @@ export default function EditOrderScreen() {
         selectedObjectId: draft.selectedObjectId || null,
         addressMode: normalizeOrderAddressMode(draft.addressMode),
         phone: String(draft.phone || '').replace(/\D/g, ''),
-        secondaryPhone: String(draft.secondaryPhone || '').replace(/\D/g, ''),
-        contactEmail: String(draft.contactEmail || '').trim(),
         entranceInfo: String(draft.entranceInfo || '').trim(),
         parkingNotes: String(draft.parkingNotes || '').trim(),
         geoLat: String(draft.geoLat || '').trim(),
@@ -717,7 +718,6 @@ export default function EditOrderScreen() {
         assigneeId: draft.assigneeId || null,
         toFeed: !!draft.toFeed,
         urgent: !!draft.urgent,
-        departmentId: draft.departmentId || null,
         price: String(draft.price ?? '').trim(),
         workTypeId: draft.workTypeId || null,
         status: draft.status || null,
@@ -761,8 +761,6 @@ export default function EditOrderScreen() {
         nextAddressMode = ORDER_ADDRESS_MODE.CUSTOM;
       }
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
-      const nextSecondaryPhone = String(row.secondary_phone || '').replace(/\D/g, '');
-      const nextContactEmail = row.contact_email ?? '';
       const nextEntranceInfo = row.entrance_info ?? '';
       const nextParkingNotes = row.parking_notes ?? '';
       const nextGeoLat = row.geo_lat ?? '';
@@ -773,7 +771,6 @@ export default function EditOrderScreen() {
       const nextAssigneeId = row.assigned_to || null;
       const nextToFeed = !row.assigned_to;
       const nextUrgent = !!row.urgent;
-      const nextDepartmentId = row.department_id || null;
       const nextWorkTypeId = normalizeId(row.work_type_id ?? workTypeIdFromParams);
       const nextWorkTypeResolved =
         typeof row.work_type_id !== 'undefined' || workTypeIdFromParams !== null;
@@ -807,13 +804,15 @@ export default function EditOrderScreen() {
       setSelectedObjectId(nextObjectId);
       setAddressMode(nextAddressMode);
       setPhone(raw);
-      setSecondaryPhone(nextSecondaryPhone);
-      setContactEmail(String(nextContactEmail || ''));
       setEntranceInfo(String(nextEntranceInfo || ''));
       setParkingNotes(String(nextParkingNotes || ''));
       setGeoLat(String(nextGeoLat || ''));
       setGeoLng(String(nextGeoLng || ''));
       setDepartureDate(nextDepartureDate);
+      setDepartureTimeTouched(
+        !!nextDepartureDate &&
+          (nextDepartureDate.getHours() !== 0 || nextDepartureDate.getMinutes() !== 0),
+      );
       setDepartureEndDate(nextDepartureEndDate);
       setIsDepartureRange(nextIsDepartureRange);
       setAssigneeId(nextAssigneeId);
@@ -823,7 +822,6 @@ export default function EditOrderScreen() {
 
       setToFeed(nextToFeed);
       setUrgent(nextUrgent);
-      setDepartmentId(nextDepartmentId);
       setWorkTypeId(nextWorkTypeId);
       setStatusLabel(nextStatus);
       try {
@@ -853,8 +851,6 @@ export default function EditOrderScreen() {
         selectedObjectId: nextObjectId,
         addressMode: nextAddressMode,
         phone: raw,
-        secondaryPhone: nextSecondaryPhone,
-        contactEmail: nextContactEmail,
         entranceInfo: nextEntranceInfo,
         parkingNotes: nextParkingNotes,
         geoLat: nextGeoLat,
@@ -865,7 +861,6 @@ export default function EditOrderScreen() {
         assigneeId: nextAssigneeId,
         toFeed: nextToFeed,
         urgent: nextUrgent,
-        departmentId: nextDepartmentId,
         price: nextPrice,
         workTypeId: nextWorkTypeId,
         status: nextStatus,
@@ -919,15 +914,12 @@ export default function EditOrderScreen() {
               selectedObjectId: nextObjectId,
               addressMode: nextAddressMode,
               phone: raw,
-              secondaryPhone: nextSecondaryPhone,
-              contactEmail: nextContactEmail,
               departureDate: nextDepartureDate,
               departureEndDate: nextDepartureEndDate || resolvedDepartureEndDate,
               isDepartureRange: nextIsDepartureRange || !!resolvedDepartureEndDate,
               assigneeId: nextAssigneeId,
               toFeed: nextToFeed,
               urgent: nextUrgent,
-              departmentId: nextDepartmentId,
               price: nextPrice,
               workTypeId: resolvedWorkTypeId,
               status: nextStatus,
@@ -994,8 +986,6 @@ export default function EditOrderScreen() {
       selectedObjectId,
       addressMode,
       phone,
-      secondaryPhone,
-      contactEmail,
       entranceInfo,
       parkingNotes,
       geoLat,
@@ -1006,7 +996,6 @@ export default function EditOrderScreen() {
       assigneeId,
       toFeed,
       urgent,
-      departmentId,
       price,
       workTypeId,
       status: statusLabel,
@@ -1032,8 +1021,6 @@ export default function EditOrderScreen() {
     selectedObjectId,
     addressMode,
     phone,
-    secondaryPhone,
-    contactEmail,
     entranceInfo,
     parkingNotes,
     geoLat,
@@ -1044,7 +1031,6 @@ export default function EditOrderScreen() {
     assigneeId,
     toFeed,
     urgent,
-    departmentId,
     price,
     workTypeId,
     statusLabel,
@@ -1377,8 +1363,6 @@ export default function EditOrderScreen() {
         entranceRef,
         apartmentRef,
         customerNameRef,
-        secondaryPhoneRef,
-        contactEmailRef,
         entranceInfoRef,
         parkingNotesRef,
         geoLatRef,
@@ -1406,6 +1390,11 @@ export default function EditOrderScreen() {
     if (isFieldRequired('time_window_start') && !normalizeDateOrNull(departureDate)) {
       nextErrors.time_window_start = { message: T('order_validation_date_required') };
     }
+    if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureDate, departureTimeTouched)) {
+      nextErrors.departure_time = {
+        message: T('order_validation_departure_time_required', 'Укажите время выезда'),
+      };
+    }
     if (isFieldRequired('assigned_to') && !toFeed && !assigneeId) {
       nextErrors.assigned_to = { message: T('order_validation_executor_required') };
     }
@@ -1429,19 +1418,6 @@ export default function EditOrderScreen() {
         message: phone ? T('order_validation_phone_format') : T('order_validation_phone_required'),
       };
     }
-    if (isFieldRequired('secondary_phone') && !toE164MobilePhoneOrNull(secondaryPhone)) {
-      nextErrors.secondary_phone = {
-        message: secondaryPhone ? T('order_validation_phone_format') : T('field_settings_required_fill', 'Заполните обязательные поля'),
-      };
-    }
-    const contactEmailError = getEmailFieldError(contactEmail, {
-      required: isFieldRequired('contact_email'),
-      requiredMessage: T('field_settings_required_fill', 'Заполните обязательные поля'),
-      t: T,
-    });
-    if (contactEmailError) {
-      nextErrors.contact_email = { message: contactEmailError };
-    }
     if (Object.keys(nextErrors).length) {
       setFieldErrors(nextErrors);
       return;
@@ -1454,15 +1430,6 @@ export default function EditOrderScreen() {
     }
     if (rawPhone && !toE164MobilePhoneOrNull(phone)) {
       setFieldErrors((prev) => ({ ...prev, phone: { message: T('order_validation_phone_format') } }));
-      return showToast(T('order_validation_phone_format'), 'error');
-    }
-    const rawSecondaryPhone = (secondaryPhone || '').replace(/\D/g, '');
-    if (rawSecondaryPhone && !isValidOptionalMobilePhone(String(secondaryPhone || ''))) {
-      setFieldErrors((prev) => ({ ...prev, secondary_phone: { message: T('order_validation_phone_format') } }));
-      return showToast(T('order_validation_phone_format'), 'error');
-    }
-    if (rawSecondaryPhone && !toE164MobilePhoneOrNull(secondaryPhone)) {
-      setFieldErrors((prev) => ({ ...prev, secondary_phone: { message: T('order_validation_phone_format') } }));
       return showToast(T('order_validation_phone_format'), 'error');
     }
     const parsedPrice = canEditOrderAmount ? parseDecimalOrNull(price) : null;
@@ -1490,6 +1457,14 @@ export default function EditOrderScreen() {
           time_window_start: { message: T('order_validation_date_required') },
         }));
         showToast(T('order_validation_date_required'), 'error');
+        return;
+      }
+      if (isFieldRequired('departure_time') && !hasDepartureTimeValue(normalizedDepartureDate, departureTimeTouched)) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          departure_time: { message: T('order_validation_departure_time_required', 'Укажите время выезда') },
+        }));
+        showToast(T('order_validation_departure_time_required', 'Укажите время выезда'), 'error');
         return;
       }
       const normalizedDepartureEndDate = normalizeDateOrNull(departureEndDate);
@@ -1550,12 +1525,7 @@ export default function EditOrderScreen() {
         showToast(T('order_validation_address_required'), 'error');
         return;
       }
-      const normalizedSecondaryPhone = toE164MobilePhoneOrNull(secondaryPhone);
-      const normalizedContactEmail = normalizeOptionalEmail(contactEmail);
-      if (
-        !selectedClientId &&
-        (normalizedPhone || normalizedSecondaryPhone || normalizedContactEmail)
-      ) {
+      if (!selectedClientId && normalizedPhone) {
         showToast(T('order_validation_client_required_for_contact_details'), 'error');
         return;
       }
@@ -1564,8 +1534,6 @@ export default function EditOrderScreen() {
           id: String(selectedClientId),
           patch: {
             phone: normalizedPhone,
-            email: normalizedContactEmail,
-            secondary_phone: normalizedSecondaryPhone,
           },
         });
       }
@@ -1590,7 +1558,6 @@ export default function EditOrderScreen() {
             ? normalizedDepartureEndDate.toISOString()
             : null,
         urgent,
-        department_id: departmentId || null,
         ...(canEditOrderAmount ? { price: parsedPrice } : {}),
         ...(useWorkTypes && workTypeResolved
           ? {
@@ -1624,15 +1591,12 @@ export default function EditOrderScreen() {
         selectedObjectId,
         addressMode,
         phone,
-        secondaryPhone,
-        contactEmail,
         departureDate,
         departureEndDate,
         isDepartureRange,
         assigneeId,
         toFeed,
         urgent,
-        departmentId,
         price,
         workTypeId,
         status: statusLabel,
@@ -1852,48 +1816,6 @@ export default function EditOrderScreen() {
               <FieldErrorText message={getFieldError('phone')} />
             </>
           );
-        case 'secondary_phone':
-          if (!selectedClientId || orderFieldsByKey.get('secondary_phone')?.isEnabled === false) return null;
-          return (
-            <>
-              <PhoneInput
-                ref={secondaryPhoneRef}
-                label={withRequiredLabel(T('order_field_secondary_phone'), isFieldRequired('secondary_phone'))}
-                value={secondaryPhone}
-                onChangeText={(value) => {
-                  setSecondaryPhone(value);
-                  clearFieldError('secondary_phone');
-                }}
-                onBlur={() => setTouched((prev) => ({ ...prev, secondary_phone: true }))}
-                style={styles.field}
-                required={isFieldRequired('secondary_phone')}
-                error={getFieldError('secondary_phone') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('secondary_phone')} />
-            </>
-          );
-        case 'contact_email':
-          if (!selectedClientId || orderFieldsByKey.get('contact_email')?.isEnabled === false) return null;
-          return (
-            <>
-              <TextField
-                ref={contactEmailRef}
-                label={withRequiredLabel(T('order_field_contact_email'), isFieldRequired('contact_email'))}
-                value={contactEmail}
-                onChangeText={(value) => {
-                  setContactEmail(value);
-                  clearFieldError('contact_email');
-                }}
-                onBlur={() => setTouched((prev) => ({ ...prev, contact_email: true }))}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                style={styles.field}
-                onFocus={() => focusField(contactEmailRef)}
-                error={getFieldError('contact_email') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('contact_email')} />
-            </>
-          );
         default:
           return null;
       }
@@ -1902,15 +1824,11 @@ export default function EditOrderScreen() {
       activeAddressDraft,
       addressMode,
       clearFieldError,
-      contactEmail,
-      focusField,
       getFieldError,
       hasPermission,
       isFieldRequired,
-      orderFieldsByKey,
       phone,
       redirectToNewObjectCreation,
-      secondaryPhone,
       selectedClientId,
       selectedClientName,
       selectedObjectId,
@@ -1929,29 +1847,58 @@ export default function EditOrderScreen() {
 
   const renderEditDepartureField = useCallback(
     (fieldKey) => {
-      if (fieldKey !== 'time_window_start') return null;
-      return (
-        <>
-          <TextField
-            label={withRequiredLabel(T('order_field_departure_date'), isFieldRequired('time_window_start'))}
-            value={
-              displayDepartureDate
-                ? (() => {
-                    const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
-                    if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
-                    const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
-                    return `${startLabel} вЂ” ${endLabel}`;
-                  })()
-                : T('order_placeholder_departure_date')
-            }
-            pressable
-            style={styles.field}
-            onPress={() => setShowDateModal(true)}
-            error={getFieldError('time_window_start') ? 'invalid' : undefined}
-          />
-          <FieldErrorText message={getFieldError('time_window_start')} />
-        </>
-      );
+      if (fieldKey === 'time_window_start') {
+        return (
+          <>
+            <TextField
+              label={withRequiredLabel(T('order_field_departure_date'), isFieldRequired('time_window_start'))}
+              value={
+                displayDepartureDate
+                  ? (() => {
+                      const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
+                      if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
+                      const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
+                      return `${startLabel} вЂ” ${endLabel}`;
+                    })()
+                  : T('order_placeholder_departure_date')
+              }
+              pressable
+              style={styles.field}
+              onPress={() => setShowDateModal(true)}
+              error={getFieldError('time_window_start') ? 'invalid' : undefined}
+            />
+            <FieldErrorText message={getFieldError('time_window_start')} />
+          </>
+        );
+      }
+
+      if (fieldKey === 'departure_time') {
+        return (
+          <>
+            <TextField
+              label={withRequiredLabel(T('order_field_departure_time'), isFieldRequired('departure_time'))}
+              value={
+                displayDepartureDate
+                  ? format(displayDepartureDate, 'HH:mm', { locale: ru })
+                  : T('order_placeholder_departure_time')
+              }
+              pressable
+              style={styles.field}
+              onPress={() => {
+                if (!displayDepartureDate) {
+                  setShowDateModal(true);
+                  return;
+                }
+                setShowTimeModal(true);
+              }}
+              error={getFieldError('departure_time') ? 'invalid' : undefined}
+            />
+            <FieldErrorText message={getFieldError('departure_time')} />
+          </>
+        );
+      }
+
+      return null;
     },
     [
       displayDepartureDate,
@@ -2079,7 +2026,7 @@ export default function EditOrderScreen() {
           <Card padded={false} style={styles.card}>
             {orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount ? (
             <TextField
-              label={T('order_details_amount')}
+              label={T('order_field_initial_amount', 'Изначальная сумма')}
               placeholder={T('order_placeholder_amount')}
               value={price}
               onChangeText={setPrice}
@@ -2102,33 +2049,12 @@ export default function EditOrderScreen() {
           <SectionHeader bottomSpacing="xs">
             {T('company_settings_sections_departure_helperText_departureOn')}
           </SectionHeader>
-          {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? (
+          {(orderFieldsByKey.get('time_window_start')?.isEnabled !== false ||
+            orderFieldsByKey.get('departure_time')?.isEnabled !== false) ? (
           <Card padded={false} style={styles.card}>
             {orderedDepartureFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditDepartureField(fieldKey)}</View>
             ))}
-
-            {useDepartureTime && !isDepartureRange && (
-              <>
-                <TextField
-                  label={T('order_field_departure_time')}
-                  value={
-                    displayDepartureDate
-                      ? format(displayDepartureDate, 'HH:mm', { locale: ru })
-                      : T('order_placeholder_departure_time')
-                  }
-                  pressable
-                  style={styles.field}
-                  onPress={() => {
-                    if (!displayDepartureDate) {
-                      setShowDateModal(true);
-                      return;
-                    }
-                    setShowTimeModal(true);
-                  }}
-                />
-              </>
-            )}
           </Card>
           ) : null}
 
@@ -2307,6 +2233,7 @@ export default function EditOrderScreen() {
             next.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
             return next;
           });
+          if (!date) setDepartureTimeTouched(false);
           setDepartureEndDate(null);
           setIsDepartureRange(false);
           setShowDateModal(false);
@@ -2324,6 +2251,7 @@ export default function EditOrderScreen() {
           const newDate = new Date(baseDate);
           newDate.setHours(time.getHours(), time.getMinutes(), 0, 0);
           setDepartureDate(newDate);
+          setDepartureTimeTouched(true);
           setShowTimeModal(false);
         }}
         onClose={() => setShowTimeModal(false)}
@@ -2348,6 +2276,14 @@ export default function EditOrderScreen() {
         onConfirm={confirmCancel}
       />
     </>
+  );
+}
+
+export default function EditOrderScreen() {
+  return (
+    <DeferredScreen>
+      <EditOrderContent />
+    </DeferredScreen>
   );
 }
 

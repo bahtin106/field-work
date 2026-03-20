@@ -45,6 +45,7 @@ import { getLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
 import { useTheme } from '../../theme/ThemeProvider';
+import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { withAlpha } from '../../theme/colors';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
@@ -61,12 +62,11 @@ import { parseClientPrefillFromSearch } from '../../src/features/clients/prefill
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import {
   hasMobilePhoneValue,
+  isValidOptionalMobilePhone,
   toE164MobilePhoneOrNull,
 } from '../../src/shared/validation/phone';
 import {
-  getEmailFieldError,
   getRequiredTextFieldError,
-  normalizeOptionalEmail,
 } from '../../src/shared/validation/fields';
 import { formatRuMask } from '../../components/ui/phone';
 import {
@@ -78,6 +78,12 @@ import {
   hasClientObjectAddressContent,
   sanitizeClientObjectPayload,
 } from '../../src/features/objects/addressing';
+import {
+  buildObjectAdditionalPhonesPatch,
+  getObjectAdditionalPhones,
+  getVisibleAdditionalObjectPhoneSlotIds,
+  resolveVisibleAdditionalObjectPhoneSlotIds,
+} from '../../src/features/objects/additionalPhones';
 import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
@@ -92,8 +98,6 @@ import {
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: true },
   { field_key: 'phone', label: null, type: 'phone', position: 30 },
-  { field_key: 'secondary_phone', label: null, type: 'phone', position: 112 },
-  { field_key: 'contact_email', label: null, type: 'text', position: 114 },
 ];
 
 const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
@@ -136,13 +140,13 @@ function sanitizeVisibleText(value, fallback = '') {
   return hasMojibake(text) ? String(fallback || '').trim() : text;
 }
 
-export default function CreateOrderScreen() {
+function CreateOrderContent() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { profile } = useAuthContext();
   const subscriptionGuard = useSubscriptionGuard(profile?.company_id || null);
-  const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const { settings: companySettings } = useCompanySettings();
   const formStyles = useEditFormStyles();
   const { banner, showBanner, clearBanner } = useFeedback();
 
@@ -158,6 +162,7 @@ export default function CreateOrderScreen() {
   const [form, setForm] = useState({});
   const [description, setDescription] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
+  const [departureTimeTouched, setDepartureTimeTouched] = useState(false);
   const [departureEndDate, setDepartureEndDate] = useState(null);
   const [isDepartureRange, setIsDepartureRange] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -281,7 +286,7 @@ export default function CreateOrderScreen() {
       getOrderedEntityFields(orderFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['client_id', 'object_id', 'phone', 'secondary_phone', 'contact_email'],
+        fieldKeys: ['client_id', 'object_id', 'phone'],
       }).map((field) => field.fieldKey),
     [orderFieldSettings],
   );
@@ -290,7 +295,7 @@ export default function CreateOrderScreen() {
       getOrderedEntityFields(orderFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['urgent', 'time_window_start', 'assigned_to'],
+        fieldKeys: ['urgent', 'time_window_start', 'departure_time', 'assigned_to'],
       }).map((field) => field.fieldKey),
     [orderFieldSettings],
   );
@@ -364,7 +369,12 @@ export default function CreateOrderScreen() {
     if (!draft) return;
     setForm(draft.form || {});
     setDescription(draft.description || '');
-    setDepartureDate(draft.departureDate ? new Date(draft.departureDate) : null);
+    const restoredDepartureDate = draft.departureDate ? new Date(draft.departureDate) : null;
+    setDepartureDate(restoredDepartureDate);
+    setDepartureTimeTouched(
+      !!restoredDepartureDate &&
+        (restoredDepartureDate.getHours() !== 0 || restoredDepartureDate.getMinutes() !== 0),
+    );
     setDepartureEndDate(draft.departureEndDate ? new Date(draft.departureEndDate) : null);
     setIsDepartureRange(!!draft.isDepartureRange);
     setWorkTypeId(draft.workTypeId || null);
@@ -407,8 +417,6 @@ export default function CreateOrderScreen() {
   const hasChanges = useCallback(() => {
     return (
       !!(form.title?.trim()) ||
-      !!(form.secondary_phone?.trim()) ||
-      !!(form.contact_email?.trim()) ||
       !!(form.phone?.trim()) ||
       !!description?.trim() ||
       !!departureDate ||
@@ -482,6 +490,8 @@ export default function CreateOrderScreen() {
       }
       if (key === 'time_window_start') {
         scrollToHandle(dateFieldRef);
+      } else if (key === 'departure_time') {
+        scrollToHandle(timeFieldRef);
       } else if (key === 'assigned_to') {
         scrollToHandle(dateFieldRef);
       }
@@ -490,6 +500,14 @@ export default function CreateOrderScreen() {
   );
 
   const normalizePhone = useCallback((val) => toE164MobilePhoneOrNull(val), []);
+  const hasDepartureTimeValue = useCallback(
+    (value, touched = false) => {
+      if (!value) return false;
+      if (touched) return true;
+      return value.getHours() !== 0 || value.getMinutes() !== 0;
+    },
+    [],
+  );
 
   const getField = useCallback(
     (key) => (schema.fields || []).find((f) => f.field_key === key) || null,
@@ -515,9 +533,8 @@ export default function CreateOrderScreen() {
         floor: t('order_field_floor'),
         entrance: t('order_field_entrance'),
         apartment: t('order_field_apartment'),
-        secondary_phone: t('order_field_secondary_phone'),
-        contact_email: t('order_field_contact_email'),
         time_window_start: t('create_order_label_date'),
+        departure_time: t('order_field_departure_time'),
         assigned_to: t('create_order_label_executor'),
       };
       const fallbackLabel = labelMap[fieldKey] || fallback || fieldKey;
@@ -548,6 +565,11 @@ export default function CreateOrderScreen() {
           }
         } else if (k === 'time_window_start') {
           if (!departureDate) {
+            missing.push(getFieldLabel(k));
+            missingKeys.push(k);
+          }
+        } else if (k === 'departure_time') {
+          if (!hasDepartureTimeValue(departureDate, departureTimeTouched)) {
             missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
@@ -594,7 +616,7 @@ export default function CreateOrderScreen() {
     } catch {
       return { ok: true };
     }
-  }, [schema, form, departureDate, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description]);
+  }, [schema, form, departureDate, departureTimeTouched, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue]);
 
   const promptNewObjectCreation = useCallback(
     (seedDraft = null) => {
@@ -665,6 +687,9 @@ export default function CreateOrderScreen() {
     if (isFieldRequired('time_window_start') && !departureDate) {
       nextErrors.time_window_start = { message: t('order_validation_date_required') };
     }
+    if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureDate, departureTimeTouched)) {
+      nextErrors.departure_time = { message: t('order_validation_departure_time_required', 'Укажите время выезда') };
+    }
     if (isDepartureRange && (!departureEndDate || departureEndDate < departureDate)) {
       nextErrors.time_window_start = { message: t('order_validation_date_range_invalid') };
     }
@@ -712,30 +737,6 @@ export default function CreateOrderScreen() {
     }
 
     const normalizedPhone = normalizePhone(form.phone);
-    const normalizedSecondaryPhone = normalizePhone(form.secondary_phone);
-    if (hasMobilePhoneValue(form.secondary_phone) && !normalizedSecondaryPhone) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        secondary_phone: { message: t('order_validation_phone_format') },
-      }));
-      focusField('secondary_phone');
-      return;
-    }
-    const contactEmailError = getEmailFieldError(form.contact_email, {
-      required: isFieldRequired('contact_email'),
-      requiredMessage: requiredMsg,
-      t,
-    });
-    if (contactEmailError) {
-      setFieldErrors((prev) => ({
-        ...prev,
-        contact_email: { message: contactEmailError },
-      }));
-      focusField('contact_email');
-      return;
-    }
-    const normalizedContactEmail = normalizeOptionalEmail(form.contact_email);
-
     if (isFieldRequired('client_id') && !selectedClientId) {
       setFieldErrors((prev) => ({
         ...prev,
@@ -768,8 +769,6 @@ export default function CreateOrderScreen() {
         id: String(selectedClientId),
         patch: {
           phone: normalizedPhone,
-          email: normalizedContactEmail,
-          secondary_phone: normalizedSecondaryPhone,
         },
       });
     }
@@ -874,6 +873,7 @@ export default function CreateOrderScreen() {
     useWorkTypes,
     workTypeId,
     departureDate,
+    departureTimeTouched,
     departureEndDate,
     isDepartureRange,
     toFeed,
@@ -885,6 +885,7 @@ export default function CreateOrderScreen() {
     getField,
     isFieldRequired,
     normalizePhone,
+    hasDepartureTimeValue,
     description,
     urgent,
     companyId,
@@ -1209,6 +1210,14 @@ export default function CreateOrderScreen() {
       ),
     [objectFieldsByKey],
   );
+  const enabledObjectAdditionalPhoneSlots = useMemo(
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    [objectFieldsByKey],
+  );
+  const requiredObjectAdditionalPhoneSlots = useMemo(
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isRequired === true),
+    [objectFieldsByKey],
+  );
   const shortAddressValue = useMemo(
     () =>
       buildOrderAddressDisplay(
@@ -1319,8 +1328,6 @@ export default function CreateOrderScreen() {
                         setSuggestedMatchingObject(null);
                         setSuggestedMatchingVisible(false);
                         setField('phone', '');
-                        setField('secondary_phone', '');
-                        setField('contact_email', '');
                       }}
                       accessibilityLabel={t('common_clear')}
                     />
@@ -1375,19 +1382,6 @@ export default function CreateOrderScreen() {
           );
         case 'phone':
           return renderPhoneInput('phone');
-        case 'secondary_phone':
-          return selectedClientId ? renderPhoneInput('secondary_phone') : null;
-        case 'contact_email':
-          if (!selectedClientId) return null;
-          return renderTextField({
-            fieldKey: 'contact_email',
-            label: getFieldLabel('contact_email'),
-            placeholder: t('create_order_placeholder_contact_email'),
-            value: form.contact_email || '',
-            onChangeText: (text) => setField('contact_email', text),
-            keyboardType: 'email-address',
-            required: isFieldRequired('contact_email'),
-          });
         default:
           return null;
       }
@@ -1396,17 +1390,14 @@ export default function CreateOrderScreen() {
       activeObjectDraft,
       draftClientObject,
       fieldErrors,
-      form.contact_email,
       formStyles.field,
       getField,
-      getFieldLabel,
       isFieldRequired,
       openObjectAddressEditor,
       openObjectFlow,
       renderPhoneInput,
-      renderTextField,
-      selectedClientId,
       selectedClientName,
+      selectedClientId,
       selectedClientObjectId,
       selectedClientObjectSummary,
       setField,
@@ -1446,6 +1437,7 @@ export default function CreateOrderScreen() {
                     <ClearButton
                       onPress={() => {
                         setDepartureDate(null);
+                        setDepartureTimeTouched(false);
                         setDepartureEndDate(null);
                         setIsDepartureRange(false);
                       }}
@@ -1470,6 +1462,7 @@ export default function CreateOrderScreen() {
                 onApply={(selected) => {
                   const nextStart = selected ? new Date(selected) : null;
                   setIsDepartureRange(false);
+                  if (!nextStart) setDepartureTimeTouched(false);
                   setDepartureDate((prev) => {
                     if (!nextStart) return null;
                     if (!prev) return nextStart;
@@ -1481,56 +1474,65 @@ export default function CreateOrderScreen() {
                 }}
                 onClose={() => setShowDatePicker(false)}
               />
+            </>
+          );
+        case 'departure_time':
+          return (
+            <>
+              <TextField
+                label={withRequiredLabel(
+                  getFieldLabel('departure_time', t('order_field_departure_time')),
+                  isFieldRequired('departure_time'),
+                )}
+                value={formatTime(departureDate) || t('create_order_placeholder_time')}
+                pressable
+                style={formStyles.field}
+                ref={timeFieldRef}
+                error={shouldShowError('departure_time') && fieldErrors?.departure_time ? 'invalid' : undefined}
+                rightSlot={
+                  departureDate ? (
+                    <ClearButton
+                      onPress={() => {
+                        const d = new Date(departureDate);
+                        d.setHours(0, 0, 0, 0);
+                        setDepartureDate(d);
+                        setDepartureTimeTouched(false);
+                      }}
+                      accessibilityLabel={t('common_clear')}
+                    />
+                  ) : null
+                }
+                onPress={() => {
+                  if (!departureDate) {
+                    setShowDatePicker(true);
+                    setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
+                    return;
+                  }
+                  setShowTimePicker(true);
+                  setTimeout(() => scrollToHandle(timeFieldRef), SCROLL_ANIMATION_DELAY);
+                }}
+              />
+              <FieldErrorText
+                message={shouldShowError('departure_time') ? fieldErrors?.departure_time?.message : null}
+              />
 
-              {useDepartureTime && !isDepartureRange ? (
-                <>
-                  <TextField
-                    label={t('create_order_label_time')}
-                    value={formatTime(departureDate) || t('create_order_placeholder_time')}
-                    pressable
-                    style={formStyles.field}
-                    ref={timeFieldRef}
-                    rightSlot={
-                      departureDate ? (
-                        <ClearButton
-                          onPress={() => {
-                            const d = new Date(departureDate);
-                            d.setHours(0, 0, 0, 0);
-                            setDepartureDate(d);
-                          }}
-                          accessibilityLabel={t('common_clear')}
-                        />
-                      ) : null
-                    }
-                    onPress={() => {
-                      if (!departureDate) {
-                        setShowDatePicker(true);
-                        setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
-                        return;
-                      }
-                      setShowTimePicker(true);
-                      setTimeout(() => scrollToHandle(timeFieldRef), SCROLL_ANIMATION_DELAY);
-                    }}
-                  />
-
-                  <DateTimeModal
-                    visible={showTimePicker && !!departureDate}
-                    initial={departureDate || new Date()}
-                    mode="time"
-                    onApply={(selected) => {
-                      if (selected) {
-                        setDepartureDate((prev) => {
-                          const baseDate = prev || new Date();
-                          const d = new Date(baseDate);
-                          d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-                          return d;
-                        });
-                      }
-                    }}
-                    onClose={() => setShowTimePicker(false)}
-                  />
-                </>
-              ) : null}
+              <DateTimeModal
+                visible={showTimePicker && !!departureDate}
+                initial={departureDate || new Date()}
+                mode="time"
+                onApply={(selected) => {
+                  if (selected) {
+                    setDepartureDate((prev) => {
+                      const baseDate = prev || new Date();
+                      const d = new Date(baseDate);
+                      d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+                      return d;
+                    });
+                    setDepartureTimeTouched(true);
+                  }
+                }}
+                onClose={() => setShowTimePicker(false)}
+              />
             </>
           );
         case 'assigned_to':
@@ -1592,7 +1594,6 @@ export default function CreateOrderScreen() {
       formStyles.field,
       getField,
       getFieldLabel,
-      isDepartureRange,
       isFieldRequired,
       renderToggle,
       scrollToHandle,
@@ -1603,7 +1604,6 @@ export default function CreateOrderScreen() {
       t,
       toFeed,
       urgent,
-      useDepartureTime,
       withRequiredLabel,
     ],
   );
@@ -1692,8 +1692,6 @@ export default function CreateOrderScreen() {
     setForm((prev) => ({
       ...prev,
       phone: String(selectedClient.phone || prev.phone || '').trim(),
-      secondary_phone: String(selectedClient.secondaryPhone || prev.secondary_phone || '').trim(),
-      contact_email: String(selectedClient.email || prev.contact_email || '').trim(),
     }));
     if (draftClientObject || pendingSuggestedObjectSelection) return;
     const primaryObject = clientObjects.find((item) => item?.is_primary) || clientObjects[0] || null;
@@ -2111,6 +2109,20 @@ export default function CreateOrderScreen() {
       if (!message) return acc;
       return { ...acc, [field]: message };
     }, {});
+    const objectAdditionalPhones = getObjectAdditionalPhones(clientObjectDraft);
+    const visibleObjectAdditionalPhoneSlots = resolveVisibleAdditionalObjectPhoneSlotIds({
+      enabledSlotIds: enabledObjectAdditionalPhoneSlots,
+      requiredSlotIds: requiredObjectAdditionalPhoneSlots,
+      valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(objectAdditionalPhones),
+    });
+    const firstInvalidAdditionalPhone = visibleObjectAdditionalPhoneSlots.find((slotId) => {
+      const value = String(objectAdditionalPhones?.[slotId - 1]?.phone || '');
+      if (requiredObjectAdditionalPhoneSlots.includes(slotId) && !hasMobilePhoneValue(value)) return true;
+      return hasMobilePhoneValue(value) && !isValidOptionalMobilePhone(value);
+    });
+    if (firstInvalidAdditionalPhone) {
+      nextObjectFieldErrors[`additional_phone_${firstInvalidAdditionalPhone}`] = t('err_phone');
+    }
     setClientObjectFieldErrors(nextObjectFieldErrors);
     if (Object.keys(nextObjectFieldErrors).length > 0) {
       return;
@@ -2133,6 +2145,10 @@ export default function CreateOrderScreen() {
       const sanitizedDraft = {
         ...createEmptyClientObjectDraft(),
         ...sanitizeClientObjectPayload(clientObjectDraft),
+        ...buildObjectAdditionalPhonesPatch(objectAdditionalPhones, {
+          defaultLabel: t('order_field_secondary_phone'),
+          visibleSlotIds: visibleObjectAdditionalPhoneSlots,
+        }),
       };
       if (clientObjectEditorMode === 'update' && selectedClientObjectId) {
         if (!has('canEditObjects')) {
@@ -2142,7 +2158,13 @@ export default function CreateOrderScreen() {
         }
         const updated = await updateClientObjectMutation.mutateAsync({
           id: String(selectedClientObjectId),
-          patch: sanitizeClientObjectPayload(clientObjectDraft),
+          patch: {
+            ...sanitizeClientObjectPayload(clientObjectDraft),
+            ...buildObjectAdditionalPhonesPatch(objectAdditionalPhones, {
+              defaultLabel: t('order_field_secondary_phone'),
+              visibleSlotIds: visibleObjectAdditionalPhoneSlots,
+            }),
+          },
         });
         await refetchSelectedClient();
         setSelectedClientObjectId(updated?.id || selectedClientObjectId);
@@ -2171,6 +2193,8 @@ export default function CreateOrderScreen() {
     showBanner,
     t,
     updateClientObjectMutation,
+    enabledObjectAdditionalPhoneSlots,
+    requiredObjectAdditionalPhoneSlots,
     visibleClientObjectFieldKeys,
     visibleObjectAddressFieldKeys,
   ]);
@@ -2401,6 +2425,7 @@ export default function CreateOrderScreen() {
         title={t('objects_new_from_order')}
         draft={clientObjectDraft}
         fieldSettings={objectFieldSettings}
+        enableAdditionalPhones
         fieldErrors={clientObjectFieldErrors}
         onChange={(field, value) => {
           setClientObjectDraft((prev) => ({ ...prev, [field]: value }));
@@ -2501,6 +2526,14 @@ export default function CreateOrderScreen() {
         }}
       />
     </>
+  );
+}
+
+export default function CreateOrderScreen() {
+  return (
+    <DeferredScreen>
+      <CreateOrderContent />
+    </DeferredScreen>
   );
 }
 

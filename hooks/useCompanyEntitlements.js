@@ -61,6 +61,11 @@ async function fetchEntitlements(companyId) {
 export function useCompanyEntitlements(companyId) {
   const queryClient = useQueryClient();
   const [cached, setCached] = React.useState(null);
+  const [hasFreshData, setHasFreshData] = React.useState(false);
+
+  React.useEffect(() => {
+    setHasFreshData(false);
+  }, [companyId]);
 
   React.useEffect(() => {
     let alive = true;
@@ -80,6 +85,7 @@ export function useCompanyEntitlements(companyId) {
       const fresh = await fetchEntitlements(companyId);
       await saveCached(companyId, fresh);
       setCached(fresh);
+      setHasFreshData(true);
       return fresh;
     },
     placeholderData: (prev) => prev ?? cached ?? null,
@@ -110,6 +116,7 @@ export function useCompanyEntitlements(companyId) {
   return {
     ...query,
     data: query.data ?? cached ?? null,
+    hasFreshData,
     refresh: query.refetch,
   };
 }

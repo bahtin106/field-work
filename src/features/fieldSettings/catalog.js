@@ -43,7 +43,6 @@ const ORDER_FIELDS = [
     inputKind: 'text',
     defaultRequired: true,
     lockedEnabled: true,
-    lockedRequired: true,
     sortOrder: 10,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'comment', {
@@ -51,6 +50,7 @@ const ORDER_FIELDS = [
     fallbackLabel: 'РћРїРёСЃР°РЅРёРµ',
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'multiline',
+    lockedEnabled: true,
     sortOrder: 20,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'work_type_id', {
@@ -100,29 +100,20 @@ const ORDER_FIELDS = [
     lockedRequired: true,
     sortOrder: 70,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'secondary_phone', {
-    labelKey: 'order_field_secondary_phone',
-    fallbackLabel: 'Р”РѕРї. С‚РµР»РµС„РѕРЅ',
-    sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
-    inputKind: 'phone',
-    sortOrder: 80,
-  }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'contact_email', {
-    labelKey: 'order_field_contact_email',
-    fallbackLabel: 'Email',
-    sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
-    inputKind: 'email',
-    sortOrder: 90,
-  }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'time_window_start', {
     labelKey: 'create_order_label_date',
     fallbackLabel: 'Р”Р°С‚Р° РІС‹РµР·РґР°',
     sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
     inputKind: 'datetime',
     defaultRequired: true,
-    lockedEnabled: true,
-    lockedRequired: true,
     sortOrder: 100,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'departure_time', {
+    labelKey: 'order_field_departure_time',
+    fallbackLabel: 'Время выезда',
+    sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
+    inputKind: 'time',
+    sortOrder: 101,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'assigned_to', {
     labelKey: 'create_order_label_executor',
@@ -130,22 +121,18 @@ const ORDER_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
     inputKind: 'relation',
     supportsRequired: false,
+    defaultRequired: true,
+    lockedEnabled: true,
+    lockedRequired: true,
     sortOrder: 110,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'department_id', {
-    labelKey: 'label_department',
-    fallbackLabel: 'РћС‚РґРµР»',
-    sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
-    inputKind: 'select',
-    supportsRequired: false,
-    sortOrder: 120,
-  }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'price', {
-    labelKey: 'order_details_amount',
-    fallbackLabel: 'РЎСѓРјРјР°',
+    labelKey: 'order_field_initial_amount',
+    fallbackLabel: 'Изначальная сумма',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'number',
     supportsRequired: false,
+    lockedEnabled: true,
     sortOrder: 130,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'payment_status', {
@@ -154,6 +141,7 @@ const ORDER_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'select',
     supportsRequired: false,
+    lockedEnabled: true,
     sortOrder: 140,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'payment_method', {
@@ -162,7 +150,43 @@ const ORDER_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'select',
     supportsRequired: false,
+    lockedEnabled: true,
     sortOrder: 150,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'contract_file', {
+    labelKey: 'order_media_field_1',
+    fallbackLabel: 'Медиа 1',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    sortOrder: 160,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'photo_before', {
+    labelKey: 'order_media_field_2',
+    fallbackLabel: 'Медиа 2',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    sortOrder: 170,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'photo_after', {
+    labelKey: 'order_media_field_3',
+    fallbackLabel: 'Медиа 3',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    sortOrder: 180,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'act_file', {
+    labelKey: 'order_media_field_4',
+    fallbackLabel: 'Медиа 4',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    sortOrder: 190,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_5', {
+    labelKey: 'order_media_field_5',
+    fallbackLabel: 'Медиа 5',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    sortOrder: 200,
   }),
 ];
 
@@ -290,6 +314,27 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
     inputKind: 'number',
     sortOrder: 160,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_1', {
+    labelKey: 'order_field_secondary_phone',
+    fallbackLabel: 'Р”РѕРї. С‚РµР»РµС„РѕРЅ',
+    sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
+    inputKind: 'phone',
+    sortOrder: 170,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_2', {
+    labelKey: 'client_field_additional_phone_2',
+    fallbackLabel: 'Р”РѕРї. С‚РµР»РµС„РѕРЅ 2',
+    sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
+    inputKind: 'phone',
+    sortOrder: 180,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_3', {
+    labelKey: 'client_field_additional_phone_3',
+    fallbackLabel: 'Р”РѕРї. С‚РµР»РµС„РѕРЅ 3',
+    sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
+    inputKind: 'phone',
+    sortOrder: 190,
   }),
 ];
 
@@ -469,7 +514,14 @@ export function normalizeEntityField(entityType, field) {
       ? true
       : field?.is_enabled !== undefined
         ? field.is_enabled !== false
+        : field?.isEnabled !== undefined
+          ? field.isEnabled !== false
         : catalogItem.defaultEnabled !== false;
+
+  const requiredOverride =
+    field?.is_required !== undefined
+      ? field.is_required
+      : field?.isRequired;
 
   const required =
     catalogItem.lockedRequired === true
@@ -477,8 +529,19 @@ export function normalizeEntityField(entityType, field) {
       : !enabled
         ? false
         : catalogItem.supportsRequired
-          ? field?.is_required === true || catalogItem.defaultRequired === true
+          ? requiredOverride !== undefined
+            ? requiredOverride === true
+            : catalogItem.defaultRequired === true
           : false;
+
+  const customLabelRaw =
+    field?.custom_label !== undefined
+      ? field.custom_label
+      : field?.customLabel;
+  const customLabel =
+    typeof customLabelRaw === 'string' && customLabelRaw.trim()
+      ? customLabelRaw.trim()
+      : null;
 
   return {
     ...catalogItem,
@@ -486,6 +549,8 @@ export function normalizeEntityField(entityType, field) {
     field_key: catalogItem.fieldKey,
     isEnabled: enabled,
     isRequired: required,
+    customLabel,
+    custom_label: customLabel,
     canToggleEnabled: catalogItem.lockedEnabled !== true,
     canToggleRequired:
       catalogItem.supportsRequired === true &&
@@ -570,7 +635,8 @@ export function toLegacySchemaFields(settings) {
     .map((field) => ({
       field_key: field.fieldKey,
       label_key: field.labelKey,
-      label: field.fallbackLabel,
+      label: field.customLabel || field.fallbackLabel,
+      custom_label: field.customLabel || null,
       type: field.inputKind,
       position: field.sortOrder,
       required: field.isRequired === true,

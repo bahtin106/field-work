@@ -9,10 +9,11 @@ export default function AuthLayout() {
         initialRouteName="login"
         screenOptions={{
           headerShown: false,
-          animation: 'simple_push',
+          animation: 'none',
           animationTypeForReplace: 'push',
           gestureEnabled: true,
           fullScreenGestureEnabled: true,
+          freezeOnBlur: true,
         }}
       >
         <Stack.Screen name="login" />

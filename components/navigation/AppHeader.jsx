@@ -10,6 +10,7 @@ import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
 
 const EMPTY_ROUTE_PARAMS = {};
+const ENABLE_HEADER_MARQUEE = false;
 
 const getHeaderMetrics = (theme, titleStyleOverride = {}) => {
   const header = theme?.components?.header ?? {};
@@ -301,6 +302,12 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   const END_PAUSE = headerMetrics.marqueeEndPause;
 
   useEffect(() => {
+    if (!ENABLE_HEADER_MARQUEE) {
+      marqueeAnim.stopAnimation?.();
+      marqueeAnim.setValue(0);
+      marqueeRunning.current = false;
+      return;
+    }
     // start/stop marquee based on measured widths
     if (!textWidth || !containerWidth) {
       marqueeAnim.stopAnimation?.();
@@ -353,7 +360,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     MARQUEE_GAP,
     MS_PER_PIXEL,
     START_DELAY,
-    END_PAUSE,
+      END_PAUSE,
   ]);
 
   return (
@@ -460,7 +467,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
       </View>
 
       {/* Marquee overlay — работает для любого заголовка автоматически */}
-      {titleText ? (
+      {ENABLE_HEADER_MARQUEE && titleText ? (
         <View
           pointerEvents="none"
           style={{
@@ -517,7 +524,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
       ) : null}
 
       {/* Invisible measuring text placed outside the clipped marquee container so it measures full natural width */}
-      {titleText ? (
+      {ENABLE_HEADER_MARQUEE && titleText ? (
         <Text
           accessibilityElementsHidden
           importantForAccessibility="no-hide-descendants"

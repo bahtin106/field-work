@@ -180,9 +180,13 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
       patch ?? {},
       'time_window_end',
     );
+    const hasMediaFile5Patch = Object.prototype.hasOwnProperty.call(
+      patch ?? {},
+      'media_file_5',
+    );
 
     // Preferred path: DB-side atomic RPC.
-    if (!hasTimeWindowEndPatch) {
+    if (!hasTimeWindowEndPatch && !hasMediaFile5Patch) {
       try {
         const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
           p_order_id: String(id),

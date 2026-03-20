@@ -111,9 +111,7 @@ function BottomNavInner() {
       }
     } catch {}
 
-    setTimeout(() => {
-      tabNavInFlightRef.current = false;
-    }, 280);
+    tabNavInFlightRef.current = false;
   }, []);
 
   // При изменении appReady на false (логаут/новый логин) - скрываем бар
