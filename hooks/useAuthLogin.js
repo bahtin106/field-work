@@ -133,11 +133,23 @@ export function useAuthLogin() {
           const { data: userRes } = await supabase.auth.getUser();
           const uid = userRes?.user?.id || null;
           if (uid) {
-            const { data: profile } = await supabase
+            let profile = null;
+
+            const { data: byId } = await supabase
               .from('profiles')
               .select('is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
               .eq('id', uid)
               .maybeSingle();
+            if (byId) {
+              profile = byId;
+            } else {
+              const { data: byUserId } = await supabase
+                .from('profiles')
+                .select('is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+                .eq('user_id', uid)
+                .maybeSingle();
+              profile = byUserId || null;
+            }
 
             const blockedReason = String(profile?.blocked_reason || '').toLowerCase();
             const blockedByAdmin =
@@ -146,14 +158,18 @@ export function useAuthLogin() {
               !!profile?.is_admin_blocked ||
               blockedReason === 'manual' ||
               blockedReason === 'admin_block' ||
-              blockedReason === 'admin_blocked';
+              blockedReason === 'admin_blocked' ||
+              blockedReason === 'blocked' ||
+              blockedReason === 'suspended';
             const blockedByLicense = String(profile?.license_state || '') === 'blocked_by_license';
 
-            if (blockedByAdmin || blockedByLicense) {
-              const blockCode = blockedByAdmin ? 'admin_blocked' : 'blocked_by_license';
+            if (!profile || blockedByAdmin || blockedByLicense) {
+              const blockCode = !profile
+                ? 'access_blocked'
+                : (blockedByAdmin ? 'admin_blocked' : 'blocked_by_license');
               const blockMessage = blockedByAdmin
                 ? t('auth_access_blocked')
-                : t('auth_blocked_by_license');
+                : (!profile ? t('auth_access_blocked') : t('auth_blocked_by_license'));
               try {
                 await supabase.auth.signOut();
               } catch {}

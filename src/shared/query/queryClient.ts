@@ -10,6 +10,7 @@ const QUERY_CACHE_MAX_ENTRIES = 350;
 const INACTIVE_QUERY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const CACHE_MAINTENANCE_INTERVAL_MS = 3 * 60 * 1000;
 const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 350 * 1024;
 const DEFAULT_QUERY_STALE_MS = 60 * 1000;
 const DEFAULT_QUERY_GC_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_RETRIES = 2;
@@ -80,15 +81,25 @@ export const queryClient = new QueryClient({
   },
 });
 
-queryClient.setQueryDefaults(['requests', 'all'], { staleTime: 20 * 1000, gcTime: 30 * 60 * 1000 });
-queryClient.setQueryDefaults(['requests', 'my'], { staleTime: 20 * 1000, gcTime: 30 * 60 * 1000 });
+queryClient.setQueryDefaults(['requests', 'all'], {
+  staleTime: 20 * 1000,
+  gcTime: 30 * 60 * 1000,
+  refetchOnReconnect: true,
+});
+queryClient.setQueryDefaults(['requests', 'my'], {
+  staleTime: 20 * 1000,
+  gcTime: 30 * 60 * 1000,
+  refetchOnReconnect: true,
+});
 queryClient.setQueryDefaults(['requests', 'calendar'], {
   staleTime: 20 * 1000,
   gcTime: 30 * 60 * 1000,
+  refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['requests', 'detail'], {
   staleTime: 45 * 1000,
   gcTime: 45 * 60 * 1000,
+  refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['employees', 'list'], {
   staleTime: 60 * 1000,
@@ -283,7 +294,7 @@ export function configureQueryEnvironment() {
 
 export const persistOptions = {
   persister,
-  buster: 'perf-policy-v1-2026-02-19',
+  buster: 'perf-policy-v2-2026-03-20',
   maxAge: PERSIST_MAX_AGE_MS,
   dehydrateOptions: {
     shouldDehydrateQuery: (q) => {
@@ -292,11 +303,14 @@ export const persistOptions = {
       if (key0 === 'session' || key0 === 'userRole' || key0 === 'profile' || key0 === 'perm-canViewAll') {
         return false;
       }
-      if (
-        key0 === 'requests' &&
-        (key1 === 'all' || key1 === 'my' || key1 === 'calendar')
-      ) {
-        return false;
+      if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) {
+        if (q.state.status !== 'success') return false;
+        try {
+          const serialized = JSON.stringify(q.state.data);
+          return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
+        } catch {
+          return false;
+        }
       }
       return q.state.status === 'success';
     },

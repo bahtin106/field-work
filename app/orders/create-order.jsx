@@ -1484,15 +1484,20 @@ function CreateOrderContent() {
                   getFieldLabel('departure_time', t('order_field_departure_time')),
                   isFieldRequired('departure_time'),
                 )}
-                value={formatTime(departureDate) || t('create_order_placeholder_time')}
+                value={
+                  hasDepartureTimeValue(departureDate, departureTimeTouched)
+                    ? formatTime(departureDate)
+                    : t('create_order_placeholder_time')
+                }
                 pressable
                 style={formStyles.field}
                 ref={timeFieldRef}
                 error={shouldShowError('departure_time') && fieldErrors?.departure_time ? 'invalid' : undefined}
                 rightSlot={
-                  departureDate ? (
+                  hasDepartureTimeValue(departureDate, departureTimeTouched) ? (
                     <ClearButton
                       onPress={() => {
+                        if (!departureDate) return;
                         const d = new Date(departureDate);
                         d.setHours(0, 0, 0, 0);
                         setDepartureDate(d);
@@ -1589,11 +1594,13 @@ function CreateOrderContent() {
       assigneeId,
       departureDate,
       departureDateDisplayLabel,
+      departureTimeTouched,
       fieldErrors,
       formatTime,
       formStyles.field,
       getField,
       getFieldLabel,
+      hasDepartureTimeValue,
       isFieldRequired,
       renderToggle,
       scrollToHandle,

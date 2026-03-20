@@ -3342,13 +3342,7 @@ function OrderDetailsContent() {
     }, [editMode, requestCloseEdit, goBack]),
   );
 
-  // РљРѕСЂРѕС‚РєР°СЏ РІРµСЂСЃРёСЏ РґР»СЏ Р·Р°РіРѕР»РѕРІРєР° native (РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ СЃС‚СЂРѕРєР° вЂ” С‡С‚РѕР±С‹ РЅРµ Р»РѕРјР°С‚СЊ Screen/header)
   const fullTitle = order?.title || t('routes.orders/[id]', 'routes.orders/[id]');
-  const shortTitle = useMemo(() => {
-    if (!fullTitle) return '';
-    const max = 36;
-    return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
-  }, [fullTitle]);
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
   const canViewClients = has('canViewClients');
   const canViewObjects = has('canViewObjects');
@@ -3548,7 +3542,8 @@ function OrderDetailsContent() {
         onBackPress={goBack}
         options={{
           headerTitleAlign: 'left',
-          title: shortTitle,
+          title: fullTitle,
+          fullTitle,
           headerTitleStyle: {
             fontSize: theme?.typography?.sizes?.md ?? 15,
             fontWeight: theme?.typography?.weight?.semibold ?? '600',
@@ -3953,6 +3948,8 @@ function OrderDetailsContent() {
                                 >
                                   <LabelValueRow
                                     label={entry.title || t('finance_rule_name', 'Название')}
+                                    labelContainerStyle={styles.financeEntryLabelWrap}
+                                    rightWrapStyle={styles.financeEntryRightWrap}
                                     valueComponent={
                                       <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
                                         {`+ ${formatMoney(entry.calculated_amount, currency)}`}
@@ -3982,6 +3979,8 @@ function OrderDetailsContent() {
                                 >
                                   <LabelValueRow
                                     label={entry.title || t('finance_rule_name', 'Название')}
+                                    labelContainerStyle={styles.financeEntryLabelWrap}
+                                    rightWrapStyle={styles.financeEntryRightWrap}
                                     valueComponent={
                                       <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
                                         {`- ${formatMoney(entry.calculated_amount, currency)}`}
@@ -4034,6 +4033,8 @@ function OrderDetailsContent() {
                                     >
                                       <LabelValueRow
                                         label={entry.title || t('finance_rule_name', 'Название')}
+                                        labelContainerStyle={styles.financeEntryLabelWrap}
+                                        rightWrapStyle={styles.financeEntryRightWrap}
                                         valueComponent={
                                           <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
                                             {`- ${formatMoney(entry.calculated_amount, currency)}`}
@@ -5037,8 +5038,16 @@ function createStyles(theme) {
     financeCompactRightWrap: {
       maxWidth: '44%',
     },
+    financeEntryLabelWrap: {
+      flexShrink: 1,
+      flexGrow: 1,
+      minWidth: 0,
+      maxWidth: '100%',
+      paddingRight: sp.sm || 8,
+    },
     financeEntryRightWrap: {
-      maxWidth: '34%',
+      flexShrink: 0,
+      maxWidth: '46%',
     },
     financeTightRightWrap: {
       maxWidth: '36%',

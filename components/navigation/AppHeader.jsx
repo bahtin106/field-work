@@ -10,7 +10,7 @@ import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
 
 const EMPTY_ROUTE_PARAMS = {};
-const ENABLE_HEADER_MARQUEE = false;
+const ENABLE_HEADER_MARQUEE = true;
 
 const getHeaderMetrics = (theme, titleStyleOverride = {}) => {
   const header = theme?.components?.header ?? {};
