@@ -25,7 +25,7 @@ export function PasswordStrengthMeter() {
   };
 
   const strength = calculateStrength(password);
-  const strengthLabels = ['РћС‡РµРЅСЊ СЃР»Р°Р±С‹Р№', 'РЎР»Р°Р±С‹Р№', 'РЎСЂРµРґРЅРёР№', 'РҐРѕСЂРѕС€РёР№', 'РЎРёР»СЊРЅС‹Р№', 'РћС‚Р»РёС‡РЅС‹Р№'];
+  const strengthLabels = ['Очень слабый', 'Слабый', 'Средний', 'РҐРѕСЂРѕС€РёР№', 'Сильный', 'Отличный'];
   const strengthColors = ['#f44336', '#ff9800', '#ffc107', '#8bc34a', '#4caf50', '#00897b'];
 
   useEffect(() => {
@@ -47,7 +47,7 @@ export function PasswordStrengthMeter() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ"
+        placeholder="Введите пароль"
       />
 
       <View style={styles.strengthContainer}>
@@ -90,7 +90,7 @@ export function TwoStepPasswordVerification() {
           <SecurePasswordInput
             value={currentPassword}
             onChangeText={setCurrentPassword}
-            placeholder="Р’РІРµРґРёС‚Рµ С‚РµРєСѓС‰РёР№ РїР°СЂРѕР»СЊ"
+            placeholder="Введите текущий пароль"
             returnKeyType="next"
           />
 
@@ -112,14 +112,14 @@ export function TwoStepPasswordVerification() {
           <SecurePasswordInput
             value={newPassword}
             onChangeText={setNewPassword}
-            placeholder="РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ"
+            placeholder="Новый пароль"
             returnKeyType="next"
           />
 
           <SecurePasswordInput
             value={confirmPassword}
             onChangeText={setConfirmPassword}
-            placeholder="РџРѕРґС‚РІРµСЂРґРёС‚Рµ РїР°СЂРѕР»СЊ"
+            placeholder="Подтвердите пароль"
             returnKeyType="done"
           />
 
@@ -131,7 +131,7 @@ export function TwoStepPasswordVerification() {
             style={[styles.button, !canProceed && styles.buttonDisabled]}
             disabled={!canProceed}
             onPress={() => {
-              Alert.alert('РЈСЃРїРµС…', 'РџР°СЂРѕР»СЊ РёР·РјРµРЅРµРЅ');
+              Alert.alert('Успех', 'Пароль изменен');
               setStep(1);
               setNewPassword('');
               setConfirmPassword('');
@@ -173,10 +173,10 @@ export function PasswordWithExpiration() {
 
   const getExpiryStatus = () => {
     if (!daysUntilExpire) return null;
-    if (daysUntilExpire <= 0) return { text: 'РСЃС‚РµРє', color: '#f44336' };
+    if (daysUntilExpire <= 0) return { text: 'Истек', color: '#f44336' };
     if (daysUntilExpire <= 7)
-      return { text: `РСЃС‚РµРєР°РµС‚ С‡РµСЂРµР· ${daysUntilExpire} РґРЅ.`, color: '#ff9800' };
-    return { text: `РСЃС‚РµРєР°РµС‚ С‡РµСЂРµР· ${daysUntilExpire} РґРЅ.`, color: '#4caf50' };
+      return { text: `Истекает через ${daysUntilExpire} дн.`, color: '#ff9800' };
+    return { text: `Истекает через ${daysUntilExpire} дн.`, color: '#4caf50' };
   };
 
   const expiryStatus = getExpiryStatus();
@@ -186,7 +186,7 @@ export function PasswordWithExpiration() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ"
+        placeholder="Введите пароль"
         onFocus={() => setPasswordSetDate(new Date())}
       />
 
@@ -232,7 +232,7 @@ export function PasswordWithBiometric() {
       //   // Рё Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРё Р·Р°Р»РѕРіРёРЅРёС‚СЊСЃСЏ
       // }
     } catch {
-      Alert.alert('РћС€РёР±РєР°', 'РћС€РёР±РєР° РїСЂРё РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРё Р±РёРѕРјРµС‚СЂРёРё');
+      Alert.alert('Ошибка', 'Ошибка при использовании биометрии');
     }
   };
 
@@ -241,7 +241,7 @@ export function PasswordWithBiometric() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="Р’РІРµРґРёС‚Рµ РїР°СЂРѕР»СЊ"
+        placeholder="Введите пароль"
       />
 
       {biometricAvailable && (
@@ -261,21 +261,21 @@ export function AdvancedPasswordRequirements() {
 
   const requirements = {
     minLength: {
-      label: 'РњРёРЅРёРјСѓРј 8 СЃРёРјРІРѕР»РѕРІ (СЂРµРєРѕРјРµРЅРґСѓРµС‚СЃСЏ 12+)',
+      label: 'Минимум 8 символов (рекомендуется 12+)',
       met: password.length >= 8,
     },
     noCommonPatterns: {
-      label: 'РќРµ СЃРѕРґРµСЂР¶РёС‚ СЂР°СЃРїСЂРѕСЃС‚СЂР°РЅРµРЅРЅС‹Рµ РїР°С‚С‚РµСЂРЅС‹',
+      label: 'Не содержит распространенные паттерны',
       met: !['password', 'qwerty', '123456', 'admin', 'letmein'].some((pattern) =>
         password.toLowerCase().includes(pattern),
       ),
     },
     noRepeatingChars: {
-      label: 'РќРµ СЃРѕРґРµСЂР¶РёС‚ 3+ РѕРґРёРЅР°РєРѕРІС‹С… СЃРёРјРІРѕР»РѕРІ РїРѕРґСЂСЏРґ',
+      label: 'Не содержит 3+ одинаковых символов подряд',
       met: !/(.)\1{2,}/.test(password),
     },
     mixedCharacters: {
-      label: 'Р Р°Р·РЅС‹Рµ С‚РёРїС‹ СЃРёРјРІРѕР»РѕРІ (Р±СѓРєРІС‹, С†РёС„СЂС‹)',
+      label: 'Разные типы символов (буквы, цифры)',
       met: /[a-z]/i.test(password) && /[0-9]/.test(password),
     },
   };
@@ -319,14 +319,14 @@ export function PasswordWithHistory() {
     const isInHistory = passwordHistory.some((oldPwd) => oldPwd === password);
 
     if (isInHistory) {
-      Alert.alert('РћС€РёР±РєР°', `РќРµ РёСЃРїРѕР»СЊР·СѓР№С‚Рµ РїР°СЂРѕР»Рё РёР· РїРѕСЃР»РµРґРЅРёС… ${cantReuseFor} РїРѕРїС‹С‚РѕРє`);
+      Alert.alert('Ошибка', `Не используйте пароли из последних ${cantReuseFor} попыток`);
       return;
     }
 
     // РћС‚РїСЂР°РІРёС‚СЊ РїР°СЂРѕР»СЊ
     setPasswordHistory((prev) => [password, ...prev].slice(0, cantReuseFor));
     setPassword('');
-    Alert.alert('РЈСЃРїРµС…', 'РџР°СЂРѕР»СЊ СѓСЃРїРµС€РЅРѕ РёР·РјРµРЅРµРЅ');
+    Alert.alert('Успех', 'Пароль успешно изменен');
   };
 
   return (
@@ -334,7 +334,7 @@ export function PasswordWithHistory() {
       <SecurePasswordInput
         value={password}
         onChangeText={setPassword}
-        placeholder="РќРѕРІС‹Р№ РїР°СЂРѕР»СЊ"
+        placeholder="Новый пароль"
         returnKeyType="done"
         onSubmitEditing={handleSubmit}
       />

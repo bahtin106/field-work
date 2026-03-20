@@ -83,6 +83,14 @@ const BOTTOM_SPACER_FALLBACK = 80;
 const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
+const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
+
+function normalizeOrderRouteId(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return null;
+  if (ROUTE_PLACEHOLDER_RE.test(normalized)) return null;
+  return normalized;
+}
 
 function EditOrderContent() {
   const navigation = useNavigation();
@@ -93,7 +101,10 @@ function EditOrderContent() {
     workTypeId: rawWorkTypeId,
     workTypeName: rawWorkTypeName,
   } = useLocalSearchParams();
-  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+  const id = useMemo(() => {
+    const value = Array.isArray(rawId) ? rawId[0] : rawId;
+    return normalizeOrderRouteId(value);
+  }, [rawId]);
   const companyIdFromParams = useMemo(() => {
     const value = Array.isArray(rawCompanyId) ? rawCompanyId[0] : rawCompanyId;
     return value ? String(value) : null;
@@ -1609,7 +1620,7 @@ function EditOrderContent() {
       }
       if (err?.code === 'CONFLICT') {
         showToast(
-          'Р вЂ”Р В°РЎРЏР Р†Р С”Р В° РЎС“Р В¶Р Вµ Р В±РЎвЂ№Р В»Р В° Р С‘Р В·Р СР ВµР Р…Р ВµР Р…Р В° Р Р…Р В° Р Т‘РЎР‚РЎС“Р С–Р С•Р С РЎС“РЎРѓРЎвЂљРЎР‚Р С•Р в„–РЎРѓРЎвЂљР Р†Р Вµ. Р С›РЎвЂљР С”РЎР‚РЎвЂ№РЎвЂљР В° Р В°Р С”РЎвЂљРЎС“Р В°Р В»РЎРЉР Р…Р В°РЎРЏ Р Р†Р ВµРЎР‚РЎРѓР С‘РЎРЏ, Р С—РЎР‚Р С•Р Р†Р ВµРЎР‚РЎРЉРЎвЂљР Вµ Р С—Р С•Р В»РЎРЏ.',
+          'Заявка уже была изменена на другом устройстве. Откройте актуальную версию и проверьте поля.',
           'warning',
         );
         await refetchOrder();
@@ -1858,7 +1869,7 @@ function EditOrderContent() {
                       const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
                       if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
                       const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
-                      return `${startLabel} вЂ” ${endLabel}`;
+                      return `${startLabel} — ${endLabel}`;
                     })()
                   : T('order_placeholder_departure_date')
               }

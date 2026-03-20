@@ -78,18 +78,18 @@ function formatDateShort(iso, showTime = true) {
   if (!iso) return '';
   const d = new Date(iso);
   const months = [
-    'СЏРЅРІ.',
-    'С„РµРІСЂ.',
-    'РјР°СЂС‚',
-    'Р°РїСЂ.',
-    'РјР°Р№',
-    'РёСЋРЅСЊ',
-    'РёСЋР»СЊ',
-    'Р°РІРі.',
-    'СЃРµРЅС‚.',
-    'РѕРєС‚.',
-    'РЅРѕСЏР±.',
-    'РґРµРє.',
+    'янв.',
+    'февр.',
+    'март',
+    'апр.',
+    'май',
+    'июнь',
+    'июль',
+    'авг.',
+    'сент.',
+    'окт.',
+    'нояб.',
+    'дек.',
   ];
   const dateStr = `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}`;
   if (showTime) {
@@ -144,11 +144,11 @@ function readWithFallback(order, field, key) {
 
   if ((val == null || val === '') && key === 'address') {
     // Р¤РѕСЂРјРёСЂСѓРµРј Р°РґСЂРµСЃ РєРѕРјРїР°РєС‚РЅРѕ: РїСЂРѕРїСѓСЃРєР°РµРј РѕР±Р»Р°СЃС‚СЊ/СЂР°Р№РѕРЅ, РїРѕРєР°Р·С‹РІР°РµРј РіРѕСЂРѕРґ,
-    // СѓР»РёС†Сѓ Р±РµР· РїСЂРёСЃС‚Р°РІРєРё "СѓР»."/"СѓР»РёС†Р°" Рё РЅРѕРјРµСЂ РґРѕРјР°.
+    // СѓР»РёС†Сѓ Р±РµР· РїСЂРёСЃС‚Р°РІРєРё "ул."/"улица" Рё РЅРѕРјРµСЂ РґРѕРјР°.
     const city = order?.city || order?.town || order?.settlement || null;
     const rawStreet = order?.street || order?.snt || null;
     const street =
-      typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(СѓР»\.?|СѓР»РёС†Р°)\s+/i, '') : rawStreet;
+      typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(ул\.?|улица)\s+/i, '') : rawStreet;
     const house = order?.house || order?.plot || null;
     const composed = [city, street, house].filter(Boolean).join(', ');
     const cand = [order?.address, order?.addr, composed].find(Boolean);
@@ -521,7 +521,7 @@ function DynamicOrderCard({
             paddingRight: 8,
           }}
         >
-          {title || 'вЂ”'}
+          {title || '—'}
         </Text>
         <OrderStatusCapsule status={statusTitle} />
       </View>
@@ -531,7 +531,7 @@ function DynamicOrderCard({
         {primaryRows.map((row) => (
           <Text key={row.key} numberOfLines={1} style={{ fontSize: 14, color: mutedColor }}>
             {row.label ? `${row.label}: ` : ''}
-            <Text style={{ color: theme.colors.text }}>{row.value || 'вЂ”'}</Text>
+            <Text style={{ color: theme.colors.text }}>{row.value || '—'}</Text>
           </Text>
         ))}
       </View>
@@ -566,7 +566,7 @@ function DynamicOrderCard({
                   lineHeight: 12,
                 }}
               >
-                СЃ
+                •
               </Text>
             </View>
           )}
@@ -583,7 +583,7 @@ function DynamicOrderCard({
 
         {showExecutor ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-            {resolvedExecutorName || executorName || 'вЂ”'}
+            {resolvedExecutorName || executorName || '—'}
           </Text>
         ) : priceValue ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
