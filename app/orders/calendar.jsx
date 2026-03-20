@@ -118,12 +118,6 @@ function CalendarScreenContent() {
   const isFocused = useIsFocused();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
-  useEffect(() => {
-    try {
-      router?.prefetch?.('/orders/[id]');
-    } catch {}
-  }, [router]);
-
   const returnTo = useMemo(() => {
     try {
       return Reflect.has(params, 'returnTo') ? String(params.returnTo) : '';

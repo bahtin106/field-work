@@ -54,6 +54,12 @@ const CALENDAR_SELECT_COLUMNS_FALLBACK = ORDER_SELECT_COLUMNS_FALLBACK;
 const EXTRA_ORDER_FIELDS = ['time_window_end'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function isAuthSessionMissing(error: unknown) {
+  const name = String(error?.name || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+  return name.includes('authsessionmissingerror') || message.includes('auth session missing');
+}
+
 function isUuid(value) {
   const normalized = String(value || '').trim();
   return UUID_RE.test(normalized);
@@ -255,7 +261,10 @@ export async function listRequests(params = {}) {
 
     if (scope === 'my') {
       const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError) throw userError;
+      if (userError) {
+        if (isAuthSessionMissing(userError)) return [];
+        throw userError;
+      }
       const uid = userData?.user?.id;
       if (!uid) return [];
       query = query.eq('assigned_to', uid);
@@ -304,7 +313,10 @@ export async function listRequests(params = {}) {
 
       if (scope === 'my') {
         const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (userError) throw userError;
+        if (userError) {
+          if (isAuthSessionMissing(userError)) return [];
+          throw userError;
+        }
         const uid = userData?.user?.id;
         if (!uid) return [];
         fallbackQuery = fallbackQuery.eq('assigned_to', uid);
