@@ -55,6 +55,7 @@ import { useUsers } from '../../../components/hooks/useUsers';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import ClearButton from '../../../components/ui/ClearButton';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import QuickPreviewModal from '../../../components/ui/modals/QuickPreviewModal';
 import PhoneInput from '../../../components/ui/PhoneInput';
@@ -1875,6 +1876,19 @@ function EditOrderContent() {
               }
               pressable
               style={styles.field}
+              rightSlot={
+                displayDepartureDate ? (
+                  <ClearButton
+                    onPress={() => {
+                      setDepartureDate(null);
+                      setDepartureTimeTouched(false);
+                      setDepartureEndDate(null);
+                      setIsDepartureRange(false);
+                    }}
+                    accessibilityLabel={T('common_clear')}
+                  />
+                ) : null
+              }
               onPress={() => setShowDateModal(true)}
               error={getFieldError('time_window_start') ? 'invalid' : undefined}
             />
@@ -1889,12 +1903,26 @@ function EditOrderContent() {
             <TextField
               label={withRequiredLabel(T('order_field_departure_time'), isFieldRequired('departure_time'))}
               value={
-                displayDepartureDate
+                hasDepartureTimeValue(displayDepartureDate, departureTimeTouched)
                   ? format(displayDepartureDate, 'HH:mm', { locale: ru })
                   : T('order_placeholder_departure_time')
               }
               pressable
               style={styles.field}
+              rightSlot={
+                hasDepartureTimeValue(displayDepartureDate, departureTimeTouched) ? (
+                  <ClearButton
+                    onPress={() => {
+                      if (!displayDepartureDate) return;
+                      const next = new Date(displayDepartureDate);
+                      next.setHours(0, 0, 0, 0);
+                      setDepartureDate(next);
+                      setDepartureTimeTouched(false);
+                    }}
+                    accessibilityLabel={T('common_clear')}
+                  />
+                ) : null
+              }
               onPress={() => {
                 if (!displayDepartureDate) {
                   setShowDateModal(true);
@@ -1912,9 +1940,11 @@ function EditOrderContent() {
       return null;
     },
     [
+      departureTimeTouched,
       displayDepartureDate,
       displayDepartureEndDate,
       getFieldError,
+      hasDepartureTimeValue,
       isDepartureRange,
       isFieldRequired,
       styles.field,

@@ -8,8 +8,9 @@ export function useSubscriptionGuard(companyId) {
   const isOwner = role === 'admin';
 
   const { data, isLoading, isFetching, error, refresh, hasFreshData } = useCompanyEntitlements(companyId);
-  const guardLoading = isLoading || isFetching || (!hasFreshData && !!companyId);
-  const canEdit = guardLoading ? true : Boolean(data?.can_edit);
+  const hasResolvedEntitlements = data != null || hasFreshData;
+  const guardLoading = !!companyId && !hasResolvedEntitlements && (isLoading || isFetching);
+  const canEdit = !companyId ? true : (guardLoading ? true : Boolean(data?.can_edit));
 
   const reason = useMemo(() => {
     if (guardLoading) return 'loading';

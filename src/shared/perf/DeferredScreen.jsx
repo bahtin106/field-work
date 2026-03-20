@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { InteractionManager, ActivityIndicator, View, StyleSheet } from 'react-native';
 
 const styles = StyleSheet.create({
@@ -14,7 +14,7 @@ const styles = StyleSheet.create({
  * This makes screen transitions instant by rendering a lightweight placeholder
  * first, then mounting the heavy content after the native transition finishes.
  */
-export default function DeferredScreen({ children, style }) {
+export default function DeferredScreen({ children, style, placeholder = null }) {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
@@ -27,6 +27,7 @@ export default function DeferredScreen({ children, style }) {
   }, []);
 
   if (!isReady) {
+    if (placeholder) return placeholder;
     return (
       <View style={[styles.container, style]}>
         <ActivityIndicator size="large" />
