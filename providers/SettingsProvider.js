@@ -247,7 +247,7 @@ export default function SettingsProvider({ children }) {
         id: uuid(),
         mode,
         key: `custom_${next}`,
-        label: 'РќРѕРІРѕРµ РїРѕР»Рµ',
+        label: 'Новое поле',
         placeholder: '',
         help_text: '',
         type: 'text',

@@ -442,7 +442,7 @@ export default function FieldEditorScreen() {
               ...prev[entityType],
               phase: 'error',
               errorMessage: String(
-                error?.message || t('field_settings_save_failed', 'РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕР»РµР№'),
+                error?.message || t('field_settings_save_failed', '?? ??????? ????????? ????????? ?????'),
               ),
             },
           }));
@@ -451,7 +451,7 @@ export default function FieldEditorScreen() {
             toast.error(
               String(
                 error?.message ||
-                  t('field_settings_save_failed', 'РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕС…СЂР°РЅРёС‚СЊ РЅР°СЃС‚СЂРѕР№РєРё РїРѕР»РµР№'),
+                  t('field_settings_save_failed', '?? ??????? ????????? ????????? ?????'),
               ),
             );
             lastErrorToastRef.current[entityType] = true;

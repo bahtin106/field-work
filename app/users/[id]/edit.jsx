@@ -788,7 +788,7 @@ export default function EditUser() {
     try {
       setErr('');
       // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСѓСЃС‚СѓСЋ СЃС‚СЂРѕРєСѓ РґР»СЏ СЏРІРЅРѕРіРѕ СѓРєР°Р·Р°РЅРёСЏ РЅР° СѓРґР°Р»РµРЅРёРµ
-      // null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", '' РѕР·РЅР°С‡Р°РµС‚ "СѓРґР°Р»РёС‚СЊ"
+      // null РѕР·РЅР°С‡Р°РµС‚ "нет изменений", '' РѕР·РЅР°С‡Р°РµС‚ "удалить"
       setPendingAvatarUrl('');
       setAvatarUrl(null);
       // avatar change will be captured by isDirty and confirmed on exit
@@ -995,7 +995,7 @@ export default function EditUser() {
       showInfoToast(t('toast_saving'));
       let savedAvatarUrl = avatarUrl || null;
 
-      // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", Р° РЅРµ "СѓРґР°Р»РёС‚СЊ"
+      // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "нет изменений", Р° РЅРµ "удалить"
       if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
         if (pendingAvatarUrl === '') {
           await cleanupProfileMediaEntity('employee', String(userId));
@@ -1262,11 +1262,11 @@ export default function EditUser() {
     // Р•СЃР»Рё СЂРµРґР°РєС‚РёСЂСѓРµРј СЃРѕР±СЃС‚РІРµРЅРЅС‹Р№ РїСЂРѕС„РёР»СЊ Рё Р·Р°РґР°РЅ РЅРѕРІС‹Р№ РїР°СЂРѕР»СЊ вЂ” РїСЂРѕРІРµСЂСЏРµРј РµРіРѕ
     if (meId && meId === userId && newPassword && newPassword.length) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
-        setFieldErrors({ newPassword: { message: t('error_password_too_short') || `РњРёРЅРёРјСѓРј ${MIN_PASSWORD_LENGTH}` } });
+        setFieldErrors({ newPassword: { message: t('error_password_too_short') || `Минимум ${MIN_PASSWORD_LENGTH}` } });
         return;
       }
       if (confirmPassword !== newPassword) {
-        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'РџР°СЂРѕР»Рё РЅРµ СЃРѕРІРїР°РґР°СЋС‚' } });
+        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'Пароли не совпадают' } });
         return;
       }
       // РџРѕРґС‚РІРµСЂР¶РґР°РµРј РґРµР№СЃС‚РІРёРµ (РїРѕРєР°Р¶РµРј РјРѕРґР°Р» РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ)
@@ -1529,7 +1529,7 @@ export default function EditUser() {
       });
 
       if (error) {
-        throw new Error(error.message || 'РћС€РёР±РєР° РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє');
+        throw new Error(error.message || 'Ошибка проверки заявок');
       }
 
       const { activeOrdersCount, availableEmployees } = data || {};
@@ -1542,7 +1542,7 @@ export default function EditUser() {
       setSuccessorError('');
       setSuspendVisible(true);
     } catch (e) {
-      console.error('РћС€РёР±РєР° РїСЂРё РїСЂРѕРІРµСЂРєРµ Р·Р°СЏРІРѕРє:', e);
+      console.error('Ошибка при проверке заявок:', e);
       setErr(e?.message || t('err_check_orders_failed'));
       showError(e?.message || t('err_check_orders_failed'));
     }
@@ -1563,8 +1563,8 @@ export default function EditUser() {
       const employees = Array.isArray(data) ? data : [];
       setPickerItems(employees);
     } catch (e) {
-      console.error('РћС€РёР±РєР° Р·Р°РіСЂСѓР·РєРё СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ:', e);
-      showError('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ СЃРїРёСЃРѕРє СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ');
+      console.error('Ошибка загрузки сотрудников:', e);
+      showError('Не удалось загрузить список сотрудников');
     }
   };
   const onAskUnsuspend = async () => {
@@ -1700,7 +1700,7 @@ export default function EditUser() {
       console.debug('[onAskDelete] result:', { data, error });
 
       if (error) {
-        throw new Error(error.message || 'РћС€РёР±РєР° РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє');
+        throw new Error(error.message || 'Ошибка проверки заявок');
       }
 
       const { activeOrdersCount, totalOrdersCount, availableEmployees } = data || {};
@@ -1715,7 +1715,7 @@ export default function EditUser() {
       setSuccessorError('');
       setDeleteVisible(true);
     } catch (e) {
-      console.error('РћС€РёР±РєР° РїСЂРё РїСЂРѕРІРµСЂРєРµ Р·Р°СЏРІРѕРє:', e);
+      console.error('Ошибка при проверке заявок:', e);
       setErr(e?.message || t('err_check_orders_failed'));
       showError(e?.message || t('err_check_orders_failed'));
     }
@@ -1765,7 +1765,7 @@ export default function EditUser() {
       setDeleteVisible(false);
       router.replace('/users');
     } catch (e) {
-      console.error('РћС€РёР±РєР° РґРµР°РєС‚РёРІР°С†РёРё:', e);
+      console.error('Ошибка деактивации:', e);
       setErr(e?.message || t('dlg_generic_warning'));
       showError(e?.message || t('err_deactivate_failed'));
     } finally {
@@ -2040,7 +2040,7 @@ export default function EditUser() {
                       cachePolicy="none"
                     />
                   ) : (
-                    <Text style={styles.avatarText}>{initials || 'вЂў'}</Text>
+                    <Text style={styles.avatarText}>{initials || '•'}</Text>
                   )}
                   {canManageAvatar ? (
                     <View style={styles.avatarCamBadge}>
@@ -2439,7 +2439,7 @@ export default function EditUser() {
                       cachePolicy="none"
                     />
                   ) : (
-                    <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'РќРµС‚ С„РѕС‚Рѕ'}</Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'Нет фото'}</Text>
                   )}
                 </View>
               </BaseModal>
@@ -2991,7 +2991,7 @@ function DeleteEmployeeModal({
             </Text>
           </View>
           <UIButton
-            title={t('placeholder_pick_employee') || 'Р’С‹Р±СЂР°С‚СЊ РґСЂСѓРіРѕРіРѕ'}
+            title={t('placeholder_pick_employee') || 'Выбрать другого'}
             variant="outline"
             onPress={openSuccessorPicker}
             size="sm"

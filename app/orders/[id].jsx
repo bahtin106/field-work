@@ -104,6 +104,7 @@ const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
 const PHOTO_MIME_TYPE = 'image/jpeg';
 const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
+const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'country',
   'region',
@@ -142,6 +143,13 @@ function setCachedExecutorName(userId, displayName) {
     if (oldestKey == null) break;
     EXECUTOR_NAME_CACHE.delete(oldestKey);
   }
+}
+
+function normalizeOrderRouteId(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) return null;
+  if (ROUTE_PLACEHOLDER_RE.test(normalized)) return null;
+  return normalized;
 }
 
 const REQUEST_SYNC_FIELDS = [
@@ -382,8 +390,9 @@ function OrderDetailsContent() {
   const idParam = __params?.id;
   const id = useMemo(() => {
     const fromParams = Array.isArray(idParam) ? idParam[0] : idParam;
-    if (fromParams != null && String(fromParams).trim() !== '') {
-      return String(fromParams).trim();
+    const normalizedFromParams = normalizeOrderRouteId(fromParams);
+    if (normalizedFromParams) {
+      return normalizedFromParams;
     }
     const path = String(pathname || '');
     const clean = path.split('?')[0];
@@ -393,7 +402,7 @@ function OrderDetailsContent() {
     if (!last || ['orders', 'my-orders', 'all-orders', 'calendar', 'new'].includes(last)) {
       return null;
     }
-    return last;
+    return normalizeOrderRouteId(last);
   }, [idParam, pathname]);
   const returnTo = useMemo(() => {
     try {
@@ -636,7 +645,7 @@ function OrderDetailsContent() {
     enabled: financeEntryPhotosModalVisible && !!financeEntryDraft.id,
   });
 
-  // Always-current order ref вЂ” prevents stale closures in parallel uploads
+  // Always-current order ref — prevents stale closures in parallel uploads
   const orderRef = useRef(order);
   useEffect(() => { orderRef.current = order; }, [order]);
 
@@ -865,7 +874,7 @@ function OrderDetailsContent() {
       }
 
       return missing.length
-        ? { ok: false, msg: `Р—Р°РїРѕР»РЅРёС‚Рµ РѕР±СЏР·Р°С‚РµР»СЊРЅС‹Рµ РїРѕР»СЏ: ${missing.join(', ')}` }
+        ? { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` }
         : { ok: true };
     } catch {
       return { ok: true };
@@ -887,16 +896,16 @@ function OrderDetailsContent() {
 
   const formatMoney = useCallback(
     (v, currency = null) => {
-      if (v === null || v === undefined || v === '') return 'вЂ”';
+      if (v === null || v === undefined || v === '') return '—';
       const n = typeof v === 'string' ? parseFloat(v) : Number(v);
-      if (!Number.isFinite(n)) return 'вЂ”';
+      if (!Number.isFinite(n)) return '—';
       const cur = currency || companySettings?.currency || 'RUB';
       try {
         // use centralized util for consistent behavior across app
         const { formatCurrency } = require('../../lib/currency');
-        return formatCurrency(n, cur, 'ru-RU') || 'вЂ”';
+        return formatCurrency(n, cur, 'ru-RU') || '—';
       } catch {
-        return 'вЂ”';
+        return '—';
       }
     },
     [companySettings],
@@ -1116,7 +1125,7 @@ function OrderDetailsContent() {
       }
       if (missingFieldsPromises.length) await Promise.all(missingFieldsPromises);
 
-      // в”Ђв”Ђ 4. Auto-status "РќРѕРІС‹Р№"в†’"Р’ СЂР°Р±РѕС‚Рµ" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
+      // в”Ђв”Ђ 4. Auto-status "Новый"в†’"В работе" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       let effectiveOrder = fetchedOrder;
       if (uid && fetchedOrder.status === mapStatusToDb('new') && fetchedOrder.assigned_to === uid) {
         try {
@@ -1225,6 +1234,11 @@ function OrderDetailsContent() {
 
       initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
     } catch (e) {
+      const errorName = String(e?.name || '').trim();
+      if (errorName === 'CancelledError') {
+        setOrderReady(true);
+        return;
+      }
       console.warn('Fetch data error:', e);
       setOrderReady(true);
     }
@@ -1562,7 +1576,7 @@ function OrderDetailsContent() {
         showToast(
           ok === 1
             ? t('order_toast_photo_uploaded')
-            : t('order_toast_photos_uploaded', 'Р—Р°РіСЂСѓР¶РµРЅРѕ {count} С„РѕС‚Рѕ').replace('{count}', String(ok)),
+            : t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(ok)),
         );
       }
     },
@@ -1588,10 +1602,10 @@ function OrderDetailsContent() {
   const financeKindLabel = useCallback(
     (kind) =>
       kind === 'income'
-        ? t('finance_kind_income', 'Р”РѕС…РѕРґ')
+        ? t('finance_kind_income', 'Доход')
         : kind === 'discount'
-          ? t('finance_kind_discount', 'РЎРєРёРґРєР°')
-          : t('finance_kind_expense', 'Р Р°СЃС…РѕРґ'),
+          ? t('finance_kind_discount', 'Скидка')
+          : t('finance_kind_expense', 'Расход'),
     [t],
   );
   const financeDeleteTitle = useCallback(
@@ -1607,8 +1621,8 @@ function OrderDetailsContent() {
   const financeCalcModeLabel = useCallback(
     (mode) =>
       mode === 'percent'
-        ? t('finance_calc_percent', 'РџСЂРѕС†РµРЅС‚')
-        : t('finance_calc_fixed', 'Р¤РёРєСЃРёСЂРѕРІР°РЅРЅР°СЏ СЃСѓРјРјР°'),
+        ? t('finance_calc_percent', 'Процент')
+        : t('finance_calc_fixed', 'Фиксированная сумма'),
     [t],
   );
 
@@ -2349,7 +2363,7 @@ function OrderDetailsContent() {
       if (!entry?.id || entry?.is_system) return;
       try {
         await deleteFinanceEntryMutation.mutateAsync(entry.id);
-        showToast(t('finance_rule_deleted', 'Р—Р°РїРёСЃСЊ СѓРґР°Р»РµРЅР°'));
+        showToast(t('finance_rule_deleted', 'Запись удалена'));
       } catch (error) {
         showWarning(error?.message || t('order_save_error'));
       }
@@ -2516,7 +2530,7 @@ function OrderDetailsContent() {
           showToast(
             failedUrls.length === selected.length
               ? t('order_toast_delete_error')
-              : t('order_toast_delete_partial_error', 'Р§Р°СЃС‚СЊ С„РѕС‚Рѕ СѓРґР°Р»РёС‚СЊ РЅРµ СѓРґР°Р»РѕСЃСЊ'),
+              : t('order_toast_delete_partial_error', 'Часть фото удалить не удалось'),
           );
         }
       })();
@@ -2572,7 +2586,7 @@ function OrderDetailsContent() {
 
     if (missing.length > 0) {
       showToast(
-        t('order_toast_add_photos', `Р”РѕР±Р°РІСЊС‚Рµ: ${missing.join(', ')}`).replace(
+        t('order_toast_add_photos', `Добавьте: ${missing.join(', ')}`).replace(
           '{items}',
           missing.join(', '),
         ),
@@ -2590,7 +2604,7 @@ function OrderDetailsContent() {
     if (error) {
       if (error?.code === 'CONFLICT' && error?.latest) {
         setOrder(error.latest);
-        showToast('Р—Р°СЏРІРєР° СѓР¶Рµ РѕР±РЅРѕРІРёР»Р°СЃСЊ РЅР° РґСЂСѓРіРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ.');
+        showToast('Заявка уже обновилась на другом устройстве.');
         return;
       }
       showToast(t('order_toast_finish_error'));
@@ -2608,7 +2622,7 @@ function OrderDetailsContent() {
       if (!order?.id) return;
       const { data, error } = await supabase.rpc('accept_order', { p_order_id: order.id });
       if (error) {
-        showToast('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРЅСЏС‚СЊ Р·Р°СЏРІРєСѓ');
+        showToast('Не удалось принять заявку');
         return;
       }
       const asBool = (v) => v === true || v === 'true' || v === 1 || v === '1' || v === 't';
@@ -2669,15 +2683,15 @@ function OrderDetailsContent() {
         setExecutorName(me ? `${me.first_name || ''} ${me.last_name || ''}`.trim() : null);
         setAssigneeId(userId);
         setToFeed(false);
-        showToast('Р—Р°СЏРІРєР° РїСЂРёРЅСЏС‚Р°');
+        showToast('Заявка принята');
       } else {
         const assignedToOther =
           !!latestOrder?.assigned_to &&
           (!userId || String(latestOrder.assigned_to) !== String(userId));
         if (assignedToOther) {
-          showToast('РЈРїСЃ, Р·Р°СЏРІРєСѓ СѓР¶Рµ РїСЂРёРЅСЏР» РєС‚Рѕ-С‚Рѕ РґСЂСѓРіРѕР№');
+          showToast('Упс, заявку уже принял кто-то другой');
         } else {
-          showToast('РќРµ СѓРґР°Р»РѕСЃСЊ РїСЂРёРЅСЏС‚СЊ Р·Р°СЏРІРєСѓ');
+          showToast('Не удалось принять заявку');
         }
       }
     } catch {
@@ -2749,7 +2763,7 @@ function OrderDetailsContent() {
           setOrder(error.latest);
           initialFormSnapshotRef.current = makeSnapshotFromOrder(error.latest);
         }
-        showToast('Р—Р°СЏРІРєР° СѓР¶Рµ РёР·РјРµРЅРµРЅР° РЅР° РґСЂСѓРіРѕРј СѓСЃС‚СЂРѕР№СЃС‚РІРµ. Р”Р°РЅРЅС‹Рµ РѕР±РЅРѕРІР»РµРЅС‹.');
+        showToast('Заявка уже изменена на другом устройстве. Данные обновлены.');
         return;
       }
       showToast(error.message || t('order_save_error'));
@@ -3333,7 +3347,7 @@ function OrderDetailsContent() {
   const shortTitle = useMemo(() => {
     if (!fullTitle) return '';
     const max = 36;
-    return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}вЂ¦` : fullTitle;
+    return fullTitle.length > max ? `${fullTitle.slice(0, max - 1).trim()}…` : fullTitle;
   }, [fullTitle]);
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
   const canViewClients = has('canViewClients');
@@ -3547,7 +3561,7 @@ function OrderDetailsContent() {
                     showToast(
                       t(
                         'subscription_edit_unavailable_toast',
-                        'РР·РјРµРЅРµРЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ. РћРїР»Р°С‚РёС‚Рµ РїРѕРґРїРёСЃРєСѓ',
+                        'Изменение недоступно. Оплатите подписку',
                       ),
                     );
                     return;
@@ -3587,7 +3601,7 @@ function OrderDetailsContent() {
                   <Text style={{ color: theme.colors.warning, fontWeight: '600' }}>
                     {t(
                       'subscription_read_only_notice',
-                      'Р РµР¶РёРј С‡С‚РµРЅРёСЏ: РёР·РјРµРЅРµРЅРёРµ РЅРµРґРѕСЃС‚СѓРїРЅРѕ РґРѕ РїСЂРѕРґР»РµРЅРёСЏ РїРѕРґРїРёСЃРєРё',
+                      'Режим чтения: изменение недоступно до продления подписки',
                     )}
                   </Text>
                 </Card>
@@ -3698,7 +3712,7 @@ function OrderDetailsContent() {
                             );
                           }
                           const endDate = new Date(order.time_window_end);
-                          return `${format(startDate, 'd MMMM yyyy', { locale: ru })} вЂ” ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
+                          return `${format(startDate, 'd MMMM yyyy', { locale: ru })} — ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
                         })()}
                       </Text>
                     }
@@ -4162,7 +4176,7 @@ function OrderDetailsContent() {
             {!isFree && visibleMediaFields.length > 0 && (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
-                  {t('order_details_photos_section', 'Р¤РѕС‚Рѕ')}
+                  {t('order_details_photos_section', 'Фото')}
                 </SectionHeader>
                 {cloudFallbackActive && isAdminUser ? (
                   <Text style={styles.cloudWarningText}>
@@ -4187,7 +4201,7 @@ function OrderDetailsContent() {
                           <Text style={base.label}>{row.label}</Text>
                           <View style={base.rightWrap}>
                             <Text style={base.value}>
-                              {t('order_photos_count', '{count} С„РѕС‚Рѕ').replace('{count}', String(count))}
+                              {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
                             </Text>
                             <Feather
                               name="chevron-right"
@@ -4723,7 +4737,7 @@ function OrderDetailsContent() {
           />
           <FieldErrorText message={financeEntryFieldErrors?.title?.message} />
           <TextField
-            label={t('finance_rule_calc_mode', 'Р¤РѕСЂРјР°С‚ СЂР°СЃС‡С‘С‚Р°')}
+            label={t('finance_rule_calc_mode', 'Формат расчёта')}
             value={financeCalcModeLabel(financeEntryDraft.calc_mode)}
             pressable
             onPress={() => setFinanceCalcModeModalVisible(true)}
@@ -4748,7 +4762,7 @@ function OrderDetailsContent() {
               />
               <FieldErrorText message={financeEntryFieldErrors?.input_percent?.message} />
               <TextField
-                label={t('finance_rule_percent_base', 'РћСЃРЅРѕРІР° РїСЂРѕС†РµРЅС‚Р°')}
+                label={t('finance_rule_percent_base', 'Основа процента')}
                 value={financePercentBaseLabel(financeEntryDraft.percent_base)}
                 multiline
                 numberOfLines={2}
@@ -4787,7 +4801,7 @@ function OrderDetailsContent() {
           ) : null}
           <TextField
             ref={financeCommentInputRef}
-            label={t('finance_rule_note_template', 'РљРѕРјРјРµРЅС‚Р°СЂРёР№')}
+            label={t('finance_rule_note_template', 'Комментарий')}
             value={financeEntryDraft.note}
             multiline
             autoGrow
@@ -5139,5 +5153,3 @@ function createStyles(theme) {
     },
   });
 }
-
-

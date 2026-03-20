@@ -46,10 +46,18 @@ const FINANCE_RULE_SELECT = `
   updated_at,
   recipient:profiles!company_finance_rules_recipient_user_id_fkey(id, full_name)
 `;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
 
 function normalizeId(value) {
   if (value === null || value === undefined || value === '') return null;
   return String(value);
+}
+
+function isValidUuid(value) {
+  const normalized = String(value ?? '').trim();
+  if (!normalized || ROUTE_PLACEHOLDER_RE.test(normalized)) return false;
+  return UUID_RE.test(normalized);
 }
 
 function normalizeMoney(value) {
@@ -79,7 +87,7 @@ function normalizePercentBase(kind, value) {
 }
 
 export async function listOrderFinanceEntries(orderId) {
-  if (!orderId) return [];
+  if (!isValidUuid(orderId)) return [];
   const { data, error } = await supabase
     .from('order_finance_entries')
     .select(ORDER_FINANCE_SELECT)

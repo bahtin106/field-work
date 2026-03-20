@@ -52,6 +52,12 @@ const ORDER_SELECT_COLUMNS_FALLBACK = `*, ${OBJECT_RELATION_SELECT}`;
 const CALENDAR_SELECT_COLUMNS = ORDER_SELECT_COLUMNS;
 const CALENDAR_SELECT_COLUMNS_FALLBACK = ORDER_SELECT_COLUMNS_FALLBACK;
 const EXTRA_ORDER_FIELDS = ['time_window_end'];
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value) {
+  const normalized = String(value || '').trim();
+  return UUID_RE.test(normalized);
+}
 
 function buildClientDisplayName(client) {
   if (!client || typeof client !== 'object') return '';
@@ -350,8 +356,8 @@ export async function listRequests(params = {}) {
 }
 
 export async function getRequestById(id) {
-  const key = String(id || '');
-  if (!key) return null;
+  const key = String(id || '').trim();
+  if (!key || !isUuid(key)) return null;
   const existing = requestByIdInFlight.get(key);
   if (existing) return existing;
 
@@ -359,13 +365,13 @@ export async function getRequestById(id) {
     let { data, error } = await supabase
       .from('orders')
       .select(ORDER_SELECT_COLUMNS)
-      .eq('id', id)
+      .eq('id', key)
       .maybeSingle();
     if (error && shouldFallbackWithoutClientRelation(error)) {
       const retryResult = await supabase
         .from('orders')
         .select(ORDER_SELECT_COLUMNS_FALLBACK)
-        .eq('id', id)
+        .eq('id', key)
         .maybeSingle();
       data = retryResult.data;
       error = retryResult.error;
