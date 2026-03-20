@@ -2,10 +2,19 @@ import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
 
+function isAuthSessionMissing(error: unknown) {
+  const name = String(error?.name || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+  return name.includes('authsessionmissingerror') || message.includes('auth session missing');
+}
+
 export async function getCurrentUser() {
   return measureNetwork('profile.getCurrentUser', async () => {
     const { data, error } = await supabase.auth.getUser();
-    if (error) throw error;
+    if (error) {
+      if (isAuthSessionMissing(error)) return null;
+      throw error;
+    }
     return data?.user || null;
   });
 }

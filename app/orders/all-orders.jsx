@@ -147,11 +147,6 @@ function AllOrdersContent() {
 
   const router = useRouter();
   const navigation = useNavigation();
-  useEffect(() => {
-    try {
-      router?.prefetch?.('/orders/[id]');
-    } catch {}
-  }, [router]);
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);

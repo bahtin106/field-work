@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
-import { InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
@@ -189,26 +189,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => sub?.subscription?.unsubscribe?.();
   }, [qc, user]);
 
-  useEffect(() => {
-    let canceled = false;
-    let timerId = null;
-    const task = InteractionManager.runAfterInteractions(() => {
-      timerId = setTimeout(() => {
-        if (canceled) return;
-        ['/stats', '/company_settings', '/orders/create-order'].forEach((path) => {
-          try {
-            router?.prefetch?.(path);
-          } catch {}
-        });
-      }, 350);
-    });
-    return () => {
-      canceled = true;
-      if (timerId) clearTimeout(timerId);
-      task?.cancel?.();
-    };
-  }, [router]);
-
   const [scope, setScope] = useState('my');
 
   // ====== Session / profile ======
@@ -311,10 +291,13 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   });
 
   // ====== Р В РЎСљР В Р’В°Р В Р вЂ Р В РЎвЂР В РЎвЂ“Р В Р’В°Р РЋРІР‚В Р В РЎвЂР РЋР РЏ ======
-  const openSelfProfileEdit = () => {
-    if (!uid) return;
-    runSingleNavigation(() => router.push(`/users/${uid}`));
-  };
+  const openSelfProfileEdit = useCallback(() => {
+    const selfProfileId = String(currentProfile?.id || uid || '').trim();
+    if (!isUuid(selfProfileId)) return;
+    runSingleNavigation(() =>
+      router.push({ pathname: '/users/[id]', params: { id: selfProfileId } }),
+    );
+  }, [currentProfile?.id, router, runSingleNavigation, uid]);
   const openAppSettings = useCallback(
     () => runSingleNavigation(() => router.push('/app_settings/AppSettings')),
     [router, runSingleNavigation],
@@ -969,10 +952,6 @@ const createStyles = (theme) => {
     actionWrapper: { marginBottom: spacing.md },
   });
 };
-
-
-
-
 
 
 

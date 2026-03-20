@@ -6,12 +6,21 @@ const companyIdByUserId = new Map();
 const errorByUserId = new Map();
 const loadingByUserId = new Map();
 
+function isAuthSessionMissing(error) {
+  const name = String(error?.name || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+  return name.includes('authsessionmissingerror') || message.includes('auth session missing');
+}
+
 async function getCurrentUserId() {
   const {
     data: { user },
     error,
   } = await supabase.auth.getUser();
-  if (error) throw error;
+  if (error) {
+    if (isAuthSessionMissing(error)) return null;
+    throw error;
+  }
   return user?.id || null;
 }
 

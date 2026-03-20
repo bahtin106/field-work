@@ -233,16 +233,24 @@ function RootLayoutInner() {
     return () => sub.remove();
   }, [isAuthenticated, isBlockedScreen, isInitializing, pathname, router]);
 
-  useEffect(() => {
-    if (isInitializing || !isAuthenticated) return;
-    const timer = setTimeout(() => {
-      try {
-        router?.prefetch?.('/app_settings/AppSettings');
-        router?.prefetch?.('/company_settings');
-      } catch {}
-    }, 120);
-    return () => clearTimeout(timer);
-  }, [isInitializing, isAuthenticated, router]);
+  const loadOwnAccessProfile = useCallback(async (uid) => {
+    if (!uid) return null;
+    const columns = 'is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason';
+
+    const { data: byId } = await supabase
+      .from('profiles')
+      .select(columns)
+      .eq('id', uid)
+      .maybeSingle();
+    if (byId) return byId;
+
+    const { data: byUserId } = await supabase
+      .from('profiles')
+      .select(columns)
+      .eq('user_id', uid)
+      .maybeSingle();
+    return byUserId || null;
+  }, []);
 
   const enforceAccess = useCallback(async () => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
@@ -273,17 +281,14 @@ function RootLayoutInner() {
         return;
       }
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
-        .eq('id', user.id)
-        .maybeSingle();
+      const profile = await loadOwnAccessProfile(user.id);
+      if (!profile) return;
 
       const blockedByAdmin =
         !!profile?.is_suspended ||
         !!profile?.suspended_at ||
         !!profile?.is_admin_blocked ||
-        ['manual', 'admin_block', 'admin_blocked'].includes(
+        ['manual', 'admin_block', 'admin_blocked', 'blocked', 'suspended'].includes(
           String(profile?.blocked_reason || '').toLowerCase(),
         );
       const blockedByLicense = String(profile?.license_state || '') === 'blocked_by_license';
@@ -300,7 +305,7 @@ function RootLayoutInner() {
     } finally {
       accessCheckInFlightRef.current = false;
     }
-  }, [isAuthenticated, isInitializing, router, user?.id]);
+  }, [isAuthenticated, isInitializing, loadOwnAccessProfile, router, user?.id]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
