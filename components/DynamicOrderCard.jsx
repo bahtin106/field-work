@@ -1,7 +1,6 @@
-import React, { memo, useCallback, useMemo, useRef } from 'react';
+﻿import React, { memo, useCallback, useMemo, useRef } from 'react';
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
-import { useCompanySettings } from '../hooks/useCompanySettings';
 import { formatCurrency } from '../lib/currency';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
@@ -14,6 +13,60 @@ import { useTheme } from '../theme/ThemeProvider';
 
 /* ===== Name cache for executor (avoid N requests in lists) ===== */
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+const EXECUTOR_NAME_INFLIGHT = (globalThis.EXECUTOR_NAME_INFLIGHT ||= new Map());
+const EXECUTOR_NAME_CACHE_MAX_ENTRIES = 300;
+const CARD_PRESS_GUARD_MS = 250;
+
+function getCachedExecutorName(userId) {
+  if (!userId || !EXECUTOR_NAME_CACHE.has(userId)) return '';
+  const value = EXECUTOR_NAME_CACHE.get(userId);
+  EXECUTOR_NAME_CACHE.delete(userId);
+  EXECUTOR_NAME_CACHE.set(userId, value);
+  return typeof value === 'string' ? value : '';
+}
+
+function setCachedExecutorName(userId, displayName) {
+  if (!userId) return;
+  const value = String(displayName || '').trim();
+  EXECUTOR_NAME_CACHE.delete(userId);
+  EXECUTOR_NAME_CACHE.set(userId, value);
+  while (EXECUTOR_NAME_CACHE.size > EXECUTOR_NAME_CACHE_MAX_ENTRIES) {
+    const oldestKey = EXECUTOR_NAME_CACHE.keys().next()?.value;
+    if (oldestKey == null) break;
+    EXECUTOR_NAME_CACHE.delete(oldestKey);
+  }
+}
+
+async function fetchExecutorNameById(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return '';
+  const cached = getCachedExecutorName(uid);
+  if (cached) return cached;
+  if (EXECUTOR_NAME_INFLIGHT.has(uid)) {
+    return EXECUTOR_NAME_INFLIGHT.get(uid);
+  }
+
+  const runner = (async () => {
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', uid)
+        .single();
+      if (error || !data) return '';
+      const full = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+      if (full) setCachedExecutorName(uid, full);
+      return full;
+    } catch {
+      return '';
+    } finally {
+      EXECUTOR_NAME_INFLIGHT.delete(uid);
+    }
+  })();
+
+  EXECUTOR_NAME_INFLIGHT.set(uid, runner);
+  return runner;
+}
 
 const PRIMARY_ROW_LABEL_KEYS = {
   customer_name: 'order_details_customer',
@@ -25,18 +78,18 @@ function formatDateShort(iso, showTime = true) {
   if (!iso) return '';
   const d = new Date(iso);
   const months = [
-    'янв.',
-    'февр.',
-    'март',
-    'апр.',
-    'май',
-    'июнь',
-    'июль',
-    'авг.',
-    'сент.',
-    'окт.',
-    'нояб.',
-    'дек.',
+    'СЏРЅРІ.',
+    'С„РµРІСЂ.',
+    'РјР°СЂС‚',
+    'Р°РїСЂ.',
+    'РјР°Р№',
+    'РёСЋРЅСЊ',
+    'РёСЋР»СЊ',
+    'Р°РІРі.',
+    'СЃРµРЅС‚.',
+    'РѕРєС‚.',
+    'РЅРѕСЏР±.',
+    'РґРµРє.',
   ];
   const dateStr = `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}`;
   if (showTime) {
@@ -90,12 +143,12 @@ function readWithFallback(order, field, key) {
   }
 
   if ((val == null || val === '') && key === 'address') {
-    // Формируем адрес компактно: пропускаем область/район, показываем город,
-    // улицу без приставки "ул."/"улица" и номер дома.
+    // Р¤РѕСЂРјРёСЂСѓРµРј Р°РґСЂРµСЃ РєРѕРјРїР°РєС‚РЅРѕ: РїСЂРѕРїСѓСЃРєР°РµРј РѕР±Р»Р°СЃС‚СЊ/СЂР°Р№РѕРЅ, РїРѕРєР°Р·С‹РІР°РµРј РіРѕСЂРѕРґ,
+    // СѓР»РёС†Сѓ Р±РµР· РїСЂРёСЃС‚Р°РІРєРё "СѓР»."/"СѓР»РёС†Р°" Рё РЅРѕРјРµСЂ РґРѕРјР°.
     const city = order?.city || order?.town || order?.settlement || null;
     const rawStreet = order?.street || order?.snt || null;
     const street =
-      typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(ул\.?|улица)\s+/i, '') : rawStreet;
+      typeof rawStreet === 'string' ? rawStreet.replace(/^\s*(СѓР»\.?|СѓР»РёС†Р°)\s+/i, '') : rawStreet;
     const house = order?.house || order?.plot || null;
     const composed = [city, street, house].filter(Boolean).join(', ');
     const cand = [order?.address, order?.addr, composed].find(Boolean);
@@ -145,16 +198,17 @@ function DynamicOrderCard({
   context = 'all_orders', // 'all_orders' | 'my_orders' | 'calendar' | 'order_card'
   onPress,
   viewerRole, // 'admin' | 'dispatcher' | 'worker' (optional)
+  departureTimeEnabled, // optional explicit flag from order field settings
+  companyCurrency = null, // optional currency from parent screen
 }) {
   const { t } = useTranslation();
   const settings = useSettings();
-  const { presetsByContext, getFieldByKey } = settings;
+  const { presetsByContext, getFieldByKey, isFieldVisible } = settings;
   const { theme } = useTheme();
-  const { settings: companySettings, useDepartureTime } = useCompanySettings();
   const lastPressAtRef = useRef(0);
   const handlePress = useCallback(() => {
     const now = Date.now();
-    if (now - lastPressAtRef.current < 500) return;
+    if (now - lastPressAtRef.current < CARD_PRESS_GUARD_MS) return;
     lastPressAtRef.current = now;
     if (typeof onPress === 'function') {
       onPress(order?.id, order);
@@ -340,9 +394,17 @@ function DynamicOrderCard({
     return null;
   }, [order, getFieldByKey]);
 
+  const showDepartureTime = useMemo(() => {
+    if (typeof departureTimeEnabled === 'boolean') return departureTimeEnabled;
+    const hasField = !!getFieldByKey?.('departure_time');
+    if (!hasField) return true;
+    const visibilityContext = context === 'calendar' ? 'calendar' : 'list';
+    return isFieldVisible('departure_time', visibilityContext);
+  }, [context, departureTimeEnabled, getFieldByKey, isFieldVisible]);
+
   // Time string derived from bottomDateIso (used in calendar context)
   const bottomTimeStr = useMemo(() => {
-    if (!useDepartureTime) return ''; // Время не показываем если настройка выключена
+    if (!showDepartureTime) return '';
     try {
       if (!bottomDateIso) return '';
       const d = new Date(bottomDateIso);
@@ -351,7 +413,7 @@ function DynamicOrderCard({
     } catch {
       return '';
     }
-  }, [bottomDateIso, useDepartureTime]);
+  }, [bottomDateIso, showDepartureTime]);
 
   // Context-driven visibility
   const roleRaw = (
@@ -385,8 +447,7 @@ function DynamicOrderCard({
     order?.id;
 
   // Resolve missing executor via Supabase
-  const initialExecCached =
-    (order?.assigned_to && EXECUTOR_NAME_CACHE.get(order.assigned_to)) || '';
+  const initialExecCached = getCachedExecutorName(order?.assigned_to);
   const [resolvedExecutorName, setResolvedExecutorName] = React.useState(initialExecCached);
   React.useEffect(() => {
     if (!showExecutor) return;
@@ -399,25 +460,17 @@ function DynamicOrderCard({
       setResolvedExecutorName('');
       return;
     }
-    const cached = EXECUTOR_NAME_CACHE.get(uid);
-    if (typeof cached === 'string') {
+    const cached = getCachedExecutorName(uid);
+    if (cached) {
       setResolvedExecutorName(cached);
       return;
     }
     let cancelled = false;
     (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('first_name, last_name')
-          .eq('id', uid)
-          .single();
-        if (!cancelled && !error && data) {
-          const full = `${data.first_name || ''} ${data.last_name || ''}`.trim();
-          EXECUTOR_NAME_CACHE.set(uid, full);
+      const full = await fetchExecutorNameById(uid);
+      if (!cancelled && full) {
           setResolvedExecutorName(full);
-        }
-      } catch {}
+      }
     })();
     return () => {
       cancelled = true;
@@ -430,6 +483,8 @@ function DynamicOrderCard({
   return (
     <TouchableOpacity
       activeOpacity={0.7}
+      delayPressIn={0}
+      delayPressOut={0}
       onPress={handlePress}
       style={{
         backgroundColor: theme.colors.card,
@@ -466,7 +521,7 @@ function DynamicOrderCard({
             paddingRight: 8,
           }}
         >
-          {title || '—'}
+          {title || 'вЂ”'}
         </Text>
         <OrderStatusCapsule status={statusTitle} />
       </View>
@@ -476,7 +531,7 @@ function DynamicOrderCard({
         {primaryRows.map((row) => (
           <Text key={row.key} numberOfLines={1} style={{ fontSize: 14, color: mutedColor }}>
             {row.label ? `${row.label}: ` : ''}
-            <Text style={{ color: theme.colors.text }}>{row.value || '—'}</Text>
+            <Text style={{ color: theme.colors.text }}>{row.value || 'вЂ”'}</Text>
           </Text>
         ))}
       </View>
@@ -511,7 +566,7 @@ function DynamicOrderCard({
                   lineHeight: 12,
                 }}
               >
-                с
+                СЃ
               </Text>
             </View>
           )}
@@ -521,18 +576,18 @@ function DynamicOrderCard({
             </Text>
           ) : showDate ? (
             <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-              {formatDateShort(bottomDateIso, useDepartureTime)}
+              {formatDateShort(bottomDateIso, showDepartureTime)}
             </Text>
           ) : null}
         </View>
 
         {showExecutor ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-            {resolvedExecutorName || executorName || '—'}
+            {resolvedExecutorName || executorName || 'вЂ”'}
           </Text>
         ) : priceValue ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-            {formatPrice(priceValue, order?.currency || companySettings?.currency || 'RUB')}
+            {formatPrice(priceValue, order?.currency || companyCurrency || 'RUB')}
           </Text>
         ) : (
           <View style={{ width: 1, height: 1 }} />
@@ -553,4 +608,5 @@ function areCardPropsEqual(prev, next) {
 
 const MemoizedDynamicOrderCard = memo(DynamicOrderCard, areCardPropsEqual);
 export default MemoizedDynamicOrderCard;
+
 

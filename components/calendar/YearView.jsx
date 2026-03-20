@@ -32,6 +32,7 @@ const DAY_KEYS = [
 ];
 const MONTH_ROWS = [0, 1, 2, 3].map((row) => MONTH_KEYS.slice(row * 3, row * 3 + 3));
 const MONTH_MATRIX_CACHE = new Map();
+const MONTH_MATRIX_CACHE_MAX_ENTRIES = 32;
 
 function capitalizeLabel(value) {
   if (!value) return value;
@@ -56,6 +57,11 @@ function getMonthMatrix(year) {
     months.push({ monthIndex: m, weeks });
   }
   MONTH_MATRIX_CACHE.set(year, months);
+  while (MONTH_MATRIX_CACHE.size > MONTH_MATRIX_CACHE_MAX_ENTRIES) {
+    const oldestKey = MONTH_MATRIX_CACHE.keys().next()?.value;
+    if (oldestKey == null) break;
+    MONTH_MATRIX_CACHE.delete(oldestKey);
+  }
   return months;
 }
 

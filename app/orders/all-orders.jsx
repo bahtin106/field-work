@@ -5,6 +5,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import {
   ActivityIndicator,
   FlatList,
+  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -23,6 +24,7 @@ import {
   useManagedRefresh,
   usePullToRefreshFeedback,
 } from '../../components/ui/PullToRefreshFeedback';
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
@@ -36,6 +38,12 @@ import {
 import { useClients } from '../../src/features/clients/queries';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+} from '../../src/features/fieldSettings/catalog';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import {
   markFirstContent,
@@ -48,6 +56,7 @@ import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
+import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
@@ -99,7 +108,7 @@ async function checkCanViewAll() {
   }
 }
 
-export default function AllOrdersScreen() {
+function AllOrdersContent() {
   trackRender('AllRequests', 30);
 
   const [allowed, setAllowed] = useState(() => {
@@ -138,6 +147,11 @@ export default function AllOrdersScreen() {
 
   const router = useRouter();
   const navigation = useNavigation();
+  useEffect(() => {
+    try {
+      router?.prefetch?.('/orders/[id]');
+    } catch {}
+  }, [router]);
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);
@@ -248,6 +262,19 @@ export default function AllOrdersScreen() {
   }, []);
 
   const { data: companyId } = useMyCompanyIdQuery();
+  const { settings: companySettings } = useCompanySettings(companyId);
+  const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
+    enabled: effectiveAllowed === true,
+  });
+  const orderFieldSettings = useMemo(
+    () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
+    [orderFieldSettingsData],
+  );
+  const orderFieldsByKey = useMemo(
+    () => getEntityFieldMap(orderFieldSettings),
+    [orderFieldSettings],
+  );
+  const departureTimeEnabled = orderFieldsByKey.get('departure_time')?.isEnabled !== false;
   const { data: companyClients = [] } = useClients(
     { companyId, search: '' },
     { enabled: !!companyId },
@@ -467,7 +494,6 @@ export default function AllOrdersScreen() {
             order?.customer_phone_visible,
             order?.customer_phone,
             order?.phone,
-            order?.secondary_phone,
           ],
         }),
         q,
@@ -549,10 +575,6 @@ export default function AllOrdersScreen() {
       const prev = detailNavLockRef.current;
       if (prev.id === orderId && now - prev.ts < 1200) return;
       detailNavLockRef.current = { id: orderId, ts: now };
-      const registry = getPrefetchRegistry();
-      registry
-        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
-        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
@@ -560,15 +582,27 @@ export default function AllOrdersScreen() {
           returnParams: JSON.stringify(returnParamsRef.current),
         },
       });
+      InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        registry
+          .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+          .catch(() => {});
+      });
     },
     [queryClient, router],
   );
 
   const renderItem = useCallback(
     ({ item: order }) => (
-      <DynamicOrderCard order={order} context="all_orders" onPress={openOrderDetails} />
+      <DynamicOrderCard
+        order={order}
+        context="all_orders"
+        onPress={openOrderDetails}
+        departureTimeEnabled={departureTimeEnabled}
+        companyCurrency={companySettings?.currency || null}
+      />
     ),
-    [openOrderDetails],
+    [companySettings?.currency, departureTimeEnabled, openOrderDetails],
   );
 
   const renderFooter = useCallback(() => {
@@ -830,6 +864,14 @@ export default function AllOrdersScreen() {
         }}
       />
     </Screen>
+  );
+}
+
+export default function AllOrdersScreen() {
+  return (
+    <DeferredScreen>
+      <AllOrdersContent />
+    </DeferredScreen>
   );
 }
 

@@ -758,7 +758,14 @@ export default function TelegramBotSettingsScreen() {
 }
 
 const styles = (theme) =>
-  StyleSheet.create({
+  {
+    const listItemPadX = theme.components?.listItem?.padX;
+    const rowPaddingX =
+      typeof listItemPadX === 'number'
+        ? listItemPadX
+        : theme.spacing?.[listItemPadX] ?? theme.spacing?.md ?? theme.spacing?.xs ?? 12;
+
+    return StyleSheet.create({
     content: {
       padding: theme.spacing.lg,
       paddingBottom: theme.spacing.xxl,
@@ -847,6 +854,7 @@ const styles = (theme) =>
     },
     linkSection: {
       paddingVertical: theme.spacing.xs,
+      paddingHorizontal: rowPaddingX,
       gap: theme.spacing.xs,
     },
     statusRow: {
@@ -954,4 +962,5 @@ const styles = (theme) =>
     groupedFieldsWrap: {
       paddingLeft: theme.spacing.lg,
     },
-  });
+    });
+  };

@@ -31,7 +31,6 @@ export function useCompanySettings(companyIdOverride = null) {
     settings: data,
     isLoading,
     error,
-    useDepartureTime: Boolean(data?.use_departure_time),
     useDepartments: Boolean(data?.use_departments),
     refetch,
     invalidateSettings,

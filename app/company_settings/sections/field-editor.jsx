@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   UIManager,
   View,
   findNodeHandle,
@@ -59,6 +60,28 @@ const AUTO_RETRY_BASE_DELAY_MS = 4000;
 const AUTO_RETRY_MAX_DELAY_MS = 30000;
 const AUTO_RETRY_MAX_ATTEMPTS = 3;
 
+const HIDDEN_EDITOR_FIELDS = Object.freeze({
+  [ENTITY_FIELD_TYPES.ORDER]: new Set([
+    'phone',
+    'work_type_id',
+    'department_id',
+    'client_id',
+    'object_id',
+    'assigned_to',
+    'price',
+    'payment_status',
+    'payment_method',
+  ]),
+});
+
+const ORDER_MEDIA_RENAMABLE_FIELDS = new Set([
+  'contract_file',
+  'photo_before',
+  'photo_after',
+  'act_file',
+  'media_file_5',
+]);
+
 function cloneSettings(settings) {
   return {
     entityType: settings?.entityType || null,
@@ -101,6 +124,10 @@ function serializeFieldState(fields) {
       fieldKey: String(field.fieldKey || field.field_key || ''),
       isEnabled: field.isEnabled !== false,
       isRequired: field.isRequired === true,
+      customLabel:
+        typeof field.customLabel === 'string' && field.customLabel.trim()
+          ? field.customLabel.trim()
+          : null,
     })),
   );
 }
@@ -183,6 +210,9 @@ export default function FieldEditorScreen() {
   const [drafts, setDrafts] = React.useState(() => buildEntityState(null));
   const [dirtyMap, setDirtyMap] = React.useState(() => buildEntityState(false));
   const [saveStateMap, setSaveStateMap] = React.useState(() => buildEntitySaveState());
+  const [labelEditField, setLabelEditField] = React.useState(null);
+  const [labelDraftValue, setLabelDraftValue] = React.useState('');
+  const labelInputRef = React.useRef(null);
   const scrollRef = React.useRef(null);
   const rowRefs = React.useRef({});
   const stickyHeaderHeightRef = React.useRef(0);
@@ -500,6 +530,53 @@ export default function FieldEditorScreen() {
     [updateDraft],
   );
 
+  const canEditFieldLabel = React.useCallback((entityType, field) => {
+    if (entityType !== ENTITY_FIELD_TYPES.ORDER) return false;
+    const fieldKey = String(field?.fieldKey || field?.field_key || '');
+    return ORDER_MEDIA_RENAMABLE_FIELDS.has(fieldKey);
+  }, []);
+
+  const openLabelEditor = React.useCallback((entityType, field) => {
+    if (!canEditFieldLabel(entityType, field)) return;
+    setLabelEditField({
+      entityType,
+      fieldKey: String(field?.fieldKey || field?.field_key || ''),
+    });
+    setLabelDraftValue(String(field?.customLabel || field?.custom_label || '').trim());
+  }, [canEditFieldLabel]);
+
+  const closeLabelEditor = React.useCallback(() => {
+    setLabelEditField(null);
+    setLabelDraftValue('');
+  }, []);
+
+  const applyLabelEditor = React.useCallback(() => {
+    if (!labelEditField?.entityType || !labelEditField?.fieldKey) {
+      closeLabelEditor();
+      return;
+    }
+    const nextCustomLabel = String(labelDraftValue || '').trim();
+    updateDraft(labelEditField.entityType, (current) => ({
+      ...current,
+      fields: (current.fields || []).map((field) => {
+        const fieldKey = String(field.fieldKey || field.field_key || '');
+        if (fieldKey !== labelEditField.fieldKey) return field;
+        return {
+          ...field,
+          customLabel: nextCustomLabel || null,
+          custom_label: nextCustomLabel || null,
+        };
+      }),
+    }));
+    closeLabelEditor();
+  }, [closeLabelEditor, labelDraftValue, labelEditField, updateDraft]);
+
+  React.useEffect(() => {
+    if (!labelEditField) return;
+    const timer = setTimeout(() => labelInputRef.current?.focus?.(), 30);
+    return () => clearTimeout(timer);
+  }, [labelEditField]);
+
   const getEntityStatusLabel = React.useCallback((entityType) => {
     const state = saveStateMap[entityType];
     if (!state) return null;
@@ -560,16 +637,65 @@ export default function FieldEditorScreen() {
         field.isEnabled === false ||
         field.lockedRequired === true;
 
-      const translatedLabel = sanitizeEditorLabel(t(field.labelKey, field.fallbackLabel || field.fieldKey));
+      const defaultLabel = sanitizeEditorLabel(t(field.labelKey, field.fallbackLabel || field.fieldKey));
+      const customLabel = String(field.customLabel || field.custom_label || '').trim();
+      const translatedLabel = customLabel || defaultLabel;
+      const allowCustomLabelEdit = canEditFieldLabel(entityType, field);
+      const isLabelEditing =
+        !!labelEditField &&
+        labelEditField.entityType === entityType &&
+        labelEditField.fieldKey === String(field.fieldKey || field.field_key || '');
 
       return (
         <React.Fragment key={field.fieldKey}>
           {index > 0 ? <View style={base.sep} /> : null}
           <View style={[base.row, s.fieldRow, field.isEnabled === false ? s.fieldRowDisabled : null]}>
             <View style={s.fieldInfo}>
-              <Text style={[base.label, s.fieldTitle, field.isEnabled === false ? s.fieldTitleDisabled : null]}>
-                {translatedLabel}
-              </Text>
+              <View style={s.fieldTitleRow}>
+                {allowCustomLabelEdit && !isLabelEditing ? (
+                  <Pressable
+                    onPress={() => openLabelEditor(entityType, field)}
+                    style={({ pressed }) => [
+                      s.fieldEditIconBtn,
+                      s.fieldEditIconBtnInline,
+                      pressed ? s.fieldEditIconBtnPressed : null,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common_edit', 'Изменить')}
+                  >
+                    <Feather
+                      name="edit-2"
+                      size={Math.max(10, Math.round((theme.icons?.sm ?? 16) / 1.5))}
+                      color={theme.colors.textSecondary}
+                    />
+                  </Pressable>
+                ) : null}
+                {isLabelEditing ? (
+                  <TextInput
+                    ref={labelInputRef}
+                    value={labelDraftValue}
+                    onChangeText={(nextText) =>
+                      setLabelDraftValue(String(nextText || '').replace(/[\r\n]+/g, ' ').slice(0, 64))
+                    }
+                    onBlur={applyLabelEditor}
+                    maxLength={64}
+                    multiline
+                    scrollEnabled={false}
+                    returnKeyType="done"
+                    blurOnSubmit
+                    onSubmitEditing={() => {
+                      applyLabelEditor();
+                      labelInputRef.current?.blur?.();
+                    }}
+                    style={s.fieldTitleInput}
+                    accessibilityLabel={t('field_settings_edit_label_input', 'Пользовательское название')}
+                  />
+                ) : (
+                  <Text style={[base.label, s.fieldTitle, field.isEnabled === false ? s.fieldTitleDisabled : null]}>
+                    {translatedLabel}
+                  </Text>
+                )}
+              </View>
             </View>
             <View style={s.fieldControls}>
               <View style={s.fieldSwitchCell}>
@@ -591,14 +717,34 @@ export default function FieldEditorScreen() {
         </React.Fragment>
       );
     },
-    [base.label, base.row, base.sep, handleToggleEnabled, handleToggleRequired, s, t],
+    [
+      base.label,
+      base.row,
+      base.sep,
+      canEditFieldLabel,
+      handleToggleEnabled,
+      handleToggleRequired,
+      labelDraftValue,
+      labelEditField,
+      openLabelEditor,
+      applyLabelEditor,
+      s,
+      t,
+      theme.colors.textSecondary,
+      theme.icons?.sm,
+    ],
   );
 
   const renderEntityEditor = React.useCallback(
     (entityType) => {
       const draft = drafts[entityType];
       const query = queryMap[entityType];
-      const visibleFields = getOrderedEntityFields(draft, { lockedFirst: true });
+      const hiddenFieldKeys = HIDDEN_EDITOR_FIELDS[entityType] || null;
+      const visibleFields = getOrderedEntityFields(draft, { lockedFirst: true }).filter((field) => {
+        if (!hiddenFieldKeys) return true;
+        const fieldKey = String(field?.fieldKey || field?.field_key || '');
+        return !hiddenFieldKeys.has(fieldKey);
+      });
 
       if (query?.isLoading && !draft) {
         return (
@@ -814,6 +960,11 @@ function createStyles(theme) {
       minWidth: 0,
       paddingRight: theme.spacing.md,
     },
+    fieldTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 0,
+    },
     fieldControls: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -890,6 +1041,32 @@ function createStyles(theme) {
     fieldTitleDisabled: {
       color: theme.colors.textSecondary,
     },
+    fieldTitleInput: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.medium,
+      lineHeight: 20,
+      paddingVertical: 0,
+      minHeight: 20,
+      maxHeight: 44,
+      flex: 1,
+      minWidth: 0,
+      textAlignVertical: 'top',
+    },
+    fieldEditIconBtn: {
+      width: 28,
+      height: 28,
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    fieldEditIconBtnInline: {
+      marginLeft: -(28 + (theme.spacing.xs ?? 4)),
+      marginRight: theme.spacing.xs ?? 4,
+    },
+    fieldEditIconBtnPressed: {
+      backgroundColor: theme.colors.cardBorder,
+    },
     fieldSwitchCell: {
       width: switchColumnWidth,
       alignItems: 'center',
@@ -905,3 +1082,4 @@ function createStyles(theme) {
     },
   });
 }
+

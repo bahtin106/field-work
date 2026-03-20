@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import React from 'react';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import AdditionalPhoneInputRow from '../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
@@ -39,12 +40,22 @@ import {
   sanitizeClientObjectPayload,
   buildClientObjectShortAddress,
 } from '../../../src/features/objects/addressing';
+import {
+  buildObjectAdditionalPhonesPatch,
+  createEmptyAdditionalObjectPhones,
+  getAddableAdditionalObjectPhoneSlotIds,
+  getObjectAdditionalPhones,
+  getVisibleAdditionalObjectPhoneSlotIds,
+  OBJECT_ADDITIONAL_PHONE_SLOT_COUNT,
+  resolveVisibleAdditionalObjectPhoneSlotIds,
+} from '../../../src/features/objects/additionalPhones';
 import { uploadClientObjectPhoto } from '../../../src/features/objects/photo';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useSetObjectTagsMutation } from '../../../src/features/tags/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation';
 import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
+import { hasMobilePhoneValue, isValidOptionalMobilePhone } from '../../../src/shared/validation/phone';
 import { useTheme } from '../../../theme/ThemeProvider';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 
@@ -133,10 +144,23 @@ function getObjectInitials(name) {
 }
 
 function snapshotObjectForm(obj = {}) {
+  const additionalPhones = Array.isArray(obj.additionalPhones) ? obj.additionalPhones : [];
+  const visibleSlots = Array.isArray(obj.additionalPhoneVisibleSlots)
+    ? Array.from(
+        new Set(
+          obj.additionalPhoneVisibleSlots
+            .map((slotId) => Number(slotId))
+            .filter((slotId) => Number.isFinite(slotId))
+            .map((slotId) => Math.trunc(slotId)),
+        ),
+      ).sort((a, b) => a - b)
+    : getVisibleAdditionalObjectPhoneSlotIds(additionalPhones);
   return JSON.stringify({
     name: String(obj.name || '').trim() || '',
     photoUrl: String(obj.photoUrl || '').trim() || '',
     tags: Array.isArray(obj.tags) ? obj.tags.map((v) => String(v || '').trim().toLowerCase()) : [],
+    additionalPhones,
+    additionalPhoneVisibleSlots: visibleSlots,
     ...Object.fromEntries(
       CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => [field, String(obj[field] || '').trim() || '']),
     ),
@@ -186,6 +210,8 @@ export default function EditObjectScreen() {
   });
 
   const [draft, setDraft] = React.useState(createEmptyClientObjectDraft());
+  const [additionalPhones, setAdditionalPhones] = React.useState(createEmptyAdditionalObjectPhones());
+  const [visibleAdditionalPhoneSlots, setVisibleAdditionalPhoneSlots] = React.useState([]);
   const [tags, setTags] = React.useState([]);
   const [initialSnap, setInitialSnap] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
@@ -244,6 +270,28 @@ export default function EditObjectScreen() {
       }).map((field) => field.fieldKey),
     [objectFieldSettings],
   );
+  const enabledAdditionalPhoneSlots = React.useMemo(
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    [objectFieldsByKey],
+  );
+  const requiredAdditionalPhoneSlots = React.useMemo(
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isRequired === true),
+    [objectFieldsByKey],
+  );
+  const addableAdditionalPhoneSlots = React.useMemo(
+    () => getAddableAdditionalObjectPhoneSlotIds(enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots),
+    [enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots],
+  );
+  const orderedContactFieldKeys = React.useMemo(
+    () =>
+      getOrderedEntityFields(objectFieldSettings, {
+        visibleOnly: true,
+        requiredFirst: true,
+        fieldKeys: ['additional_phone_1', 'additional_phone_2', 'additional_phone_3'],
+      }).map((field) => field.fieldKey),
+    [objectFieldSettings],
+  );
+  const canShowContactSection = orderedContactFieldKeys.length > 0;
   const withRequiredLabel = React.useCallback(
     (field, label) => getRequiredFieldLabel(label, objectFieldsByKey.get(field)?.isRequired === true),
     [objectFieldsByKey],
@@ -274,6 +322,12 @@ export default function EditObjectScreen() {
 
   React.useEffect(() => {
     if (!objectItem) return;
+    const nextAdditionalPhones = getObjectAdditionalPhones(objectItem);
+    const nextVisibleSlots = resolveVisibleAdditionalObjectPhoneSlotIds({
+      enabledSlotIds: enabledAdditionalPhoneSlots,
+      requiredSlotIds: requiredAdditionalPhoneSlots,
+      valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(nextAdditionalPhones),
+    });
     const next = createEmptyClientObjectDraft({
       name: objectItem.name || CLIENT_OBJECT_DEFAULT_NAME,
       photoUrl: objectItem.photoUrl || '',
@@ -281,14 +335,39 @@ export default function EditObjectScreen() {
     });
     const nextTags = Array.isArray(objectItem?.tags) ? objectItem.tags.map((tag) => String(tag?.value || '').trim()) : [];
     setDraft(next);
+    setAdditionalPhones(nextAdditionalPhones);
+    setVisibleAdditionalPhoneSlots(nextVisibleSlots);
     setTags(nextTags);
-    setInitialSnap(snapshotObjectForm({ ...next, tags: nextTags }));
-  }, [objectItem]);
+    setInitialSnap(
+      snapshotObjectForm({
+        ...next,
+        tags: nextTags,
+        additionalPhones: nextAdditionalPhones,
+        additionalPhoneVisibleSlots: nextVisibleSlots,
+      }),
+    );
+  }, [enabledAdditionalPhoneSlots, objectItem, requiredAdditionalPhoneSlots]);
+
+  React.useEffect(() => {
+    setVisibleAdditionalPhoneSlots((prev) =>
+      resolveVisibleAdditionalObjectPhoneSlotIds({
+        enabledSlotIds: enabledAdditionalPhoneSlots,
+        requiredSlotIds: requiredAdditionalPhoneSlots,
+        explicitVisibleSlotIds: prev,
+        valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(additionalPhones),
+      }),
+    );
+  }, [additionalPhones, enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots]);
 
   const isDirty = React.useMemo(() => {
     if (!initialSnap) return false;
-    return snapshotObjectForm({ ...draft, tags }) !== initialSnap;
-  }, [draft, initialSnap, tags]);
+    return snapshotObjectForm({
+      ...draft,
+      tags,
+      additionalPhones,
+      additionalPhoneVisibleSlots: visibleAdditionalPhoneSlots,
+    }) !== initialSnap;
+  }, [additionalPhones, draft, initialSnap, tags, visibleAdditionalPhoneSlots]);
 
   const goBack = React.useCallback(() => {
     allowLeaveRef.current = true;
@@ -418,6 +497,15 @@ export default function EditObjectScreen() {
       if (!message) return acc;
       return { ...acc, [field]: message };
     }, {});
+    const firstInvalidAdditional = visibleAdditionalPhoneSlots.find((slotId) => {
+      const slotIndex = Number(slotId) - 1;
+      const value = additionalPhones?.[slotIndex]?.phone || '';
+      if (requiredAdditionalPhoneSlots.includes(slotId) && !hasMobilePhoneValue(value)) return true;
+      return hasMobilePhoneValue(value) && !isValidOptionalMobilePhone(value);
+    });
+    if (firstInvalidAdditional) {
+      nextFieldErrors[`additional_phone_${firstInvalidAdditional}`] = t('err_phone');
+    }
     setFieldErrors(nextFieldErrors);
     if (Object.keys(nextFieldErrors).length > 0) {
       return;
@@ -443,6 +531,12 @@ export default function EditObjectScreen() {
         id: String(objectId),
         patch: {
           ...cleanPatch,
+          ...buildObjectAdditionalPhonesPatch(additionalPhones, {
+            defaultLabel: t('order_field_secondary_phone'),
+            visibleSlotIds: visibleAdditionalPhoneSlots,
+            hiddenSource: getObjectAdditionalPhones(objectItem),
+            preserveHidden: true,
+          }),
           photo_url: persistedPhotoUrl,
         },
       });
@@ -461,7 +555,22 @@ export default function EditObjectScreen() {
     } finally {
       setSaving(false);
     }
-  }, [canEditObjects, draft, goBack, objectFieldsByKey, objectId, objectItem?.photoUrl, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAddressFields, visibleAdditionalInfoFields]);
+  }, [additionalPhones, canEditObjects, draft, goBack, objectFieldsByKey, objectId, objectItem, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
+
+  const hiddenEnabledAdditionalPhoneSlots = React.useMemo(
+    () => addableAdditionalPhoneSlots.filter((slotId) => !visibleAdditionalPhoneSlots.includes(slotId)),
+    [addableAdditionalPhoneSlots, visibleAdditionalPhoneSlots],
+  );
+  const canAddAdditionalPhone =
+    hiddenEnabledAdditionalPhoneSlots.length > 0 &&
+    visibleAdditionalPhoneSlots.length < OBJECT_ADDITIONAL_PHONE_SLOT_COUNT;
+  const updateAdditionalPhoneBySlotId = React.useCallback((slotId, patch) => {
+    const slotIndex = Number(slotId) - 1;
+    if (!Number.isFinite(slotIndex) || slotIndex < 0) return;
+    setAdditionalPhones((prev) =>
+      prev.map((item, itemIndex) => (itemIndex === slotIndex ? { ...item, ...patch } : item)),
+    );
+  }, []);
 
   if (!canViewObjects) {
     return (
@@ -608,6 +717,64 @@ export default function EditObjectScreen() {
                   <FieldErrorText message={fieldErrors?.[field] || null} />
                 </React.Fragment>
               ))}
+            </Card>
+          </>
+        ) : null}
+        {canShowContactSection ? (
+          <>
+            <SectionHeader>{t('clients_contacts_section')}</SectionHeader>
+            <Card paddedXOnly>
+              {visibleAdditionalPhoneSlots.filter((slotId) => orderedContactFieldKeys.includes(`additional_phone_${slotId}`)).map((slotId) => {
+                const slotIndex = slotId - 1;
+                const entry = additionalPhones[slotIndex] || { phone: '', label: '' };
+                return (
+                  <AdditionalPhoneInputRow
+                    key={`additional-phone-${slotId}`}
+                    phoneValue={entry.phone || ''}
+                    onPhoneChange={(nextValue) => {
+                      updateAdditionalPhoneBySlotId(slotId, { phone: nextValue });
+                      setFieldErrors((prev) => ({ ...prev, [`additional_phone_${slotId}`]: null }));
+                    }}
+                    designationValue={entry.label || ''}
+                    onDesignationChange={(nextValue) => updateAdditionalPhoneBySlotId(slotId, { label: nextValue })}
+                    phoneRequired={requiredAdditionalPhoneSlots.includes(slotId)}
+                    phoneError={
+                      fieldErrors?.[`additional_phone_${slotId}`] ||
+                      (requiredAdditionalPhoneSlots.includes(slotId) && !hasMobilePhoneValue(entry.phone || '')
+                        ? t('clients_required_phone')
+                        : hasMobilePhoneValue(entry.phone || '') && !isValidOptionalMobilePhone(entry.phone || '')
+                          ? t('err_phone')
+                          : null)
+                    }
+                    onRemove={requiredAdditionalPhoneSlots.includes(slotId) ? undefined : () => {
+                      setVisibleAdditionalPhoneSlots((prev) => prev.filter((value) => value !== slotId));
+                    }}
+                    style={styles.additionalPhoneGroup}
+                  />
+                );
+              })}
+              {canAddAdditionalPhone ? (
+                <View style={styles.additionalPhoneAddRow}>
+                  <Text style={styles.additionalPhoneAddText}>{t('clients_additional_phone_add')}</Text>
+                  <Pressable
+                    onPress={() => {
+                      const nextSlotId = hiddenEnabledAdditionalPhoneSlots[0] || null;
+                      if (!nextSlotId) return;
+                      setVisibleAdditionalPhoneSlots((prev) => [...prev, nextSlotId].sort((a, b) => a - b));
+                    }}
+                    style={styles.additionalPhoneAddButton}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('clients_additional_phone_a11y_add')}
+                  >
+                    <Feather
+                      name="plus"
+                      size={theme.components?.icon?.sizeXs ?? Math.round((theme.icons?.sm ?? 18) * 0.75)}
+                      color={theme.colors.textSecondary}
+                    />
+                  </Pressable>
+                </View>
+              ) : null}
             </Card>
           </>
         ) : null}
@@ -834,6 +1001,28 @@ function createStyles(theme, formStyles) {
     field: formStyles.field,
     deleteBtn: {
       marginTop: theme.spacing.sm,
+    },
+    additionalPhoneGroup: {
+      marginBottom: theme.spacing.xs,
+    },
+    additionalPhoneAddRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: Number(theme.spacing?.lg ?? 16),
+      paddingVertical: theme.spacing.xs,
+      marginBottom: theme.spacing.xs,
+    },
+    additionalPhoneAddText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
+    },
+    additionalPhoneAddButton: {
+      minWidth: 24,
+      minHeight: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     previewWrap: {
       alignItems: 'center',

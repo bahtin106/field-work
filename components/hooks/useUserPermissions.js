@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { AppState } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { getUserRole } from '../../lib/getUserRole';
-import { useQuery, useQueryClient, useIsFetching } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
@@ -114,7 +114,13 @@ export function useUserPermissions() {
   const role = resolvedRoleFromQuery || lastRoleRef.current || fallbackRole || null;
   const roleLoadingSafe = roleLoading && !role;
 
-  const lastCanAllRef = useRef(qc.getQueryData(['perm-canViewAll']));
+  const initialCanAll =
+    typeof qc.getQueryData(['perm-canViewAll']) === 'boolean'
+      ? qc.getQueryData(['perm-canViewAll'])
+      : fallbackRole === 'admin'
+        ? true
+        : null;
+  const lastCanAllRef = useRef(initialCanAll);
   const { data: canAllRaw, isLoading: canAllLoading, error: canAllError } = useQuery({
     queryKey: ['perm-canViewAll'],
     queryFn: __fetchCanViewAll,
@@ -140,8 +146,9 @@ export function useUserPermissions() {
         lastCanAllRef.current = cached;
         return;
       }
-      lastCanAllRef.current = false;
-      qc.setQueryData(['perm-canViewAll'], false);
+      const fallbackCanAll = role === 'admin';
+      lastCanAllRef.current = fallbackCanAll;
+      qc.setQueryData(['perm-canViewAll'], fallbackCanAll);
     }, 3000);
 
     return () => clearTimeout(timer);
@@ -161,8 +168,6 @@ export function useUserPermissions() {
 
   const canAll = canAllNormalized ?? (typeof lastCanAllRef.current === 'boolean' ? lastCanAllRef.current : false);
   const canAllLoadingSafe = canAllLoading && canAllNormalized === null && lastCanAllRef.current == null;
-
-  const isFetching = useIsFetching();
 
   const doRefresh = useCallback(async () => {
     try {
@@ -252,6 +257,5 @@ export function useUserPermissions() {
     canAll,
     roleLoading: roleLoadingSafe,
     canAllLoading: canAllLoadingSafe,
-    isFetching,
   };
 }

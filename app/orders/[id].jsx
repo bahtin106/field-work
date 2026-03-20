@@ -93,6 +93,7 @@ import { isValidOptionalMobilePhone, toE164MobilePhoneOrNull } from '../../src/s
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
+import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { useQueryClient } from '@tanstack/react-query';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import OrderPhotosModal from './components/OrderPhotosModal';
@@ -121,6 +122,28 @@ const REMOVED_ORDER_OBJECT_FIELDS = new Set([
 ]);
 
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
+const EXECUTOR_NAME_CACHE_MAX_ENTRIES = 300;
+
+function getCachedExecutorName(userId) {
+  if (!userId || !EXECUTOR_NAME_CACHE.has(userId)) return '';
+  const value = EXECUTOR_NAME_CACHE.get(userId);
+  EXECUTOR_NAME_CACHE.delete(userId);
+  EXECUTOR_NAME_CACHE.set(userId, value);
+  return typeof value === 'string' ? value : '';
+}
+
+function setCachedExecutorName(userId, displayName) {
+  if (!userId) return;
+  const value = String(displayName || '').trim();
+  EXECUTOR_NAME_CACHE.delete(userId);
+  EXECUTOR_NAME_CACHE.set(userId, value);
+  while (EXECUTOR_NAME_CACHE.size > EXECUTOR_NAME_CACHE_MAX_ENTRIES) {
+    const oldestKey = EXECUTOR_NAME_CACHE.keys().next()?.value;
+    if (oldestKey == null) break;
+    EXECUTOR_NAME_CACHE.delete(oldestKey);
+  }
+}
+
 const REQUEST_SYNC_FIELDS = [
   'id',
   'updated_at',
@@ -134,7 +157,6 @@ const REQUEST_SYNC_FIELDS = [
   'comment',
   'fio',
   'phone',
-  'department_id',
   'work_type_id',
   'price',
   'payment_status',
@@ -149,7 +171,20 @@ const REQUEST_SYNC_FIELDS = [
   'photo_before',
   'photo_after',
   'act_file',
+  'media_file_5',
 ];
+
+const FORCED_VISIBLE_ORDER_FIELDS = new Set([
+  'client_id',
+  'object_id',
+  'assigned_to',
+  'price',
+  'payment_status',
+  'payment_method',
+]);
+
+const FORCED_HIDDEN_ORDER_FIELDS = new Set(['department_id']);
+const ORDER_MEDIA_FIELD_KEYS = ['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5'];
 
 function isYandexMediaUrl(url) {
   const raw = String(url || '').toLowerCase();
@@ -321,12 +356,12 @@ function FinanceSummaryIconButton({ icon, onPress, accessibilityLabel, styles })
   );
 }
 
-export default function OrderDetails() {
+function OrderDetailsContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
   const { has, loading: permsLoading } = usePermissions();
-  const { settings: companySettings, useDepartureTime } = useCompanySettings();
+  const { settings: companySettings } = useCompanySettings();
   const auth = useAuth();
   const authUserId = auth.user?.id || null;
   const authRole = auth.profile?.role || null;
@@ -425,7 +460,6 @@ export default function OrderDetails() {
   const [users, setUsers] = useState([]);
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
-  const [departmentId, setDepartmentId] = useState(null);
   const [useDepartments, setUseDepartmentsFlag] = useState(false);
   const [companyId, setCompanyId] = useState(null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
@@ -461,10 +495,25 @@ export default function OrderDetails() {
   }, []);
   const isOrderFieldVisible = useCallback(
     (fieldKey) => {
-      const field = orderFieldsByKey.get(String(fieldKey || ''));
+      const normalizedFieldKey = String(fieldKey || '');
+      if (FORCED_HIDDEN_ORDER_FIELDS.has(normalizedFieldKey)) return false;
+      if (FORCED_VISIBLE_ORDER_FIELDS.has(normalizedFieldKey)) return true;
+      const field = orderFieldsByKey.get(normalizedFieldKey);
       return !field || field.isEnabled !== false;
     },
     [orderFieldsByKey],
+  );
+  const getOrderFieldLabel = useCallback(
+    (fieldKey, fallbackLabel) => {
+      const field = orderFieldsByKey.get(String(fieldKey || ''));
+      const customLabel = String(field?.customLabel || field?.custom_label || '').trim();
+      if (customLabel) return customLabel;
+      if (field?.labelKey) {
+        return t(field.labelKey, field?.fallbackLabel || fallbackLabel || String(fieldKey || ''));
+      }
+      return fallbackLabel || String(fieldKey || '');
+    },
+    [orderFieldsByKey, t],
   );
   const workTypeName = useMemo(() => {
     const normalized = normalizeId(workTypeId);
@@ -721,8 +770,8 @@ export default function OrderDetails() {
 
   const deriveExecutorNameInstant = useCallback((o) => {
     if (!o) return null;
-    if (o.assigned_to && EXECUTOR_NAME_CACHE.has(o.assigned_to))
-      return EXECUTOR_NAME_CACHE.get(o.assigned_to);
+    const cached = getCachedExecutorName(o.assigned_to);
+    if (cached) return cached;
 
     const fromFields = [
       o.assigned_to_name,
@@ -770,8 +819,6 @@ export default function OrderDetails() {
           return toFeed ? null : assigneeId;
         case 'price':
           return canEditFinances ? amount : amount || '';
-        case 'department_id':
-          return departmentId;
         default:
           return null;
       }
@@ -790,7 +837,6 @@ export default function OrderDetails() {
       toFeed,
       amount,
       canEditFinances,
-      departmentId,
     ],
   );
 
@@ -934,7 +980,6 @@ export default function OrderDetails() {
       phone: phoneDigits,
       time_window_start: o.time_window_start ? new Date(o.time_window_start).toISOString() : null,
       assigned_to: o.assigned_to || null,
-      department_id: o.department_id || null,
       price: o.price ?? null,
       payment_status: o.payment_status ?? null,
       payment_method: o.payment_method ?? null,
@@ -953,7 +998,6 @@ export default function OrderDetails() {
       phone: phoneDigits,
       time_window_start: departureDate ? departureDate.toISOString() : null,
       assigned_to: assigneeId || null,
-      department_id: departmentId || null,
       ...(canEditFinances
         ? {
             price: parseMoney(amount),
@@ -972,7 +1016,6 @@ export default function OrderDetails() {
     phone,
     departureDate,
     assigneeId,
-    departmentId,
     canEditFinances,
     amount,
     order?.payment_method,
@@ -1009,7 +1052,6 @@ export default function OrderDetails() {
     setAssigneeId(o.assigned_to || null);
     setToFeed(!o.assigned_to);
     setUrgent(!!o.urgent);
-    setDepartmentId(o.department_id || null);
     setAmount(o.price !== null && o.price !== undefined ? String(o.price) : '');
     // Executor name from cache (instant)
     const cachedExecName = deriveExecutorNameInstant(o);
@@ -1065,13 +1107,6 @@ export default function OrderDetails() {
 
       // в”Ђв”Ђ 3. Fill missing fields IN PARALLEL (not sequential!) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       const missingFieldsPromises = [];
-      if (typeof fetchedOrder.department_id === 'undefined') {
-        missingFieldsPromises.push(
-          supabase.from('orders').select('department_id').eq('id', id).single()
-            .then(({ data }) => { if (data) fetchedOrder.department_id = data.department_id || null; })
-            .catch(() => {})
-        );
-      }
       if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_id === null) {
         missingFieldsPromises.push(
           supabase.from('orders').select('work_type_id').eq('id', id).single()
@@ -1119,7 +1154,7 @@ export default function OrderDetails() {
         media.syncPhotos(effectiveOrder.id).then((fresh) => {
           if (!fresh) return;
           setOrder((prev) => {
-            const cats = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
+            const cats = ORDER_MEDIA_FIELD_KEYS;
             const next = { ...prev };
             let changed = false;
             for (const cat of cats) {
@@ -1148,7 +1183,7 @@ export default function OrderDetails() {
               .then(({ data: executorProfile }) => {
                 if (executorProfile) {
                   const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
-                  EXECUTOR_NAME_CACHE.set(effectiveOrder.assigned_to, full);
+                  setCachedExecutorName(effectiveOrder.assigned_to, full);
                   setExecutorName(full);
                 }
               }).catch(() => {})
@@ -1898,25 +1933,80 @@ export default function OrderDetails() {
     }));
   }, []);
 
+  const removeFinanceEntryPhotoRemote = useCallback(
+    async (removedUrl, rollback) => {
+      const url = String(removedUrl || '').trim();
+      if (!url) return true;
+      const financeEntryIdValue = String(financeEntryDraft.id || '').trim();
+      if (!financeEntryIdValue || isLocalFinancePhotoUrl(url)) return true;
+
+      try {
+        await deleteFinanceEntryPhotoByUrl(financeEntryIdValue, url);
+        financeEntryInitialPhotoUrlsRef.current = (financeEntryInitialPhotoUrlsRef.current || []).filter(
+          (value) => String(value || '') !== url,
+        );
+        setSelectedFinanceEntry((prev) => {
+          if (!prev || String(prev.id || '') !== financeEntryIdValue) return prev;
+          return {
+            ...prev,
+            photo_urls: (prev.photo_urls || []).filter((value) => String(value || '') !== url),
+          };
+        });
+        return true;
+      } catch (error) {
+        console.warn('[finance-entry-photo-remove] remote delete failed:', error);
+        if (typeof rollback === 'function') rollback();
+        showWarning(error?.message || t('order_toast_delete_error'));
+        return false;
+      }
+    },
+    [deleteFinanceEntryPhotoByUrl, financeEntryDraft.id, isLocalFinancePhotoUrl, showWarning, t],
+  );
+
   const handleFinanceEntryPhotoRemove = useCallback((_category, index) => {
+    let removedUrl = '';
     setFinanceEntryDraft((prev) => {
-      const nextUrl = (prev.photo_urls || [])[index];
-      if (nextUrl) financeEntryMedia.removeFromCache(nextUrl);
+      removedUrl = String((prev.photo_urls || [])[index] || '').trim();
+      if (removedUrl) financeEntryMedia.removeFromCache(removedUrl);
       return {
         ...prev,
         photo_urls: (prev.photo_urls || []).filter((_, itemIndex) => itemIndex !== index),
       };
     });
-  }, [financeEntryMedia]);
+    if (!removedUrl) return;
+    void removeFinanceEntryPhotoRemote(removedUrl, () => {
+      setFinanceEntryDraft((prev) => {
+        if ((prev.photo_urls || []).some((value) => String(value || '') === removedUrl)) return prev;
+        const next = [...(prev.photo_urls || [])];
+        const restoreAt = Number.isFinite(index) ? Math.max(0, Math.min(index, next.length)) : next.length;
+        next.splice(restoreAt, 0, removedUrl);
+        return { ...prev, photo_urls: next };
+      });
+    });
+  }, [financeEntryMedia, removeFinanceEntryPhotoRemote]);
 
   const handleFinanceEntryPhotoRemoveMany = useCallback((_category, urls = []) => {
     const selected = new Set((urls || []).map((value) => String(value || '')).filter(Boolean));
+    const removedUrls = [];
     selected.forEach((url) => financeEntryMedia.removeFromCache(url));
     setFinanceEntryDraft((prev) => ({
       ...prev,
-      photo_urls: (prev.photo_urls || []).filter((value) => !selected.has(String(value || ''))),
+      photo_urls: (prev.photo_urls || []).filter((value) => {
+        const normalized = String(value || '');
+        const shouldRemove = selected.has(normalized);
+        if (shouldRemove) removedUrls.push(normalized);
+        return !shouldRemove;
+      }),
     }));
-  }, [financeEntryMedia]);
+    removedUrls.forEach((removedUrl) => {
+      void removeFinanceEntryPhotoRemote(removedUrl, () => {
+        setFinanceEntryDraft((prev) => {
+          if ((prev.photo_urls || []).some((value) => String(value || '') === removedUrl)) return prev;
+          return { ...prev, photo_urls: [...(prev.photo_urls || []), removedUrl] };
+        });
+      });
+    });
+  }, [financeEntryMedia, removeFinanceEntryPhotoRemote]);
 
   const openFinanceEntryViewer = useCallback((photos, index) => {
     if (!Array.isArray(photos) || !photos.length) return;
@@ -1944,7 +2034,13 @@ export default function OrderDetails() {
       ...prev,
       photo_urls: (prev.photo_urls || []).filter((value) => value !== rawUrl),
     }));
-  }, [financeEntryMedia]);
+    void removeFinanceEntryPhotoRemote(rawUrl, () => {
+      setFinanceEntryDraft((prev) => {
+        if ((prev.photo_urls || []).some((value) => String(value || '') === String(rawUrl || ''))) return prev;
+        return { ...prev, photo_urls: [...(prev.photo_urls || []), String(rawUrl || '')] };
+      });
+    });
+  }, [financeEntryMedia, removeFinanceEntryPhotoRemote]);
 
   const handleFinanceViewerRotateSave = useCallback((rotationsMap) => {
     const rawPhotos = [...(financeViewerRawPhotosRef.current || [])];
@@ -2429,20 +2525,50 @@ export default function OrderDetails() {
   );
 
   const canFinishOrder = useCallback(() => {
-    const required = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
+    const required = ORDER_MEDIA_FIELD_KEYS.filter((fieldKey) => {
+      const field = orderFieldsByKey.get(fieldKey);
+      return field?.isEnabled !== false && field?.isRequired === true;
+    });
     return required.every((cat) => Array.isArray(order[cat]) && order[cat].length > 0);
-  }, [order]);
+  }, [order, orderFieldsByKey]);
 
   const handleFinishOrder = useCallback(async () => {
     const missing = [];
-    if (!Array.isArray(order.contract_file) || order.contract_file.length === 0)
-      missing.push(t('order_missing_contract'));
-    if (!Array.isArray(order.photo_before) || order.photo_before.length === 0)
-      missing.push(t('order_missing_photo_before'));
-    if (!Array.isArray(order.photo_after) || order.photo_after.length === 0)
-      missing.push(t('order_missing_photo_after'));
-    if (!Array.isArray(order.act_file) || order.act_file.length === 0)
-      missing.push(t('order_missing_act'));
+    if (
+      isOrderFieldVisible('contract_file') &&
+      orderFieldsByKey.get('contract_file')?.isRequired === true &&
+      (!Array.isArray(order.contract_file) || order.contract_file.length === 0)
+    ) {
+      missing.push(getOrderFieldLabel('contract_file', t('order_media_field_1', 'Медиа 1')).toLowerCase());
+    }
+    if (
+      isOrderFieldVisible('photo_before') &&
+      orderFieldsByKey.get('photo_before')?.isRequired === true &&
+      (!Array.isArray(order.photo_before) || order.photo_before.length === 0)
+    ) {
+      missing.push(getOrderFieldLabel('photo_before', t('order_media_field_2', 'Медиа 2')).toLowerCase());
+    }
+    if (
+      isOrderFieldVisible('photo_after') &&
+      orderFieldsByKey.get('photo_after')?.isRequired === true &&
+      (!Array.isArray(order.photo_after) || order.photo_after.length === 0)
+    ) {
+      missing.push(getOrderFieldLabel('photo_after', t('order_media_field_3', 'Медиа 3')).toLowerCase());
+    }
+    if (
+      isOrderFieldVisible('act_file') &&
+      orderFieldsByKey.get('act_file')?.isRequired === true &&
+      (!Array.isArray(order.act_file) || order.act_file.length === 0)
+    ) {
+      missing.push(getOrderFieldLabel('act_file', t('order_media_field_4', 'Медиа 4')).toLowerCase());
+    }
+    if (
+      isOrderFieldVisible('media_file_5') &&
+      orderFieldsByKey.get('media_file_5')?.isRequired === true &&
+      (!Array.isArray(order.media_file_5) || order.media_file_5.length === 0)
+    ) {
+      missing.push(getOrderFieldLabel('media_file_5', t('order_media_field_5', 'Медиа 5')).toLowerCase());
+    }
 
     if (missing.length > 0) {
       showToast(
@@ -2473,7 +2599,7 @@ export default function OrderDetails() {
 
     setOrder({ ...order, status: t('order_status_completed') });
     showToast(t('order_toast_order_finished'));
-  }, [order, showToast, t]);
+  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, showToast, t]);
 
   const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
 
@@ -2593,7 +2719,6 @@ export default function OrderDetails() {
       time_window_start: departureDate.toISOString(),
       status: nextStatus,
       urgent,
-      department_id: departmentId || null,
       ...(canEditFinances ? { price: parseMoney(amount) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
@@ -2644,7 +2769,6 @@ export default function OrderDetails() {
       setToFeed(!data.assigned_to);
       setUrgent(!!data.urgent);
       setAmount(data.price !== null && data.price !== undefined ? String(data.price) : '');
-      setDepartmentId(data.department_id || null);
       setWorkTypeId(data.work_type_id || null);
 
       initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
@@ -2681,7 +2805,6 @@ export default function OrderDetails() {
     toFeed,
     order,
     urgent,
-    departmentId,
     canEditFinances,
     amount,
     parseMoney,
@@ -2722,7 +2845,6 @@ export default function OrderDetails() {
       setAssigneeId(order.assigned_to || null);
       setToFeed(!order.assigned_to);
       setUrgent(!!order.urgent);
-      setDepartmentId(order.department_id || null);
       setWorkTypeId(order.work_type_id || null);
       setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
     }
@@ -3158,11 +3280,12 @@ export default function OrderDetails() {
 
   useFocusEffect(
     useCallback(() => {
-      if (id) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(id) });
+      if (!id) return;
+      const task = InteractionManager.runAfterInteractions(() => {
         refetchRequestData?.();
-      }
-    }, [id, queryClient, refetchRequestData]),
+      });
+      return () => task.cancel();
+    }, [id, refetchRequestData]),
   );
 
   useFocusEffect(
@@ -3396,7 +3519,10 @@ export default function OrderDetails() {
     financeCompanyPaidExpenseTotal > 0 || financeExecutorPaidExpenseTotal > 0;
   const showInitialCostLine =
     canViewOrderAmount &&
-    orderFieldsByKey.get('price')?.isEnabled !== false;
+    isOrderFieldVisible('price');
+  const visibleMediaFields = ORDER_MEDIA_FIELD_KEYS.filter(
+    (fieldKey) => isOrderFieldVisible(fieldKey),
+  );
   return (
     <>
       <SafeAreaView
@@ -3489,7 +3615,7 @@ export default function OrderDetails() {
               </View>
               <View style={base.sep} />
 
-              {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? (
+              {isOrderFieldVisible('assigned_to') ? (
                 <Pressable
                   onPress={() => {
                   const assignee = order?.assigned_to || null;
@@ -3526,7 +3652,7 @@ export default function OrderDetails() {
                   />
                 </Pressable>
               ) : null}
-              {orderFieldsByKey.get('assigned_to')?.isEnabled !== false ? <View style={base.sep} /> : null}
+              {isOrderFieldVisible('assigned_to') ? <View style={base.sep} /> : null}
 
               {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? (
                 <LabelValueRow
@@ -3537,7 +3663,7 @@ export default function OrderDetails() {
               ) : null}
               {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
 
-              {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? (
+              {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? (
                 <Pressable
                   onPress={() => {
                   const dateStr = order.time_window_start
@@ -3563,10 +3689,11 @@ export default function OrderDetails() {
                           if (!order.time_window_start) return t('order_details_departure_not_specified');
                           const startDate = new Date(order.time_window_start);
                           const hasRangeEnd = !!order.time_window_end;
+                          const showDepartureTime = isOrderFieldVisible('departure_time');
                           if (!hasRangeEnd) {
                             return format(
                               startDate,
-                              useDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
+                              showDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
                               { locale: ru },
                             );
                           }
@@ -3579,7 +3706,7 @@ export default function OrderDetails() {
                   />
                 </Pressable>
               ) : null}
-              {orderFieldsByKey.get('time_window_start')?.isEnabled !== false ? <View style={base.sep} /> : null}
+              {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? <View style={base.sep} /> : null}
 
               {orderFieldsByKey.get('comment')?.isEnabled !== false ? (
               <ExpandableTextRow
@@ -3593,7 +3720,7 @@ export default function OrderDetails() {
               {t('order_details_object_data')}
             </SectionHeader>
             <Card paddedXOnly>
-              {orderFieldsByKey.get('client_id')?.isEnabled !== false ? (
+              {isOrderFieldVisible('client_id') ? (
                 <Pressable onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
                   <LabelValueRow
                     label={t('order_details_customer')}
@@ -3606,9 +3733,9 @@ export default function OrderDetails() {
                   />
                 </Pressable>
               ) : null}
-              {orderFieldsByKey.get('client_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
+              {isOrderFieldVisible('client_id') ? <View style={base.sep} /> : null}
 
-              {orderFieldsByKey.get('object_id')?.isEnabled !== false ? (
+              {isOrderFieldVisible('object_id') ? (
                 <Pressable onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
                   <LabelValueRow
                     label={t('routes_objects_object')}
@@ -3627,7 +3754,7 @@ export default function OrderDetails() {
                   />
                 </Pressable>
               ) : null}
-              {(orderFieldsByKey.get('object_id')?.isEnabled !== false && orderAddressItems.length > 0) ? <View style={base.sep} /> : null}
+              {(isOrderFieldVisible('object_id') && orderAddressItems.length > 0) ? <View style={base.sep} /> : null}
               {orderAddressItems.length > 0 ? (
               <ExpandableTextRow
                 label={t('order_details_address')}
@@ -3653,18 +3780,9 @@ export default function OrderDetails() {
                 forceShow
               />
               ) : null}
-              {(orderAddressItems.length > 0 || orderFieldsByKey.get('object_id')?.isEnabled !== false) && (orderFieldsByKey.get('secondary_phone')?.isEnabled !== false || orderFieldsByKey.get('contact_email')?.isEnabled !== false) ? <View style={base.sep} /> : null}
-              {orderFieldsByKey.get('secondary_phone')?.isEnabled !== false ? (
-              <LabelValueRow
-                label={t('order_field_secondary_phone')}
-                value={order?.secondary_phone}
-              />
-              ) : null}
-              {orderFieldsByKey.get('secondary_phone')?.isEnabled !== false && orderFieldsByKey.get('contact_email')?.isEnabled !== false ? <View style={base.sep} /> : null}
-              {orderFieldsByKey.get('contact_email')?.isEnabled !== false ? <LabelValueRow label={t('order_field_contact_email')} value={order?.contact_email} /> : null}
             </Card>
 
-            {canViewFinanceSection && (orderFieldsByKey.get('price')?.isEnabled !== false || canViewFinanceEntries) ? (
+            {canViewFinanceSection && (isOrderFieldVisible('price') || canViewFinanceEntries) ? (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_finance_data')}
@@ -4041,7 +4159,7 @@ export default function OrderDetails() {
               </>
             ) : null}
 
-            {!isFree && (
+            {!isFree && visibleMediaFields.length > 0 && (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_photos_section', 'Р¤РѕС‚Рѕ')}
@@ -4052,12 +4170,12 @@ export default function OrderDetails() {
                   </Text>
                 ) : null}
                 <Card paddedXOnly>
-                  {[
-                    { key: 'contract_file', label: t('order_details_contract_photo') },
-                    { key: 'photo_before', label: t('order_details_photo_before') },
-                    { key: 'photo_after', label: t('order_details_photo_after') },
-                    { key: 'act_file', label: t('order_details_act') },
-                  ].map((row, idx) => {
+                  {visibleMediaFields
+                    .map((fieldKey) => ({
+                      key: fieldKey,
+                      label: getOrderFieldLabel(fieldKey, t(`order_media_field_${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`, `Медиа ${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`)),
+                    }))
+                    .map((row, idx) => {
                     const count = (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length;
                     return (
                       <View key={row.key}>
@@ -4081,7 +4199,7 @@ export default function OrderDetails() {
                         </Pressable>
                       </View>
                     );
-                  })}
+                    })}
                 </Card>
               </>
             )}
@@ -4100,10 +4218,11 @@ export default function OrderDetails() {
               onRemoveMany={removePhotosBatch}
               onOpenViewer={(photos, idx) => {
                 const catLabels = {
-                  contract_file: t('order_details_contract_photo'),
-                  photo_before: t('order_details_photo_before'),
-                  photo_after: t('order_details_photo_after'),
-                  act_file: t('order_details_act'),
+                  contract_file: getOrderFieldLabel('contract_file', t('order_media_field_1', 'Медиа 1')),
+                  photo_before: getOrderFieldLabel('photo_before', t('order_media_field_2', 'Медиа 2')),
+                  photo_after: getOrderFieldLabel('photo_after', t('order_media_field_3', 'Медиа 3')),
+                  act_file: getOrderFieldLabel('act_file', t('order_media_field_4', 'Медиа 4')),
+                  media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5', 'Медиа 5')),
                 };
                 openViewer(photos, idx, orderPhotosModal.category, catLabels[orderPhotosModal.category] || '');
               }}
@@ -4385,7 +4504,7 @@ export default function OrderDetails() {
           />
         ) : (
           <LabelValueRow
-            label={t('finance_rule_fixed_amount', 'Сумма')}
+            label={t('order_field_initial_amount', 'Изначальная сумма')}
             value={formatMoney(selectedFinanceEntry?.calculated_amount, order?.currency || companySettings?.currency)}
             middleSpacerStyle={styles.financeModalCompactSpacer}
             rightWrapStyle={styles.financeModalRightWrap}
@@ -4641,7 +4760,7 @@ export default function OrderDetails() {
             <>
               <TextField
                 ref={financeAmountInputRef}
-                label={`${t('finance_rule_fixed_amount', 'Сумма')}${t('common_required_suffix', ' *')}`}
+                label={`${t('order_field_initial_amount', 'Изначальная сумма')}${t('common_required_suffix', ' *')}`}
                 value={String(financeEntryDraft.input_amount || '')}
                 onChangeText={(value) => {
                   clearFinanceEntryFieldError('input_amount');
@@ -4747,6 +4866,14 @@ export default function OrderDetails() {
         onConfirm={deleteOrderCompletely}
       />
     </>
+  );
+}
+
+export default function OrderDetails() {
+  return (
+    <DeferredScreen>
+      <OrderDetailsContent />
+    </DeferredScreen>
   );
 }
 

@@ -240,6 +240,37 @@ async function removeFinanceEntryPhotoUrlAtomic(
   };
 }
 
+async function removeFinanceEntryPhotoUrlAtomicCanonical(
+  admin: ReturnType<typeof createClient>,
+  financeEntryId: string,
+  companyId: string,
+  url: string,
+) {
+  const direct = String(url || '').trim();
+  let atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, direct);
+  if (!direct) return atomic;
+  if (!Array.isArray(atomic.photo_urls) || !atomic.photo_urls.includes(direct)) return atomic;
+
+  const needle = canonicalUrl(direct);
+  if (!needle) return atomic;
+
+  const { data: entry, error: entryErr } = await admin
+    .from('order_finance_entries')
+    .select('photo_urls')
+    .eq('id', financeEntryId)
+    .maybeSingle();
+  if (entryErr) throw entryErr;
+
+  const existingUrls = Array.isArray(entry?.photo_urls)
+    ? entry.photo_urls.map((value: unknown) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const canonicalMatch = existingUrls.find((existingUrl) => canonicalUrl(existingUrl) === needle);
+  if (!canonicalMatch || canonicalMatch === direct) return atomic;
+
+  atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, canonicalMatch);
+  return atomic;
+}
+
 function buildFinanceEntryMediaKey(
   ctx: {
     companyName: string;
@@ -538,15 +569,9 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       }
 
       const fallbackObjectKey = keyFromBegetUrl(sourceUrl);
-      if (!row && !fallbackObjectKey) return json(404, { success: false, message: 'Media mapping not found' });
-
       const objectKey = String(row?.external_path || fallbackObjectKey || '').trim();
-      if (objectKey) {
-        await deleteBegetKeys([objectKey]);
-      }
-
       const preferredSourceUrl = String(row?.source_url || '').trim() || sourceUrl;
-      let atomic = await removeFinanceEntryPhotoUrlAtomic(
+      let atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
         admin,
         ctx.financeEntryId,
         ctx.companyId,
@@ -558,7 +583,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
         atomic.photo_urls.includes(preferredSourceUrl) &&
         sourceUrl !== preferredSourceUrl
       ) {
-        atomic = await removeFinanceEntryPhotoUrlAtomic(
+        atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
           admin,
           ctx.financeEntryId,
           ctx.companyId,
@@ -569,22 +594,37 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       if (row?.id != null) {
         await admin.from('finance_entry_media_external_map').delete().eq('id', Number(row.id));
       } else {
-        await admin
+        let deleteQuery = admin
           .from('finance_entry_media_external_map')
           .delete()
           .eq('company_id', ctx.companyId)
           .eq('finance_entry_id', ctx.financeEntryId)
-          .eq('provider', 'beget_s3')
-          .or(`source_url.eq.${sourceUrl},display_url.eq.${sourceUrl},external_path.eq.${objectKey}`);
+          .eq('provider', 'beget_s3');
+        const orConditions = [`source_url.eq.${sourceUrl}`, `display_url.eq.${sourceUrl}`];
+        if (objectKey) orConditions.push(`external_path.eq.${objectKey}`);
+        deleteQuery = deleteQuery.or(orConditions.join(','));
+        await deleteQuery;
+      }
+
+      if (objectKey) {
+        try {
+          await deleteBegetKeys([objectKey]);
+        } catch (storageError) {
+          console.warn('[finance-entry-media-storage] beget delete warning:', toErrorMessage(storageError));
+        }
       }
 
       const orphanFolder = parentKeyPrefix(objectKey);
       if (orphanFolder) {
-        await purgeBegetFinanceEntryOrphans(admin, {
-          companyId: ctx.companyId,
-          financeEntryId: ctx.financeEntryId,
-          folderPrefix: orphanFolder,
-        });
+        try {
+          await purgeBegetFinanceEntryOrphans(admin, {
+            companyId: ctx.companyId,
+            financeEntryId: ctx.financeEntryId,
+            folderPrefix: orphanFolder,
+          });
+        } catch (cleanupError) {
+          console.warn('[finance-entry-media-storage] beget orphan cleanup warning:', toErrorMessage(cleanupError));
+        }
       }
 
       return json(200, {

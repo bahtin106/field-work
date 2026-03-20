@@ -3,6 +3,7 @@ import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { format, startOfMonth } from 'date-fns';
+import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { ru as dfnsRu } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -10,6 +11,7 @@ import {
   BackHandler,
   Dimensions,
   FlatList,
+  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -36,6 +38,7 @@ import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useAuth } from '../../components/hooks/useAuth';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
@@ -105,7 +108,7 @@ function nowMs() {
   return Date.now();
 }
 
-export default function CalendarScreen() {
+function CalendarScreenContent() {
   const { profile, isAuthenticated, isInitializing } = useAuth();
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -115,6 +118,11 @@ export default function CalendarScreen() {
   const isFocused = useIsFocused();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  useEffect(() => {
+    try {
+      router?.prefetch?.('/orders/[id]');
+    } catch {}
+  }, [router]);
 
   const returnTo = useMemo(() => {
     try {
@@ -182,6 +190,7 @@ export default function CalendarScreen() {
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
   const companyId = profile?.company_id || null;
+  const { settings: companySettings } = useCompanySettings(companyId);
   const navigationPresetRef = useRef('');
 
   useEffect(() => {
@@ -1346,11 +1355,13 @@ export default function CalendarScreen() {
       const prev = detailNavLockRef.current;
       if (prev.id === orderId && now - prev.ts < 1200) return;
       detailNavLockRef.current = { id: orderId, ts: now };
-      const registry = getPrefetchRegistry();
-      registry
-        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
-        .catch(() => {});
       router.push(`/orders/${orderId}`);
+      InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        registry
+          .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+          .catch(() => {});
+      });
     },
     [queryClient, router],
   );
@@ -1360,9 +1371,10 @@ export default function CalendarScreen() {
         order={item}
         context="calendar"
         onPress={openOrderDetails}
+        companyCurrency={companySettings?.currency || null}
       />
     ),
-    [openOrderDetails],
+    [companySettings?.currency, openOrderDetails],
   );
   const ordersEmptyComponent = useMemo(
     () => <Text style={styles.noOrders}>Нет заявок</Text>,
@@ -1714,5 +1726,13 @@ export default function CalendarScreen() {
         />
       ) : null}
     </Screen>
+  );
+}
+
+export default function CalendarScreen() {
+  return (
+    <DeferredScreen>
+      <CalendarScreenContent />
+    </DeferredScreen>
   );
 }

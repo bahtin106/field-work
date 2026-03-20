@@ -97,7 +97,9 @@ export default function Screen({
             scrollEventThrottle={scrollEventThrottle}
           >
             {showHeader && <GlobalCurrencyRecalcBanner />}
-            <DismissKeyboardArea style={{ flex: 1 }}>{children}</DismissKeyboardArea>
+            <DismissKeyboardArea style={{ flex: 1 }} enabled={false}>
+              {children}
+            </DismissKeyboardArea>
           </KeyboardAwareScrollView>
         ) : (
           <>

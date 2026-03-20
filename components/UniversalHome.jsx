@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
@@ -157,25 +157,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const toast = useToast();
   const qc = useQueryClient();
-  const navigationLockRef = useRef(false);
-  const navigationLockTimerRef = useRef(null);
+  const lastNavigationAtRef = useRef(0);
+  const NAV_GUARD_MS = 0;
 
   const runSingleNavigation = useCallback((navigate) => {
-    if (navigationLockRef.current) return;
-    navigationLockRef.current = true;
-
-    if (navigationLockTimerRef.current) {
-      clearTimeout(navigationLockTimerRef.current);
-    }
-
-    try {
-      navigate?.();
-    } finally {
-      navigationLockTimerRef.current = setTimeout(() => {
-        navigationLockRef.current = false;
-        navigationLockTimerRef.current = null;
-      }, 600);
-    }
+    const now = Date.now();
+    if (now - lastNavigationAtRef.current < NAV_GUARD_MS) return;
+    lastNavigationAtRef.current = now;
+    navigate?.();
   }, []);
 
   // Debug: inspect incoming auth/profile props.
@@ -201,12 +190,24 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [qc, user]);
 
   useEffect(() => {
+    let canceled = false;
+    let timerId = null;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timerId = setTimeout(() => {
+        if (canceled) return;
+        ['/stats', '/company_settings', '/orders/create-order'].forEach((path) => {
+          try {
+            router?.prefetch?.(path);
+          } catch {}
+        });
+      }, 350);
+    });
     return () => {
-      if (navigationLockTimerRef.current) {
-        clearTimeout(navigationLockTimerRef.current);
-      }
+      canceled = true;
+      if (timerId) clearTimeout(timerId);
+      task?.cancel?.();
     };
-  }, []);
+  }, [router]);
 
   const [scope, setScope] = useState('my');
 
@@ -230,9 +231,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
     initialData: providedProfile || undefined,
-    staleTime: 30 * 1000,
+    staleTime: 60 * 1000,
     gcTime: 10 * 60 * 1000,
-    refetchOnMount: 'always',
+    refetchOnMount: false,
     refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
@@ -707,7 +708,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             </Pressable>
           );
         })}
-      </View>      {canCreateOrders && (
+      </View>
+      {canCreateOrders && (
         <View style={styles.actionWrapper}>
           <Button title={t('home_btn_create_order')} onPress={openCreateOrder} />
         </View>

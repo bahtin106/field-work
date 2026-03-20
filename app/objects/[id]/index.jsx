@@ -1,11 +1,15 @@
 import React from 'react';
 import { Image as ExpoImage } from 'expo-image';
+import { Feather } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import AppHeader from '../../../components/navigation/AppHeader';
 import Card from '../../../components/ui/Card';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
+import IconButton from '../../../components/ui/IconButton';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TagList from '../../../components/tags/TagList';
@@ -22,11 +26,16 @@ import {
   buildFallbackEntityFieldSettings,
   getEntityFieldMap,
 } from '../../../src/features/fieldSettings/catalog';
+import {
+  buildAdditionalPhoneDisplayLabel,
+} from '../../../src/features/clients/additionalPhones';
+import { getObjectAdditionalPhones } from '../../../src/features/objects/additionalPhones';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { buildAddressForNavigator, openAddressInYandex } from '../../../components/ui/map';
 import { buildClientObjectShortAddress } from '../../../src/features/objects/addressing';
+import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
 const SAFE_AREA_EDGES = ['left', 'right'];
@@ -159,12 +168,34 @@ export default function ObjectViewScreen() {
     })
     .filter(([, value]) => String(value || '').trim().length > 0)
     .map(([label, value]) => ({ label, value: String(value || '').trim() }));
+  const additionalPhones = React.useMemo(() => getObjectAdditionalPhones(objectItem), [objectItem]);
+  const visibleAdditionalPhones = React.useMemo(
+    () =>
+      additionalPhones.filter((item, index) =>
+        objectFieldsByKey.get(`additional_phone_${index + 1}`)?.isEnabled !== false && !!item?.phone,
+      ),
+    [additionalPhones, objectFieldsByKey],
+  );
 
   const navigatorAddress = buildAddressForNavigator(objectItem);
   const shortAddress = buildClientObjectShortAddress(objectItem);
   const clientDisplayName = String(clientData?.full_name || objectItem?.client_id || '').trim();
   const showObjectName = objectFieldsByKey.get('name')?.isEnabled !== false;
   const showClientRow = hasDisplayValue(clientDisplayName);
+  const canShowContactSection = visibleAdditionalPhones.length > 0;
+  const onCopyPhone = React.useCallback(async (rawPhone) => {
+    const phone = String(rawPhone || '').trim();
+    if (!phone) return false;
+    const text = toE164(phone) || '+' + normalizeRu(phone);
+    try {
+      await Clipboard.setStringAsync(text);
+      toast.success(t('toast_phone_copied'));
+      return true;
+    } catch {
+      toast.error(t('toast_copy_phone_fail'));
+      return false;
+    }
+  }, [t, toast]);
 
   if (!canViewObjects) {
     return (
@@ -288,6 +319,55 @@ export default function ObjectViewScreen() {
           />
           {/* tags moved to separate section below */}
         </Card>
+
+        {canShowContactSection ? (
+          <>
+            <SectionHeader>{t('clients_contacts_section')}</SectionHeader>
+            <Card paddedXOnly>
+              {visibleAdditionalPhones.map((item, index) => {
+                const rowLabel = buildAdditionalPhoneDisplayLabel(t, item?.label);
+                const isLast = index === visibleAdditionalPhones.length - 1;
+                return (
+                  <React.Fragment key={`object-additional-phone-${index + 1}`}>
+                    <LabelValueRow
+                      label={rowLabel}
+                      valueComponent={
+                        <Pressable
+                          accessibilityRole="link"
+                          onPress={async () => {
+                            const url = `tel:${toE164(item.phone) || '+' + normalizeRu(item.phone)}`;
+                            try {
+                              await Linking.openURL(url);
+                            } catch {
+                              try {
+                                const ok = await Linking.canOpenURL(url);
+                                if (ok) await Linking.openURL(url);
+                                else toast.error(t('errors_callsUnavailable'));
+                              } catch {
+                                toast.error(t('errors_callsUnavailable'));
+                              }
+                            }
+                          }}
+                        >
+                          <Text style={[base.value, styles.clientLink]}>{formatRuMask(item.phone)}</Text>
+                        </Pressable>
+                      }
+                      rightActions={
+                        <IconButton
+                          onPress={() => onCopyPhone(item.phone)}
+                          accessibilityLabel={t('a11y_copy_phone')}
+                        >
+                          <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
+                        </IconButton>
+                      }
+                    />
+                    {!isLast ? <View style={base.sep} /> : null}
+                  </React.Fragment>
+                );
+              })}
+            </Card>
+          </>
+        ) : null}
 
         {additionalInfoItems.length ? (
           <>

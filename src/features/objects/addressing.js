@@ -21,6 +21,15 @@ export const CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS = [
   'geo_lng',
 ];
 
+export const CLIENT_OBJECT_CONTACT_FIELDS = [
+  'additional_phone_1',
+  'additional_phone_1_label',
+  'additional_phone_2',
+  'additional_phone_2_label',
+  'additional_phone_3',
+  'additional_phone_3_label',
+];
+
 export const CLIENT_OBJECT_ADDRESS_FIELDS = [
   ...CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   ...CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
@@ -45,6 +54,12 @@ export function createEmptyClientObjectDraft(overrides = {}) {
     parking_notes: '',
     geo_lat: '',
     geo_lng: '',
+    additional_phone_1: '',
+    additional_phone_1_label: '',
+    additional_phone_2: '',
+    additional_phone_2_label: '',
+    additional_phone_3: '',
+    additional_phone_3_label: '',
     ...overrides,
   };
 }
@@ -131,6 +146,9 @@ export function normalizeClientObject(row) {
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });
+  CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
+    normalized[field] = String(row[field] || '').trim();
+  });
   normalized.summary =
     String(row.summary || '').trim() || buildClientObjectAddressSummary(normalized) || null;
   return normalized;
@@ -141,6 +159,9 @@ export function sanitizeClientObjectPayload(draft, { nameRequired = true } = {})
   const cleanName = String(draft?.name || '').trim();
   next.name = cleanName || (nameRequired ? CLIENT_OBJECT_DEFAULT_NAME : '');
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
+    next[field] = String(draft?.[field] || '').trim() || null;
+  });
+  CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
     next[field] = String(draft?.[field] || '').trim() || null;
   });
   return next;

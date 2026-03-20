@@ -5,11 +5,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 
-const MEDIA_CATEGORIES = ['contract_file', 'photo_before', 'photo_after', 'act_file'];
+const MEDIA_CATEGORIES = ['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5'];
 
 /** Weak per-order cache so resolved URLs survive hook re-mounts within same session. */
 const _globalResolvedCache = new Map();  // key → display URL
 const _globalIssuesCache   = new Map();  // key → issue object
+const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
+
+function pruneMapCache(map, maxEntries = GLOBAL_MEDIA_CACHE_MAX_ENTRIES) {
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next()?.value;
+    if (oldestKey == null) break;
+    map.delete(oldestKey);
+  }
+}
+
+function setResolvedCacheEntry(key, value) {
+  if (!key) return;
+  if (_globalResolvedCache.has(key)) _globalResolvedCache.delete(key);
+  _globalResolvedCache.set(key, value);
+  pruneMapCache(_globalResolvedCache);
+}
+
+function setIssueCacheEntry(key, value) {
+  if (!key) return;
+  if (_globalIssuesCache.has(key)) _globalIssuesCache.delete(key);
+  _globalIssuesCache.set(key, value);
+  pruneMapCache(_globalIssuesCache);
+}
 
 function isLikelyYandexLink(url) {
   const raw = String(url || '').toLowerCase();
@@ -98,11 +121,11 @@ export function useOrderMedia({ order, mediaProvider, t }) {
 
         if (isMounted.current) {
           if (Object.keys(resolved).length) {
-            for (const [k, v] of Object.entries(resolved)) _globalResolvedCache.set(k, v);
+            for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
             setResolvedUrls((p) => ({ ...p, ...resolved }));
           }
           if (Object.keys(issuesMap).length) {
-            for (const [k, v] of Object.entries(issuesMap)) _globalIssuesCache.set(k, v);
+            for (const [k, v] of Object.entries(issuesMap)) setIssueCacheEntry(k, v);
             setIssues((p) => ({ ...p, ...issuesMap }));
           }
         }
@@ -181,8 +204,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       }
 
       if (isMounted.current) {
-        for (const [k, v] of Object.entries(nextResolved)) _globalResolvedCache.set(k, v);
-        for (const [k, v] of Object.entries(nextIssues)) _globalIssuesCache.set(k, v);
+        for (const [k, v] of Object.entries(nextResolved)) setResolvedCacheEntry(k, v);
+        for (const [k, v] of Object.entries(nextIssues)) setIssueCacheEntry(k, v);
         setResolvedUrls(nextResolved);
         setIssues(nextIssues);
       }
@@ -256,7 +279,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       });
       return;
     }
-    _globalResolvedCache.set(source, nextDisplay);
+    setResolvedCacheEntry(source, nextDisplay);
     setResolvedUrls((prev) => ({ ...prev, [source]: nextDisplay }));
   }, []);
 

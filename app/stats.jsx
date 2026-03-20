@@ -29,6 +29,7 @@ import { formatCurrencyWithOptions } from '../lib/currency';
 import { supabase } from '../lib/supabase';
 import { useScreenRefreshRegistration } from '../src/shared/query/screenRefreshRegistry';
 import { useTheme } from '../theme/ThemeProvider';
+import DeferredScreen from '../src/shared/perf/DeferredScreen';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -76,7 +77,7 @@ const fromISODate = (s) => {
 
 const formatNumber = (n) => new Intl.NumberFormat('ru-RU').format(n);
 
-export default function StatsScreen() {
+function StatsScreenContent() {
   const { theme, mode } = useTheme();
   const insets = useSafeAreaInsets();
 
@@ -1069,5 +1070,13 @@ export default function StatsScreen() {
         </SafeAreaView>
       </AnimatedFullscreenModal>
     </View>
+  );
+}
+
+export default function StatsScreen() {
+  return (
+    <DeferredScreen>
+      <StatsScreenContent />
+    </DeferredScreen>
   );
 }

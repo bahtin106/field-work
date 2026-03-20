@@ -29,12 +29,13 @@ const json = (status: number, body: Record<string, Json>) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
-const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file']);
+const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5']);
 const CATEGORY_DIR: Record<string, string> = {
-  contract_file: 'Договор',
-  photo_before: 'До',
-  photo_after: 'После',
-  act_file: 'Акт',
+  contract_file: 'Media_1',
+  photo_before: 'Media_2',
+  photo_after: 'Media_3',
+  act_file: 'Media_4',
+  media_file_5: 'Media_5',
 };
 
 function toErrorMessage(error: unknown) {
@@ -223,7 +224,7 @@ async function appendOrderMediaUrlAtomic(
   category: string,
   url: string,
 ) {
-  const { data, error } = await admin.rpc('append_order_media_url', {
+  const { data, error } = await admin.rpc('append_order_media_url_v2', {
     p_order_id: orderId,
     p_company_id: companyId,
     p_category: category,
@@ -244,7 +245,7 @@ async function removeOrderMediaUrlAtomic(
   category: string,
   url: string,
 ) {
-  const { data, error } = await admin.rpc('remove_order_media_url', {
+  const { data, error } = await admin.rpc('remove_order_media_url_v2', {
     p_order_id: orderId,
     p_company_id: companyId,
     p_category: category,
@@ -657,3 +658,4 @@ export async function handleOrderMediaStorageRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleOrderMediaStorageRequest);
 }
+

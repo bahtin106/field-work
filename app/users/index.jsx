@@ -22,6 +22,7 @@ import {
 } from '../../components/ui/PullToRefreshFeedback';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
+import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
@@ -67,7 +68,7 @@ function withAlpha(color, a) {
 
 const USER_OPEN_GUARD_MS = 900;
 
-export default function UsersIndex() {
+function UsersIndexContent() {
   const { theme } = useTheme();
   useTranslation(); // subscribe to i18n changes without re-plumbing
 
@@ -725,6 +726,14 @@ export default function UsersIndex() {
         }}
       />
     </SafeAreaView>
+  );
+}
+
+export default function UsersIndex() {
+  return (
+    <DeferredScreen>
+      <UsersIndexContent />
+    </DeferredScreen>
   );
 }
 

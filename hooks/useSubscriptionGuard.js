@@ -7,11 +7,12 @@ export function useSubscriptionGuard(companyId) {
   const role = String(profile?.role || '').toLowerCase();
   const isOwner = role === 'admin';
 
-  const { data, isLoading, error, refresh } = useCompanyEntitlements(companyId);
-  const canEdit = Boolean(data?.can_edit);
+  const { data, isLoading, isFetching, error, refresh, hasFreshData } = useCompanyEntitlements(companyId);
+  const guardLoading = isLoading || isFetching || (!hasFreshData && !!companyId);
+  const canEdit = guardLoading ? true : Boolean(data?.can_edit);
 
   const reason = useMemo(() => {
-    if (isLoading) return 'loading';
+    if (guardLoading) return 'loading';
     if (error) return 'entitlements_error';
     if (canEdit) return null;
     const status = data?.status;
@@ -20,12 +21,12 @@ export function useSubscriptionGuard(companyId) {
     if (status === 'canceled') return 'subscription_canceled';
     if (status === 'paused') return 'subscription_paused';
     return 'subscription_inactive';
-  }, [canEdit, data?.status, error, isLoading]);
+  }, [canEdit, data?.status, error, guardLoading]);
 
   return {
     canEdit,
     reason,
-    isLoading,
+    isLoading: guardLoading,
     isOwner,
     entitlements: data,
     upgradeUrl: process.env.EXPO_PUBLIC_BILLING_WEBSITE_URL || 'https://example.com/billing',
