@@ -17,9 +17,9 @@ export const CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS = [
 export const CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS = [
   'entrance_info',
   'parking_notes',
-  'geo_lat',
-  'geo_lng',
 ];
+
+export const CLIENT_OBJECT_MAP_COORD_FIELDS = ['geo_lat', 'geo_lng'];
 
 export const CLIENT_OBJECT_CONTACT_FIELDS = [
   'additional_phone_1',
@@ -101,12 +101,7 @@ export function buildClientObjectFullAddress(objectLike) {
 
 export function buildClientObjectAdditionalInfoSummary(objectLike) {
   if (!objectLike || typeof objectLike !== 'object') return '';
-  const parts = [
-    objectLike.parking_notes,
-    objectLike.entrance_info,
-    objectLike.geo_lat,
-    objectLike.geo_lng,
-  ]
+  const parts = [objectLike.parking_notes, objectLike.entrance_info]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
   return parts.join(', ').trim();

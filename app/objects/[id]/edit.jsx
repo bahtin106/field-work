@@ -1,9 +1,10 @@
-import { AntDesign, Feather } from '@expo/vector-icons';
+﻿import { AntDesign, Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
+import * as Clipboard from 'expo-clipboard';
 import React from 'react';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AdditionalPhoneInputRow from '../../../components/clients/AdditionalPhoneInputRow';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
@@ -37,6 +38,7 @@ import {
   CLIENT_OBJECT_DEFAULT_NAME,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   createEmptyClientObjectDraft,
+  hasClientObjectAddressContent,
   sanitizeClientObjectPayload,
   buildClientObjectShortAddress,
 } from '../../../src/features/objects/addressing';
@@ -57,6 +59,7 @@ import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation
 import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
 import { hasMobilePhoneValue, isValidOptionalMobilePhone } from '../../../src/shared/validation/phone';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
@@ -164,7 +167,43 @@ function snapshotObjectForm(obj = {}) {
     ...Object.fromEntries(
       CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => [field, String(obj[field] || '').trim() || '']),
     ),
+    geo_lat: String(obj.geo_lat || '').trim() || '',
+    geo_lng: String(obj.geo_lng || '').trim() || '',
   });
+}
+
+function normalizeCoordinateValue(input) {
+  const raw = String(input || '').trim().replace(',', '.');
+  if (!raw) return '';
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return '';
+  return String(Math.round(value * 1_000_000) / 1_000_000);
+}
+
+function parseCoordinatesFromText(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const text = raw.replace(/,/g, '.');
+  const matches = text.match(/-?\d+(?:\.\d+)?/g) || [];
+  if (matches.length < 2) return null;
+  const first = Number(matches[0]);
+  const second = Number(matches[1]);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+
+  const inLatRange = (value) => value >= -90 && value <= 90;
+  const inLngRange = (value) => value >= -180 && value <= 180;
+
+  let lat = first;
+  let lng = second;
+  if (!inLatRange(lat) || !inLngRange(lng)) {
+    lat = second;
+    lng = first;
+  }
+  if (!inLatRange(lat) || !inLngRange(lng)) return null;
+  return {
+    lat: normalizeCoordinateValue(lat),
+    lng: normalizeCoordinateValue(lng),
+  };
 }
 
 export default function EditObjectScreen() {
@@ -222,6 +261,8 @@ export default function EditObjectScreen() {
   const [cropSrc, setCropSrc] = React.useState(null);
   const [photoPreviewVisible, setPhotoPreviewVisible] = React.useState(false);
   const [addressModalVisible, setAddressModalVisible] = React.useState(false);
+  const [locationMode, setLocationMode] = React.useState('address');
+  const [clipboardHasCoordinates, setClipboardHasCoordinates] = React.useState(false);
   const [avatarKey, setAvatarKey] = React.useState(0);
   const [fieldErrors, setFieldErrors] = React.useState({});
   const allowLeaveRef = React.useRef(false);
@@ -305,6 +346,25 @@ export default function EditObjectScreen() {
         : draft.photoUrl,
     [draft.photoUrl, objectItem?.photoDisplayUrl],
   );
+  const mapLat = React.useMemo(
+    () => normalizeCoordinateValue(draft?.geo_lat),
+    [draft?.geo_lat],
+  );
+  const mapLng = React.useMemo(
+    () => normalizeCoordinateValue(draft?.geo_lng),
+    [draft?.geo_lng],
+  );
+  const hasMapPoint = React.useMemo(
+    () => !!mapLat && !!mapLng,
+    [mapLat, mapLng],
+  );
+  const hasAddressContent = React.useMemo(
+    () =>
+      hasClientObjectAddressContent(
+        visibleAddressFields.reduce((acc, field) => ({ ...acc, [field]: draft?.[field] || '' }), {}),
+      ),
+    [draft, visibleAddressFields],
+  );
 
   const cameraIconSize = React.useMemo(() => {
     const iconSm = theme.icons?.sm ?? 18;
@@ -332,12 +392,19 @@ export default function EditObjectScreen() {
       name: objectItem.name || CLIENT_OBJECT_DEFAULT_NAME,
       photoUrl: objectItem.photoUrl || '',
       ...Object.fromEntries(CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => [field, objectItem[field] || ''])),
+      geo_lat: objectItem?.geo_lat || '',
+      geo_lng: objectItem?.geo_lng || '',
     });
     const nextTags = Array.isArray(objectItem?.tags) ? objectItem.tags.map((tag) => String(tag?.value || '').trim()) : [];
     setDraft(next);
     setAdditionalPhones(nextAdditionalPhones);
     setVisibleAdditionalPhoneSlots(nextVisibleSlots);
     setTags(nextTags);
+    setLocationMode(
+      String(next.geo_lat || '').trim() || String(next.geo_lng || '').trim()
+        ? 'map'
+        : 'address',
+    );
     setInitialSnap(
       snapshotObjectForm({
         ...next,
@@ -358,6 +425,31 @@ export default function EditObjectScreen() {
       }),
     );
   }, [additionalPhones, enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots]);
+
+  React.useEffect(() => {
+    if (!addressModalVisible || locationMode !== 'map') {
+      setClipboardHasCoordinates(false);
+      return undefined;
+    }
+
+    let disposed = false;
+    const checkClipboard = async () => {
+      try {
+        const value = await Clipboard.getStringAsync();
+        if (disposed) return;
+        setClipboardHasCoordinates(!!parseCoordinatesFromText(value));
+      } catch {
+        if (!disposed) setClipboardHasCoordinates(false);
+      }
+    };
+
+    checkClipboard();
+    const timer = setInterval(checkClipboard, theme.timing?.clipboardPollMs ?? 1200);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [addressModalVisible, locationMode, theme.timing?.clipboardPollMs]);
 
   const isDirty = React.useMemo(() => {
     if (!initialSnap) return false;
@@ -408,6 +500,10 @@ export default function EditObjectScreen() {
     }
     dismissToRoute(router, '/objects');
   }, [objectItem?.client_id, returnParams, returnTo, router]);
+
+  const openAddressModal = React.useCallback(() => {
+    setAddressModalVisible(true);
+  }, []);
 
   React.useEffect(() => {
     const sub = navigation.addListener('beforeRemove', (event) => {
@@ -476,6 +572,45 @@ export default function EditObjectScreen() {
     }
   }, [ensureLibraryPerms, mediaAspect, mediaQuality, mediaTypesOpt, t, toast]);
 
+  const openMapForPoint = React.useCallback(async () => {
+    try {
+      if (hasMapPoint) {
+        openCoordinatesInYandex(mapLat, mapLng);
+      } else {
+        await Linking.openURL('https://yandex.ru/maps/');
+      }
+    } catch {}
+  }, [hasMapPoint, mapLat, mapLng]);
+
+  const showClipboardEmptyFeedback = React.useCallback(() => {
+    const message = t('objects_location_clipboard_empty');
+    toast.warning(message);
+  }, [t, toast]);
+
+  const pasteCoordinatesFromClipboard = React.useCallback(async () => {
+    if (!clipboardHasCoordinates) {
+      showClipboardEmptyFeedback();
+      return;
+    }
+    try {
+      const value = await Clipboard.getStringAsync();
+      const parsed = parseCoordinatesFromText(value);
+      if (!parsed) {
+        showClipboardEmptyFeedback();
+        return;
+      }
+      setDraft((prev) => ({ ...prev, geo_lat: parsed.lat, geo_lng: parsed.lng }));
+      setLocationMode('map');
+      toast.success(t('objects_location_point_set'));
+    } catch {
+      toast.error(t('objects_location_clipboard_fail'));
+    }
+  }, [clipboardHasCoordinates, showClipboardEmptyFeedback, t, toast]);
+
+  const clearMapPoint = React.useCallback(() => {
+    setDraft((prev) => ({ ...prev, geo_lat: '', geo_lng: '' }));
+  }, []);
+
   const onCropCancel = React.useCallback(() => {
     setCropVisible(false);
     setCropSrc(null);
@@ -490,8 +625,11 @@ export default function EditObjectScreen() {
   const saveObject = React.useCallback(async () => {
     if (!objectId || saving || !canEditObjects) return;
     const nextFieldErrors = ['name', ...visibleAddressFields, ...visibleAdditionalInfoFields].reduce((acc, field) => {
+      const requiredByField = objectFieldsByKey.get(field)?.isRequired === true;
+      const shouldRelaxAddressRequired =
+        locationMode === 'map' && hasMapPoint && visibleAddressFields.includes(field);
       const message = getRequiredTextFieldError(draft?.[field], {
-        required: objectFieldsByKey.get(field)?.isRequired === true,
+        required: shouldRelaxAddressRequired ? false : requiredByField,
         requiredMessage: getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
       });
       if (!message) return acc;
@@ -508,6 +646,10 @@ export default function EditObjectScreen() {
     }
     setFieldErrors(nextFieldErrors);
     if (Object.keys(nextFieldErrors).length > 0) {
+      return;
+    }
+    if (!hasAddressContent && !hasMapPoint) {
+      toast.warning(t('objects_location_required'));
       return;
     }
     setSaving(true);
@@ -531,6 +673,8 @@ export default function EditObjectScreen() {
         id: String(objectId),
         patch: {
           ...cleanPatch,
+          geo_lat: mapLat || null,
+          geo_lng: mapLng || null,
           ...buildObjectAdditionalPhonesPatch(additionalPhones, {
             defaultLabel: t('order_field_secondary_phone'),
             visibleSlotIds: visibleAdditionalPhoneSlots,
@@ -555,7 +699,7 @@ export default function EditObjectScreen() {
     } finally {
       setSaving(false);
     }
-  }, [additionalPhones, canEditObjects, draft, goBack, objectFieldsByKey, objectId, objectItem, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
+  }, [additionalPhones, canEditObjects, draft, goBack, hasAddressContent, hasMapPoint, locationMode, mapLat, mapLng, objectFieldsByKey, objectId, objectItem, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
 
   const hiddenEnabledAdditionalPhoneSlots = React.useMemo(
     () => addableAdditionalPhoneSlots.filter((slotId) => !visibleAdditionalPhoneSlots.includes(slotId)),
@@ -660,7 +804,7 @@ export default function EditObjectScreen() {
           <View style={styles.field}>
             <Pressable
               style={styles.addressRow}
-              onPress={() => setAddressModalVisible(true)}
+              onPress={openAddressModal}
               accessibilityRole="button"
             >
               <View style={styles.addressTextWrap}>
@@ -708,7 +852,6 @@ export default function EditObjectScreen() {
                       setDraft((prev) => ({ ...prev, [field]: value }));
                       setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
                     }}
-                    keyboardType={field === 'geo_lat' || field === 'geo_lng' ? 'decimal-pad' : undefined}
                     multiline={field === 'entrance_info' || field === 'parking_notes'}
                     minLines={field === 'entrance_info' || field === 'parking_notes' ? 2 : undefined}
                     error={fieldErrors?.[field] ? 'invalid' : undefined}
@@ -860,23 +1003,96 @@ export default function EditObjectScreen() {
           contentContainerStyle={{ paddingVertical: theme.spacing.sm }}
           keyboardShouldPersistTaps="handled"
         >
-          <Card paddedXOnly>
-            {orderedPrimaryAddressFields.map((field) => (
-              <React.Fragment key={field}>
-                <TextField
-                  label={withRequiredLabel(field, t(`order_field_${field}`))}
-                  value={String(draft[field] || '')}
-                  onChangeText={(value) => {
-                    setDraft((prev) => ({ ...prev, [field]: value }));
-                    setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
-                  }}
-                  error={fieldErrors?.[field] ? 'invalid' : undefined}
-                  style={styles.field}
-                />
-                <FieldErrorText message={fieldErrors?.[field] || null} />
-              </React.Fragment>
-            ))}
-          </Card>
+          <View style={styles.modalInset}>
+            <View style={styles.locationModeRow}>
+              <Pressable
+                onPress={() => setLocationMode('address')}
+                style={[styles.locationModeBtn, locationMode === 'address' ? styles.locationModeBtnActive : null]}
+              >
+                <Text style={[styles.locationModeBtnText, locationMode === 'address' ? styles.locationModeBtnTextActive : null]}>
+                  {t('objects_location_mode_address')}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setLocationMode('map')}
+                style={[styles.locationModeBtn, locationMode === 'map' ? styles.locationModeBtnActive : null]}
+              >
+                <Text style={[styles.locationModeBtnText, locationMode === 'map' ? styles.locationModeBtnTextActive : null]}>
+                  {t('objects_location_mode_map')}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+
+          {locationMode === 'map' ? (
+            <Card paddedXOnly style={{ marginTop: theme.spacing.sm }}>
+              <View style={styles.mapPointBlock}>
+                <Text style={styles.mapPointHint}>
+                  {t('objects_location_map_hint')}
+                </Text>
+                <View style={styles.mapPointValueRow}>
+                  <Text style={styles.mapPointValue}>
+                    {hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty')}
+                  </Text>
+                  {hasMapPoint ? (
+                    <Pressable
+                      onPress={clearMapPoint}
+                      style={styles.mapPointClearBtn}
+                      hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('objects_location_clear')}
+                    >
+                      <Feather
+                        name="x-circle"
+                        size={theme.icons?.sm ?? 18}
+                        color={theme.colors.textSecondary}
+                      />
+                    </Pressable>
+                  ) : null}
+                </View>
+                <View style={styles.mapActionsRow}>
+                  <View style={styles.mapActionItem}>
+                    <UIButton
+                      title={t('objects_location_open_map')}
+                      variant="secondary"
+                      onPress={openMapForPoint}
+                      style={styles.mapActionBtn}
+                    />
+                  </View>
+                  <View style={styles.mapActionItem}>
+                    <UIButton
+                      title={t('objects_location_paste')}
+                      onPress={pasteCoordinatesFromClipboard}
+                      style={[
+                        styles.mapActionBtn,
+                        !clipboardHasCoordinates ? styles.mapActionBtnInactive : null,
+                      ]}
+                    />
+                  </View>
+                </View>
+              </View>
+            </Card>
+          ) : null}
+
+          {locationMode === 'address' ? (
+            <Card paddedXOnly>
+              {orderedPrimaryAddressFields.map((field) => (
+                <React.Fragment key={field}>
+                  <TextField
+                    label={withRequiredLabel(field, t(`order_field_${field}`))}
+                    value={String(draft[field] || '')}
+                    onChangeText={(value) => {
+                      setDraft((prev) => ({ ...prev, [field]: value }));
+                      setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
+                    }}
+                    error={fieldErrors?.[field] ? 'invalid' : undefined}
+                    style={styles.field}
+                  />
+                  <FieldErrorText message={fieldErrors?.[field] || null} />
+                </React.Fragment>
+              ))}
+            </Card>
+          ) : null}
         </ScrollView>
       </BaseModal>
 
@@ -1024,6 +1240,78 @@ function createStyles(theme, formStyles) {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    modalInset: {
+      paddingHorizontal: theme.spacing[theme.components?.card?.padX ?? 'lg'],
+    },
+    locationModeRow: {
+      flexDirection: 'row',
+      gap: theme.spacing.xs,
+      paddingVertical: theme.spacing.sm,
+    },
+    locationModeBtn: {
+      flex: 1,
+      minHeight: 36,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: theme.spacing.sm,
+      backgroundColor: theme.colors.surface,
+    },
+    locationModeBtnActive: {
+      borderColor: theme.colors.primary,
+      backgroundColor: withAlpha(theme.colors.primary, 0.1),
+    },
+    locationModeBtnText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
+    },
+    locationModeBtnTextActive: {
+      color: theme.colors.primary,
+    },
+    mapPointBlock: {
+      paddingVertical: theme.spacing.sm,
+      gap: theme.spacing.sm,
+    },
+    mapPointHint: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+    },
+    mapPointValueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: theme.spacing.sm,
+    },
+    mapPointValue: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.medium,
+      flex: 1,
+    },
+    mapPointClearBtn: {
+      minWidth: theme.icons?.md ?? 24,
+      minHeight: theme.icons?.md ?? 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    mapActionsRow: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+      width: '100%',
+    },
+    mapActionItem: {
+      flex: 1,
+      minWidth: 0,
+    },
+    mapActionBtn: {
+      width: '100%',
+    },
+    mapActionBtnInactive: {
+      opacity: 0.5,
+    },
     previewWrap: {
       alignItems: 'center',
       padding: theme.spacing.md,
@@ -1039,3 +1327,5 @@ function createStyles(theme, formStyles) {
     },
   });
 }
+
+

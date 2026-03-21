@@ -179,15 +179,11 @@ export default function ObjectViewScreen() {
   const additionalInfoItems = [
     [t('order_field_parking_notes'), objectItem?.parking_notes],
     [t('order_field_entrance_info'), objectItem?.entrance_info],
-    [t('order_field_geo_lat'), objectItem?.geo_lat],
-    [t('order_field_geo_lng'), objectItem?.geo_lng],
   ]
     .filter(([label]) => {
       const keyMap = {
         [t('order_field_parking_notes')]: 'parking_notes',
         [t('order_field_entrance_info')]: 'entrance_info',
-        [t('order_field_geo_lat')]: 'geo_lat',
-        [t('order_field_geo_lng')]: 'geo_lng',
       };
       const fieldKey = keyMap[label];
       return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled !== false : true;

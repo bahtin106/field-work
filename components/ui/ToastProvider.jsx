@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Dimensions, Keyboard, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FullWindowOverlay } from 'react-native-screens';
 import { useTheme } from '../../theme';
 // --- i18n labels (safe runtime require) ---
 let __labels = null;
@@ -188,24 +189,33 @@ export default function ToastProvider({ children }) {
     bottom: bottom.value,
   }));
 
+  const renderOverlay = useCallback(
+    () => (
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.portalContainer,
+            aStyle,
+          ]}
+        >
+          <View pointerEvents="none" style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
+            <Text style={[styles.text, { color: p.fg }]}>{msg?.text}</Text>
+          </View>
+        </Animated.View>
+      </View>
+    ),
+    [aStyle, msg?.text, p.bg, p.border, p.fg],
+  );
+
   return (
-    <Ctx.Provider value={value}>
+    <Ctx.Provider value={{ ...value, renderOverlay }}>
       {children}
 
       {msg ? (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          <Animated.View
-            pointerEvents="box-none"
-            style={[
-              styles.portalContainer,
-              aStyle,
-            ]}
-          >
-            <View style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
-              <Text style={[styles.text, { color: p.fg }]}>{msg?.text}</Text>
-            </View>
-          </Animated.View>
-        </View>
+        <FullWindowOverlay>
+          {renderOverlay()}
+        </FullWindowOverlay>
       ) : null}
     </Ctx.Provider>
   );

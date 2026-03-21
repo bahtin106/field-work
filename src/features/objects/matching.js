@@ -107,7 +107,7 @@ export function findExactMatchingClientObject(draftObject, clientObjects) {
         ['house', 'office', 'entrance', 'apartment', 'floor'].every(
           (field) => normalizedDraft[field] === normalizedCandidate[field],
         ) &&
-        ['entrance_info', 'parking_notes', 'geo_lat', 'geo_lng'].every(
+        ['entrance_info', 'parking_notes'].every(
           (field) => normalizedDraft[field] === normalizedCandidate[field],
         )
       );

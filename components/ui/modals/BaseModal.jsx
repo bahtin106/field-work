@@ -24,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { applyAndroidNavigationBar, applyAndroidSystemBars } from '../../../lib/systemBars';
 import { t as T } from '../../../src/i18n';
+import { useToast } from '../ToastProvider';
 import { useTheme } from '../../../theme';
 import { withAlpha as withThemeAlpha } from '../../../theme/colors';
 
@@ -101,6 +102,7 @@ const BaseModalImpl = (
   ref,
 ) => {
   const { theme } = useTheme();
+  const toast = useToast();
   const insets = useSafeAreaInsets();
   const s = useMemo(() => baseSheetStyles(theme), [theme]);
   const modalTokens = theme.components?.modal || {};
@@ -500,6 +502,7 @@ const BaseModalImpl = (
             ) : null}
           </Animated.View>
         </Animated.View>
+      {toast?.renderOverlay?.() || null}
     </Modal>
   );
 };
