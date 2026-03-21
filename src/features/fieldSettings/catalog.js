@@ -301,40 +301,26 @@ const OBJECT_FIELDS = [
     inputKind: 'multiline',
     sortOrder: 140,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'geo_lat', {
-    labelKey: 'order_field_geo_lat',
-    fallbackLabel: 'Широта',
-    sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
-    inputKind: 'number',
-    sortOrder: 150,
-  }),
-  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'geo_lng', {
-    labelKey: 'order_field_geo_lng',
-    fallbackLabel: 'Долгота',
-    sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
-    inputKind: 'number',
-    sortOrder: 160,
-  }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_1', {
     labelKey: 'order_field_secondary_phone',
     fallbackLabel: 'Доп. телефон',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
-    sortOrder: 170,
+    sortOrder: 150,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_2', {
     labelKey: 'client_field_additional_phone_2',
     fallbackLabel: 'Доп. телефон 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
-    sortOrder: 180,
+    sortOrder: 160,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_3', {
     labelKey: 'client_field_additional_phone_3',
     fallbackLabel: 'Доп. телефон 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
-    sortOrder: 190,
+    sortOrder: 170,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_1', {
     labelKey: 'object_media_field_1',
@@ -342,7 +328,7 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
-    sortOrder: 200,
+    sortOrder: 180,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_2', {
     labelKey: 'object_media_field_2',
@@ -350,7 +336,7 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
-    sortOrder: 210,
+    sortOrder: 190,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_3', {
     labelKey: 'object_media_field_3',
@@ -358,7 +344,7 @@ const OBJECT_FIELDS = [
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
-    sortOrder: 220,
+    sortOrder: 200,
   }),
 ];
 

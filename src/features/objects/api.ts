@@ -37,8 +37,6 @@ export type OrderObjectSearchResult = {
   apartment: string;
   entrance_info: string;
   parking_notes: string;
-  geo_lat: string;
-  geo_lng: string;
 };
 
 export async function listClientObjects(clientId: string) {
@@ -223,8 +221,6 @@ export async function searchCompanyObjectsForOrder({
       apartment: String(row?.apartment || '').trim(),
       entrance_info: String(row?.entrance_info || '').trim(),
       parking_notes: String(row?.parking_notes || '').trim(),
-      geo_lat: String(row?.geo_lat || '').trim(),
-      geo_lng: String(row?.geo_lng || '').trim(),
     }));
   });
 }

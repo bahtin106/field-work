@@ -26,4 +26,20 @@ export function openAddressInYandex(fullAddress) {
   });
 }
 
-export default { buildAddressForNavigator, openAddressInYandex };
+export function openCoordinatesInYandex(latitude, longitude) {
+  const lat = Number(String(latitude || '').replace(',', '.'));
+  const lng = Number(String(longitude || '').replace(',', '.'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    const fallback = 'https://yandex.ru/maps/';
+    Linking.openURL(fallback).catch(() => {});
+    return;
+  }
+  const queryPoint = `${lng},${lat}`;
+  const deep = `yandexmaps://maps.yandex.ru/?pt=${encodeURIComponent(queryPoint)}&z=17&l=map`;
+  Linking.openURL(deep).catch(() => {
+    const fallback = `https://yandex.ru/maps/?pt=${encodeURIComponent(queryPoint)}&z=17&l=map`;
+    Linking.openURL(fallback).catch(() => {});
+  });
+}
+
+export default { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex };
