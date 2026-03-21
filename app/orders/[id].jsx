@@ -55,7 +55,7 @@ import OrderStatusCapsule from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import { BaseModal, ConfirmModal, AlertModal, SelectModal } from '../../components/ui/modals';
 import { listItemStyles } from '../../components/ui/listItemStyles';
-import { buildAddressForNavigator, openAddressInYandex } from '../../components/ui/map';
+import { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex } from '../../components/ui/map';
 import { usePermissions } from '../../lib/permissions';
 import { formatClientNameForOrder, getClientByOrderId } from '../../src/features/clients/api';
 import { useClient, useUpdateClientMutation } from '../../src/features/clients/queries';
@@ -82,6 +82,11 @@ import {
   extractOrderAddress,
   normalizeOrderAddressMode,
 } from '../../src/features/requests/addressing';
+import {
+  hasClientObjectMapPoint,
+  normalizeClientObjectLocationMode,
+  normalizeCoordinateValue,
+} from '../../src/features/objects/addressing';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -683,6 +688,7 @@ function OrderDetailsContent() {
     () => orderedFinanceEntries.filter((entry) => entry?.kind === 'expense'),
     [orderedFinanceEntries],
   );
+  const hasCustomerFinanceEntries = financeIncomeEntries.length > 0 || financeDiscountEntries.length > 0;
   const isLocalFinancePhotoUrl = useCallback((value) => {
     const raw = String(value || '').trim().toLowerCase();
     if (!raw) return false;
@@ -3361,6 +3367,17 @@ function OrderDetailsContent() {
   const orderAddress = useMemo(() => extractOrderAddress(order), [order]);
   const shortOrderAddress = useMemo(() => buildOrderAddressShort(orderAddress), [orderAddress]);
   const orderAddressForNavigator = useMemo(() => buildAddressForNavigator(orderAddress), [orderAddress]);
+  const orderMapLat = useMemo(() => normalizeCoordinateValue(orderAddress?.geo_lat), [orderAddress?.geo_lat]);
+  const orderMapLng = useMemo(() => normalizeCoordinateValue(orderAddress?.geo_lng), [orderAddress?.geo_lng]);
+  const orderHasMapPoint = useMemo(() => hasClientObjectMapPoint(orderAddress), [orderAddress]);
+  const orderLocationMode = useMemo(
+    () =>
+      normalizeClientObjectLocationMode(order?.object_location_mode || order?.object?.location_mode, {
+        fallback: orderHasMapPoint ? 'map' : 'address',
+      }),
+    [order?.object?.location_mode, order?.object_location_mode, orderHasMapPoint],
+  );
+  const useCoordinatesForOrderAddress = orderLocationMode === 'map' && orderHasMapPoint;
   const orderAddressItems = useMemo(
     () =>
       [
@@ -3765,29 +3782,44 @@ function OrderDetailsContent() {
               ) : null}
               {(isOrderFieldVisible('object_id') && orderAddressItems.length > 0) ? <View style={base.sep} /> : null}
               {orderAddressItems.length > 0 ? (
-              <ExpandableTextRow
-                label={t('order_details_address')}
-                value={orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')}
-                collapsedValue={shortOrderAddress || buildOrderAddressDisplay(orderAddress) || t('order_details_address_not_specified')}
-                expandedKeyValueItems={orderAddressItems}
-                expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
-                collapsedValueStyle={styles.link}
-                onValuePress={
-                  orderAddressForNavigator
-                    ? () => {
-                        openAddressInYandex(orderAddressForNavigator);
-                      }
-                    : null
-                }
-                onCollapsedPress={
-                  orderAddressForNavigator
-                    ? () => {
-                        openAddressInYandex(orderAddressForNavigator);
-                      }
-                    : null
-                }
-                forceShow
-              />
+                useCoordinatesForOrderAddress ? (
+                  <LabelValueRow
+                    label={t('objects_location_coordinates')}
+                    valueComponent={(
+                      <Pressable
+                        accessibilityRole="link"
+                        onPress={() => openCoordinatesInYandex(orderMapLat, orderMapLng)}
+                      >
+                        <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
+                      </Pressable>
+                    )}
+                    hideWhenEmpty={false}
+                  />
+                ) : (
+                  <ExpandableTextRow
+                    label={t('order_details_address')}
+                    value={orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')}
+                    collapsedValue={shortOrderAddress || buildOrderAddressDisplay(orderAddress) || t('order_details_address_not_specified')}
+                    expandedKeyValueItems={orderAddressItems}
+                    expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
+                    collapsedValueStyle={styles.link}
+                    onValuePress={
+                      orderAddressForNavigator
+                        ? () => {
+                            openAddressInYandex(orderAddressForNavigator);
+                          }
+                        : null
+                    }
+                    onCollapsedPress={
+                      orderAddressForNavigator
+                        ? () => {
+                            openAddressInYandex(orderAddressForNavigator);
+                          }
+                        : null
+                    }
+                    forceShow
+                  />
+                )
               ) : null}
             </Card>
 
@@ -3937,7 +3969,7 @@ function OrderDetailsContent() {
                               </Pressable>
                             ) : null}
 
-                            {showInitialCostLine ? <View style={base.sep} /> : null}
+                            {showInitialCostLine && hasCustomerFinanceEntries ? <View style={base.sep} /> : null}
 
                             {financeIncomeEntries.map((entry, index) => (
                               <View key={entry.id}>

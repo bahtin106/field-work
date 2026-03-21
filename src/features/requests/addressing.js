@@ -22,6 +22,7 @@ export const ORDER_ADDRESS_FIELDS = Object.freeze([
   'geo_lat',
   'geo_lng',
 ]);
+export const ORDER_LOCATION_MODE_FIELD = 'location_mode';
 
 export function normalizeOrderAddressMode(value) {
   return String(value || '').trim().toLowerCase() === ORDER_ADDRESS_MODE.CUSTOM
@@ -35,6 +36,12 @@ export function extractOrderAddress(source) {
     const normalized = String(source?.[field] ?? '').trim();
     result[field] = normalized || '';
   }
+  result[ORDER_LOCATION_MODE_FIELD] =
+    String(source?.[ORDER_LOCATION_MODE_FIELD] || '').trim().toLowerCase() === 'map'
+      ? 'map'
+      : result.geo_lat && result.geo_lng
+        ? 'map'
+        : 'address';
   return result;
 }
 

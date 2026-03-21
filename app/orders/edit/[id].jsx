@@ -1,6 +1,7 @@
 ﻿import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect } from '@react-navigation/native';
@@ -8,6 +9,7 @@ import {
   ActivityIndicator,
   BackHandler,
   Keyboard,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -30,6 +32,9 @@ import { useClientObjects } from '../../../src/features/objects/queries';
 import {
   buildClientObjectAddressSummary,
   buildClientObjectShortAddress,
+  hasClientObjectMapPoint,
+  normalizeClientObjectLocationMode,
+  normalizeCoordinateValue,
 } from '../../../src/features/objects/addressing';
 import {
   ORDER_ADDRESS_MODE,
@@ -78,6 +83,7 @@ import { parseClientPrefillFromSearch } from '../../../src/features/clients/pref
 import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matching';
 import { useTheme } from '../../../theme/ThemeProvider';
 import DeferredScreen from '../../../src/shared/perf/DeferredScreen';
+import { openCoordinatesInYandex } from '../../../components/ui/map';
 
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
@@ -91,6 +97,30 @@ function normalizeOrderRouteId(value) {
   if (!normalized) return null;
   if (ROUTE_PLACEHOLDER_RE.test(normalized)) return null;
   return normalized;
+}
+
+function parseCoordinatesFromText(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const text = raw.replace(/,/g, '.');
+  const matches = text.match(/-?\d+(?:\.\d+)?/g) || [];
+  if (matches.length < 2) return null;
+  const first = Number(matches[0]);
+  const second = Number(matches[1]);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+  const inLatRange = (value) => value >= -90 && value <= 90;
+  const inLngRange = (value) => value >= -180 && value <= 180;
+  let lat = first;
+  let lng = second;
+  if (!inLatRange(lat) || !inLngRange(lng)) {
+    lat = second;
+    lng = first;
+  }
+  if (!inLatRange(lat) || !inLngRange(lng)) return null;
+  return {
+    lat: normalizeCoordinateValue(lat),
+    lng: normalizeCoordinateValue(lng),
+  };
 }
 
 function EditOrderContent() {
@@ -180,6 +210,8 @@ function EditOrderContent() {
   const [addressMode, setAddressMode] = useState(ORDER_ADDRESS_MODE.OBJECT);
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [addressModalDraft, setAddressModalDraft] = useState(() => extractOrderAddress({}));
+  const [addressModalLocationMode, setAddressModalLocationMode] = useState('address');
+  const [addressModalClipboardHasCoordinates, setAddressModalClipboardHasCoordinates] = useState(false);
   const [phone, setPhone] = useState('');
   const [entranceInfo, setEntranceInfo] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
@@ -202,6 +234,7 @@ function EditOrderContent() {
   const [parkingNotes, setParkingNotes] = useState('');
   const [geoLat, setGeoLat] = useState('');
   const [geoLng, setGeoLng] = useState('');
+  const [customAddressLocationMode, setCustomAddressLocationMode] = useState('address');
   const [assignedEmployeeLabel, setAssignedEmployeeLabel] = useState('');
   const [formHydrated, setFormHydrated] = useState(false);
   const [cancelVisible, setCancelVisible] = useState(false);
@@ -553,6 +586,11 @@ function EditOrderContent() {
         setParkingNotes(objectAddress.parking_notes);
         setGeoLat(objectAddress.geo_lat);
         setGeoLng(objectAddress.geo_lng);
+        setCustomAddressLocationMode(
+          normalizeClientObjectLocationMode(objectAddress.location_mode, {
+            fallback: hasClientObjectMapPoint(objectAddress) ? 'map' : 'address',
+          }),
+        );
         setObjectModalVisible(false);
       },
     }));
@@ -724,6 +762,12 @@ function EditOrderContent() {
         parkingNotes: String(draft.parkingNotes || '').trim(),
         geoLat: String(draft.geoLat || '').trim(),
         geoLng: String(draft.geoLng || '').trim(),
+        customAddressLocationMode: normalizeClientObjectLocationMode(draft.customAddressLocationMode, {
+          fallback:
+            normalizeCoordinateValue(draft.geoLat) && normalizeCoordinateValue(draft.geoLng)
+              ? 'map'
+              : 'address',
+        }),
         departureDateIso: normalizeDateOrNull(draft.departureDate)?.toISOString() || null,
         departureEndDateIso: normalizeDateOrNull(draft.departureEndDate)?.toISOString() || null,
         isDepartureRange: !!draft.isDepartureRange,
@@ -777,6 +821,12 @@ function EditOrderContent() {
       const nextParkingNotes = row.parking_notes ?? '';
       const nextGeoLat = row.geo_lat ?? '';
       const nextGeoLng = row.geo_lng ?? '';
+      const nextCustomAddressLocationMode = normalizeClientObjectLocationMode(row.location_mode, {
+        fallback:
+          normalizeCoordinateValue(nextGeoLat) && normalizeCoordinateValue(nextGeoLng)
+            ? 'map'
+            : 'address',
+      });
       const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
       const nextDepartureEndDate = normalizeDateOrNull(row.time_window_end);
       const nextIsDepartureRange = !!nextDepartureEndDate;
@@ -820,6 +870,7 @@ function EditOrderContent() {
       setParkingNotes(String(nextParkingNotes || ''));
       setGeoLat(String(nextGeoLat || ''));
       setGeoLng(String(nextGeoLng || ''));
+      setCustomAddressLocationMode(nextCustomAddressLocationMode);
       setDepartureDate(nextDepartureDate);
       setDepartureTimeTouched(
         !!nextDepartureDate &&
@@ -867,6 +918,7 @@ function EditOrderContent() {
         parkingNotes: nextParkingNotes,
         geoLat: nextGeoLat,
         geoLng: nextGeoLng,
+        customAddressLocationMode: nextCustomAddressLocationMode,
         departureDate: nextDepartureDate,
         departureEndDate: nextDepartureEndDate,
         isDepartureRange: nextIsDepartureRange,
@@ -926,6 +978,11 @@ function EditOrderContent() {
               selectedObjectId: nextObjectId,
               addressMode: nextAddressMode,
               phone: raw,
+              entranceInfo: nextEntranceInfo,
+              parkingNotes: nextParkingNotes,
+              geoLat: nextGeoLat,
+              geoLng: nextGeoLng,
+              customAddressLocationMode: nextCustomAddressLocationMode,
               departureDate: nextDepartureDate,
               departureEndDate: nextDepartureEndDate || resolvedDepartureEndDate,
               isDepartureRange: nextIsDepartureRange || !!resolvedDepartureEndDate,
@@ -1002,6 +1059,7 @@ function EditOrderContent() {
       parkingNotes,
       geoLat,
       geoLng,
+      customAddressLocationMode,
       departureDate,
       departureEndDate,
       isDepartureRange,
@@ -1037,6 +1095,7 @@ function EditOrderContent() {
     parkingNotes,
     geoLat,
     geoLng,
+    customAddressLocationMode,
     departureDate,
     departureEndDate,
     isDepartureRange,
@@ -1117,6 +1176,85 @@ function EditOrderContent() {
         },
         toggleKnobOn: {
           alignSelf: 'flex-end',
+        },
+        locationModeRow: {
+          ...formStyles.field,
+          flexDirection: 'row',
+          borderRadius: theme?.radius?.md ?? theme?.components?.input?.borderRadius ?? 10,
+          borderWidth: 1,
+          borderColor: theme.colors.inputBorder,
+          overflow: 'hidden',
+        },
+        locationModeBtn: {
+          flex: 1,
+          minHeight: theme.components.input.height,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.surface,
+        },
+        locationModeBtnActive: {
+          backgroundColor: theme.colors.primarySoft,
+        },
+        locationModeBtnText: {
+          color: theme.colors.textSecondary,
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.medium,
+        },
+        locationModeBtnTextActive: {
+          color: theme.colors.primary,
+        },
+        mapPointBlock: {
+          ...formStyles.field,
+          borderWidth: 1,
+          borderColor: theme.colors.inputBorder,
+          borderRadius: theme?.radius?.md ?? theme?.components?.input?.borderRadius ?? 10,
+          paddingHorizontal: theme.spacing.md,
+          paddingVertical: theme.spacing.sm,
+          backgroundColor: theme.colors.surface,
+        },
+        mapPointHint: {
+          color: theme.colors.textSecondary,
+          fontSize: theme.typography.sizes.sm,
+        },
+        mapPointValueRow: {
+          marginTop: theme.spacing.xs,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        },
+        mapPointValue: {
+          flex: 1,
+          color: theme.colors.text,
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.medium,
+        },
+        mapPointClearBtn: {
+          marginLeft: theme.spacing.sm,
+          padding: 2,
+        },
+        mapActionsRow: {
+          marginTop: theme.spacing.sm,
+          flexDirection: 'row',
+          gap: theme.spacing.sm,
+        },
+        mapActionBtn: {
+          flex: 1,
+          minHeight: theme.components.input.height,
+          borderRadius: theme?.radius?.md ?? theme?.components?.input?.borderRadius ?? 10,
+          borderWidth: 1,
+          borderColor: theme.colors.inputBorder,
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: theme.spacing.sm,
+          backgroundColor: theme.colors.card,
+        },
+        mapActionBtnInactive: {
+          opacity: 0.45,
+        },
+        mapActionBtnText: {
+          color: theme.colors.text,
+          fontSize: theme.typography.sizes.sm,
+          fontWeight: theme.typography.weight.medium,
         },
       }),
     [formStyles, theme],
@@ -1247,6 +1385,7 @@ function EditOrderContent() {
       parking_notes: parkingNotes,
       geo_lat: geoLat,
       geo_lng: geoLng,
+      location_mode: customAddressLocationMode,
     }),
     [
       apartment,
@@ -1264,7 +1403,20 @@ function EditOrderContent() {
       postalCode,
       region,
       street,
+      customAddressLocationMode,
     ],
+  );
+  const addressModalMapLat = useMemo(
+    () => normalizeCoordinateValue(addressModalDraft?.geo_lat),
+    [addressModalDraft?.geo_lat],
+  );
+  const addressModalMapLng = useMemo(
+    () => normalizeCoordinateValue(addressModalDraft?.geo_lng),
+    [addressModalDraft?.geo_lng],
+  );
+  const addressModalHasMapPoint = useMemo(
+    () => !!addressModalMapLat && !!addressModalMapLng,
+    [addressModalMapLat, addressModalMapLng],
   );
   const activeAddressDraft = useMemo(
     () =>
@@ -1282,11 +1434,17 @@ function EditOrderContent() {
           if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
           return { ...acc, [field]: activeAddressDraft?.[field] || '' };
         }, {}),
-      ),
+      ) || hasClientObjectMapPoint(activeAddressDraft),
     [activeAddressDraft, objectFieldsByKey],
   );
   const shortAddressValue = useMemo(
     () =>
+      (hasClientObjectMapPoint(activeAddressDraft) &&
+      normalizeClientObjectLocationMode(activeAddressDraft?.location_mode, {
+        fallback: hasClientObjectMapPoint(activeAddressDraft) ? 'map' : 'address',
+      }) === 'map'
+        ? `${normalizeCoordinateValue(activeAddressDraft?.geo_lat)}, ${normalizeCoordinateValue(activeAddressDraft?.geo_lng)}`
+        : '') ||
       buildOrderAddressDisplay(
         Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
           if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
@@ -1301,6 +1459,13 @@ function EditOrderContent() {
       ) ||
       T('order_details_address_not_specified'),
     [activeAddressDraft, objectFieldsByKey],
+  );
+  const activeAddressIsMapMode = useMemo(
+    () =>
+      normalizeClientObjectLocationMode(activeAddressDraft?.location_mode, {
+        fallback: hasClientObjectMapPoint(activeAddressDraft) ? 'map' : 'address',
+      }) === 'map' && hasClientObjectMapPoint(activeAddressDraft),
+    [activeAddressDraft],
   );
   const customAddressFields = useMemo(
     () => [
@@ -1317,8 +1482,6 @@ function EditOrderContent() {
       { key: 'apartment', label: T('order_field_apartment'), ref: apartmentRef },
       { key: 'entrance_info', label: T('order_field_entrance_info'), ref: entranceInfoRef },
       { key: 'parking_notes', label: T('order_field_parking_notes'), ref: parkingNotesRef },
-      { key: 'geo_lat', label: T('order_field_geo_lat'), ref: geoLatRef, keyboardType: 'decimal-pad' },
-      { key: 'geo_lng', label: T('order_field_geo_lng'), ref: geoLngRef, keyboardType: 'decimal-pad' },
     ].filter((field) => objectFieldsByKey.get(field.key)?.isEnabled !== false),
     [objectFieldsByKey],
   );
@@ -1339,6 +1502,75 @@ function EditOrderContent() {
     setParkingNotes(next.parking_notes);
     setGeoLat(next.geo_lat);
     setGeoLng(next.geo_lng);
+    setCustomAddressLocationMode(
+      normalizeClientObjectLocationMode(next.location_mode, {
+        fallback: hasClientObjectMapPoint(next) ? 'map' : 'address',
+      }),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!addressModalVisible || addressModalLocationMode !== 'map') {
+      setAddressModalClipboardHasCoordinates(false);
+      return undefined;
+    }
+    let disposed = false;
+    const checkClipboard = async () => {
+      try {
+        const value = await Clipboard.getStringAsync();
+        if (!disposed) setAddressModalClipboardHasCoordinates(!!parseCoordinatesFromText(value));
+      } catch {
+        if (!disposed) setAddressModalClipboardHasCoordinates(false);
+      }
+    };
+    checkClipboard();
+    const timer = setInterval(checkClipboard, theme.timing?.clipboardPollMs ?? 1200);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [addressModalLocationMode, addressModalVisible, theme.timing?.clipboardPollMs]);
+
+  const setAddressModalNextLocationMode = useCallback((nextMode) => {
+    const normalized = normalizeClientObjectLocationMode(nextMode, {
+      fallback: addressModalHasMapPoint ? 'map' : 'address',
+    });
+    setAddressModalLocationMode(normalized);
+    setAddressModalDraft((prev) => ({ ...prev, location_mode: normalized }));
+  }, [addressModalHasMapPoint]);
+
+  const openAddressModalMap = useCallback(async () => {
+    try {
+      if (addressModalHasMapPoint) {
+        openCoordinatesInYandex(addressModalMapLat, addressModalMapLng);
+      } else {
+        await Linking.openURL('yandexnavi://map_search?text=');
+      }
+    } catch {
+      try {
+        await Linking.openURL('https://yandex.ru/maps/');
+      } catch {}
+    }
+  }, [addressModalHasMapPoint, addressModalMapLat, addressModalMapLng]);
+
+  const pasteAddressModalCoordinatesFromClipboard = useCallback(async () => {
+    if (!addressModalClipboardHasCoordinates) return;
+    try {
+      const value = await Clipboard.getStringAsync();
+      const parsed = parseCoordinatesFromText(value);
+      if (!parsed) return;
+      setAddressModalDraft((prev) => ({
+        ...prev,
+        geo_lat: parsed.lat,
+        geo_lng: parsed.lng,
+        location_mode: 'map',
+      }));
+      setAddressModalLocationMode('map');
+    } catch {}
+  }, [addressModalClipboardHasCoordinates]);
+
+  const clearAddressModalMapPoint = useCallback(() => {
+    setAddressModalDraft((prev) => ({ ...prev, geo_lat: '', geo_lng: '' }));
   }, []);
 
   const handleSave = async () => {
@@ -1607,6 +1839,7 @@ function EditOrderContent() {
         parkingNotes,
         geoLat,
         geoLng,
+        customAddressLocationMode,
         departureDate,
         departureEndDate,
         isDepartureRange,
@@ -1802,12 +2035,18 @@ function EditOrderContent() {
               ) : null}
               {addressMode === ORDER_ADDRESS_MODE.CUSTOM ? (
                 <TextField
-                  label={T('order_details_address')}
+                  label={activeAddressIsMapMode ? T('objects_location_coordinates') : T('order_details_address')}
                   value={shortAddressValue}
                   pressable
                   style={styles.field}
                   onPress={() => {
-                    setAddressModalDraft(extractOrderAddress(activeAddressDraft));
+                    const nextDraft = extractOrderAddress(activeAddressDraft);
+                    setAddressModalDraft(nextDraft);
+                    setAddressModalLocationMode(
+                      normalizeClientObjectLocationMode(nextDraft?.location_mode, {
+                        fallback: hasClientObjectMapPoint(nextDraft) ? 'map' : 'address',
+                      }),
+                    );
                     setAddressModalVisible(true);
                   }}
                 />
@@ -1849,6 +2088,7 @@ function EditOrderContent() {
       selectedClientName,
       selectedObjectId,
       selectedObjectSummary,
+      activeAddressIsMapMode,
       shortAddressValue,
       styles.field,
       styles.toggle,
@@ -2140,23 +2380,70 @@ function EditOrderContent() {
           showsVerticalScrollIndicator
         >
           <Card paddedXOnly>
-            {customAddressFields.map((field) => (
-              <TextField
-                key={`modal-address-${field.key}`}
-                ref={field.ref}
-                label={field.label}
-                value={String(addressModalDraft?.[field.key] || '')}
-                onChangeText={(value) =>
-                  setAddressModalDraft((prev) => ({
-                    ...prev,
-                    [field.key]: String(value || ''),
-                  }))
-                }
-                keyboardType={field.keyboardType}
-                style={styles.field}
-                onFocus={() => focusField(field.ref)}
-              />
-            ))}
+            <View style={styles.locationModeRow}>
+              <Pressable
+                onPress={() => setAddressModalNextLocationMode('address')}
+                style={[styles.locationModeBtn, addressModalLocationMode === 'address' ? styles.locationModeBtnActive : null]}
+              >
+                <Text style={[styles.locationModeBtnText, addressModalLocationMode === 'address' ? styles.locationModeBtnTextActive : null]}>
+                  {T('objects_location_mode_address')}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setAddressModalNextLocationMode('map')}
+                style={[styles.locationModeBtn, addressModalLocationMode === 'map' ? styles.locationModeBtnActive : null]}
+              >
+                <Text style={[styles.locationModeBtnText, addressModalLocationMode === 'map' ? styles.locationModeBtnTextActive : null]}>
+                  {T('objects_location_mode_map')}
+                </Text>
+              </Pressable>
+            </View>
+            {addressModalLocationMode === 'map' ? (
+              <View style={styles.mapPointBlock}>
+                <Text style={styles.mapPointHint}>{T('objects_location_map_hint')}</Text>
+                <View style={styles.mapPointValueRow}>
+                  <Text style={styles.mapPointValue}>
+                    {addressModalHasMapPoint ? `${addressModalMapLat}, ${addressModalMapLng}` : T('objects_location_empty')}
+                  </Text>
+                  {addressModalHasMapPoint ? (
+                    <Pressable onPress={clearAddressModalMapPoint} style={styles.mapPointClearBtn}>
+                      <Feather name="x-circle" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
+                    </Pressable>
+                  ) : null}
+                </View>
+                <View style={styles.mapActionsRow}>
+                  <Pressable onPress={openAddressModalMap} style={styles.mapActionBtn}>
+                    <Text style={styles.mapActionBtnText}>{T('objects_location_open_map')}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={pasteAddressModalCoordinatesFromClipboard}
+                    style={[styles.mapActionBtn, !addressModalClipboardHasCoordinates ? styles.mapActionBtnInactive : null]}
+                    disabled={!addressModalClipboardHasCoordinates}
+                  >
+                    <Text style={styles.mapActionBtnText}>{T('objects_location_paste')}</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+            {addressModalLocationMode === 'address'
+              ? customAddressFields.map((field) => (
+                  <TextField
+                    key={`modal-address-${field.key}`}
+                    ref={field.ref}
+                    label={field.label}
+                    value={String(addressModalDraft?.[field.key] || '')}
+                    onChangeText={(value) =>
+                      setAddressModalDraft((prev) => ({
+                        ...prev,
+                        [field.key]: String(value || ''),
+                      }))
+                    }
+                    keyboardType={field.keyboardType}
+                    style={styles.field}
+                    onFocus={() => focusField(field.ref)}
+                  />
+                ))
+              : null}
           </Card>
         </ScrollView>
       </BaseModal>

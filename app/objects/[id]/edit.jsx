@@ -206,6 +206,13 @@ function parseCoordinatesFromText(input) {
   };
 }
 
+function normalizeLocationMode(value, { fallback = 'address' } = {}) {
+  const mode = String(value || '').trim().toLowerCase();
+  if (mode === 'map') return 'map';
+  if (mode === 'address') return 'address';
+  return fallback === 'map' ? 'map' : 'address';
+}
+
 export default function EditObjectScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -358,6 +365,7 @@ export default function EditObjectScreen() {
     () => !!mapLat && !!mapLng,
     [mapLat, mapLng],
   );
+  const isMapLocationMode = locationMode === 'map';
   const hasAddressContent = React.useMemo(
     () =>
       hasClientObjectAddressContent(
@@ -401,9 +409,10 @@ export default function EditObjectScreen() {
     setVisibleAdditionalPhoneSlots(nextVisibleSlots);
     setTags(nextTags);
     setLocationMode(
-      String(next.geo_lat || '').trim() || String(next.geo_lng || '').trim()
-        ? 'map'
-        : 'address',
+      normalizeLocationMode(objectItem?.location_mode, {
+        fallback:
+          String(next.geo_lat || '').trim() || String(next.geo_lng || '').trim() ? 'map' : 'address',
+      }),
     );
     setInitialSnap(
       snapshotObjectForm({
@@ -675,6 +684,7 @@ export default function EditObjectScreen() {
           ...cleanPatch,
           geo_lat: mapLat || null,
           geo_lng: mapLng || null,
+          location_mode: normalizeLocationMode(locationMode, { fallback: hasMapPoint ? 'map' : 'address' }),
           ...buildObjectAdditionalPhonesPatch(additionalPhones, {
             defaultLabel: t('order_field_secondary_phone'),
             visibleSlotIds: visibleAdditionalPhoneSlots,
@@ -812,7 +822,7 @@ export default function EditObjectScreen() {
                   style={styles.fieldLabel}
                   onLayout={(e) => setAddressLabelHeight(Math.round(e.nativeEvent.layout.height))}
                 >
-                  {t('order_details_address')}
+                  {isMapLocationMode ? t('objects_location_coordinates') : t('order_details_address')}
                 </Text>
                 <Text
                   style={styles.addressValue}
@@ -820,12 +830,16 @@ export default function EditObjectScreen() {
                   ellipsizeMode="tail"
                   onLayout={(e) => setAddressValueHeight(Math.round(e.nativeEvent.layout.height))}
                 >
-                  {buildClientObjectShortAddress(draft) || t('objects_empty')}
+                  {isMapLocationMode
+                    ? (hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty'))
+                    : (buildClientObjectShortAddress(draft) || t('objects_empty'))}
                 </Text>
               </View>
-              <View style={[styles.chevronWrap, { marginTop: chevronMarginTop }]}>
-                <Feather name="chevron-right" size={chevronIconSize} color={theme.colors.textSecondary} />
-              </View>
+              {!isMapLocationMode ? (
+                <View style={[styles.chevronWrap, { marginTop: chevronMarginTop }]}>
+                  <Feather name="chevron-right" size={chevronIconSize} color={theme.colors.textSecondary} />
+                </View>
+              ) : null}
             </Pressable>
           </View>
           {settings?.enable_object_tags ? (

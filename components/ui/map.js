@@ -34,11 +34,13 @@ export function openCoordinatesInYandex(latitude, longitude) {
     Linking.openURL(fallback).catch(() => {});
     return;
   }
-  const queryPoint = `${lng},${lat}`;
-  const deep = `yandexmaps://maps.yandex.ru/?pt=${encodeURIComponent(queryPoint)}&z=17&l=map`;
+  const deep = `yandexnavi://build_route_on_map?lat_to=${encodeURIComponent(String(lat))}&lon_to=${encodeURIComponent(String(lng))}`;
   Linking.openURL(deep).catch(() => {
-    const fallback = `https://yandex.ru/maps/?pt=${encodeURIComponent(queryPoint)}&z=17&l=map`;
-    Linking.openURL(fallback).catch(() => {});
+    const fallbackDeep = `yandexnavi://map_search?text=${encodeURIComponent(`${lat}, ${lng}`)}`;
+    Linking.openURL(fallbackDeep).catch(() => {
+      const fallback = `https://yandex.ru/maps/?pt=${encodeURIComponent(`${lng},${lat}`)}&z=17&l=map`;
+      Linking.openURL(fallback).catch(() => {});
+    });
   });
 }
 

@@ -35,7 +35,7 @@ import { getObjectAdditionalPhones } from '../../../src/features/objects/additio
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
-import { buildAddressForNavigator, openAddressInYandex } from '../../../components/ui/map';
+import { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex } from '../../../components/ui/map';
 import { buildClientObjectShortAddress } from '../../../src/features/objects/addressing';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 import OrderPhotosModal from '../../orders/components/OrderPhotosModal';
@@ -72,6 +72,14 @@ function getObjectInitials(name) {
     .map((part) => part.slice(0, 1))
     .join('')
     .toUpperCase() || DEFAULT_OBJECT_INITIALS;
+}
+
+function normalizeCoordinateValue(input) {
+  const raw = String(input || '').trim().replace(',', '.');
+  if (!raw) return '';
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return '';
+  return String(Math.round(value * 1_000_000) / 1_000_000);
 }
 
 export default function ObjectViewScreen() {
@@ -201,6 +209,12 @@ export default function ObjectViewScreen() {
 
   const navigatorAddress = buildAddressForNavigator(objectItem);
   const shortAddress = buildClientObjectShortAddress(objectItem);
+  const mapLat = normalizeCoordinateValue(objectItem?.geo_lat);
+  const mapLng = normalizeCoordinateValue(objectItem?.geo_lng);
+  const hasMapPoint = !!mapLat && !!mapLng;
+  const isCoordinatesMode =
+    String(objectItem?.location_mode || '').trim().toLowerCase() === 'map' ||
+    (!String(objectItem?.location_mode || '').trim() && hasMapPoint);
   const clientDisplayName = String(clientData?.full_name || objectItem?.client_id || '').trim();
   const showObjectName = objectFieldsByKey.get('name')?.isEnabled !== false;
   const showClientRow = hasDisplayValue(clientDisplayName);
@@ -518,21 +532,43 @@ export default function ObjectViewScreen() {
             />
           ) : null}
           {showObjectName || showClientRow ? <View style={base.sep} /> : null}
-          <ExpandableTextRow
-            label={t('order_details_address')}
-            value={objectItem?.summary || t('objects_empty')}
-            collapsedValue={shortAddress || objectItem?.summary || t('objects_empty')}
-            expandedKeyValueItems={addressItems}
-            expandedLabelBold
-            onValuePress={() => {
-              if (!navigatorAddress) {
-                toast.warning(t('order_details_address_not_specified'));
-                return;
-              }
-              openAddressInYandex(navigatorAddress);
-            }}
-            collapsedValueStyle={navigatorAddress ? styles.clientLink : null}
-          />
+          {isCoordinatesMode ? (
+            <LabelValueRow
+              label={t('objects_location_coordinates')}
+              valueComponent={(
+                <Pressable
+                  accessibilityRole={hasMapPoint ? 'link' : undefined}
+                  onPress={() => {
+                    if (!hasMapPoint) {
+                      toast.warning(t('objects_location_empty'));
+                      return;
+                    }
+                    openCoordinatesInYandex(mapLat, mapLng);
+                  }}
+                >
+                  <Text style={[base.value, hasMapPoint ? styles.clientLink : null]}>
+                    {hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty')}
+                  </Text>
+                </Pressable>
+              )}
+            />
+          ) : (
+            <ExpandableTextRow
+              label={t('order_details_address')}
+              value={objectItem?.summary || t('objects_empty')}
+              collapsedValue={shortAddress || objectItem?.summary || t('objects_empty')}
+              expandedKeyValueItems={addressItems}
+              expandedLabelBold
+              onValuePress={() => {
+                if (!navigatorAddress) {
+                  toast.warning(t('order_details_address_not_specified'));
+                  return;
+                }
+                openAddressInYandex(navigatorAddress);
+              }}
+              collapsedValueStyle={navigatorAddress ? styles.clientLink : null}
+            />
+          )}
           {/* tags moved to separate section below */}
         </Card>
 

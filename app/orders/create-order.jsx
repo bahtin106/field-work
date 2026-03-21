@@ -71,11 +71,15 @@ import {
 import { formatRuMask } from '../../components/ui/phone';
 import {
   CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
+  CLIENT_OBJECT_ADDRESS_FIELDS,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   buildClientObjectFullAddress,
   buildClientObjectShortAddress,
   createEmptyClientObjectDraft,
   hasClientObjectAddressContent,
+  hasClientObjectMapPoint,
+  normalizeClientObjectLocationMode,
+  normalizeCoordinateValue,
   sanitizeClientObjectPayload,
 } from '../../src/features/objects/addressing';
 import {
@@ -624,6 +628,11 @@ function CreateOrderContent() {
         ? {
             ...createEmptyClientObjectDraft({ name: t('objects_new') }),
             ...sanitizeClientObjectPayload(seedDraft),
+            geo_lat: normalizeCoordinateValue(seedDraft?.geo_lat) || '',
+            geo_lng: normalizeCoordinateValue(seedDraft?.geo_lng) || '',
+            location_mode: normalizeClientObjectLocationMode(seedDraft?.location_mode, {
+              fallback: hasClientObjectMapPoint(seedDraft) ? 'map' : 'address',
+            }),
           }
         : draftClientObject || createEmptyClientObjectDraft({ name: t('objects_new') });
       setObjectEditPermissionSeedDraft(nextDraft);
@@ -775,6 +784,9 @@ function CreateOrderContent() {
 
     let resolvedObject = stagedSelectedObjectDraft || selectedClientObject;
     let resolvedObjectId = selectedClientObjectId || null;
+    const stagedObjectLocationMode = normalizeClientObjectLocationMode(stagedSelectedObjectDraft?.location_mode, {
+      fallback: hasClientObjectMapPoint(stagedSelectedObjectDraft) ? 'map' : 'address',
+    });
     if (resolvedObjectId && stagedSelectedObjectDraft) {
       if (!has('canEditObjects')) {
         promptNewObjectCreation(stagedSelectedObjectDraft);
@@ -782,14 +794,22 @@ function CreateOrderContent() {
       }
       const updated = await updateClientObjectMutation.mutateAsync({
         id: String(resolvedObjectId),
-        patch: sanitizeClientObjectPayload(stagedSelectedObjectDraft),
+        patch: {
+          ...sanitizeClientObjectPayload(stagedSelectedObjectDraft),
+          geo_lat: normalizeCoordinateValue(stagedSelectedObjectDraft?.geo_lat) || null,
+          geo_lng: normalizeCoordinateValue(stagedSelectedObjectDraft?.geo_lng) || null,
+          location_mode: stagedObjectLocationMode,
+        },
       });
       await refetchSelectedClient();
       resolvedObject = updated || stagedSelectedObjectDraft;
       setStagedSelectedObjectDraft(null);
     }
     if (!resolvedObjectId && draftClientObject) {
-      if (!hasClientObjectAddressContent(draftClientObject)) {
+      const draftObjectLocationMode = normalizeClientObjectLocationMode(draftClientObject?.location_mode, {
+        fallback: hasClientObjectMapPoint(draftClientObject) ? 'map' : 'address',
+      });
+      if (!hasClientObjectAddressContent(draftClientObject) && !hasClientObjectMapPoint(draftClientObject)) {
         showBanner({
           type: 'warning',
           message: t('order_validation_address_required'),
@@ -805,6 +825,9 @@ function CreateOrderContent() {
         const createdObject = await createClientObjectMutation.mutateAsync({
           client_id: String(selectedClientId),
           ...sanitizeClientObjectPayload(draftClientObject),
+          geo_lat: normalizeCoordinateValue(draftClientObject?.geo_lat) || null,
+          geo_lng: normalizeCoordinateValue(draftClientObject?.geo_lng) || null,
+          location_mode: draftObjectLocationMode,
         });
         resolvedObject = createdObject || null;
         resolvedObjectId = createdObject?.id || null;
@@ -816,7 +839,7 @@ function CreateOrderContent() {
     const resolvedAddressDraft = resolvedObject
       ? extractOrderAddressFromObject(resolvedObject)
       : null;
-    if (!buildOrderAddressShort(resolvedAddressDraft)) {
+    if (!buildOrderAddressShort(resolvedAddressDraft) && !hasClientObjectMapPoint(resolvedAddressDraft)) {
       showBanner({
         type: 'warning',
         message: t('order_validation_address_required'),
@@ -1220,6 +1243,12 @@ function CreateOrderContent() {
   );
   const shortAddressValue = useMemo(
     () =>
+      (hasClientObjectMapPoint(activeObjectDraft) &&
+      normalizeClientObjectLocationMode(activeObjectDraft?.location_mode, {
+        fallback: hasClientObjectMapPoint(activeObjectDraft) ? 'map' : 'address',
+      }) === 'map'
+        ? `${normalizeCoordinateValue(activeObjectDraft?.geo_lat)}, ${normalizeCoordinateValue(activeObjectDraft?.geo_lng)}`
+        : '') ||
       buildOrderAddressDisplay(
         visibleObjectAddressFieldKeys.reduce(
           (acc, field) => ({ ...acc, [field]: activeAddressDraft?.[field] || '' }),
@@ -1369,7 +1398,13 @@ function CreateOrderContent() {
               />
               {activeObjectDraft && visibleObjectAddressFieldKeys.length ? (
                 <TextField
-                  label={t('order_details_address')}
+                  label={
+                    normalizeClientObjectLocationMode(activeObjectDraft?.location_mode, {
+                      fallback: hasClientObjectMapPoint(activeObjectDraft) ? 'map' : 'address',
+                    }) === 'map'
+                      ? t('objects_location_coordinates')
+                      : t('order_details_address')
+                  }
                   value={shortAddressValue}
                   pressable
                   multiline
@@ -1893,6 +1928,12 @@ function CreateOrderContent() {
   );
   const previewObjectRows = useMemo(() => {
     if (!previewObject) return [];
+    const previewLocationMode = normalizeClientObjectLocationMode(previewObject?.location_mode, {
+      fallback: hasClientObjectMapPoint(previewObject) ? 'map' : 'address',
+    });
+    const previewCoordinatesValue = hasClientObjectMapPoint(previewObject)
+      ? `${normalizeCoordinateValue(previewObject?.geo_lat)}, ${normalizeCoordinateValue(previewObject?.geo_lng)}`
+      : '';
     const fullAddress =
       buildClientObjectFullAddress(previewObject) || previewObject.shortAddress || '';
     return [
@@ -1902,9 +1943,12 @@ function CreateOrderContent() {
         value: String(previewObject.clientName || '').trim(),
       },
       {
-        key: 'address',
-        label: t('order_details_address'),
-        value: fullAddress || t('order_details_address_not_specified'),
+        key: previewLocationMode === 'map' ? 'coordinates' : 'address',
+        label: previewLocationMode === 'map' ? t('objects_location_coordinates') : t('order_details_address'),
+        value:
+          previewLocationMode === 'map'
+            ? (previewCoordinatesValue || t('objects_location_empty'))
+            : (fullAddress || t('order_details_address_not_specified')),
       },
       {
         key: 'entrance_info',
@@ -1992,6 +2036,8 @@ function CreateOrderContent() {
       parking_notes: item.parking_notes || '',
       geo_lat: item.geo_lat || '',
       geo_lng: item.geo_lng || '',
+      location_mode:
+        normalizeCoordinateValue(item.geo_lat) && normalizeCoordinateValue(item.geo_lng) ? 'map' : 'address',
     };
     setPendingSuggestedObjectSelection({
       clientId: item.clientId,
@@ -2108,9 +2154,15 @@ function CreateOrderContent() {
   );
 
   const handleCreateClientObject = useCallback(async () => {
+    const objectLocationMode = normalizeClientObjectLocationMode(clientObjectDraft?.location_mode, {
+      fallback: hasClientObjectMapPoint(clientObjectDraft) ? 'map' : 'address',
+    });
+    const objectHasMapPoint = hasClientObjectMapPoint(clientObjectDraft);
     const nextObjectFieldErrors = visibleClientObjectFieldKeys.reduce((acc, field) => {
+      const shouldRelaxRequired =
+        objectLocationMode === 'map' && objectHasMapPoint && CLIENT_OBJECT_ADDRESS_FIELDS.includes(field);
       const message = getRequiredTextFieldError(clientObjectDraft?.[field], {
-        required: objectFieldsByKey.get(field)?.isRequired === true,
+        required: shouldRelaxRequired ? false : objectFieldsByKey.get(field)?.isRequired === true,
         requiredMessage: getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
       });
       if (!message) return acc;
@@ -2140,7 +2192,8 @@ function CreateOrderContent() {
           (acc, field) => ({ ...acc, [field]: clientObjectDraft?.[field] || '' }),
           {},
         ),
-      )
+      ) &&
+      !objectHasMapPoint
     ) {
       showBanner({
         type: 'warning',
@@ -2152,6 +2205,9 @@ function CreateOrderContent() {
       const sanitizedDraft = {
         ...createEmptyClientObjectDraft(),
         ...sanitizeClientObjectPayload(clientObjectDraft),
+        geo_lat: normalizeCoordinateValue(clientObjectDraft?.geo_lat) || null,
+        geo_lng: normalizeCoordinateValue(clientObjectDraft?.geo_lng) || null,
+        location_mode: objectLocationMode,
         ...buildObjectAdditionalPhonesPatch(objectAdditionalPhones, {
           defaultLabel: t('order_field_secondary_phone'),
           visibleSlotIds: visibleObjectAdditionalPhoneSlots,
@@ -2167,6 +2223,9 @@ function CreateOrderContent() {
           id: String(selectedClientObjectId),
           patch: {
             ...sanitizeClientObjectPayload(clientObjectDraft),
+            geo_lat: normalizeCoordinateValue(clientObjectDraft?.geo_lat) || null,
+            geo_lng: normalizeCoordinateValue(clientObjectDraft?.geo_lng) || null,
+            location_mode: objectLocationMode,
             ...buildObjectAdditionalPhonesPatch(objectAdditionalPhones, {
               defaultLabel: t('order_field_secondary_phone'),
               visibleSlotIds: visibleObjectAdditionalPhoneSlots,
