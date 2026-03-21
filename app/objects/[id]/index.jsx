@@ -1,4 +1,5 @@
 import React from 'react';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { Image as ExpoImage } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -18,8 +19,9 @@ import { BaseModal } from '../../../components/ui/modals';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
-import { useClientObject } from '../../../src/features/objects/queries';
+import { useClientObject, useUpdateClientObjectMutation } from '../../../src/features/objects/queries';
 import { useClient } from '../../../src/features/clients/queries';
+import { uploadObjectMediaPhoto, deleteObjectMediaPhotoByUrl } from '../../../src/features/objects/media';
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 import {
   ENTITY_FIELD_TYPES,
@@ -36,9 +38,15 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import { buildAddressForNavigator, openAddressInYandex } from '../../../components/ui/map';
 import { buildClientObjectShortAddress } from '../../../src/features/objects/addressing';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
+import OrderPhotosModal from '../../orders/components/OrderPhotosModal';
+import FullscreenImageViewer from '../../orders/components/FullscreenImageViewer';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
 const SAFE_AREA_EDGES = ['left', 'right'];
+const OBJECT_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'];
+const PHOTO_MAX_WIDTH = 1280;
+const PHOTO_COMPRESS_QUALITY = 0.8;
+const PHOTO_MIME_TYPE = 'image/jpeg';
 
 function withAlpha(color, alpha) {
   if (typeof color === 'string') {
@@ -110,10 +118,28 @@ export default function ObjectViewScreen() {
 
   const clientId = objectItem?.client_id;
   const { data: clientData } = useClient(clientId, { enabled: !!clientId && canViewClients });
+  const updateObjectMutation = useUpdateClientObjectMutation();
 
   const [photoPreviewVisible, setPhotoPreviewVisible] = React.useState(false);
+  const [objectPhotosModal, setObjectPhotosModal] = React.useState({ visible: false, category: null });
+  const [localPendingMap, setLocalPendingMap] = React.useState({});
+  const [viewerVisible, setViewerVisible] = React.useState(false);
+  const [viewerPhotos, setViewerPhotos] = React.useState([]);
+  const [viewerIndex, setViewerIndex] = React.useState(0);
+  const [viewerCategoryLabel, setViewerCategoryLabel] = React.useState('');
+  const viewerRawPhotosRef = React.useRef([]);
+  const viewerCategoryRef = React.useRef(null);
+  const objectMediaRef = React.useRef({});
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
+
+  React.useEffect(() => {
+    const next = {};
+    OBJECT_MEDIA_FIELD_KEYS.forEach((fieldKey) => {
+      next[fieldKey] = Array.isArray(objectItem?.[fieldKey]) ? objectItem[fieldKey] : [];
+    });
+    objectMediaRef.current = next;
+  }, [objectItem]);
 
   // Allow viewing object even if user cannot view clients. Client details (name/link)
   // will be shown only when `canViewClients` is true and `clientData` is available.
@@ -196,6 +222,200 @@ export default function ObjectViewScreen() {
       return false;
     }
   }, [t, toast]);
+
+  const getObjectFieldLabel = React.useCallback(
+    (fieldKey, fallbackLabel) => {
+      const field = objectFieldsByKey.get(fieldKey);
+      const customLabel = String(field?.customLabel || '').trim();
+      if (customLabel) return customLabel;
+      if (field?.labelKey) {
+        return t(field.labelKey, field?.fallbackLabel || fallbackLabel || String(fieldKey || ''));
+      }
+      return fallbackLabel || String(fieldKey || '');
+    },
+    [objectFieldsByKey, t],
+  );
+
+  const visibleMediaFields = React.useMemo(
+    () => OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey) => objectFieldsByKey.get(fieldKey)?.isEnabled !== false),
+    [objectFieldsByKey],
+  );
+
+  const uploadLocalUri = React.useCallback(
+    async (category, uri) => {
+      if (!objectId || !canEditObjects) return false;
+      const manipulated = await ImageManipulator.manipulateAsync(
+        uri,
+        [{ resize: { width: PHOTO_MAX_WIDTH } }],
+        { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+      );
+      const { publicUrl } = await uploadObjectMediaPhoto(objectId, category, manipulated.uri, PHOTO_MIME_TYPE);
+
+      const current = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
+      const next = [publicUrl, ...current.filter((value) => String(value || '') !== publicUrl)];
+      const updated = await updateObjectMutation.mutateAsync({
+        id: objectId,
+        patch: {
+          [category]: next,
+        },
+      });
+      objectMediaRef.current = {
+        ...objectMediaRef.current,
+        [category]: Array.isArray(updated?.[category]) ? updated[category] : next,
+      };
+      return true;
+    },
+    [objectId, canEditObjects, updateObjectMutation],
+  );
+
+  const handleUploadUri = React.useCallback(
+    async (category, uri) => {
+      const pendingId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setLocalPendingMap((prev) => ({
+        ...prev,
+        [category]: [...(prev?.[category] || []), { id: pendingId, uri }],
+      }));
+      try {
+        await uploadLocalUri(category, uri);
+        toast.success(t('order_toast_photo_uploaded'));
+      } catch (error) {
+        toast.error(String(error?.message || t('order_toast_upload_error')));
+      } finally {
+        setLocalPendingMap((prev) => ({
+          ...prev,
+          [category]: (prev?.[category] || []).filter((item) => item.id !== pendingId),
+        }));
+      }
+    },
+    [toast, t, uploadLocalUri],
+  );
+
+  const handleUploadMultiple = React.useCallback(
+    async (category, uris = []) => {
+      const queue = Array.isArray(uris) ? uris.filter(Boolean) : [];
+      if (!queue.length) return;
+      const ids = queue.map((uri, index) => ({
+        id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        uri,
+      }));
+      setLocalPendingMap((prev) => ({
+        ...prev,
+        [category]: [...(prev?.[category] || []), ...ids],
+      }));
+
+      let uploadedCount = 0;
+      for (const item of ids) {
+        try {
+          await uploadLocalUri(category, item.uri);
+          uploadedCount += 1;
+        } catch {
+        } finally {
+          setLocalPendingMap((prev) => ({
+            ...prev,
+            [category]: (prev?.[category] || []).filter((pending) => pending.id !== item.id),
+          }));
+        }
+      }
+
+      if (uploadedCount > 0) {
+        if (uploadedCount === 1) {
+          toast.success(t('order_toast_photo_uploaded'));
+        } else {
+          toast.success(t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(uploadedCount)));
+        }
+      } else {
+        toast.error(t('order_toast_upload_error'));
+      }
+    },
+    [toast, t, uploadLocalUri],
+  );
+
+  const removePhoto = React.useCallback(
+    async (category, index) => {
+      if (!objectId || !canEditObjects) return;
+      const photos = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
+      const removedUrl = String(photos[index] || '').trim();
+      if (!removedUrl) return;
+
+      const next = photos.filter((_, photoIndex) => photoIndex !== index);
+      const updated = await updateObjectMutation.mutateAsync({
+        id: objectId,
+        patch: {
+          [category]: next,
+        },
+      });
+      objectMediaRef.current = {
+        ...objectMediaRef.current,
+        [category]: Array.isArray(updated?.[category]) ? updated[category] : next,
+      };
+      try {
+        await deleteObjectMediaPhotoByUrl(objectId, category, removedUrl);
+      } catch {
+      }
+    },
+    [objectId, canEditObjects, updateObjectMutation],
+  );
+
+  const removePhotosBatch = React.useCallback(
+    async (category, urls = []) => {
+      if (!objectId || !canEditObjects) return;
+      const selected = new Set((urls || []).map((value) => String(value || '').trim()).filter(Boolean));
+      if (!selected.size) return;
+
+      const photos = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
+      const next = photos.filter((value) => !selected.has(String(value || '').trim()));
+      const removed = photos.filter((value) => selected.has(String(value || '').trim()));
+
+      const updated = await updateObjectMutation.mutateAsync({
+        id: objectId,
+        patch: {
+          [category]: next,
+        },
+      });
+      objectMediaRef.current = {
+        ...objectMediaRef.current,
+        [category]: Array.isArray(updated?.[category]) ? updated[category] : next,
+      };
+      for (const url of removed) {
+        try {
+          await deleteObjectMediaPhotoByUrl(objectId, category, url);
+        } catch {
+        }
+      }
+    },
+    [objectId, canEditObjects, updateObjectMutation],
+  );
+
+  const openViewer = React.useCallback((photos, index, category, label) => {
+    if (!Array.isArray(photos) || !photos.length) return;
+    const prepared = photos.map((raw) => String(raw || '').trim()).filter(Boolean);
+    if (!prepared.length) return;
+    viewerRawPhotosRef.current = prepared;
+    viewerCategoryRef.current = category || null;
+    setViewerCategoryLabel(label || '');
+    setViewerPhotos(prepared);
+    setViewerIndex(Math.min(index, prepared.length - 1));
+    setViewerVisible(true);
+  }, []);
+
+  const closeViewer = React.useCallback(() => {
+    setViewerVisible(false);
+  }, []);
+
+  const handleViewerDelete = React.useCallback(
+    async (viewerIdx) => {
+      const category = viewerCategoryRef.current;
+      const photos = viewerRawPhotosRef.current || [];
+      const rawUrl = String(photos[viewerIdx] || '').trim();
+      if (!category || !rawUrl) return;
+      const objectPhotos = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
+      const realIndex = objectPhotos.findIndex((value) => String(value || '').trim() === rawUrl);
+      if (realIndex < 0) return;
+      await removePhoto(category, realIndex);
+      viewerRawPhotosRef.current = photos.filter((_, index) => index !== viewerIdx);
+    },
+    [removePhoto],
+  );
 
   if (!canViewObjects) {
     return (
@@ -369,6 +589,52 @@ export default function ObjectViewScreen() {
           </>
         ) : null}
 
+        {visibleMediaFields.length > 0 ? (
+          <>
+            <SectionHeader topSpacing="xs" bottomSpacing="xs">
+              {t('order_details_photos_section', 'Фото')}
+            </SectionHeader>
+            <Card paddedXOnly>
+              {visibleMediaFields
+                .map((fieldKey) => ({
+                  key: fieldKey,
+                  label: getObjectFieldLabel(
+                    fieldKey,
+                    t(`object_media_field_${OBJECT_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`, `Медиа объекта ${OBJECT_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`),
+                  ),
+                }))
+                .map((row, idx) => {
+                  const count =
+                    (Array.isArray(objectItem?.[row.key]) ? objectItem[row.key].length : 0) +
+                    ((localPendingMap?.[row.key] || []).length || 0);
+                  return (
+                    <View key={row.key}>
+                      {idx > 0 ? <View style={base.sep} /> : null}
+                      <Pressable
+                        style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+                        onPress={() => setObjectPhotosModal({ visible: true, category: row.key })}
+                        disabled={!canEditObjects && count === 0}
+                      >
+                        <Text style={base.label}>{row.label}</Text>
+                        <View style={base.rightWrap}>
+                          <Text style={base.value}>
+                            {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+                          </Text>
+                          <Feather
+                            name="chevron-right"
+                            size={theme.icons?.sm ?? 18}
+                            color={theme.colors.textSecondary}
+                            style={{ marginLeft: theme.spacing.xs }}
+                          />
+                        </View>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+            </Card>
+          </>
+        ) : null}
+
         {additionalInfoItems.length ? (
           <>
             <SectionHeader>{t('objects_additional_info_section')}</SectionHeader>
@@ -403,6 +669,37 @@ export default function ObjectViewScreen() {
           )}
         </View>
       </BaseModal>
+
+      <OrderPhotosModal
+        visible={objectPhotosModal.visible}
+        onClose={() => setObjectPhotosModal({ visible: false, category: null })}
+        category={objectPhotosModal.category}
+        photos={Array.isArray(objectItem?.[objectPhotosModal.category]) ? objectItem[objectPhotosModal.category] : []}
+        pending={localPendingMap?.[objectPhotosModal.category] || []}
+        getDisplayUrl={(url) => String(url || '')}
+        getIssue={() => ''}
+        onUploadUri={handleUploadUri}
+        onUploadMultiple={handleUploadMultiple}
+        onRemove={removePhoto}
+        onRemoveMany={removePhotosBatch}
+        onOpenViewer={(photos, idx) => {
+          const catLabels = {
+            media_file_1: getObjectFieldLabel('media_file_1', t('object_media_field_1', 'Медиа объекта 1')),
+            media_file_2: getObjectFieldLabel('media_file_2', t('object_media_field_2', 'Медиа объекта 2')),
+            media_file_3: getObjectFieldLabel('media_file_3', t('object_media_field_3', 'Медиа объекта 3')),
+          };
+          openViewer(photos, idx, objectPhotosModal.category, catLabels[objectPhotosModal.category] || '');
+        }}
+      />
+
+      <FullscreenImageViewer
+        visible={viewerVisible}
+        images={viewerPhotos}
+        initialIndex={viewerIndex}
+        onClose={closeViewer}
+        onDelete={canEditObjects ? handleViewerDelete : undefined}
+        categoryLabel={viewerCategoryLabel}
+      />
     </SafeAreaView>
   );
 }

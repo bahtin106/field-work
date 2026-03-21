@@ -9,6 +9,7 @@ import { handleProfileMediaStorageRequest } from '../profile-media-storage/index
 import { handleOrderMediaStorageRequest } from '../order-media-storage/index.ts';
 import { handleFinanceEntryMediaStorageRequest } from '../finance-entry-media-storage/index.ts';
 import { handleFinanceEntryYandexMediaRequest } from '../finance-entry-yandex-media/index.ts';
+import { handleObjectMediaStorageRequest } from '../object-media-storage/index.ts';
 import { handleMediaCleanupRequest } from '../media-cleanup/index.ts';
 import { handleBackfillMediaSizesRequest } from '../backfill-media-sizes/index.ts';
 import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
@@ -43,6 +44,7 @@ Deno.serve(async (req) => {
   if (fn === 'order-media-storage') return handleOrderMediaStorageRequest(req);
   if (fn === 'finance-entry-media-storage') return handleFinanceEntryMediaStorageRequest(req);
   if (fn === 'finance-entry-yandex-media') return handleFinanceEntryYandexMediaRequest(req);
+  if (fn === 'object-media-storage') return handleObjectMediaStorageRequest(req);
   if (fn === 'media-cleanup') return handleMediaCleanupRequest(req);
   if (fn === 'backfill-media-sizes') return handleBackfillMediaSizesRequest(req);
   if (fn === 'telegram-bot') return handleTelegramBotRequest(req);
