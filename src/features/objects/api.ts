@@ -10,6 +10,25 @@ import { inspectProfileMedia } from '../profileMedia/api';
 const objectByIdInFlight = new Map<string, Promise<any>>();
 const OBJECT_MEDIA_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'] as const;
 
+function normalizeObjectLocationMode(value: unknown) {
+  return String(value || '').trim().toLowerCase() === 'map' ? 'map' : 'address';
+}
+
+function trimToNull(value: unknown) {
+  const next = String(value ?? '').trim();
+  return next || null;
+}
+
+function isMissingLocationModeColumnError(error: any) {
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  const hint = String(error?.hint || '').toLowerCase();
+  return (
+    String(error?.code || '') === '42703' &&
+    `${message} ${details} ${hint}`.includes('location_mode')
+  );
+}
+
 function normalizeMediaUrls(value: unknown) {
   if (!Array.isArray(value)) return [] as string[];
   const next = value.map((item) => String(item || '').trim()).filter(Boolean);
@@ -235,17 +254,36 @@ export async function createClientObject(payload: Record<string, any>) {
       photo_url: payload.photo_url ?? null,
       ...clean,
     };
+    if (Object.prototype.hasOwnProperty.call(payload, 'geo_lat')) {
+      insertPayload.geo_lat = trimToNull(payload.geo_lat);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'geo_lng')) {
+      insertPayload.geo_lng = trimToNull(payload.geo_lng);
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'location_mode')) {
+      insertPayload.location_mode = normalizeObjectLocationMode(payload.location_mode);
+    }
     OBJECT_MEDIA_KEYS.forEach((key) => {
       if (Object.prototype.hasOwnProperty.call(payload, key)) {
         insertPayload[key] = normalizeMediaUrls(payload[key]);
       }
     });
-    const { data, error } = await supabase
+    let query = supabase
       .from('client_objects')
       .insert(insertPayload)
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .single();
-
+    let { data, error } = await query;
+    if (error && isMissingLocationModeColumnError(error) && Object.prototype.hasOwnProperty.call(insertPayload, 'location_mode')) {
+      const fallbackPayload = { ...insertPayload };
+      delete fallbackPayload.location_mode;
+      query = supabase
+        .from('client_objects')
+        .insert(fallbackPayload)
+        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .single();
+      ({ data, error } = await query);
+    }
     if (error) throw error;
     return normalizeClientObject(data);
   });
@@ -268,19 +306,39 @@ export async function updateClientObject(objectId: string, patch: Record<string,
     if (Object.prototype.hasOwnProperty.call(patch, 'photo_url')) {
       nextPatch.photo_url = patch.photo_url || null;
     }
+    if (Object.prototype.hasOwnProperty.call(patch, 'geo_lat')) {
+      nextPatch.geo_lat = trimToNull(patch.geo_lat);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'geo_lng')) {
+      nextPatch.geo_lng = trimToNull(patch.geo_lng);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, 'location_mode')) {
+      nextPatch.location_mode = normalizeObjectLocationMode(patch.location_mode);
+    }
     OBJECT_MEDIA_KEYS.forEach((key) => {
       if (Object.prototype.hasOwnProperty.call(patch, key)) {
         nextPatch[key] = normalizeMediaUrls(patch[key]);
       }
     });
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('client_objects')
       .update(nextPatch)
       .eq('id', objectId)
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .single();
-
+    let { data, error } = await query;
+    if (error && isMissingLocationModeColumnError(error) && Object.prototype.hasOwnProperty.call(nextPatch, 'location_mode')) {
+      const fallbackPatch = { ...nextPatch };
+      delete fallbackPatch.location_mode;
+      query = supabase
+        .from('client_objects')
+        .update(fallbackPatch)
+        .eq('id', objectId)
+        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .single();
+      ({ data, error } = await query);
+    }
     if (error) throw error;
     return normalizeClientObject(data);
   });

@@ -30,6 +30,7 @@ const OBJECT_RELATION_SELECT = `
     apartment,
     entrance_info,
     parking_notes,
+    location_mode,
     geo_lat,
     geo_lng
   )
@@ -107,6 +108,7 @@ function normalizeOrder(row) {
     customer_name: customerName || null,
     object_name: objectItem?.name || String(row.object_name_snapshot || '').trim() || null,
     object_summary: objectItem?.summary || null,
+    object_location_mode: String(objectItem?.location_mode || '').trim() || null,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,
     country: address.country || null,

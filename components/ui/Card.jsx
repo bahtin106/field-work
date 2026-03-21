@@ -55,33 +55,52 @@ export default function Card({ children, style, padded = true, paddedXOnly = fal
   };
 
   const labelCount = countLabelRows(arr);
-  const removeSeparators = (nodes) => {
+  const looksLikeThinSeparatorView = (node) => {
+    if (!React.isValidElement(node)) return false;
+    if (node.type !== View) return false;
+    if (node.props?.children !== undefined && node.props?.children !== null && node.props?.children !== false) {
+      return false;
+    }
+    const flattened = StyleSheet.flatten(node.props?.style);
+    if (!flattened || typeof flattened !== 'object') return false;
+    const height = Number(flattened.height);
+    if (!Number.isFinite(height) || height <= 0 || height > 2) return false;
+    return typeof flattened.backgroundColor === 'string' && flattened.backgroundColor.length > 0;
+  };
+
+  const isSeparatorLikeNode = (node) => {
+    if (!React.isValidElement(node)) return false;
+    if (node.type === ListSeparator) return true;
+    return looksLikeThinSeparatorView(node);
+  };
+
+  const collapseAdjacentSeparators = (nodes) => {
     const out = [];
+    let prevWasSeparator = false;
+
     React.Children.forEach(nodes, (n) => {
-      if (!n) return;
-      if (Array.isArray(n)) {
-        out.push(...removeSeparators(n));
-        return;
-      }
-      if (React.isValidElement(n)) {
-        if (n.type === ListSeparator) return; // drop
-        if (n.props && n.props.children) {
-          const childNodes = removeSeparators(n.props.children);
-          out.push(React.cloneElement(n, { ...n.props, children: childNodes }));
-          return;
-        }
-      }
+      if (n === null || n === undefined || n === false) return;
+
+      const currentIsSeparator = isSeparatorLikeNode(n);
+      if (prevWasSeparator && currentIsSeparator) return;
       out.push(n);
+      prevWasSeparator = currentIsSeparator;
     });
+
     return out;
   };
 
-  const filtered = labelCount === 1 ? removeSeparators(arr) : arr;
+  const withSingleSeparators = React.Children.toArray(collapseAdjacentSeparators(arr));
+  const filtered =
+    labelCount === 1
+      ? withSingleSeparators.filter((node) => !(React.isValidElement(node) && node.type === ListSeparator))
+      : withSingleSeparators;
+  const normalizedChildren = React.Children.toArray(filtered);
 
   return (
     <CardContext.Provider value={{ labelCount }}>
       <View style={[s.card, padded ? s.padded : null, paddedXOnly ? s.paddedX : null, style]}>
-        {filtered}
+        {normalizedChildren}
       </View>
     </CardContext.Provider>
   );

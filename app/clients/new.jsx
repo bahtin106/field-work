@@ -57,6 +57,9 @@ import {
   buildClientObjectAddressSummary,
   createEmptyClientObjectDraft,
   hasClientObjectAddressContent,
+  hasClientObjectMapPoint,
+  normalizeClientObjectLocationMode,
+  normalizeCoordinateValue,
   sanitizeClientObjectPayload,
 } from '../../src/features/objects/addressing';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -583,11 +586,17 @@ export default function NewClientScreen() {
         }
       }
 
-      if (hasClientObjectAddressContent(primaryObjectDraft)) {
+      const objectLocationMode = normalizeClientObjectLocationMode(primaryObjectDraft?.location_mode, {
+        fallback: hasClientObjectMapPoint(primaryObjectDraft) ? 'map' : 'address',
+      });
+      if (hasClientObjectAddressContent(primaryObjectDraft) || hasClientObjectMapPoint(primaryObjectDraft)) {
         await createObjectMutation.mutateAsync({
           client_id: created.id,
           is_primary: true,
           ...sanitizeClientObjectPayload(primaryObjectDraft),
+          geo_lat: normalizeCoordinateValue(primaryObjectDraft?.geo_lat) || null,
+          geo_lng: normalizeCoordinateValue(primaryObjectDraft?.geo_lng) || null,
+          location_mode: objectLocationMode,
         });
       }
 
@@ -779,7 +788,11 @@ export default function NewClientScreen() {
           <Pressable onPress={() => setObjectModalVisible(true)} style={styles.addressCard}>
             <Text style={styles.addressTitle}>{t('objects_primary')}</Text>
             <Text style={styles.addressSummary}>
-              {buildClientObjectAddressSummary(primaryObjectDraft) || t('objects_empty')}
+              {normalizeClientObjectLocationMode(primaryObjectDraft?.location_mode, {
+                fallback: hasClientObjectMapPoint(primaryObjectDraft) ? 'map' : 'address',
+              }) === 'map' && hasClientObjectMapPoint(primaryObjectDraft)
+                ? `${normalizeCoordinateValue(primaryObjectDraft?.geo_lat)}, ${normalizeCoordinateValue(primaryObjectDraft?.geo_lng)}`
+                : (buildClientObjectAddressSummary(primaryObjectDraft) || t('objects_empty'))}
             </Text>
           </Pressable>
         </Card>

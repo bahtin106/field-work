@@ -1,5 +1,7 @@
 import React from 'react';
+import * as Clipboard from 'expo-clipboard';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Linking } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import AdditionalPhoneInputRow from '../clients/AdditionalPhoneInputRow';
 import SectionHeader from '../ui/SectionHeader';
@@ -19,6 +21,9 @@ import { useTheme } from '../../theme/ThemeProvider';
 import {
   CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
+  hasClientObjectMapPoint,
+  normalizeClientObjectLocationMode,
+  normalizeCoordinateValue,
 } from '../../src/features/objects/addressing';
 import {
   getAddableAdditionalObjectPhoneSlotIds,
@@ -68,6 +73,32 @@ const FIELD_PLACEHOLDER_KEYS = {
 
 const NUMERIC_FIELDS = new Set(['geo_lat', 'geo_lng']);
 const MULTILINE_FIELDS = new Set(['entrance_info', 'parking_notes']);
+
+function parseCoordinatesFromText(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const text = raw.replace(/,/g, '.');
+  const matches = text.match(/-?\d+(?:\.\d+)?/g) || [];
+  if (matches.length < 2) return null;
+  const first = Number(matches[0]);
+  const second = Number(matches[1]);
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null;
+
+  const inLatRange = (value) => value >= -90 && value <= 90;
+  const inLngRange = (value) => value >= -180 && value <= 180;
+
+  let lat = first;
+  let lng = second;
+  if (!inLatRange(lat) || !inLngRange(lng)) {
+    lat = second;
+    lng = first;
+  }
+  if (!inLatRange(lat) || !inLngRange(lng)) return null;
+  return {
+    lat: normalizeCoordinateValue(lat),
+    lng: normalizeCoordinateValue(lng),
+  };
+}
 
 export default function ClientObjectEditorModal({
   visible,
@@ -140,10 +171,20 @@ export default function ClientObjectEditorModal({
     [enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots],
   );
   const additionalPhones = React.useMemo(() => getObjectAdditionalPhones(draft), [draft]);
+  const [locationMode, setLocationMode] = React.useState('address');
+  const [clipboardHasCoordinates, setClipboardHasCoordinates] = React.useState(false);
   const [explicitVisibleAdditionalPhoneSlots, setExplicitVisibleAdditionalPhoneSlots] = React.useState([]);
+  const mapLat = React.useMemo(() => normalizeCoordinateValue(draft?.geo_lat), [draft?.geo_lat]);
+  const mapLng = React.useMemo(() => normalizeCoordinateValue(draft?.geo_lng), [draft?.geo_lng]);
+  const hasMapPoint = React.useMemo(() => hasClientObjectMapPoint(draft), [draft]);
 
   React.useEffect(() => {
     if (!visible) return;
+    setLocationMode(
+      normalizeClientObjectLocationMode(draft?.location_mode, {
+        fallback: hasMapPoint ? 'map' : 'address',
+      }),
+    );
     setExplicitVisibleAdditionalPhoneSlots((prev) =>
       resolveVisibleAdditionalObjectPhoneSlotIds({
         enabledSlotIds: enabledAdditionalPhoneSlots,
@@ -152,7 +193,29 @@ export default function ClientObjectEditorModal({
         valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(additionalPhones),
       }),
     );
-  }, [additionalPhones, enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots, visible]);
+  }, [additionalPhones, draft?.location_mode, enabledAdditionalPhoneSlots, hasMapPoint, requiredAdditionalPhoneSlots, visible]);
+
+  React.useEffect(() => {
+    if (!visible || locationMode !== 'map') {
+      setClipboardHasCoordinates(false);
+      return undefined;
+    }
+    let disposed = false;
+    const checkClipboard = async () => {
+      try {
+        const value = await Clipboard.getStringAsync();
+        if (!disposed) setClipboardHasCoordinates(!!parseCoordinatesFromText(value));
+      } catch {
+        if (!disposed) setClipboardHasCoordinates(false);
+      }
+    };
+    checkClipboard();
+    const timer = setInterval(checkClipboard, theme.timing?.clipboardPollMs ?? 1200);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [locationMode, theme.timing?.clipboardPollMs, visible]);
   const visibleAdditionalPhoneSlots = React.useMemo(
     () =>
       resolveVisibleAdditionalObjectPhoneSlotIds({
@@ -193,6 +256,44 @@ export default function ClientObjectEditorModal({
     </View>
   );
 
+  const setNextLocationMode = React.useCallback((nextMode) => {
+    const normalized = normalizeClientObjectLocationMode(nextMode);
+    setLocationMode(normalized);
+    onChange?.('location_mode', normalized);
+  }, [onChange]);
+
+  const openMapForPoint = React.useCallback(async () => {
+    try {
+      if (hasMapPoint) {
+        const query = `${mapLat}, ${mapLng}`;
+        await Linking.openURL(`yandexnavi://map_search?text=${encodeURIComponent(query)}`);
+      } else {
+        await Linking.openURL('yandexnavi://map_search?text=');
+      }
+    } catch {
+      try {
+        await Linking.openURL('https://yandex.ru/maps/');
+      } catch {}
+    }
+  }, [hasMapPoint, mapLat, mapLng]);
+
+  const pasteCoordinatesFromClipboard = React.useCallback(async () => {
+    if (!clipboardHasCoordinates) return;
+    try {
+      const value = await Clipboard.getStringAsync();
+      const parsed = parseCoordinatesFromText(value);
+      if (!parsed) return;
+      onChange?.('geo_lat', parsed.lat);
+      onChange?.('geo_lng', parsed.lng);
+      if (locationMode !== 'map') setNextLocationMode('map');
+    } catch {}
+  }, [clipboardHasCoordinates, locationMode, onChange, setNextLocationMode]);
+
+  const clearMapPoint = React.useCallback(() => {
+    onChange?.('geo_lat', '');
+    onChange?.('geo_lng', '');
+  }, [onChange]);
+
   return (
     <BaseModal
       visible={visible}
@@ -214,22 +315,75 @@ export default function ClientObjectEditorModal({
           style={styles.field}
         />
         <FieldErrorText message={fieldErrors?.name || null} />
-        {orderedPrimaryFields.map((field) => (
-          <React.Fragment key={field}>
-            <TextField
-              label={withRequiredLabel(field, t(FIELD_LABEL_KEYS[field]))}
-              placeholder={FIELD_PLACEHOLDER_KEYS[field] ? t(FIELD_PLACEHOLDER_KEYS[field]) : undefined}
-              value={String(draft?.[field] || '')}
-              onChangeText={(value) => onChange?.(field, value)}
-              keyboardType={NUMERIC_FIELDS.has(field) ? 'decimal-pad' : undefined}
-              multiline={MULTILINE_FIELDS.has(field)}
-              minLines={MULTILINE_FIELDS.has(field) ? 2 : undefined}
-              error={fieldErrors?.[field] ? 'invalid' : undefined}
-              style={styles.field}
-            />
-            <FieldErrorText message={fieldErrors?.[field] || null} />
-          </React.Fragment>
-        ))}
+        <View style={styles.locationModeRow}>
+          <Pressable
+            onPress={() => setNextLocationMode('address')}
+            style={[styles.locationModeBtn, locationMode === 'address' ? styles.locationModeBtnActive : null]}
+          >
+            <Text style={[styles.locationModeBtnText, locationMode === 'address' ? styles.locationModeBtnTextActive : null]}>
+              {t('objects_location_mode_address')}
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setNextLocationMode('map')}
+            style={[styles.locationModeBtn, locationMode === 'map' ? styles.locationModeBtnActive : null]}
+          >
+            <Text style={[styles.locationModeBtnText, locationMode === 'map' ? styles.locationModeBtnTextActive : null]}>
+              {t('objects_location_mode_map')}
+            </Text>
+          </Pressable>
+        </View>
+        {locationMode === 'map' ? (
+          <View style={styles.mapPointBlock}>
+            <Text style={styles.mapPointHint}>{t('objects_location_map_hint')}</Text>
+            <View style={styles.mapPointValueRow}>
+              <Text style={styles.mapPointValue}>
+                {hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty')}
+              </Text>
+              {hasMapPoint ? (
+                <Pressable
+                  onPress={clearMapPoint}
+                  style={styles.mapPointClearBtn}
+                  hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('objects_location_clear')}
+                >
+                  <Feather name="x-circle" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
+                </Pressable>
+              ) : null}
+            </View>
+            <View style={styles.mapActionsRow}>
+              <Pressable onPress={openMapForPoint} style={styles.mapActionBtn}>
+                <Text style={styles.mapActionBtnText}>{t('objects_location_open_map')}</Text>
+              </Pressable>
+              <Pressable
+                onPress={pasteCoordinatesFromClipboard}
+                style={[styles.mapActionBtn, !clipboardHasCoordinates ? styles.mapActionBtnInactive : null]}
+                disabled={!clipboardHasCoordinates}
+              >
+                <Text style={styles.mapActionBtnText}>{t('objects_location_paste')}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+        {locationMode === 'address'
+          ? orderedPrimaryFields.map((field) => (
+              <React.Fragment key={field}>
+                <TextField
+                  label={withRequiredLabel(field, t(FIELD_LABEL_KEYS[field]))}
+                  placeholder={FIELD_PLACEHOLDER_KEYS[field] ? t(FIELD_PLACEHOLDER_KEYS[field]) : undefined}
+                  value={String(draft?.[field] || '')}
+                  onChangeText={(value) => onChange?.(field, value)}
+                  keyboardType={NUMERIC_FIELDS.has(field) ? 'decimal-pad' : undefined}
+                  multiline={MULTILINE_FIELDS.has(field)}
+                  minLines={MULTILINE_FIELDS.has(field) ? 2 : undefined}
+                  error={fieldErrors?.[field] ? 'invalid' : undefined}
+                  style={styles.field}
+                />
+                <FieldErrorText message={fieldErrors?.[field] || null} />
+              </React.Fragment>
+            ))
+          : null}
         {searchSuggestionsVisible ? (
           <>
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
@@ -375,6 +529,84 @@ function createStyles(theme) {
     },
     field: {
       marginBottom: theme.spacing.xs,
+    },
+    locationModeRow: {
+      flexDirection: 'row',
+      gap: theme.spacing.xs,
+      paddingVertical: theme.spacing.xs,
+    },
+    locationModeBtn: {
+      flex: 1,
+      minHeight: 36,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: theme.spacing.sm,
+      backgroundColor: theme.colors.surface,
+    },
+    locationModeBtnActive: {
+      borderColor: theme.colors.primary,
+      backgroundColor: `${theme.colors.primary}1A`,
+    },
+    locationModeBtnText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
+    },
+    locationModeBtnTextActive: {
+      color: theme.colors.primary,
+    },
+    mapPointBlock: {
+      paddingVertical: theme.spacing.xs,
+      marginBottom: theme.spacing.xs,
+      gap: theme.spacing.sm,
+    },
+    mapPointHint: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+    },
+    mapPointValueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: theme.spacing.sm,
+    },
+    mapPointValue: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.medium,
+      flex: 1,
+    },
+    mapPointClearBtn: {
+      minWidth: 24,
+      minHeight: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    mapActionsRow: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+    },
+    mapActionBtn: {
+      flex: 1,
+      minHeight: 36,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radii.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.surface,
+      paddingHorizontal: theme.spacing.sm,
+    },
+    mapActionBtnInactive: {
+      opacity: 0.5,
+    },
+    mapActionBtnText: {
+      color: theme.colors.text,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
     },
     footer: {
       paddingHorizontal: theme.spacing.lg,

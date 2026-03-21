@@ -743,6 +743,7 @@
   "objects_address_section": "Адрес",
   "objects_location_mode_address": "Вручную",
   "objects_location_mode_map": "Точка на карте",
+  "objects_location_coordinates": "Координаты",
   "objects_location_map_hint": "Откройте карту, выберите точку и вернитесь. Затем вставьте координаты из буфера.",
   "objects_location_empty": "Точка не выбрана",
   "objects_location_clear": "Очистить точку",

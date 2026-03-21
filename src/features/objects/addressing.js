@@ -37,6 +37,27 @@ export const CLIENT_OBJECT_ADDRESS_FIELDS = [
   ...CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
 ];
 
+export function normalizeClientObjectLocationMode(value, { fallback = 'address' } = {}) {
+  const mode = String(value || '').trim().toLowerCase();
+  if (mode === 'map') return 'map';
+  if (mode === 'address') return 'address';
+  return fallback === 'map' ? 'map' : 'address';
+}
+
+export function normalizeCoordinateValue(input) {
+  const raw = String(input || '').trim().replace(',', '.');
+  if (!raw) return '';
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return '';
+  return String(Math.round(value * 1_000_000) / 1_000_000);
+}
+
+export function hasClientObjectMapPoint(objectLike) {
+  const lat = normalizeCoordinateValue(objectLike?.geo_lat);
+  const lng = normalizeCoordinateValue(objectLike?.geo_lng);
+  return !!lat && !!lng;
+}
+
 export function createEmptyClientObjectDraft(overrides = {}) {
   return {
     name: CLIENT_OBJECT_DEFAULT_NAME,
@@ -56,6 +77,7 @@ export function createEmptyClientObjectDraft(overrides = {}) {
     parking_notes: '',
     geo_lat: '',
     geo_lng: '',
+    location_mode: 'address',
     additional_phone_1: '',
     additional_phone_1_label: '',
     additional_phone_2: '',
@@ -150,6 +172,11 @@ export function normalizeClientObject(row) {
     normalized[field] = Array.isArray(row?.[field])
       ? row[field].map((value) => String(value || '').trim()).filter(Boolean)
       : [];
+  });
+  normalized.geo_lat = normalizeCoordinateValue(row?.geo_lat);
+  normalized.geo_lng = normalizeCoordinateValue(row?.geo_lng);
+  normalized.location_mode = normalizeClientObjectLocationMode(row?.location_mode, {
+    fallback: normalized.geo_lat && normalized.geo_lng ? 'map' : 'address',
   });
   normalized.summary =
     String(row.summary || '').trim() || buildClientObjectAddressSummary(normalized) || null;

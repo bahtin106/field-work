@@ -401,6 +401,7 @@ export default {
   objects_address_section: 'Address',
   objects_location_mode_address: 'Manual',
   objects_location_mode_map: 'Point on map',
+  objects_location_coordinates: 'Coordinates',
   objects_location_map_hint:
     'Open the map, pick a point, then return and paste coordinates from the clipboard.',
   objects_location_empty: 'Point is not selected',
