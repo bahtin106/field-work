@@ -8,6 +8,13 @@ import {
 import { inspectProfileMedia } from '../profileMedia/api';
 
 const objectByIdInFlight = new Map<string, Promise<any>>();
+const OBJECT_MEDIA_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'] as const;
+
+function normalizeMediaUrls(value: unknown) {
+  if (!Array.isArray(value)) return [] as string[];
+  const next = value.map((item) => String(item || '').trim()).filter(Boolean);
+  return Array.from(new Set(next));
+}
 
 export type OrderObjectSearchResult = {
   objectId: string;
@@ -232,6 +239,11 @@ export async function createClientObject(payload: Record<string, any>) {
       photo_url: payload.photo_url ?? null,
       ...clean,
     };
+    OBJECT_MEDIA_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(payload, key)) {
+        insertPayload[key] = normalizeMediaUrls(payload[key]);
+      }
+    });
     const { data, error } = await supabase
       .from('client_objects')
       .insert(insertPayload)
@@ -260,6 +272,11 @@ export async function updateClientObject(objectId: string, patch: Record<string,
     if (Object.prototype.hasOwnProperty.call(patch, 'photo_url')) {
       nextPatch.photo_url = patch.photo_url || null;
     }
+    OBJECT_MEDIA_KEYS.forEach((key) => {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) {
+        nextPatch[key] = normalizeMediaUrls(patch[key]);
+      }
+    });
 
     const { data, error } = await supabase
       .from('client_objects')

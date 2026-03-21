@@ -336,6 +336,30 @@ const OBJECT_FIELDS = [
     inputKind: 'phone',
     sortOrder: 190,
   }),
+  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_1', {
+    labelKey: 'object_media_field_1',
+    fallbackLabel: 'Медиа объекта 1',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    supportsRequired: false,
+    sortOrder: 200,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_2', {
+    labelKey: 'object_media_field_2',
+    fallbackLabel: 'Медиа объекта 2',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    supportsRequired: false,
+    sortOrder: 210,
+  }),
+  createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_3', {
+    labelKey: 'object_media_field_3',
+    fallbackLabel: 'Медиа объекта 3',
+    sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
+    inputKind: 'media',
+    supportsRequired: false,
+    sortOrder: 220,
+  }),
 ];
 
 const CLIENT_FIELDS = [

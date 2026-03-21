@@ -30,6 +30,8 @@ export const CLIENT_OBJECT_CONTACT_FIELDS = [
   'additional_phone_3_label',
 ];
 
+export const CLIENT_OBJECT_MEDIA_FIELDS = ['media_file_1', 'media_file_2', 'media_file_3'];
+
 export const CLIENT_OBJECT_ADDRESS_FIELDS = [
   ...CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   ...CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
@@ -148,6 +150,11 @@ export function normalizeClientObject(row) {
   });
   CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
+  });
+  CLIENT_OBJECT_MEDIA_FIELDS.forEach((field) => {
+    normalized[field] = Array.isArray(row?.[field])
+      ? row[field].map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
   });
   normalized.summary =
     String(row.summary || '').trim() || buildClientObjectAddressSummary(normalized) || null;
