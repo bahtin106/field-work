@@ -539,7 +539,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           )}
 
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName} numberOfLines={1}>
+            <Text style={styles.profileName}>
               {fullName || ''}
             </Text>
             <View style={styles.metaRows}>
@@ -790,6 +790,7 @@ const createStyles = (theme) => {
       fontSize: type.sizes.lg,
       fontWeight: type.weight.semibold,
       color: colors.text,
+      lineHeight: Math.round(type.sizes.lg * 1.25),
       paddingRight: spacing.md,
     },
     profileRoleText: {

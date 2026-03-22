@@ -360,7 +360,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     MARQUEE_GAP,
     MS_PER_PIXEL,
     START_DELAY,
-      END_PAUSE,
+    END_PAUSE,
   ]);
 
   return (

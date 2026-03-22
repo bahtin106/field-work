@@ -35,8 +35,11 @@ const FINANCE_RULE_SELECT = `
   fixed_amount,
   percent_value,
   percent_base,
+  conditions_json,
   recipient_mode,
   recipient_user_id,
+  expense_payer,
+  apply_to_existing,
   note_template,
   requires_note,
   note_visible,
@@ -76,13 +79,31 @@ function normalizeExpensePayer(value) {
   return String(value || '').trim() === 'executor' ? 'executor' : 'company';
 }
 
+function normalizeRuleConditions(value) {
+  const fallback = { op: 'all', conditions: [] };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return fallback;
+  const op = String(value.op || 'all').trim().toLowerCase();
+  const rawConditions = Array.isArray(value.conditions) ? value.conditions : [];
+  const conditions = rawConditions
+    .map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const fact = String(item.fact || '').trim();
+      const operator = String(item.operator || '').trim();
+      const conditionValue = item.value;
+      if (!fact || !operator || conditionValue === undefined) return null;
+      return { fact, operator, value: conditionValue };
+    })
+    .filter(Boolean);
+  return { op: op === 'all' ? 'all' : 'all', conditions };
+}
+
 function normalizePercentBase(kind, value) {
   const normalizedKind = String(kind || 'expense').trim();
   const normalizedBase = String(value || 'base_price').trim();
   const allowed =
     normalizedKind === 'discount'
-      ? ['base_price', 'gross_before_discount']
-      : ['base_price', 'gross_before_discount', 'gross_after_discount'];
+      ? ['base_price', 'gross_before_discount', 'income_total', 'gross_after_discount']
+      : ['base_price', 'gross_before_discount', 'gross_after_discount', 'income_total'];
   return allowed.includes(normalizedBase) ? normalizedBase : 'base_price';
 }
 
@@ -150,7 +171,21 @@ export async function listCompanyFinanceRules(companyId) {
     .order('sort_order', { ascending: true })
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return Array.isArray(data) ? data : [];
+  if (!Array.isArray(data)) return [];
+  return data.map((row) => {
+    const normalized = { ...row };
+    if (typeof normalized.conditions_json === 'string') {
+      try {
+        normalized.conditions_json = JSON.parse(normalized.conditions_json);
+      } catch {
+        normalized.conditions_json = { op: 'all', conditions: [] };
+      }
+    }
+    if (!normalized.conditions_json || typeof normalized.conditions_json !== 'object') {
+      normalized.conditions_json = { op: 'all', conditions: [] };
+    }
+    return normalized;
+  });
 }
 
 export async function upsertCompanyFinanceRule(payload) {
@@ -162,9 +197,12 @@ export async function upsertCompanyFinanceRule(payload) {
     fixed_amount: normalizeMoney(payload?.fixed_amount),
     percent_value: normalizePercent(payload?.percent_value),
     percent_base: normalizePercentBase(payload?.kind, payload?.percent_base),
+    conditions_json: normalizeRuleConditions(payload?.conditions_json),
     recipient_mode: String(payload?.recipient_mode || 'none').trim(),
     recipient_user_id: normalizeId(payload?.recipient_user_id),
+    expense_payer: normalizeExpensePayer(payload?.expense_payer),
     note_template: payload?.note_template ? String(payload.note_template).trim() : null,
+    apply_to_existing: payload?.apply_to_existing === true,
     requires_note: payload?.requires_note === true,
     note_visible: payload?.note_visible !== false,
     is_enabled: payload?.is_enabled !== false,
