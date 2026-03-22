@@ -697,6 +697,10 @@ function OrderDetailsContent() {
     () => orderedFinanceEntries.filter((entry) => entry?.kind === 'expense'),
     [orderedFinanceEntries],
   );
+  const manualExpenseEntries = useMemo(
+    () => financeExpenseEntries.filter((entry) => entry?.is_system !== true),
+    [financeExpenseEntries],
+  );
   const hasCustomerFinanceEntries = financeIncomeEntries.length > 0 || financeDiscountEntries.length > 0;
   const isLocalFinancePhotoUrl = useCallback((value) => {
     const raw = String(value || '').trim().toLowerCase();
@@ -1202,19 +1206,21 @@ function OrderDetailsContent() {
         const cachedName = deriveExecutorNameInstant(effectiveOrder);
         if (cachedName) {
           setExecutorName(cachedName);
-        } else {
-          bgTasks.push(
-            supabase.from('profiles').select('first_name, middle_name, last_name').eq('id', effectiveOrder.assigned_to).single()
-              .then(({ data: executorProfile }) => {
-                if (executorProfile) {
-                  const full =
-                    `${executorProfile.first_name || ''} ${executorProfile.middle_name || ''} ${executorProfile.last_name || ''}`.trim();
+        }
+        // Always refresh assignee name in background to prevent stale cache after profile edits.
+        bgTasks.push(
+          supabase.from('profiles').select('first_name, middle_name, last_name').eq('id', effectiveOrder.assigned_to).single()
+            .then(({ data: executorProfile }) => {
+              if (executorProfile) {
+                const full =
+                  `${executorProfile.first_name || ''} ${executorProfile.middle_name || ''} ${executorProfile.last_name || ''}`.trim();
+                if (full) {
                   setCachedExecutorName(effectiveOrder.assigned_to, full);
                   setExecutorName(full);
                 }
-              }).catch(() => {})
-          );
-        }
+              }
+            }).catch(() => {})
+        );
       }
 
       // 5d. Users list
@@ -1651,6 +1657,9 @@ function OrderDetailsContent() {
       if (baseValue === 'gross_before_discount') {
         return t('finance_percent_gross_before_discount', 'От изначальной стоимости + доп. работы');
       }
+      if (baseValue === 'income_total') {
+        return t('finance_percent_income_total', 'От суммы доп. работ');
+      }
       return t('finance_percent_gross_after_discount', 'От общей суммы');
     },
     [t],
@@ -1658,9 +1667,9 @@ function OrderDetailsContent() {
 
   const allowedFinancePercentBases = useCallback((kind) => {
     if (String(kind || 'expense') === 'discount') {
-      return ['base_price', 'gross_before_discount'];
+      return ['base_price', 'gross_before_discount', 'gross_after_discount', 'income_total'];
     }
-    return ['base_price', 'gross_before_discount', 'gross_after_discount'];
+    return ['base_price', 'gross_before_discount', 'gross_after_discount', 'income_total'];
   }, []);
 
   const normalizeFinancePercentBase = useCallback(
@@ -1760,6 +1769,48 @@ function OrderDetailsContent() {
     ],
     [financeExpensePayerLabel],
   );
+
+  const financeEntryNarrative = useMemo(() => {
+    if (!selectedFinanceEntry) return '';
+    const currencyCode = order?.currency || companySettings?.currency;
+    const payer = String(selectedFinanceEntry?.expense_payer || 'company');
+    const recipient =
+      payer === 'executor'
+        ? t('finance_recipient_executor_dative', 'исполнителю')
+        : t('finance_recipient_company_dative', 'компании');
+    const baseLabel = String(financePercentBaseLabel(selectedFinanceEntry?.percent_base) || '').trim();
+    const basePhrase = baseLabel ? `${baseLabel.charAt(0).toLowerCase()}${baseLabel.slice(1)}` : '';
+
+    if (String(selectedFinanceEntry?.kind || 'expense') === 'expense') {
+      if (String(selectedFinanceEntry?.calc_mode || 'fixed') === 'percent') {
+        const percentValue = Number(selectedFinanceEntry?.input_percent || 0);
+        return t(
+          'order_finance_entry_sentence_percent_plain',
+          'Отчисление {recipient} в размере {percent}% {base}',
+        )
+          .replace('{recipient}', recipient)
+          .replace('{percent}', String(percentValue))
+          .replace('{base}', basePhrase);
+      }
+
+      const amountValue = formatMoney(selectedFinanceEntry?.calculated_amount, currencyCode);
+      return t(
+        'order_finance_entry_sentence_fixed_plain',
+        'Отчисление {recipient} в размере {amount} {base}',
+      )
+        .replace('{recipient}', recipient)
+        .replace('{amount}', amountValue)
+        .replace('{base}', basePhrase);
+    }
+
+    const amountValue = formatMoney(selectedFinanceEntry?.calculated_amount, currencyCode);
+    return t(
+      'order_finance_entry_sentence_common',
+      '{amount} {base}',
+    )
+      .replace('{amount}', amountValue)
+      .replace('{base}', basePhrase);
+  }, [companySettings?.currency, financePercentBaseLabel, formatMoney, order?.currency, selectedFinanceEntry, t]);
 
   const normalizePaymentStatus = useCallback((value) => {
     const raw = String(value || '').trim().toLowerCase();
@@ -3511,8 +3562,8 @@ function OrderDetailsContent() {
     (sum, entry) => (entry?.kind === 'income' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
     0,
   );
-  const financeExpenseTotal = financeEntries.reduce(
-    (sum, entry) => (entry?.kind === 'expense' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
+  const manualFinanceExpenseTotal = manualExpenseEntries.reduce(
+    (sum, entry) => sum + (Number(entry?.calculated_amount) || 0),
     0,
   );
   const financeCompanyPaidExpenseTotal = financeEntries.reduce(
@@ -3533,17 +3584,22 @@ function OrderDetailsContent() {
     (sum, entry) => (entry?.kind === 'discount' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
     0,
   );
+  const companyPaidExpenseEntries = financeExpenseEntries.filter(
+    (entry) => String(entry?.expense_payer || 'company') === 'company',
+  );
+  const executorPaidExpenseEntries = financeExpenseEntries.filter(
+    (entry) => String(entry?.expense_payer || 'company') === 'executor',
+  );
   const customerFinanceTotal =
     Number(order.finance_gross_total ?? grossTotal + financeIncomeTotal - financeDiscountTotal) || 0;
-  const internalFinanceTotal = Number(financeExpenseTotal) || 0;
+  const internalFinanceTotal = Number(manualFinanceExpenseTotal) || 0;
   const normalizedPaymentStatus = normalizePaymentStatus(order?.payment_status);
   const normalizedPaymentMethod = normalizePaymentMethod(order?.payment_method);
   const isOrderPaid = normalizedPaymentStatus === 'paid';
   const executorAccruedTotal =
     Number(customerFinanceTotal - financeCompanyPaidExpenseTotal + financeExecutorPaidExpenseTotal) || 0;
   const executorFinanceTotal = isOrderPaid ? executorAccruedTotal : 0;
-  const hasExecutorFinanceBreakdown =
-    financeCompanyPaidExpenseTotal > 0 || financeExecutorPaidExpenseTotal > 0;
+  const showExecutorFinanceSection = canViewFinanceEntries === true;
   const showInitialCostLine =
     canViewOrderAmount &&
     isOrderFieldVisible('price');
@@ -4062,7 +4118,7 @@ function OrderDetailsContent() {
                               </View>
                             ) : (
                               <>
-                                {financeExpenseEntries.map((entry, index) => (
+                                {manualExpenseEntries.map((entry, index) => (
                                   <View key={entry.id}>
                                     {index > 0 ? <View style={base.sep} /> : null}
                                     <Pressable
@@ -4099,7 +4155,7 @@ function OrderDetailsContent() {
                         </>
                       ) : null}
 
-                      {hasExecutorFinanceBreakdown ? (
+                      {showExecutorFinanceSection ? (
                         <FinanceAccordionRow
                           label={t('order_finance_executor_section', 'Исполнителю')}
                           summaryValue={formatMoney(executorFinanceTotal, currency)}
@@ -4122,32 +4178,70 @@ function OrderDetailsContent() {
                                 value={formatMoney(customerFinanceTotal, currency)}
                                 hideWhenEmpty={false}
                               />
-                              {financeCompanyPaidExpenseTotal > 0 ? (
+                              {companyPaidExpenseEntries.length > 0 ? (
                                 <>
                                   <View style={base.sep} />
-                                    <LabelValueRow
-                                      label={t('order_finance_company_expense_total', 'Расходы компании')}
-                                      valueComponent={
-                                        <Text style={base.value}>
-                                          {`- ${formatMoney(financeCompanyPaidExpenseTotal, currency)}`}
-                                      </Text>
-                                    }
-                                    hideWhenEmpty={false}
-                                  />
+                                  {companyPaidExpenseEntries.map((entry, index) => (
+                                    <View key={`executor-company-expense-${entry.id}`}>
+                                      {index > 0 ? <View style={base.sep} /> : null}
+                                      <Pressable
+                                        style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                                        onPress={() => openFinanceEntryView(entry)}
+                                      >
+                                        <LabelValueRow
+                                          label={entry.title || t('finance_rule_name', 'Название')}
+                                          labelContainerStyle={styles.financeEntryLabelWrap}
+                                          rightWrapStyle={styles.financeEntryRightWrap}
+                                          valueComponent={
+                                            <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
+                                              {`- ${formatMoney(entry.calculated_amount, currency)}`}
+                                            </Text>
+                                          }
+                                          hideWhenEmpty={false}
+                                          rightActions={
+                                            <Feather
+                                              name="chevron-right"
+                                              size={theme.icons?.sm ?? 18}
+                                              color={theme.colors.textSecondary}
+                                            />
+                                          }
+                                        />
+                                      </Pressable>
+                                    </View>
+                                  ))}
                                 </>
                               ) : null}
-                              {financeExecutorPaidExpenseTotal > 0 ? (
+                              {executorPaidExpenseEntries.length > 0 ? (
                                 <>
                                   <View style={base.sep} />
-                                    <LabelValueRow
-                                      label={t('order_finance_executor_reimbursement_total', 'Расходы исполнителя')}
-                                      valueComponent={
-                                        <Text style={base.value}>
-                                          {formatMoney(financeExecutorPaidExpenseTotal, currency)}
-                                      </Text>
-                                    }
-                                    hideWhenEmpty={false}
-                                  />
+                                  {executorPaidExpenseEntries.map((entry, index) => (
+                                    <View key={`executor-self-expense-${entry.id}`}>
+                                      {index > 0 ? <View style={base.sep} /> : null}
+                                      <Pressable
+                                        style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+                                        onPress={() => openFinanceEntryView(entry)}
+                                      >
+                                        <LabelValueRow
+                                          label={entry.title || t('finance_rule_name', 'Название')}
+                                          labelContainerStyle={styles.financeEntryLabelWrap}
+                                          rightWrapStyle={styles.financeEntryRightWrap}
+                                          valueComponent={
+                                            <Text style={base.value} numberOfLines={1} ellipsizeMode="tail">
+                                              {`+ ${formatMoney(entry.calculated_amount, currency)}`}
+                                            </Text>
+                                          }
+                                          hideWhenEmpty={false}
+                                          rightActions={
+                                            <Feather
+                                              name="chevron-right"
+                                              size={theme.icons?.sm ?? 18}
+                                              color={theme.colors.textSecondary}
+                                            />
+                                          }
+                                        />
+                                      </Pressable>
+                                    </View>
+                                  ))}
                                 </>
                               ) : null}
                             </>
@@ -4540,40 +4634,52 @@ function OrderDetailsContent() {
         title={String(selectedFinanceEntry?.title || '').trim() || t('order_finance_entry_modal_title', 'Финансовая статья')}
         maxHeightRatio={0.7}
       >
-        <LabelValueRow
-          label={t('finance_rule_kind', 'Тип')}
-          value={financeKindLabel(selectedFinanceEntry?.kind)}
-          middleSpacerStyle={styles.financeModalCompactSpacer}
-          rightWrapStyle={styles.financeModalRightWrap}
-        />
-        <View style={base.sep} />
-        {selectedFinanceEntry?.calc_mode === 'percent' ? (
+        {selectedFinanceEntry?.is_system === true ? (
           <LabelValueRow
-            label={t('finance_rule_percent_value', 'Процент')}
-            value={`${Number(selectedFinanceEntry?.input_percent || 0)}% (${financePercentBaseLabel(selectedFinanceEntry?.percent_base)})`}
-            maxValueLines={2}
-            middleSpacerStyle={styles.financeModalTightSpacer}
+            label={t('finance_rule_rule', 'Правило')}
+            valueComponent={<Text style={[base.value, styles.financeEntryNarrativeValue]}>{financeEntryNarrative}</Text>}
+            hideWhenEmpty={false}
+            middleSpacerStyle={styles.financeModalCompactSpacer}
             rightWrapStyle={styles.financeModalPercentRightWrap}
           />
         ) : (
-          <LabelValueRow
-            label={t('order_field_initial_amount', 'Изначальная сумма')}
-            value={formatMoney(selectedFinanceEntry?.calculated_amount, order?.currency || companySettings?.currency)}
-            middleSpacerStyle={styles.financeModalCompactSpacer}
-            rightWrapStyle={styles.financeModalRightWrap}
-          />
-        )}
-        {selectedFinanceEntry?.kind === 'expense' ? (
           <>
-            <View style={base.sep} />
             <LabelValueRow
-              label={t('finance_expense_payer', 'Кто оплатил')}
-              value={financeExpensePayerLabel(selectedFinanceEntry?.expense_payer)}
+              label={t('finance_rule_kind', 'Тип')}
+              value={financeKindLabel(selectedFinanceEntry?.kind)}
               middleSpacerStyle={styles.financeModalCompactSpacer}
               rightWrapStyle={styles.financeModalRightWrap}
             />
+            <View style={base.sep} />
+            {selectedFinanceEntry?.calc_mode === 'percent' ? (
+              <LabelValueRow
+                label={t('finance_rule_percent_value', 'Процент')}
+                value={`${Number(selectedFinanceEntry?.input_percent || 0)}% (${financePercentBaseLabel(selectedFinanceEntry?.percent_base)})`}
+                maxValueLines={2}
+                middleSpacerStyle={styles.financeModalTightSpacer}
+                rightWrapStyle={styles.financeModalPercentRightWrap}
+              />
+            ) : (
+              <LabelValueRow
+                label={t('order_field_initial_amount', 'Изначальная сумма')}
+                value={formatMoney(selectedFinanceEntry?.calculated_amount, order?.currency || companySettings?.currency)}
+                middleSpacerStyle={styles.financeModalCompactSpacer}
+                rightWrapStyle={styles.financeModalRightWrap}
+              />
+            )}
+            {selectedFinanceEntry?.kind === 'expense' ? (
+              <>
+                <View style={base.sep} />
+                <LabelValueRow
+                  label={t('finance_expense_payer', 'Кто оплатил')}
+                  value={financeExpensePayerLabel(selectedFinanceEntry?.expense_payer)}
+                  middleSpacerStyle={styles.financeModalCompactSpacer}
+                  rightWrapStyle={styles.financeModalRightWrap}
+                />
+              </>
+            ) : null}
           </>
-        ) : null}
+        )}
         {financeEntryViewHasComment ? (
           <>
             <View style={base.sep} />
@@ -5147,6 +5253,9 @@ function createStyles(theme) {
       minHeight: 52,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    financeEntryNarrativeValue: {
+      textAlign: 'right',
     },
     financeEntryExpandedComment: {
       textAlign: 'left',

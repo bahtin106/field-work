@@ -5,14 +5,15 @@ import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import SectionHeader from '../../../components/ui/SectionHeader';
-import TextField from '../../../components/ui/TextField';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
+import TextField from '../../../components/ui/TextField';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import {
+  useDeleteCompanyFinanceRuleMutation,
   useCompanyFinanceRules,
   useUpsertCompanyFinanceRuleMutation,
 } from '../../../src/features/finance/queries';
@@ -33,43 +34,109 @@ const CALC_MODE_OPTIONS = [
 ];
 
 const PERCENT_BASE_OPTIONS = [
-  { id: 'base_price', labelKey: 'finance_percent_base_price', fallback: 'От базовой суммы заявки' },
+  { id: 'gross_after_discount', labelKey: 'finance_rule_subtract_from_gross', fallback: 'Из общей суммы' },
+  { id: 'base_price', labelKey: 'finance_rule_subtract_from_base', fallback: 'Из изначальной суммы' },
   {
     id: 'gross_before_discount',
-    labelKey: 'finance_percent_gross_before_discount',
-    fallback: 'От суммы до скидок',
+    labelKey: 'finance_rule_subtract_from_before_discount',
+    fallback: 'Из суммы без скидок',
   },
   {
-    id: 'gross_after_discount',
-    labelKey: 'finance_percent_gross_after_discount',
-    fallback: 'От суммы после скидок',
-  },
-  {
-    id: 'net_before_expense',
-    labelKey: 'finance_percent_net_before_expense',
-    fallback: 'От прибыли до расходов',
+    id: 'income_total',
+    labelKey: 'finance_rule_subtract_from_income_total',
+    fallback: 'Из суммы доп. работ',
   },
 ];
 
 const RECIPIENT_MODE_OPTIONS = [
-  { id: 'customer', labelKey: 'finance_rule_recipient_customer', fallback: 'Заказчик' },
   { id: 'executor', labelKey: 'finance_expense_payer_executor', fallback: 'Исполнитель' },
   { id: 'company', labelKey: 'finance_expense_payer_company', fallback: 'Компания' },
+];
+
+const CONDITION_PAYMENT_METHOD_OPTIONS = [
+  { id: 'any', labelKey: 'finance_rule_condition_any', fallback: 'Любой' },
+  { id: 'cash', labelKey: 'order_payment_method_cash', fallback: 'Наличные' },
+  { id: 'cashless', labelKey: 'order_payment_method_cashless', fallback: 'Безнал' },
+];
+
+const CONDITION_PAYMENT_STATUS_OPTIONS = [
+  { id: 'any', labelKey: 'finance_rule_condition_any', fallback: 'Любой' },
+  { id: 'paid', labelKey: 'order_payment_status_paid', fallback: 'Оплачено' },
+  { id: 'unpaid', labelKey: 'order_payment_status_unpaid', fallback: 'Не оплачено' },
+];
+
+const CONDITION_MONEY_HOLDER_OPTIONS = [
+  { id: 'any', labelKey: 'finance_rule_condition_any', fallback: 'Любой' },
+  { id: 'company', labelKey: 'finance_expense_payer_company', fallback: 'Компания' },
+  { id: 'executor', labelKey: 'finance_expense_payer_executor', fallback: 'Исполнитель' },
+];
+
+const IF_FILTER_OPTIONS = [
+  { id: 'payment_method', labelKey: 'finance_rule_condition_fact_payment_method', fallback: 'Способ оплаты' },
+  { id: 'payment_status', labelKey: 'finance_rule_condition_fact_payment_status', fallback: 'Статус оплаты' },
+  { id: 'money_holder', labelKey: 'finance_rule_condition_fact_money_holder', fallback: 'Где находятся деньги' },
+  { id: 'min_gross_after_discount', labelKey: 'finance_rule_condition_min_gross_after_discount', fallback: 'Общая сумма от' },
+  { id: 'max_gross_after_discount', labelKey: 'finance_rule_condition_max_gross_after_discount', fallback: 'Общая сумма до' },
+  { id: 'min_base_price', labelKey: 'finance_rule_condition_min_base_price', fallback: 'Изначальная сумма от' },
+  { id: 'max_base_price', labelKey: 'finance_rule_condition_max_base_price', fallback: 'Изначальная сумма до' },
+  { id: 'min_gross_before_discount', labelKey: 'finance_rule_condition_min_gross_before_discount', fallback: 'Сумма без скидок от' },
+  { id: 'max_gross_before_discount', labelKey: 'finance_rule_condition_max_gross_before_discount', fallback: 'Сумма без скидок до' },
+  { id: 'min_income_total', labelKey: 'finance_rule_condition_min_income_total', fallback: 'Сумма доп. работ от' },
+  { id: 'max_income_total', labelKey: 'finance_rule_condition_max_income_total', fallback: 'Сумма доп. работ до' },
+];
+
+const RANGE_FILTERS = [
+  {
+    minFilterId: 'min_gross_after_discount',
+    maxFilterId: 'max_gross_after_discount',
+    minField: 'condition_min_gross_after_discount',
+    maxField: 'condition_max_gross_after_discount',
+    fact: 'gross_after_discount',
+    factLabelKey: 'finance_rule_condition_fact_gross_after_discount',
+    factFallback: 'Общая сумма',
+  },
+  {
+    minFilterId: 'min_base_price',
+    maxFilterId: 'max_base_price',
+    minField: 'condition_min_base_price',
+    maxField: 'condition_max_base_price',
+    fact: 'base_price',
+    factLabelKey: 'finance_rule_condition_fact_base_price',
+    factFallback: 'Изначальная сумма',
+  },
+  {
+    minFilterId: 'min_gross_before_discount',
+    maxFilterId: 'max_gross_before_discount',
+    minField: 'condition_min_gross_before_discount',
+    maxField: 'condition_max_gross_before_discount',
+    fact: 'gross_before_discount',
+    factLabelKey: 'finance_rule_condition_fact_gross_before_discount',
+    factFallback: 'Сумма без скидок',
+  },
+  {
+    minFilterId: 'min_income_total',
+    maxFilterId: 'max_income_total',
+    minField: 'condition_min_income_total',
+    maxField: 'condition_max_income_total',
+    fact: 'income_total',
+    factLabelKey: 'finance_rule_condition_fact_income_total',
+    factFallback: 'Сумма доп. работ',
+  },
 ];
 
 const DEFAULT_SORT_ORDER = 100;
 const PRESSED_OPACITY = 0.7;
 const MAX_RULES_PER_COMPANY = 10;
 
-function allowedRecipientModes(kind) {
-  const normalizedKind = String(kind || 'expense');
-  if (normalizedKind === 'expense') return ['executor', 'company'];
-  return ['customer'];
+function allowedRecipientModes() {
+  return ['executor', 'company'];
 }
 
-function normalizeRecipientModeForKind(kind, value) {
-  const allowed = allowedRecipientModes(kind);
-  return allowed.includes(String(value || '')) ? String(value) : allowed[0];
+function normalizeRecipientModeForKind(_kind, value) {
+  const allowed = allowedRecipientModes();
+  const normalized = String(value || '').trim();
+  if (normalized === 'customer') return 'company';
+  return allowed.includes(normalized) ? normalized : 'company';
 }
 
 function createEmptyRuleDraft() {
@@ -83,12 +150,181 @@ function createEmptyRuleDraft() {
     percent_base: 'gross_after_discount',
     recipient_mode: 'company',
     recipient_user_id: null,
+    condition_payment_method: 'any',
+    condition_payment_status: 'any',
+    condition_money_holder: 'any',
+    condition_min_gross_after_discount: '',
+    condition_max_gross_after_discount: '',
+    condition_min_base_price: '',
+    condition_max_base_price: '',
+    condition_min_gross_before_discount: '',
+    condition_max_gross_before_discount: '',
+    condition_min_income_total: '',
+    condition_max_income_total: '',
+    if_filters: [],
     note_template: '',
+    apply_to_existing: false,
     requires_note: false,
     note_visible: true,
     is_enabled: true,
     sort_order: DEFAULT_SORT_ORDER,
   };
+}
+
+function buildConditionsJsonFromDraft(draft) {
+  const conditions = [];
+  const selectedFilters = new Set(Array.isArray(draft?.if_filters) ? draft.if_filters : []);
+  const paymentMethod = String(draft?.condition_payment_method || 'any');
+  const paymentStatus = String(draft?.condition_payment_status || 'any');
+  const moneyHolder = String(draft?.condition_money_holder || 'any');
+
+  if (selectedFilters.has('payment_method') && (paymentMethod === 'cash' || paymentMethod === 'cashless')) {
+    conditions.push({ fact: 'payment_method', operator: 'eq', value: paymentMethod });
+  }
+
+  if (selectedFilters.has('payment_status') && (paymentStatus === 'paid' || paymentStatus === 'unpaid')) {
+    conditions.push({ fact: 'payment_status', operator: 'eq', value: paymentStatus });
+  }
+
+  if (selectedFilters.has('money_holder') && (moneyHolder === 'company' || moneyHolder === 'executor')) {
+    conditions.push({ fact: 'money_holder', operator: 'eq', value: moneyHolder });
+  }
+
+  for (const rangeFilter of RANGE_FILTERS) {
+    const minRaw = String(draft?.[rangeFilter.minField] || '').trim();
+    const maxRaw = String(draft?.[rangeFilter.maxField] || '').trim();
+    if (selectedFilters.has(rangeFilter.minFilterId) && minRaw) {
+      conditions.push({ fact: rangeFilter.fact, operator: 'gte', value: parseNumberSafe(minRaw, 0) });
+    }
+    if (selectedFilters.has(rangeFilter.maxFilterId) && maxRaw) {
+      conditions.push({ fact: rangeFilter.fact, operator: 'lte', value: parseNumberSafe(maxRaw, 0) });
+    }
+  }
+
+  return { op: 'all', conditions };
+}
+
+function parseDraftConditions(conditionsJson) {
+  let normalizedConditions = conditionsJson;
+  if (typeof normalizedConditions === 'string') {
+    try {
+      normalizedConditions = JSON.parse(normalizedConditions);
+    } catch {
+      normalizedConditions = null;
+    }
+  }
+  const result = {
+    condition_payment_method: 'any',
+    condition_payment_status: 'any',
+    condition_money_holder: 'any',
+    condition_min_gross_after_discount: '',
+    condition_max_gross_after_discount: '',
+    condition_min_base_price: '',
+    condition_max_base_price: '',
+    condition_min_gross_before_discount: '',
+    condition_max_gross_before_discount: '',
+    condition_min_income_total: '',
+    condition_max_income_total: '',
+    if_filters: [],
+  };
+
+  const conditions = Array.isArray(normalizedConditions?.conditions) ? normalizedConditions.conditions : [];
+  for (const condition of conditions) {
+    const fact = String(condition?.fact || '');
+    const operator = String(condition?.operator || '');
+    const value = condition?.value;
+
+    if (fact === 'payment_method' && operator === 'eq') {
+      if (value === 'cash' || value === 'cashless') result.condition_payment_method = String(value);
+      result.if_filters.push('payment_method');
+    } else if (fact === 'payment_status' && operator === 'eq' && (value === 'paid' || value === 'unpaid')) {
+      result.condition_payment_status = String(value);
+      result.if_filters.push('payment_status');
+    } else if (fact === 'money_holder' && operator === 'eq' && (value === 'company' || value === 'executor')) {
+      result.condition_money_holder = String(value);
+      result.if_filters.push('money_holder');
+    } else {
+      const normalizedFact = fact === 'price' ? 'gross_after_discount' : fact;
+      const mapping = RANGE_FILTERS.find((item) => item.fact === normalizedFact);
+      if (!mapping) continue;
+      if (operator === 'gte') {
+        result[mapping.minField] = String(value ?? '');
+        result.if_filters.push(mapping.minFilterId);
+      } else if (operator === 'lte') {
+        result[mapping.maxField] = String(value ?? '');
+        result.if_filters.push(mapping.maxFilterId);
+      }
+    }
+  }
+
+  result.if_filters = Array.from(new Set(result.if_filters));
+  return result;
+}
+
+function formatRuleConditionsSummary(t, conditionsJson) {
+  const draftConditions = parseDraftConditions(conditionsJson);
+  const parts = [];
+
+  const paymentLabel = CONDITION_PAYMENT_METHOD_OPTIONS.find(
+    (item) => item.id === draftConditions.condition_payment_method,
+  );
+  if (draftConditions.condition_payment_method !== 'any') {
+    parts.push(
+      `${t('finance_rule_condition_fact_payment_method', 'Способ оплаты')} ${t(
+        'finance_rule_condition_operator_eq',
+        'Равно',
+      )} ${t(paymentLabel?.labelKey, paymentLabel?.fallback || draftConditions.condition_payment_method)}`,
+    );
+  }
+
+  const statusLabel = CONDITION_PAYMENT_STATUS_OPTIONS.find(
+    (item) => item.id === draftConditions.condition_payment_status,
+  );
+  if (draftConditions.condition_payment_status !== 'any') {
+    parts.push(
+      `${t('finance_rule_condition_fact_payment_status', 'Статус оплаты')} ${t(
+        'finance_rule_condition_operator_eq',
+        'Равно',
+      )} ${t(statusLabel?.labelKey, statusLabel?.fallback || draftConditions.condition_payment_status)}`,
+    );
+  }
+
+  const holderLabel = CONDITION_MONEY_HOLDER_OPTIONS.find(
+    (item) => item.id === draftConditions.condition_money_holder,
+  );
+  if (draftConditions.condition_money_holder !== 'any') {
+    parts.push(
+      `${t('finance_rule_condition_fact_money_holder', 'Где находятся деньги')} ${t(
+        'finance_rule_condition_operator_eq',
+        'Равно',
+      )} ${t(holderLabel?.labelKey, holderLabel?.fallback || draftConditions.condition_money_holder)}`,
+    );
+  }
+
+  for (const rangeFilter of RANGE_FILTERS) {
+    const minRaw = String(draftConditions[rangeFilter.minField] || '').trim();
+    const maxRaw = String(draftConditions[rangeFilter.maxField] || '').trim();
+    if (minRaw) {
+      parts.push(
+        `${t(rangeFilter.factLabelKey, rangeFilter.factFallback)} ${t(
+          'finance_rule_condition_operator_gte',
+          'Больше или равно',
+        )} ${minRaw}`,
+      );
+    }
+    if (maxRaw) {
+      parts.push(
+        `${t(rangeFilter.factLabelKey, rangeFilter.factFallback)} ${t(
+          'finance_rule_condition_operator_lte',
+          'Меньше или равно',
+        )} ${maxRaw}`,
+      );
+    }
+  }
+
+  if (parts.length === 0) return t('finance_rule_condition_always_true', 'Без условий (всегда)');
+
+  return parts.map((part, index) => `${index === 0 ? t('finance_rule_if', 'Если') : t('finance_rule_and', 'И')} ${part}`).join(' ');
 }
 
 function parseNumberSafe(raw, fallback = 0) {
@@ -105,15 +341,19 @@ export default function FinanceRulesSettingsScreen() {
 
   const [companyId, setCompanyId] = React.useState(null);
   const [editorVisible, setEditorVisible] = React.useState(false);
-  const [kindModalVisible, setKindModalVisible] = React.useState(false);
   const [calcModeModalVisible, setCalcModeModalVisible] = React.useState(false);
   const [percentBaseModalVisible, setPercentBaseModalVisible] = React.useState(false);
   const [recipientModeModalVisible, setRecipientModeModalVisible] = React.useState(false);
+  const [conditionPaymentMethodModalVisible, setConditionPaymentMethodModalVisible] = React.useState(false);
+  const [conditionPaymentStatusModalVisible, setConditionPaymentStatusModalVisible] = React.useState(false);
+  const [conditionMoneyHolderModalVisible, setConditionMoneyHolderModalVisible] = React.useState(false);
+  const [ifFilterPickerVisible, setIfFilterPickerVisible] = React.useState(false);
   const [editorSubmitAttempt, setEditorSubmitAttempt] = React.useState(false);
   const [draft, setDraft] = React.useState(() => createEmptyRuleDraft());
 
   const rulesQuery = useCompanyFinanceRules(companyId, { enabled: !!companyId });
   const saveMutation = useUpsertCompanyFinanceRuleMutation(companyId);
+  const deleteMutation = useDeleteCompanyFinanceRuleMutation(companyId);
 
   React.useEffect(() => {
     let mounted = true;
@@ -166,8 +406,47 @@ export default function FinanceRulesSettingsScreen() {
     () => (normalizedRecipientMode ? null : requiredFieldMessage),
     [normalizedRecipientMode, requiredFieldMessage],
   );
+  const draftConditionsPriceError = React.useMemo(() => {
+    const selectedFilters = new Set(Array.isArray(draft.if_filters) ? draft.if_filters : []);
+    for (const rangeFilter of RANGE_FILTERS) {
+      const minRaw = String(draft?.[rangeFilter.minField] || '').trim();
+      const maxRaw = String(draft?.[rangeFilter.maxField] || '').trim();
+      if (selectedFilters.has(rangeFilter.minFilterId) && !minRaw) {
+        return t('finance_rule_condition_value_required', 'Укажите значение условия');
+      }
+      if (selectedFilters.has(rangeFilter.maxFilterId) && !maxRaw) {
+        return t('finance_rule_condition_value_required', 'Укажите значение условия');
+      }
+      if (minRaw && !Number.isFinite(parseNumberSafe(minRaw, Number.NaN))) {
+        return t('finance_rule_condition_price_invalid', 'Для стоимости укажите корректное число');
+      }
+      if (maxRaw && !Number.isFinite(parseNumberSafe(maxRaw, Number.NaN))) {
+        return t('finance_rule_condition_price_invalid', 'Для стоимости укажите корректное число');
+      }
+      const minValue = minRaw ? parseNumberSafe(minRaw, Number.NaN) : null;
+      const maxValue = maxRaw ? parseNumberSafe(maxRaw, Number.NaN) : null;
+      if (
+        minValue !== null &&
+        maxValue !== null &&
+        Number.isFinite(minValue) &&
+        Number.isFinite(maxValue) &&
+        minValue > maxValue
+      ) {
+        return t('finance_rule_condition_price_range_invalid', 'Минимальная сумма не может быть больше максимальной');
+      }
+    }
+    return null;
+  }, [draft, t]);
   const rules = React.useMemo(() => (Array.isArray(rulesQuery.data) ? rulesQuery.data : []), [rulesQuery.data]);
   const canAddRule = rules.length < MAX_RULES_PER_COMPANY;
+  const selectedIfFilters = React.useMemo(
+    () => (Array.isArray(draft.if_filters) ? Array.from(new Set(draft.if_filters)) : []),
+    [draft.if_filters],
+  );
+  const availableIfFilters = React.useMemo(
+    () => IF_FILTER_OPTIONS.filter((item) => !selectedIfFilters.includes(item.id)),
+    [selectedIfFilters],
+  );
 
   const getOptionLabel = React.useCallback(
     (options, id) => {
@@ -185,18 +464,16 @@ export default function FinanceRulesSettingsScreen() {
       );
       return;
     }
-    setDraft(createEmptyRuleDraft());
+    setDraft({ ...createEmptyRuleDraft(), kind: 'expense' });
     setEditorSubmitAttempt(false);
     setEditorVisible(true);
   }, [canAddRule, t, toast]);
 
   const openEdit = React.useCallback((rule) => {
     const kind = String(rule?.kind || 'expense');
-    const recipientMode = kind === 'expense' && String(rule?.recipient_mode || '') === 'assigned_to'
-      ? 'executor'
-      : kind === 'expense'
-        ? 'company'
-        : 'customer';
+    const recipientMode = String(rule?.recipient_mode || '') === 'assigned_to' ? 'executor' : 'company';
+    const parsedConditions = parseDraftConditions(rule?.conditions_json);
+
     setDraft({
       id: rule?.id || null,
       name: String(rule?.name || ''),
@@ -207,7 +484,9 @@ export default function FinanceRulesSettingsScreen() {
       percent_base: String(rule?.percent_base || 'gross_after_discount'),
       recipient_mode: normalizeRecipientModeForKind(kind, recipientMode),
       recipient_user_id: null,
+      ...parsedConditions,
       note_template: String(rule?.note_template || ''),
+      apply_to_existing: rule?.apply_to_existing === true,
       requires_note: rule?.requires_note === true,
       note_visible: rule?.note_visible !== false,
       is_enabled: rule?.is_enabled !== false,
@@ -221,7 +500,7 @@ export default function FinanceRulesSettingsScreen() {
     if (!companyId) return;
 
     setEditorSubmitAttempt(true);
-    const firstError = draftNameError || draftAmountError || draftRecipientModeError;
+    const firstError = draftNameError || draftAmountError || draftRecipientModeError || draftConditionsPriceError;
     if (firstError) {
       toast.error(firstError);
       return;
@@ -240,10 +519,12 @@ export default function FinanceRulesSettingsScreen() {
         fixed_amount: parseNumberSafe(draft.fixed_amount, 0),
         percent_value: parseNumberSafe(draft.percent_value, 0),
         percent_base: draft.percent_base,
+        conditions_json: buildConditionsJsonFromDraft(draft),
         recipient_mode: recipientMode === 'executor' ? 'assigned_to' : 'none',
         recipient_user_id: null,
         expense_payer: draft.kind === 'expense' ? expensePayer : 'company',
         note_template: draft.note_template,
+        apply_to_existing: draft.apply_to_existing === true,
         requires_note: draft.requires_note === true,
         note_visible: draft.note_visible !== false,
         is_enabled: draft.is_enabled !== false,
@@ -259,12 +540,67 @@ export default function FinanceRulesSettingsScreen() {
     companyId,
     draft,
     draftAmountError,
+    draftConditionsPriceError,
     draftNameError,
     draftRecipientModeError,
     saveMutation,
     t,
     toast,
   ]);
+
+  const toggleRuleEnabled = React.useCallback(
+    async (rule, nextEnabled) => {
+      if (!companyId || !rule?.id) return;
+      try {
+        await saveMutation.mutateAsync({
+          id: rule.id,
+          company_id: companyId,
+          name: String(rule.name || '').trim(),
+          kind: String(rule.kind || 'expense'),
+          calc_mode: String(rule.calc_mode || 'fixed'),
+          fixed_amount: parseNumberSafe(rule.fixed_amount, 0),
+          percent_value: parseNumberSafe(rule.percent_value, 0),
+          percent_base: String(rule.percent_base || 'gross_after_discount'),
+          conditions_json: rule.conditions_json || { op: 'all', conditions: [] },
+          recipient_mode: String(rule.recipient_mode || 'none'),
+          recipient_user_id: rule.recipient_user_id || null,
+          expense_payer: String(rule.expense_payer || 'company') === 'executor' ? 'executor' : 'company',
+          note_template: String(rule.note_template || ''),
+          apply_to_existing: rule.apply_to_existing === true,
+          requires_note: rule.requires_note === true,
+          note_visible: rule.note_visible !== false,
+          is_enabled: nextEnabled === true,
+          sort_order: parseNumberSafe(rule.sort_order, DEFAULT_SORT_ORDER),
+        });
+        if (nextEnabled !== true) {
+          toast.info(
+            t(
+              'finance_rule_disable_notice_new_only',
+              'Правило выключено: оно не будет применяться к новым заявкам. Старые заявки не меняются.',
+            ),
+          );
+        }
+      } catch (error) {
+        toast.error(String(error?.message || error));
+      }
+    },
+    [companyId, saveMutation, t, toast],
+  );
+
+  const deleteRule = React.useCallback(
+    async (ruleId) => {
+      if (!ruleId) return;
+      try {
+        await deleteMutation.mutateAsync(ruleId);
+        setEditorVisible(false);
+        setEditorSubmitAttempt(false);
+        toast.success(t('finance_rule_deleted', 'Правило удалено'));
+      } catch (error) {
+        toast.error(String(error?.message || error));
+      }
+    },
+    [deleteMutation, t, toast],
+  );
 
   if (permissionsLoading) {
     return (
@@ -348,7 +684,22 @@ export default function FinanceRulesSettingsScreen() {
                     ),
                   )}
                 </Text>
+                <Text style={styles.ruleConditionsText}>{formatRuleConditionsSummary(t, rule?.conditions_json)}</Text>
               </View>
+              <Pressable
+                style={({ pressed }) => [styles.ruleEnabledChip, pressed && { opacity: PRESSED_OPACITY }]}
+                onPress={(event) => {
+                  event?.stopPropagation?.();
+                  void toggleRuleEnabled(rule, rule?.is_enabled !== true);
+                }}
+              >
+                <Text style={styles.ruleEnabledChipText}>
+                  {t(
+                    rule?.is_enabled !== false ? 'finance_rule_enabled_on' : 'finance_rule_enabled_off',
+                    rule?.is_enabled !== false ? 'Вкл' : 'Выкл',
+                  )}
+                </Text>
+              </Pressable>
               <Feather
                 name="chevron-right"
                 size={theme.icons?.sm ?? 18}
@@ -385,6 +736,14 @@ export default function FinanceRulesSettingsScreen() {
         title={t('finance_rule_editor_title', 'Редактор правила')}
         footer={
           <View style={styles.modalFooter}>
+            {draft.id ? (
+              <Button
+                title={t('btn_delete', 'Удалить')}
+                variant="ghost"
+                loading={deleteMutation.isPending}
+                onPress={() => void deleteRule(draft.id)}
+              />
+            ) : null}
             <Button
               title={t('btn_cancel')}
               variant="ghost"
@@ -408,11 +767,126 @@ export default function FinanceRulesSettingsScreen() {
             style={styles.field}
           />
 
+          <Text style={styles.conditionsHeader}>{t('finance_rule_if', 'Если')}</Text>
+
+          {selectedIfFilters.map((filterKey, index) => (
+            <View key={`if-filter-${filterKey}`} style={styles.conditionRowWrap}>
+              <View style={styles.conditionRowHeader}>
+                <Text style={styles.conditionPrefix}>{index === 0 ? t('finance_rule_if', 'Если') : t('finance_rule_and', 'И')}</Text>
+                <Pressable
+                  style={({ pressed }) => [styles.conditionRemoveButton, pressed && { opacity: PRESSED_OPACITY }]}
+                  onPress={() => {
+                    const rangeFilter = RANGE_FILTERS.find(
+                      (item) => item.minFilterId === filterKey || item.maxFilterId === filterKey,
+                    );
+                    setDraft((prev) => ({
+                      ...prev,
+                      if_filters: (prev.if_filters || []).filter((item) => item !== filterKey),
+                      ...(filterKey === 'payment_method' ? { condition_payment_method: 'any' } : {}),
+                      ...(filterKey === 'payment_status' ? { condition_payment_status: 'any' } : {}),
+                      ...(filterKey === 'money_holder' ? { condition_money_holder: 'any' } : {}),
+                      ...(rangeFilter && filterKey === rangeFilter.minFilterId ? { [rangeFilter.minField]: '' } : {}),
+                      ...(rangeFilter && filterKey === rangeFilter.maxFilterId ? { [rangeFilter.maxField]: '' } : {}),
+                    }));
+                  }}
+                >
+                  <Feather name="x" size={theme.icons?.sm ?? 16} color={theme.colors.textSecondary} />
+                </Pressable>
+              </View>
+
+              {filterKey === 'payment_method' ? (
+                <TextField
+                  label={t('finance_rule_condition_fact_payment_method', 'Способ оплаты')}
+                  value={getOptionLabel(CONDITION_PAYMENT_METHOD_OPTIONS, draft.condition_payment_method)}
+                  pressable
+                  onPress={() => setConditionPaymentMethodModalVisible(true)}
+                  style={styles.field}
+                />
+              ) : null}
+
+              {filterKey === 'payment_status' ? (
+                <TextField
+                  label={t('finance_rule_condition_fact_payment_status', 'Статус оплаты')}
+                  value={getOptionLabel(CONDITION_PAYMENT_STATUS_OPTIONS, draft.condition_payment_status)}
+                  pressable
+                  onPress={() => setConditionPaymentStatusModalVisible(true)}
+                  style={styles.field}
+                />
+              ) : null}
+
+              {filterKey === 'money_holder' ? (
+                <TextField
+                  label={t('finance_rule_condition_fact_money_holder', 'Где находятся деньги')}
+                  value={getOptionLabel(CONDITION_MONEY_HOLDER_OPTIONS, draft.condition_money_holder)}
+                  pressable
+                  onPress={() => setConditionMoneyHolderModalVisible(true)}
+                  style={styles.field}
+                />
+              ) : null}
+
+              {RANGE_FILTERS.map((rangeFilter) => (
+                <React.Fragment key={`${rangeFilter.fact}-${filterKey}`}>
+                  {filterKey === rangeFilter.minFilterId ? (
+                    <TextField
+                      label={t(
+                        IF_FILTER_OPTIONS.find((item) => item.id === rangeFilter.minFilterId)?.labelKey,
+                        IF_FILTER_OPTIONS.find((item) => item.id === rangeFilter.minFilterId)?.fallback || 'Сумма от',
+                      )}
+                      keyboardType="decimal-pad"
+                      value={String(draft?.[rangeFilter.minField] || '')}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, [rangeFilter.minField]: value }))}
+                      style={styles.field}
+                    />
+                  ) : null}
+                  {filterKey === rangeFilter.maxFilterId ? (
+                    <TextField
+                      label={t(
+                        IF_FILTER_OPTIONS.find((item) => item.id === rangeFilter.maxFilterId)?.labelKey,
+                        IF_FILTER_OPTIONS.find((item) => item.id === rangeFilter.maxFilterId)?.fallback || 'Сумма до',
+                      )}
+                      keyboardType="decimal-pad"
+                      value={String(draft?.[rangeFilter.maxField] || '')}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, [rangeFilter.maxField]: value }))}
+                      style={styles.field}
+                    />
+                  ) : null}
+                </React.Fragment>
+              ))}
+            </View>
+          ))}
+
+          {availableIfFilters.length > 0 ? (
+            <Pressable
+              style={({ pressed }) => [styles.addConditionRow, pressed && { opacity: PRESSED_OPACITY }]}
+              onPress={() => setIfFilterPickerVisible(true)}
+            >
+              <Feather name="plus-circle" size={theme.icons?.sm ?? 16} color={theme.colors.primary} />
+              <Text style={styles.addConditionText}>{t('finance_rule_add_condition', 'Добавить условие')}</Text>
+            </Pressable>
+          ) : null}
+
+          {editorSubmitAttempt && draftConditionsPriceError ? (
+            <Text style={styles.conditionsErrorText}>{draftConditionsPriceError}</Text>
+          ) : null}
+
+          <Text style={styles.conditionsHeader}>{t('finance_rule_then', 'То')}</Text>
+
           <TextField
-            label={t('finance_rule_kind', 'Тип')}
-            value={getOptionLabel(KIND_OPTIONS, draft.kind)}
+            label={t('finance_rule_subtract_from', 'Вычитаем из')}
+            value={getOptionLabel(PERCENT_BASE_OPTIONS, draft.percent_base)}
             pressable
-            onPress={() => setKindModalVisible(true)}
+            onPress={() => setPercentBaseModalVisible(true)}
+            style={styles.field}
+          />
+
+          <TextField
+            label={t('finance_rule_recipient_payout', 'Кому отчисляем')}
+            required
+            forceValidation={editorSubmitAttempt}
+            error={editorSubmitAttempt ? draftRecipientModeError : null}
+            value={getOptionLabel(RECIPIENT_MODE_OPTIONS, normalizedRecipientMode)}
+            pressable
+            onPress={() => setRecipientModeModalVisible(true)}
             style={styles.field}
           />
 
@@ -436,87 +910,47 @@ export default function FinanceRulesSettingsScreen() {
               style={styles.field}
             />
           ) : (
-            <>
-              <TextField
-                label={t('finance_rule_percent_value', 'Процент')}
-                required
-                forceValidation={editorSubmitAttempt}
-                error={editorSubmitAttempt ? draftAmountError : null}
-                keyboardType="decimal-pad"
-                value={String(draft.percent_value)}
-                onChangeText={(value) => setDraft((prev) => ({ ...prev, percent_value: value }))}
-                style={styles.field}
-              />
-              <TextField
-                label={t('finance_rule_percent_base', 'Основа процента')}
-                value={getOptionLabel(PERCENT_BASE_OPTIONS, draft.percent_base)}
-                pressable
-                onPress={() => setPercentBaseModalVisible(true)}
-                style={styles.field}
-              />
-            </>
+            <TextField
+              label={t('finance_rule_percent_value', 'Процент')}
+              required
+              forceValidation={editorSubmitAttempt}
+              error={editorSubmitAttempt ? draftAmountError : null}
+              keyboardType="decimal-pad"
+              value={String(draft.percent_value)}
+              onChangeText={(value) => setDraft((prev) => ({ ...prev, percent_value: value }))}
+              style={styles.field}
+            />
           )}
 
           <TextField
-            label={t('finance_rule_recipient_mode', 'Получатель')}
-            required
-            forceValidation={editorSubmitAttempt}
-            error={editorSubmitAttempt ? draftRecipientModeError : null}
-            value={getOptionLabel(RECIPIENT_MODE_OPTIONS, normalizedRecipientMode)}
-            pressable
-            onPress={() => setRecipientModeModalVisible(true)}
-            style={styles.field}
-          />
-
-          <TextField
-            label={t('finance_rule_note_template', 'Шаблон комментария')}
+            label={t('finance_rule_comment', 'Комментарий')}
             value={draft.note_template}
             onChangeText={(value) => setDraft((prev) => ({ ...prev, note_template: value }))}
             style={styles.field}
           />
 
           <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>{t('finance_rule_requires_note', 'Комментарий обязателен')}</Text>
+            <View style={styles.switchTextWrap}>
+              <Text style={styles.switchLabel}>
+                {t(
+                  'finance_rule_apply_to_existing_label',
+                  'Пересчитать существующие заявки',
+                )}
+              </Text>
+              <Text style={styles.switchHint}>
+                {t(
+                  'finance_rule_apply_to_existing_hint',
+                  'Если включено, правило будет применяться и к старым заявкам при пересчёте. Если выключено - только к новым.',
+                )}
+              </Text>
+            </View>
             <ThemedSwitch
-              value={draft.requires_note === true}
-              onValueChange={(value) => setDraft((prev) => ({ ...prev, requires_note: value }))}
-            />
-          </View>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>{t('finance_rule_note_visible', 'Показывать комментарий')}</Text>
-            <ThemedSwitch
-              value={draft.note_visible !== false}
-              onValueChange={(value) => setDraft((prev) => ({ ...prev, note_visible: value }))}
-            />
-          </View>
-
-          <View style={styles.switchRow}>
-            <Text style={styles.switchLabel}>{t('finance_rule_enabled', 'Правило включено')}</Text>
-            <ThemedSwitch
-              value={draft.is_enabled !== false}
-              onValueChange={(value) => setDraft((prev) => ({ ...prev, is_enabled: value }))}
+              value={draft.apply_to_existing === true}
+              onValueChange={(value) => setDraft((prev) => ({ ...prev, apply_to_existing: value === true }))}
             />
           </View>
         </ScrollView>
       </BaseModal>
-
-      <SelectModal
-        visible={kindModalVisible}
-        title={t('finance_rule_kind', 'Тип')}
-        items={KIND_OPTIONS.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
-        selectedId={draft.kind}
-        searchable={false}
-        onSelect={(item) => {
-          setDraft((prev) => ({
-            ...prev,
-            kind: item.id,
-            recipient_mode: normalizeRecipientModeForKind(item.id, prev.recipient_mode),
-          }));
-          setKindModalVisible(false);
-        }}
-        onClose={() => setKindModalVisible(false)}
-      />
 
       <SelectModal
         visible={calcModeModalVisible}
@@ -533,7 +967,7 @@ export default function FinanceRulesSettingsScreen() {
 
       <SelectModal
         visible={percentBaseModalVisible}
-        title={t('finance_rule_percent_base', 'Основа процента')}
+        title={t('finance_rule_subtract_from', 'Вычитаем из')}
         items={PERCENT_BASE_OPTIONS.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
         selectedId={draft.percent_base}
         searchable={false}
@@ -546,7 +980,7 @@ export default function FinanceRulesSettingsScreen() {
 
       <SelectModal
         visible={recipientModeModalVisible}
-        title={t('finance_rule_recipient_mode', 'Получатель')}
+        title={t('finance_rule_recipient_payout', 'Кому отчисляем')}
         items={allowedRecipientModes(draft.kind).map((id) => {
           const option = RECIPIENT_MODE_OPTIONS.find((item) => item.id === id);
           return { id, label: t(option?.labelKey, option?.fallback || id) };
@@ -559,42 +993,104 @@ export default function FinanceRulesSettingsScreen() {
         }}
         onClose={() => setRecipientModeModalVisible(false)}
       />
+
+      <SelectModal
+        visible={conditionPaymentMethodModalVisible}
+        title={t('finance_rule_condition_fact_payment_method', 'Способ оплаты')}
+        items={CONDITION_PAYMENT_METHOD_OPTIONS.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
+        selectedId={draft.condition_payment_method}
+        searchable={false}
+        onSelect={(item) => {
+          setDraft((prev) => ({ ...prev, condition_payment_method: String(item?.id || 'any') }));
+          setConditionPaymentMethodModalVisible(false);
+        }}
+        onClose={() => setConditionPaymentMethodModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={conditionPaymentStatusModalVisible}
+        title={t('finance_rule_condition_fact_payment_status', 'Статус оплаты')}
+        items={CONDITION_PAYMENT_STATUS_OPTIONS.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
+        selectedId={draft.condition_payment_status}
+        searchable={false}
+        onSelect={(item) => {
+          setDraft((prev) => ({ ...prev, condition_payment_status: String(item?.id || 'any') }));
+          setConditionPaymentStatusModalVisible(false);
+        }}
+        onClose={() => setConditionPaymentStatusModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={conditionMoneyHolderModalVisible}
+        title={t('finance_rule_condition_fact_money_holder', 'Где находятся деньги')}
+        items={CONDITION_MONEY_HOLDER_OPTIONS.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
+        selectedId={draft.condition_money_holder}
+        searchable={false}
+        onSelect={(item) => {
+          setDraft((prev) => ({ ...prev, condition_money_holder: String(item?.id || 'any') }));
+          setConditionMoneyHolderModalVisible(false);
+        }}
+        onClose={() => setConditionMoneyHolderModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={ifFilterPickerVisible}
+        title={t('finance_rule_add_condition', 'Добавить условие')}
+        items={availableIfFilters.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
+        selectedId=""
+        searchable={false}
+        onSelect={(item) => {
+          const nextId = String(item?.id || '');
+          if (!nextId) {
+            setIfFilterPickerVisible(false);
+            return;
+          }
+          setDraft((prev) => ({
+            ...prev,
+            if_filters: Array.from(new Set([...(prev.if_filters || []), nextId])),
+          }));
+          setIfFilterPickerVisible(false);
+        }}
+        onClose={() => setIfFilterPickerVisible(false)}
+      />
     </Screen>
   );
 }
 
 function createStyles(theme) {
+  const spacing = theme?.spacing || {};
+  const typography = theme?.typography || {};
   return StyleSheet.create({
     container: {
-      gap: theme.spacing.md,
+      gap: spacing.md,
     },
     loadingWrap: {
-      paddingVertical: theme.spacing.lg,
+      paddingVertical: spacing.lg,
       alignItems: 'center',
     },
     emptyText: {
       color: theme.colors.textSecondary,
       textAlign: 'center',
-      paddingVertical: theme.spacing.lg,
+      paddingVertical: spacing.lg,
     },
     scopeHint: {
       color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.sm,
-      paddingHorizontal: theme.spacing.md,
-      paddingTop: theme.spacing.sm,
-      paddingBottom: theme.spacing.xs,
+      fontSize: typography?.sizes?.sm,
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.sm,
+      paddingBottom: spacing.xs,
     },
     ruleItem: {
-      paddingVertical: theme.spacing.sm,
+      paddingVertical: spacing.sm,
       borderBottomWidth: theme.components?.card?.borderWidth || 1,
       borderBottomColor: theme.colors.border,
-      paddingHorizontal: theme.spacing.md,
+      paddingHorizontal: spacing.md,
     },
     ruleRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: theme.spacing.sm,
+      gap: spacing.sm,
     },
     ruleTextWrap: {
       flex: 1,
@@ -602,40 +1098,113 @@ function createStyles(theme) {
     },
     ruleName: {
       color: theme.colors.text,
-      fontSize: theme.typography.sizes.md,
-      fontWeight: theme.typography.weight.semibold,
+      fontSize: typography?.sizes?.md,
+      fontWeight: typography?.weight?.semibold,
       flexShrink: 1,
     },
     ruleMeta: {
       color: theme.colors.textSecondary,
-      fontSize: theme.typography.sizes.sm,
-      marginTop: theme.spacing.xs,
+      fontSize: typography?.sizes?.sm,
+      marginTop: spacing.xs,
+    },
+    ruleConditionsText: {
+      color: theme.colors.textSecondary,
+      fontSize: typography?.sizes?.xs,
+      marginTop: spacing.xs,
+    },
+    ruleEnabledChip: {
+      borderWidth: theme.components?.card?.borderWidth || 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radius?.pill ?? 999,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      alignSelf: 'center',
+    },
+    ruleEnabledChipText: {
+      color: theme.colors.textSecondary,
+      fontSize: typography?.sizes?.xs,
+      fontWeight: typography?.weight?.medium,
     },
     addRuleText: {
       color: theme.colors.primary,
-      fontSize: theme.typography.sizes.sm,
-      fontWeight: theme.typography.weight.medium,
+      fontSize: typography?.sizes?.sm,
+      fontWeight: typography?.weight?.medium,
     },
     modalFooter: {
       flexDirection: 'row',
-      gap: theme.spacing.sm,
+      gap: spacing.sm,
       justifyContent: 'flex-end',
     },
     field: {
-      marginBottom: theme.spacing.sm,
+      marginBottom: spacing.sm,
+    },
+    conditionsHeader: {
+      color: theme.colors.text,
+      fontSize: typography?.sizes?.sm,
+      fontWeight: typography?.weight?.semibold,
+      marginBottom: spacing.xs,
+    },
+    conditionRowWrap: {
+      borderWidth: theme.components?.card?.borderWidth || 1,
+      borderColor: theme.colors.border,
+      borderRadius: theme.radius?.md ?? spacing.sm,
+      paddingHorizontal: spacing.sm,
+      paddingTop: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    conditionRowHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.xs,
+    },
+    conditionPrefix: {
+      color: theme.colors.textSecondary,
+      fontSize: typography?.sizes?.xs,
+      fontWeight: typography?.weight?.medium,
+    },
+    conditionRemoveButton: {
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.xs,
+    },
+    addConditionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.xs,
+      marginBottom: spacing.sm,
+    },
+    addConditionText: {
+      color: theme.colors.primary,
+      fontSize: typography?.sizes?.sm,
+      fontWeight: typography?.weight?.medium,
+    },
+    conditionsErrorText: {
+      color: theme.colors.danger,
+      fontSize: typography?.sizes?.xs,
+      marginBottom: spacing.sm,
     },
     switchRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: theme.spacing.sm,
-      paddingVertical: theme.spacing.xs,
+      marginBottom: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    switchTextWrap: {
+      flex: 1,
+      paddingRight: spacing.sm,
     },
     switchLabel: {
       color: theme.colors.text,
-      fontSize: theme.typography.sizes.sm,
+      fontSize: typography?.sizes?.sm,
       flexShrink: 1,
-      paddingRight: theme.spacing.sm,
+    },
+    switchHint: {
+      color: theme.colors.textSecondary,
+      fontSize: typography?.sizes?.xs,
+      marginTop: spacing.xs,
     },
   });
 }
