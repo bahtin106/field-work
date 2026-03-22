@@ -38,10 +38,13 @@ import {
   CLIENT_OBJECT_DEFAULT_NAME,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   createEmptyClientObjectDraft,
-  hasClientObjectAddressContent,
   sanitizeClientObjectPayload,
-  buildClientObjectShortAddress,
 } from '../../../src/features/objects/addressing';
+import {
+  buildOrderAddressShort,
+  extractOrderAddressFromObject,
+  filterOrderAddressByObjectFieldSettings,
+} from '../../../src/features/requests/addressing';
 import {
   buildObjectAdditionalPhonesPatch,
   createEmptyAdditionalObjectPhones,
@@ -283,20 +286,20 @@ export default function EditObjectScreen() {
   );
   const objectFieldsByKey = React.useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
   const visibleAddressFields = React.useMemo(
-    () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled !== false),
+    () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled === true),
     [objectFieldsByKey],
   );
   const _visiblePrimaryAddressFields = React.useMemo(
     () =>
       CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS.filter(
-        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
+        (field) => objectFieldsByKey.get(field)?.isEnabled === true,
       ),
     [objectFieldsByKey],
   );
   const visibleAdditionalInfoFields = React.useMemo(
     () =>
       CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS.filter(
-        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
+        (field) => objectFieldsByKey.get(field)?.isEnabled === true,
       ),
     [objectFieldsByKey],
   );
@@ -319,7 +322,7 @@ export default function EditObjectScreen() {
     [objectFieldSettings],
   );
   const enabledAdditionalPhoneSlots = React.useMemo(
-    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled === true),
     [objectFieldsByKey],
   );
   const requiredAdditionalPhoneSlots = React.useMemo(
@@ -366,12 +369,15 @@ export default function EditObjectScreen() {
     [mapLat, mapLng],
   );
   const isMapLocationMode = locationMode === 'map';
-  const hasAddressContent = React.useMemo(
+  const visibleAddressSummary = React.useMemo(
     () =>
-      hasClientObjectAddressContent(
-        visibleAddressFields.reduce((acc, field) => ({ ...acc, [field]: draft?.[field] || '' }), {}),
+      buildOrderAddressShort(
+        filterOrderAddressByObjectFieldSettings(
+          extractOrderAddressFromObject(draft),
+          objectFieldsByKey,
+        ),
       ),
-    [draft, visibleAddressFields],
+    [draft, objectFieldsByKey],
   );
 
   const cameraIconSize = React.useMemo(() => {
@@ -657,10 +663,6 @@ export default function EditObjectScreen() {
     if (Object.keys(nextFieldErrors).length > 0) {
       return;
     }
-    if (!hasAddressContent && !hasMapPoint) {
-      toast.warning(t('objects_location_required'));
-      return;
-    }
     setSaving(true);
     try {
       const cleanPatch = sanitizeClientObjectPayload(draft, { nameRequired: false });
@@ -709,7 +711,7 @@ export default function EditObjectScreen() {
     } finally {
       setSaving(false);
     }
-  }, [additionalPhones, canEditObjects, draft, goBack, hasAddressContent, hasMapPoint, locationMode, mapLat, mapLng, objectFieldsByKey, objectId, objectItem, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
+  }, [additionalPhones, canEditObjects, draft, goBack, hasMapPoint, locationMode, mapLat, mapLng, objectFieldsByKey, objectId, objectItem, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
 
   const hiddenEnabledAdditionalPhoneSlots = React.useMemo(
     () => addableAdditionalPhoneSlots.filter((slotId) => !visibleAdditionalPhoneSlots.includes(slotId)),
@@ -832,7 +834,7 @@ export default function EditObjectScreen() {
                 >
                   {isMapLocationMode
                     ? (hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty'))
-                    : (buildClientObjectShortAddress(draft) || t('objects_empty'))}
+                    : (visibleAddressSummary || t('order_details_address_not_specified', 'Без адреса'))}
                 </Text>
               </View>
               {!isMapLocationMode ? (

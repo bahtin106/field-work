@@ -432,6 +432,7 @@ export default {
     'This client already has a similar object at that address. Use it instead of the new one?',
   order_object_match_confirm: 'Use existing',
   order_object_match_keep_new: 'Keep new',
+  order_details_address_not_specified: 'No address',
   order_validation_address_required: 'Specify at least part of the address',
   a11y_change_object_photo: 'Change object photo',
   a11y_change_object_photo_hint: 'Press to upload, view, or delete the object photo',

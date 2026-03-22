@@ -36,7 +36,12 @@ import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex } from '../../../components/ui/map';
-import { buildClientObjectShortAddress } from '../../../src/features/objects/addressing';
+import {
+  buildOrderAddressDisplay,
+  buildOrderAddressShort,
+  extractOrderAddressFromObject,
+  filterOrderAddressByObjectFieldSettings,
+} from '../../../src/features/requests/addressing';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
 import OrderPhotosModal from '../../orders/components/OrderPhotosModal';
 import FullscreenImageViewer from '../../orders/components/FullscreenImageViewer';
@@ -152,34 +157,26 @@ export default function ObjectViewScreen() {
   // Allow viewing object even if user cannot view clients. Client details (name/link)
   // will be shown only when `canViewClients` is true and `clientData` is available.
 
+  const visibleAddressDraft = React.useMemo(
+    () =>
+      filterOrderAddressByObjectFieldSettings(
+        extractOrderAddressFromObject(objectItem),
+        objectFieldsByKey,
+      ),
+    [objectFieldsByKey, objectItem],
+  );
   const addressItems = [
-    [t('order_field_country'), objectItem?.country],
-    [t('order_field_region'), objectItem?.region],
-    [t('order_field_district'), objectItem?.district],
-    [t('order_field_city'), objectItem?.city],
-    [t('order_field_street'), objectItem?.street],
-    [t('order_field_house'), objectItem?.house],
-    [t('order_field_floor'), objectItem?.floor],
-    [t('order_field_entrance'), objectItem?.entrance],
-    [t('order_field_apartment'), objectItem?.apartment],
-    [t('order_field_postal_code'), objectItem?.postal_code],
+    [t('order_field_country'), visibleAddressDraft.country],
+    [t('order_field_region'), visibleAddressDraft.region],
+    [t('order_field_district'), visibleAddressDraft.district],
+    [t('order_field_city'), visibleAddressDraft.city],
+    [t('order_field_street'), visibleAddressDraft.street],
+    [t('order_field_house'), visibleAddressDraft.house],
+    [t('order_field_floor'), visibleAddressDraft.floor],
+    [t('order_field_entrance'), visibleAddressDraft.entrance],
+    [t('order_field_apartment'), visibleAddressDraft.apartment],
+    [t('order_field_postal_code'), visibleAddressDraft.postal_code],
   ]
-    .filter(([label]) => {
-      const keyMap = {
-        [t('order_field_country')]: 'country',
-        [t('order_field_region')]: 'region',
-        [t('order_field_district')]: 'district',
-        [t('order_field_city')]: 'city',
-        [t('order_field_street')]: 'street',
-        [t('order_field_house')]: 'house',
-        [t('order_field_floor')]: 'floor',
-        [t('order_field_entrance')]: 'entrance',
-        [t('order_field_apartment')]: 'apartment',
-        [t('order_field_postal_code')]: 'postal_code',
-      };
-      const fieldKey = keyMap[label];
-      return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled !== false : true;
-    })
     .filter(([, value]) => String(value || '').trim().length > 0)
     .map(([label, value]) => ({ label, value: String(value || '').trim() }));
   const additionalInfoItems = [
@@ -190,7 +187,7 @@ export default function ObjectViewScreen() {
         [t('order_field_comment')]: 'comment',
       };
       const fieldKey = keyMap[label];
-      return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled !== false : true;
+      return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled === true : true;
     })
     .filter(([, value]) => String(value || '').trim().length > 0)
     .map(([label, value]) => ({ label, value: String(value || '').trim() }));
@@ -198,13 +195,14 @@ export default function ObjectViewScreen() {
   const visibleAdditionalPhones = React.useMemo(
     () =>
       additionalPhones.filter((item, index) =>
-        objectFieldsByKey.get(`additional_phone_${index + 1}`)?.isEnabled !== false && !!item?.phone,
+        objectFieldsByKey.get(`additional_phone_${index + 1}`)?.isEnabled === true && !!item?.phone,
       ),
     [additionalPhones, objectFieldsByKey],
   );
 
-  const navigatorAddress = buildAddressForNavigator(objectItem);
-  const shortAddress = buildClientObjectShortAddress(objectItem);
+  const navigatorAddress = buildAddressForNavigator(visibleAddressDraft);
+  const shortAddress = buildOrderAddressShort(visibleAddressDraft);
+  const fullAddress = buildOrderAddressDisplay(visibleAddressDraft);
   const mapLat = normalizeCoordinateValue(objectItem?.geo_lat);
   const mapLng = normalizeCoordinateValue(objectItem?.geo_lng);
   const hasMapPoint = !!mapLat && !!mapLng;
@@ -212,7 +210,7 @@ export default function ObjectViewScreen() {
     String(objectItem?.location_mode || '').trim().toLowerCase() === 'map' ||
     (!String(objectItem?.location_mode || '').trim() && hasMapPoint);
   const clientDisplayName = String(clientData?.full_name || objectItem?.client_id || '').trim();
-  const showObjectName = objectFieldsByKey.get('name')?.isEnabled !== false;
+  const showObjectName = objectFieldsByKey.get('name')?.isEnabled === true;
   const showClientRow = hasDisplayValue(clientDisplayName);
   const canShowContactSection = visibleAdditionalPhones.length > 0;
   const onCopyPhone = React.useCallback(async (rawPhone) => {
@@ -243,7 +241,7 @@ export default function ObjectViewScreen() {
   );
 
   const visibleMediaFields = React.useMemo(
-    () => OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey) => objectFieldsByKey.get(fieldKey)?.isEnabled !== false),
+    () => OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey) => objectFieldsByKey.get(fieldKey)?.isEnabled === true),
     [objectFieldsByKey],
   );
 
@@ -551,8 +549,8 @@ export default function ObjectViewScreen() {
           ) : (
             <ExpandableTextRow
               label={t('order_details_address')}
-              value={objectItem?.summary || t('objects_empty')}
-              collapsedValue={shortAddress || objectItem?.summary || t('objects_empty')}
+              value={fullAddress || t('order_details_address_not_specified', 'Без адреса')}
+              collapsedValue={shortAddress || fullAddress || t('order_details_address_not_specified', 'Без адреса')}
               expandedKeyValueItems={addressItems}
               expandedLabelBold
               onValuePress={() => {

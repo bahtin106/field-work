@@ -30,8 +30,6 @@ import { useClient, useClients, useUpdateClientMutation } from '../../../src/fea
 import { collectClientPhoneSearchValues } from '../../../src/features/clients/additionalPhones';
 import { useClientObjects } from '../../../src/features/objects/queries';
 import {
-  buildClientObjectAddressSummary,
-  buildClientObjectShortAddress,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
   normalizeCoordinateValue,
@@ -42,6 +40,7 @@ import {
   buildOrderAddressShort,
   extractOrderAddress,
   extractOrderAddressFromObject,
+  filterOrderAddressByObjectFieldSettings,
   normalizeOrderAddressMode,
   toOrderAddressPatch,
 } from '../../../src/features/requests/addressing';
@@ -287,6 +286,14 @@ function EditOrderContent() {
   );
   const orderFieldsByKey = useMemo(() => getEntityFieldMap(orderFieldSettings), [orderFieldSettings]);
   const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
+  const getVisibleObjectAddressDraft = useCallback(
+    (source) =>
+      filterOrderAddressByObjectFieldSettings(
+        extractOrderAddressFromObject(source),
+        objectFieldsByKey,
+      ),
+    [objectFieldsByKey],
+  );
   const orderedGeneralFieldKeys = useMemo(
     () =>
       getOrderedEntityFields(orderFieldSettings, {
@@ -371,12 +378,12 @@ function EditOrderContent() {
     [clientObjects, selectedObjectId],
   );
   const selectedObjectSummary = useMemo(() => {
-    const liveSummary = [selectedObject?.name, buildClientObjectAddressSummary(selectedObject)]
+    const liveSummary = [selectedObject?.name, buildOrderAddressShort(getVisibleObjectAddressDraft(selectedObject))]
       .filter(Boolean)
       .join(' - ');
     if (liveSummary) return liveSummary;
     return String(orderData?.object_name_snapshot || orderData?.object_name || '').trim();
-  }, [orderData?.object_name, orderData?.object_name_snapshot, selectedObject]);
+  }, [getVisibleObjectAddressDraft, orderData?.object_name, orderData?.object_name_snapshot, selectedObject]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -470,8 +477,8 @@ function EditOrderContent() {
   );
   const previewObjectRows = useMemo(() => {
     if (!previewObject) return [];
-    const fullAddress =
-      buildClientObjectAddressSummary(previewObject) || buildClientObjectShortAddress(previewObject) || '';
+    const previewVisibleAddress = getVisibleObjectAddressDraft(previewObject);
+    const fullAddress = buildOrderAddressDisplay(previewVisibleAddress);
     return [
       {
         key: 'client',
@@ -486,10 +493,10 @@ function EditOrderContent() {
       {
         key: 'comment',
         label: T('order_field_comment'),
-        value: String(previewObject.comment || previewObject.entrance_info || '').trim(),
+        value: String(previewVisibleAddress.comment || previewVisibleAddress.entrance_info || '').trim(),
       },
     ].filter((row) => String(row?.value || '').trim());
-  }, [previewObject]);
+  }, [getVisibleObjectAddressDraft, previewObject]);
 
   const openPreviewClientCard = useCallback(() => {
     if (!hasPermission('canViewClients')) return;
@@ -563,7 +570,7 @@ function EditOrderContent() {
       label: objectItem.is_primary
         ? [objectItem.name, T('objects_primary')].filter(Boolean).join(' - ')
         : objectItem.name,
-      subtitle: buildClientObjectShortAddress(objectItem) || undefined,
+      subtitle: buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || undefined,
       objectRaw: objectItem,
       onPress: () => {
         setSelectedObjectId(objectItem.id);
@@ -591,7 +598,7 @@ function EditOrderContent() {
         setObjectModalVisible(false);
       },
     }));
-  }, [clientObjects]);
+  }, [clientObjects, getVisibleObjectAddressDraft]);
 
   const openCreateClientFromModal = useCallback(() => {
     const prefill = parseClientPrefillFromSearch(clientModalSearch);
@@ -1431,14 +1438,12 @@ function EditOrderContent() {
         : customAddressDraft,
     [addressMode, customAddressDraft, selectedObject],
   );
-  const hasActiveAddress = useMemo(
+  const visibleActiveAddressDraft = useMemo(
     () =>
-      !!buildOrderAddressShort(
-        Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
-          if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
-          return { ...acc, [field]: activeAddressDraft?.[field] || '' };
-        }, {}),
-      ) || hasClientObjectMapPoint(activeAddressDraft),
+      filterOrderAddressByObjectFieldSettings(
+        activeAddressDraft,
+        objectFieldsByKey,
+      ),
     [activeAddressDraft, objectFieldsByKey],
   );
   const shortAddressValue = useMemo(
@@ -1449,20 +1454,10 @@ function EditOrderContent() {
       }) === 'map'
         ? `${normalizeCoordinateValue(activeAddressDraft?.geo_lat)}, ${normalizeCoordinateValue(activeAddressDraft?.geo_lng)}`
         : '') ||
-      buildOrderAddressDisplay(
-        Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
-          if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
-          return { ...acc, [field]: activeAddressDraft?.[field] || '' };
-        }, {}),
-      ) ||
-      buildOrderAddressShort(
-        Object.keys(activeAddressDraft || {}).reduce((acc, field) => {
-          if (objectFieldsByKey.get(field)?.isEnabled === false) return acc;
-          return { ...acc, [field]: activeAddressDraft?.[field] || '' };
-        }, {}),
-      ) ||
+      buildOrderAddressDisplay(visibleActiveAddressDraft) ||
+      buildOrderAddressShort(visibleActiveAddressDraft) ||
       T('order_details_address_not_specified'),
-    [activeAddressDraft, objectFieldsByKey],
+    [activeAddressDraft, visibleActiveAddressDraft],
   );
   const activeAddressIsMapMode = useMemo(
     () =>
@@ -1486,7 +1481,7 @@ function EditOrderContent() {
       { key: 'entrance_info', label: T('order_field_comment'), ref: entranceInfoRef, settingsKey: 'comment' },
     ].filter((field) => {
       const lookupKey = field.settingsKey || field.key;
-      return objectFieldsByKey.get(lookupKey)?.isEnabled !== false;
+      return objectFieldsByKey.get(lookupKey)?.isEnabled === true;
     }),
     [objectFieldsByKey],
   );
@@ -1769,10 +1764,6 @@ function EditOrderContent() {
           object_id: { message: T('objects_select_required_for_order') },
         }));
         showToast(T('objects_select_required_for_order'), 'error');
-        return;
-      }
-      if (orderFieldsByKey.get('object_id')?.isEnabled !== false && !hasActiveAddress) {
-        showToast(T('order_validation_address_required'), 'error');
         return;
       }
       if (!selectedClientId && normalizedPhone) {

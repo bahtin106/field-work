@@ -81,6 +81,7 @@ import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
   extractOrderAddress,
+  filterOrderAddressByObjectFieldSettings,
   normalizeOrderAddressMode,
 } from '../../src/features/requests/addressing';
 import {
@@ -3383,8 +3384,16 @@ function OrderDetailsContent() {
     return '';
   }, [customerName, linkedClient, order?.customer_name, order?.fio]);
   const orderAddress = useMemo(() => extractOrderAddress(order), [order]);
-  const shortOrderAddress = useMemo(() => buildOrderAddressShort(orderAddress), [orderAddress]);
-  const orderAddressForNavigator = useMemo(() => buildAddressForNavigator(orderAddress), [orderAddress]);
+  const visibleOrderAddress = useMemo(
+    () => filterOrderAddressByObjectFieldSettings(orderAddress, objectFieldsByKey),
+    [objectFieldsByKey, orderAddress],
+  );
+  const shortOrderAddress = useMemo(() => buildOrderAddressShort(visibleOrderAddress), [visibleOrderAddress]);
+  const fullOrderAddress = useMemo(() => buildOrderAddressDisplay(visibleOrderAddress), [visibleOrderAddress]);
+  const orderAddressForNavigator = useMemo(
+    () => buildAddressForNavigator(visibleOrderAddress),
+    [visibleOrderAddress],
+  );
   const orderMapLat = useMemo(() => normalizeCoordinateValue(orderAddress?.geo_lat), [orderAddress?.geo_lat]);
   const orderMapLng = useMemo(() => normalizeCoordinateValue(orderAddress?.geo_lng), [orderAddress?.geo_lng]);
   const orderHasMapPoint = useMemo(() => hasClientObjectMapPoint(orderAddress), [orderAddress]);
@@ -3399,42 +3408,21 @@ function OrderDetailsContent() {
   const orderAddressItems = useMemo(
     () =>
       [
-        [t('order_field_country'), orderAddress.country],
-        [t('order_field_region'), orderAddress.region],
-        [t('order_field_district'), orderAddress.district],
-        [t('order_field_city'), orderAddress.city],
-        [t('order_field_street'), orderAddress.street],
-        [t('order_field_house'), orderAddress.house],
-        [t('order_field_floor'), orderAddress.floor],
-        [t('order_field_entrance'), orderAddress.entrance],
-        [t('order_field_apartment'), orderAddress.apartment],
-        [t('order_field_postal_code'), orderAddress.postal_code],
-        [t('order_field_comment'), orderAddress.entrance_info],
-        [t('order_field_geo_lat'), orderAddress.geo_lat],
-        [t('order_field_geo_lng'), orderAddress.geo_lng],
+        [t('order_field_country'), visibleOrderAddress.country],
+        [t('order_field_region'), visibleOrderAddress.region],
+        [t('order_field_district'), visibleOrderAddress.district],
+        [t('order_field_city'), visibleOrderAddress.city],
+        [t('order_field_street'), visibleOrderAddress.street],
+        [t('order_field_house'), visibleOrderAddress.house],
+        [t('order_field_floor'), visibleOrderAddress.floor],
+        [t('order_field_entrance'), visibleOrderAddress.entrance],
+        [t('order_field_apartment'), visibleOrderAddress.apartment],
+        [t('order_field_postal_code'), visibleOrderAddress.postal_code],
+        [t('order_field_comment'), visibleOrderAddress.entrance_info],
       ]
-        .filter(([label]) => {
-          const keyMap = {
-            [t('order_field_country')]: 'country',
-            [t('order_field_region')]: 'region',
-            [t('order_field_district')]: 'district',
-            [t('order_field_city')]: 'city',
-            [t('order_field_street')]: 'street',
-            [t('order_field_house')]: 'house',
-            [t('order_field_floor')]: 'floor',
-            [t('order_field_entrance')]: 'entrance',
-            [t('order_field_apartment')]: 'apartment',
-            [t('order_field_postal_code')]: 'postal_code',
-            [t('order_field_comment')]: 'entrance_info',
-            [t('order_field_geo_lat')]: 'geo_lat',
-            [t('order_field_geo_lng')]: 'geo_lng',
-          };
-          const fieldKey = keyMap[label];
-          return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled !== false : true;
-        })
         .filter(([, value]) => String(value || '').trim().length > 0)
         .map(([label, value]) => ({ label, value: String(value || '').trim() })),
-    [objectFieldsByKey, orderAddress, t],
+    [t, visibleOrderAddress],
   );
   const normalizedAddressMode = useMemo(
     () => normalizeOrderAddressMode(order?.address_mode),
@@ -3794,8 +3782,8 @@ function OrderDetailsContent() {
                   />
                 </Pressable>
               ) : null}
-              {(isOrderFieldVisible('object_id') && orderAddressItems.length > 0) ? <View style={base.sep} /> : null}
-              {orderAddressItems.length > 0 ? (
+              {isOrderFieldVisible('object_id') ? <View style={base.sep} /> : null}
+              {isOrderFieldVisible('object_id') ? (
                 useCoordinatesForOrderAddress ? (
                   <LabelValueRow
                     label={t('objects_location_coordinates')}
@@ -3812,11 +3800,15 @@ function OrderDetailsContent() {
                 ) : (
                   <ExpandableTextRow
                     label={t('order_details_address')}
-                    value={orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')}
-                    collapsedValue={shortOrderAddress || buildOrderAddressDisplay(orderAddress) || t('order_details_address_not_specified')}
+                    value={
+                      orderAddressItems.length > 0
+                        ? orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')
+                        : t('order_details_address_not_specified')
+                    }
+                    collapsedValue={shortOrderAddress || fullOrderAddress || t('order_details_address_not_specified')}
                     expandedKeyValueItems={orderAddressItems}
                     expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
-                    collapsedValueStyle={styles.link}
+                    collapsedValueStyle={orderAddressForNavigator ? styles.link : null}
                     onValuePress={
                       orderAddressForNavigator
                         ? () => {

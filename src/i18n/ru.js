@@ -897,7 +897,7 @@
   "order_object_match_message": "У этого клиента уже есть похожий объект по адресу. Использовать его вместо нового?",
   "order_object_match_confirm": "Использовать",
   "order_object_match_keep_new": "Оставить новый",
-  "order_details_address_not_specified": "Адрес не указан",
+  "order_details_address_not_specified": "Без адреса",
   "order_details_work_type": "Тип работ",
   "order_details_work_type_not_selected": "не выбран",
   "order_section_customer": "Клиент",

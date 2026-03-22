@@ -125,14 +125,14 @@ export default function ClientObjectEditorModal({
   const _visiblePrimaryFields = React.useMemo(
     () =>
       CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS.filter(
-        (field) => fieldsByKey.get(field)?.isEnabled !== false,
+        (field) => fieldsByKey.get(field)?.isEnabled === true,
       ),
     [fieldsByKey],
   );
   const _visibleAdditionalFields = React.useMemo(
     () =>
       CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS.filter(
-        (field) => fieldsByKey.get(field)?.isEnabled !== false,
+        (field) => fieldsByKey.get(field)?.isEnabled === true,
       ),
     [fieldsByKey],
   );
@@ -155,7 +155,7 @@ export default function ClientObjectEditorModal({
     [settings],
   );
   const enabledAdditionalPhoneSlots = React.useMemo(
-    () => [1, 2, 3].filter((slotId) => fieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    () => [1, 2, 3].filter((slotId) => fieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled === true),
     [fieldsByKey],
   );
   const requiredAdditionalPhoneSlots = React.useMemo(

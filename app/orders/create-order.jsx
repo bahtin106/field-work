@@ -73,10 +73,7 @@ import {
   CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
   CLIENT_OBJECT_ADDRESS_FIELDS,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
-  buildClientObjectFullAddress,
-  buildClientObjectShortAddress,
   createEmptyClientObjectDraft,
-  hasClientObjectAddressContent,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
   normalizeCoordinateValue,
@@ -92,6 +89,7 @@ import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
   extractOrderAddressFromObject,
+  filterOrderAddressByObjectFieldSettings,
   toOrderAddressPatch,
 } from '../../src/features/requests/addressing';
 import {
@@ -323,6 +321,14 @@ function CreateOrderContent() {
     [orderFieldSettings],
   );
   const objectFieldsByKey = useMemo(() => new Map((objectFieldSettings?.fields || []).map((field) => [String(field.fieldKey || field.field_key || ''), field])), [objectFieldSettings]);
+  const getVisibleObjectAddressDraft = useCallback(
+    (source) =>
+      filterOrderAddressByObjectFieldSettings(
+        extractOrderAddressFromObject(source),
+        objectFieldsByKey,
+      ),
+    [objectFieldsByKey],
+  );
 
   const DRAFT_KEY = 'draft_create_order';
 
@@ -831,13 +837,6 @@ function CreateOrderContent() {
       const draftObjectLocationMode = normalizeClientObjectLocationMode(draftClientObject?.location_mode, {
         fallback: hasClientObjectMapPoint(draftClientObject) ? 'map' : 'address',
       });
-      if (!hasClientObjectAddressContent(draftClientObject) && !hasClientObjectMapPoint(draftClientObject)) {
-        showBanner({
-          type: 'warning',
-          message: t('order_validation_address_required'),
-        });
-        return;
-      }
       const exactMatchingObject = findExactMatchingClientObject(draftClientObject, clientObjects);
       if (exactMatchingObject) {
         resolvedObject = exactMatchingObject;
@@ -861,14 +860,6 @@ function CreateOrderContent() {
     const resolvedAddressDraft = resolvedObject
       ? extractOrderAddressFromObject(resolvedObject)
       : null;
-    if (!buildOrderAddressShort(resolvedAddressDraft) && !hasClientObjectMapPoint(resolvedAddressDraft)) {
-      showBanner({
-        type: 'warning',
-        message: t('order_validation_address_required'),
-      });
-      return;
-    }
-
     const payload = {
       company_id: effectiveCompanyId || null,
       title,
@@ -1238,26 +1229,19 @@ function CreateOrderContent() {
     () => String(activeObjectDraft?.name || '').trim() || null,
     [activeObjectDraft],
   );
-  const activeAddressDraft = useMemo(
-    () => extractOrderAddressFromObject(activeObjectDraft),
-    [activeObjectDraft],
-  );
-  const visibleObjectAddressFieldKeys = useMemo(
-    () =>
-      Object.keys(activeAddressDraft || {}).filter(
-        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
-      ),
-    [activeAddressDraft, objectFieldsByKey],
+  const visibleActiveAddressDraft = useMemo(
+    () => getVisibleObjectAddressDraft(activeObjectDraft),
+    [activeObjectDraft, getVisibleObjectAddressDraft],
   );
   const visibleClientObjectFieldKeys = useMemo(
     () =>
       ['name', ...CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS, ...CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS].filter(
-        (field) => objectFieldsByKey.get(field)?.isEnabled !== false,
+        (field) => objectFieldsByKey.get(field)?.isEnabled === true,
       ),
     [objectFieldsByKey],
   );
   const enabledObjectAdditionalPhoneSlots = useMemo(
-    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled === true),
     [objectFieldsByKey],
   );
   const requiredObjectAdditionalPhoneSlots = useMemo(
@@ -1272,21 +1256,10 @@ function CreateOrderContent() {
       }) === 'map'
         ? `${normalizeCoordinateValue(activeObjectDraft?.geo_lat)}, ${normalizeCoordinateValue(activeObjectDraft?.geo_lng)}`
         : '') ||
-      buildOrderAddressDisplay(
-        visibleObjectAddressFieldKeys.reduce(
-          (acc, field) => ({ ...acc, [field]: activeAddressDraft?.[field] || '' }),
-          {},
-        ),
-      ) ||
-      buildClientObjectFullAddress(activeObjectDraft) ||
-      buildOrderAddressShort(
-        visibleObjectAddressFieldKeys.reduce(
-          (acc, field) => ({ ...acc, [field]: activeAddressDraft?.[field] || '' }),
-          {},
-        ),
-      ) ||
+      buildOrderAddressDisplay(visibleActiveAddressDraft) ||
+      buildOrderAddressShort(visibleActiveAddressDraft) ||
       t('order_details_address_not_specified'),
-    [activeAddressDraft, activeObjectDraft, t, visibleObjectAddressFieldKeys],
+    [activeObjectDraft, t, visibleActiveAddressDraft],
   );
   const renderCreateMainField = useCallback(
     (fieldKey) => {
@@ -1419,7 +1392,7 @@ function CreateOrderContent() {
               <FieldErrorText
                 message={shouldShowError('object_id') ? fieldErrors?.object_id?.message : null}
               />
-              {activeObjectDraft && visibleObjectAddressFieldKeys.length ? (
+              {activeObjectDraft ? (
                 <TextField
                   label={
                     normalizeClientObjectLocationMode(activeObjectDraft?.location_mode, {
@@ -1462,7 +1435,6 @@ function CreateOrderContent() {
       shortAddressValue,
       shouldShowError,
       t,
-      visibleObjectAddressFieldKeys.length,
       withRequiredLabel,
     ],
   );
@@ -1686,7 +1658,6 @@ function CreateOrderContent() {
       },
       clientId: top.clientId,
       clientName: top.clientName || '',
-      shortAddress: top.shortAddress || '',
       raw: top,
       signature: `global:${top.clientId}:${top.objectId}:${globalDraftSearchParams.query}:${globalDraftSearchParams.street}:${globalDraftSearchParams.house}`,
     };
@@ -1711,10 +1682,13 @@ function CreateOrderContent() {
   }, [objectSearchSourceDraft, selectedClientId]);
   const objectSearchSuggestions = useMemo(
     () =>
-      (Array.isArray(companyObjectSearchResults) ? companyObjectSearchResults : []).filter(
-        (item) => String(item?.objectId || '') !== String(selectedClientObjectId || ''),
-      ),
-    [companyObjectSearchResults, selectedClientObjectId],
+      (Array.isArray(companyObjectSearchResults) ? companyObjectSearchResults : [])
+        .filter((item) => String(item?.objectId || '') !== String(selectedClientObjectId || ''))
+        .map((item) => ({
+          ...item,
+          shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(item)),
+        })),
+    [companyObjectSearchResults, getVisibleObjectAddressDraft, selectedClientObjectId],
   );
   const objectSearchHasQuery = useMemo(() => {
     const street = String(debouncedObjectSearchParams?.street || '').trim();
@@ -1956,8 +1930,8 @@ function CreateOrderContent() {
     const previewCoordinatesValue = hasClientObjectMapPoint(previewObject)
       ? `${normalizeCoordinateValue(previewObject?.geo_lat)}, ${normalizeCoordinateValue(previewObject?.geo_lng)}`
       : '';
-    const fullAddress =
-      buildClientObjectFullAddress(previewObject) || previewObject.shortAddress || '';
+    const previewVisibleAddress = getVisibleObjectAddressDraft(previewObject);
+    const fullAddress = buildOrderAddressDisplay(previewVisibleAddress);
     return [
       {
         key: 'client',
@@ -1975,10 +1949,10 @@ function CreateOrderContent() {
       {
         key: 'comment',
         label: t('order_field_comment'),
-        value: String(previewObject.comment || previewObject.entrance_info || '').trim(),
+        value: String(previewVisibleAddress.comment || previewVisibleAddress.entrance_info || '').trim(),
       },
     ].filter((row) => String(row?.value || '').trim());
-  }, [previewObject, t]);
+  }, [getVisibleObjectAddressDraft, previewObject, t]);
 
   const openPreviewClientCard = useCallback(() => {
     if (!has('canViewClients')) return;
@@ -2015,12 +1989,12 @@ function CreateOrderContent() {
           id: suggestedMatchingObject.raw.objectId,
           name: suggestedMatchingObject.raw.objectName,
           clientName: suggestedMatchingObject.raw.clientName,
-          shortAddress: suggestedMatchingObject.raw.shortAddress,
+          shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(suggestedMatchingObject.raw)),
         }
       : {
           ...(suggestedMatchingObject?.object || {}),
           clientName: suggestedMatchingObject?.clientName || selectedClientName || '',
-          shortAddress: suggestedMatchingObject?.shortAddress || '',
+          shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(suggestedMatchingObject?.object || {})),
         };
     if (!sourceObject?.id) return;
     const pageX = Number(event?.nativeEvent?.pageX);
@@ -2030,7 +2004,7 @@ function CreateOrderContent() {
     }
     setPreviewObject(sourceObject);
     setPreviewObjectVisible(true);
-  }, [has, selectedClientName, suggestedMatchingObject]);
+  }, [getVisibleObjectAddressDraft, has, selectedClientName, suggestedMatchingObject]);
 
   const handleSelectGlobalObjectSuggestion = useCallback((item) => {
     if (!item?.objectId || !item?.clientId) return;
@@ -2077,7 +2051,7 @@ function CreateOrderContent() {
       items.push({
         id: 'draft-object',
         label: sanitizeVisibleText(String(draftClientObject.name || '').trim(), t('objects_new')),
-        subtitle: buildClientObjectShortAddress(draftClientObject) || undefined,
+        subtitle: buildOrderAddressShort(getVisibleObjectAddressDraft(draftClientObject)) || undefined,
         onPress: () => {
           setClientObjectModalVisible(false);
           setClientObjectEditorMode('draft');
@@ -2096,7 +2070,7 @@ function CreateOrderContent() {
         label: objectItem.is_primary
           ? sanitizeVisibleText([objectItem.name, t('objects_primary')].filter(Boolean).join(' - '), t('objects_new'))
           : sanitizeVisibleText(objectItem.name, t('objects_new')),
-        subtitle: buildClientObjectShortAddress(objectItem) || undefined,
+        subtitle: buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || undefined,
         objectRaw: objectItem,
         onPress: () => {
           setSelectedClientObjectId(objectItem.id);
@@ -2106,7 +2080,7 @@ function CreateOrderContent() {
         },
       })),
     ];
-  }, [clientObjects, draftClientObject, t]);
+  }, [clientObjects, draftClientObject, getVisibleObjectAddressDraft, t]);
 
   const openObjectPreview = useCallback((item, event) => {
     if (!has('canViewObjects')) return;
@@ -2120,10 +2094,10 @@ function CreateOrderContent() {
     setPreviewObject({
       ...objectItem,
       clientName: selectedClientName || '',
-      shortAddress: buildClientObjectShortAddress(objectItem) || '',
+      shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || '',
     });
     setPreviewObjectVisible(true);
-  }, [has, selectedClientName]);
+  }, [getVisibleObjectAddressDraft, has, selectedClientName]);
 
   const openCreateClientFromModal = useCallback(() => {
     const prefill = parseClientPrefillFromSearch(clientModalSearch);
@@ -2201,21 +2175,6 @@ function CreateOrderContent() {
     if (Object.keys(nextObjectFieldErrors).length > 0) {
       return;
     }
-    if (
-      !hasClientObjectAddressContent(
-        visibleObjectAddressFieldKeys.reduce(
-          (acc, field) => ({ ...acc, [field]: clientObjectDraft?.[field] || '' }),
-          {},
-        ),
-      ) &&
-      !objectHasMapPoint
-    ) {
-      showBanner({
-        type: 'warning',
-        message: t('order_validation_address_required'),
-      });
-      return;
-    }
     try {
       const sanitizedDraft = {
         ...createEmptyClientObjectDraft(),
@@ -2277,7 +2236,6 @@ function CreateOrderContent() {
     enabledObjectAdditionalPhoneSlots,
     requiredObjectAdditionalPhoneSlots,
     visibleClientObjectFieldKeys,
-    visibleObjectAddressFieldKeys,
   ]);
 
   const openObjectFlow = useCallback(() => {
@@ -2566,7 +2524,11 @@ function CreateOrderContent() {
                 {String(suggestedMatchingObject?.object?.name || '').trim() || t('objects_new')}
               </Text>
               <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}>
-                {suggestedMatchingObject?.shortAddress || t('order_details_address_not_specified')}
+                {buildOrderAddressShort(
+                  getVisibleObjectAddressDraft(
+                    suggestedMatchingObject?.raw || suggestedMatchingObject?.object || {},
+                  ),
+                ) || t('order_details_address_not_specified')}
               </Text>
             </Pressable>
           </View>

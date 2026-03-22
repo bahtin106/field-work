@@ -3,7 +3,17 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useClient } from '../../src/features/clients/queries';
-import { buildClientObjectShortAddress } from '../../src/features/objects/addressing';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
+import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+} from '../../src/features/fieldSettings/catalog';
+import {
+  buildOrderAddressShort,
+  extractOrderAddressFromObject,
+  filterOrderAddressByObjectFieldSettings,
+} from '../../src/features/requests/addressing';
 import { withAlpha } from '../../theme/colors';
 
 export default function ObjectCard({ item, onPress, canViewClients: canViewClientsProp = null }) {
@@ -42,14 +52,23 @@ export default function ObjectCard({ item, onPress, canViewClients: canViewClien
     [theme, c.surface, c.border, c.text, c.textSecondary, rad.lg, sz, ty, cardShadows],
   );
 
-  const name = String(item?.name || '').trim() || item?.summary || '';
+  const name = String(item?.name || '').trim();
   const canViewClients =
     typeof canViewClientsProp === 'boolean' ? canViewClientsProp : has('canViewClients');
+  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT);
+  const objectFieldSettings = useMemo(
+    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
+    [objectFieldSettingsData],
+  );
+  const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
   const { data: client } = useClient(item?.client_id, { enabled: !!item?.client_id && canViewClients });
   const owner =
     String(client?.fullName || client?.full_name || item?._client?.name || item?.client?.full_name || '').trim() || '';
-  const address =
-    String(buildClientObjectShortAddress(item) || item?.summary || '').trim() || '';
+  const visibleAddress = useMemo(
+    () => filterOrderAddressByObjectFieldSettings(extractOrderAddressFromObject(item), objectFieldsByKey),
+    [item, objectFieldsByKey],
+  );
+  const address = String(buildOrderAddressShort(visibleAddress) || '').trim() || '';
 
   return (
       <Pressable
