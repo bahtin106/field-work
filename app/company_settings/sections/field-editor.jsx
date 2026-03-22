@@ -83,6 +83,7 @@ const HIDDEN_EDITOR_FIELDS = Object.freeze({
     'first_name',
     'last_name',
     'middle_name',
+    'phone',
   ]),
 });
 
@@ -199,6 +200,10 @@ function toggleFieldRequired(fields, fieldKey, nextValue) {
   });
 }
 
+function hasAtLeastOneEnabledField(fields) {
+  return (Array.isArray(fields) ? fields : []).some((field) => field?.isEnabled !== false);
+}
+
 export default function FieldEditorScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -311,6 +316,29 @@ export default function FieldEditorScreen() {
       const current = draftsRef.current?.[entityType];
       const entityQuery = queryMapRef.current?.[entityType];
       if (!current) return;
+      if (!hasAtLeastOneEnabledField(current.fields)) {
+        setSaveStateMap((prev) => ({
+          ...prev,
+          [entityType]: {
+            ...prev[entityType],
+            phase: 'error',
+            errorMessage: t(
+              'field_settings_min_enabled_one',
+              'Нельзя отключить все поля. Оставьте включенным хотя бы одно поле.',
+            ),
+          },
+        }));
+        if (!lastErrorToastRef.current[entityType] || options.showErrorToast === true) {
+          toast.warning(
+            t(
+              'field_settings_min_enabled_one',
+              'Нельзя отключить все поля. Оставьте включенным хотя бы одно поле.',
+            ),
+          );
+          lastErrorToastRef.current[entityType] = true;
+        }
+        return;
+      }
 
       if (inFlightRef.current[entityType]) {
         queuedSaveRef.current[entityType] = true;
@@ -524,12 +552,25 @@ export default function FieldEditorScreen() {
 
   const handleToggleEnabled = React.useCallback(
     (entityType, fieldKey, nextValue) => {
+      const current = draftsRef.current?.[entityType];
+      if (!nextValue) {
+        const nextFields = toggleFieldEnabled(current?.fields || [], fieldKey, false);
+        if (!hasAtLeastOneEnabledField(nextFields)) {
+          toast.warning(
+            t(
+              'field_settings_min_enabled_one',
+              'Нельзя отключить все поля. Оставьте включенным хотя бы одно поле.',
+            ),
+          );
+          return;
+        }
+      }
       updateDraft(entityType, (current) => ({
         ...current,
         fields: toggleFieldEnabled(current.fields, fieldKey, nextValue),
       }));
     },
-    [updateDraft],
+    [t, toast, updateDraft],
   );
 
   const handleToggleRequired = React.useCallback(

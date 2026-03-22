@@ -22,6 +22,10 @@ export const ORDER_ADDRESS_FIELDS = Object.freeze([
   'geo_lng',
 ]);
 export const ORDER_LOCATION_MODE_FIELD = 'location_mode';
+const ORDER_ADDRESS_OBJECT_FIELD_KEY_MAP = Object.freeze({
+  comment: 'comment',
+  entrance_info: 'comment',
+});
 
 export function normalizeOrderAddressMode(value) {
   return String(value || '').trim().toLowerCase() === ORDER_ADDRESS_MODE.CUSTOM
@@ -54,6 +58,29 @@ export function extractOrderAddressFromObject(objectItem) {
     apartment: source?.apartment || source?.office || '',
     comment: source?.comment || source?.entrance_info || '',
   });
+}
+
+export function getObjectFieldKeyForOrderAddressField(fieldKey) {
+  const normalized = String(fieldKey || '').trim();
+  if (!normalized) return '';
+  return ORDER_ADDRESS_OBJECT_FIELD_KEY_MAP[normalized] || normalized;
+}
+
+export function filterOrderAddressByObjectFieldSettings(address, objectFieldsByKey) {
+  const normalized = extractOrderAddress(address || {});
+  const result = {};
+  for (const field of ORDER_ADDRESS_FIELDS) {
+    const settingsFieldKey = getObjectFieldKeyForOrderAddressField(field);
+    if (objectFieldsByKey?.get(settingsFieldKey)?.isEnabled !== true) continue;
+    result[field] = String(normalized[field] || '').trim();
+  }
+  if (objectFieldsByKey?.get('comment')?.isEnabled === true) {
+    const comment = String(result.comment || result.entrance_info || '').trim();
+    result.comment = comment;
+    result.entrance_info = comment;
+  }
+  result[ORDER_LOCATION_MODE_FIELD] = normalized[ORDER_LOCATION_MODE_FIELD];
+  return result;
 }
 
 export function toOrderAddressPatch(address) {

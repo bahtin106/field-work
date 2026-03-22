@@ -28,7 +28,6 @@ import { useSetObjectTagsMutation } from '../../../../src/features/tags/queries'
 import {
   CLIENT_OBJECT_ADDRESS_FIELDS,
   createEmptyClientObjectDraft,
-  hasClientObjectAddressContent,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
   normalizeCoordinateValue,
@@ -106,7 +105,7 @@ export default function NewClientObjectScreen() {
   );
   const objectFieldsByKey = React.useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
   const visibleAddressFields = React.useMemo(
-    () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled !== false),
+    () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled === true),
     [objectFieldsByKey],
   );
   const orderedAddressFields = React.useMemo(
@@ -119,7 +118,7 @@ export default function NewClientObjectScreen() {
     [objectFieldSettings],
   );
   const enabledAdditionalPhoneSlots = React.useMemo(
-    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled !== false),
+    () => [1, 2, 3].filter((slotId) => objectFieldsByKey.get(`additional_phone_${slotId}`)?.isEnabled === true),
     [objectFieldsByKey],
   );
   const requiredAdditionalPhoneSlots = React.useMemo(
@@ -220,12 +219,6 @@ export default function NewClientObjectScreen() {
     }, {});
     setFieldErrors(nextFieldErrors);
     if (Object.keys(nextFieldErrors).length > 0) {
-      return;
-    }
-    if (!hasClientObjectAddressContent(
-      visibleAddressFields.reduce((acc, field) => ({ ...acc, [field]: draft?.[field] || '' }), {}),
-    ) && !hasMapPoint) {
-      toast.warning(t('order_details_address_not_specified'));
       return;
     }
     const firstInvalidAdditional = visibleAdditionalPhoneSlots.find((slotId) => {
