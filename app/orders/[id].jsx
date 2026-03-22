@@ -1619,7 +1619,7 @@ function OrderDetailsContent() {
   const financeKindLabel = useCallback(
     (kind) =>
       kind === 'income'
-        ? t('finance_kind_income', 'Доход')
+        ? t('finance_kind_income', 'Доп. работы')
         : kind === 'discount'
           ? t('finance_kind_discount', 'Скидка')
           : t('finance_kind_expense', 'Расход'),
@@ -1628,7 +1628,7 @@ function OrderDetailsContent() {
   const financeDeleteTitle = useCallback(
     (kind) =>
       kind === 'income'
-        ? t('order_finance_delete_income_title', 'Удалить доход?')
+        ? t('order_finance_delete_income_title', 'Удалить доп. работы?')
         : kind === 'discount'
           ? t('order_finance_delete_discount_title', 'Удалить скидку?')
           : t('order_finance_delete_expense_title', 'Удалить расход?'),
@@ -1649,7 +1649,7 @@ function OrderDetailsContent() {
         return t('finance_percent_base_price', 'От изначальной стоимости');
       }
       if (baseValue === 'gross_before_discount') {
-        return t('finance_percent_gross_before_discount', 'От изначальной стоимости + доп. доходы');
+        return t('finance_percent_gross_before_discount', 'От изначальной стоимости + доп. работы');
       }
       return t('finance_percent_gross_after_discount', 'От общей суммы');
     },
@@ -1675,7 +1675,7 @@ function OrderDetailsContent() {
   const getDefaultFinanceEntryTitle = useCallback(
     (kind) => {
       if (kind === 'discount') return t('order_finance_default_title_discount', 'Новая скидка');
-      if (kind === 'income') return t('order_finance_default_title_income', 'Новый доход');
+      if (kind === 'income') return t('order_finance_default_title_income', 'Новые доп. работы');
       return t('order_finance_default_title_expense', 'Новый расход');
     },
     [t],
@@ -1685,11 +1685,11 @@ function OrderDetailsContent() {
     (kind, isEdit = false) => {
       if (isEdit) {
         if (kind === 'discount') return t('order_finance_modal_edit_discount', 'Редактировать скидку');
-        if (kind === 'income') return t('order_finance_modal_edit_income', 'Редактировать доход');
+        if (kind === 'income') return t('order_finance_modal_edit_income', 'Редактировать доп. работы');
         return t('order_finance_modal_edit_expense', 'Редактировать расход');
       }
       if (kind === 'discount') return t('order_finance_modal_add_discount', 'Добавить скидку');
-      if (kind === 'income') return t('order_finance_modal_add_income', 'Добавить доход');
+      if (kind === 'income') return t('order_finance_modal_add_income', 'Добавить доп. работы');
       return t('order_finance_modal_add_expense', 'Добавить расход');
     },
     [t],
@@ -1704,7 +1704,7 @@ function OrderDetailsContent() {
       },
       {
         id: 'income',
-        label: t('finance_kind_income', 'Доход'),
+        label: t('finance_kind_income', 'Доп. работы'),
         right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
       },
       {
@@ -4163,7 +4163,7 @@ function OrderDetailsContent() {
                             onPress={() => setFinanceKindModalVisible(true)}
                           >
                             <Text style={base.label}>
-                              {t('order_finance_add_entry_action', 'Добавить расход/доход/скидку')}
+                              {t('order_finance_add_entry_action', 'Добавить расход/доп. работы/скидку')}
                             </Text>
                             <View style={base.rightWrap}>
                               <Feather
