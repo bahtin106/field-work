@@ -1,25 +1,28 @@
 ﻿import React from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Feather from '@expo/vector-icons/Feather';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
+import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { BaseModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
 import {
   useCompanyFinanceRules,
-  useDeleteCompanyFinanceRuleMutation,
   useUpsertCompanyFinanceRuleMutation,
 } from '../../../src/features/finance/queries';
+import { FEEDBACK_CODES, getMessageByCode } from '../../../src/shared/feedback/messages';
+import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
 const KIND_OPTIONS = [
-  { id: 'income', labelKey: 'finance_kind_income', fallback: 'Доход' },
+  { id: 'income', labelKey: 'finance_kind_income', fallback: 'Доп. работы' },
   { id: 'expense', labelKey: 'finance_kind_expense', fallback: 'Расход' },
   { id: 'discount', labelKey: 'finance_kind_discount', fallback: 'Скидка' },
 ];
@@ -49,27 +52,44 @@ const PERCENT_BASE_OPTIONS = [
 ];
 
 const RECIPIENT_MODE_OPTIONS = [
-  { id: 'none', labelKey: 'finance_recipient_none', fallback: 'Без получателя' },
-  { id: 'assigned_to', labelKey: 'finance_recipient_assigned', fallback: 'Исполнитель заявки' },
-  { id: 'manual_user', labelKey: 'finance_recipient_manual', fallback: 'Конкретный сотрудник' },
+  { id: 'customer', labelKey: 'finance_rule_recipient_customer', fallback: 'Заказчик' },
+  { id: 'executor', labelKey: 'finance_expense_payer_executor', fallback: 'Исполнитель' },
+  { id: 'company', labelKey: 'finance_expense_payer_company', fallback: 'Компания' },
 ];
 
-const EMPTY_RULE_DRAFT = {
-  id: null,
-  name: '',
-  kind: 'expense',
-  calc_mode: 'fixed',
-  fixed_amount: '0',
-  percent_value: '0',
-  percent_base: 'gross_after_discount',
-  recipient_mode: 'none',
-  recipient_user_id: null,
-  note_template: '',
-  requires_note: false,
-  note_visible: true,
-  is_enabled: true,
-  sort_order: 100,
-};
+const DEFAULT_SORT_ORDER = 100;
+const PRESSED_OPACITY = 0.7;
+const MAX_RULES_PER_COMPANY = 10;
+
+function allowedRecipientModes(kind) {
+  const normalizedKind = String(kind || 'expense');
+  if (normalizedKind === 'expense') return ['executor', 'company'];
+  return ['customer'];
+}
+
+function normalizeRecipientModeForKind(kind, value) {
+  const allowed = allowedRecipientModes(kind);
+  return allowed.includes(String(value || '')) ? String(value) : allowed[0];
+}
+
+function createEmptyRuleDraft() {
+  return {
+    id: null,
+    name: '',
+    kind: 'expense',
+    calc_mode: 'fixed',
+    fixed_amount: '',
+    percent_value: '',
+    percent_base: 'gross_after_discount',
+    recipient_mode: 'company',
+    recipient_user_id: null,
+    note_template: '',
+    requires_note: false,
+    note_visible: true,
+    is_enabled: true,
+    sort_order: DEFAULT_SORT_ORDER,
+  };
+}
 
 function parseNumberSafe(raw, fallback = 0) {
   const value = Number(String(raw ?? '').replace(',', '.'));
@@ -84,18 +104,16 @@ export default function FinanceRulesSettingsScreen() {
   const canManageFinanceRules = has('canManageFinanceRules');
 
   const [companyId, setCompanyId] = React.useState(null);
-  const [users, setUsers] = React.useState([]);
   const [editorVisible, setEditorVisible] = React.useState(false);
   const [kindModalVisible, setKindModalVisible] = React.useState(false);
   const [calcModeModalVisible, setCalcModeModalVisible] = React.useState(false);
   const [percentBaseModalVisible, setPercentBaseModalVisible] = React.useState(false);
   const [recipientModeModalVisible, setRecipientModeModalVisible] = React.useState(false);
-  const [recipientModalVisible, setRecipientModalVisible] = React.useState(false);
-  const [draft, setDraft] = React.useState(EMPTY_RULE_DRAFT);
+  const [editorSubmitAttempt, setEditorSubmitAttempt] = React.useState(false);
+  const [draft, setDraft] = React.useState(() => createEmptyRuleDraft());
 
   const rulesQuery = useCompanyFinanceRules(companyId, { enabled: !!companyId });
   const saveMutation = useUpsertCompanyFinanceRuleMutation(companyId);
-  const deleteMutation = useDeleteCompanyFinanceRuleMutation(companyId);
 
   React.useEffect(() => {
     let mounted = true;
@@ -125,33 +143,31 @@ export default function FinanceRulesSettingsScreen() {
     };
   }, [t, toast]);
 
-  React.useEffect(() => {
-    if (!companyId) return;
-    let mounted = true;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, full_name, role')
-          .eq('company_id', companyId)
-          .neq('role', 'client')
-          .order('full_name', { ascending: true });
-        if (error) throw error;
-        if (mounted) setUsers(Array.isArray(data) ? data : []);
-      } catch (error) {
-        if (mounted) {
-          toast.error(String(error?.message || error));
-        }
-      }
-    })();
-
-    return () => {
-      mounted = false;
-    };
-  }, [companyId, toast]);
-
   const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const base = React.useMemo(() => listItemStyles(theme), [theme]);
+  const requiredFieldMessage = React.useMemo(
+    () => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
+    [t],
+  );
+  const draftNameError = React.useMemo(
+    () => getRequiredTextFieldError(draft.name, { required: true, message: requiredFieldMessage }),
+    [draft.name, requiredFieldMessage],
+  );
+  const draftAmountValue = draft.calc_mode === 'fixed' ? draft.fixed_amount : draft.percent_value;
+  const draftAmountError = React.useMemo(
+    () => getRequiredTextFieldError(draftAmountValue, { required: true, message: requiredFieldMessage }),
+    [draftAmountValue, requiredFieldMessage],
+  );
+  const normalizedRecipientMode = React.useMemo(
+    () => normalizeRecipientModeForKind(draft.kind, draft.recipient_mode),
+    [draft.kind, draft.recipient_mode],
+  );
+  const draftRecipientModeError = React.useMemo(
+    () => (normalizedRecipientMode ? null : requiredFieldMessage),
+    [normalizedRecipientMode, requiredFieldMessage],
+  );
+  const rules = React.useMemo(() => (Array.isArray(rulesQuery.data) ? rulesQuery.data : []), [rulesQuery.data]);
+  const canAddRule = rules.length < MAX_RULES_PER_COMPANY;
 
   const getOptionLabel = React.useCallback(
     (options, id) => {
@@ -163,69 +179,92 @@ export default function FinanceRulesSettingsScreen() {
   );
 
   const openCreate = React.useCallback(() => {
-    setDraft(EMPTY_RULE_DRAFT);
+    if (!canAddRule) {
+      toast.error(
+        t('finance_rules_limit_reached', `Можно добавить не более ${MAX_RULES_PER_COMPANY} правил`),
+      );
+      return;
+    }
+    setDraft(createEmptyRuleDraft());
+    setEditorSubmitAttempt(false);
     setEditorVisible(true);
-  }, []);
+  }, [canAddRule, t, toast]);
 
   const openEdit = React.useCallback((rule) => {
+    const kind = String(rule?.kind || 'expense');
+    const recipientMode = kind === 'expense' && String(rule?.recipient_mode || '') === 'assigned_to'
+      ? 'executor'
+      : kind === 'expense'
+        ? 'company'
+        : 'customer';
     setDraft({
       id: rule?.id || null,
       name: String(rule?.name || ''),
-      kind: String(rule?.kind || 'expense'),
+      kind,
       calc_mode: String(rule?.calc_mode || 'fixed'),
-      fixed_amount: String(rule?.fixed_amount ?? '0'),
-      percent_value: String(rule?.percent_value ?? '0'),
+      fixed_amount: String(rule?.fixed_amount ?? ''),
+      percent_value: String(rule?.percent_value ?? ''),
       percent_base: String(rule?.percent_base || 'gross_after_discount'),
-      recipient_mode: String(rule?.recipient_mode || 'none'),
-      recipient_user_id: rule?.recipient_user_id || null,
+      recipient_mode: normalizeRecipientModeForKind(kind, recipientMode),
+      recipient_user_id: null,
       note_template: String(rule?.note_template || ''),
       requires_note: rule?.requires_note === true,
       note_visible: rule?.note_visible !== false,
       is_enabled: rule?.is_enabled !== false,
-      sort_order: Number.isFinite(Number(rule?.sort_order)) ? Number(rule.sort_order) : 100,
+      sort_order: Number.isFinite(Number(rule?.sort_order)) ? Number(rule.sort_order) : DEFAULT_SORT_ORDER,
     });
+    setEditorSubmitAttempt(false);
     setEditorVisible(true);
   }, []);
 
   const saveRule = React.useCallback(async () => {
     if (!companyId) return;
-    if (!String(draft.name || '').trim()) {
-      toast.error(t('finance_rule_name_required', 'Укажите название правила'));
+
+    setEditorSubmitAttempt(true);
+    const firstError = draftNameError || draftAmountError || draftRecipientModeError;
+    if (firstError) {
+      toast.error(firstError);
       return;
     }
 
+    const recipientMode = normalizeRecipientModeForKind(draft.kind, draft.recipient_mode);
+    const expensePayer = recipientMode === 'executor' ? 'executor' : 'company';
+
     try {
       await saveMutation.mutateAsync({
-        ...draft,
+        id: draft.id || undefined,
         company_id: companyId,
+        name: String(draft.name || '').trim(),
+        kind: draft.kind,
+        calc_mode: draft.calc_mode,
         fixed_amount: parseNumberSafe(draft.fixed_amount, 0),
         percent_value: parseNumberSafe(draft.percent_value, 0),
-        sort_order: parseNumberSafe(draft.sort_order, 100),
+        percent_base: draft.percent_base,
+        recipient_mode: recipientMode === 'executor' ? 'assigned_to' : 'none',
+        recipient_user_id: null,
+        expense_payer: draft.kind === 'expense' ? expensePayer : 'company',
+        note_template: draft.note_template,
+        requires_note: draft.requires_note === true,
+        note_visible: draft.note_visible !== false,
+        is_enabled: draft.is_enabled !== false,
+        sort_order: parseNumberSafe(draft.sort_order, DEFAULT_SORT_ORDER),
       });
       setEditorVisible(false);
+      setEditorSubmitAttempt(false);
       toast.success(t('finance_rule_saved', 'Правило сохранено'));
     } catch (error) {
       toast.error(String(error?.message || error));
     }
-  }, [companyId, draft, saveMutation, t, toast]);
-
-  const removeRule = React.useCallback(
-    async (ruleId) => {
-      try {
-        await deleteMutation.mutateAsync(ruleId);
-        toast.success(t('finance_rule_deleted', 'Правило удалено'));
-      } catch (error) {
-        toast.error(String(error?.message || error));
-      }
-    },
-    [deleteMutation, t, toast],
-  );
-
-  const recipientLabel = React.useMemo(() => {
-    if (!draft.recipient_user_id) return t('common_not_selected', 'Не выбрано');
-    const user = users.find((item) => String(item.id) === String(draft.recipient_user_id));
-    return user?.full_name || t('common_not_selected', 'Не выбрано');
-  }, [draft.recipient_user_id, t, users]);
+  }, [
+    companyId,
+    draft,
+    draftAmountError,
+    draftNameError,
+    draftRecipientModeError,
+    saveMutation,
+    t,
+    toast,
+  ]);
 
   if (permissionsLoading) {
     return (
@@ -263,59 +302,97 @@ export default function FinanceRulesSettingsScreen() {
       headerOptions={{ title: t('finance_rules_title', 'Финансовые правила') }}
       contentContainerStyle={styles.container}
     >
-      <Button title={t('finance_rule_add', 'Добавить правило')} onPress={openCreate} />
-
-      <SectionHeader bottomSpacing="xs">{t('finance_rules_title', 'Финансовые правила')}</SectionHeader>
+      <SectionHeader bottomSpacing="xs">
+        {t('finance_rules_scope_title', 'Правила для всех заявок')}
+      </SectionHeader>
       <Card paddedXOnly>
+        <Text style={styles.scopeHint}>
+          {t(
+            'finance_rules_scope_hint',
+            'Эти правила применяются ко всем заявкам и не редактируются внутри заявки',
+          )}
+        </Text>
+
         {rulesQuery.isLoading ? (
           <View style={styles.loadingWrap}>
             <ActivityIndicator color={theme.colors.primary} />
           </View>
         ) : null}
 
-        {!rulesQuery.isLoading && (rulesQuery.data || []).length === 0 ? (
-          <Text style={styles.emptyText}>{t('finance_rules_empty', 'Пока нет правил')}</Text>
+        {!rulesQuery.isLoading && rules.length === 0 ? (
+          <View>
+            <Text style={styles.emptyText}>{t('finance_rules_empty', 'Правил пока нет')}</Text>
+          </View>
         ) : null}
 
-        {(rulesQuery.data || []).map((rule) => (
-          <View key={rule.id} style={styles.ruleItem}>
-            <View style={styles.ruleHeader}>
-              <Text style={styles.ruleName}>{rule.name}</Text>
-              <ThemedSwitch
-                value={rule.is_enabled !== false}
-                onValueChange={(next) =>
-                  saveMutation
-                    .mutateAsync({ ...rule, company_id: companyId, is_enabled: next })
-                    .catch((error) => toast.error(String(error?.message || error)))
-                }
+        {rules.map((rule) => (
+          <Pressable
+            key={rule.id}
+            style={({ pressed }) => [styles.ruleItem, pressed && { opacity: PRESSED_OPACITY }]}
+            onPress={() => openEdit(rule)}
+          >
+            <View style={styles.ruleRow}>
+              <View style={styles.ruleTextWrap}>
+                <Text style={styles.ruleName}>{rule.name}</Text>
+                <Text style={styles.ruleMeta}>
+                  {getOptionLabel(KIND_OPTIONS, rule.kind)} • {getOptionLabel(CALC_MODE_OPTIONS, rule.calc_mode)} •{' '}
+                  {getOptionLabel(
+                    RECIPIENT_MODE_OPTIONS,
+                    normalizeRecipientModeForKind(
+                      rule.kind,
+                      rule.kind === 'expense' && String(rule?.recipient_mode || '') === 'assigned_to'
+                        ? 'executor'
+                        : rule.kind === 'expense'
+                          ? 'company'
+                          : 'customer',
+                    ),
+                  )}
+                </Text>
+              </View>
+              <Feather
+                name="chevron-right"
+                size={theme.icons?.sm ?? 18}
+                color={theme.colors.textSecondary}
               />
             </View>
-            <Text style={styles.ruleMeta}>
-              {getOptionLabel(KIND_OPTIONS, rule.kind)} • {getOptionLabel(CALC_MODE_OPTIONS, rule.calc_mode)}
-            </Text>
-            <View style={styles.rowActions}>
-              <Button
-                title={t('common_edit', 'Изменить')}
-                variant="secondary"
-                onPress={() => openEdit(rule)}
-              />
-              <Button
-                title={t('common_delete', 'Удалить')}
-                variant="destructive"
-                onPress={() => removeRule(rule.id)}
-              />
-            </View>
-          </View>
+          </Pressable>
         ))}
+
+        {!rulesQuery.isLoading ? <View style={base.sep} /> : null}
+        {!rulesQuery.isLoading && canAddRule ? (
+          <Pressable
+            style={({ pressed }) => [base.row, pressed && { opacity: PRESSED_OPACITY }]}
+            onPress={openCreate}
+          >
+            <Text style={styles.addRuleText}>{t('finance_rule_add_new', 'Добавить новое правило')}</Text>
+            <View style={base.rightWrap}>
+              <Feather
+                name="chevron-right"
+                size={theme.icons?.sm ?? 18}
+                color={theme.colors.textSecondary}
+              />
+            </View>
+          </Pressable>
+        ) : null}
       </Card>
 
       <BaseModal
         visible={editorVisible}
-        onClose={() => setEditorVisible(false)}
+        onClose={() => {
+          setEditorVisible(false);
+          setEditorSubmitAttempt(false);
+        }}
         title={t('finance_rule_editor_title', 'Редактор правила')}
         footer={
           <View style={styles.modalFooter}>
-            <Button title={t('btn_cancel')} variant="ghost" onPress={() => setEditorVisible(false)} />
+            <Button
+              title={t('btn_cancel')}
+              variant="ghost"
+              onPress={() => {
+                setEditorVisible(false);
+                setEditorSubmitAttempt(false);
+              }}
+            />
             <Button title={t('btn_save')} loading={saveMutation.isPending} onPress={saveRule} />
           </View>
         }
@@ -323,6 +400,9 @@ export default function FinanceRulesSettingsScreen() {
         <ScrollView keyboardShouldPersistTaps="handled">
           <TextField
             label={t('finance_rule_name', 'Название')}
+            required
+            forceValidation={editorSubmitAttempt}
+            error={editorSubmitAttempt ? draftNameError : null}
             value={draft.name}
             onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
             style={styles.field}
@@ -347,6 +427,9 @@ export default function FinanceRulesSettingsScreen() {
           {draft.calc_mode === 'fixed' ? (
             <TextField
               label={t('finance_rule_fixed_amount', 'Сумма')}
+              required
+              forceValidation={editorSubmitAttempt}
+              error={editorSubmitAttempt ? draftAmountError : null}
               keyboardType="decimal-pad"
               value={String(draft.fixed_amount)}
               onChangeText={(value) => setDraft((prev) => ({ ...prev, fixed_amount: value }))}
@@ -356,6 +439,9 @@ export default function FinanceRulesSettingsScreen() {
             <>
               <TextField
                 label={t('finance_rule_percent_value', 'Процент')}
+                required
+                forceValidation={editorSubmitAttempt}
+                error={editorSubmitAttempt ? draftAmountError : null}
                 keyboardType="decimal-pad"
                 value={String(draft.percent_value)}
                 onChangeText={(value) => setDraft((prev) => ({ ...prev, percent_value: value }))}
@@ -373,21 +459,14 @@ export default function FinanceRulesSettingsScreen() {
 
           <TextField
             label={t('finance_rule_recipient_mode', 'Получатель')}
-            value={getOptionLabel(RECIPIENT_MODE_OPTIONS, draft.recipient_mode)}
+            required
+            forceValidation={editorSubmitAttempt}
+            error={editorSubmitAttempt ? draftRecipientModeError : null}
+            value={getOptionLabel(RECIPIENT_MODE_OPTIONS, normalizedRecipientMode)}
             pressable
             onPress={() => setRecipientModeModalVisible(true)}
             style={styles.field}
           />
-
-          {draft.recipient_mode === 'manual_user' ? (
-            <TextField
-              label={t('finance_rule_recipient_user', 'Сотрудник')}
-              value={recipientLabel}
-              pressable
-              onPress={() => setRecipientModalVisible(true)}
-              style={styles.field}
-            />
-          ) : null}
 
           <TextField
             label={t('finance_rule_note_template', 'Шаблон комментария')}
@@ -429,7 +508,11 @@ export default function FinanceRulesSettingsScreen() {
         selectedId={draft.kind}
         searchable={false}
         onSelect={(item) => {
-          setDraft((prev) => ({ ...prev, kind: item.id }));
+          setDraft((prev) => ({
+            ...prev,
+            kind: item.id,
+            recipient_mode: normalizeRecipientModeForKind(item.id, prev.recipient_mode),
+          }));
           setKindModalVisible(false);
         }}
         onClose={() => setKindModalVisible(false)}
@@ -464,31 +547,17 @@ export default function FinanceRulesSettingsScreen() {
       <SelectModal
         visible={recipientModeModalVisible}
         title={t('finance_rule_recipient_mode', 'Получатель')}
-        items={RECIPIENT_MODE_OPTIONS.map((item) => ({ id: item.id, label: t(item.labelKey, item.fallback) }))}
-        selectedId={draft.recipient_mode}
+        items={allowedRecipientModes(draft.kind).map((id) => {
+          const option = RECIPIENT_MODE_OPTIONS.find((item) => item.id === id);
+          return { id, label: t(option?.labelKey, option?.fallback || id) };
+        })}
+        selectedId={normalizedRecipientMode}
         searchable={false}
         onSelect={(item) => {
-          setDraft((prev) => ({ ...prev, recipient_mode: item.id }));
+          setDraft((prev) => ({ ...prev, recipient_mode: item.id, recipient_user_id: null }));
           setRecipientModeModalVisible(false);
         }}
         onClose={() => setRecipientModeModalVisible(false)}
-      />
-
-      <SelectModal
-        visible={recipientModalVisible}
-        title={t('finance_rule_recipient_user', 'Сотрудник')}
-        items={users.map((user) => ({
-          id: user.id,
-          label: user.full_name || t('common_noName'),
-          subtitle: user.role ? t(`role_${user.role}`, user.role) : undefined,
-        }))}
-        selectedId={draft.recipient_user_id}
-        searchable
-        onSelect={(item) => {
-          setDraft((prev) => ({ ...prev, recipient_user_id: item.id }));
-          setRecipientModalVisible(false);
-        }}
-        onClose={() => setRecipientModalVisible(false)}
       />
     </Screen>
   );
@@ -508,16 +577,28 @@ function createStyles(theme) {
       textAlign: 'center',
       paddingVertical: theme.spacing.lg,
     },
+    scopeHint: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      paddingHorizontal: theme.spacing.md,
+      paddingTop: theme.spacing.sm,
+      paddingBottom: theme.spacing.xs,
+    },
     ruleItem: {
       paddingVertical: theme.spacing.sm,
       borderBottomWidth: theme.components?.card?.borderWidth || 1,
       borderBottomColor: theme.colors.border,
+      paddingHorizontal: theme.spacing.md,
     },
-    ruleHeader: {
+    ruleRow: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
       alignItems: 'center',
+      justifyContent: 'space-between',
       gap: theme.spacing.sm,
+    },
+    ruleTextWrap: {
+      flex: 1,
+      minWidth: 0,
     },
     ruleName: {
       color: theme.colors.text,
@@ -530,10 +611,10 @@ function createStyles(theme) {
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
     },
-    rowActions: {
-      flexDirection: 'row',
-      gap: theme.spacing.sm,
-      marginTop: theme.spacing.sm,
+    addRuleText: {
+      color: theme.colors.primary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
     },
     modalFooter: {
       flexDirection: 'row',
