@@ -571,14 +571,15 @@ function buildEntityLabel(entityType: EntityType, row: Record<string, unknown>) 
 
   if (entityType === 'employee') {
     const firstName = String(row.first_name || '').trim();
+    const middleName = String(row.middle_name || '').trim();
     const lastName = String(row.last_name || '').trim();
-    const fullName = String(row.full_name || '').trim() || [lastName, firstName].filter(Boolean).join(' ').trim();
+    const fullName = String(row.full_name || '').trim() || [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
     return sanitizePathSegment(fullName || `сотрудник_${shortId}`, `сотрудник_${shortId}`);
   }
 
   if (entityType === 'client') {
     const fullName = String(row.full_name || '').trim();
-    const fallback = [row.last_name, row.first_name, row.middle_name]
+    const fallback = [row.first_name, row.middle_name, row.last_name]
       .map((part) => String(part || '').trim())
       .filter(Boolean)
       .join(' ')

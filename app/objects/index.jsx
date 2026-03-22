@@ -233,7 +233,6 @@ export default function ObjectsIndex() {
             item?.city,
             item?.street,
             item?.house,
-            item?.office,
             item?.region,
             item?.district,
             item?.country,

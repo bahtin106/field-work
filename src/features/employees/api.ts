@@ -6,7 +6,8 @@ const employeeByIdInFlight = new Map<string, Promise<any>>();
 function normalizeEmployee(row) {
   const first_name = row?.first_name ?? row?.firstName ?? '';
   const last_name = row?.last_name ?? row?.lastName ?? '';
-  const nameParts = `${first_name} ${last_name}`.trim();
+  const middle_name = row?.middle_name ?? row?.middleName ?? '';
+  const nameParts = `${first_name} ${middle_name} ${last_name}`.trim();
   const full_name_raw = nameParts || (row?.full_name ?? row?.fullName ?? '').trim() || null;
 
   const avatar_url = row?.avatar_url ?? row?.avatarUrl ?? null;
@@ -32,6 +33,7 @@ function normalizeEmployee(row) {
     // add camelCase aliases expected by UI
     firstName: first_name || '',
     lastName: last_name || '',
+    middleName: middle_name || '',
     fullName: full_name_raw,
     avatarUrl: avatar_url,
     avatarDisplayUrl: row?.avatar_display_url ?? row?.avatarDisplayUrl ?? avatar_url,
@@ -49,7 +51,7 @@ export async function listEmployees(filters = {}) {
   return measureNetwork('employees.list', async () => {
     let query = supabase
       .from('profiles')
-      .select('id, first_name, last_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, email, phone, birthdate, avatar_url')
+      .select('id, first_name, last_name, middle_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, email, phone, birthdate, avatar_url')
       .order('full_name', { ascending: true, nullsFirst: false });
 
     if (Array.isArray(filters.departments) && filters.departments.length > 0) {
@@ -126,7 +128,7 @@ export async function getEmployeeById(userId) {
             if (full) {
               const { data: profileFlags } = await supabase
                 .from('profiles')
-                .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+                .select('company_id, first_name, last_name, middle_name, full_name, email, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
                 .eq('id', userId)
                 .maybeSingle();
               const isSuspended = !!(profileFlags?.is_suspended || profileFlags?.suspended_at || full?.is_suspended || full?.suspended_at);
@@ -141,9 +143,10 @@ export async function getEmployeeById(userId) {
               return {
                 ...normalizeEmployee({
                   id: full.profile_id,
-                  first_name: full.first_name,
-                  last_name: full.last_name,
-                  full_name: full.full_name,
+                  first_name: profileFlags?.first_name ?? full.first_name,
+                  last_name: profileFlags?.last_name ?? full.last_name,
+                  middle_name: profileFlags?.middle_name ?? full.middle_name,
+                  full_name: profileFlags?.full_name ?? full.full_name,
                   phone: full.phone,
                   avatar_url: cleanedSet.has(String(full?.avatar_url || '').trim()) ? null : full.avatar_url,
                   avatar_display_url:
@@ -158,7 +161,7 @@ export async function getEmployeeById(userId) {
                   license_state: licenseState,
                   blocked_reason: blockedReason,
                 }),
-                email: full.email || '',
+                email: profileFlags?.email || full.email || '',
                 meIsAdmin: true,
                 meIsSuperAdmin: true,
                 myUid: uid,
@@ -185,7 +188,7 @@ export async function getEmployeeById(userId) {
 
     const { data: prof, error } = await supabase
       .from('profiles')
-      .select('id, first_name, last_name, full_name, phone, avatar_url, department_id, company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
+      .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
       .eq('id', userId)
       .maybeSingle();
 

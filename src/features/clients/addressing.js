@@ -8,12 +8,10 @@ export const CLIENT_ADDRESS_FIELDS = [
   'street',
   'house',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
-  'entrance_info',
-  'parking_notes',
+  'comment',
   'geo_lat',
   'geo_lng',
 ];
@@ -28,12 +26,10 @@ export function createEmptyClientAddressDraft(overrides = {}) {
     street: '',
     house: '',
     postal_code: '',
-    office: '',
     floor: '',
     entrance: '',
     apartment: '',
-    entrance_info: '',
-    parking_notes: '',
+    comment: '',
     geo_lat: '',
     geo_lng: '',
     ...overrides,
@@ -53,6 +49,8 @@ export function normalizeClientAddress(row) {
   CLIENT_ADDRESS_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });
+  normalized.apartment = String(row.apartment || row.office || '').trim();
+  normalized.comment = String(row.comment || row.entrance_info || '').trim();
   return normalized;
 }
 
@@ -62,9 +60,8 @@ export function buildClientAddressSummary(address) {
     address.city,
     address.street,
     address.house,
-    address.office ? `оф. ${String(address.office).trim()}` : '',
+    address.apartment ? `кв. ${String(address.apartment).trim()}` : '',
     address.entrance,
-    address.apartment,
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
@@ -94,6 +91,8 @@ export function getClientAddressDraftFromOrder(orderLike = {}, overrides = {}) {
   CLIENT_ADDRESS_FIELDS.forEach((field) => {
     next[field] = String(orderLike?.[field] || '').trim();
   });
+  next.apartment = String(orderLike?.apartment || orderLike?.office || '').trim();
+  next.comment = String(orderLike?.comment || orderLike?.entrance_info || '').trim();
   return next;
 }
 

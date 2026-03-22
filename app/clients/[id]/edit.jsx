@@ -331,22 +331,19 @@ export default function EditClientScreen() {
     (fieldKey) => submittedAttempt || !!touched[fieldKey],
     [submittedAttempt, touched],
   );
+  const cleanFirstName = String(firstName || '').trim();
+  const cleanLastName = String(lastName || '').trim();
+  const cleanMiddleName = String(middleName || '').trim();
+  const hasAnyName = !!(cleanFirstName || cleanLastName || cleanMiddleName);
+  const shouldShowAnyNameError =
+    (shouldShowError('first_name') || shouldShowError('last_name') || shouldShowError('middle_name')) &&
+    !hasAnyName;
   const firstNameError =
-    fieldErrors.first_name || (shouldShowError('first_name') && fieldUi.isRequired('first_name') && !String(firstName || '').trim()
-      ? t('clients_required_any_name')
-      : null);
+    fieldErrors.first_name || (shouldShowAnyNameError ? t('clients_required_any_name') : null);
   const lastNameError =
-    fieldErrors.last_name || (shouldShowError('last_name') && fieldUi.isRequired('last_name') && !String(lastName || '').trim()
-      ? t('clients_required_any_name')
-      : null);
+    fieldErrors.last_name || (shouldShowAnyNameError ? t('clients_required_any_name') : null);
   const middleNameError =
-    fieldErrors.middle_name ||
-    (shouldShowError('middle_name')
-      ? getRequiredTextFieldError(middleName, {
-          required: fieldUi.isRequired('middle_name'),
-          message: getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
-        })
-      : null);
+    fieldErrors.middle_name || (shouldShowAnyNameError ? t('clients_required_any_name') : null);
   const commentError =
     fieldErrors.comment ||
     (shouldShowError('comment')
@@ -567,7 +564,7 @@ export default function EditClientScreen() {
               setFieldErrors((prev) => ({ ...prev, middle_name: null }));
             }}
             onBlur={() => setTouched((prev) => ({ ...prev, middle_name: true }))}
-            required={fieldUi.isRequired('middle_name')}
+            required={false}
             error={shouldShowError('middle_name') && middleNameError ? 'invalid' : undefined}
             style={styles.field}
           />
@@ -619,7 +616,7 @@ export default function EditClientScreen() {
       email: () => (
         <>
           <TextField
-            label={fieldUi.withRequiredLabel('email', t('label_email'))}
+            label={fieldUi.withRequiredLabel('email', t('view_label_email'))}
             value={email}
             onChangeText={(value) => {
               setEmail(value);
@@ -833,17 +830,9 @@ export default function EditClientScreen() {
     const cleanLastName = String(lastName || '').trim();
     const cleanMiddleName = String(middleName || '').trim();
 
-    if (fieldUi.isRequired('first_name') && !cleanFirstName) {
-      setFieldErrors({ first_name: t('clients_required_any_name') });
-      return false;
-    }
-    if (fieldUi.isRequired('last_name') && !cleanLastName) {
-      setFieldErrors({ last_name: t('clients_required_any_name') });
-      return false;
-    }
-    if (fieldUi.isRequired('middle_name') && !cleanMiddleName) {
-      const message = getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t);
-      setFieldErrors({ middle_name: message });
+    if (!cleanFirstName && !cleanLastName && !cleanMiddleName) {
+      const message = t('clients_required_any_name');
+      setFieldErrors({ first_name: message, last_name: message, middle_name: message });
       return false;
     }
     if (fieldUi.isRequired('comment') && !String(comment || '').trim()) {

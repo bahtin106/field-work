@@ -72,6 +72,18 @@ const HIDDEN_EDITOR_FIELDS = Object.freeze({
     'payment_status',
     'payment_method',
   ]),
+  [ENTITY_FIELD_TYPES.EMPLOYEE]: new Set([
+    'first_name',
+    'last_name',
+    'middle_name',
+    'email',
+    'role',
+  ]),
+  [ENTITY_FIELD_TYPES.CLIENT]: new Set([
+    'first_name',
+    'last_name',
+    'middle_name',
+  ]),
 });
 
 const ORDER_MEDIA_RENAMABLE_FIELDS = new Set([

@@ -66,6 +66,7 @@ import {
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
 import { updateRequestWithVersion } from '../../src/features/requests/api';
+import { resolveRequestTitle } from '../../src/features/requests/title';
 import {
   financeQueryKeys,
   useDeleteOrderFinanceEntryMutation,
@@ -117,12 +118,10 @@ const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'street',
   'house',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
-  'entrance_info',
-  'parking_notes',
+  'comment',
   'geo_lat',
   'geo_lng',
 ]);
@@ -372,6 +371,7 @@ function FinanceSummaryIconButton({ icon, onPress, accessibilityLabel, styles })
 function OrderDetailsContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const titlePrefix = useMemo(() => t('order_auto_title_prefix', 'Заявка от'), [t]);
   const toast = useToast();
   const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings } = useCompanySettings();
@@ -507,6 +507,14 @@ function OrderDetailsContent() {
     if (value === null || value === undefined || value === '') return null;
     return String(value);
   }, []);
+  const resolveTitleForSave = useCallback(
+    (value, fallbackDate = null) =>
+      resolveRequestTitle(value, {
+        fallbackDate,
+        prefix: titlePrefix,
+      }),
+    [titlePrefix],
+  );
   const isOrderFieldVisible = useCallback(
     (fieldKey) => {
       const normalizedFieldKey = String(fieldKey || '');
@@ -800,7 +808,7 @@ function OrderDetailsContent() {
     const join = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
       const s =
-        [obj.last_name, obj.first_name, obj.middle_name].filter(Boolean).join(' ').trim() ||
+        [obj.first_name, obj.middle_name, obj.last_name].filter(Boolean).join(' ').trim() ||
         obj.full_name ||
         obj.name;
       return s ? String(s).trim() : null;
@@ -986,7 +994,7 @@ function OrderDetailsContent() {
       .replace(/^8(\d{10})$/, '7$1');
 
     return JSON.stringify({
-      title: o.title || '',
+      title: resolveRequestTitle(o, { prefix: titlePrefix }),
       comment: o.comment || '',
       region: o.region || '',
       city: o.city || '',
@@ -999,12 +1007,12 @@ function OrderDetailsContent() {
       payment_status: o.payment_status ?? null,
       payment_method: o.payment_method ?? null,
     });
-  }, []);
+  }, [titlePrefix]);
 
   const makeSnapshotFromState = useCallback(() => {
     const phoneDigits = (phone || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
     return JSON.stringify({
-      title: title || '',
+      title: resolveTitleForSave(title, departureDate),
       comment: description || '',
       region: region || '',
       city: city || '',
@@ -1036,6 +1044,7 @@ function OrderDetailsContent() {
     order?.payment_method,
     order?.payment_status,
     parseMoney,
+    resolveTitleForSave,
   ]);
 
   const formIsDirty = useCallback(() => {
@@ -1055,7 +1064,7 @@ function OrderDetailsContent() {
     const rawDigits = (
       (o.phone ?? o.customer_phone_visible ?? o.phone_visible) || ''
     ).replace(/\D/g, '');
-    setTitle(o.title || '');
+    setTitle(resolveRequestTitle(o, { prefix: titlePrefix }));
     setDescription(o.comment || '');
     setRegion(o.region || '');
     setCity(o.city || '');
@@ -1071,7 +1080,7 @@ function OrderDetailsContent() {
     // Executor name from cache (instant)
     const cachedExecName = deriveExecutorNameInstant(o);
     if (cachedExecName) setExecutorName(cachedExecName);
-  }, [deriveExecutorNameInstant]);
+  }, [deriveExecutorNameInstant, titlePrefix]);
 
 
   const fetchData = useCallback(async () => {
@@ -1194,10 +1203,11 @@ function OrderDetailsContent() {
           setExecutorName(cachedName);
         } else {
           bgTasks.push(
-            supabase.from('profiles').select('first_name, last_name').eq('id', effectiveOrder.assigned_to).single()
+            supabase.from('profiles').select('first_name, middle_name, last_name').eq('id', effectiveOrder.assigned_to).single()
               .then(({ data: executorProfile }) => {
                 if (executorProfile) {
-                  const full = `${executorProfile.first_name || ''} ${executorProfile.last_name || ''}`.trim();
+                  const full =
+                    `${executorProfile.first_name || ''} ${executorProfile.middle_name || ''} ${executorProfile.last_name || ''}`.trim();
                   setCachedExecutorName(effectiveOrder.assigned_to, full);
                   setExecutorName(full);
                 }
@@ -1208,7 +1218,7 @@ function OrderDetailsContent() {
 
       // 5d. Users list
       bgTasks.push(
-        supabase.from('profiles').select('id, first_name, last_name, role')
+        supabase.from('profiles').select('id, first_name, middle_name, last_name, role')
           .in('role', ['worker', 'dispatcher', 'admin'])
           .order('last_name', { ascending: true })
           .then(({ data: execList }) => setUsers(execList || []))
@@ -2686,7 +2696,9 @@ function OrderDetailsContent() {
           assigned_to: userId,
           status: latestOrder?.status || t('order_status_in_progress'),
         }));
-        setExecutorName(me ? `${me.first_name || ''} ${me.last_name || ''}`.trim() : null);
+        setExecutorName(
+          me ? `${me.first_name || ''} ${me.middle_name || ''} ${me.last_name || ''}`.trim() : null,
+        );
         setAssigneeId(userId);
         setToFeed(false);
         showToast('Заявка принята');
@@ -2713,7 +2725,8 @@ function OrderDetailsContent() {
     }
     if (!canEdit()) return;
 
-    if (!title.trim()) return showWarning(t('order_validation_title_required'));
+    const resolvedTitle = resolveTitleForSave(title, departureDate);
+    if (!resolvedTitle) return showWarning(t('order_validation_title_required'));
     const clientIdForContacts = order?.client_id ? String(order.client_id) : resolvedClientId;
     if (!clientIdForContacts) return showWarning(t('order_validation_client_required'));
     if (!phone.trim()) return showWarning(t('order_validation_phone_required'));
@@ -2733,7 +2746,7 @@ function OrderDetailsContent() {
         : order.status;
 
     const payload = {
-      title,
+      title: resolvedTitle,
       comment: description,
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: departureDate.toISOString(),
@@ -2776,7 +2789,7 @@ function OrderDetailsContent() {
     } else {
       setOrder(data);
       const rawDigitsSaved = ((data.customer_phone_visible || data.phone_visible) || '').replace(/\D/g, '');
-      setTitle(data.title || '');
+      setTitle(resolveRequestTitle(data, { prefix: titlePrefix }));
       setDescription(data.comment || '');
       setRegion(data.region || '');
       setCity(data.city || '');
@@ -2796,16 +2809,16 @@ function OrderDetailsContent() {
       if (data.assigned_to) {
         const sel = (users || []).find((u) => u.id === data.assigned_to);
         if (sel) {
-          setExecutorName(`${sel.first_name || ''} ${sel.last_name || ''}`.trim());
+          setExecutorName(`${sel.first_name || ''} ${sel.middle_name || ''} ${sel.last_name || ''}`.trim());
         } else {
           try {
             const { data: exec } = await supabase
               .from('profiles')
-              .select('first_name, last_name')
+              .select('first_name, middle_name, last_name')
               .eq('id', data.assigned_to)
               .single();
             setExecutorName(
-              exec ? `${exec.first_name || ''} ${exec.last_name || ''}`.trim() : null,
+              exec ? `${exec.first_name || ''} ${exec.middle_name || ''} ${exec.last_name || ''}`.trim() : null,
             );
           } catch {}
         }
@@ -2839,6 +2852,8 @@ function OrderDetailsContent() {
     linkedClient,
     resolvedClientId,
     updateClientMutation,
+    resolveTitleForSave,
+    titlePrefix,
   ]);
 
   const confirmCancel = useCallback(() => {
@@ -2853,7 +2868,7 @@ function OrderDetailsContent() {
         ''
       ).replace(/\D/g, '');
 
-      setTitle(order.title || '');
+      setTitle(resolveRequestTitle(order, { prefix: titlePrefix }));
       setDescription(order.comment || '');
       setRegion(order.region || '');
       setCity(order.city || '');
@@ -2868,7 +2883,7 @@ function OrderDetailsContent() {
       setWorkTypeId(order.work_type_id || null);
       setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
     }
-  }, [order, makeSnapshotFromOrder, applyNavBar]);
+  }, [order, makeSnapshotFromOrder, applyNavBar, titlePrefix]);
 
   const deleteOrderCompletely = useCallback(async () => {
     const deletedOrderId = String(order?.id || '').trim();
@@ -3348,7 +3363,10 @@ function OrderDetailsContent() {
     }, [editMode, requestCloseEdit, goBack]),
   );
 
-  const fullTitle = order?.title || t('routes.orders/[id]', 'routes.orders/[id]');
+  const fullTitle = resolveRequestTitle(order, {
+    prefix: titlePrefix,
+    fallbackDate: order?.time_window_start,
+  });
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
   const canViewClients = has('canViewClients');
   const canViewObjects = has('canViewObjects');
@@ -3387,13 +3405,11 @@ function OrderDetailsContent() {
         [t('order_field_city'), orderAddress.city],
         [t('order_field_street'), orderAddress.street],
         [t('order_field_house'), orderAddress.house],
-        [t('order_field_office'), orderAddress.office],
         [t('order_field_floor'), orderAddress.floor],
         [t('order_field_entrance'), orderAddress.entrance],
         [t('order_field_apartment'), orderAddress.apartment],
         [t('order_field_postal_code'), orderAddress.postal_code],
-        [t('order_field_entrance_info'), orderAddress.entrance_info],
-        [t('order_field_parking_notes'), orderAddress.parking_notes],
+        [t('order_field_comment'), orderAddress.entrance_info],
         [t('order_field_geo_lat'), orderAddress.geo_lat],
         [t('order_field_geo_lng'), orderAddress.geo_lng],
       ]
@@ -3405,13 +3421,11 @@ function OrderDetailsContent() {
             [t('order_field_city')]: 'city',
             [t('order_field_street')]: 'street',
             [t('order_field_house')]: 'house',
-            [t('order_field_office')]: 'office',
             [t('order_field_floor')]: 'floor',
             [t('order_field_entrance')]: 'entrance',
             [t('order_field_apartment')]: 'apartment',
             [t('order_field_postal_code')]: 'postal_code',
-            [t('order_field_entrance_info')]: 'entrance_info',
-            [t('order_field_parking_notes')]: 'parking_notes',
+            [t('order_field_comment')]: 'entrance_info',
             [t('order_field_geo_lat')]: 'geo_lat',
             [t('order_field_geo_lng')]: 'geo_lng',
           };
@@ -4362,7 +4376,7 @@ function OrderDetailsContent() {
           { id: '__feed__', label: t('order_modal_to_feed') },
           ...users.map((user) => ({
             id: user.id,
-            label: [user.first_name, user.last_name].filter(Boolean).join(' '),
+            label: [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' '),
           })),
         ]}
         onSelect={(item) => {

@@ -92,6 +92,7 @@ export default function UserView() {
   const avatarUrl = userData?.avatarDisplayUrl || userData?.avatarUrl || null;
   const firstName = userData?.firstName || '';
   const lastName = userData?.lastName || '';
+  const middleName = userData?.middleName || '';
   const email = userData?.email || '';
   const phone = userData?.phone || '';
   const birthdate = userData?.birthdate || null;
@@ -121,7 +122,7 @@ export default function UserView() {
     [employeeFieldSettings],
   );
   const canShowAvatarImage = fieldUi.isVisible('avatar_url');
-  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'middle_name', 'last_name', 'birthdate']);
   const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
   const canShowCompanySection =
     fieldUi.hasVisibleFields(['department_id', 'role']) &&
@@ -211,7 +212,9 @@ export default function UserView() {
   }, [phone, t, toast]);
 
   const initials =
-    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
+    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}${(middleName || '').trim().slice(0, 1)}`
+      .slice(0, 2)
+      .toUpperCase();
   const statusColor = isBlocked ? theme.colors.danger : theme.colors.success;
 
   const parsePgTs = React.useCallback((ts) => {
@@ -388,17 +391,17 @@ export default function UserView() {
         ) : null}
         {canShowPersonalSection ? (
         <Card paddedXOnly>
-          {fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name') ? (
+          {fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name') ? (
           <LabelValueRow
             label={t('view_label_name', 'view_label_name')}
             value={
-              firstName || lastName
-                ? `${firstName || ''} ${lastName || ''}`.trim()
+              firstName || middleName || lastName
+                ? `${firstName || ''} ${middleName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim()
                 : ''
             }
           />
           ) : null}
-          {(fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name')) && fieldUi.isVisible('birthdate') ? (
+          {(fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name')) && fieldUi.isVisible('birthdate') ? (
             <ListSeparator />
           ) : null}
 

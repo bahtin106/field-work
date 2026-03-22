@@ -17,7 +17,9 @@ type ReqBody = {
   role?: string | null;
   profile?: {
     first_name?: string | null;
+    middle_name?: string | null;
     last_name?: string | null;
+    full_name?: string | null;
     phone?: string | null;
     birthdate?: string | null;
     department_id?: string | null;
@@ -63,6 +65,7 @@ serve(async (req: Request) => {
     const profilePatch: any = {};
     if (profile && typeof profile === 'object') {
       if ('first_name' in profile) profilePatch.first_name = profile.first_name;
+      if ('middle_name' in profile) profilePatch.middle_name = profile.middle_name;
       if ('last_name' in profile) profilePatch.last_name = profile.last_name;
       if ('phone' in profile) profilePatch.phone = profile.phone;
       if ('birthdate' in profile) profilePatch.birthdate = profile.birthdate;
@@ -84,13 +87,15 @@ serve(async (req: Request) => {
     }
 
     const shouldSyncFullName =
-      'first_name' in profilePatch || 'last_name' in profilePatch;
+      'first_name' in profilePatch || 'middle_name' in profilePatch || 'last_name' in profilePatch;
     if (shouldSyncFullName) {
       const firstValue =
         typeof profilePatch.first_name === 'string' ? profilePatch.first_name.trim() : '';
+      const middleValue =
+        typeof profilePatch.middle_name === 'string' ? profilePatch.middle_name.trim() : '';
       const lastValue =
         typeof profilePatch.last_name === 'string' ? profilePatch.last_name.trim() : '';
-      const combined = [firstValue, lastValue].filter(Boolean).join(' ').trim();
+      const combined = [firstValue, middleValue, lastValue].filter(Boolean).join(' ').trim();
       profilePatch.full_name = combined || null;
     }
 
