@@ -4,8 +4,8 @@ import {
 } from './addressing';
 
 const TEXT_FIELDS = ['country', 'region', 'district', 'city', 'street', 'postal_code'];
-const EXACT_FIELDS = ['house', 'office', 'entrance', 'apartment', 'floor'];
-const OPTIONAL_TEXT_FIELDS = ['entrance_info', 'parking_notes'];
+const EXACT_FIELDS = ['house', 'entrance', 'apartment', 'floor'];
+const OPTIONAL_TEXT_FIELDS = ['comment'];
 const STREET_SYNONYMS = new Map([
   ['ул', 'улица'],
   ['ул.', 'улица'],
@@ -80,9 +80,17 @@ function normalizeObjectForMatch(objectLike) {
   const normalized = {};
   for (const field of CLIENT_OBJECT_ADDRESS_FIELDS) {
     if (TEXT_FIELDS.includes(field) || OPTIONAL_TEXT_FIELDS.includes(field)) {
-      normalized[field] = normalizeText(objectLike?.[field]);
+      if (field === 'comment') {
+        normalized[field] = normalizeText(objectLike?.comment || objectLike?.entrance_info);
+      } else {
+        normalized[field] = normalizeText(objectLike?.[field]);
+      }
     } else if (EXACT_FIELDS.includes(field)) {
-      normalized[field] = normalizeNumberLike(objectLike?.[field]);
+      if (field === 'apartment') {
+        normalized[field] = normalizeNumberLike(objectLike?.apartment || objectLike?.office);
+      } else {
+        normalized[field] = normalizeNumberLike(objectLike?.[field]);
+      }
     } else {
       normalized[field] = trimToEmpty(objectLike?.[field]);
     }
@@ -104,10 +112,10 @@ export function findExactMatchingClientObject(draftObject, clientObjects) {
         ['country', 'region', 'district', 'city', 'street', 'postal_code'].every(
           (field) => normalizedDraft[field] === normalizedCandidate[field],
         ) &&
-        ['house', 'office', 'entrance', 'apartment', 'floor'].every(
+        ['house', 'entrance', 'apartment', 'floor'].every(
           (field) => normalizedDraft[field] === normalizedCandidate[field],
         ) &&
-        ['entrance_info', 'parking_notes'].every(
+        ['comment'].every(
           (field) => normalizedDraft[field] === normalizedCandidate[field],
         )
       );
@@ -132,12 +140,6 @@ function weightedSimilarity(draft, candidate) {
     draft.district && candidate.district ? similarityScore(draft.district, candidate.district) : 0.92;
   const houseScore =
     draft.house && candidate.house ? (draft.house === candidate.house ? 1 : 0) : 0;
-  const officeScore =
-    draft.office && candidate.office
-      ? draft.office === candidate.office
-        ? 1
-        : 0
-      : 1;
   const apartmentScore =
     draft.apartment && candidate.apartment
       ? draft.apartment === candidate.apartment
@@ -154,12 +156,11 @@ function weightedSimilarity(draft, candidate) {
   return (
     streetScore * 0.36 +
     cityScore * 0.2 +
-    regionScore * 0.06 +
-    districtScore * 0.02 +
+    regionScore * 0.08 +
+    districtScore * 0.04 +
     houseScore * 0.22 +
-    officeScore * 0.06 +
-    apartmentScore * 0.06 +
-    entranceScore * 0.02
+    apartmentScore * 0.07 +
+    entranceScore * 0.03
   );
 }
 
@@ -208,8 +209,7 @@ export function findBestMatchingClientObject(draftObject, clientObjects) {
       street: normalizeText(draftObject?.street),
       house: normalizeNumberLike(draftObject?.house),
       city: normalizeText(draftObject?.city),
-      apartment: normalizeNumberLike(draftObject?.apartment),
-      office: normalizeNumberLike(draftObject?.office),
+      apartment: normalizeNumberLike(draftObject?.apartment || draftObject?.office),
       entrance: normalizeNumberLike(draftObject?.entrance),
     }),
   };

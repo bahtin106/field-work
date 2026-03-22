@@ -16,12 +16,10 @@ const FIELD_LABEL_KEYS = {
   street: 'order_field_street',
   house: 'order_field_house',
   postal_code: 'order_field_postal_code',
-  office: 'order_field_office',
   floor: 'order_field_floor',
   entrance: 'order_field_entrance',
   apartment: 'order_field_apartment',
-  entrance_info: 'order_field_entrance_info',
-  parking_notes: 'order_field_parking_notes',
+  comment: 'order_field_comment',
   geo_lat: 'order_field_geo_lat',
   geo_lng: 'order_field_geo_lng',
 };
@@ -34,18 +32,16 @@ const FIELD_PLACEHOLDER_KEYS = {
   street: 'create_order_placeholder_street',
   house: 'create_order_placeholder_house',
   postal_code: 'create_order_placeholder_postal_code',
-  office: 'create_order_placeholder_office',
   floor: 'create_order_placeholder_floor',
   entrance: 'create_order_placeholder_entrance',
   apartment: 'create_order_placeholder_apartment',
-  entrance_info: 'create_order_placeholder_entrance_info',
-  parking_notes: 'create_order_placeholder_parking_notes',
+  comment: 'create_order_placeholder_comment',
   geo_lat: 'create_order_placeholder_geo_lat',
   geo_lng: 'create_order_placeholder_geo_lng',
 };
 
 const NUMERIC_FIELDS = new Set(['geo_lat', 'geo_lng']);
-const MULTILINE_FIELDS = new Set(['entrance_info', 'parking_notes']);
+const MULTILINE_FIELDS = new Set(['comment']);
 
 export default function ClientAddressEditorModal({
   visible,

@@ -184,6 +184,7 @@ export default function NewUserScreen() {
   // state
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [middleName, setMiddleName] = useState('');
   const [headerName, setHeaderName] = useState(t('placeholder_no_name'));
   const [email, setEmail] = useState('');
   const [role, setRole] = useState(ROLE.WORKER);
@@ -241,6 +242,7 @@ export default function NewUserScreen() {
   const [invalidCharWarning, setInvalidCharWarning] = useState(false);
 
   const firstNameRef = useRef(null);
+  const middleNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
   const _pwdRef = useRef(null);
@@ -329,17 +331,28 @@ export default function NewUserScreen() {
     [employeeFieldSettings],
   );
   const canManageAvatar = fieldUi.isVisible('avatar_url');
-  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'middle_name', 'birthdate']);
   const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
   const canShowCompanySection =
     fieldUi.hasVisibleFields(['department_id', 'role']) && (useDepartments || fieldUi.isVisible('role'));
   const orderedPersonalFieldKeys = useMemo(
-    () =>
-      getOrderedEntityFields(employeeFieldSettings, {
+    () => {
+      const keys = getOrderedEntityFields(employeeFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['first_name', 'last_name', 'birthdate'],
-      }).map((field) => field.fieldKey),
+        fieldKeys: ['first_name', 'middle_name', 'last_name', 'birthdate'],
+      }).map((field) => field.fieldKey);
+      const nameSequence = ['first_name', 'middle_name', 'last_name'];
+      const firstNameFieldIndex = keys.findIndex((key) => nameSequence.includes(key));
+      if (firstNameFieldIndex < 0) return keys;
+      const names = nameSequence.filter((key) => keys.includes(key));
+      const withoutNames = keys.filter((key) => !nameSequence.includes(key));
+      return [
+        ...withoutNames.slice(0, firstNameFieldIndex),
+        ...names,
+        ...withoutNames.slice(firstNameFieldIndex),
+      ];
+    },
     [employeeFieldSettings],
   );
   const orderedContactFieldKeys = useMemo(
@@ -378,12 +391,21 @@ export default function NewUserScreen() {
     () => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
     [t],
   );
+  const hasAnyName = useMemo(
+    () => !!(firstName.trim() || lastName.trim() || middleName.trim()),
+    [firstName, lastName, middleName],
+  );
+  const shouldShowAnyNameError =
+    shouldShowError('firstName') || shouldShowError('middleName') || shouldShowError('lastName');
   const firstNameError =
     fieldErrors.firstName?.message ||
-    (shouldShowError('firstName') && fieldUi.isRequired('first_name') && !firstName.trim() ? requiredMsg : null);
+    (shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
+  const middleNameError =
+    fieldErrors.middleName?.message ||
+    (shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
   const lastNameError =
     fieldErrors.lastName?.message ||
-    (shouldShowError('lastName') && fieldUi.isRequired('last_name') && !lastName.trim() ? requiredMsg : null);
+    (shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
   const emailError =
     fieldErrors.email?.message ||
     ((fieldUi.isVisible('email') && (shouldShowError('email') || emailCheckStatus === 'taken'))
@@ -486,8 +508,10 @@ export default function NewUserScreen() {
 
   const initials = useMemo(
     () =>
-      `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
-    [firstName, lastName],
+      `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}${(middleName || '').trim().slice(0, 1)}`
+        .slice(0, 2)
+        .toUpperCase(),
+    [firstName, lastName, middleName],
   );
   const personalFieldRenderers = useMemo(
     () => ({
@@ -508,6 +532,25 @@ export default function NewUserScreen() {
             error={firstNameError ? 'invalid' : undefined}
           />
           <FieldErrorText message={firstNameError} />
+        </>
+      ),
+      middle_name: () => (
+        <>
+          <TextField
+            ref={middleNameRef}
+            label={fieldUi.withRequiredLabel('middle_name', t('label_middle_name'))}
+            placeholder={t('label_middle_name')}
+            style={styles.field}
+            value={middleName}
+            onChangeText={(val) => {
+              setMiddleName(val);
+              clearFieldError('middleName');
+            }}
+            onBlur={() => setTouched((prev) => ({ ...prev, middleName: true }))}
+            forceValidation={submittedAttempt}
+            error={middleNameError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={middleNameError} />
         </>
       ),
       last_name: () => (
@@ -555,7 +598,7 @@ export default function NewUserScreen() {
         </>
       ),
     }),
-    [birthdate, birthdateError, clearFieldError, fieldUi, firstName, firstNameError, lastName, lastNameError, styles.field, submittedAttempt, t, withYear],
+    [birthdate, birthdateError, clearFieldError, fieldUi, firstName, firstNameError, lastName, lastNameError, middleName, middleNameError, styles.field, submittedAttempt, t, withYear],
   );
   const contactFieldRenderers = useMemo(
     () => ({
@@ -563,7 +606,7 @@ export default function NewUserScreen() {
         <>
           <TextField
             ref={emailRef}
-            label={fieldUi.withRequiredLabel('email', t('label_email'))}
+            label={fieldUi.withRequiredLabel('email', t('view_label_email'))}
             placeholder={t('placeholder_email')}
             style={styles.field}
             keyboardType="email-address"
@@ -634,6 +677,7 @@ export default function NewUserScreen() {
     initialSnapRef.current = JSON.stringify({
       firstName: '',
       lastName: '',
+      middleName: '',
       email: '',
       phone: '',
       role: ROLE.WORKER,
@@ -645,6 +689,7 @@ export default function NewUserScreen() {
     return (
       !firstName.trim() &&
       !lastName.trim() &&
+      !middleName.trim() &&
       !email.trim() &&
       !String(phone || '').replace(/\D/g, '') &&
       !birthdate &&
@@ -654,6 +699,7 @@ export default function NewUserScreen() {
   }, [
     firstName,
     lastName,
+    middleName,
     email,
     phone,
     birthdate,
@@ -666,6 +712,7 @@ export default function NewUserScreen() {
     const snap = JSON.stringify({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
+      middleName: middleName.trim(),
       email: email.trim(),
       phone: String(phone || '').replace(/\D/g, ''),
       role,
@@ -677,7 +724,7 @@ export default function NewUserScreen() {
       avatar: !!avatarUrl,
     });
     return snap !== initialSnapRef.current;
-  }, [firstName, lastName, email, phone, role, birthdate, withYear, avatarUrl]);
+  }, [firstName, lastName, middleName, email, phone, role, birthdate, withYear, avatarUrl]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -701,10 +748,10 @@ export default function NewUserScreen() {
 
   useEffect(() => {
     setHeaderName(
-      `${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() ||
+      `${firstName || ''} ${middleName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() ||
         t('placeholder_no_name'),
     );
-  }, [firstName, lastName, t]);
+  }, [firstName, lastName, middleName, t]);
 
   const ensureCameraPerms = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -764,8 +811,9 @@ export default function NewUserScreen() {
     setSubmittedAttempt(true);
 
     //    ( )
-    const missingFirst = fieldUi.isRequired('first_name') && !firstName.trim();
-    const missingLast = fieldUi.isRequired('last_name') && !lastName.trim();
+    const missingAnyName = fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name')
+      ? !(`${firstName}`.trim() || `${middleName}`.trim() || `${lastName}`.trim())
+      : false;
     const missingEmail = fieldUi.isRequired('email') && !email.trim();
     const invalidEmail = fieldUi.isVisible('email') && !!email.trim() && !emailValid;
     const missingPhone = fieldUi.isRequired('phone') && !hasMobilePhoneValue(phone);
@@ -784,15 +832,25 @@ export default function NewUserScreen() {
       return;
     }
 
-    if (missingFirst || missingLast || missingEmail || invalidEmail || missingPhone || missingBirthdate || missingDepartment) {
+    if (missingAnyName || missingEmail || invalidEmail || missingPhone || missingBirthdate || missingDepartment) {
+      if (missingAnyName) {
+        setFieldErrors((prev) => ({
+          ...prev,
+          firstName: { message: requiredMsg },
+          middleName: { message: requiredMsg },
+          lastName: { message: requiredMsg },
+          ...(missingBirthdate ? { birthdate: { message: requiredMsg } } : {}),
+          ...(missingDepartment ? { department_id: { message: requiredMsg } } : {}),
+        }));
+      } else {
       setFieldErrors((prev) => ({
         ...prev,
         ...(missingBirthdate ? { birthdate: { message: requiredMsg } } : {}),
         ...(missingDepartment ? { department_id: { message: requiredMsg } } : {}),
       }));
+      }
       scrollToFirstInvalid([
-        { invalid: missingFirst, ref: firstNameRef, fallbackY: 0 },
-        { invalid: missingLast, ref: lastNameRef, fallbackY: 0 },
+        { invalid: missingAnyName, ref: firstNameRef, fallbackY: 0 },
         { invalid: missingEmail || invalidEmail, ref: emailRef, fallbackY: 0 },
         { invalid: missingPhone, ref: phoneRef, fallbackY: 0 },
       ]);
@@ -829,6 +887,7 @@ export default function NewUserScreen() {
     submitting,
     firstName,
     lastName,
+    middleName,
     emailValid,
     emailCheckStatus,
     email,
@@ -853,7 +912,7 @@ export default function NewUserScreen() {
     setFieldErrors({});
 
     try {
-      const fullName = `${firstName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
+      const fullName = `${firstName.trim()} ${middleName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
       if (hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
         throw new Error(t('err_phone'));
       }
@@ -882,6 +941,7 @@ export default function NewUserScreen() {
       const payload = {
         email: inviteEmail,
         first_name: fieldUi.isVisible('first_name') ? firstName.trim() || null : null,
+        middle_name: fieldUi.isVisible('middle_name') ? middleName.trim() || null : null,
         last_name: fieldUi.isVisible('last_name') ? lastName.trim() || null : null,
         full_name: fullName || null,
         phone: fieldUi.isVisible('phone') ? phoneNormalized : null,
@@ -939,6 +999,7 @@ export default function NewUserScreen() {
     submitting,
     firstName,
     lastName,
+    middleName,
     phone,
     birthdate,
     withYear,
@@ -1032,7 +1093,9 @@ export default function NewUserScreen() {
               ) : null}
             </Pressable>
             <View style={{ flex: 1 }}>
-              <Text style={styles.nameTitle}>{headerName}</Text>
+              <Text style={styles.nameTitle} numberOfLines={2} ellipsizeMode="tail">
+                {headerName}
+              </Text>
             </View>
           </View>
         </Card>

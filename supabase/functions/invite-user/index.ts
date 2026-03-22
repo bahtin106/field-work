@@ -25,6 +25,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 type InviteBody = {
   email?: string;
   first_name?: string | null;
+  middle_name?: string | null;
   last_name?: string | null;
   full_name?: string | null;
   phone?: string | null;
@@ -153,6 +154,7 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
       email_confirm: true,
       user_metadata: {
         first_name: body.first_name || null,
+        middle_name: body.middle_name || null,
         last_name: body.last_name || null,
         full_name: body.full_name || null,
         invited_by: user.id,
@@ -182,13 +184,16 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
     if (!invitedUserId) return err('Failed to create invited user', 400);
 
     const fullName = String(body.full_name || '').trim() ||
-      `${String(body.first_name || '').trim()} ${String(body.last_name || '').trim()}`.trim() ||
+      `${String(body.first_name || '').trim()} ${String(body.middle_name || '').trim()} ${String(body.last_name || '').trim()}`
+        .replace(/\s+/g, ' ')
+        .trim() ||
       null;
 
     const upsertPayload = {
       id: invitedUserId,
       email,
       first_name: body.first_name || null,
+      middle_name: body.middle_name || null,
       last_name: body.last_name || null,
       full_name: fullName,
       phone: body.phone || null,

@@ -254,7 +254,7 @@ function UsersIndexContent() {
       return matchesSearch(
         buildSearchIndex({
           texts: [
-            `${u.first_name || ''} ${u.last_name || ''}`.trim(),
+            `${u.first_name || ''} ${u.middle_name || ''} ${u.last_name || ''}`.trim(),
             u?.display_name,
             u?.full_name,
             u?.email,
@@ -279,7 +279,7 @@ function UsersIndexContent() {
         sortKey,
         getName: (item) =>
           (item?.display_name || '').trim() ||
-          `${item?.first_name || ''} ${item?.last_name || ''}`.trim() ||
+          `${item?.first_name || ''} ${item?.middle_name || ''} ${item?.last_name || ''}`.trim() ||
           item?.full_name ||
           '',
         getDepartmentName: (item) => {

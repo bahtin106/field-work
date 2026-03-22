@@ -359,10 +359,10 @@ export default function BillingScreen() {
   const hasStorageUsage = !!storageUsage && typeof storageUsage === 'object';
   const storageLimitBytes = Number(storageUsage?.limit_bytes || STORAGE_LIMITS.COMPANY_TOTAL_BYTES);
   const usedStorageBytes = Number(storageUsage?.total_bytes ?? 0);
-  const dataStorageBytes = Number(storageUsage?.data_bytes ?? 0);
+  const _dataStorageBytes = Number(storageUsage?.data_bytes ?? 0);
   const mediaStorageBytes = Number(storageUsage?.media_bytes ?? 0);
   const mediaOrdersBytes = Number(storageUsage?.media_orders_bytes ?? 0);
-  const combinedMediaBytes = Math.max(0, mediaStorageBytes + mediaOrdersBytes);
+  const _combinedMediaBytes = Math.max(0, mediaStorageBytes + mediaOrdersBytes);
   const storageUsedPercent = Math.max(
     0,
     Math.min(
@@ -1097,7 +1097,7 @@ export default function BillingScreen() {
                 </View>
                 {item.action === 'reassign' ? (
                   <Pressable onPress={() => setSelectUserForReassign(item.userId)} style={({ pressed }) => [styles(theme).selectSuccessorBtn, pressed ? styles(theme).pressed : null]}>
-                    <Text style={styles(theme).selectSuccessorText}>{successor ? `${t('billing_manage_successor')}: ${successor.full_name || `${successor.first_name || ''} ${successor.last_name || ''}`.trim()}` : t('billing_manage_choose_successor')}</Text>
+                    <Text style={styles(theme).selectSuccessorText}>{successor ? `${t('billing_manage_successor')}: ${successor.full_name || `${successor.first_name || ''} ${successor.middle_name || ''} ${successor.last_name || ''}`.trim()}` : t('billing_manage_choose_successor')}</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -1116,7 +1116,7 @@ export default function BillingScreen() {
           if (!conflict) return [];
           return (conflict.availableEmployees || []).map((emp) => ({
             id: emp.id,
-            label: emp.full_name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.email || String(emp.id),
+            label: emp.full_name || `${emp.first_name || ''} ${emp.middle_name || ''} ${emp.last_name || ''}`.trim() || emp.email || String(emp.id),
             subtitle: t(`role_${emp.role || ROLE.WORKER}`, emp.role || ROLE.WORKER),
           }));
         })()}
@@ -1139,7 +1139,7 @@ export default function BillingScreen() {
           });
           return Array.from(available.values()).map((emp) => ({
             id: emp.id,
-            label: emp.full_name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.email || String(emp.id),
+            label: emp.full_name || `${emp.first_name || ''} ${emp.middle_name || ''} ${emp.last_name || ''}`.trim() || emp.email || String(emp.id),
             subtitle: t(`role_${emp.role || ROLE.WORKER}`, emp.role || ROLE.WORKER),
           }));
         })()}

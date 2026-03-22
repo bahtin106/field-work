@@ -13,12 +13,11 @@ export const ORDER_ADDRESS_FIELDS = Object.freeze([
   'street',
   'house',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
+  'comment',
   'entrance_info',
-  'parking_notes',
   'geo_lat',
   'geo_lng',
 ]);
@@ -36,6 +35,9 @@ export function extractOrderAddress(source) {
     const normalized = String(source?.[field] ?? '').trim();
     result[field] = normalized || '';
   }
+  result.apartment = String(source?.apartment ?? source?.office ?? result.apartment ?? '').trim();
+  result.comment = String(source?.comment ?? source?.entrance_info ?? result.comment ?? '').trim();
+  result.entrance_info = result.comment;
   result[ORDER_LOCATION_MODE_FIELD] =
     String(source?.[ORDER_LOCATION_MODE_FIELD] || '').trim().toLowerCase() === 'map'
       ? 'map'
@@ -46,7 +48,12 @@ export function extractOrderAddress(source) {
 }
 
 export function extractOrderAddressFromObject(objectItem) {
-  return extractOrderAddress(objectItem || {});
+  const source = objectItem || {};
+  return extractOrderAddress({
+    ...source,
+    apartment: source?.apartment || source?.office || '',
+    comment: source?.comment || source?.entrance_info || '',
+  });
 }
 
 export function toOrderAddressPatch(address) {
@@ -73,7 +80,6 @@ export function buildOrderAddressDisplay(address) {
     normalized.street ? `ул. ${String(normalized.street).trim()}` : '',
     normalized.house ? `д. ${String(normalized.house).trim()}` : '',
     normalized.apartment ? `кв. ${String(normalized.apartment).trim()}` : '',
-    normalized.office ? `оф. ${String(normalized.office).trim()}` : '',
     normalized.entrance ? `подъезд ${String(normalized.entrance).trim()}` : '',
     normalized.floor ? `этаж ${String(normalized.floor).trim()}` : '',
   ]

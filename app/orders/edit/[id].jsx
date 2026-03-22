@@ -84,6 +84,7 @@ import { buildSearchIndex, matchesSearch } from '../../../src/shared/search/matc
 import { useTheme } from '../../../theme/ThemeProvider';
 import DeferredScreen from '../../../src/shared/perf/DeferredScreen';
 import { openCoordinatesInYandex } from '../../../components/ui/map';
+import { resolveRequestTitle } from '../../../src/features/requests/title';
 
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
@@ -242,6 +243,7 @@ function EditOrderContent() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const [touched, setTouched] = useState({});
+  const titlePrefix = useMemo(() => T('order_auto_title_prefix', 'Заявка от'), []);
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const insets = useSafeAreaInsets();
@@ -482,14 +484,9 @@ function EditOrderContent() {
         value: fullAddress || T('order_details_address_not_specified'),
       },
       {
-        key: 'entrance_info',
-        label: T('order_field_entrance_info'),
-        value: String(previewObject.entrance_info || '').trim(),
-      },
-      {
-        key: 'parking_notes',
-        label: T('order_field_parking_notes'),
-        value: String(previewObject.parking_notes || '').trim(),
+        key: 'comment',
+        label: T('order_field_comment'),
+        value: String(previewObject.comment || previewObject.entrance_info || '').trim(),
       },
     ].filter((row) => String(row?.value || '').trim());
   }, [previewObject]);
@@ -578,12 +575,12 @@ function EditOrderContent() {
         setStreet(objectAddress.street);
         setHouse(objectAddress.house);
         setPostalCode(objectAddress.postal_code);
-        setOffice(objectAddress.office);
+        setOffice(objectAddress.apartment || objectAddress.office || '');
         setFloor(objectAddress.floor);
         setEntrance(objectAddress.entrance);
         setApartment(objectAddress.apartment);
-        setEntranceInfo(objectAddress.entrance_info);
-        setParkingNotes(objectAddress.parking_notes);
+        setEntranceInfo(objectAddress.comment || objectAddress.entrance_info || '');
+        setParkingNotes('');
         setGeoLat(objectAddress.geo_lat);
         setGeoLng(objectAddress.geo_lng);
         setCustomAddressLocationMode(
@@ -736,6 +733,14 @@ function EditOrderContent() {
     () => normalizeDateOrNull(departureEndDate),
     [departureEndDate, normalizeDateOrNull],
   );
+  const resolveTitleForSave = useCallback(
+    (value, fallbackDate = null) =>
+      resolveRequestTitle(value, {
+        fallbackDate,
+        prefix: titlePrefix,
+      }),
+    [titlePrefix],
+  );
 
   const buildSnapshot = useCallback(
     (draft) =>
@@ -789,7 +794,7 @@ function EditOrderContent() {
 
     (async () => {
       const row = orderData;
-      const nextTitle = row.title || '';
+      const nextTitle = resolveRequestTitle(row, { prefix: titlePrefix });
       const nextDescription = row.comment || '';
       const nextRegion = row.region || '';
       const nextDistrict = row.district || '';
@@ -798,17 +803,17 @@ function EditOrderContent() {
       const nextHouse = row.house || '';
       const nextCountry = row.country ?? country ?? '';
       const nextPostalCode = row.postal_code ?? postalCode ?? '';
-      const nextOffice = row.office ?? office ?? '';
+      const nextOffice = row.apartment ?? row.office ?? office ?? '';
       const nextFloor = row.floor ?? floor ?? '';
       const nextEntrance = row.entrance ?? entrance ?? '';
       const nextApartment = row.apartment ?? apartment ?? '';
       const nextCustomerName =
         row.fio ||
         row.customer_name ||
-        row.client?.full_name ||
-        [row.client?.last_name, row.client?.first_name, row.client?.middle_name]
+        [row.client?.first_name, row.client?.middle_name, row.client?.last_name]
           .filter(Boolean)
           .join(' ') ||
+        row.client?.full_name ||
         '';
       const nextClientId = normalizeId(row.client_id);
       const nextObjectId = normalizeId(row.object_id);
@@ -817,8 +822,8 @@ function EditOrderContent() {
         nextAddressMode = ORDER_ADDRESS_MODE.CUSTOM;
       }
       const raw = (row.phone || row.customer_phone_visible || '').replace(/\D/g, '');
-      const nextEntranceInfo = row.entrance_info ?? '';
-      const nextParkingNotes = row.parking_notes ?? '';
+      const nextEntranceInfo = row.entrance_info ?? row.object?.comment ?? '';
+      const nextParkingNotes = '';
       const nextGeoLat = row.geo_lat ?? '';
       const nextGeoLng = row.geo_lng ?? '';
       const nextCustomAddressLocationMode = normalizeClientObjectLocationMode(row.location_mode, {
@@ -843,7 +848,7 @@ function EditOrderContent() {
       let nextAssignedEmployeeLabel = '';
       if (row.assigned_to && row.assignee_profile) {
         const data = row.assignee_profile;
-        const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+        const nameParts = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
         const normalizedFullName = (data.full_name || '').trim();
         nextAssignedEmployeeLabel = nameParts || normalizedFullName || data.email || '';
       }
@@ -1017,6 +1022,7 @@ function EditOrderContent() {
     floor,
     entrance,
     apartment,
+    titlePrefix,
   ]);
   useEffect(() => {
     if (!assigneeId) {
@@ -1377,12 +1383,11 @@ function EditOrderContent() {
       street,
       house,
       postal_code: postalCode,
-      office,
       floor,
       entrance,
-      apartment,
+      apartment: apartment || office,
       entrance_info: entranceInfo,
-      parking_notes: parkingNotes,
+      parking_notes: '',
       geo_lat: geoLat,
       geo_lng: geoLng,
       location_mode: customAddressLocationMode,
@@ -1399,7 +1404,6 @@ function EditOrderContent() {
       geoLat,
       geoLng,
       house,
-      parkingNotes,
       postalCode,
       region,
       street,
@@ -1476,13 +1480,14 @@ function EditOrderContent() {
       { key: 'street', label: T('order_field_street'), ref: streetRef },
       { key: 'house', label: T('order_field_house'), ref: houseRef },
       { key: 'postal_code', label: T('order_field_postal_code'), ref: postalCodeRef },
-      { key: 'office', label: T('order_field_office'), ref: officeRef },
       { key: 'floor', label: T('order_field_floor'), ref: floorRef },
       { key: 'entrance', label: T('order_field_entrance'), ref: entranceRef },
       { key: 'apartment', label: T('order_field_apartment'), ref: apartmentRef },
-      { key: 'entrance_info', label: T('order_field_entrance_info'), ref: entranceInfoRef },
-      { key: 'parking_notes', label: T('order_field_parking_notes'), ref: parkingNotesRef },
-    ].filter((field) => objectFieldsByKey.get(field.key)?.isEnabled !== false),
+      { key: 'entrance_info', label: T('order_field_comment'), ref: entranceInfoRef, settingsKey: 'comment' },
+    ].filter((field) => {
+      const lookupKey = field.settingsKey || field.key;
+      return objectFieldsByKey.get(lookupKey)?.isEnabled !== false;
+    }),
     [objectFieldsByKey],
   );
   const applyAddressDraft = useCallback((draft) => {
@@ -1494,12 +1499,12 @@ function EditOrderContent() {
     setStreet(next.street);
     setHouse(next.house);
     setPostalCode(next.postal_code);
-    setOffice(next.office);
+    setOffice(next.apartment || next.office || '');
     setFloor(next.floor);
     setEntrance(next.entrance);
     setApartment(next.apartment);
-    setEntranceInfo(next.entrance_info);
-    setParkingNotes(next.parking_notes);
+    setEntranceInfo(next.comment || next.entrance_info || '');
+    setParkingNotes('');
     setGeoLat(next.geo_lat);
     setGeoLng(next.geo_lng);
     setCustomAddressLocationMode(
@@ -1624,8 +1629,9 @@ function EditOrderContent() {
     } catch {
     }
 
+    const resolvedTitle = resolveTitleForSave(title, departureDate);
     const nextErrors = {};
-    if (isFieldRequired('title') && !title.trim()) {
+    if (isFieldRequired('title') && !resolvedTitle) {
       nextErrors.title = { message: T('order_validation_title_required') };
     }
     if (isFieldRequired('comment') && !String(description || '').trim()) {
@@ -1782,7 +1788,7 @@ function EditOrderContent() {
         });
       }
       const payload = {
-        title,
+        title: resolveTitleForSave(title, normalizedDepartureDate),
         comment: description,
         client_id: normalizeId(selectedClientId),
         object_id:

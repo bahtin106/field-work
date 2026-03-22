@@ -50,12 +50,10 @@ export type OrderObjectSearchResult = {
   street: string;
   house: string;
   postal_code: string;
-  office: string;
   floor: string;
   entrance: string;
   apartment: string;
-  entrance_info: string;
-  parking_notes: string;
+  comment: string;
 };
 
 export async function listClientObjects(clientId: string) {
@@ -234,12 +232,10 @@ export async function searchCompanyObjectsForOrder({
       street: String(row?.street || '').trim(),
       house: String(row?.house || '').trim(),
       postal_code: String(row?.postal_code || '').trim(),
-      office: String(row?.office || '').trim(),
       floor: String(row?.floor || '').trim(),
       entrance: String(row?.entrance || '').trim(),
-      apartment: String(row?.apartment || '').trim(),
-      entrance_info: String(row?.entrance_info || '').trim(),
-      parking_notes: String(row?.parking_notes || '').trim(),
+      apartment: String(row?.apartment || row?.office || '').trim(),
+      comment: String(row?.comment || row?.entrance_info || '').trim(),
     }));
   });
 }

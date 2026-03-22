@@ -159,7 +159,6 @@ export default function ObjectViewScreen() {
     [t('order_field_city'), objectItem?.city],
     [t('order_field_street'), objectItem?.street],
     [t('order_field_house'), objectItem?.house],
-    [t('order_field_office'), objectItem?.office],
     [t('order_field_floor'), objectItem?.floor],
     [t('order_field_entrance'), objectItem?.entrance],
     [t('order_field_apartment'), objectItem?.apartment],
@@ -173,7 +172,6 @@ export default function ObjectViewScreen() {
         [t('order_field_city')]: 'city',
         [t('order_field_street')]: 'street',
         [t('order_field_house')]: 'house',
-        [t('order_field_office')]: 'office',
         [t('order_field_floor')]: 'floor',
         [t('order_field_entrance')]: 'entrance',
         [t('order_field_apartment')]: 'apartment',
@@ -185,13 +183,11 @@ export default function ObjectViewScreen() {
     .filter(([, value]) => String(value || '').trim().length > 0)
     .map(([label, value]) => ({ label, value: String(value || '').trim() }));
   const additionalInfoItems = [
-    [t('order_field_parking_notes'), objectItem?.parking_notes],
-    [t('order_field_entrance_info'), objectItem?.entrance_info],
+    [t('order_field_comment'), objectItem?.comment || objectItem?.entrance_info],
   ]
     .filter(([label]) => {
       const keyMap = {
-        [t('order_field_parking_notes')]: 'parking_notes',
-        [t('order_field_entrance_info')]: 'entrance_info',
+        [t('order_field_comment')]: 'comment',
       };
       const fieldKey = keyMap[label];
       return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled !== false : true;

@@ -866,8 +866,8 @@ export default function EditObjectScreen() {
                       setDraft((prev) => ({ ...prev, [field]: value }));
                       setFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
                     }}
-                    multiline={field === 'entrance_info' || field === 'parking_notes'}
-                    minLines={field === 'entrance_info' || field === 'parking_notes' ? 2 : undefined}
+                    multiline={field === 'comment'}
+                    minLines={field === 'comment' ? 2 : undefined}
                     error={fieldErrors?.[field] ? 'invalid' : undefined}
                     style={styles.field}
                   />

@@ -626,6 +626,7 @@ export default function EditUser() {
   const [avatarKey, setAvatarKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -645,10 +646,18 @@ export default function EditUser() {
     });
   }, []);
 
-  const headerName = useMemo(() => {
-    const name = `${firstName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim();
-    return name || t('placeholder_no_name');
-  }, [firstName, lastName, t]);
+  const headerPrimaryName = useMemo(() => {
+    const name = `${firstName || ''} ${middleName || ''}`.replace(/\s+/g, ' ').trim();
+    return name || '';
+  }, [firstName, middleName]);
+  const headerSecondaryName = useMemo(
+    () => String(lastName || '').trim(),
+    [lastName],
+  );
+  const headerFallbackName = useMemo(
+    () => t('placeholder_no_name'),
+    [t],
+  );
   const [birthdate, setBirthdate] = useState(null);
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
@@ -694,19 +703,30 @@ export default function EditUser() {
     [employeeFieldSettings],
   );
   const canManageAvatar = fieldUi.isVisible('avatar_url');
-  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'birthdate']);
+  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'middle_name', 'last_name', 'birthdate']);
   const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
   const canEditDepartmentField = meIsAdmin && useDepartments && fieldUi.isVisible('department_id');
   const canShowCompanySection =
     fieldUi.hasVisibleFields(['department_id', 'role']) &&
     ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role'));
   const orderedPersonalFieldKeys = useMemo(
-    () =>
-      getOrderedEntityFields(employeeFieldSettings, {
+    () => {
+      const keys = getOrderedEntityFields(employeeFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['first_name', 'last_name', 'birthdate'],
-      }).map((field) => field.fieldKey),
+        fieldKeys: ['first_name', 'middle_name', 'last_name', 'birthdate'],
+      }).map((field) => field.fieldKey);
+      const nameSequence = ['first_name', 'middle_name', 'last_name'];
+      const firstNameFieldIndex = keys.findIndex((key) => nameSequence.includes(key));
+      if (firstNameFieldIndex < 0) return keys;
+      const names = nameSequence.filter((key) => keys.includes(key));
+      const withoutNames = keys.filter((key) => !nameSequence.includes(key));
+      return [
+        ...withoutNames.slice(0, firstNameFieldIndex),
+        ...names,
+        ...withoutNames.slice(firstNameFieldIndex),
+      ];
+    },
     [employeeFieldSettings],
   );
   const orderedContactFieldKeys = useMemo(
@@ -727,16 +747,18 @@ export default function EditUser() {
       }).map((field) => field.fieldKey),
     [employeeFieldSettings],
   );
+  const hasAnyName = !!(firstName.trim() || middleName.trim() || lastName.trim());
+  const shouldShowAnyNameError =
+    shouldShowError('firstName') || shouldShowError('middleName') || shouldShowError('lastName');
   const firstNameError =
     fieldErrors.firstName?.message ||
-    (fieldUi.isVisible('first_name') && shouldShowError('firstName') && fieldUi.isRequired('first_name') && !firstName.trim()
-      ? requiredMsg
-      : null);
+    (fieldUi.isVisible('first_name') && shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
+  const middleNameError =
+    fieldErrors.middleName?.message ||
+    (fieldUi.isVisible('middle_name') && shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
   const lastNameError =
     fieldErrors.lastName?.message ||
-    (fieldUi.isVisible('last_name') && shouldShowError('lastName') && fieldUi.isRequired('last_name') && !lastName.trim()
-      ? requiredMsg
-      : null);
+    (fieldUi.isVisible('last_name') && shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
   const emailError =
     fieldErrors.email?.message ||
     ((fieldUi.isVisible('email') && shouldShowError('email'))
@@ -869,6 +891,7 @@ export default function EditUser() {
   const _pwdRef = useRef(null);
   const confirmPwdRef = useRef(null);
   const firstNameRef = useRef(null);
+  const middleNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
   const phoneRef = useRef(null);
@@ -911,6 +934,7 @@ export default function EditUser() {
     const avatarCurrent = pendingAvatarUrl === null ? (avatarUrl || null) : pendingAvatarUrl === '' ? null : pendingAvatarUrl;
     const current = JSON.stringify({
       firstName: firstName.trim(),
+      middleName: middleName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
       phone: normalizeOptionalPhoneForSave(phone) || '',
@@ -922,7 +946,7 @@ export default function EditUser() {
       avatar: avatarCurrent,
     });
     return current !== initialSnap;
-  }, [firstName, lastName, email, phone, birthdate, withYear, role, newPassword, isSuspended, departmentId, pendingAvatarUrl, avatarUrl, initialSnap]);
+  }, [firstName, middleName, lastName, email, phone, birthdate, withYear, role, newPassword, isSuspended, departmentId, pendingAvatarUrl, avatarUrl, initialSnap]);
   const isDirtyRef = useRef(false);
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -1023,7 +1047,7 @@ export default function EditUser() {
       }
 
       // Р•СЃР»Рё Р°РґРјРёРЅ СЂРµРґР°РєС‚РёСЂСѓРµС‚ РґСЂСѓРіРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј edge-С„СѓРЅРєС†РёСЋ РґР»СЏ РІСЃРµРіРѕ
-      const computedFullName = buildFullName(firstName, lastName);
+      const computedFullName = buildFullName(firstName, middleName, lastName);
       const normalizedFullName = computedFullName || null;
 
       if (isSuperAdminEditingOther) {
@@ -1043,6 +1067,14 @@ export default function EditUser() {
 
         const { error: rpcErr } = await supabase.rpc('admin_update_profile_super_full', payload);
         if (rpcErr) throw rpcErr;
+        const { error: middleNameErr } = await supabase
+          .from(TABLES.profiles)
+          .update({
+            middle_name: middleName.trim() || null,
+            full_name: normalizedFullName,
+          })
+          .eq('id', userId);
+        if (middleNameErr) throw middleNameErr;
 
         if (newPassword && newPassword.length) {
           await withTimeout(
@@ -1059,6 +1091,7 @@ export default function EditUser() {
         // РђРґРјРёРЅ СЂРµРґР°РєС‚РёСЂСѓРµС‚ РґСЂСѓРіРѕРіРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ
         const profilePatch = {
           first_name: firstName.trim() || null,
+          middle_name: middleName.trim() || null,
           last_name: lastName.trim() || null,
           full_name: normalizedFullName,
           phone: normalizeOptionalPhoneForSave(phone),
@@ -1093,6 +1126,7 @@ export default function EditUser() {
         // РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ СЂРµРґР°РєС‚РёСЂСѓРµС‚ СЃРµР±СЏ
         const profilePatch = {
           first_name: firstName.trim() || null,
+          middle_name: middleName.trim() || null,
           last_name: lastName.trim() || null,
           full_name: normalizedFullName,
           phone: normalizeOptionalPhoneForSave(phone),
@@ -1126,6 +1160,7 @@ export default function EditUser() {
       setInitialSnap(
         JSON.stringify({
           firstName: firstName.trim(),
+          middleName: middleName.trim(),
           lastName: lastName.trim(),
           email: normalizeOptionalEmail(email) || '',
           phone: normalizeOptionalPhoneForSave(phone) || '',
@@ -1140,8 +1175,9 @@ export default function EditUser() {
       queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
         ...(prev || {}),
         first_name: firstName.trim() || null,
+        middle_name: middleName.trim() || null,
         last_name: lastName.trim() || null,
-        full_name: buildFullName(firstName, lastName) || null,
+        full_name: buildFullName(firstName, middleName, lastName) || null,
         email: normalizeOptionalEmail(email),
         phone: normalizeOptionalPhoneForSave(phone),
         birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
@@ -1186,8 +1222,12 @@ export default function EditUser() {
     clearBanner();
     setFieldErrors({});
     setSubmittedAttempt(true);
-    if (fieldUi.isVisible('first_name') && fieldUi.isRequired('first_name') && !firstName.trim()) {
-      setFieldErrors({ firstName: { message: requiredMsg } });
+    if ((fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name')) && !(firstName.trim() || middleName.trim() || lastName.trim())) {
+      setFieldErrors({
+        firstName: { message: requiredMsg },
+        middleName: { message: requiredMsg },
+        lastName: { message: requiredMsg },
+      });
       ensureVisibleField({
         fieldRef: firstNameRef,
         scrollRef,
@@ -1196,18 +1236,6 @@ export default function EditUser() {
         headerHeight,
       });
       firstNameRef.current?.focus?.();
-      return;
-    }
-    if (fieldUi.isVisible('last_name') && fieldUi.isRequired('last_name') && !lastName.trim()) {
-      setFieldErrors({ lastName: { message: requiredMsg } });
-      ensureVisibleField({
-        fieldRef: lastNameRef,
-        scrollRef,
-        scrollYRef,
-        insetsBottom: insets.bottom ?? 0,
-        headerHeight,
-      });
-      lastNameRef.current?.focus?.();
       return;
     }
     const emailFieldError = getEmailFieldError(email, {
@@ -1300,18 +1328,19 @@ export default function EditUser() {
     if (initialSnap) {
       allowLeaveRef.current = false;
     }
-  }, [initialSnap, firstName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId]);
+  }, [initialSnap, firstName, middleName, lastName, email, phone, birthdate, role, newPassword, isSuspended, departmentId]);
   // password strength check removed for edit screen per request
   const _formatName = (p) => {
     const n1 = (p.first_name || '').trim();
-    const n2 = (p.last_name || '').trim();
+    const n2 = (p.middle_name || '').trim();
+    const n3 = (p.last_name || '').trim();
     const fn = (p.full_name || '').trim();
     const name =
-      n1 || n2 ? `${n1} ${n2}`.replace(/\s+/g, ' ').trim() : fn || t('placeholder_no_name');
+      n1 || n2 || n3 ? `${n1} ${n2} ${n3}`.replace(/\s+/g, ' ').trim() : fn || t('placeholder_no_name');
     return name;
   };
-  const buildFullName = (first, last) => {
-    const parts = [(first || '').trim(), (last || '').trim()].filter(Boolean);
+  const buildFullName = (first, middle, last) => {
+    const parts = [(first || '').trim(), (middle || '').trim(), (last || '').trim()].filter(Boolean);
     return parts.join(' ').replace(/\s+/g, ' ').trim();
   };
   useEffect(() => {
@@ -1323,6 +1352,7 @@ export default function EditUser() {
     const AVATAR_SAVE_PROTECTION_MS = 3000;
 
     setFirstName(employeeData?.first_name || '');
+    setMiddleName(employeeData?.middle_name || '');
     setLastName(employeeData?.last_name || '');
     setEmail(employeeData?.email || '');
     setDepartmentId(employeeData?.department_id ?? null);
@@ -1353,6 +1383,7 @@ export default function EditUser() {
     setInitialSnap(
       JSON.stringify({
         firstName: (employeeData?.first_name || '').trim(),
+        middleName: (employeeData?.middle_name || '').trim(),
         lastName: (employeeData?.last_name || '').trim(),
         email: String(employeeData?.email || '').trim(),
         phone: String(employeeData?.phone || '').replace(/\D/g, '') || '',
@@ -1553,7 +1584,7 @@ export default function EditUser() {
       // Р—Р°РіСЂСѓР¶Р°РµРј СЃРїРёСЃРѕРє Р°РєС‚РёРІРЅС‹С… СЃРѕС‚СЂСѓРґРЅРёРєРѕРІ РґР»СЏ РІС‹Р±РѕСЂР° РїСЂРµРµРјРЅРёРєР°
       const { data, error } = await supabase
         .from(TABLES.profiles)
-        .select('id, first_name, last_name, full_name, role')
+        .select('id, first_name, middle_name, last_name, full_name, role')
         .eq('is_suspended', false)
         .neq('id', userId) // РёСЃРєР»СЋС‡Р°РµРј СЃР°РјРѕРіРѕ СЃРѕС‚СЂСѓРґРЅРёРєР°
         .order('full_name', { ascending: true });
@@ -1813,7 +1844,9 @@ export default function EditUser() {
   }
   const isSelfAdmin = meIsAdmin && meId === userId;
   const initials =
-    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase();
+    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}${(middleName || '').trim().slice(0, 1)}`
+      .slice(0, 2)
+      .toUpperCase();
   const personalFieldRenderers = {
       first_name: () => (
         <>
@@ -1846,6 +1879,37 @@ export default function EditUser() {
             error={firstNameError ? 'invalid' : undefined}
           />
           <FieldErrorText message={firstNameError} />
+        </>
+      ),
+      middle_name: () => (
+        <>
+          <TextField
+            ref={middleNameRef}
+            label={fieldUi.withRequiredLabel('middle_name', t('label_middle_name'))}
+            placeholder={t('label_middle_name')}
+            placeholderTextColor={theme.colors.inputPlaceholder}
+            style={styles.field}
+            value={middleName}
+            onChangeText={(val) => {
+              setMiddleName(val);
+              clearFieldError('middleName');
+            }}
+            onFocus={() => {
+              ensureVisibleField({
+                fieldRef: middleNameRef,
+                scrollRef,
+                scrollYRef,
+                insetsBottom: insets.bottom ?? 0,
+                headerHeight,
+              });
+            }}
+            onBlur={() => {
+              setTouched((prev) => ({ ...prev, middleName: true }));
+            }}
+            forceValidation={submittedAttempt}
+            error={middleNameError ? 'invalid' : undefined}
+          />
+          <FieldErrorText message={middleNameError} />
         </>
       ),
       last_name: () => (
@@ -1909,7 +1973,7 @@ export default function EditUser() {
         <>
           <TextField
             ref={emailRef}
-            label={fieldUi.withRequiredLabel('email', t('label_email'))}
+            label={fieldUi.withRequiredLabel('email', t('view_label_email'))}
             placeholder={t('placeholder_email')}
             placeholderTextColor={theme.colors.inputPlaceholder}
             style={styles.field}
@@ -2049,7 +2113,21 @@ export default function EditUser() {
                   ) : null}
                 </Pressable>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.nameTitle}>{headerName}</Text>
+                  {headerPrimaryName ? (
+                    <Text style={styles.nameTitle} numberOfLines={1} ellipsizeMode="tail">
+                      {headerPrimaryName}
+                    </Text>
+                  ) : null}
+                  {headerSecondaryName ? (
+                    <Text style={styles.nameTitle} numberOfLines={1} ellipsizeMode="tail">
+                      {headerSecondaryName}
+                    </Text>
+                  ) : null}
+                  {!headerPrimaryName && !headerSecondaryName ? (
+                    <Text style={styles.nameTitle} numberOfLines={1} ellipsizeMode="tail">
+                      {headerFallbackName}
+                    </Text>
+                  ) : null}
                   <View
                     style={{
                       flexDirection: 'row',
@@ -2355,7 +2433,7 @@ export default function EditUser() {
               items={(pickerItems || []).map((it) => {
                 const displayName =
                   it.full_name ||
-                  `${it.first_name || ''} ${it.last_name || ''}`.trim() ||
+                  `${it.first_name || ''} ${it.middle_name || ''} ${it.last_name || ''}`.trim() ||
                   t('placeholder_no_name');
                 const initials = `${(it.first_name || '').slice(0, 1)}${(it.last_name || '').slice(0, 1)}`.toUpperCase();
                 const roleLabel = it.role ? t(`role_${it.role}`) : '';
@@ -3001,6 +3079,7 @@ function DeleteEmployeeModal({
     </BaseModal>
   );
 }
+
 
 
 

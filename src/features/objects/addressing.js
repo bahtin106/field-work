@@ -8,15 +8,13 @@ export const CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS = [
   'street',
   'house',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
 ];
 
 export const CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS = [
-  'entrance_info',
-  'parking_notes',
+  'comment',
 ];
 
 export const CLIENT_OBJECT_MAP_COORD_FIELDS = ['geo_lat', 'geo_lng'];
@@ -69,12 +67,10 @@ export function createEmptyClientObjectDraft(overrides = {}) {
     street: '',
     house: '',
     postal_code: '',
-    office: '',
     floor: '',
     entrance: '',
     apartment: '',
-    entrance_info: '',
-    parking_notes: '',
+    comment: '',
     geo_lat: '',
     geo_lng: '',
     location_mode: 'address',
@@ -94,7 +90,7 @@ export function buildClientObjectAddressSummary(objectLike) {
     objectLike.city,
     objectLike.street,
     objectLike.house,
-    objectLike.office ? `оф. ${String(objectLike.office).trim()}` : '',
+    objectLike.apartment ? `кв./оф. ${String(objectLike.apartment).trim()}` : '',
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
@@ -111,8 +107,7 @@ export function buildClientObjectFullAddress(objectLike) {
     objectLike.city,
     objectLike.street ? `ул. ${String(objectLike.street).trim()}` : '',
     objectLike.house ? `д. ${String(objectLike.house).trim()}` : '',
-    objectLike.apartment ? `кв. ${String(objectLike.apartment).trim()}` : '',
-    objectLike.office ? `оф. ${String(objectLike.office).trim()}` : '',
+    objectLike.apartment ? `кв./оф. ${String(objectLike.apartment).trim()}` : '',
     objectLike.entrance ? `подъезд ${String(objectLike.entrance).trim()}` : '',
     objectLike.floor ? `этаж ${String(objectLike.floor).trim()}` : '',
   ]
@@ -123,10 +118,7 @@ export function buildClientObjectFullAddress(objectLike) {
 
 export function buildClientObjectAdditionalInfoSummary(objectLike) {
   if (!objectLike || typeof objectLike !== 'object') return '';
-  const parts = [objectLike.parking_notes, objectLike.entrance_info]
-    .map((value) => String(value || '').trim())
-    .filter(Boolean);
-  return parts.join(', ').trim();
+  return String(objectLike.comment || objectLike.entrance_info || '').trim();
 }
 
 export function buildClientObjectShortAddress(objectLike) {
@@ -165,6 +157,8 @@ export function normalizeClientObject(row) {
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });
+  normalized.apartment = String(row.apartment || row.office || '').trim();
+  normalized.comment = String(row.comment || row.entrance_info || '').trim();
   CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });

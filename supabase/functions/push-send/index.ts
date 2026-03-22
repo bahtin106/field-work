@@ -96,9 +96,20 @@ function tr(key: (typeof PUSH_MESSAGE_KEYS)[keyof typeof PUSH_MESSAGE_KEYS], par
   return template;
 }
 
-function normalizeOrderTitle(value: unknown): string {
+function pad2(value: number) {
+  return String(Math.trunc(value)).padStart(2, '0');
+}
+
+function buildAutoOrderTitle(dateInput: unknown): string {
+  const parsed = dateInput ? new Date(String(dateInput)) : new Date();
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  const stamp = `${pad2(date.getDate())}.${pad2(date.getMonth() + 1)}.${date.getFullYear()} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  return `Заявка от ${stamp}`;
+}
+
+function normalizeOrderTitle(value: unknown, fallbackDate: unknown = null): string {
   const raw = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
-  const fallback = tr(PUSH_MESSAGE_KEYS.fallback_untitled);
+  const fallback = buildAutoOrderTitle(fallbackDate);
   if (!raw) return fallback;
   if (raw.length <= 56) return raw;
   return `${raw.slice(0, 55).trimEnd()}...`;
@@ -294,20 +305,20 @@ async function fetchTokensForUsers(userIds: string[]): Promise<PushTokenRow[]> {
 async function resolveOrderTitle(event: NotificationEvent): Promise<string> {
   const payloadTitle = event.payload?.order_title;
   if (typeof payloadTitle === 'string' && payloadTitle.trim()) {
-    return normalizeOrderTitle(payloadTitle);
+    return normalizeOrderTitle(payloadTitle, (event.payload as any)?.time_window_start);
   }
 
   const { data, error } = await sb
     .from('orders')
-    .select('title')
+    .select('title, time_window_start, created_at')
     .eq('id', event.order_id)
     .limit(1)
     .maybeSingle();
   if (error) {
     console.warn('resolveOrderTitle error:', error.message);
-    return normalizeOrderTitle(null);
+    return normalizeOrderTitle(null, null);
   }
-  return normalizeOrderTitle(data?.title);
+  return normalizeOrderTitle(data?.title, data?.time_window_start || data?.created_at || null);
 }
 
 async function getEventText(event: NotificationEvent): Promise<{ title: string; body: string; orderLabel: string }> {

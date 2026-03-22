@@ -52,6 +52,7 @@ import {
   hasRelationFilters,
   parseRelationIdsParam,
 } from '../../src/features/requests/relationFilters';
+import { resolveRequestTitle } from '../../src/features/requests/title';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { startFpsProbe, trackRender } from '../../src/shared/perf/devMetrics';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
@@ -229,8 +230,8 @@ function MyOrdersContent() {
           const id = String(row?.id || '').trim();
           if (!id) return null;
           const label =
+            [row?.first_name, row?.middle_name, row?.last_name].filter(Boolean).join(' ').trim() ||
             String(row?.full_name || '').trim() ||
-            [row?.last_name, row?.first_name, row?.middle_name].filter(Boolean).join(' ').trim() ||
             String(row?.phone || '').trim() ||
             id;
           return { id, value: id, label };
@@ -861,7 +862,10 @@ function MyOrdersContent() {
       return matchesSearch(
         buildSearchIndex({
           texts: [
-            o?.title,
+            resolveRequestTitle(o, {
+              fallbackDate: o?.time_window_start || o?.created_at,
+              prefix: t('order_auto_title_prefix', 'Заявка от'),
+            }),
             o?.fio,
             o?.region,
             o?.city,
@@ -876,7 +880,7 @@ function MyOrdersContent() {
         q,
       );
     });
-  }, [orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo]);
+  }, [orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo, t]);
 
   const sortOptions = useMemo(
     () => [

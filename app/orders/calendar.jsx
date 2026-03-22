@@ -244,7 +244,8 @@ function CalendarScreenContent() {
         .map((row) => {
           const id = String(row?.id || '').trim();
           if (!id) return null;
-          const fullName = `${String(row?.first_name || '').trim()} ${String(row?.last_name || '').trim()}`.trim();
+          const fullName =
+            `${String(row?.first_name || '').trim()} ${String(row?.middle_name || '').trim()} ${String(row?.last_name || '').trim()}`.trim();
           return {
             id,
             label: fullName || String(row?.full_name || row?.email || '').trim() || id,

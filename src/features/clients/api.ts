@@ -45,8 +45,8 @@ function normalizeClient(row: any) {
   const lastName = String(row.last_name || '').trim();
   const middleName = String(row.middle_name || '').trim();
   const fullName =
-    String(row.full_name || '').trim() ||
-    [lastName, firstName, middleName].filter(Boolean).join(' ').trim();
+    [firstName, middleName, lastName].filter(Boolean).join(' ').trim() ||
+    String(row.full_name || '').trim();
 
   const objects = Array.isArray(row.client_objects)
     ? row.client_objects.map(normalizeClientObject).filter(Boolean)
@@ -293,8 +293,8 @@ function normalizeConflictClientRow(row: any) {
   const lastName = String(row.last_name || '').trim();
   const middleName = String(row.middle_name || '').trim();
   const fullName =
-    String(row.full_name || '').trim() ||
-    [lastName, firstName, middleName].filter(Boolean).join(' ').trim();
+    [firstName, middleName, lastName].filter(Boolean).join(' ').trim() ||
+    String(row.full_name || '').trim();
 
   return {
     id: String(row.id || ''),

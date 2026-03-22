@@ -32,12 +32,10 @@ const ADDRESS_FIELD_KEYS = new Set([
   'street',
   'house',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
-  'entrance_info',
-  'parking_notes',
+  'comment',
 ]);
 const FIELD_SWITCH_COLUMN_WIDTH = 72;
 

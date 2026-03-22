@@ -133,7 +133,7 @@ function UserCardContent({
 
   const fullName =
     (item.display_name || '').trim() ||
-    `${item.first_name || ''} ${item.last_name || ''}`.trim() ||
+    `${item.first_name || ''} ${item.middle_name || ''} ${item.last_name || ''}`.trim() ||
     item.full_name ||
     '';
 
@@ -210,6 +210,7 @@ export const UserCard = React.memo(UserCardContent, (prevProps, nextProps) => {
   return (
     prevProps.item?.id === nextProps.item?.id &&
     prevProps.item?.first_name === nextProps.item?.first_name &&
+    prevProps.item?.middle_name === nextProps.item?.middle_name &&
     prevProps.item?.last_name === nextProps.item?.last_name &&
     prevProps.item?.full_name === nextProps.item?.full_name &&
     prevProps.item?.role === nextProps.item?.role &&

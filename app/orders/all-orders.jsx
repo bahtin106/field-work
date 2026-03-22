@@ -35,6 +35,7 @@ import {
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
@@ -85,7 +86,7 @@ async function checkCanViewAll() {
       .select('role, company_id')
       .eq('id', uid)
       .maybeSingle();
-    if (profileError || !me?.role || !me?.company_id) return false;
+    if (profileError || !me?.role || !me?.company_id) return null;
 
     const { data: perm, error: permError } = await supabase
       .from('app_role_permissions')
@@ -94,7 +95,7 @@ async function checkCanViewAll() {
       .eq('role', me.role)
       .eq('key', 'canViewAllOrders')
       .maybeSingle();
-    if (permError) return false;
+    if (permError) return null;
 
     if (perm?.value === null || perm?.value === undefined) return true;
     if (typeof perm.value === 'boolean') return perm.value;
@@ -102,9 +103,9 @@ async function checkCanViewAll() {
     if (typeof perm.value === 'string') {
       return ['1', 'true', 't', 'yes', 'y'].includes(perm.value.trim().toLowerCase());
     }
-    return false;
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -281,8 +282,8 @@ function AllOrdersContent() {
           const id = String(row?.id || '').trim();
           if (!id) return null;
           const label =
+            [row?.first_name, row?.middle_name, row?.last_name].filter(Boolean).join(' ').trim() ||
             String(row?.full_name || '').trim() ||
-            [row?.last_name, row?.first_name, row?.middle_name].filter(Boolean).join(' ').trim() ||
             String(row?.phone || '').trim() ||
             id;
           return { id, value: id, label };
@@ -391,7 +392,7 @@ function AllOrdersContent() {
         if (!id) return null;
         const label =
           String(item?.full_name || '').trim() ||
-          [item?.first_name, item?.last_name].filter(Boolean).join(' ').trim() ||
+          [item?.first_name, item?.middle_name, item?.last_name].filter(Boolean).join(' ').trim() ||
           item?.email ||
           id;
         return {
@@ -473,7 +474,10 @@ function AllOrdersContent() {
       return matchesSearch(
         buildSearchIndex({
           texts: [
-            order?.title,
+            resolveRequestTitle(order, {
+              fallbackDate: order?.time_window_start || order?.created_at,
+              prefix: t('order_auto_title_prefix', 'Заявка от'),
+            }),
             order?.fio,
             order?.region,
             order?.city,
@@ -494,7 +498,7 @@ function AllOrdersContent() {
         q,
       );
     });
-  }, [deferredSearchQuery, orders]);
+  }, [deferredSearchQuery, orders, t]);
 
   const sortOptions = useMemo(
     () => [

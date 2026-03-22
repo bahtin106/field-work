@@ -8,6 +8,7 @@ import {
   normalizeOrderAddressMode,
 } from './addressing';
 import { applyOrderRelationFilters } from './relationFilters';
+import { resolveRequestTitle } from './title';
 
 const DEFAULT_PAGE_SIZE = 20;
 const requestByIdInFlight = new Map<string, Promise<any>>();
@@ -24,12 +25,10 @@ const OBJECT_RELATION_SELECT = `
     street,
     house,
     postal_code,
-    office,
     floor,
     entrance,
     apartment,
-    entrance_info,
-    parking_notes,
+    comment,
     location_mode,
     geo_lat,
     geo_lng
@@ -68,17 +67,18 @@ function isUuid(value) {
 
 function buildClientDisplayName(client) {
   if (!client || typeof client !== 'object') return '';
-  const fullName = String(client.full_name ?? '').trim();
-  if (fullName) return fullName;
-  return [
-    String(client.last_name ?? '').trim(),
+  const fromParts = [
     String(client.first_name ?? '').trim(),
     String(client.middle_name ?? '').trim(),
+    String(client.last_name ?? '').trim(),
   ]
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim();
+  if (fromParts) return fromParts;
+  const fullName = String(client.full_name ?? '').trim();
+  return fullName;
 }
 
 function normalizeOrder(row) {
@@ -95,6 +95,10 @@ function normalizeOrder(row) {
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
   return {
     ...row,
+    title: resolveRequestTitle(row, {
+      fallbackDate: row.time_window_start ?? row.created_at ?? row.updated_at ?? null,
+      prefix: 'Заявка от',
+    }),
     address_mode: addressMode,
     object_name_snapshot: String(row.object_name_snapshot || '').trim() || null,
     address_short: buildOrderAddressShort(address) || null,
@@ -118,12 +122,12 @@ function normalizeOrder(row) {
     street: address.street || null,
     house: address.house || null,
     postal_code: address.postal_code || null,
-    office: address.office || null,
+    office: address.apartment || null,
     floor: address.floor || null,
     entrance: address.entrance || null,
     apartment: address.apartment || null,
-    entrance_info: address.entrance_info || null,
-    parking_notes: address.parking_notes || null,
+    entrance_info: address.comment || address.entrance_info || null,
+    parking_notes: null,
     geo_lat: address.geo_lat || null,
     geo_lng: address.geo_lng || null,
   };
@@ -408,7 +412,7 @@ export async function listRequestExecutors({ companyId = null } = {}) {
   return measureNetwork('requests.executors', async () => {
     let query = supabase
       .from('profiles')
-      .select('id, first_name, last_name, full_name, email, role, department_id')
+      .select('id, first_name, middle_name, last_name, full_name, email, role, department_id')
       .neq('role', 'client');
     if (companyId) {
       query = query.eq('company_id', companyId);
@@ -436,12 +440,12 @@ export async function getAssigneeDisplayNameById(userId) {
     if (!userId) return '';
     const { data, error } = await supabase
       .from('profiles')
-      .select('first_name, last_name, full_name, email')
+      .select('first_name, middle_name, last_name, full_name, email')
       .eq('id', userId)
       .maybeSingle();
     if (error) throw error;
     if (!data) return '';
-    const nameParts = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+    const nameParts = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
     const normalizedFullName = (data.full_name || '').trim();
     return nameParts || normalizedFullName || data.email || '';
   });

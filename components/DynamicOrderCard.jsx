@@ -5,6 +5,7 @@ import { formatCurrency } from '../lib/currency';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../providers/SettingsProvider';
+import { resolveRequestTitle } from '../src/features/requests/title';
 import { useTranslation } from '../src/i18n/useTranslation';
 import OrderStatusCapsule from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
@@ -50,11 +51,11 @@ async function fetchExecutorNameById(userId) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('first_name, last_name')
+        .select('first_name, middle_name, last_name')
         .eq('id', uid)
         .single();
       if (error || !data) return '';
-      const full = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+      const full = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
       if (full) setCachedExecutorName(uid, full);
       return full;
     } catch {
@@ -114,8 +115,8 @@ function joinName(obj) {
     obj.full_name,
     obj.fullName,
     obj.name,
-    [obj.surname, obj.first_name, obj.last_name].filter(Boolean).join(' '),
-    [obj.last_name, obj.first_name, obj.middle_name].filter(Boolean).join(' '),
+    [obj.first_name, obj.middle_name, obj.last_name].filter(Boolean).join(' '),
+    [obj.first_name, obj.middle_name, obj.surname].filter(Boolean).join(' '),
   ].filter(Boolean);
   return (parts[0] || '').trim();
 }
@@ -304,14 +305,14 @@ function DynamicOrderCard({
         if (nn) return nn;
       }
     }
-    const pairs = [
-      [order?.assigned_to_first_name, order?.assigned_to_last_name],
-      [order?.executor_first_name, order?.executor_last_name],
-      [order?.assignee_first_name, order?.assignee_last_name],
-      [order?.worker_first_name, order?.worker_last_name],
+    const triples = [
+      [order?.assigned_to_first_name, order?.assigned_to_middle_name, order?.assigned_to_last_name],
+      [order?.executor_first_name, order?.executor_middle_name, order?.executor_last_name],
+      [order?.assignee_first_name, order?.assignee_middle_name, order?.assignee_last_name],
+      [order?.worker_first_name, order?.worker_middle_name, order?.worker_last_name],
     ];
-    for (const [fn, ln] of pairs) {
-      const name = [fn, ln].filter(Boolean).join(' ').trim();
+    for (const [fn, mn, ln] of triples) {
+      const name = [fn, mn, ln].filter(Boolean).join(' ').trim();
       if (name) return name;
     }
     if (order?.users_map) {
@@ -440,11 +441,13 @@ function DynamicOrderCard({
   const showUrgentDot = !!order?.urgent;
 
   // Title
-  const title =
-    readWithFallback(order, getFieldByKey('title'), 'title') ||
-    order?.title ||
-    order?.city ||
-    order?.id;
+  const title = resolveRequestTitle(
+    readWithFallback(order, getFieldByKey('title'), 'title') || order,
+    {
+      fallbackDate: order?.time_window_start || order?.created_at,
+      prefix: t('order_auto_title_prefix', 'Заявка от'),
+    },
+  );
 
   // Resolve missing executor via Supabase
   const initialExecCached = getCachedExecutorName(order?.assigned_to);

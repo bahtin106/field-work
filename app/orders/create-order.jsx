@@ -98,6 +98,7 @@ import {
   findBestMatchingClientObject,
   findExactMatchingClientObject,
 } from '../../src/features/objects/matching';
+import { buildAutoRequestTitle, resolveRequestTitle } from '../../src/features/requests/title';
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: true },
@@ -114,12 +115,10 @@ const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
   'house',
   'country',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
-  'entrance_info',
-  'parking_notes',
+  'comment',
   'geo_lat',
   'geo_lng',
 ]);
@@ -245,10 +244,9 @@ function CreateOrderContent() {
     const house = String(draftClientObject?.house || '').trim();
     const city = String(draftClientObject?.city || '').trim();
     const entrance = String(draftClientObject?.entrance || '').trim();
-    const apartment = String(draftClientObject?.apartment || '').trim();
-    const office = String(draftClientObject?.office || '').trim();
+    const apartment = String(draftClientObject?.apartment || draftClientObject?.office || '').trim();
     return {
-      query: [city, street, house, apartment, office, entrance].filter(Boolean).join(' ').trim(),
+      query: [city, street, house, apartment, entrance].filter(Boolean).join(' ').trim(),
       street,
       house,
       city,
@@ -263,8 +261,29 @@ function CreateOrderContent() {
   );
 
   const intentionalExitRef = useRef(false);
+  const autoTitleRef = useRef('');
   const clientFlowKeyRef = useRef(
     `create-order-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  if (!autoTitleRef.current) {
+    autoTitleRef.current = buildAutoRequestTitle(new Date(), {
+      prefix: t('order_auto_title_prefix', 'Заявка от'),
+    });
+  }
+  const titlePreviewValue = useMemo(
+    () =>
+      String(form.title || '').trim()
+        ? String(form.title || '')
+        : autoTitleRef.current,
+    [form.title],
+  );
+  const resolveTitleForSave = useCallback(
+    (value, fallbackDate = null) =>
+      resolveRequestTitle(value, {
+        fallbackDate,
+        prefix: t('order_auto_title_prefix', 'Заявка от'),
+      }),
+    [t],
   );
 
   const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
@@ -371,7 +390,8 @@ function CreateOrderContent() {
   // � � вЂ™� � С•� Ў� ѓ� Ў� ѓ� ЎвЂљ� � В°� � � …� � С•� � � � � � С‘� ЎвЂљ� Ў� Љ � � Т‘� � В°� � � …� � � …� ЎвЂ№� � Вµ � � С‘� � В· � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”� � В°
   const restoreDraft = useCallback((draft) => {
     if (!draft) return;
-    setForm(draft.form || {});
+    const draftForm = draft.form || {};
+    setForm({ ...draftForm });
     setDescription(draft.description || '');
     const restoredDepartureDate = draft.departureDate ? new Date(draft.departureDate) : null;
     setDepartureDate(restoredDepartureDate);
@@ -533,10 +553,10 @@ function CreateOrderContent() {
         house: t('order_field_house'),
         country: t('order_field_country'),
         postal_code: t('order_field_postal_code'),
-        office: t('order_field_office'),
         floor: t('order_field_floor'),
         entrance: t('order_field_entrance'),
         apartment: t('order_field_apartment'),
+        comment: t('order_field_comment'),
         time_window_start: t('create_order_label_date'),
         departure_time: t('order_field_departure_time'),
         assigned_to: t('create_order_label_executor'),
@@ -602,6 +622,11 @@ function CreateOrderContent() {
             missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
+        } else if (k === 'title') {
+          if (!resolveTitleForSave(v, departureDate)) {
+            missing.push(getFieldLabel(k));
+            missingKeys.push(k);
+          }
         } else if (v === null || v === undefined || String(v).trim() === '') {
           missing.push(getFieldLabel(k));
           missingKeys.push(k);
@@ -620,7 +645,7 @@ function CreateOrderContent() {
     } catch {
       return { ok: true };
     }
-  }, [schema, form, departureDate, departureTimeTouched, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue]);
+  }, [schema, form, departureDate, departureTimeTouched, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue, resolveTitleForSave]);
 
   const promptNewObjectCreation = useCallback(
     (seedDraft = null) => {
@@ -685,13 +710,10 @@ function CreateOrderContent() {
       return;
     }
 
-    const title = (form.title || '').trim();
+    const title = resolveTitleForSave(form.title, departureDate);
     const nextErrors = {};
     if (isFieldRequired('work_type_id') && useWorkTypes && !workTypeId) {
       nextErrors.work_type_id = { message: t('order_validation_work_type_required') };
-    }
-    if (isFieldRequired('title') && !title) {
-      nextErrors.title = { message: t('order_validation_title_required') };
     }
     if (isFieldRequired('time_window_start') && !departureDate) {
       nextErrors.time_window_start = { message: t('order_validation_date_required') };
@@ -849,7 +871,7 @@ function CreateOrderContent() {
 
     const payload = {
       company_id: effectiveCompanyId || null,
-      title: form.title ?? '',
+      title,
       work_type_id: useWorkTypes ? normalizedWorkTypeId || null : null,
       comment: description,
       client_id: selectedClientId || null,
@@ -928,6 +950,7 @@ function CreateOrderContent() {
     updateClientMutation,
     updateClientObjectMutation,
     subscriptionGuard.canEdit,
+    resolveTitleForSave,
   ]);
 
   useFocusEffect(
@@ -966,7 +989,7 @@ function CreateOrderContent() {
     const loadUsers = async () => {
       const { data: userList, error } = await supabase
         .from('profiles')
-        .select('id, first_name, last_name, role')
+        .select('id, first_name, middle_name, last_name, role')
         .in('role', ['worker', 'dispatcher', 'admin']);
       if (!error && mounted) setUsers(userList || []);
     };
@@ -1182,7 +1205,7 @@ function CreateOrderContent() {
     if (!assigneeId) return null;
     const u = users.find((x) => x.id === assigneeId);
     return (
-      [u?.first_name, u?.last_name].filter(Boolean).join(' ') ||
+      [u?.first_name, u?.middle_name, u?.last_name].filter(Boolean).join(' ') ||
       t('create_order_executor_selected')
     );
   }, [assigneeId, users, t]);
@@ -1275,7 +1298,7 @@ function CreateOrderContent() {
             fieldKey: 'title',
             label: getFieldLabel('title'),
             placeholder: t('create_order_placeholder_title'),
-            value: form.title || '',
+            value: titlePreviewValue,
             onChangeText: (text) => setField('title', text),
             required: isFieldRequired('title'),
           });
@@ -1315,7 +1338,6 @@ function CreateOrderContent() {
     [
       description,
       fieldErrors,
-      form.title,
       formStyles.field,
       getField,
       getFieldLabel,
@@ -1327,6 +1349,7 @@ function CreateOrderContent() {
       setField,
       shouldShowError,
       t,
+      titlePreviewValue,
       useWorkTypes,
       withRequiredLabel,
     ],
@@ -1677,10 +1700,9 @@ function CreateOrderContent() {
     const house = String(objectSearchSourceDraft?.house || '').trim();
     const city = String(objectSearchSourceDraft?.city || '').trim();
     const entrance = String(objectSearchSourceDraft?.entrance || '').trim();
-    const apartment = String(objectSearchSourceDraft?.apartment || '').trim();
-    const office = String(objectSearchSourceDraft?.office || '').trim();
+    const apartment = String(objectSearchSourceDraft?.apartment || objectSearchSourceDraft?.office || '').trim();
     return {
-      query: [city, street, house, apartment, office, entrance].filter(Boolean).join(' ').trim(),
+      query: [city, street, house, apartment, entrance].filter(Boolean).join(' ').trim(),
       street,
       house,
       city,
@@ -1848,7 +1870,7 @@ function CreateOrderContent() {
       },
     ];
     users.forEach((user) => {
-      const label = [user.first_name, user.last_name].filter(Boolean).join(' ');
+      const label = [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' ');
       items.push({
         id: user.id,
         label: label || user.email || String(user.id),
@@ -1951,14 +1973,9 @@ function CreateOrderContent() {
             : (fullAddress || t('order_details_address_not_specified')),
       },
       {
-        key: 'entrance_info',
-        label: t('order_field_entrance_info'),
-        value: String(previewObject.entrance_info || '').trim(),
-      },
-      {
-        key: 'parking_notes',
-        label: t('order_field_parking_notes'),
-        value: String(previewObject.parking_notes || '').trim(),
+        key: 'comment',
+        label: t('order_field_comment'),
+        value: String(previewObject.comment || previewObject.entrance_info || '').trim(),
       },
     ].filter((row) => String(row?.value || '').trim());
   }, [previewObject, t]);
@@ -2028,12 +2045,10 @@ function CreateOrderContent() {
       street: item.street || '',
       house: item.house || '',
       postal_code: item.postal_code || '',
-      office: item.office || '',
       floor: item.floor || '',
       entrance: item.entrance || '',
-      apartment: item.apartment || '',
-      entrance_info: item.entrance_info || '',
-      parking_notes: item.parking_notes || '',
+      apartment: item.apartment || item.office || '',
+      comment: item.comment || item.entrance_info || '',
       geo_lat: item.geo_lat || '',
       geo_lng: item.geo_lng || '',
       location_mode:

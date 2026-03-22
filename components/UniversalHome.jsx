@@ -56,7 +56,7 @@ async function fetchProfile(uid) {
   try {
     const { data: byUserId } = await supabase
       .from('profiles')
-      .select('full_name, first_name, last_name, avatar_url, role, company_id, department_id')
+      .select('full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
       .eq('user_id', uid)
       .maybeSingle();
     if (byUserId) return await resolveProfileAvatar(byUserId);
@@ -64,7 +64,7 @@ async function fetchProfile(uid) {
 
   const { data: byId } = await supabase
     .from('profiles')
-    .select('full_name, first_name, last_name, avatar_url, role, company_id, department_id')
+    .select('full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
     .eq('id', uid)
     .maybeSingle();
   return await resolveProfileAvatar(byId || null);
@@ -213,7 +213,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     initialData: providedProfile || undefined,
     staleTime: 60 * 1000,
     gcTime: 10 * 60 * 1000,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
@@ -221,8 +221,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const currentProfile = profileData || providedProfile || null;
 
   const fullName =
-    currentProfile?.full_name ||
-    `${currentProfile?.first_name || ''} ${currentProfile?.last_name || ''}`.trim();
+    `${currentProfile?.first_name || ''} ${currentProfile?.middle_name || ''} ${currentProfile?.last_name || ''}`.trim() ||
+    currentProfile?.full_name;
   const firstName = currentProfile?.first_name || '';
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_display_url || currentProfile?.avatar_url || null;
@@ -952,6 +952,3 @@ const createStyles = (theme) => {
     actionWrapper: { marginBottom: spacing.md },
   });
 };
-
-
-
