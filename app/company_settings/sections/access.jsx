@@ -24,8 +24,8 @@ const ACCESS_SECTIONS = [
       { key: 'canDeleteOrders', labelKey: 'access_settings_perm_delete_orders' },
       { key: 'canAddGalleryPhotos', labelKey: 'access_settings_perm_add_gallery_photos' },
       { key: 'canAddCameraPhotos', labelKey: 'access_settings_perm_add_camera_photos' },
-      { key: 'canViewOrderAmount', labelKey: 'access_settings_perm_view_order_amount' },
-      { key: 'canEditOrderAmount', labelKey: 'access_settings_perm_edit_order_amount' },
+      { key: 'canViewFinanceAll', labelKey: 'access_settings_perm_view_order_finance_field' },
+      { key: 'canEditFinanceEntries', labelKey: 'access_settings_perm_edit_order_finance_field' },
     ],
   },
   {
@@ -44,17 +44,6 @@ const ACCESS_SECTIONS = [
       { key: 'canDeleteObjects', labelKey: 'access_settings_perm_delete_objects' },
     ],
   },
-  {
-    id: 'finances',
-    titleKey: 'access_settings_section_finances',
-    permissions: [
-      { key: 'canViewFinanceOwn', labelKey: 'access_settings_perm_view_finance_own' },
-      { key: 'canViewFinanceAll', labelKey: 'access_settings_perm_view_finance_all' },
-      { key: 'canEditFinanceEntries', labelKey: 'access_settings_perm_edit_finance_entries' },
-      { key: 'canManageFinanceRules', labelKey: 'access_settings_perm_manage_finance_rules' },
-      { key: 'canViewFinanceStatsAll', labelKey: 'access_settings_perm_view_finance_stats' },
-    ],
-  },
 ];
 const ROLE_LABEL_KEYS = {
   admin: 'role_admin',
@@ -67,6 +56,9 @@ const BROADCAST_CLEANUP_DELAY_MS = 250;
 
 const REQUEST_PERMISSION_KEYS = ACCESS_SECTIONS.flatMap((section) =>
   section.permissions.map((permission) => permission.key),
+);
+const PERSISTED_PERMISSION_KEYS = Array.from(
+  new Set([...REQUEST_PERMISSION_KEYS, 'canViewFinanceOwn', 'canManageFinanceRules']),
 );
 
 const createDefaultMatrix = () =>
@@ -93,25 +85,22 @@ const mergeWithDefaults = (data) => {
 const normalizePermissionDependencies = (matrix) =>
   ROLE_IDS.reduce((acc, roleId) => {
     const rolePerms = { ...(matrix?.[roleId] || {}) };
-    if (rolePerms.canEditOrderAmount) rolePerms.canViewOrderAmount = true;
-    if (rolePerms.canEditFinanceEntries) rolePerms.canViewFinanceOwn = true;
+    if (rolePerms.canEditFinanceEntries) rolePerms.canViewFinanceAll = true;
     if (rolePerms.canViewFinanceAll) rolePerms.canViewFinanceOwn = true;
-    if (!rolePerms.canViewOrderAmount) rolePerms.canEditOrderAmount = false;
-    if (!rolePerms.canViewFinanceOwn) {
+    if (!rolePerms.canViewFinanceAll) {
+      rolePerms.canViewFinanceOwn = false;
       rolePerms.canEditFinanceEntries = false;
-      rolePerms.canViewFinanceAll = false;
     }
+    rolePerms.canManageFinanceRules = !!rolePerms.canEditFinanceEntries;
     acc[roleId] = rolePerms;
     return acc;
   }, {});
 
 const VIEW_EDIT_LINKS = {
-  canEditOrderAmount: 'canViewOrderAmount',
-  canEditFinanceEntries: 'canViewFinanceOwn',
+  canEditFinanceEntries: 'canViewFinanceAll',
 };
 const EDIT_VIEW_LINKS = {
-  canViewOrderAmount: 'canEditOrderAmount',
-  canViewFinanceOwn: 'canEditFinanceEntries',
+  canViewFinanceAll: 'canEditFinanceEntries',
 };
 
 export default function AccessSettingsScreen() {
@@ -121,10 +110,6 @@ export default function AccessSettingsScreen() {
   const { refresh: refreshPermissions } = usePermissions();
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const s = React.useMemo(() => styles(theme), [theme]);
-  const permissions = React.useMemo(
-    () => ACCESS_SECTIONS.flatMap((section) => section.permissions),
-    [],
-  );
   const cardPadX = React.useMemo(
     () => theme.spacing[theme.components?.card?.padX ?? 'lg'],
     [theme],
@@ -241,12 +226,12 @@ export default function AccessSettingsScreen() {
       const normalizedMatrix = normalizePermissionDependencies(permMatrix);
       const payload = [];
       for (const roleId of ROLE_IDS) {
-        for (const perm of permissions) {
+        for (const permissionKey of PERSISTED_PERMISSION_KEYS) {
           payload.push({
             company_id: companyId,
             role: roleId,
-            key: perm.key,
-            value: !!normalizedMatrix[roleId]?.[perm.key],
+            key: permissionKey,
+            value: !!normalizedMatrix[roleId]?.[permissionKey],
           });
         }
       }
@@ -290,7 +275,7 @@ export default function AccessSettingsScreen() {
     } finally {
       setSaving(false);
     }
-  }, [cloudReady, companyId, permMatrix, permissions, t, toast, refreshPermissions]);
+  }, [cloudReady, companyId, permMatrix, t, toast, refreshPermissions]);
 
   const onApplyDefaults = React.useCallback(async () => {
     if (!companyId) {
@@ -308,7 +293,7 @@ export default function AccessSettingsScreen() {
         .from('app_role_permissions')
         .delete()
         .eq('company_id', companyId)
-        .in('key', permissions.map((permission) => permission.key));
+        .in('key', PERSISTED_PERMISSION_KEYS);
       if (error) throw error;
 
       const defaults = normalizePermissionDependencies(createDefaultMatrix());
@@ -348,7 +333,7 @@ export default function AccessSettingsScreen() {
     } finally {
       setResettingDefaults(false);
     }
-  }, [cloudReady, companyId, permissions, t, toast, refreshPermissions]);
+  }, [cloudReady, companyId, t, toast, refreshPermissions]);
 
   return (
     <Screen

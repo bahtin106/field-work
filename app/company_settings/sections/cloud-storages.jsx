@@ -465,7 +465,7 @@ export default function YandexDiskIntegrationScreen() {
                 title={t('company_integrations_google_connect')}
                 variant="secondary"
                 style={styles.disabledActionButton}
-                onPress={() => toast.info(t('company_integrations_google_disabled_toast'))}
+                onPress={() => toast.info(t('feature_future'))}
               />
             </View>
           )}

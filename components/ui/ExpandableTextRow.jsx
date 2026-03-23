@@ -25,6 +25,7 @@ function ExpandableTextRowComponent({
   expandedLabelBold = false,
   expandedKeyValueItems = null,
   onCollapsedPress = null,
+  onCollapsedLongPress = null,
   rowPressDisabled = false,
   // new optional props
   chevronName = 'chevron-down',
@@ -99,9 +100,14 @@ function ExpandableTextRowComponent({
         <View style={base.middleSpacer} />
         <View style={styles.rightWrap}>
           {showCollapsedValue ? (
-            onCollapsedPress ? (
+            onCollapsedPress || onCollapsedLongPress ? (
               <View style={styles.valueWrap}>
-                <Pressable onPress={onCollapsedPress} hitSlop={theme.components?.interactive?.hitSlop}>
+                <Pressable
+                  style={({ pressed }) => [styles.inlineValuePressable, pressed ? styles.inlineValuePressablePressed : null]}
+                  onPress={onCollapsedPress}
+                  onLongPress={onCollapsedLongPress}
+                  hitSlop={theme.components?.interactive?.hitSlop}
+                >
                   <Text
                     style={[base.value, styles.collapsedValue, collapsedValueStyle]}
                     numberOfLines={1}
@@ -125,7 +131,11 @@ function ExpandableTextRowComponent({
           ) : null}
           {showExpandedAction ? (
             <View style={styles.valueWrap}>
-              <Pressable onPress={onValuePress} hitSlop={theme.components?.interactive?.hitSlop}>
+              <Pressable
+                style={({ pressed }) => [styles.inlineValuePressable, pressed ? styles.inlineValuePressablePressed : null]}
+                onPress={onValuePress}
+                hitSlop={theme.components?.interactive?.hitSlop}
+              >
                 <Text style={[base.value, styles.collapsedValue, collapsedValueStyle]}>
                   {normalizedExpandedActionText}
                 </Text>
@@ -193,6 +203,12 @@ function createStyles(theme) {
     valueWrap: {
       flexShrink: 1,
       minWidth: 0,
+    },
+    inlineValuePressable: {
+      borderRadius: theme.radii.xs,
+    },
+    inlineValuePressablePressed: {
+      opacity: 0.6,
     },
     collapsedValue: {
       flexShrink: 1,

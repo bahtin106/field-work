@@ -38,6 +38,7 @@ import FiltersPanel from '../../components/filters/FiltersPanel';
 import { useAuth } from '../../components/hooks/useAuth';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
+import { useToast } from '../../components/ui/ToastProvider';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
 import goBackSmart from '../../lib/navigation/goBackSmart';
@@ -112,6 +113,7 @@ function CalendarScreenContent() {
   const { profile, isAuthenticated, isInitializing } = useAuth();
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const toast = useToast();
   const router = useRouter();
   const navigation = useNavigation();
   const params = useLocalSearchParams();
@@ -735,6 +737,9 @@ function CalendarScreenContent() {
           justifyContent: 'center',
           alignItems: 'center',
         },
+        tabItemDisabled: {
+          opacity: theme.components?.listItem?.disabledOpacity ?? 0.6,
+        },
         tabIndicator: {
           height: 2,
           marginTop: theme.spacing.xs,
@@ -745,6 +750,9 @@ function CalendarScreenContent() {
           color: theme.colors.textSecondary,
           fontSize: theme.typography.sizes.sm,
           fontWeight: theme.typography.weight.medium,
+        },
+        viewPanelTextDisabled: {
+          color: theme.colors.textSecondary,
         },
         calendarContent: {
           overflow: 'hidden',
@@ -1444,26 +1452,40 @@ function CalendarScreenContent() {
       <View style={styles.container}>
         <Animated.View style={styles.tabsWrapper}>
           <View style={styles.tabsContent}>
-            {['Год', 'Месяц', 'Неделя', 'День', 'Расписание'].map((label, index) => {
+            {[
+              { label: 'Год', mode: 'year', disabled: false },
+              { label: 'Месяц', mode: 'month', disabled: false },
+              { label: 'Неделя', mode: 'week', disabled: true },
+              { label: 'День', mode: 'day', disabled: true },
+              { label: 'Расписание', mode: 'schedule', disabled: true },
+            ].map((tab, index) => {
+              const { label, mode, disabled } = tab;
               const isActive =
                 (index === 0 && viewMode === 'year') ||
                 (index === 1 && viewMode === 'month') ||
-                (index > 1 && viewMode === label.toLowerCase());
+                (index > 1 && viewMode === mode);
               return (
                 <Pressable
                   key={label}
                   onPress={() => {
+                    if (disabled) {
+                      toast.info(t('feature_future'));
+                      return;
+                    }
                     if (index === 0) switchMode('year');
                     else if (index === 1) switchMode('month');
-                    // Other modes not yet implemented
                   }}
-                  style={styles.tabItem}
+                  style={[styles.tabItem, disabled && styles.tabItemDisabled]}
                   android_ripple={{ color: theme.colors.overlayNavBar }}
                   accessibilityRole="button"
-                  accessibilityState={{ selected: isActive }}
+                  accessibilityState={{ selected: isActive, disabled }}
                 >
                   <Text
-                    style={[styles.viewPanelText, isActive && { color: theme.colors.primary }]}
+                    style={[
+                      styles.viewPanelText,
+                      disabled && styles.viewPanelTextDisabled,
+                      isActive && { color: theme.colors.primary },
+                    ]}
                     numberOfLines={1}
                     ellipsizeMode="tail"
                   >

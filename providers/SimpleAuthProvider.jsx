@@ -73,6 +73,18 @@ const isAbortLikeError = (error) => {
 const isInvalidRefreshTokenError = (error) =>
   INVALID_REFRESH_TOKEN_RE.test(String(error?.message || error || ''));
 
+const isUserIdColumnMissingError = (error) => {
+  if (!error) return false;
+  const message = String(error?.message || '');
+  return error?.code === '42703' || /user_id/i.test(message);
+};
+
+const isDuplicateProfileError = (error) => {
+  if (!error) return false;
+  const message = String(error?.message || '');
+  return error?.code === '23505' || /duplicate key/i.test(message);
+};
+
 export function SimpleAuthProvider({ children }) {
   const [state, setState] = useState({
     isInitializing: true,
@@ -124,40 +136,84 @@ export function SimpleAuthProvider({ children }) {
             .select(PROFILE_COLUMNS)
             .eq('id', userId)
             .abortSignal(controller.signal)
-            .single());
+            .maybeSingle());
         } finally {
           clearTimeout(timeoutId);
         }
 
         if (error) {
-          if (error.code === 'PGRST116') {
-            debugLog('[SimpleAuth] Creating new profile...');
-            const { data: created, error: createErr } = await supabase
-              .from('profiles')
-              .insert({ id: userId, user_id: userId, role: 'worker' })
-              .select(PROFILE_COLUMNS)
-              .single();
-
-            if (createErr) {
-              console.error('[SimpleAuth] Create error:', createErr);
-              throw createErr;
-            }
-            return normalizeProfileData(created, user, 'created');
-          }
           throw error;
         }
 
+        if (!data) {
+          debugLog('[SimpleAuth] Creating new profile...');
+          const insertPayloads = [
+            { id: userId, user_id: userId, role: 'worker' },
+            { id: userId, role: 'worker' },
+          ];
+          let createdProfile = null;
+          let createError = null;
+
+          for (const payload of insertPayloads) {
+            const { data: created, error: createErr } = await supabase
+              .from('profiles')
+              .insert(payload)
+              .select(PROFILE_COLUMNS)
+              .maybeSingle();
+
+            if (!createErr) {
+              createdProfile = created;
+              break;
+            }
+
+            if (isUserIdColumnMissingError(createErr) && 'user_id' in payload) {
+              createError = createErr;
+              continue;
+            }
+
+            if (isDuplicateProfileError(createErr)) {
+              createError = createErr;
+              break;
+            }
+
+            createError = createErr;
+            break;
+          }
+
+          if (!createdProfile && isDuplicateProfileError(createError)) {
+            const { data: existingProfile, error: refetchError } = await supabase
+              .from('profiles')
+              .select(PROFILE_COLUMNS)
+              .eq('id', userId)
+              .maybeSingle();
+
+            if (refetchError) {
+              throw refetchError;
+            }
+            createdProfile = existingProfile;
+          }
+
+          if (!createdProfile) {
+            throw createError || new Error('profile-create-failed');
+          }
+
+          return normalizeProfileData(createdProfile, user, 'created');
+        }
+
         debugLog('[SimpleAuth] Profile loaded:', data.role);
-        const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
-          [String(data?.avatar_url || '').trim()].filter(Boolean),
-        );
-        const safeData = cleanedUrls.includes(String(data?.avatar_url || '').trim())
-          ? { ...data, avatar_url: null, avatar_display_url: null }
-          : {
-              ...data,
-              avatar_display_url:
-                resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
-            };
+        let safeData = data;
+        try {
+          const avatarUrl = String(data?.avatar_url || '').trim();
+          const { cleanedUrls, resolvedUrls } = await inspectProfileMedia([avatarUrl].filter(Boolean));
+          safeData = cleanedUrls.includes(avatarUrl)
+            ? { ...data, avatar_url: null, avatar_display_url: null }
+            : {
+                ...data,
+                avatar_display_url: resolvedUrls[avatarUrl] || data?.avatar_url || null,
+              };
+        } catch (profileMediaError) {
+          console.warn('[SimpleAuth] Profile media inspect skipped:', profileMediaError);
+        }
         return normalizeProfileData(safeData, user, 'supabase');
       } catch (error) {
         const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);

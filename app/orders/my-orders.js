@@ -73,6 +73,18 @@ function pruneObjectCache(cacheObj, maxEntries = LIST_CACHE_MAX_ENTRIES) {
   });
 }
 
+function excludeFeedStatuses(query) {
+  const feedStatusAliases = getStatusDbAliases('feed').filter(Boolean);
+  if (!feedStatusAliases.length) return query;
+  if (feedStatusAliases.length === 1) {
+    return query.neq('status', feedStatusAliases[0]);
+  }
+  const encoded = feedStatusAliases
+    .map((value) => `'${String(value).replace(/'/g, "''")}'`)
+    .join(',');
+  return query.not('status', 'in', `(${encoded})`);
+}
+
 function MyOrdersContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -659,6 +671,9 @@ function MyOrdersContent() {
           }
         }
       }
+      if (key === 'all') {
+        query = excludeFeedStatuses(query);
+      }
 
       const filterValues = filters.values;
       const statusFilters = Array.isArray(filterValues.statuses)
@@ -811,6 +826,9 @@ function MyOrdersContent() {
         } else if (statusAliases.length > 1) {
           query = query.in('status', statusAliases);
         }
+      }
+      if (key === 'all') {
+        query = excludeFeedStatuses(query);
       }
       query = applyOrderRelationFilters(query, {
         clientId: relationClientId,
@@ -1193,6 +1211,9 @@ function MyOrdersContent() {
       } else if (statusAliases.length > 1) {
         query = query.in('status', statusAliases);
       }
+    }
+    if (key === 'all') {
+      query = excludeFeedStatuses(query);
     }
     query = applyOrderRelationFilters(query, {
       clientId: relationClientId,

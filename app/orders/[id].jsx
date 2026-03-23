@@ -2,6 +2,7 @@
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -10,6 +11,7 @@ import {
   findNodeHandle,
   InteractionManager,
   Keyboard,
+  Linking,
   Pressable,
   Animated as RNAnimated,
   ScrollView,
@@ -81,7 +83,6 @@ import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
   extractOrderAddress,
-  filterOrderAddressByObjectFieldSettings,
   normalizeOrderAddressMode,
 } from '../../src/features/requests/addressing';
 import {
@@ -106,6 +107,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import OrderPhotosModal from './components/OrderPhotosModal';
 import FullscreenImageViewer from './components/FullscreenImageViewer';
 import { useToast } from '../../components/ui/ToastProvider';
+import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
 
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
@@ -434,9 +436,6 @@ function OrderDetailsContent() {
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !!id,
   });
-  const { data: objectFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT, {
-    enabled: !!id,
-  });
   const updateClientMutation = useUpdateClientMutation();
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
@@ -455,12 +454,7 @@ function OrderDetailsContent() {
     () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
     [orderFieldSettingsData],
   );
-  const objectFieldSettings = useMemo(
-    () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
-    [objectFieldSettingsData],
-  );
   const orderFieldsByKey = useMemo(() => getEntityFieldMap(orderFieldSettings), [orderFieldSettings]);
-  const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -486,14 +480,10 @@ function OrderDetailsContent() {
   const [workTypeId, setWorkTypeId] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [amount, setAmount] = useState('');
-  const canViewOrderAmount = has('canViewOrderAmount');
-  const canEditOrderAmount = canViewOrderAmount && has('canEditOrderAmount');
-  const canEditFinances = canEditOrderAmount;
-  const canViewFinanceOwn = has('canViewFinanceOwn');
   const canViewFinanceAll = has('canViewFinanceAll');
-  const canViewFinanceEntries = canViewFinanceOwn || canViewFinanceAll;
+  const canViewFinanceEntries = canViewFinanceAll;
   const canEditFinanceEntries = has('canEditFinanceEntries');
-  const canManageFinanceRules = has('canManageFinanceRules');
+  const canEditFinances = canEditFinanceEntries;
   const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
   const cloudFallbackActive =
     mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'beget_s3';
@@ -1012,8 +1002,23 @@ function OrderDetailsContent() {
   );
 
   const handleQrPaymentPress = useCallback(() => {
-    showToast(t('order_payment_qr_soon', 'Скоро добавим'));
+    showToast(t('feature_future'));
   }, [showToast, t]);
+  const copyTextToClipboard = useCallback(
+    async (text) => {
+      const normalized = String(text || '').trim();
+      if (!normalized) return false;
+      try {
+        await Clipboard.setStringAsync(normalized);
+        showToast(t('toast_copied'));
+        return true;
+      } catch {
+        showToast(t('toast_copy_phone_fail', 'Не удалось скопировать'));
+        return false;
+      }
+    },
+    [showToast, t],
+  );
 
   const makeSnapshotFromOrder = useCallback((o) => {
     if (!o) return '';
@@ -2467,12 +2472,12 @@ function OrderDetailsContent() {
   const confirmDeleteFinanceEntry = useCallback(async () => {
     if (!selectedFinanceEntry?.id) return;
     await removeFinanceEntry(selectedFinanceEntry, {
-      allowSystemDelete: selectedFinanceEntry?.is_system === true && canManageFinanceRules,
+      allowSystemDelete: selectedFinanceEntry?.is_system === true && canEditFinanceEntries,
     });
     setFinanceEntryDeleteConfirmVisible(false);
     setFinanceEntryViewModalVisible(false);
     setSelectedFinanceEntry(null);
-  }, [canManageFinanceRules, removeFinanceEntry, selectedFinanceEntry]);
+  }, [canEditFinanceEntries, removeFinanceEntry, selectedFinanceEntry]);
 
   const toggleFinanceSection = useCallback((sectionKey) => {
     setExpandedFinanceSections((prev) => ({
@@ -3462,15 +3467,11 @@ function OrderDetailsContent() {
     return '';
   }, [customerName, linkedClient, order?.customer_name, order?.fio]);
   const orderAddress = useMemo(() => extractOrderAddress(order), [order]);
-  const visibleOrderAddress = useMemo(
-    () => filterOrderAddressByObjectFieldSettings(orderAddress, objectFieldsByKey),
-    [objectFieldsByKey, orderAddress],
-  );
-  const shortOrderAddress = useMemo(() => buildOrderAddressShort(visibleOrderAddress), [visibleOrderAddress]);
-  const fullOrderAddress = useMemo(() => buildOrderAddressDisplay(visibleOrderAddress), [visibleOrderAddress]);
+  const shortOrderAddress = useMemo(() => buildOrderAddressShort(orderAddress), [orderAddress]);
+  const fullOrderAddress = useMemo(() => buildOrderAddressDisplay(orderAddress), [orderAddress]);
   const orderAddressForNavigator = useMemo(
-    () => buildAddressForNavigator(visibleOrderAddress),
-    [visibleOrderAddress],
+    () => buildAddressForNavigator(orderAddress),
+    [orderAddress],
   );
   const orderMapLat = useMemo(() => normalizeCoordinateValue(orderAddress?.geo_lat), [orderAddress?.geo_lat]);
   const orderMapLng = useMemo(() => normalizeCoordinateValue(orderAddress?.geo_lng), [orderAddress?.geo_lng]);
@@ -3478,29 +3479,29 @@ function OrderDetailsContent() {
   const orderLocationMode = useMemo(
     () =>
       normalizeClientObjectLocationMode(order?.object_location_mode || order?.object?.location_mode, {
-        fallback: orderHasMapPoint ? 'map' : 'address',
+        fallback: 'address',
       }),
-    [order?.object?.location_mode, order?.object_location_mode, orderHasMapPoint],
+    [order?.object?.location_mode, order?.object_location_mode],
   );
   const useCoordinatesForOrderAddress = orderLocationMode === 'map' && orderHasMapPoint;
   const orderAddressItems = useMemo(
     () =>
       [
-        [t('order_field_country'), visibleOrderAddress.country],
-        [t('order_field_region'), visibleOrderAddress.region],
-        [t('order_field_district'), visibleOrderAddress.district],
-        [t('order_field_city'), visibleOrderAddress.city],
-        [t('order_field_street'), visibleOrderAddress.street],
-        [t('order_field_house'), visibleOrderAddress.house],
-        [t('order_field_floor'), visibleOrderAddress.floor],
-        [t('order_field_entrance'), visibleOrderAddress.entrance],
-        [t('order_field_apartment'), visibleOrderAddress.apartment],
-        [t('order_field_postal_code'), visibleOrderAddress.postal_code],
-        [t('order_field_comment'), visibleOrderAddress.entrance_info],
+        [t('order_field_country'), orderAddress.country],
+        [t('order_field_region'), orderAddress.region],
+        [t('order_field_district'), orderAddress.district],
+        [t('order_field_city'), orderAddress.city],
+        [t('order_field_street'), orderAddress.street],
+        [t('order_field_house'), orderAddress.house],
+        [t('order_field_floor'), orderAddress.floor],
+        [t('order_field_entrance'), orderAddress.entrance],
+        [t('order_field_apartment'), orderAddress.apartment],
+        [t('order_field_postal_code'), orderAddress.postal_code],
+        [t('order_field_comment'), orderAddress.entrance_info],
       ]
         .filter(([, value]) => String(value || '').trim().length > 0)
         .map(([label, value]) => ({ label, value: String(value || '').trim() })),
-    [t, visibleOrderAddress],
+    [t, orderAddress],
   );
   const normalizedAddressMode = useMemo(
     () => normalizeOrderAddressMode(order?.address_mode),
@@ -3513,6 +3514,49 @@ function OrderDetailsContent() {
     if (normalizedAddressMode === 'custom') return t('order_address_custom_mode');
     return '';
   }, [isObjectDeleted, linkedObjectId, normalizedAddressMode, order?.object_name, t]);
+  const createdAtDisplayValue = useMemo(() => {
+    if (!order?.created_at) return t('order_details_departure_not_specified');
+    const createdDate = new Date(order.created_at);
+    if (Number.isNaN(createdDate.getTime())) return t('order_details_departure_not_specified');
+    return format(createdDate, 'dd.MM.yyyy, HH:mm', { locale: ru });
+  }, [order?.created_at, t]);
+  const orderPhoneRawValue = useMemo(
+    () => String(order?.phone ?? order?.customer_phone_visible ?? order?.phone_visible ?? '').trim(),
+    [order?.customer_phone_visible, order?.phone, order?.phone_visible],
+  );
+  const orderPhoneDisplayValue = useMemo(() => {
+    if (!orderPhoneRawValue) return t('order_details_departure_not_specified');
+    return formatRuMask(orderPhoneRawValue);
+  }, [orderPhoneRawValue, t]);
+  const openOrderPhoneDialer = useCallback(async () => {
+    if (!orderPhoneRawValue) return;
+    const dialTarget = toE164(orderPhoneRawValue) || `+${normalizeRu(orderPhoneRawValue)}`;
+    const url = `tel:${dialTarget}`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      try {
+        const canOpen = await Linking.canOpenURL(url);
+        if (canOpen) await Linking.openURL(url);
+        else showToast(t('errors_callsUnavailable', 'Звонки недоступны'));
+      } catch {
+        showToast(t('errors_callsUnavailable', 'Звонки недоступны'));
+      }
+    }
+  }, [orderPhoneRawValue, showToast, t]);
+  const copyOrderPhone = useCallback(async () => {
+    const text = toE164(orderPhoneRawValue) || `+${normalizeRu(orderPhoneRawValue)}`;
+    await copyTextToClipboard(text);
+  }, [copyTextToClipboard, orderPhoneRawValue]);
+  const copyOrderCoordinates = useCallback(async () => {
+    if (!useCoordinatesForOrderAddress) return;
+    await copyTextToClipboard(`${orderMapLat}, ${orderMapLng}`);
+  }, [copyTextToClipboard, orderMapLat, orderMapLng, useCoordinatesForOrderAddress]);
+  const copyOrderShortAddress = useCallback(async () => {
+    const text = String(shortOrderAddress || fullOrderAddress || '').trim();
+    if (!text) return;
+    await copyTextToClipboard(text);
+  }, [copyTextToClipboard, fullOrderAddress, shortOrderAddress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3582,7 +3626,7 @@ function OrderDetailsContent() {
     isFree &&
     !isReadOnlyBySubscription &&
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
-  const canViewFinanceSection = canViewOrderAmount || canViewFinanceEntries;
+  const canViewFinanceSection = canViewFinanceEntries;
   const currency = order?.currency || companySettings?.currency;
   const grossTotal = Number(order.price ?? 0) || 0;
   const financeIncomeTotal = financeEntries.reduce(
@@ -3628,7 +3672,7 @@ function OrderDetailsContent() {
   const executorFinanceTotal = isOrderPaid ? executorAccruedTotal : 0;
   const showExecutorFinanceSection = canViewFinanceEntries === true;
   const showInitialCostLine =
-    canViewOrderAmount &&
+    canViewFinanceEntries &&
     isOrderFieldVisible('price');
   const visibleMediaFields = ORDER_MEDIA_FIELD_KEYS.filter(
     (fieldKey) => isOrderFieldVisible(fieldKey),
@@ -3724,6 +3768,12 @@ function OrderDetailsContent() {
                   <OrderStatusCapsule status={order.status} />
                 </View>
               </View>
+              <View style={base.sep} />
+              <LabelValueRow
+                label={t('order_details_created_at')}
+                value={createdAtDisplayValue}
+                hideWhenEmpty={false}
+              />
               <View style={base.sep} />
 
               {isOrderFieldVisible('assigned_to') ? (
@@ -3866,18 +3916,63 @@ function OrderDetailsContent() {
                 </Pressable>
               ) : null}
               {isOrderFieldVisible('object_id') ? <View style={base.sep} /> : null}
+              {isOrderFieldVisible('phone') ? (
+                <LabelValueRow
+                  label={t('order_details_phone')}
+                  valueComponent={
+                    orderPhoneRawValue ? (
+                      <Pressable
+                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
+                        accessibilityRole="link"
+                        onPress={openOrderPhoneDialer}
+                        onLongPress={copyOrderPhone}
+                      >
+                        <Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>
+                      </Pressable>
+                    ) : (
+                      <Text style={base.value}>{orderPhoneDisplayValue}</Text>
+                    )
+                  }
+                  rightActions={
+                    orderPhoneRawValue ? (
+                      <Pressable
+                        style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('a11y_copy_phone', 'Скопировать телефон')}
+                        onPress={copyOrderPhone}
+                      >
+                        <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
+                      </Pressable>
+                    ) : null
+                  }
+                  hideWhenEmpty={false}
+                />
+              ) : null}
+              {isOrderFieldVisible('phone') ? <View style={base.sep} /> : null}
               {isOrderFieldVisible('object_id') ? (
                 useCoordinatesForOrderAddress ? (
                   <LabelValueRow
                     label={t('objects_location_coordinates')}
                     valueComponent={(
                       <Pressable
+                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                         accessibilityRole="link"
                         onPress={() => openCoordinatesInYandex(orderMapLat, orderMapLng)}
+                        onLongPress={copyOrderCoordinates}
                       >
                         <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
                       </Pressable>
                     )}
+                    rightActions={
+                      <Pressable
+                        style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('common_copy', 'Скопировать')}
+                        onPress={copyOrderCoordinates}
+                      >
+                        <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
+                      </Pressable>
+                    }
                     hideWhenEmpty={false}
                   />
                 ) : (
@@ -3906,6 +4001,7 @@ function OrderDetailsContent() {
                           }
                         : null
                     }
+                    onCollapsedLongPress={copyOrderShortAddress}
                     forceShow
                   />
                 )
@@ -3947,7 +4043,7 @@ function OrderDetailsContent() {
                           )
                         }
                         summaryIconOnPress={isOrderPaid ? null : handleQrPaymentPress}
-                        summaryIconAccessibilityLabel={isOrderPaid ? null : t('order_payment_qr_soon', 'Скоро добавим')}
+                        summaryIconAccessibilityLabel={isOrderPaid ? null : t('feature_future')}
                         expanded={expandedFinanceSections.customer}
                         onToggle={() => toggleFinanceSection('customer')}
                         base={base}
@@ -4033,10 +4129,10 @@ function OrderDetailsContent() {
 
                             {showInitialCostLine ? (
                               <Pressable
-                                style={({ pressed }) => [canEditOrderAmount && pressed && { opacity: 0.7 }]}
-                                disabled={!canEditOrderAmount}
+                                style={({ pressed }) => [canEditFinances && pressed && { opacity: 0.7 }]}
+                                disabled={!canEditFinances}
                                 onPress={() => {
-                                  if (!canEditOrderAmount) return;
+                                  if (!canEditFinances) return;
                                   setAmountDraft(String(order?.price ?? ''));
                                   setAmountEditModalVisible(true);
                                 }}
@@ -4044,13 +4140,13 @@ function OrderDetailsContent() {
                                 <LabelValueRow
                                   label={t('order_finance_initial_cost', 'Изначальная стоимость')}
                                   value={formatMoney(order.price, currency)}
-                                  hideWhenEmpty={false}
-                                  rightActions={
-                                    canEditOrderAmount ? (
-                                      <Feather
-                                        name="chevron-right"
-                                        size={theme.icons?.sm ?? 18}
-                                        color={theme.colors.textSecondary}
+                                    hideWhenEmpty={false}
+                                    rightActions={
+                                      canEditFinances ? (
+                                        <Feather
+                                          name="chevron-right"
+                                          size={theme.icons?.sm ?? 18}
+                                          color={theme.colors.textSecondary}
                                       />
                                     ) : null
                                   }
@@ -4302,10 +4398,10 @@ function OrderDetailsContent() {
                     <>
                       {showInitialCostLine ? (
                         <Pressable
-                          style={({ pressed }) => [canEditOrderAmount && pressed && { opacity: 0.7 }]}
-                          disabled={!canEditOrderAmount}
+                          style={({ pressed }) => [canEditFinances && pressed && { opacity: 0.7 }]}
+                          disabled={!canEditFinances}
                           onPress={() => {
-                            if (!canEditOrderAmount) return;
+                            if (!canEditFinances) return;
                             setAmountDraft(String(order?.price ?? ''));
                             setAmountEditModalVisible(true);
                           }}
@@ -4315,7 +4411,7 @@ function OrderDetailsContent() {
                             value={formatMoney(order.price, currency)}
                             hideWhenEmpty={false}
                             rightActions={
-                              canEditOrderAmount ? (
+                              canEditFinances ? (
                                 <Feather
                                   name="chevron-right"
                                   size={theme.icons?.sm ?? 18}
@@ -4821,7 +4917,7 @@ function OrderDetailsContent() {
           </>
         ) : null}
         {(canEditFinanceEntries && selectedFinanceEntry?.is_system !== true) ||
-        (canManageFinanceRules && selectedFinanceEntry?.is_system === true) ? (
+        (canEditFinanceEntries && selectedFinanceEntry?.is_system === true) ? (
           <View style={styles.financeEntryModalActions}>
             {selectedFinanceEntry?.is_system !== true ? (
               <Button
@@ -5119,7 +5215,23 @@ function createStyles(theme) {
       fontWeight: typo.weight?.bold || '700',
       fontSize: typo.sizes?.xs || 12,
     },
+    copyButton: {
+      padding: 2,
+    },
+    copyButtonPressed: {
+      opacity: 0.65,
+    },
+    copyButtonHidden: {
+      display: 'none',
+    },
     link: { color: theme.colors.primary },
+    linkPressable: {
+      borderRadius: rad.xs || 6,
+    },
+    linkPressablePressed: {
+      opacity: 0.6,
+      transform: [{ scale: 0.99 }],
+    },
     deletedObjectText: {
       color: theme.colors.textSecondary,
       fontStyle: 'italic',

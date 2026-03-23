@@ -65,6 +65,18 @@ function isUuid(value) {
   return UUID_RE.test(normalized);
 }
 
+function excludeFeedStatuses(query: any) {
+  const feedStatusValues = getStatusDbAliases('feed').filter(Boolean);
+  if (!feedStatusValues.length) return query;
+  if (feedStatusValues.length === 1) {
+    return query.neq('status', feedStatusValues[0]);
+  }
+  const encoded = feedStatusValues
+    .map((value) => `'${String(value).replace(/'/g, "''")}'`)
+    .join(',');
+  return query.not('status', 'in', `(${encoded})`);
+}
+
 function buildClientDisplayName(client) {
   if (!client || typeof client !== 'object') return '';
   const fromParts = [
@@ -282,6 +294,9 @@ export async function listRequests(params = {}) {
       if (feedStatusValues.length === 1) query = query.eq('status', feedStatusValues[0]);
       if (feedStatusValues.length > 1) query = query.in('status', feedStatusValues);
     } else {
+      if (status === 'all') {
+        query = excludeFeedStatuses(query);
+      }
       const statusValues = getStatusDbAliases(status);
       if (statusValues.length === 1) query = query.eq('status', statusValues[0]);
       if (statusValues.length > 1) query = query.in('status', statusValues);
@@ -334,6 +349,9 @@ export async function listRequests(params = {}) {
         if (feedStatusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', feedStatusValues[0]);
         if (feedStatusValues.length > 1) fallbackQuery = fallbackQuery.in('status', feedStatusValues);
       } else {
+        if (status === 'all') {
+          fallbackQuery = excludeFeedStatuses(fallbackQuery);
+        }
         const statusValues = getStatusDbAliases(status);
         if (statusValues.length === 1) fallbackQuery = fallbackQuery.eq('status', statusValues[0]);
         if (statusValues.length > 1) fallbackQuery = fallbackQuery.in('status', statusValues);

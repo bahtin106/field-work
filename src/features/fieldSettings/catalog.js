@@ -43,6 +43,7 @@ const ORDER_FIELDS = [
     inputKind: 'text',
     defaultRequired: true,
     lockedEnabled: true,
+    lockedRequired: true,
     sortOrder: 10,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'comment', {

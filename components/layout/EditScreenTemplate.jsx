@@ -48,6 +48,40 @@ export default function EditScreenTemplate({
     mergedOptions.headerLeft = () => null; // Будет обработан в AppHeader через onBackPress
   }
 
+  const scrollViewNode = (
+    <KeyboardAwareScrollView
+      ref={resolvedScrollRef}
+      contentContainerStyle={[
+        {
+          paddingHorizontal: theme.spacing?.lg ?? 16,
+          flexGrow: 1,
+          paddingBottom: basePaddingBottom,
+        },
+        contentContainerStyle,
+      ]}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="none"
+      showsVerticalScrollIndicator={false}
+      contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
+      scrollEnabled={scrollEnabled}
+      bottomOffset={keyboardBottomOffset}
+      extraKeyboardSpace={extraKeyboardSpace}
+      onScroll={(event) => {
+        internalScrollYRef.current = event?.nativeEvent?.contentOffset?.y || 0;
+        onScroll?.(event);
+      }}
+      scrollEventThrottle={scrollEventThrottle}
+    >
+      {dismissKeyboardOnPress ? (
+        <DismissKeyboardArea>
+          <View>{children}</View>
+        </DismissKeyboardArea>
+      ) : (
+        <View>{children}</View>
+      )}
+    </KeyboardAwareScrollView>
+  );
+
   return (
     <SafeAreaView
       style={{ flex: 1, backgroundColor: theme.colors.background }}
@@ -61,37 +95,7 @@ export default function EditScreenTemplate({
         headerHeight={headerHeight}
       >
         <AppHeader back options={mergedOptions} onBackPress={onBack} />
-        <KeyboardAwareScrollView
-          ref={resolvedScrollRef}
-          contentContainerStyle={[
-            {
-              paddingHorizontal: theme.spacing?.lg ?? 16,
-              flexGrow: 1,
-              paddingBottom: basePaddingBottom,
-            },
-            contentContainerStyle,
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="none"
-          showsVerticalScrollIndicator={false}
-          contentInsetAdjustmentBehavior={Platform.OS === 'ios' ? 'always' : 'automatic'}
-          scrollEnabled={scrollEnabled}
-          bottomOffset={keyboardBottomOffset}
-          extraKeyboardSpace={extraKeyboardSpace}
-          onScroll={(event) => {
-            internalScrollYRef.current = event?.nativeEvent?.contentOffset?.y || 0;
-            onScroll?.(event);
-          }}
-          scrollEventThrottle={scrollEventThrottle}
-        >
-          {dismissKeyboardOnPress ? (
-            <DismissKeyboardArea>
-              <View>{children}</View>
-            </DismissKeyboardArea>
-          ) : (
-            <View>{children}</View>
-          )}
-        </KeyboardAwareScrollView>
+        {scrollViewNode}
       </FormAutoScrollProvider>
     </SafeAreaView>
   );

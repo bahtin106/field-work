@@ -50,7 +50,12 @@ import { withAlpha } from '../../theme/colors';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { useClient, useClients, useUpdateClientMutation } from '../../src/features/clients/queries';
-import { collectClientPhoneSearchValues } from '../../src/features/clients/additionalPhones';
+import {
+  buildAdditionalPhoneDisplayLabel,
+  CLIENT_ADDITIONAL_PHONE_SLOT_IDS,
+  collectClientPhoneSearchValues,
+  getClientAdditionalPhones,
+} from '../../src/features/clients/additionalPhones';
 import {
   useCreateClientObjectMutation,
   useClientObjects,
@@ -82,6 +87,7 @@ import {
 import {
   buildObjectAdditionalPhonesPatch,
   getObjectAdditionalPhones,
+  OBJECT_ADDITIONAL_PHONE_SLOT_IDS,
   getVisibleAdditionalObjectPhoneSlotIds,
   resolveVisibleAdditionalObjectPhoneSlotIds,
 } from '../../src/features/objects/additionalPhones';
@@ -123,6 +129,55 @@ const REMOVED_ORDER_ADDRESS_FIELDS = new Set([
 
 const SCROLL_ANIMATION_DELAY = 200;
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
+const PHONE_SOURCE_SEPARATOR = ':';
+const PHONE_SOURCE_KIND = Object.freeze({
+  MANUAL: 'manual',
+  CLIENT_PRIMARY: 'client_primary',
+  CLIENT_ADDITIONAL: 'client_additional',
+  OBJECT_ADDITIONAL: 'object_additional',
+});
+const PHONE_SOURCE_IDS = Object.freeze({
+  MANUAL: PHONE_SOURCE_KIND.MANUAL,
+  CLIENT_PRIMARY: PHONE_SOURCE_KIND.CLIENT_PRIMARY,
+});
+
+function buildPhoneSourceId(kind, slotId = null) {
+  const normalizedKind = String(kind || '').trim();
+  if (!normalizedKind) return PHONE_SOURCE_IDS.MANUAL;
+  if (slotId === null || slotId === undefined) return normalizedKind;
+  const normalizedSlotId = Number(slotId);
+  if (!Number.isFinite(normalizedSlotId)) return normalizedKind;
+  return `${normalizedKind}${PHONE_SOURCE_SEPARATOR}${Math.trunc(normalizedSlotId)}`;
+}
+
+function parsePhoneSourceId(sourceId) {
+  const raw = String(sourceId || '').trim();
+  if (!raw) return { kind: PHONE_SOURCE_KIND.MANUAL, slotId: null };
+  const [kindPart, slotPart] = raw.split(PHONE_SOURCE_SEPARATOR);
+  const kind = String(kindPart || '').trim();
+  if (!slotPart) return { kind, slotId: null };
+  const slotId = Number(slotPart);
+  if (!Number.isFinite(slotId)) return { kind, slotId: null };
+  return { kind, slotId: Math.trunc(slotId) };
+}
+
+function normalizePhoneSourceId(sourceId) {
+  const { kind, slotId } = parsePhoneSourceId(sourceId);
+  if (kind === PHONE_SOURCE_KIND.CLIENT_PRIMARY) return PHONE_SOURCE_IDS.CLIENT_PRIMARY;
+  if (kind === PHONE_SOURCE_KIND.CLIENT_ADDITIONAL) {
+    if (CLIENT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) {
+      return buildPhoneSourceId(PHONE_SOURCE_KIND.CLIENT_ADDITIONAL, slotId);
+    }
+    return PHONE_SOURCE_IDS.MANUAL;
+  }
+  if (kind === PHONE_SOURCE_KIND.OBJECT_ADDITIONAL) {
+    if (OBJECT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) {
+      return buildPhoneSourceId(PHONE_SOURCE_KIND.OBJECT_ADDITIONAL, slotId);
+    }
+    return PHONE_SOURCE_IDS.MANUAL;
+  }
+  return PHONE_SOURCE_IDS.MANUAL;
+}
 
 function hasMojibake(text) {
   const value = String(text || '').trim();
@@ -211,6 +266,8 @@ function CreateOrderContent() {
   const [previewObjectVisible, setPreviewObjectVisible] = useState(false);
   const [previewAnchor, setPreviewAnchor] = useState({ x: 0, y: 0 });
   const [workTypeModalVisible, setWorkTypeModalVisible] = useState(false);
+  const [phoneSourceModalVisible, setPhoneSourceModalVisible] = useState(false);
+  const [phoneSourceId, setPhoneSourceId] = useState(PHONE_SOURCE_IDS.MANUAL);
   const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
   const [savedDraft, setSavedDraft] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
@@ -347,6 +404,7 @@ function CreateOrderContent() {
         selectedClientObjectId,
         stagedSelectedObjectDraft,
         draftClientObject,
+        phoneSourceId,
         urgent,
         toFeed,
         timestamp: Date.now(),
@@ -367,6 +425,7 @@ function CreateOrderContent() {
     selectedClientObjectId,
     stagedSelectedObjectDraft,
     draftClientObject,
+    phoneSourceId,
     urgent,
     toFeed,
   ]);
@@ -413,6 +472,7 @@ function CreateOrderContent() {
     setSelectedClientObjectId(draft.selectedClientObjectId || null);
     setStagedSelectedObjectDraft(draft.stagedSelectedObjectDraft || null);
     setDraftClientObject(draft.draftClientObject || null);
+    setPhoneSourceId(normalizePhoneSourceId(draft.phoneSourceId));
     setUrgent(draft.urgent || false);
     setToFeed(draft.toFeed || false);
   }, []);
@@ -458,6 +518,7 @@ function CreateOrderContent() {
       !!selectedClientObjectId ||
       !!stagedSelectedObjectDraft ||
       !!draftClientObject ||
+      phoneSourceId !== PHONE_SOURCE_IDS.MANUAL ||
       !!urgent ||
       !!toFeed
     );
@@ -473,6 +534,7 @@ function CreateOrderContent() {
     selectedClientObjectId,
     stagedSelectedObjectDraft,
     draftClientObject,
+    phoneSourceId,
     urgent,
     toFeed,
   ]);
@@ -802,12 +864,15 @@ function CreateOrderContent() {
     }
 
     if (selectedClientId) {
-      await updateClientMutation.mutateAsync({
-        id: String(selectedClientId),
-        patch: {
-          phone: normalizedPhone,
-        },
-      });
+      const shouldSyncClientPrimaryPhone = phoneSourceId === PHONE_SOURCE_IDS.CLIENT_PRIMARY;
+      if (shouldSyncClientPrimaryPhone) {
+        await updateClientMutation.mutateAsync({
+          id: String(selectedClientId),
+          patch: {
+            phone: normalizedPhone,
+          },
+        });
+      }
     }
 
     let resolvedObject = stagedSelectedObjectDraft || selectedClientObject;
@@ -940,6 +1005,7 @@ function CreateOrderContent() {
     stagedSelectedObjectDraft,
     updateClientMutation,
     updateClientObjectMutation,
+    phoneSourceId,
     subscriptionGuard.canEdit,
     resolveTitleForSave,
   ]);
@@ -1131,6 +1197,9 @@ function CreateOrderContent() {
             label={label}
             value={val}
             onChangeText={(raw, _meta) => {
+              if (key === 'phone' && phoneSourceId !== PHONE_SOURCE_IDS.MANUAL) {
+                setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
+              }
               setField(key, raw);
               clearFieldError(key);
             }}
@@ -1153,6 +1222,7 @@ function CreateOrderContent() {
       formStyles,
       t,
       isFieldRequired,
+      phoneSourceId,
       withRequiredLabel,
       fieldErrors,
       shouldShowError,
@@ -1224,6 +1294,102 @@ function CreateOrderContent() {
       draftClientObject ||
       null,
     [draftClientObject, pendingSuggestedObjectSelection, selectedClientObject, stagedSelectedObjectDraft],
+  );
+  const selectedClientAdditionalPhones = useMemo(
+    () => getClientAdditionalPhones(selectedClient),
+    [selectedClient],
+  );
+  const selectedObjectAdditionalPhones = useMemo(
+    () => getObjectAdditionalPhones(activeObjectDraft),
+    [activeObjectDraft],
+  );
+  const resolvePhoneBySourceId = useCallback(
+    (sourceId) => {
+      const normalizedSourceId = normalizePhoneSourceId(sourceId);
+      const { kind, slotId } = parsePhoneSourceId(normalizedSourceId);
+      if (kind === PHONE_SOURCE_KIND.CLIENT_PRIMARY) {
+        return String(selectedClient?.phone || '').trim();
+      }
+      if (kind === PHONE_SOURCE_KIND.CLIENT_ADDITIONAL) {
+        if (!CLIENT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) return '';
+        return String(selectedClientAdditionalPhones?.[slotId - 1]?.phone || '').trim();
+      }
+      if (kind === PHONE_SOURCE_KIND.OBJECT_ADDITIONAL) {
+        if (!OBJECT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) return '';
+        return String(selectedObjectAdditionalPhones?.[slotId - 1]?.phone || '').trim();
+      }
+      return '';
+    },
+    [selectedClient, selectedClientAdditionalPhones, selectedObjectAdditionalPhones],
+  );
+  const phoneSourceItems = useMemo(() => {
+    const items = [
+      {
+        id: PHONE_SOURCE_IDS.MANUAL,
+        label: t('create_order_phone_source_manual'),
+      },
+    ];
+
+    if (selectedClientId) {
+      const clientPrimaryPhone = String(selectedClient?.phone || '').trim();
+      items.push({
+        id: PHONE_SOURCE_IDS.CLIENT_PRIMARY,
+        label: t('create_order_phone_source_client_primary'),
+        subtitle: clientPrimaryPhone ? formatRuMask(clientPrimaryPhone) : undefined,
+        disabled: !clientPrimaryPhone,
+      });
+
+      CLIENT_ADDITIONAL_PHONE_SLOT_IDS.forEach((slotId) => {
+        const entry = selectedClientAdditionalPhones?.[slotId - 1] || {};
+        const phone = String(entry?.phone || '').trim();
+        if (!phone) return;
+        const displayLabel = buildAdditionalPhoneDisplayLabel(t, entry?.label);
+        items.push({
+          id: buildPhoneSourceId(PHONE_SOURCE_KIND.CLIENT_ADDITIONAL, slotId),
+          label: t('create_order_phone_source_client_additional').replace('{label}', displayLabel),
+          subtitle: formatRuMask(phone),
+        });
+      });
+    }
+
+    OBJECT_ADDITIONAL_PHONE_SLOT_IDS.forEach((slotId) => {
+      const entry = selectedObjectAdditionalPhones?.[slotId - 1] || {};
+      const phone = String(entry?.phone || '').trim();
+      if (!phone) return;
+      const displayLabel = buildAdditionalPhoneDisplayLabel(t, entry?.label);
+      items.push({
+        id: buildPhoneSourceId(PHONE_SOURCE_KIND.OBJECT_ADDITIONAL, slotId),
+        label: t('create_order_phone_source_object_additional').replace('{label}', displayLabel),
+        subtitle: formatRuMask(phone),
+      });
+    });
+
+    return items;
+  }, [selectedClient, selectedClientAdditionalPhones, selectedClientId, selectedObjectAdditionalPhones, t]);
+  const selectedPhoneSourceLabel = useMemo(() => {
+    const selectedItem = phoneSourceItems.find((item) => item.id === phoneSourceId);
+    return selectedItem?.label || t('create_order_phone_source_manual');
+  }, [phoneSourceId, phoneSourceItems, t]);
+  const applyPhoneSource = useCallback(
+    (sourceId, options = {}) => {
+      const normalizedSourceId = normalizePhoneSourceId(sourceId);
+      const fillPhone = options.fillPhone !== false;
+      const keepPhoneOnManual = options.keepPhoneOnManual !== false;
+
+      setPhoneSourceId(normalizedSourceId);
+      if (!fillPhone) return;
+      if (normalizedSourceId === PHONE_SOURCE_IDS.MANUAL) {
+        if (!keepPhoneOnManual) {
+          setForm((prev) => ({ ...prev, phone: '' }));
+        }
+        clearFieldError('phone');
+        return;
+      }
+      const nextPhone = resolvePhoneBySourceId(normalizedSourceId);
+      setForm((prev) => ({ ...prev, phone: String(nextPhone || '').trim() }));
+      clearFieldError('phone');
+    },
+    [clearFieldError, resolvePhoneBySourceId],
   );
   const selectedClientObjectSummary = useMemo(
     () => String(activeObjectDraft?.name || '').trim() || null,
@@ -1352,6 +1518,7 @@ function CreateOrderContent() {
                         setStagedSelectedObjectDraft(null);
                         setSuggestedMatchingObject(null);
                         setSuggestedMatchingVisible(false);
+                        setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
                         setField('phone', '');
                       }}
                       accessibilityLabel={t('common_clear')}
@@ -1412,7 +1579,18 @@ function CreateOrderContent() {
             </>
           );
         case 'phone':
-          return renderPhoneInput('phone');
+          return (
+            <>
+              <TextField
+                label={t('create_order_phone_source_label')}
+                value={selectedPhoneSourceLabel}
+                pressable
+                style={formStyles.field}
+                onPress={() => setPhoneSourceModalVisible(true)}
+              />
+              {renderPhoneInput('phone')}
+            </>
+          );
         default:
           return null;
       }
@@ -1427,11 +1605,13 @@ function CreateOrderContent() {
       openObjectAddressEditor,
       openObjectFlow,
       renderPhoneInput,
+      selectedPhoneSourceLabel,
       selectedClientName,
       selectedClientId,
       selectedClientObjectId,
       selectedClientObjectSummary,
       setField,
+      setPhoneSourceModalVisible,
       shortAddressValue,
       shouldShowError,
       t,
@@ -1588,7 +1768,7 @@ function CreateOrderContent() {
               <TextField
                 label={withRequiredLabel(
                   getFieldLabel('assigned_to', t('create_order_label_executor')),
-                  !toFeed && isFieldRequired('assigned_to'),
+                  isFieldRequired('assigned_to'),
                 )}
                 value={
                   toFeed
@@ -1598,7 +1778,6 @@ function CreateOrderContent() {
                 pressable
                 style={formStyles.field}
                 onPress={() => {
-                  if (toFeed) return;
                   setAssigneeModalVisible(true);
                 }}
                 error={shouldShowError('assigned_to') && fieldErrors?.assigned_to ? 'invalid' : undefined}
@@ -1727,10 +1906,6 @@ function CreateOrderContent() {
       }
       return;
     }
-    setForm((prev) => ({
-      ...prev,
-      phone: String(selectedClient.phone || prev.phone || '').trim(),
-    }));
     if (draftClientObject || pendingSuggestedObjectSelection) return;
     const primaryObject = clientObjects.find((item) => item?.is_primary) || clientObjects[0] || null;
     setSelectedClientObjectId((prev) => {
@@ -1752,6 +1927,31 @@ function CreateOrderContent() {
       return String(prev.id) === String(selectedClientObjectId) ? prev : null;
     });
   }, [selectedClientObject, selectedClientObjectId]);
+
+  useEffect(() => {
+    if (phoneSourceId === PHONE_SOURCE_IDS.MANUAL) return;
+    const sourceIsAvailable = phoneSourceItems.some(
+      (item) => item.id === phoneSourceId && !item.disabled,
+    );
+    if (sourceIsAvailable) return;
+    setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
+  }, [phoneSourceId, phoneSourceItems]);
+
+  useEffect(() => {
+    if (phoneSourceId === PHONE_SOURCE_IDS.MANUAL) return;
+    const selectedSource = phoneSourceItems.find(
+      (item) => item.id === phoneSourceId && !item.disabled,
+    );
+    if (!selectedSource) return;
+    const nextPhone = resolvePhoneBySourceId(phoneSourceId);
+    setForm((prev) => {
+      const currentPhone = String(prev.phone || '').trim();
+      const resolvedPhone = String(nextPhone || '').trim();
+      if (currentPhone === resolvedPhone) return prev;
+      return { ...prev, phone: resolvedPhone };
+    });
+    clearFieldError('phone');
+  }, [clearFieldError, phoneSourceId, phoneSourceItems, resolvePhoneBySourceId]);
 
   useEffect(() => {
     if (!pendingSuggestedObjectSelection || !selectedClient) return;
@@ -1881,10 +2081,18 @@ function CreateOrderContent() {
         setPendingSuggestedObjectSelection(null);
         setSelectedClientId(client.id);
         setSelectedClientObjectId(null);
+        const primaryPhone = String(client?.phone || '').trim();
+        if (primaryPhone) {
+          setPhoneSourceId(PHONE_SOURCE_IDS.CLIENT_PRIMARY);
+          setForm((prev) => ({ ...prev, phone: primaryPhone }));
+          clearFieldError('phone');
+        } else {
+          setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
+        }
         setClientModalVisible(false);
       },
     }));
-  }, [clients, t]);
+  }, [clearFieldError, clients, t]);
 
   const openClientPreview = useCallback((item, event) => {
     const client = item?.clientRaw || null;
@@ -2373,8 +2581,23 @@ function CreateOrderContent() {
         title={t('create_order_modal_executor_title')}
         items={assigneeItems}
         searchable
+        selectedId={toFeed ? 'feed' : assigneeId}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setAssigneeModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={phoneSourceModalVisible}
+        title={t('create_order_phone_source_modal_title')}
+        items={phoneSourceItems}
+        searchable={false}
+        selectedId={phoneSourceId}
+        onSelect={(item) => {
+          if (!item?.id || item.disabled) return;
+          applyPhoneSource(item.id);
+          setPhoneSourceModalVisible(false);
+        }}
+        onClose={() => setPhoneSourceModalVisible(false)}
       />
 
       <SelectModal
@@ -2590,12 +2813,13 @@ function createStyles(theme) {
   const sepHeight = sep.height ?? theme.components?.listItem?.dividerWidth ?? 1;
   const alpha = sep.alpha ?? 0.18;
   const sepColor = withAlpha(col.primary, alpha);
+  const toggleTrackOffColor = col.inputBorder || col.border;
   const ml = Number(sp?.[insetKey] ?? 0) || 0;
   const mr = Number(sp?.[insetKey] ?? 0) || 0;
 
   const TOGGLE_WIDTH = 42;
-  const TOGGLE_HEIGHT = 26;
-  const KNOB_SIZE = 22;
+  const TOGGLE_HEIGHT = 24;
+  const KNOB_SIZE = 20;
   const INPUT_MULTILINE_HEIGHT = 100;
 
   return StyleSheet.create({
@@ -2647,13 +2871,13 @@ function createStyles(theme) {
     toggleLabel: {
       color: col.text,
       fontSize: typo.sizes?.md || 16,
-      fontWeight: typo.weight?.regular || '400',
+      fontWeight: typo.weight?.medium || '500',
     },
     toggle: {
       width: TOGGLE_WIDTH,
       height: TOGGLE_HEIGHT,
       borderRadius: TOGGLE_HEIGHT / 2,
-      backgroundColor: col.border,
+      backgroundColor: toggleTrackOffColor,
       padding: 2,
       justifyContent: 'center',
     },

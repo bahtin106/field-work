@@ -351,7 +351,7 @@ export default function FinanceRulesSettingsScreen() {
   const { t } = useTranslation();
   const toast = useToast();
   const { has, loading: permissionsLoading } = usePermissions();
-  const canManageFinanceRules = has('canManageFinanceRules');
+  const canManageFinanceRules = has('canEditFinanceEntries');
 
   const [companyId, setCompanyId] = React.useState(null);
   const [editorVisible, setEditorVisible] = React.useState(false);
