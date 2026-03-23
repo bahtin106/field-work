@@ -848,7 +848,7 @@ export default function CompanySettings() {
     [],
   );
   const onSoonPress = React.useCallback(() => {
-    toast.info(t('settings_soon'));
+    toast.info(t('feature_future'));
   }, [t, toast]);
 
   if (isInitializing) {

@@ -219,13 +219,36 @@ export default function ObjectViewScreen() {
     const text = toE164(phone) || '+' + normalizeRu(phone);
     try {
       await Clipboard.setStringAsync(text);
-      toast.success(t('toast_phone_copied'));
+      toast.success(t('toast_copied'));
       return true;
     } catch {
       toast.error(t('toast_copy_phone_fail'));
       return false;
     }
   }, [t, toast]);
+  const copyCoordinates = React.useCallback(async () => {
+    if (!hasMapPoint) return false;
+    try {
+      await Clipboard.setStringAsync(`${mapLat}, ${mapLng}`);
+      toast.success(t('toast_copied'));
+      return true;
+    } catch {
+      toast.error(t('toast_copy_phone_fail'));
+      return false;
+    }
+  }, [hasMapPoint, mapLat, mapLng, t, toast]);
+  const copyShortAddress = React.useCallback(async () => {
+    const value = String(shortAddress || fullAddress || '').trim();
+    if (!value) return false;
+    try {
+      await Clipboard.setStringAsync(value);
+      toast.success(t('toast_copied'));
+      return true;
+    } catch {
+      toast.error(t('toast_copy_phone_fail'));
+      return false;
+    }
+  }, [fullAddress, shortAddress, t, toast]);
 
   const getObjectFieldLabel = React.useCallback(
     (fieldKey, fallbackLabel) => {
@@ -531,7 +554,9 @@ export default function ObjectViewScreen() {
               label={t('objects_location_coordinates')}
               valueComponent={(
                 <Pressable
+                  style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                   accessibilityRole={hasMapPoint ? 'link' : undefined}
+                  onLongPress={copyCoordinates}
                   onPress={() => {
                     if (!hasMapPoint) {
                       toast.warning(t('objects_location_empty'));
@@ -560,6 +585,7 @@ export default function ObjectViewScreen() {
                 }
                 openAddressInYandex(navigatorAddress);
               }}
+              onCollapsedLongPress={copyShortAddress}
               collapsedValueStyle={navigatorAddress ? styles.clientLink : null}
             />
           )}
@@ -579,7 +605,9 @@ export default function ObjectViewScreen() {
                       label={rowLabel}
                       valueComponent={
                         <Pressable
+                          style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                           accessibilityRole="link"
+                          onLongPress={() => onCopyPhone(item.phone)}
                           onPress={async () => {
                             const url = `tel:${toE164(item.phone) || '+' + normalizeRu(item.phone)}`;
                             try {
@@ -600,6 +628,7 @@ export default function ObjectViewScreen() {
                       }
                       rightActions={
                         <IconButton
+                          style={styles.copyIconHidden}
                           onPress={() => onCopyPhone(item.phone)}
                           accessibilityLabel={t('a11y_copy_phone')}
                         >
@@ -779,10 +808,20 @@ function createStyles(theme) {
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
     },
+    linkPressable: {
+      borderRadius: theme.radii.xs,
+    },
+    linkPressablePressed: {
+      opacity: 0.6,
+      transform: [{ scale: 0.99 }],
+    },
     clientText: {
       color: theme.colors.text,
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
+    },
+    copyIconHidden: {
+      display: 'none',
     },
     previewWrap: {
       alignItems: 'center',

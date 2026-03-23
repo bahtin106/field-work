@@ -314,10 +314,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     () => runSingleNavigation(() => router.push('/admin')),
     [router, runSingleNavigation],
   );
-  const openStats = useCallback(
-    () => runSingleNavigation(() => router.push('/stats')),
-    [router, runSingleNavigation],
-  );
+  const showFutureFeatureToast = useCallback(() => {
+    toast.info(t('feature_future'));
+  }, [t, toast]);
   const openBilling = useCallback(
     () => runSingleNavigation(() => router.push('/billing')),
     [router, runSingleNavigation],
@@ -390,7 +389,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           key: 'stats',
           title: t('home_menu_stats'),
           icon: 'bar-chart-2',
-          onPress: openStats,
+          onPress: showFutureFeatureToast,
+          disabled: true,
           visible: true,
         },
         {
@@ -408,7 +408,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           visible: isSuperAdmin,
         },
       ].filter((i) => i.visible),
-    [isAdmin, isSuperAdmin, openAppSettings, openStats, openCompanySettings, openAdministration, t],
+    [isAdmin, isSuperAdmin, openAppSettings, showFutureFeatureToast, openCompanySettings, openAdministration, t],
   );
 
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -601,6 +601,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       <Card style={[styles.cardRounded, styles.menuCard]} padded={false}>
         {menuItems.map((item, index) => {
           const isLast = index === menuItems.length - 1;
+          const isDisabled = item.disabled === true;
           return (
             <Pressable
               key={item.key}
@@ -608,19 +609,21 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
                 styles.menuRow,
+                isDisabled && styles.menuRowDisabled,
                 pressed && styles.rowPressed,
                 !isLast && styles.menuRowBorder,
               ]}
               accessibilityRole="button"
+              accessibilityState={{ disabled: isDisabled }}
             >
               <View style={styles.menuContent}>
                 <FeatherIcon
                   name={item.icon}
                   size={theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs}
-                  color={theme.colors.text}
+                  color={isDisabled ? (theme.colors.textSecondary || theme.colors.text) : theme.colors.text}
                   style={styles.menuIcon}
                 />
-                <Text style={styles.menuLabel}>{item.title}</Text>
+                <Text style={[styles.menuLabel, isDisabled && styles.menuLabelDisabled]}>{item.title}</Text>
               </View>
               <FeatherIcon
                 name="chevron-right"
@@ -880,6 +883,9 @@ const createStyles = (theme) => {
       paddingVertical: spacing.md,
       backgroundColor: colors.surface,
     },
+    menuRowDisabled: {
+      opacity: theme.components?.listItem?.disabledOpacity ?? 0.6,
+    },
     menuRowBorder: {
       borderBottomWidth: theme.components?.listItem?.dividerWidth ?? 1,
       borderColor: colors.border,
@@ -892,6 +898,9 @@ const createStyles = (theme) => {
     menuLabel: {
       fontSize: type.sizes.md,
       color: colors.text,
+    },
+    menuLabelDisabled: {
+      color: colors.textSecondary || colors.text,
     },
     scopeSwitch: {
       flexDirection: 'row',

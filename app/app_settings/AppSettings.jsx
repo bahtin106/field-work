@@ -301,7 +301,7 @@ export default function AppSettings() {
   const currentThemeLabel = t(`settings_theme_${mode || 'system'}`);
   const s = useMemo(() => styles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
-  const futureFeature = useCallback(() => toast.info(t('settings_soon')), [t, toast]);
+  const futureFeature = useCallback(() => toast.info(t('feature_future')), [t, toast]);
   const [prefs, setPrefs] = useState({
     allow: true,
     new_orders: true,

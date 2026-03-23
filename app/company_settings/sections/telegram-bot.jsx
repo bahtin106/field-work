@@ -573,6 +573,7 @@ export default function TelegramBotSettingsScreen() {
                 </Pressable>
                 {data?.start_link ? (
                   <IconButton
+                    style={{ display: 'none' }}
                     onPress={copyStartLink}
                     accessibilityLabel={t('company_settings_telegram_copy_link')}
                   >

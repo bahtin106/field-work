@@ -165,7 +165,7 @@ export default function UserView() {
     try {
       await Clipboard.setStringAsync(text);
       try {
-        toast.success(t('toast_email_copied', 'toast_email_copied'));
+        toast.success(t('toast_copied'));
       } catch {}
       return true;
     } catch {
@@ -173,7 +173,7 @@ export default function UserView() {
         try {
           await globalThis.navigator.clipboard.writeText(text);
           try {
-            toast.success(t('toast_email_copied', 'toast_email_copied'));
+            toast.success(t('toast_copied'));
           } catch {}
           return true;
         } catch {}
@@ -191,7 +191,7 @@ export default function UserView() {
     try {
       await Clipboard.setStringAsync(text);
       try {
-        toast.success(t('toast_phone_copied', 'toast_phone_copied'));
+        toast.success(t('toast_copied'));
       } catch {}
       return true;
     } catch {
@@ -199,7 +199,7 @@ export default function UserView() {
         try {
           await globalThis.navigator.clipboard.writeText(text);
           try {
-            toast.success(t('toast_phone_copied', 'toast_phone_copied'));
+            toast.success(t('toast_copied'));
           } catch {}
           return true;
         } catch {}
@@ -449,7 +449,9 @@ export default function UserView() {
                 valueComponent={
                   email ? (
                     <Pressable
+                      style={({ pressed }) => [s.linkPressable, pressed ? s.linkPressablePressed : null]}
                       accessibilityRole="link"
+                      onLongPress={onCopyEmail}
                       onPress={async () => {
                         const url = `mailto:${email}`;
                         try {
@@ -473,6 +475,7 @@ export default function UserView() {
                   email ? (
                     <IconButton
                       onPress={onCopyEmail}
+                      style={s.copyIconHidden}
                       accessibilityLabel={t('a11y_copy_email', 'a11y_copy_email')}
                     >
                       <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
@@ -489,7 +492,9 @@ export default function UserView() {
               valueComponent={
                 phone ? (
                   <Pressable
+                    style={({ pressed }) => [s.linkPressable, pressed ? s.linkPressablePressed : null]}
                     accessibilityRole="link"
+                    onLongPress={onCopyPhone}
                     onPress={async () => {
                       const url = `tel:${toE164(phone) || '+' + normalizeRu(phone)}`;
                       try {
@@ -513,6 +518,7 @@ export default function UserView() {
                 phone ? (
                   <IconButton
                     onPress={onCopyPhone}
+                    style={s.copyIconHidden}
                     accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
                   >
                     <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
@@ -611,5 +617,13 @@ const styles = (t) => {
     },
     avatarImg: { width: '100%', height: '100%' },
     link: { color: PRIMARY },
+    linkPressable: {
+      borderRadius: t?.radii?.xs ?? 6,
+    },
+    linkPressablePressed: {
+      opacity: 0.6,
+      transform: [{ scale: 0.99 }],
+    },
+    copyIconHidden: { display: 'none' },
   });
 };

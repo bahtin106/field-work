@@ -62,6 +62,7 @@ const AUTO_RETRY_MAX_ATTEMPTS = 3;
 
 const HIDDEN_EDITOR_FIELDS = Object.freeze({
   [ENTITY_FIELD_TYPES.ORDER]: new Set([
+    'title',
     'phone',
     'work_type_id',
     'department_id',

@@ -105,7 +105,7 @@ export default function ClientViewScreen() {
     const text = String(email);
     try {
       await Clipboard.setStringAsync(text);
-      toast.success(t('toast_email_copied'));
+      toast.success(t('toast_copied'));
       return true;
     } catch {
       try {
@@ -121,7 +121,7 @@ export default function ClientViewScreen() {
     const text = toE164(phone) || '+' + normalizeRu(phone);
     try {
       await Clipboard.setStringAsync(text);
-      toast.success(t('toast_phone_copied'));
+      toast.success(t('toast_copied'));
       return true;
     } catch {
       try {
@@ -232,7 +232,9 @@ export default function ClientViewScreen() {
               valueComponent={
                 hasDisplayValue(client?.email) ? (
                   <Pressable
+                    style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                     accessibilityRole="link"
+                    onLongPress={onCopyEmail}
                     onPress={async () => {
                       const url = `mailto:${client.email}`;
                       try {
@@ -254,7 +256,7 @@ export default function ClientViewScreen() {
               }
               rightActions={
                 client?.email ? (
-                  <IconButton onPress={onCopyEmail} accessibilityLabel={t('a11y_copy_email')}>
+                  <IconButton style={styles.copyIconHidden} onPress={onCopyEmail} accessibilityLabel={t('a11y_copy_email')}>
                     <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                   </IconButton>
                 ) : null
@@ -270,7 +272,9 @@ export default function ClientViewScreen() {
               valueComponent={
                 hasDisplayValue(client?.phone) ? (
                   <Pressable
+                    style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                     accessibilityRole="link"
+                    onLongPress={onCopyPhone}
                     onPress={async () => {
                       const url = `tel:${toE164(client.phone) || '+' + normalizeRu(client.phone)}`;
                       try {
@@ -292,7 +296,7 @@ export default function ClientViewScreen() {
               }
               rightActions={
                 client?.phone ? (
-                  <IconButton onPress={onCopyPhone} accessibilityLabel={t('a11y_copy_phone')}>
+                  <IconButton style={styles.copyIconHidden} onPress={onCopyPhone} accessibilityLabel={t('a11y_copy_phone')}>
                     <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                   </IconButton>
                 ) : null
@@ -310,7 +314,9 @@ export default function ClientViewScreen() {
                     label={rowLabel}
                     valueComponent={
                       <Pressable
+                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
                         accessibilityRole="link"
+                        onLongPress={() => copyPhoneValue(item.phone)}
                         onPress={async () => {
                           const url = `tel:${toE164(item.phone) || '+' + normalizeRu(item.phone)}`;
                           try {
@@ -331,6 +337,7 @@ export default function ClientViewScreen() {
                     }
                     rightActions={
                       <IconButton
+                        style={styles.copyIconHidden}
                         onPress={() => copyPhoneValue(item.phone)}
                         accessibilityLabel={t('a11y_copy_phone')}
                       >
@@ -457,6 +464,16 @@ function createStyles(theme) {
     },
     link: {
       color: theme.colors.primary,
+    },
+    linkPressable: {
+      borderRadius: theme.radii.xs,
+    },
+    linkPressablePressed: {
+      opacity: 0.6,
+      transform: [{ scale: 0.99 }],
+    },
+    copyIconHidden: {
+      display: 'none',
     },
     mutedText: {
       color: theme.colors.textSecondary,
