@@ -225,9 +225,22 @@ export async function upsertCompanyFinanceRule(payload) {
   return data;
 }
 
-export async function deleteCompanyFinanceRule(ruleId) {
+export async function deleteCompanyFinanceRule(payload) {
+  const isObjectPayload = payload && typeof payload === 'object' && !Array.isArray(payload);
+  const ruleId = isObjectPayload ? payload.ruleId : payload;
+  const deleteExistingEntries = isObjectPayload ? payload.deleteExistingEntries === true : false;
   if (!ruleId) throw new Error('Rule id is required');
-  const { error } = await supabase.from('company_finance_rules').delete().eq('id', ruleId);
+
+  const { error } = await supabase.rpc('delete_company_finance_rule', {
+    p_rule_id: ruleId,
+    p_delete_existing_entries: deleteExistingEntries,
+  });
+
+  if (error && !deleteExistingEntries) {
+    const fallback = await supabase.from('company_finance_rules').delete().eq('id', ruleId);
+    if (fallback.error) throw fallback.error;
+    return true;
+  }
   if (error) throw error;
   return true;
 }

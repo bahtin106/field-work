@@ -493,6 +493,7 @@ function OrderDetailsContent() {
   const canViewFinanceAll = has('canViewFinanceAll');
   const canViewFinanceEntries = canViewFinanceOwn || canViewFinanceAll;
   const canEditFinanceEntries = has('canEditFinanceEntries');
+  const canManageFinanceRules = has('canManageFinanceRules');
   const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
   const cloudFallbackActive =
     mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'beget_s3';
@@ -697,11 +698,33 @@ function OrderDetailsContent() {
     () => orderedFinanceEntries.filter((entry) => entry?.kind === 'expense'),
     [orderedFinanceEntries],
   );
+  const isDisplayableFinanceEntry = useCallback((entry) => {
+    const amount = Number(entry?.calculated_amount ?? 0);
+    if (!Number.isFinite(amount)) return false;
+    return Math.abs(amount) > 0.004;
+  }, []);
+  const visibleFinanceIncomeEntries = useMemo(
+    () => financeIncomeEntries.filter(isDisplayableFinanceEntry),
+    [financeIncomeEntries, isDisplayableFinanceEntry],
+  );
+  const visibleFinanceDiscountEntries = useMemo(
+    () => financeDiscountEntries.filter(isDisplayableFinanceEntry),
+    [financeDiscountEntries, isDisplayableFinanceEntry],
+  );
+  const visibleFinanceExpenseEntries = useMemo(
+    () => financeExpenseEntries.filter(isDisplayableFinanceEntry),
+    [financeExpenseEntries, isDisplayableFinanceEntry],
+  );
   const manualExpenseEntries = useMemo(
     () => financeExpenseEntries.filter((entry) => entry?.is_system !== true),
     [financeExpenseEntries],
   );
-  const hasCustomerFinanceEntries = financeIncomeEntries.length > 0 || financeDiscountEntries.length > 0;
+  const visibleManualExpenseEntries = useMemo(
+    () => manualExpenseEntries.filter(isDisplayableFinanceEntry),
+    [manualExpenseEntries, isDisplayableFinanceEntry],
+  );
+  const hasCustomerFinanceEntries =
+    visibleFinanceIncomeEntries.length > 0 || visibleFinanceDiscountEntries.length > 0;
   const isLocalFinancePhotoUrl = useCallback((value) => {
     const raw = String(value || '').trim().toLowerCase();
     if (!raw) return false;
@@ -1652,15 +1675,15 @@ function OrderDetailsContent() {
   const financePercentBaseLabel = useCallback(
     (baseValue) => {
       if (baseValue === 'base_price') {
-        return t('finance_percent_base_price', 'От изначальной стоимости');
+        return t('finance_rule_subtract_from_base', 'Из изначальной суммы');
       }
       if (baseValue === 'gross_before_discount') {
-        return t('finance_percent_gross_before_discount', 'От изначальной стоимости + доп. работы');
+        return t('finance_rule_subtract_from_before_discount', 'Из суммы без скидок');
       }
       if (baseValue === 'income_total') {
-        return t('finance_percent_income_total', 'От суммы доп. работ');
+        return t('finance_rule_subtract_from_income_total', 'Из суммы доп. работ');
       }
-      return t('finance_percent_gross_after_discount', 'От общей суммы');
+      return t('finance_rule_subtract_from_gross', 'Из общей суммы');
     },
     [t],
   );
@@ -2427,8 +2450,10 @@ function OrderDetailsContent() {
   ]);
 
   const removeFinanceEntry = useCallback(
-    async (entry) => {
-      if (!entry?.id || entry?.is_system) return;
+    async (entry, options = {}) => {
+      const allowSystemDelete = options?.allowSystemDelete === true;
+      if (!entry?.id) return;
+      if (entry?.is_system && !allowSystemDelete) return;
       try {
         await deleteFinanceEntryMutation.mutateAsync(entry.id);
         showToast(t('finance_rule_deleted', 'Запись удалена'));
@@ -2441,11 +2466,13 @@ function OrderDetailsContent() {
 
   const confirmDeleteFinanceEntry = useCallback(async () => {
     if (!selectedFinanceEntry?.id) return;
-    await removeFinanceEntry(selectedFinanceEntry);
+    await removeFinanceEntry(selectedFinanceEntry, {
+      allowSystemDelete: selectedFinanceEntry?.is_system === true && canManageFinanceRules,
+    });
     setFinanceEntryDeleteConfirmVisible(false);
     setFinanceEntryViewModalVisible(false);
     setSelectedFinanceEntry(null);
-  }, [removeFinanceEntry, selectedFinanceEntry]);
+  }, [canManageFinanceRules, removeFinanceEntry, selectedFinanceEntry]);
 
   const toggleFinanceSection = useCallback((sectionKey) => {
     setExpandedFinanceSections((prev) => ({
@@ -3584,10 +3611,10 @@ function OrderDetailsContent() {
     (sum, entry) => (entry?.kind === 'discount' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
     0,
   );
-  const companyPaidExpenseEntries = financeExpenseEntries.filter(
+  const companyPaidExpenseEntries = visibleFinanceExpenseEntries.filter(
     (entry) => String(entry?.expense_payer || 'company') === 'company',
   );
-  const executorPaidExpenseEntries = financeExpenseEntries.filter(
+  const executorPaidExpenseEntries = visibleFinanceExpenseEntries.filter(
     (entry) => String(entry?.expense_payer || 'company') === 'executor',
   );
   const customerFinanceTotal =
@@ -4033,7 +4060,7 @@ function OrderDetailsContent() {
 
                             {showInitialCostLine && hasCustomerFinanceEntries ? <View style={base.sep} /> : null}
 
-                            {financeIncomeEntries.map((entry, index) => (
+                            {visibleFinanceIncomeEntries.map((entry, index) => (
                               <View key={entry.id}>
                                 {index > 0 ? <View style={base.sep} /> : null}
                                 <Pressable
@@ -4062,9 +4089,9 @@ function OrderDetailsContent() {
                               </View>
                             ))}
 
-                            {financeIncomeEntries.length > 0 && financeDiscountEntries.length > 0 ? <View style={base.sep} /> : null}
+                            {visibleFinanceIncomeEntries.length > 0 && visibleFinanceDiscountEntries.length > 0 ? <View style={base.sep} /> : null}
 
-                            {financeDiscountEntries.map((entry, index) => (
+                            {visibleFinanceDiscountEntries.map((entry, index) => (
                               <View key={entry.id}>
                                 {index > 0 ? <View style={base.sep} /> : null}
                                 <Pressable
@@ -4118,7 +4145,7 @@ function OrderDetailsContent() {
                               </View>
                             ) : (
                               <>
-                                {manualExpenseEntries.map((entry, index) => (
+                                {visibleManualExpenseEntries.map((entry, index) => (
                                   <View key={entry.id}>
                                     {index > 0 ? <View style={base.sep} /> : null}
                                     <Pressable
@@ -4793,13 +4820,16 @@ function OrderDetailsContent() {
             </Pressable>
           </>
         ) : null}
-        {canEditFinanceEntries && selectedFinanceEntry?.is_system !== true ? (
+        {(canEditFinanceEntries && selectedFinanceEntry?.is_system !== true) ||
+        (canManageFinanceRules && selectedFinanceEntry?.is_system === true) ? (
           <View style={styles.financeEntryModalActions}>
-            <Button
-              title={t('btn_edit')}
-              variant="secondary"
-              onPress={startEditFinanceEntryFromView}
-            />
+            {selectedFinanceEntry?.is_system !== true ? (
+              <Button
+                title={t('btn_edit')}
+                variant="secondary"
+                onPress={startEditFinanceEntryFromView}
+              />
+            ) : null}
             <Button
               title={t('btn_delete')}
               variant="destructive"
@@ -4812,7 +4842,12 @@ function OrderDetailsContent() {
       <ConfirmModal
         visible={financeEntryDeleteConfirmVisible}
         title={financeDeleteTitle(selectedFinanceEntry?.kind)}
-        message={t('order_finance_delete_message', 'Это значение будет удалено без возможности восстановления')}
+        message={selectedFinanceEntry?.is_system === true
+          ? t(
+            'order_finance_delete_system_rule_current_order_message',
+            'Это правило удалится только из текущей заявки. При редактировании правила в настройках компании оно вернется снова.',
+          )
+          : t('order_finance_delete_message', 'Это значение будет удалено без возможности восстановления')}
         confirmLabel={t('btn_delete')}
         confirmVariant="destructive"
         loading={deleteFinanceEntryMutation.isPending}

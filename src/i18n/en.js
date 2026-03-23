@@ -258,6 +258,20 @@ export default {
   finance_rule_apply_to_existing_label: 'Recalculate existing requests',
   finance_rule_apply_to_existing_hint:
     'If enabled, this rule also applies to existing requests during recalculation. If disabled, only to new ones.',
+  finance_rule_apply_to_existing_confirm_title: 'Recalculate existing requests?',
+  finance_rule_apply_to_existing_confirm_message:
+    'After saving, this rule will recalculate old requests. Please review settings before continuing.',
+  finance_rule_enable_confirm_title: 'Enable rule?',
+  finance_rule_enable_confirm_message:
+    'Newly created requests will now include this rule. Existing requests also keep this rule.',
+  finance_rule_disable_confirm_title: 'Disable rule?',
+  finance_rule_disable_confirm_message:
+    'If you disable this rule, requests where it is already applied will not change. To remove it from existing requests, delete the rule entirely.',
+  finance_rule_delete_confirm_title: 'Delete rule?',
+  finance_rule_delete_confirm_message:
+    'Choose how to delete the rule: keep it in existing requests or remove it from existing requests too.',
+  finance_rule_delete_keep_old: 'Keep in existing requests',
+  finance_rule_delete_purge_old: 'Delete from existing too',
   finance_rule_recipient_customer: 'Customer',
   finance_rule_recipient_user: 'Employee',
   finance_expense_payer: 'Paid by',
@@ -308,6 +322,8 @@ export default {
   finance_rule_condition_value_required: 'Specify condition value',
   finance_rule_condition_price_invalid: 'Enter a valid number for amount',
   finance_rule_condition_price_range_invalid: 'Minimum amount cannot be greater than maximum amount',
+  finance_rule_amount_must_be_gt_zero: 'Amount or percent must be greater than zero',
+  finance_rule_if_required: 'Add at least one "If" condition',
   finance_kind_income: 'Additional work',
   finance_kind_expense: 'Expense',
   finance_kind_discount: 'Discount',
@@ -348,6 +364,8 @@ export default {
   order_finance_delete_income_title: 'Delete additional work?',
   order_finance_delete_title: 'Delete entry?',
   order_finance_delete_message: 'This value will be deleted permanently.',
+  order_finance_delete_system_rule_current_order_message:
+    'This rule will be deleted only from the current request. If the company rule is edited, it will appear again.',
   order_finance_note: 'Comment',
   order_finance_recipient: 'Recipient',
   order_finance_entry_modal_title: 'Finance entry',
