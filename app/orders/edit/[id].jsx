@@ -27,8 +27,17 @@ import {
   useUpdateRequestMutation,
 } from '../../../src/features/requests/queries';
 import { useClient, useClients, useUpdateClientMutation } from '../../../src/features/clients/queries';
-import { collectClientPhoneSearchValues } from '../../../src/features/clients/additionalPhones';
+import {
+  buildAdditionalPhoneDisplayLabel,
+  CLIENT_ADDITIONAL_PHONE_SLOT_IDS,
+  collectClientPhoneSearchValues,
+  getClientAdditionalPhones,
+} from '../../../src/features/clients/additionalPhones';
 import { useClientObjects } from '../../../src/features/objects/queries';
+import {
+  getObjectAdditionalPhones,
+  OBJECT_ADDITIONAL_PHONE_SLOT_IDS,
+} from '../../../src/features/objects/additionalPhones';
 import {
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
@@ -53,7 +62,6 @@ import {
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import FiltersPanel from '../../../components/filters/FiltersPanel';
 import { useDepartments as useDepartmentsHook } from '../../../components/hooks/useDepartments';
 import { useUsers } from '../../../components/hooks/useUsers';
 import EditScreenTemplate, { useEditFormStyles } from '../../../components/layout/EditScreenTemplate';
@@ -64,7 +72,7 @@ import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../co
 import QuickPreviewModal from '../../../components/ui/modals/QuickPreviewModal';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
-import TextField from '../../../components/ui/TextField';
+import TextField, { SwitchField } from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { usePermissions } from '../../../lib/permissions';
@@ -84,6 +92,7 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import DeferredScreen from '../../../src/shared/perf/DeferredScreen';
 import { openCoordinatesInYandex } from '../../../components/ui/map';
 import { resolveRequestTitle } from '../../../src/features/requests/title';
+import { buildAssigneeSelectItems } from '../../../src/features/requests/assigneeSelect';
 
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
@@ -91,6 +100,55 @@ const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
+const PHONE_SOURCE_SEPARATOR = ':';
+const PHONE_SOURCE_KIND = Object.freeze({
+  MANUAL: 'manual',
+  CLIENT_PRIMARY: 'client_primary',
+  CLIENT_ADDITIONAL: 'client_additional',
+  OBJECT_ADDITIONAL: 'object_additional',
+});
+const PHONE_SOURCE_IDS = Object.freeze({
+  MANUAL: PHONE_SOURCE_KIND.MANUAL,
+  CLIENT_PRIMARY: PHONE_SOURCE_KIND.CLIENT_PRIMARY,
+});
+
+function buildPhoneSourceId(kind, slotId = null) {
+  const normalizedKind = String(kind || '').trim();
+  if (!normalizedKind) return PHONE_SOURCE_IDS.MANUAL;
+  if (slotId === null || slotId === undefined) return normalizedKind;
+  const normalizedSlotId = Number(slotId);
+  if (!Number.isFinite(normalizedSlotId)) return normalizedKind;
+  return `${normalizedKind}${PHONE_SOURCE_SEPARATOR}${Math.trunc(normalizedSlotId)}`;
+}
+
+function parsePhoneSourceId(sourceId) {
+  const raw = String(sourceId || '').trim();
+  if (!raw) return { kind: PHONE_SOURCE_KIND.MANUAL, slotId: null };
+  const [kindPart, slotPart] = raw.split(PHONE_SOURCE_SEPARATOR);
+  const kind = String(kindPart || '').trim();
+  if (!slotPart) return { kind, slotId: null };
+  const slotId = Number(slotPart);
+  if (!Number.isFinite(slotId)) return { kind, slotId: null };
+  return { kind, slotId: Math.trunc(slotId) };
+}
+
+function normalizePhoneSourceId(sourceId) {
+  const { kind, slotId } = parsePhoneSourceId(sourceId);
+  if (kind === PHONE_SOURCE_KIND.CLIENT_PRIMARY) return PHONE_SOURCE_IDS.CLIENT_PRIMARY;
+  if (kind === PHONE_SOURCE_KIND.CLIENT_ADDITIONAL) {
+    if (CLIENT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) {
+      return buildPhoneSourceId(PHONE_SOURCE_KIND.CLIENT_ADDITIONAL, slotId);
+    }
+    return PHONE_SOURCE_IDS.MANUAL;
+  }
+  if (kind === PHONE_SOURCE_KIND.OBJECT_ADDITIONAL) {
+    if (OBJECT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) {
+      return buildPhoneSourceId(PHONE_SOURCE_KIND.OBJECT_ADDITIONAL, slotId);
+    }
+    return PHONE_SOURCE_IDS.MANUAL;
+  }
+  return PHONE_SOURCE_IDS.MANUAL;
+}
 
 function normalizeOrderRouteId(value) {
   const normalized = String(value ?? '').trim();
@@ -121,6 +179,74 @@ function parseCoordinatesFromText(input) {
     lat: normalizeCoordinateValue(lat),
     lng: normalizeCoordinateValue(lng),
   };
+}
+
+function normalizeTimestampLike(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  let normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  normalized = normalized.replace(/([+-]\d{2})$/, '$1:00');
+  return normalized;
+}
+
+function hasValidDateLike(input) {
+  if (!input) return false;
+  if (input instanceof Date) {
+    return !Number.isNaN(input?.getTime?.());
+  }
+
+  const direct = new Date(input);
+  if (!Number.isNaN(direct?.getTime?.())) return true;
+
+  const normalizedRaw = normalizeTimestampLike(input);
+  if (!normalizedRaw) return false;
+  const normalized = new Date(normalizedRaw);
+  return !Number.isNaN(normalized?.getTime?.());
+}
+
+function hasExplicitTimeLike(input) {
+  if (!input) return false;
+  const parse = (value) => {
+    if (value instanceof Date) return value;
+    const direct = new Date(value);
+    if (!Number.isNaN(direct?.getTime?.())) return direct;
+    const normalizedRaw = normalizeTimestampLike(value);
+    if (!normalizedRaw) return null;
+    const normalized = new Date(normalizedRaw);
+    return Number.isNaN(normalized?.getTime?.()) ? null : normalized;
+  };
+
+  const parsed = parse(input);
+  if (!parsed) return false;
+  return parsed.getHours() !== 0 || parsed.getMinutes() !== 0;
+}
+
+function parseTimeStringToDate(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function formatTimeForStorage(input) {
+  const date = input instanceof Date ? input : null;
+  if (!date || Number.isNaN(date?.getTime?.())) return null;
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}:00`;
+}
+
+function formatDateOnlyForStorage(input) {
+  const date = input instanceof Date ? input : null;
+  if (!date || Number.isNaN(date?.getTime?.())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function EditOrderContent() {
@@ -180,10 +306,10 @@ function EditOrderContent() {
     onlyEnabled: true,
   });
   useRequestRealtimeSync({ enabled: !!id && !!companyId, companyId });
-  const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
+  const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const { users: employees } = useUsers({
     filters: {},
-    enabled: assigneePickerVisible,
+    enabled: assigneeModalVisible,
   });
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
@@ -213,8 +339,11 @@ function EditOrderContent() {
   const [addressModalLocationMode, setAddressModalLocationMode] = useState('address');
   const [addressModalClipboardHasCoordinates, setAddressModalClipboardHasCoordinates] = useState(false);
   const [phone, setPhone] = useState('');
+  const [phoneSourceModalVisible, setPhoneSourceModalVisible] = useState(false);
+  const [phoneSourceId, setPhoneSourceId] = useState(PHONE_SOURCE_IDS.MANUAL);
   const [entranceInfo, setEntranceInfo] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
+  const [departureTime, setDepartureTime] = useState(null);
   const [departureEndDate, setDepartureEndDate] = useState(null);
   const [isDepartureRange, setIsDepartureRange] = useState(false);
   const [assigneeId, setAssigneeId] = useState(null);
@@ -275,7 +404,7 @@ function EditOrderContent() {
   const updateClientMutation = useUpdateClientMutation();
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
-  const [departureTimeTouched, setDepartureTimeTouched] = useState(false);
+  const [stickyPlanningFieldMap, setStickyPlanningFieldMap] = useState({});
   const orderFieldSettings = useMemo(
     () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
     [orderFieldSettingsData],
@@ -286,6 +415,66 @@ function EditOrderContent() {
   );
   const orderFieldsByKey = useMemo(() => getEntityFieldMap(orderFieldSettings), [orderFieldSettings]);
   const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
+  const hasPersistedOrderFieldValue = useCallback(
+    (fieldKey) => {
+      const key = String(fieldKey || '');
+      if (!key) return false;
+      const value = orderData?.[key];
+      if (Array.isArray(value)) return value.length > 0;
+      if (typeof value === 'number') return Number.isFinite(value);
+      if (typeof value === 'boolean') return value === true;
+      if (value !== null && value !== undefined && String(value).trim().length > 0) return true;
+
+      if (key === 'work_type_id') {
+        return (
+          String(orderData?.work_type_name || '').trim().length > 0 ||
+          String(orderData?.work_type?.name || '').trim().length > 0
+        );
+      }
+      if (key === 'object_id') {
+        if (String(orderData?.object_id || '').trim().length > 0) return true;
+        if (String(orderData?.address_mode || '').trim().toLowerCase() === 'custom') return true;
+        const addressFieldKeys = [
+          'country',
+          'region',
+          'district',
+          'city',
+          'street',
+          'house',
+          'postal_code',
+          'floor',
+          'entrance',
+          'apartment',
+          'comment',
+          'entrance_info',
+          'geo_lat',
+          'geo_lng',
+        ];
+        return addressFieldKeys.some(
+          (addressKey) => String(orderData?.[addressKey] || '').trim().length > 0,
+        );
+      }
+      if (key === 'time_window_start') {
+        return (
+          hasValidDateLike(orderData?.time_window_start) ||
+          hasValidDateLike(orderData?.time_window_end) ||
+          hasValidDateLike(departureDate) ||
+          hasValidDateLike(departureEndDate)
+        );
+      }
+      if (key === 'departure_time') {
+        return (
+          String(orderData?.departure_time || '').trim().length > 0 ||
+          hasExplicitTimeLike(orderData?.time_window_start) ||
+          hasExplicitTimeLike(orderData?.departure_time) ||
+          hasExplicitTimeLike(departureTime)
+        );
+      }
+      if (key === 'price') return orderData?.price !== null && orderData?.price !== undefined;
+      return false;
+    },
+    [departureDate, departureEndDate, departureTime, orderData],
+  );
   const getVisibleObjectAddressDraft = useCallback(
     (source) =>
       filterOrderAddressByObjectFieldSettings(
@@ -297,30 +486,64 @@ function EditOrderContent() {
   const orderedGeneralFieldKeys = useMemo(
     () =>
       getOrderedEntityFields(orderFieldSettings, {
-        visibleOnly: true,
+        visibleOnly: false,
         requiredFirst: true,
-        fieldKeys: ['title', 'comment', 'assigned_to', 'work_type_id'],
-      }).map((field) => field.fieldKey),
-    [orderFieldSettings],
+        fieldKeys: ['title', 'comment', 'work_type_id'],
+      })
+        .map((field) => field.fieldKey)
+        .filter(
+          (fieldKey) =>
+            orderFieldsByKey.get(fieldKey)?.isEnabled !== false || hasPersistedOrderFieldValue(fieldKey),
+        ),
+    [hasPersistedOrderFieldValue, orderFieldSettings, orderFieldsByKey],
   );
   const orderedCustomerFieldKeys = useMemo(
     () =>
       getOrderedEntityFields(orderFieldSettings, {
-        visibleOnly: true,
+        visibleOnly: false,
         requiredFirst: true,
         fieldKeys: ['client_id', 'object_id', 'phone'],
-      }).map((field) => field.fieldKey),
-    [orderFieldSettings],
+      })
+        .map((field) => field.fieldKey)
+        .filter(
+          (fieldKey) =>
+            orderFieldsByKey.get(fieldKey)?.isEnabled !== false || hasPersistedOrderFieldValue(fieldKey),
+        ),
+    [hasPersistedOrderFieldValue, orderFieldSettings, orderFieldsByKey],
   );
-  const orderedDepartureFieldKeys = useMemo(
+  const dynamicPlanningFieldKeys = useMemo(
     () =>
-      getOrderedEntityFields(orderFieldSettings, {
-        visibleOnly: true,
-        requiredFirst: true,
-        fieldKeys: ['time_window_start', 'departure_time'],
-      }).map((field) => field.fieldKey),
-    [orderFieldSettings],
+      ['urgent', 'time_window_start', 'departure_time', 'assigned_to'].filter((fieldKey) => {
+        const field = orderFieldsByKey.get(fieldKey);
+        if (!field) return hasPersistedOrderFieldValue(fieldKey);
+        return field.isEnabled !== false || hasPersistedOrderFieldValue(fieldKey);
+      }),
+    [hasPersistedOrderFieldValue, orderFieldsByKey],
   );
+  useEffect(() => {
+    setStickyPlanningFieldMap({});
+  }, [id]);
+  useEffect(() => {
+    if (!formHydrated) return;
+    setStickyPlanningFieldMap((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      dynamicPlanningFieldKeys.forEach((fieldKey) => {
+        if (next[fieldKey]) return;
+        next[fieldKey] = true;
+        changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [dynamicPlanningFieldKeys, formHydrated]);
+  const orderedPlanningFieldKeys = useMemo(() => {
+    const priority = ['urgent', 'time_window_start', 'departure_time', 'assigned_to'];
+    const visible = new Set(dynamicPlanningFieldKeys);
+    Object.keys(stickyPlanningFieldMap || {}).forEach((fieldKey) => {
+      if (stickyPlanningFieldMap?.[fieldKey]) visible.add(fieldKey);
+    });
+    return priority.filter((fieldKey) => visible.has(fieldKey));
+  }, [dynamicPlanningFieldKeys, stickyPlanningFieldMap]);
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
@@ -338,7 +561,11 @@ function EditOrderContent() {
     [],
   );
   const isFieldRequired = useCallback(
-    (fieldKey) => orderFieldsByKey.get(fieldKey)?.isRequired === true,
+    (fieldKey) => {
+      const field = orderFieldsByKey.get(fieldKey);
+      if (!field || field.isEnabled === false) return false;
+      return field.isRequired === true;
+    },
     [orderFieldsByKey],
   );
   const clearFieldError = useCallback((fieldKey) => {
@@ -377,6 +604,81 @@ function EditOrderContent() {
     () => clientObjects.find((item) => String(item.id) === String(selectedObjectId)) || null,
     [clientObjects, selectedObjectId],
   );
+  const selectedClientAdditionalPhones = useMemo(
+    () => getClientAdditionalPhones(selectedClient),
+    [selectedClient],
+  );
+  const selectedObjectAdditionalPhones = useMemo(
+    () => getObjectAdditionalPhones(selectedObject),
+    [selectedObject],
+  );
+  const resolvePhoneBySourceId = useCallback(
+    (sourceId) => {
+      const normalizedSourceId = normalizePhoneSourceId(sourceId);
+      const { kind, slotId } = parsePhoneSourceId(normalizedSourceId);
+      if (kind === PHONE_SOURCE_KIND.CLIENT_PRIMARY) {
+        return String(selectedClient?.phone || '').trim();
+      }
+      if (kind === PHONE_SOURCE_KIND.CLIENT_ADDITIONAL) {
+        if (!CLIENT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) return '';
+        return String(selectedClientAdditionalPhones?.[slotId - 1]?.phone || '').trim();
+      }
+      if (kind === PHONE_SOURCE_KIND.OBJECT_ADDITIONAL) {
+        if (!OBJECT_ADDITIONAL_PHONE_SLOT_IDS.includes(slotId)) return '';
+        return String(selectedObjectAdditionalPhones?.[slotId - 1]?.phone || '').trim();
+      }
+      return '';
+    },
+    [selectedClient, selectedClientAdditionalPhones, selectedObjectAdditionalPhones],
+  );
+  const phoneSourceItems = useMemo(() => {
+    const items = [
+      {
+        id: PHONE_SOURCE_IDS.MANUAL,
+        label: T('create_order_phone_source_manual'),
+      },
+    ];
+
+    if (selectedClientId) {
+      const clientPrimaryPhone = String(selectedClient?.phone || '').trim();
+      items.push({
+        id: PHONE_SOURCE_IDS.CLIENT_PRIMARY,
+        label: T('create_order_phone_source_client_primary'),
+        subtitle: clientPrimaryPhone ? formatRuMask(clientPrimaryPhone) : undefined,
+        disabled: !clientPrimaryPhone,
+      });
+
+      CLIENT_ADDITIONAL_PHONE_SLOT_IDS.forEach((slotId) => {
+        const entry = selectedClientAdditionalPhones?.[slotId - 1] || {};
+        const sourcePhone = String(entry?.phone || '').trim();
+        if (!sourcePhone) return;
+        const displayLabel = buildAdditionalPhoneDisplayLabel(T, entry?.label);
+        items.push({
+          id: buildPhoneSourceId(PHONE_SOURCE_KIND.CLIENT_ADDITIONAL, slotId),
+          label: T('create_order_phone_source_client_additional').replace('{label}', displayLabel),
+          subtitle: formatRuMask(sourcePhone),
+        });
+      });
+    }
+
+    OBJECT_ADDITIONAL_PHONE_SLOT_IDS.forEach((slotId) => {
+      const entry = selectedObjectAdditionalPhones?.[slotId - 1] || {};
+      const sourcePhone = String(entry?.phone || '').trim();
+      if (!sourcePhone) return;
+      const displayLabel = buildAdditionalPhoneDisplayLabel(T, entry?.label);
+      items.push({
+        id: buildPhoneSourceId(PHONE_SOURCE_KIND.OBJECT_ADDITIONAL, slotId),
+        label: T('create_order_phone_source_object_additional').replace('{label}', displayLabel),
+        subtitle: formatRuMask(sourcePhone),
+      });
+    });
+
+    return items;
+  }, [selectedClient, selectedClientAdditionalPhones, selectedClientId, selectedObjectAdditionalPhones]);
+  const selectedPhoneSourceLabel = useMemo(() => {
+    const selectedItem = phoneSourceItems.find((item) => item.id === phoneSourceId);
+    return selectedItem?.label || T('create_order_phone_source_manual');
+  }, [phoneSourceId, phoneSourceItems]);
   const selectedObjectSummary = useMemo(() => {
     const liveSummary = [selectedObject?.name, buildOrderAddressShort(getVisibleObjectAddressDraft(selectedObject))]
       .filter(Boolean)
@@ -437,7 +739,9 @@ function EditOrderContent() {
         setSelectedClientId(client.id);
         setSelectedObjectId(null);
         setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
-        setPhone(String(client.phone || ''));
+        const clientPrimaryPhone = String(client.phone || '').trim();
+        setPhone(clientPrimaryPhone);
+        setPhoneSourceId(clientPrimaryPhone ? PHONE_SOURCE_IDS.CLIENT_PRIMARY : PHONE_SOURCE_IDS.MANUAL);
         setClientModalVisible(false);
       },
     }));
@@ -512,25 +816,6 @@ function EditOrderContent() {
     });
   }, [hasPermission, id, previewClient?.id, router]);
 
-  const redirectToNewObjectCreation = useCallback(() => {
-    if (!selectedClientId) return;
-    setAddressModalVisible(false);
-    setObjectModalVisible(false);
-    showToast(
-      T(
-        'order_object_edit_requires_new_object',
-        'У вас нет прав на редактирование выбранного объекта. Создайте новый объект для этой заявки.',
-      ),
-      'warning',
-    );
-    router.push({
-      pathname: `/clients/${String(selectedClientId)}/objects/new`,
-      params: {
-        returnTo: `/orders/edit/${String(id || '')}`,
-      },
-    });
-  }, [id, router, selectedClientId, showToast]);
-
   const openPreviewObjectCard = useCallback(() => {
     if (!hasPermission('canViewObjects')) return;
     const objectId = String(previewObject?.id || '').trim();
@@ -574,6 +859,7 @@ function EditOrderContent() {
       objectRaw: objectItem,
       onPress: () => {
         setSelectedObjectId(objectItem.id);
+        setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
         const objectAddress = extractOrderAddressFromObject(objectItem);
         setCountry(objectAddress.country);
         setRegion(objectAddress.region);
@@ -649,6 +935,29 @@ function EditOrderContent() {
     setAddressModalVisible(false);
   }, [selectedClientId]);
 
+  useEffect(() => {
+    if (phoneSourceId === PHONE_SOURCE_IDS.MANUAL) return;
+    const sourceIsAvailable = phoneSourceItems.some(
+      (item) => item.id === phoneSourceId && !item.disabled,
+    );
+    if (sourceIsAvailable) return;
+    setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
+  }, [phoneSourceId, phoneSourceItems]);
+
+  useEffect(() => {
+    if (phoneSourceId === PHONE_SOURCE_IDS.MANUAL) return;
+    const selectedSource = phoneSourceItems.find(
+      (item) => item.id === phoneSourceId && !item.disabled,
+    );
+    if (!selectedSource) return;
+    const nextPhone = resolvePhoneBySourceId(phoneSourceId);
+    const currentPhone = String(phone || '').trim();
+    const resolvedPhone = String(nextPhone || '').trim();
+    if (currentPhone === resolvedPhone) return;
+    setPhone(resolvedPhone);
+    clearFieldError('phone');
+  }, [clearFieldError, phone, phoneSourceId, phoneSourceItems, resolvePhoneBySourceId]);
+
   const selectedEmployee = useMemo(() => {
     if (!assigneeId || !employees?.length) return null;
     return employees.find((user) => String(user.id) === String(assigneeId));
@@ -720,17 +1029,25 @@ function EditOrderContent() {
 
   const normalizeDateOrNull = useCallback((input) => {
     if (!input) return null;
-    const d = input instanceof Date ? input : new Date(input);
-    return Number.isNaN(d?.getTime?.()) ? null : d;
+    if (input instanceof Date) {
+      return Number.isNaN(input?.getTime?.()) ? null : input;
+    }
+
+    const direct = new Date(input);
+    if (!Number.isNaN(direct?.getTime?.())) return direct;
+
+    const normalizedRaw = normalizeTimestampLike(input);
+    if (!normalizedRaw) return null;
+    const normalized = new Date(normalizedRaw);
+    return Number.isNaN(normalized?.getTime?.()) ? null : normalized;
   }, []);
   const hasDepartureTimeValue = useCallback(
-    (input, touched = false) => {
-      const value = normalizeDateOrNull(input);
+    (input) => {
+      const value = input instanceof Date ? input : parseTimeStringToDate(input);
       if (!value) return false;
-      if (touched) return true;
-      return value.getHours() !== 0 || value.getMinutes() !== 0;
+      return !Number.isNaN(value?.getTime?.());
     },
-    [normalizeDateOrNull],
+    [],
   );
   const displayDepartureDate = useMemo(
     () => normalizeDateOrNull(departureDate),
@@ -739,6 +1056,10 @@ function EditOrderContent() {
   const displayDepartureEndDate = useMemo(
     () => normalizeDateOrNull(departureEndDate),
     [departureEndDate, normalizeDateOrNull],
+  );
+  const displayDepartureTime = useMemo(
+    () => (departureTime instanceof Date && !Number.isNaN(departureTime?.getTime?.()) ? departureTime : null),
+    [departureTime],
   );
   const resolveTitleForSave = useCallback(
     (value, fallbackDate = null) =>
@@ -769,6 +1090,7 @@ function EditOrderContent() {
         selectedClientId: draft.selectedClientId || null,
         selectedObjectId: draft.selectedObjectId || null,
         addressMode: normalizeOrderAddressMode(draft.addressMode),
+        phoneSourceId: normalizePhoneSourceId(draft.phoneSourceId),
         phone: String(draft.phone || '').replace(/\D/g, ''),
         entranceInfo: String(draft.entranceInfo || '').trim(),
         parkingNotes: String(draft.parkingNotes || '').trim(),
@@ -780,8 +1102,9 @@ function EditOrderContent() {
               ? 'map'
               : 'address',
         }),
-        departureDateIso: normalizeDateOrNull(draft.departureDate)?.toISOString() || null,
-        departureEndDateIso: normalizeDateOrNull(draft.departureEndDate)?.toISOString() || null,
+        departureDateIso: formatDateOnlyForStorage(normalizeDateOrNull(draft.departureDate)) || null,
+        departureEndDateIso: formatDateOnlyForStorage(normalizeDateOrNull(draft.departureEndDate)) || null,
+        departureTime: formatTimeForStorage(draft.departureTime) || null,
         isDepartureRange: !!draft.isDepartureRange,
         assigneeId: draft.assigneeId || null,
         toFeed: !!draft.toFeed,
@@ -839,7 +1162,22 @@ function EditOrderContent() {
             ? 'map'
             : 'address',
       });
-      const nextDepartureDate = normalizeDateOrNull(row.time_window_start);
+      const rawDepartureDate = normalizeDateOrNull(row.time_window_start);
+      const nextDepartureDate = rawDepartureDate
+        ? new Date(
+            rawDepartureDate.getFullYear(),
+            rawDepartureDate.getMonth(),
+            rawDepartureDate.getDate(),
+            0,
+            0,
+            0,
+            0,
+          )
+        : null;
+      const legacyDepartureTime = hasExplicitTimeLike(row.time_window_start)
+        ? normalizeDateOrNull(row.time_window_start)
+        : null;
+      const nextDepartureTime = parseTimeStringToDate(row.departure_time) || legacyDepartureTime || null;
       const nextDepartureEndDate = normalizeDateOrNull(row.time_window_end);
       const nextIsDepartureRange = !!nextDepartureEndDate;
       const nextAssigneeId = row.assigned_to || null;
@@ -877,6 +1215,7 @@ function EditOrderContent() {
       setSelectedClientId(nextClientId);
       setSelectedObjectId(nextObjectId);
       setAddressMode(nextAddressMode);
+      setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
       setPhone(raw);
       setEntranceInfo(String(nextEntranceInfo || ''));
       setParkingNotes(String(nextParkingNotes || ''));
@@ -884,10 +1223,7 @@ function EditOrderContent() {
       setGeoLng(String(nextGeoLng || ''));
       setCustomAddressLocationMode(nextCustomAddressLocationMode);
       setDepartureDate(nextDepartureDate);
-      setDepartureTimeTouched(
-        !!nextDepartureDate &&
-          (nextDepartureDate.getHours() !== 0 || nextDepartureDate.getMinutes() !== 0),
-      );
+      setDepartureTime(nextDepartureTime);
       setDepartureEndDate(nextDepartureEndDate);
       setIsDepartureRange(nextIsDepartureRange);
       setAssigneeId(nextAssigneeId);
@@ -925,6 +1261,7 @@ function EditOrderContent() {
         selectedClientId: nextClientId,
         selectedObjectId: nextObjectId,
         addressMode: nextAddressMode,
+        phoneSourceId: PHONE_SOURCE_IDS.MANUAL,
         phone: raw,
         entranceInfo: nextEntranceInfo,
         parkingNotes: nextParkingNotes,
@@ -932,6 +1269,7 @@ function EditOrderContent() {
         geoLng: nextGeoLng,
         customAddressLocationMode: nextCustomAddressLocationMode,
         departureDate: nextDepartureDate,
+        departureTime: nextDepartureTime,
         departureEndDate: nextDepartureEndDate,
         isDepartureRange: nextIsDepartureRange,
         assigneeId: nextAssigneeId,
@@ -989,6 +1327,7 @@ function EditOrderContent() {
               selectedClientId: resolvedClientId,
               selectedObjectId: nextObjectId,
               addressMode: nextAddressMode,
+              phoneSourceId: PHONE_SOURCE_IDS.MANUAL,
               phone: raw,
               entranceInfo: nextEntranceInfo,
               parkingNotes: nextParkingNotes,
@@ -996,6 +1335,7 @@ function EditOrderContent() {
               geoLng: nextGeoLng,
               customAddressLocationMode: nextCustomAddressLocationMode,
               departureDate: nextDepartureDate,
+              departureTime: nextDepartureTime,
               departureEndDate: nextDepartureEndDate || resolvedDepartureEndDate,
               isDepartureRange: nextIsDepartureRange || !!resolvedDepartureEndDate,
               assigneeId: nextAssigneeId,
@@ -1067,6 +1407,7 @@ function EditOrderContent() {
       selectedClientId,
       selectedObjectId,
       addressMode,
+      phoneSourceId,
       phone,
       entranceInfo,
       parkingNotes,
@@ -1074,6 +1415,7 @@ function EditOrderContent() {
       geoLng,
       customAddressLocationMode,
       departureDate,
+      departureTime,
       departureEndDate,
       isDepartureRange,
       assigneeId,
@@ -1103,6 +1445,7 @@ function EditOrderContent() {
     selectedClientId,
     selectedObjectId,
     addressMode,
+    phoneSourceId,
     phone,
     entranceInfo,
     parkingNotes,
@@ -1110,6 +1453,7 @@ function EditOrderContent() {
     geoLng,
     customAddressLocationMode,
     departureDate,
+    departureTime,
     departureEndDate,
     isDepartureRange,
     assigneeId,
@@ -1158,6 +1502,12 @@ function EditOrderContent() {
       StyleSheet.create({
         card: formStyles.card,
         field: formStyles.field,
+        separator: {
+          height: theme.components?.input?.separator?.height ?? 1,
+          backgroundColor: theme.components?.input?.separator?.color || theme.colors.border,
+          marginLeft: theme.spacing?.lg ?? 16,
+          marginRight: theme.spacing?.lg ?? 16,
+        },
         toggleRow: {
           ...formStyles.field,
           flexDirection: 'row',
@@ -1331,34 +1681,6 @@ function EditOrderContent() {
     }
   }, [isDirty]);
 
-  const handleAssignmentApply = useCallback(
-    (selectedId) => {
-      const normalized = selectedId ?? null;
-      setAssigneeId(normalized);
-      setToFeed(!normalized);
-      try {
-        if (normalized && statusKey === 'in_feed') {
-          setStatusKey('new');
-          setStatusLabel(T('order_status_new'));
-        }
-      } catch {
-      }
-      setAssigneePickerVisible(false);
-    },
-    [setAssigneeId, setAssigneePickerVisible, setToFeed, statusKey, setStatusKey, setStatusLabel],
-  );
-
-  const handleAssignmentReset = useCallback(() => {
-    setAssigneeId(null);
-    setToFeed(true);
-    try {
-      setStatusKey('in_feed');
-      setStatusLabel(T('order_status_in_feed'));
-    } catch {
-    }
-  }, [setAssigneeId, setToFeed, setStatusKey, setStatusLabel]);
-
-  const selectExecutorTitle = T('order_modal_select_executor');
   const focusField = useCallback(
     (fieldRef) =>
       ensureVisibleField({
@@ -1370,17 +1692,36 @@ function EditOrderContent() {
       }),
     [insets.bottom, theme?.components?.header?.height],
   );
-  const assignmentPanelConfig = useMemo(
-    () => ({
-      employees,
-      selectedId: assigneeId,
-      defaults: { selectedId: null },
-      onApply: handleAssignmentApply,
-      onReset: handleAssignmentReset,
-      title: selectExecutorTitle,
-    }),
-    [employees, assigneeId, handleAssignmentApply, handleAssignmentReset, selectExecutorTitle],
-  );
+  const assigneeItems = useMemo(() => {
+    const departmentsById = new Map(
+      (Array.isArray(departments) ? departments : []).map((department) => [
+        String(department?.id || ''),
+        String(department?.name || '').trim(),
+      ]),
+    );
+    return buildAssigneeSelectItems({
+      users: employees,
+      departmentsById,
+      t: T,
+      includeFeed: true,
+      onSelectFeed: () => {
+        setAssigneeId(null);
+        setToFeed(true);
+        setStatusKey('in_feed');
+        setStatusLabel(T('order_status_in_feed'));
+        setAssigneeModalVisible(false);
+      },
+      onSelectUser: (userId) => {
+        setAssigneeId(userId ?? null);
+        setToFeed(false);
+        if (statusKey === 'in_feed') {
+          setStatusKey('new');
+          setStatusLabel(T('order_status_new'));
+        }
+        setAssigneeModalVisible(false);
+      },
+    });
+  }, [departments, employees, statusKey]);
   const customAddressDraft = useMemo(
     () => ({
       country,
@@ -1437,34 +1778,6 @@ function EditOrderContent() {
           : customAddressDraft
         : customAddressDraft,
     [addressMode, customAddressDraft, selectedObject],
-  );
-  const visibleActiveAddressDraft = useMemo(
-    () =>
-      filterOrderAddressByObjectFieldSettings(
-        activeAddressDraft,
-        objectFieldsByKey,
-      ),
-    [activeAddressDraft, objectFieldsByKey],
-  );
-  const shortAddressValue = useMemo(
-    () =>
-      (hasClientObjectMapPoint(activeAddressDraft) &&
-      normalizeClientObjectLocationMode(activeAddressDraft?.location_mode, {
-        fallback: hasClientObjectMapPoint(activeAddressDraft) ? 'map' : 'address',
-      }) === 'map'
-        ? `${normalizeCoordinateValue(activeAddressDraft?.geo_lat)}, ${normalizeCoordinateValue(activeAddressDraft?.geo_lng)}`
-        : '') ||
-      buildOrderAddressDisplay(visibleActiveAddressDraft) ||
-      buildOrderAddressShort(visibleActiveAddressDraft) ||
-      T('order_details_address_not_specified'),
-    [activeAddressDraft, visibleActiveAddressDraft],
-  );
-  const activeAddressIsMapMode = useMemo(
-    () =>
-      normalizeClientObjectLocationMode(activeAddressDraft?.location_mode, {
-        fallback: hasClientObjectMapPoint(activeAddressDraft) ? 'map' : 'address',
-      }) === 'map' && hasClientObjectMapPoint(activeAddressDraft),
-    [activeAddressDraft],
   );
   const customAddressFields = useMemo(
     () => [
@@ -1635,7 +1948,7 @@ function EditOrderContent() {
     if (isFieldRequired('time_window_start') && !normalizeDateOrNull(departureDate)) {
       nextErrors.time_window_start = { message: T('order_validation_date_required') };
     }
-    if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureDate, departureTimeTouched)) {
+    if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
       nextErrors.departure_time = {
         message: T('order_validation_departure_time_required', 'Укажите время выезда'),
       };
@@ -1704,7 +2017,7 @@ function EditOrderContent() {
         showToast(T('order_validation_date_required'), 'error');
         return;
       }
-      if (isFieldRequired('departure_time') && !hasDepartureTimeValue(normalizedDepartureDate, departureTimeTouched)) {
+      if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
         setFieldErrors((prev) => ({
           ...prev,
           departure_time: { message: T('order_validation_departure_time_required', 'Укажите время выезда') },
@@ -1793,11 +2106,12 @@ function EditOrderContent() {
             : null,
         ...toOrderAddressPatch(activeAddressDraft),
         assigned_to: toFeed ? null : assigneeId,
-        time_window_start: normalizedDepartureDate ? normalizedDepartureDate.toISOString() : null,
+        time_window_start: formatDateOnlyForStorage(normalizedDepartureDate),
         time_window_end:
           isDepartureRange && normalizedDepartureEndDate
-            ? normalizedDepartureEndDate.toISOString()
+            ? formatDateOnlyForStorage(normalizedDepartureEndDate)
             : null,
+        departure_time: formatTimeForStorage(departureTime),
         urgent,
         ...(canEditOrderAmount ? { price: parsedPrice } : {}),
         ...(useWorkTypes && workTypeResolved
@@ -1831,6 +2145,7 @@ function EditOrderContent() {
         selectedClientId,
         selectedObjectId,
         addressMode,
+        phoneSourceId,
         phone,
         entranceInfo,
         parkingNotes,
@@ -1839,6 +2154,7 @@ function EditOrderContent() {
         customAddressLocationMode,
         departureDate,
         departureEndDate,
+        departureTime,
         isDepartureRange,
         assigneeId,
         toFeed,
@@ -1886,6 +2202,8 @@ function EditOrderContent() {
                   clearFieldError('title');
                 }}
                 onBlur={() => setTouched((prev) => ({ ...prev, title: true }))}
+                multiline
+                minLines={1}
                 style={styles.field}
                 onFocus={() => focusField(titleRef)}
                 error={getFieldError('title') ? 'invalid' : undefined}
@@ -1907,27 +2225,12 @@ function EditOrderContent() {
                 }}
                 onBlur={() => setTouched((prev) => ({ ...prev, comment: true }))}
                 multiline
-                minLines={3}
+                minLines={1}
                 style={styles.field}
                 onFocus={() => focusField(descriptionRef)}
                 error={getFieldError('comment') ? 'invalid' : undefined}
               />
               <FieldErrorText message={getFieldError('comment')} />
-            </>
-          );
-        case 'assigned_to':
-          return (
-            <>
-              <TextField
-                label={withRequiredLabel(T('order_details_executor'), isFieldRequired('assigned_to') && !toFeed)}
-                value={selectedEmployeeName}
-                placeholder={T('order_details_not_assigned')}
-                pressable
-                style={styles.field}
-                onPress={() => setAssigneePickerVisible(true)}
-                error={getFieldError('assigned_to') ? 'invalid' : undefined}
-              />
-              <FieldErrorText message={getFieldError('assigned_to')} />
             </>
           );
         case 'work_type_id':
@@ -1956,12 +2259,10 @@ function EditOrderContent() {
       focusField,
       getFieldError,
       isFieldRequired,
-      selectedEmployeeName,
       selectedWorkTypeName,
       setDescription,
       styles.field,
       title,
-      toFeed,
       useWorkTypes,
       withRequiredLabel,
     ],
@@ -1988,75 +2289,40 @@ function EditOrderContent() {
           if (!selectedClientId) return null;
           return (
             <>
-              <View style={styles.toggleRow}>
-                <Text style={styles.toggleLabel}>{T('order_address_use_custom')}</Text>
-                <Pressable
-                  onPress={() => {
-                    if (
-                      addressMode === ORDER_ADDRESS_MODE.OBJECT &&
-                      selectedObjectId &&
-                      !hasPermission('canEditObjects')
-                    ) {
-                      redirectToNewObjectCreation();
-                      return;
-                    }
-                    setAddressMode((prev) =>
-                      prev === ORDER_ADDRESS_MODE.CUSTOM ? ORDER_ADDRESS_MODE.OBJECT : ORDER_ADDRESS_MODE.CUSTOM,
-                    );
-                  }}
-                  style={[
-                    styles.toggle,
-                    addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleOn : null,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.toggleKnob,
-                      addressMode === ORDER_ADDRESS_MODE.CUSTOM ? styles.toggleKnobOn : null,
-                    ]}
-                  />
-                </Pressable>
-              </View>
-              {addressMode === ORDER_ADDRESS_MODE.OBJECT ? (
-                <>
-                  <TextField
-                    label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
-                    value={selectedObjectSummary || T('create_order_client_object_placeholder')}
-                    pressable
-                    style={styles.field}
-                    onPress={() => setObjectModalVisible(true)}
-                    error={getFieldError('object_id') ? 'invalid' : undefined}
-                  />
-                  <FieldErrorText message={getFieldError('object_id')} />
-                </>
-              ) : null}
-              {addressMode === ORDER_ADDRESS_MODE.CUSTOM ? (
-                <TextField
-                  label={activeAddressIsMapMode ? T('objects_location_coordinates') : T('order_details_address')}
-                  value={shortAddressValue}
-                  pressable
-                  style={styles.field}
-                  onPress={() => {
-                    const nextDraft = extractOrderAddress(activeAddressDraft);
-                    setAddressModalDraft(nextDraft);
-                    setAddressModalLocationMode(
-                      normalizeClientObjectLocationMode(nextDraft?.location_mode, {
-                        fallback: hasClientObjectMapPoint(nextDraft) ? 'map' : 'address',
-                      }),
-                    );
-                    setAddressModalVisible(true);
-                  }}
-                />
-              ) : null}
+              <TextField
+                label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
+                value={selectedObjectSummary || T('create_order_client_object_placeholder')}
+                pressable
+                style={styles.field}
+                onPress={() => setObjectModalVisible(true)}
+                error={getFieldError('object_id') ? 'invalid' : undefined}
+              />
+              <FieldErrorText message={getFieldError('object_id')} />
             </>
           );
         case 'phone':
           return (
             <>
+              <TextField
+                label={withRequiredLabel(
+                  T('create_order_phone_source_display_label'),
+                  true,
+                )}
+                value={selectedPhoneSourceLabel}
+                pressable
+                style={styles.field}
+                onPress={() => setPhoneSourceModalVisible(true)}
+              />
               <PhoneInput
-                label={withRequiredLabel(T('fields_phone'), isFieldRequired('phone'))}
+                label={withRequiredLabel(
+                  T('create_order_visible_phone_label'),
+                  isFieldRequired('phone'),
+                )}
                 value={phone}
                 onChangeText={(value) => {
+                  if (phoneSourceId !== PHONE_SOURCE_IDS.MANUAL) {
+                    setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
+                  }
                   setPhone(value);
                   clearFieldError('phone');
                 }}
@@ -2073,33 +2339,37 @@ function EditOrderContent() {
       }
     },
     [
-      activeAddressDraft,
-      addressMode,
       clearFieldError,
       getFieldError,
-      hasPermission,
       isFieldRequired,
       phone,
-      redirectToNewObjectCreation,
+      phoneSourceId,
+      selectedPhoneSourceLabel,
       selectedClientId,
       selectedClientName,
-      selectedObjectId,
       selectedObjectSummary,
-      activeAddressIsMapMode,
-      shortAddressValue,
+      setPhoneSourceModalVisible,
       styles.field,
-      styles.toggle,
-      styles.toggleKnob,
-      styles.toggleKnobOn,
-      styles.toggleLabel,
-      styles.toggleOn,
-      styles.toggleRow,
       withRequiredLabel,
     ],
   );
 
-  const renderEditDepartureField = useCallback(
+  const renderEditPlanningField = useCallback(
     (fieldKey) => {
+      if (fieldKey === 'urgent') {
+        return (
+          <>
+            <SwitchField
+              label={T('create_order_label_urgent')}
+              value={urgent}
+              onValueChange={() => setUrgent((prev) => !prev)}
+              style={styles.field}
+            />
+            <View style={styles.separator} />
+          </>
+        );
+      }
+
       if (fieldKey === 'time_window_start') {
         return (
           <>
@@ -2122,7 +2392,6 @@ function EditOrderContent() {
                   <ClearButton
                     onPress={() => {
                       setDepartureDate(null);
-                      setDepartureTimeTouched(false);
                       setDepartureEndDate(null);
                       setIsDepartureRange(false);
                     }}
@@ -2144,31 +2413,23 @@ function EditOrderContent() {
             <TextField
               label={withRequiredLabel(T('order_field_departure_time'), isFieldRequired('departure_time'))}
               value={
-                hasDepartureTimeValue(displayDepartureDate, departureTimeTouched)
-                  ? format(displayDepartureDate, 'HH:mm', { locale: ru })
+                hasDepartureTimeValue(displayDepartureTime)
+                  ? format(displayDepartureTime, 'HH:mm', { locale: ru })
                   : T('order_placeholder_departure_time')
               }
               pressable
               style={styles.field}
               rightSlot={
-                hasDepartureTimeValue(displayDepartureDate, departureTimeTouched) ? (
+                hasDepartureTimeValue(displayDepartureTime) ? (
                   <ClearButton
                     onPress={() => {
-                      if (!displayDepartureDate) return;
-                      const next = new Date(displayDepartureDate);
-                      next.setHours(0, 0, 0, 0);
-                      setDepartureDate(next);
-                      setDepartureTimeTouched(false);
+                      setDepartureTime(null);
                     }}
                     accessibilityLabel={T('common_clear')}
                   />
                 ) : null
               }
               onPress={() => {
-                if (!displayDepartureDate) {
-                  setShowDateModal(true);
-                  return;
-                }
                 setShowTimeModal(true);
               }}
               error={getFieldError('departure_time') ? 'invalid' : undefined}
@@ -2178,17 +2439,63 @@ function EditOrderContent() {
         );
       }
 
+      if (fieldKey === 'assigned_to') {
+        return (
+          <>
+            <SwitchField
+              label={T('create_order_label_to_feed')}
+              value={toFeed}
+              onValueChange={() => {
+                setToFeed((prev) => {
+                  const nextValue = !prev;
+                  if (nextValue) setAssigneeId(null);
+                  return nextValue;
+                });
+              }}
+              style={styles.field}
+            />
+            <View style={styles.separator} />
+            <TextField
+              label={withRequiredLabel(T('create_order_label_executor'), isFieldRequired('assigned_to') && !toFeed)}
+              value={
+                toFeed
+                  ? T('create_order_executor_in_feed')
+                  : selectedEmployeeName || T('order_details_not_assigned')
+              }
+              pressable
+              style={styles.field}
+              onPress={() => setAssigneeModalVisible(true)}
+              error={getFieldError('assigned_to') ? 'invalid' : undefined}
+              rightSlot={
+                assigneeId && !toFeed ? (
+                  <ClearButton
+                    onPress={() => setAssigneeId(null)}
+                    accessibilityLabel={T('common_clear')}
+                  />
+                ) : null
+              }
+            />
+            <FieldErrorText message={getFieldError('assigned_to')} />
+          </>
+        );
+      }
+
       return null;
     },
     [
-      departureTimeTouched,
+      assigneeId,
       displayDepartureDate,
       displayDepartureEndDate,
+      displayDepartureTime,
       getFieldError,
       hasDepartureTimeValue,
       isDepartureRange,
       isFieldRequired,
+      selectedEmployeeName,
       styles.field,
+      styles.separator,
+      toFeed,
+      urgent,
       withRequiredLabel,
     ],
   );
@@ -2287,12 +2594,19 @@ function EditOrderContent() {
           } catch {}
         }}
       >
-      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
+      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('create_order_section_main')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedGeneralFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditGeneralField(fieldKey)}</View>
             ))}
+          </Card>
 
+          <SectionHeader>{T('create_order_section_planning')}</SectionHeader>
+          {orderedPlanningFieldKeys.length > 0 ? (
+          <Card padded={false} style={styles.card}>
+            {orderedPlanningFieldKeys.map((fieldKey) => (
+              <View key={fieldKey}>{renderEditPlanningField(fieldKey)}</View>
+            ))}
             <TextField
               label={T('orders_filter_status')}
               value={selectedStatusLabel}
@@ -2302,43 +2616,14 @@ function EditOrderContent() {
               onPress={() => setStatusModalVisible(true)}
             />
           </Card>
-
-          <SectionHeader bottomSpacing="xs">{T('order_section_finances')}</SectionHeader>
-          {orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount ? (
-          <Card padded={false} style={styles.card}>
-            {orderFieldsByKey.get('price')?.isEnabled !== false && canViewOrderAmount ? (
-            <TextField
-              label={T('order_field_initial_amount', 'Изначальная сумма')}
-              placeholder={T('order_placeholder_amount')}
-              value={price}
-              onChangeText={setPrice}
-              keyboardType="decimal-pad"
-              pressable={!canEditOrderAmount}
-              onPress={!canEditOrderAmount ? () => {} : undefined}
-              style={styles.field}
-            />
-            ) : null}
-          </Card>
           ) : null}
 
-          <SectionHeader bottomSpacing="xs">{T('order_section_customer')}</SectionHeader>
+          <SectionHeader>{T('create_order_section_customer')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedCustomerFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditCustomerField(fieldKey)}</View>
             ))}
           </Card>
-
-          <SectionHeader bottomSpacing="xs">
-            {T('company_settings_sections_departure_helperText_departureOn')}
-          </SectionHeader>
-          {(orderFieldsByKey.get('time_window_start')?.isEnabled !== false ||
-            orderFieldsByKey.get('departure_time')?.isEnabled !== false) ? (
-          <Card padded={false} style={styles.card}>
-            {orderedDepartureFieldKeys.map((fieldKey) => (
-              <View key={fieldKey}>{renderEditDepartureField(fieldKey)}</View>
-            ))}
-          </Card>
-          ) : null}
 
           <View style={{ height: theme.spacing?.xxl ?? BOTTOM_SPACER_FALLBACK }} />
       </EditScreenTemplate>
@@ -2486,6 +2771,39 @@ function EditOrderContent() {
       />
 
       <SelectModal
+        visible={phoneSourceModalVisible}
+        title={T('create_order_phone_source_modal_title')}
+        items={phoneSourceItems}
+        searchable={false}
+        selectedId={phoneSourceId}
+        onSelect={(item) => {
+          if (!item?.id || item.disabled) return;
+          const normalizedSourceId = normalizePhoneSourceId(item.id);
+          setPhoneSourceId(normalizedSourceId);
+          if (normalizedSourceId === PHONE_SOURCE_IDS.MANUAL) {
+            clearFieldError('phone');
+          } else {
+            const nextPhone = resolvePhoneBySourceId(normalizedSourceId);
+            setPhone(String(nextPhone || '').trim());
+            clearFieldError('phone');
+          }
+          setPhoneSourceModalVisible(false);
+        }}
+        onClose={() => setPhoneSourceModalVisible(false)}
+      />
+
+      <SelectModal
+        visible={assigneeModalVisible}
+        title={T('create_order_modal_executor_title')}
+        items={assigneeItems}
+        searchable
+        filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
+        selectedId={toFeed ? 'feed' : assigneeId}
+        onSelect={(item) => item?.onPress?.()}
+        onClose={() => setAssigneeModalVisible(false)}
+      />
+
+      <SelectModal
         visible={clientModalVisible}
         title={T('routes_clients_client')}
         items={clientItems}
@@ -2555,14 +2873,11 @@ function EditOrderContent() {
         initial={departureDate}
         allowFutureDates={true}
         onApply={(date) => {
-          setDepartureDate((prev) => {
-            if (!date) return null;
-            if (!prev) return date;
-            const next = new Date(date);
-            next.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
-            return next;
-          });
-          if (!date) setDepartureTimeTouched(false);
+          setDepartureDate(
+            date
+              ? new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0)
+              : null,
+          );
           setDepartureEndDate(null);
           setIsDepartureRange(false);
           setShowDateModal(false);
@@ -2573,26 +2888,17 @@ function EditOrderContent() {
       <DateTimeModal
         visible={showTimeModal}
         mode="time"
-        initial={displayDepartureDate || new Date()}
+        initial={displayDepartureTime || new Date()}
         allowFutureDates={true}
         onApply={(time) => {
-          const baseDate = displayDepartureDate || new Date();
-          const newDate = new Date(baseDate);
-          newDate.setHours(time.getHours(), time.getMinutes(), 0, 0);
-          setDepartureDate(newDate);
-          setDepartureTimeTouched(true);
+          const newTime = new Date();
+          newTime.setHours(time.getHours(), time.getMinutes(), 0, 0);
+          setDepartureTime(newTime);
           setShowTimeModal(false);
         }}
         onClose={() => setShowTimeModal(false)}
       />
 
-      <FiltersPanel
-        visible={assigneePickerVisible}
-        onClose={() => setAssigneePickerVisible(false)}
-        departments={departments}
-        mode="assignment"
-        assignment={assignmentPanelConfig}
-      />
       <ConfirmModal
         key={`cancel-${cancelKey}`}
         visible={cancelVisible}

@@ -99,6 +99,38 @@ function formatDateShort(iso, showTime = true) {
   return dateStr;
 }
 
+function hasExplicitDepartureTime(order) {
+  if (!order) return false;
+  if (typeof order?.departure_time === 'string' && order.departure_time.trim()) return true;
+  const raw = order?.time_window_start;
+  if (!raw) return false;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed?.getTime?.())) return false;
+  return parsed.getHours() !== 0 || parsed.getMinutes() !== 0;
+}
+
+function parseDepartureTime(order) {
+  const raw = String(order?.departure_time || '').trim();
+  if (raw) {
+    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (match) {
+      const hh = Number(match[1]);
+      const mm = Number(match[2]);
+      if (Number.isFinite(hh) && Number.isFinite(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+        return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+      }
+    }
+  }
+  const startRaw = order?.time_window_start;
+  if (!startRaw) return '';
+  const parsed = new Date(startRaw);
+  if (Number.isNaN(parsed?.getTime?.())) return '';
+  const hh = parsed.getHours();
+  const mm = parsed.getMinutes();
+  if (hh === 0 && mm === 0) return '';
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 function formatPrice(val, currency = 'RUB') {
   return formatCurrency(val, currency, 'ru-RU');
 }
@@ -235,6 +267,49 @@ function DynamicOrderCard({
 
   const fields = useMemo(() => preset.fields, [preset.fields]);
   const pills = useMemo(() => preset.pills, [preset.pills]);
+  const hasOrderFieldValue = useCallback(
+    (fieldKey, fallbackValue = null) => {
+      const direct = fallbackValue;
+      if (direct !== null && direct !== undefined && String(direct).trim().length > 0) return true;
+      const key = String(fieldKey || '').trim();
+      if (!key) return false;
+      if (key === 'customer_name') {
+        return [
+          order?.customer_name,
+          order?.customerName,
+          order?.customer_full_name,
+          order?.client_name,
+          order?.clientName,
+          order?.fio,
+        ].some((value) => String(value || '').trim().length > 0);
+      }
+      if (key === 'address') {
+        const city = order?.city || order?.town || order?.settlement || '';
+        const street = order?.street || order?.snt || '';
+        const house = order?.house || order?.plot || '';
+        return [order?.address, order?.addr, city, street, house].some(
+          (value) => String(value || '').trim().length > 0,
+        );
+      }
+      if (key === 'departure_time') return hasExplicitDepartureTime(order);
+      if (key === 'price') {
+        return (
+          order?.price !== null &&
+          order?.price !== undefined &&
+          String(order?.price).trim().length > 0
+        );
+      }
+      return String(order?.[key] || '').trim().length > 0;
+    },
+    [order],
+  );
+  const isCardFieldVisible = useCallback(
+    (fieldKey) => {
+      const visibilityContext = context === 'calendar' ? 'calendar' : 'list';
+      return isFieldVisible(fieldKey, visibilityContext) || hasOrderFieldValue(fieldKey);
+    },
+    [context, hasOrderFieldValue, isFieldVisible],
+  );
 
   // Primary rows
   const primaryRows = useMemo(() => {
@@ -253,10 +328,12 @@ function DynamicOrderCard({
             : PRIMARY_ROW_LABEL_KEYS[key]
               ? t(PRIMARY_ROW_LABEL_KEYS[key])
               : (field?.label ?? key);
-        return { key, label, value };
+        const visibleBySettings = isCardFieldVisible(key);
+        const hasValue = hasOrderFieldValue(key, value);
+        return { key, label, value, visibleBySettings, hasValue };
       })
-      .filter((r) => r.key !== 'title');
-  }, [fields, order, getFieldByKey, t]);
+      .filter((r) => r.key !== 'title' && (r.visibleBySettings || r.hasValue));
+  }, [fields, order, getFieldByKey, hasOrderFieldValue, isCardFieldVisible, t]);
 
   // Status pill
   const statusTitle = useMemo(
@@ -396,25 +473,21 @@ function DynamicOrderCard({
   }, [order, getFieldByKey]);
 
   const showDepartureTime = useMemo(() => {
-    if (typeof departureTimeEnabled === 'boolean') return departureTimeEnabled;
+    const explicitTime = hasExplicitDepartureTime(order);
+    if (typeof departureTimeEnabled === 'boolean') {
+      if (departureTimeEnabled) return explicitTime;
+      return hasOrderFieldValue('departure_time');
+    }
     const hasField = !!getFieldByKey?.('departure_time');
-    if (!hasField) return true;
-    const visibilityContext = context === 'calendar' ? 'calendar' : 'list';
-    return isFieldVisible('departure_time', visibilityContext);
-  }, [context, departureTimeEnabled, getFieldByKey, isFieldVisible]);
+    if (!hasField) return explicitTime;
+    return isCardFieldVisible('departure_time') && explicitTime;
+  }, [departureTimeEnabled, getFieldByKey, hasOrderFieldValue, isCardFieldVisible, order]);
 
   // Time string derived from bottomDateIso (used in calendar context)
   const bottomTimeStr = useMemo(() => {
     if (!showDepartureTime) return '';
-    try {
-      if (!bottomDateIso) return '';
-      const d = new Date(bottomDateIso);
-      if (isNaN(d)) return '';
-      return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-    } catch {
-      return '';
-    }
-  }, [bottomDateIso, showDepartureTime]);
+    return parseDepartureTime(order);
+  }, [order, showDepartureTime]);
 
   // Context-driven visibility
   const roleRaw = (
@@ -588,7 +661,7 @@ function DynamicOrderCard({
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
             {resolvedExecutorName || executorName || '—'}
           </Text>
-        ) : priceValue ? (
+        ) : (isCardFieldVisible('price') || hasOrderFieldValue('price', priceValue)) && priceValue ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
             {formatPrice(priceValue, order?.currency || companyCurrency || 'RUB')}
           </Text>

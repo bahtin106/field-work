@@ -159,6 +159,35 @@ function normalizeOrderRouteId(value) {
   return normalized;
 }
 
+function extractLegacyDepartureTime(input) {
+  if (!input) return null;
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed?.getTime?.())) return null;
+  const hh = parsed.getHours();
+  const mm = parsed.getMinutes();
+  if (hh === 0 && mm === 0) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`;
+}
+
+function normalizeDepartureTimeString(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  const ss = Number(match[3] ?? '0');
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || !Number.isFinite(ss)) return null;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
+function formatDateOnlyForStorage(input) {
+  const parsed = input instanceof Date ? input : new Date(input);
+  if (!parsed || Number.isNaN(parsed?.getTime?.())) return null;
+  return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+}
+
 const REQUEST_SYNC_FIELDS = [
   'id',
   'updated_at',
@@ -167,6 +196,7 @@ const REQUEST_SYNC_FIELDS = [
   'client_id',
   'object_id',
   'time_window_start',
+  'departure_time',
   'time_window_end',
   'title',
   'comment',
@@ -507,16 +537,76 @@ function OrderDetailsContent() {
       }),
     [titlePrefix],
   );
+  const hasOrderFieldValue = useCallback(
+    (fieldKey) => {
+      const key = String(fieldKey || '');
+      const value = order?.[key];
+      if (Array.isArray(value)) return value.length > 0;
+      if (typeof value === 'number') return Number.isFinite(value);
+      if (typeof value === 'boolean') return value === true;
+      if (value !== null && value !== undefined && String(value).trim().length > 0) return true;
+
+      if (key === 'work_type_id') {
+        return (
+          String(order?.work_type_name || '').trim().length > 0 ||
+          String(order?.work_type?.name || '').trim().length > 0
+        );
+      }
+      if (key === 'object_id') {
+        if (String(order?.object_id || '').trim().length > 0) return true;
+        if (String(order?.address_mode || '').trim().toLowerCase() === 'custom') return true;
+        const addressFieldKeys = [
+          'country',
+          'region',
+          'district',
+          'city',
+          'street',
+          'house',
+          'postal_code',
+          'floor',
+          'entrance',
+          'apartment',
+          'comment',
+          'entrance_info',
+          'geo_lat',
+          'geo_lng',
+        ];
+        return addressFieldKeys.some((addressKey) => String(order?.[addressKey] || '').trim().length > 0);
+      }
+      if (key === 'departure_time') {
+        if (String(order?.departure_time || '').trim().length > 0) return true;
+        const startRaw = order?.time_window_start;
+        if (!startRaw) return false;
+        const startDate = new Date(startRaw);
+        if (Number.isNaN(startDate?.getTime?.())) return false;
+        return startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
+      }
+      if (key === 'payment_status') return String(order?.payment_status || '').trim().length > 0;
+      if (key === 'payment_method') return String(order?.payment_method || '').trim().length > 0;
+      if (key === 'price') return order?.price !== null && order?.price !== undefined;
+      return false;
+    },
+    [order],
+  );
   const isOrderFieldVisible = useCallback(
     (fieldKey) => {
       const normalizedFieldKey = String(fieldKey || '');
       if (FORCED_HIDDEN_ORDER_FIELDS.has(normalizedFieldKey)) return false;
       if (FORCED_VISIBLE_ORDER_FIELDS.has(normalizedFieldKey)) return true;
       const field = orderFieldsByKey.get(normalizedFieldKey);
-      return !field || field.isEnabled !== false;
+      if (!field || field.isEnabled !== false) return true;
+      return hasOrderFieldValue(normalizedFieldKey);
     },
-    [orderFieldsByKey],
+    [hasOrderFieldValue, orderFieldsByKey],
   );
+  const hasExplicitDepartureTime = useMemo(() => {
+    if (String(order?.departure_time || '').trim().length > 0) return true;
+    const startRaw = order?.time_window_start;
+    if (!startRaw) return false;
+    const startDate = new Date(startRaw);
+    if (Number.isNaN(startDate?.getTime?.())) return false;
+    return startDate.getHours() !== 0 || startDate.getMinutes() !== 0;
+  }, [order?.departure_time, order?.time_window_start]);
   const getOrderFieldLabel = useCallback(
     (fieldKey, fallbackLabel) => {
       const field = orderFieldsByKey.get(String(fieldKey || ''));
@@ -753,6 +843,9 @@ function OrderDetailsContent() {
 
   const showToast = useCallback((msg) => {
     toast.info(String(msg || ''));
+  }, [toast]);
+  const showSuccessToast = useCallback((msg) => {
+    toast.success(String(msg || ''));
   }, [toast]);
 
   const notifyCloudFallback = useCallback(() => {
@@ -1010,14 +1103,14 @@ function OrderDetailsContent() {
       if (!normalized) return false;
       try {
         await Clipboard.setStringAsync(normalized);
-        showToast(t('toast_copied'));
+        showSuccessToast(t('toast_copied'));
         return true;
       } catch {
         showToast(t('toast_copy_phone_fail', 'Не удалось скопировать'));
         return false;
       }
     },
-    [showToast, t],
+    [showSuccessToast, showToast, t],
   );
 
   const makeSnapshotFromOrder = useCallback((o) => {
@@ -1025,6 +1118,9 @@ function OrderDetailsContent() {
     const phoneDigits = ((o.phone ?? o.phone_visible) || '')
       .replace(/\D/g, '')
       .replace(/^8(\d{10})$/, '7$1');
+
+    const persistedDepartureTime =
+      normalizeDepartureTimeString(o?.departure_time) || extractLegacyDepartureTime(o?.time_window_start);
 
     return JSON.stringify({
       title: resolveRequestTitle(o, { prefix: titlePrefix }),
@@ -1034,7 +1130,8 @@ function OrderDetailsContent() {
       street: o.street || '',
       house: o.house || '',
       phone: phoneDigits,
-      time_window_start: o.time_window_start ? new Date(o.time_window_start).toISOString() : null,
+      time_window_start: formatDateOnlyForStorage(o.time_window_start),
+      departure_time: persistedDepartureTime,
       assigned_to: o.assigned_to || null,
       price: o.price ?? null,
       payment_status: o.payment_status ?? null,
@@ -1044,6 +1141,12 @@ function OrderDetailsContent() {
 
   const makeSnapshotFromState = useCallback(() => {
     const phoneDigits = (phone || '').replace(/\D/g, '').replace(/^8(\d{10})$/, '7$1');
+    const explicitTimeFromState =
+      !!departureDate &&
+      (departureDate.getHours() !== 0 || departureDate.getMinutes() !== 0);
+    const departureTimeForSave = explicitTimeFromState
+      ? `${String(departureDate.getHours()).padStart(2, '0')}:${String(departureDate.getMinutes()).padStart(2, '0')}:00`
+      : null;
     return JSON.stringify({
       title: resolveTitleForSave(title, departureDate),
       comment: description || '',
@@ -1052,7 +1155,8 @@ function OrderDetailsContent() {
       street: street || '',
       house: house || '',
       phone: phoneDigits,
-      time_window_start: departureDate ? departureDate.toISOString() : null,
+      time_window_start: formatDateOnlyForStorage(departureDate),
+      departure_time: departureTimeForSave,
       assigned_to: assigneeId || null,
       ...(canEditFinances
         ? {
@@ -2833,7 +2937,11 @@ function OrderDetailsContent() {
       title: resolvedTitle,
       comment: description,
       assigned_to: toFeed ? null : assigneeId,
-      time_window_start: departureDate.toISOString(),
+      time_window_start: formatDateOnlyForStorage(departureDate),
+      departure_time:
+        departureDate.getHours() !== 0 || departureDate.getMinutes() !== 0
+          ? `${String(departureDate.getHours()).padStart(2, '0')}:${String(departureDate.getMinutes()).padStart(2, '0')}:00`
+          : null,
       status: nextStatus,
       urgent,
       ...(canEditFinances ? { price: parseMoney(amount) } : {}),
@@ -3815,14 +3923,14 @@ function OrderDetailsContent() {
               ) : null}
               {isOrderFieldVisible('assigned_to') ? <View style={base.sep} /> : null}
 
-              {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? (
+              {isOrderFieldVisible('work_type_id') ? (
                 <LabelValueRow
                   label={t('order_details_work_type')}
                   value={workTypeName || t('order_details_work_type_not_selected')}
                   hideWhenEmpty={false}
                 />
               ) : null}
-              {orderFieldsByKey.get('work_type_id')?.isEnabled !== false ? <View style={base.sep} /> : null}
+              {isOrderFieldVisible('work_type_id') ? <View style={base.sep} /> : null}
 
               {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? (
                 <Pressable
@@ -3850,13 +3958,18 @@ function OrderDetailsContent() {
                           if (!order.time_window_start) return t('order_details_departure_not_specified');
                           const startDate = new Date(order.time_window_start);
                           const hasRangeEnd = !!order.time_window_end;
-                          const showDepartureTime = isOrderFieldVisible('departure_time');
+                          const showDepartureTime =
+                            isOrderFieldVisible('departure_time') && hasExplicitDepartureTime;
+                          const departureTimeLabel = (() => {
+                            const normalized = normalizeDepartureTimeString(order?.departure_time);
+                            if (normalized) return normalized.slice(0, 5);
+                            const legacy = extractLegacyDepartureTime(order?.time_window_start);
+                            return legacy ? legacy.slice(0, 5) : '';
+                          })();
                           if (!hasRangeEnd) {
-                            return format(
-                              startDate,
-                              showDepartureTime ? 'd MMMM yyyy, HH:mm' : 'd MMMM yyyy',
-                              { locale: ru },
-                            );
+                            const dateLabel = format(startDate, 'd MMMM yyyy', { locale: ru });
+                            if (!showDepartureTime || !departureTimeLabel) return dateLabel;
+                            return `${dateLabel}, ${departureTimeLabel}`;
                           }
                           const endDate = new Date(order.time_window_end);
                           return `${format(startDate, 'd MMMM yyyy', { locale: ru })} — ${format(endDate, 'd MMMM yyyy', { locale: ru })}`;
@@ -3869,7 +3982,7 @@ function OrderDetailsContent() {
               ) : null}
               {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? <View style={base.sep} /> : null}
 
-              {orderFieldsByKey.get('comment')?.isEnabled !== false ? (
+              {isOrderFieldVisible('comment') ? (
               <ExpandableTextRow
                 label={t('order_details_description')}
                 value={descriptionValue || t('order_details_description_empty')}
