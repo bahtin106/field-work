@@ -93,6 +93,29 @@ function buildClientDisplayName(client) {
   return fullName;
 }
 
+function normalizeDepartureTimeString(input) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3] ?? '0');
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || seconds < 0 || seconds > 59) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function extractDepartureTimeFromLegacyDatetime(input) {
+  if (!input) return null;
+  const parsed = new Date(input);
+  if (Number.isNaN(parsed?.getTime?.())) return null;
+  const hours = parsed.getHours();
+  const minutes = parsed.getMinutes();
+  if (hours === 0 && minutes === 0) return null;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`;
+}
+
 function normalizeOrder(row) {
   if (!row) return row;
   const customerPhoneVisible =
@@ -105,6 +128,9 @@ function normalizeOrder(row) {
   const address = objectItem ? { ...addressFromRow, ...addressFromObject } : addressFromRow;
   const addressMode = normalizeOrderAddressMode(row.address_mode);
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
+  const departureTime =
+    normalizeDepartureTimeString(row?.departure_time) ||
+    extractDepartureTimeFromLegacyDatetime(row?.time_window_start);
   return {
     ...row,
     title: resolveRequestTitle(row, {
@@ -118,6 +144,7 @@ function normalizeOrder(row) {
     customer_phone_visible: customerPhoneVisible,
     phone_visible: legacyPhoneVisible,
     time_window_start: row.time_window_start ?? null,
+    departure_time: departureTime,
     object: objectItem,
     client: clientItem,
     fio: customerName || null,

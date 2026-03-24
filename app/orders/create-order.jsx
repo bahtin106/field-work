@@ -31,6 +31,7 @@ import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/mo
 import QuickPreviewModal from '../../components/ui/modals/QuickPreviewModal';
 import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_CODES, getMessageByCode } from '../../src/shared/feedback';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
 import { usePermissions } from '../../lib/permissions';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
@@ -103,6 +104,7 @@ import {
   findExactMatchingClientObject,
 } from '../../src/features/objects/matching';
 import { buildAutoRequestTitle, resolveRequestTitle } from '../../src/features/requests/title';
+import { buildAssigneeSelectItems } from '../../src/features/requests/assigneeSelect';
 
 const DEFAULT_FIELDS = [
   { field_key: 'title', label: null, type: 'text', position: 10, required: true },
@@ -196,6 +198,34 @@ function sanitizeVisibleText(value, fallback = '') {
   return hasMojibake(text) ? String(fallback || '').trim() : text;
 }
 
+function parseTimeStringToDate(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  const date = new Date();
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+}
+
+function formatTimeForStorage(input) {
+  const date = input instanceof Date ? input : parseTimeStringToDate(input);
+  if (!date || Number.isNaN(date?.getTime?.())) return null;
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}:00`;
+}
+
+function formatDateOnlyForStorage(input) {
+  const date = input instanceof Date ? input : null;
+  if (!date || Number.isNaN(date?.getTime?.())) return null;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 function CreateOrderContent() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
@@ -218,7 +248,7 @@ function CreateOrderContent() {
   const [form, setForm] = useState({});
   const [description, setDescription] = useState('');
   const [departureDate, setDepartureDate] = useState(null);
-  const [departureTimeTouched, setDepartureTimeTouched] = useState(false);
+  const [departureTime, setDepartureTime] = useState(null);
   const [departureEndDate, setDepartureEndDate] = useState(null);
   const [isDepartureRange, setIsDepartureRange] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -271,6 +301,11 @@ function CreateOrderContent() {
   const [draftRestoreVisible, setDraftRestoreVisible] = useState(false);
   const [savedDraft, setSavedDraft] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
+  const { departments } = useDepartmentsHook({
+    companyId,
+    enabled: !!companyId,
+    onlyEnabled: true,
+  });
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: has('canCreateOrders'),
   });
@@ -369,12 +404,25 @@ function CreateOrderContent() {
     [orderFieldSettings],
   );
   const orderedPlanningFieldKeys = useMemo(
-    () =>
-      getOrderedEntityFields(orderFieldSettings, {
+    () => {
+      const priority = {
+        urgent: 0,
+        time_window_start: 1,
+        departure_time: 2,
+        assigned_to: 3,
+      };
+      return getOrderedEntityFields(orderFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
         fieldKeys: ['urgent', 'time_window_start', 'departure_time', 'assigned_to'],
-      }).map((field) => field.fieldKey),
+      })
+        .map((field) => field.fieldKey)
+        .sort((left, right) => {
+          const leftWeight = Number.isFinite(priority[left]) ? priority[left] : Number.MAX_SAFE_INTEGER;
+          const rightWeight = Number.isFinite(priority[right]) ? priority[right] : Number.MAX_SAFE_INTEGER;
+          return leftWeight - rightWeight;
+        });
+    },
     [orderFieldSettings],
   );
   const objectFieldsByKey = useMemo(() => new Map((objectFieldSettings?.fields || []).map((field) => [String(field.fieldKey || field.field_key || ''), field])), [objectFieldSettings]);
@@ -396,6 +444,7 @@ function CreateOrderContent() {
         form,
         description,
         departureDate: departureDate?.toISOString(),
+        departureTime: formatTimeForStorage(departureTime),
         departureEndDate: departureEndDate?.toISOString(),
         isDepartureRange,
         workTypeId,
@@ -417,6 +466,7 @@ function CreateOrderContent() {
     form,
     description,
     departureDate,
+    departureTime,
     departureEndDate,
     isDepartureRange,
     workTypeId,
@@ -460,10 +510,7 @@ function CreateOrderContent() {
     setDescription(draft.description || '');
     const restoredDepartureDate = draft.departureDate ? new Date(draft.departureDate) : null;
     setDepartureDate(restoredDepartureDate);
-    setDepartureTimeTouched(
-      !!restoredDepartureDate &&
-        (restoredDepartureDate.getHours() !== 0 || restoredDepartureDate.getMinutes() !== 0),
-    );
+    setDepartureTime(parseTimeStringToDate(draft.departureTime));
     setDepartureEndDate(draft.departureEndDate ? new Date(draft.departureEndDate) : null);
     setIsDepartureRange(!!draft.isDepartureRange);
     setWorkTypeId(draft.workTypeId || null);
@@ -510,6 +557,7 @@ function CreateOrderContent() {
       !!(form.phone?.trim()) ||
       !!description?.trim() ||
       !!departureDate ||
+      !!departureTime ||
       !!departureEndDate ||
       !!isDepartureRange ||
       !!workTypeId ||
@@ -526,6 +574,7 @@ function CreateOrderContent() {
     form,
     description,
     departureDate,
+    departureTime,
     departureEndDate,
     isDepartureRange,
     workTypeId,
@@ -593,10 +642,9 @@ function CreateOrderContent() {
 
   const normalizePhone = useCallback((val) => toE164MobilePhoneOrNull(val), []);
   const hasDepartureTimeValue = useCallback(
-    (value, touched = false) => {
-      if (!value) return false;
-      if (touched) return true;
-      return value.getHours() !== 0 || value.getMinutes() !== 0;
+    (value) => {
+      const parsed = value instanceof Date ? value : parseTimeStringToDate(value);
+      return !!parsed && !Number.isNaN(parsed?.getTime?.());
     },
     [],
   );
@@ -661,7 +709,7 @@ function CreateOrderContent() {
             missingKeys.push(k);
           }
         } else if (k === 'departure_time') {
-          if (!hasDepartureTimeValue(departureDate, departureTimeTouched)) {
+          if (!hasDepartureTimeValue(departureTime)) {
             missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
@@ -713,7 +761,7 @@ function CreateOrderContent() {
     } catch {
       return { ok: true };
     }
-  }, [schema, form, departureDate, departureTimeTouched, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue, resolveTitleForSave]);
+  }, [schema, form, departureDate, departureTime, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue, resolveTitleForSave]);
 
   const promptNewObjectCreation = useCallback(
     (seedDraft = null) => {
@@ -786,7 +834,7 @@ function CreateOrderContent() {
     if (isFieldRequired('time_window_start') && !departureDate) {
       nextErrors.time_window_start = { message: t('order_validation_date_required') };
     }
-    if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureDate, departureTimeTouched)) {
+    if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
       nextErrors.departure_time = { message: t('order_validation_departure_time_required', 'Укажите время выезда') };
     }
     if (isDepartureRange && (!departureEndDate || departureEndDate < departureDate)) {
@@ -936,8 +984,9 @@ function CreateOrderContent() {
       object_name_snapshot: String(resolvedObject?.name || '').trim() || null,
       ...toOrderAddressPatch(resolvedAddressDraft),
       assigned_to: toFeed ? null : assigneeId,
-      time_window_start: departureDate ? departureDate.toISOString() : null,
-      time_window_end: isDepartureRange && departureEndDate ? departureEndDate.toISOString() : null,
+      time_window_start: formatDateOnlyForStorage(departureDate),
+      time_window_end: isDepartureRange ? formatDateOnlyForStorage(departureEndDate) : null,
+      departure_time: formatTimeForStorage(departureTime),
       status: toFeed ? t('order_status_in_feed') : t('order_status_new'),
       urgent,
       currency: companySettings?.currency ?? null,
@@ -974,7 +1023,7 @@ function CreateOrderContent() {
     useWorkTypes,
     workTypeId,
     departureDate,
-    departureTimeTouched,
+    departureTime,
     departureEndDate,
     isDepartureRange,
     toFeed,
@@ -1046,7 +1095,7 @@ function CreateOrderContent() {
     const loadUsers = async () => {
       const { data: userList, error } = await supabase
         .from('profiles')
-        .select('id, first_name, middle_name, last_name, role')
+        .select('id, first_name, middle_name, last_name, role, department_id, email')
         .in('role', ['worker', 'dispatcher', 'admin']);
       if (!error && mounted) setUsers(userList || []);
     };
@@ -1186,7 +1235,11 @@ function CreateOrderContent() {
     (key = 'phone') => {
       const f = getField(key);
       if (!f) return null;
-      const label = withRequiredLabel(getFieldLabel(key), isFieldRequired(key));
+      const baseLabel =
+        key === 'phone'
+          ? t('create_order_visible_phone_label')
+          : getFieldLabel(key);
+      const label = withRequiredLabel(baseLabel, isFieldRequired(key));
       const val = form[key] ?? '';
       const errMsg = fieldErrors?.[key]?.message;
       const finalErr = shouldShowError(key) ? errMsg : null;
@@ -1582,7 +1635,10 @@ function CreateOrderContent() {
           return (
             <>
               <TextField
-                label={t('create_order_phone_source_label')}
+                label={withRequiredLabel(
+                  t('create_order_phone_source_display_label'),
+                  true,
+                )}
                 value={selectedPhoneSourceLabel}
                 pressable
                 style={formStyles.field}
@@ -1647,7 +1703,6 @@ function CreateOrderContent() {
                     <ClearButton
                       onPress={() => {
                         setDepartureDate(null);
-                        setDepartureTimeTouched(false);
                         setDepartureEndDate(null);
                         setIsDepartureRange(false);
                       }}
@@ -1672,14 +1727,19 @@ function CreateOrderContent() {
                 onApply={(selected) => {
                   const nextStart = selected ? new Date(selected) : null;
                   setIsDepartureRange(false);
-                  if (!nextStart) setDepartureTimeTouched(false);
-                  setDepartureDate((prev) => {
-                    if (!nextStart) return null;
-                    if (!prev) return nextStart;
-                    const d = new Date(nextStart);
-                    d.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
-                    return d;
-                  });
+                  setDepartureDate(
+                    nextStart
+                      ? new Date(
+                          nextStart.getFullYear(),
+                          nextStart.getMonth(),
+                          nextStart.getDate(),
+                          0,
+                          0,
+                          0,
+                          0,
+                        )
+                      : null,
+                  );
                   setDepartureEndDate(null);
                 }}
                 onClose={() => setShowDatePicker(false)}
@@ -1695,8 +1755,8 @@ function CreateOrderContent() {
                   isFieldRequired('departure_time'),
                 )}
                 value={
-                  hasDepartureTimeValue(departureDate, departureTimeTouched)
-                    ? formatTime(departureDate)
+                  hasDepartureTimeValue(departureTime)
+                    ? formatTime(departureTime)
                     : t('create_order_placeholder_time')
                 }
                 pressable
@@ -1704,25 +1764,16 @@ function CreateOrderContent() {
                 ref={timeFieldRef}
                 error={shouldShowError('departure_time') && fieldErrors?.departure_time ? 'invalid' : undefined}
                 rightSlot={
-                  hasDepartureTimeValue(departureDate, departureTimeTouched) ? (
+                  hasDepartureTimeValue(departureTime) ? (
                     <ClearButton
                       onPress={() => {
-                        if (!departureDate) return;
-                        const d = new Date(departureDate);
-                        d.setHours(0, 0, 0, 0);
-                        setDepartureDate(d);
-                        setDepartureTimeTouched(false);
+                        setDepartureTime(null);
                       }}
                       accessibilityLabel={t('common_clear')}
                     />
                   ) : null
                 }
                 onPress={() => {
-                  if (!departureDate) {
-                    setShowDatePicker(true);
-                    setTimeout(() => scrollToHandle(dateFieldRef), SCROLL_ANIMATION_DELAY);
-                    return;
-                  }
                   setShowTimePicker(true);
                   setTimeout(() => scrollToHandle(timeFieldRef), SCROLL_ANIMATION_DELAY);
                 }}
@@ -1732,18 +1783,14 @@ function CreateOrderContent() {
               />
 
               <DateTimeModal
-                visible={showTimePicker && !!departureDate}
-                initial={departureDate || new Date()}
+                visible={showTimePicker}
+                initial={departureTime || new Date()}
                 mode="time"
                 onApply={(selected) => {
                   if (selected) {
-                    setDepartureDate((prev) => {
-                      const baseDate = prev || new Date();
-                      const d = new Date(baseDate);
-                      d.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
-                      return d;
-                    });
-                    setDepartureTimeTouched(true);
+                    const next = new Date();
+                    next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+                    setDepartureTime(next);
                   }
                 }}
                 onClose={() => setShowTimePicker(false)}
@@ -1802,8 +1849,8 @@ function CreateOrderContent() {
     [
       assigneeId,
       departureDate,
+      departureTime,
       departureDateDisplayLabel,
-      departureTimeTouched,
       fieldErrors,
       formatTime,
       formStyles.field,
@@ -2032,31 +2079,29 @@ function CreateOrderContent() {
   }, [workTypes, t]);
 
   const assigneeItems = useMemo(() => {
-    const items = [
-      {
-        id: 'feed',
-        label: t('create_order_executor_in_feed'),
-        onPress: () => {
-          setToFeed(true);
-          setAssigneeId(null);
-          setAssigneeModalVisible(false);
-        },
+    const departmentsById = new Map(
+      (Array.isArray(departments) ? departments : []).map((department) => [
+        String(department?.id || ''),
+        String(department?.name || '').trim(),
+      ]),
+    );
+    return buildAssigneeSelectItems({
+      users,
+      departmentsById,
+      t,
+      includeFeed: true,
+      onSelectFeed: () => {
+        setToFeed(true);
+        setAssigneeId(null);
+        setAssigneeModalVisible(false);
       },
-    ];
-    users.forEach((user) => {
-      const label = [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' ');
-      items.push({
-        id: user.id,
-        label: label || user.email || String(user.id),
-        onPress: () => {
-          setAssigneeId(user.id);
-          setToFeed(false);
-          setAssigneeModalVisible(false);
-        },
-      });
+      onSelectUser: (userId) => {
+        setAssigneeId(userId);
+        setToFeed(false);
+        setAssigneeModalVisible(false);
+      },
     });
-    return items;
-  }, [users, t]);
+  }, [departments, users, t]);
 
   const clientItems = useMemo(() => {
     if (!Array.isArray(clients) || clients.length === 0) {
@@ -2581,6 +2626,7 @@ function CreateOrderContent() {
         title={t('create_order_modal_executor_title')}
         items={assigneeItems}
         searchable
+        filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
         selectedId={toFeed ? 'feed' : assigneeId}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setAssigneeModalVisible(false)}
