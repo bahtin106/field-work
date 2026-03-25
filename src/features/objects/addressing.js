@@ -157,7 +157,7 @@ export function normalizeClientObject(row) {
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });
-  normalized.apartment = String(row.apartment || row.office || '').trim();
+  normalized.apartment = String(row.apartment || '').trim();
   normalized.comment = String(row.comment || row.entrance_info || '').trim();
   CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();

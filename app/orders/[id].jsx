@@ -203,7 +203,7 @@ const REQUEST_SYNC_FIELDS = [
   'fio',
   'phone',
   'work_type_id',
-  'price',
+  'start_price',
   'payment_status',
   'payment_method',
   'finance_income_total',
@@ -212,10 +212,10 @@ const REQUEST_SYNC_FIELDS = [
   'finance_gross_total',
   'finance_net_total',
   'urgent',
-  'contract_file',
-  'photo_before',
-  'photo_after',
-  'act_file',
+  'media_file_1',
+  'media_file_2',
+  'media_file_3',
+  'media_file_4',
   'media_file_5',
 ];
 
@@ -223,13 +223,13 @@ const FORCED_VISIBLE_ORDER_FIELDS = new Set([
   'client_id',
   'object_id',
   'assigned_to',
-  'price',
+  'start_price',
   'payment_status',
   'payment_method',
 ]);
 
 const FORCED_HIDDEN_ORDER_FIELDS = new Set(['department_id']);
-const ORDER_MEDIA_FIELD_KEYS = ['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5'];
+const ORDER_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
 
 function isYandexMediaUrl(url) {
   const raw = String(url || '').toLowerCase();
@@ -583,7 +583,7 @@ function OrderDetailsContent() {
       }
       if (key === 'payment_status') return String(order?.payment_status || '').trim().length > 0;
       if (key === 'payment_method') return String(order?.payment_method || '').trim().length > 0;
-      if (key === 'price') return order?.price !== null && order?.price !== undefined;
+      if (key === 'start_price') return order?.start_price !== null && order?.start_price !== undefined;
       return false;
     },
     [order],
@@ -639,8 +639,6 @@ function OrderDetailsContent() {
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [departmentModalVisible, setDepartmentModalVisible] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
-  const [deleteCountdown, setDeleteCountdown] = useState(5);
-  const [deleteEnabled, setDeleteEnabled] = useState(false);
   const [orderPhotosModal, setOrderPhotosModal] = useState({ visible: false, category: null });
   const [amountEditModalVisible, setAmountEditModalVisible] = useState(false);
   const [paymentStatusModalVisible, setPaymentStatusModalVisible] = useState(false);
@@ -951,7 +949,7 @@ function OrderDetailsContent() {
           return departureDate;
         case 'assigned_to':
           return toFeed ? null : assigneeId;
-        case 'price':
+        case 'start_price':
           return canEditFinances ? amount : amount || '';
         default:
           return null;
@@ -1042,7 +1040,7 @@ function OrderDetailsContent() {
       const parsed = parseMoney(rawValue);
       if (parsed === null) {
         showWarning(
-          field === 'price' ? t('order_validation_amount_format') : t('order_validation_fuel_format'),
+          field === 'start_price' ? t('order_validation_amount_format') : t('order_validation_fuel_format'),
         );
         return;
       }
@@ -1055,7 +1053,7 @@ function OrderDetailsContent() {
           order?.updated_at || null,
         );
         setOrder(updatedOrder || order);
-        if (field === 'price') setAmount(String(parsed));
+        if (field === 'start_price') setAmount(String(parsed));
         onDone?.();
         showToast(t('order_toast_saved'));
       } catch (e) {
@@ -1133,7 +1131,7 @@ function OrderDetailsContent() {
       time_window_start: formatDateOnlyForStorage(o.time_window_start),
       departure_time: persistedDepartureTime,
       assigned_to: o.assigned_to || null,
-      price: o.price ?? null,
+      start_price: o.start_price ?? null,
       payment_status: o.payment_status ?? null,
       payment_method: o.payment_method ?? null,
     });
@@ -1213,7 +1211,7 @@ function OrderDetailsContent() {
     setAssigneeId(o.assigned_to || null);
     setToFeed(!o.assigned_to);
     setUrgent(!!o.urgent);
-    setAmount(o.price !== null && o.price !== undefined ? String(o.price) : '');
+    setAmount(o.start_price !== null && o.start_price !== undefined ? String(o.start_price) : '');
     // Executor name from cache (instant)
     const cachedExecName = deriveExecutorNameInstant(o);
     if (cachedExecName) setExecutorName(cachedExecName);
@@ -2753,32 +2751,32 @@ function OrderDetailsContent() {
   const handleFinishOrder = useCallback(async () => {
     const missing = [];
     if (
-      isOrderFieldVisible('contract_file') &&
-      orderFieldsByKey.get('contract_file')?.isRequired === true &&
-      (!Array.isArray(order.contract_file) || order.contract_file.length === 0)
+      isOrderFieldVisible('media_file_1') &&
+      orderFieldsByKey.get('media_file_1')?.isRequired === true &&
+      (!Array.isArray(order.media_file_1) || order.media_file_1.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('contract_file', t('order_media_field_1', 'Медиа 1')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_1', t('order_media_field_1', 'Медиа 1')).toLowerCase());
     }
     if (
-      isOrderFieldVisible('photo_before') &&
-      orderFieldsByKey.get('photo_before')?.isRequired === true &&
-      (!Array.isArray(order.photo_before) || order.photo_before.length === 0)
+      isOrderFieldVisible('media_file_2') &&
+      orderFieldsByKey.get('media_file_2')?.isRequired === true &&
+      (!Array.isArray(order.media_file_2) || order.media_file_2.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('photo_before', t('order_media_field_2', 'Медиа 2')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_2', t('order_media_field_2', 'Медиа 2')).toLowerCase());
     }
     if (
-      isOrderFieldVisible('photo_after') &&
-      orderFieldsByKey.get('photo_after')?.isRequired === true &&
-      (!Array.isArray(order.photo_after) || order.photo_after.length === 0)
+      isOrderFieldVisible('media_file_3') &&
+      orderFieldsByKey.get('media_file_3')?.isRequired === true &&
+      (!Array.isArray(order.media_file_3) || order.media_file_3.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('photo_after', t('order_media_field_3', 'Медиа 3')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_3', t('order_media_field_3', 'Медиа 3')).toLowerCase());
     }
     if (
-      isOrderFieldVisible('act_file') &&
-      orderFieldsByKey.get('act_file')?.isRequired === true &&
-      (!Array.isArray(order.act_file) || order.act_file.length === 0)
+      isOrderFieldVisible('media_file_4') &&
+      orderFieldsByKey.get('media_file_4')?.isRequired === true &&
+      (!Array.isArray(order.media_file_4) || order.media_file_4.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('act_file', t('order_media_field_4', 'Медиа 4')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_4', t('order_media_field_4', 'Медиа 4')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_5') &&
@@ -2993,7 +2991,7 @@ function OrderDetailsContent() {
       setAssigneeId(data.assigned_to || null);
       setToFeed(!data.assigned_to);
       setUrgent(!!data.urgent);
-      setAmount(data.price !== null && data.price !== undefined ? String(data.price) : '');
+      setAmount(data.start_price !== null && data.start_price !== undefined ? String(data.start_price) : '');
       setWorkTypeId(data.work_type_id || null);
 
       initialFormSnapshotRef.current = makeSnapshotFromOrder(data);
@@ -3073,7 +3071,7 @@ function OrderDetailsContent() {
       setToFeed(!order.assigned_to);
       setUrgent(!!order.urgent);
       setWorkTypeId(order.work_type_id || null);
-      setAmount(order.price !== null && order.price !== undefined ? String(order.price) : '');
+      setAmount(order.start_price !== null && order.start_price !== undefined ? String(order.start_price) : '');
     }
   }, [order, makeSnapshotFromOrder, applyNavBar, titlePrefix]);
 
@@ -3439,23 +3437,7 @@ function OrderDetailsContent() {
     }
   }, [loading, viewFade, viewTranslate]);
 
-  useEffect(() => {
-    let t;
-    if (deleteModalVisible) {
-      setDeleteEnabled(false);
-      setDeleteCountdown(5);
-      let c = 5;
-      t = setInterval(() => {
-        c -= 1;
-        setDeleteCountdown(c);
-        if (c <= 0) {
-          clearInterval(t);
-          setDeleteEnabled(true);
-        }
-      }, 1000);
-    }
-    return () => clearInterval(t);
-  }, [deleteModalVisible]);
+
 
   useEffect(() => {
     const onHardwareBack = () => {
@@ -3736,7 +3718,7 @@ function OrderDetailsContent() {
     (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
   const canViewFinanceSection = canViewFinanceEntries;
   const currency = order?.currency || companySettings?.currency;
-  const grossTotal = Number(order.price ?? 0) || 0;
+  const grossTotal = Number(order.start_price ?? 0) || 0;
   const financeIncomeTotal = financeEntries.reduce(
     (sum, entry) => (entry?.kind === 'income' ? sum + (Number(entry?.calculated_amount) || 0) : sum),
     0,
@@ -3781,7 +3763,7 @@ function OrderDetailsContent() {
   const showExecutorFinanceSection = canViewFinanceEntries === true;
   const showInitialCostLine =
     canViewFinanceEntries &&
-    isOrderFieldVisible('price');
+    isOrderFieldVisible('start_price');
   const visibleMediaFields = ORDER_MEDIA_FIELD_KEYS.filter(
     (fieldKey) => isOrderFieldVisible(fieldKey),
   );
@@ -4121,7 +4103,7 @@ function OrderDetailsContent() {
               ) : null}
             </Card>
 
-            {canViewFinanceSection && (isOrderFieldVisible('price') || canViewFinanceEntries) ? (
+            {canViewFinanceSection && (isOrderFieldVisible('start_price') || canViewFinanceEntries) ? (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
                   {t('order_details_finance_data')}
@@ -4246,13 +4228,13 @@ function OrderDetailsContent() {
                                 disabled={!canEditFinances}
                                 onPress={() => {
                                   if (!canEditFinances) return;
-                                  setAmountDraft(String(order?.price ?? ''));
+                                  setAmountDraft(String(order?.start_price ?? ''));
                                   setAmountEditModalVisible(true);
                                 }}
                               >
                                 <LabelValueRow
                                   label={t('order_finance_initial_cost', 'Изначальная стоимость')}
-                                  value={formatMoney(order.price, currency)}
+                                  value={formatMoney(order.start_price, currency)}
                                     hideWhenEmpty={false}
                                     rightActions={
                                       canEditFinances ? (
@@ -4515,13 +4497,13 @@ function OrderDetailsContent() {
                           disabled={!canEditFinances}
                           onPress={() => {
                             if (!canEditFinances) return;
-                            setAmountDraft(String(order?.price ?? ''));
+                            setAmountDraft(String(order?.start_price ?? ''));
                             setAmountEditModalVisible(true);
                           }}
                         >
                           <LabelValueRow
                             label={t('order_finance_initial_cost', 'Изначальная стоимость')}
-                            value={formatMoney(order.price, currency)}
+                            value={formatMoney(order.start_price, currency)}
                             hideWhenEmpty={false}
                             rightActions={
                               canEditFinances ? (
@@ -4601,10 +4583,10 @@ function OrderDetailsContent() {
               onRemoveMany={removePhotosBatch}
               onOpenViewer={(photos, idx) => {
                 const catLabels = {
-                  contract_file: getOrderFieldLabel('contract_file', t('order_media_field_1', 'Медиа 1')),
-                  photo_before: getOrderFieldLabel('photo_before', t('order_media_field_2', 'Медиа 2')),
-                  photo_after: getOrderFieldLabel('photo_after', t('order_media_field_3', 'Медиа 3')),
-                  act_file: getOrderFieldLabel('act_file', t('order_media_field_4', 'Медиа 4')),
+                  media_file_1: getOrderFieldLabel('media_file_1', t('order_media_field_1', 'Медиа 1')),
+                  media_file_2: getOrderFieldLabel('media_file_2', t('order_media_field_2', 'Медиа 2')),
+                  media_file_3: getOrderFieldLabel('media_file_3', t('order_media_field_3', 'Медиа 3')),
+                  media_file_4: getOrderFieldLabel('media_file_4', t('order_media_field_4', 'Медиа 4')),
                   media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5', 'Медиа 5')),
                 };
                 openViewer(photos, idx, orderPhotosModal.category, catLabels[orderPhotosModal.category] || '');
@@ -4751,7 +4733,7 @@ function OrderDetailsContent() {
           returnKeyType="done"
           onSubmitEditing={() =>
             saveInlineFinanceField({
-              field: 'price',
+              field: 'start_price',
               rawValue: amountDraft,
               onDone: () => setAmountEditModalVisible(false),
             })
@@ -4768,7 +4750,7 @@ function OrderDetailsContent() {
             loading={financeSaving}
             onPress={() =>
               saveInlineFinanceField({
-                field: 'price',
+                field: 'start_price',
                 rawValue: amountDraft,
                 onDone: () => setAmountEditModalVisible(false),
               })
@@ -5258,11 +5240,7 @@ function OrderDetailsContent() {
         visible={deleteModalVisible}
         title={t('order_modal_delete_title')}
         message={t('order_modal_delete_msg')}
-        confirmLabel={
-          deleteEnabled
-            ? t('order_modal_delete_confirm')
-            : t('order_modal_delete_countdown').replace('{n}', deleteCountdown)
-        }
+        confirmLabel={t('order_modal_delete_confirm')}
         cancelLabel={t('order_modal_cancel_stay')}
         confirmVariant="destructive"
         onClose={() => setDeleteModalVisible(false)}

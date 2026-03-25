@@ -334,7 +334,7 @@ function CreateOrderContent() {
     const house = String(draftClientObject?.house || '').trim();
     const city = String(draftClientObject?.city || '').trim();
     const entrance = String(draftClientObject?.entrance || '').trim();
-    const apartment = String(draftClientObject?.apartment || draftClientObject?.office || '').trim();
+    const apartment = String(draftClientObject?.apartment || '').trim();
     return {
       query: [city, street, house, apartment, entrance].filter(Boolean).join(' ').trim(),
       street,
@@ -981,7 +981,6 @@ function CreateOrderContent() {
       client_id: selectedClientId || null,
       object_id: resolvedObjectId || null,
       address_mode: 'object',
-      object_name_snapshot: String(resolvedObject?.name || '').trim() || null,
       ...toOrderAddressPatch(resolvedAddressDraft),
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: formatDateOnlyForStorage(departureDate),
@@ -990,6 +989,7 @@ function CreateOrderContent() {
       status: toFeed ? t('order_status_in_feed') : t('order_status_new'),
       urgent,
       currency: companySettings?.currency ?? null,
+      creation_source: 'app',
     };
 
     const { error } = await supabase.from('orders').insert(payload);
@@ -1897,7 +1897,7 @@ function CreateOrderContent() {
     const house = String(objectSearchSourceDraft?.house || '').trim();
     const city = String(objectSearchSourceDraft?.city || '').trim();
     const entrance = String(objectSearchSourceDraft?.entrance || '').trim();
-    const apartment = String(objectSearchSourceDraft?.apartment || objectSearchSourceDraft?.office || '').trim();
+    const apartment = String(objectSearchSourceDraft?.apartment || '').trim();
     return {
       query: [city, street, house, apartment, entrance].filter(Boolean).join(' ').trim(),
       street,
@@ -2274,7 +2274,7 @@ function CreateOrderContent() {
       postal_code: item.postal_code || '',
       floor: item.floor || '',
       entrance: item.entrance || '',
-      apartment: item.apartment || item.office || '',
+      apartment: item.apartment || '',
       comment: item.comment || item.entrance_info || '',
       geo_lat: item.geo_lat || '',
       geo_lng: item.geo_lng || '',

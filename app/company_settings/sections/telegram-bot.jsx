@@ -374,7 +374,7 @@ export default function TelegramBotSettingsScreen() {
   const copyStartLink = React.useCallback(async () => {
     if (!data?.start_link) return;
     await Clipboard.setStringAsync(String(data.start_link));
-    toast.success(t('company_settings_telegram_link_copied'));
+    toast.success(t('toast_copied'));
   }, [data?.start_link, t, toast]);
 
   const handleFieldToggle = React.useCallback((field, value) => {

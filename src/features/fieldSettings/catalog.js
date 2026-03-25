@@ -127,7 +127,7 @@ const ORDER_FIELDS = [
     lockedRequired: true,
     sortOrder: 110,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'price', {
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'start_price', {
     labelKey: 'order_field_initial_amount',
     fallbackLabel: 'Изначальная сумма',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
@@ -154,28 +154,28 @@ const ORDER_FIELDS = [
     lockedEnabled: true,
     sortOrder: 150,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'contract_file', {
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_1', {
     labelKey: 'order_media_field_1',
     fallbackLabel: 'Медиа 1',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     sortOrder: 160,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'photo_before', {
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_2', {
     labelKey: 'order_media_field_2',
     fallbackLabel: 'Медиа 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     sortOrder: 170,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'photo_after', {
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_3', {
     labelKey: 'order_media_field_3',
     fallbackLabel: 'Медиа 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     sortOrder: 180,
   }),
-  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'act_file', {
+  createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_4', {
     labelKey: 'order_media_field_4',
     fallbackLabel: 'Медиа 4',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,

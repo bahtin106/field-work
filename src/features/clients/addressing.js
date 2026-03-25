@@ -49,7 +49,7 @@ export function normalizeClientAddress(row) {
   CLIENT_ADDRESS_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });
-  normalized.apartment = String(row.apartment || row.office || '').trim();
+  normalized.apartment = String(row.apartment || '').trim();
   normalized.comment = String(row.comment || row.entrance_info || '').trim();
   return normalized;
 }
@@ -91,7 +91,7 @@ export function getClientAddressDraftFromOrder(orderLike = {}, overrides = {}) {
   CLIENT_ADDRESS_FIELDS.forEach((field) => {
     next[field] = String(orderLike?.[field] || '').trim();
   });
-  next.apartment = String(orderLike?.apartment || orderLike?.office || '').trim();
+  next.apartment = String(orderLike?.apartment || '').trim();
   next.comment = String(orderLike?.comment || orderLike?.entrance_info || '').trim();
   return next;
 }

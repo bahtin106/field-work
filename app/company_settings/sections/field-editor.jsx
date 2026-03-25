@@ -1,4 +1,4 @@
-import { Feather } from '@expo/vector-icons';
+﻿import { Feather } from '@expo/vector-icons';
 import { useNavigation } from 'expo-router';
 import React from 'react';
 import {
@@ -41,7 +41,7 @@ const ENTITY_ROWS = [
   {
     id: ENTITY_FIELD_TYPES.OBJECT,
     titleKey: 'field_settings_tab_object',
-    fallbackTitle: 'Объекты',
+    fallbackTitle: 'Новые объекты',
   },
   {
     id: ENTITY_FIELD_TYPES.EMPLOYEE,
@@ -69,7 +69,7 @@ const HIDDEN_EDITOR_FIELDS = Object.freeze({
     'client_id',
     'object_id',
     'assigned_to',
-    'price',
+    'start_price',
     'payment_status',
     'payment_method',
   ]),
@@ -89,10 +89,10 @@ const HIDDEN_EDITOR_FIELDS = Object.freeze({
 });
 
 const ORDER_MEDIA_RENAMABLE_FIELDS = new Set([
-  'contract_file',
-  'photo_before',
-  'photo_after',
-  'act_file',
+  'media_file_1',
+  'media_file_2',
+  'media_file_3',
+  'media_file_4',
   'media_file_5',
 ]);
 
@@ -420,9 +420,9 @@ export default function FieldEditorScreen() {
           },
         }));
         toast.success(
-          t(
-            'field_settings_saved',
-            `Настройки полей «${getEntityMeta(entityType, t).title}» сохранены`,
+          t('field_settings_saved', 'Настройки полей «{entity}» сохранены').replace(
+            '{entity}',
+            getEntityMeta(entityType, t).title,
           ),
         );
       } catch (error) {
@@ -483,7 +483,7 @@ export default function FieldEditorScreen() {
               ...prev[entityType],
               phase: 'error',
               errorMessage: String(
-                error?.message || t('field_settings_save_failed', '?? ??????? ????????? ????????? ?????'),
+                error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
               ),
             },
           }));
@@ -492,7 +492,7 @@ export default function FieldEditorScreen() {
             toast.error(
               String(
                 error?.message ||
-                  t('field_settings_save_failed', '?? ??????? ????????? ????????? ?????'),
+                  t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
               ),
             );
             lastErrorToastRef.current[entityType] = true;
@@ -1136,4 +1136,5 @@ function createStyles(theme) {
     },
   });
 }
+
 

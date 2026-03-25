@@ -162,6 +162,7 @@ export default function ObjectViewScreen() {
       filterOrderAddressByObjectFieldSettings(
         extractOrderAddressFromObject(objectItem),
         objectFieldsByKey,
+        { preserveFilledDisabled: true },
       ),
     [objectFieldsByKey, objectItem],
   );
@@ -180,22 +181,25 @@ export default function ObjectViewScreen() {
     .filter(([, value]) => String(value || '').trim().length > 0)
     .map(([label, value]) => ({ label, value: String(value || '').trim() }));
   const additionalInfoItems = [
-    [t('order_field_comment'), objectItem?.comment || objectItem?.entrance_info],
+    {
+      fieldKey: 'comment',
+      label: t('order_field_comment'),
+      value: objectItem?.comment || objectItem?.entrance_info || '',
+    },
   ]
-    .filter(([label]) => {
-      const keyMap = {
-        [t('order_field_comment')]: 'comment',
-      };
-      const fieldKey = keyMap[label];
-      return fieldKey ? objectFieldsByKey.get(fieldKey)?.isEnabled === true : true;
+    .filter((item) => {
+      const value = String(item?.value || '').trim();
+      const isEnabled = objectFieldsByKey.get(item.fieldKey)?.isEnabled === true;
+      return isEnabled || !!value;
     })
-    .filter(([, value]) => String(value || '').trim().length > 0)
-    .map(([label, value]) => ({ label, value: String(value || '').trim() }));
+    .map((item) => ({ label: item.label, value: String(item.value || '').trim() }));
   const additionalPhones = React.useMemo(() => getObjectAdditionalPhones(objectItem), [objectItem]);
   const visibleAdditionalPhones = React.useMemo(
     () =>
       additionalPhones.filter((item, index) =>
-        objectFieldsByKey.get(`additional_phone_${index + 1}`)?.isEnabled === true && !!item?.phone,
+        (objectFieldsByKey.get(`additional_phone_${index + 1}`)?.isEnabled === true ||
+          String(item?.phone || '').trim().length > 0) &&
+        !!item?.phone,
       ),
     [additionalPhones, objectFieldsByKey],
   );
@@ -210,7 +214,8 @@ export default function ObjectViewScreen() {
     String(objectItem?.location_mode || '').trim().toLowerCase() === 'map' ||
     (!String(objectItem?.location_mode || '').trim() && hasMapPoint);
   const clientDisplayName = String(clientData?.full_name || objectItem?.client_id || '').trim();
-  const showObjectName = objectFieldsByKey.get('name')?.isEnabled === true;
+  const showObjectName =
+    objectFieldsByKey.get('name')?.isEnabled === true || String(objectItem?.name || '').trim().length > 0;
   const showClientRow = hasDisplayValue(clientDisplayName);
   const canShowContactSection = visibleAdditionalPhones.length > 0;
   const onCopyPhone = React.useCallback(async (rawPhone) => {
@@ -264,8 +269,13 @@ export default function ObjectViewScreen() {
   );
 
   const visibleMediaFields = React.useMemo(
-    () => OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey) => objectFieldsByKey.get(fieldKey)?.isEnabled === true),
-    [objectFieldsByKey],
+    () =>
+      OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey) => {
+        const isEnabled = objectFieldsByKey.get(fieldKey)?.isEnabled === true;
+        const hasValues = Array.isArray(objectItem?.[fieldKey]) && objectItem[fieldKey].length > 0;
+        return isEnabled || hasValues;
+      }),
+    [objectFieldsByKey, objectItem],
   );
 
   const uploadLocalUri = React.useCallback(

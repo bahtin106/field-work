@@ -549,7 +549,7 @@ function StatsScreenContent() {
       let query = supabase
         .from('orders')
         .select(
-          'id, status, time_window_start, assigned_to, price, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
+          'id, status, time_window_start, assigned_to, start_price, finance_income_total, finance_expense_total, finance_discount_total, finance_gross_total, finance_net_total',
         )
         .order('time_window_start', { ascending: false });
 
@@ -573,7 +573,7 @@ function StatsScreenContent() {
       const inProgressOrders = orders?.filter((o) => o.status === 'В работе').length || 0;
       const newOrders = orders?.filter((o) => o.status === 'Новый' || o.status === 'Новая').length || 0;
 
-      const getGross = (o) => Number(o.finance_gross_total ?? o.price ?? 0) || 0;
+      const getGross = (o) => Number(o.finance_gross_total ?? o.start_price ?? 0) || 0;
       const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
       const getExpense = (o) => Number(o.finance_expense_total ?? 0) || 0;
       const getNet = (o) =>

@@ -533,10 +533,16 @@ function MyOrdersContent() {
       const uid = sessionData?.session?.user?.id;
       if (!uid) return;
 
-      const { data, error } = await supabase
+      const feedStatusAliases = getStatusDbAliases('feed');
+      let prefetchQuery = supabase
         .from('orders_secure_v2')
-        .select('*')
-        .is('assigned_to', null)
+        .select('*');
+      if (feedStatusAliases.length === 1) {
+        prefetchQuery = prefetchQuery.eq('status', feedStatusAliases[0]);
+      } else if (feedStatusAliases.length > 1) {
+        prefetchQuery = prefetchQuery.in('status', feedStatusAliases);
+      }
+      const { data, error } = await prefetchQuery
         .order('time_window_start', { ascending: false })
         .range(0, PAGE_SIZE - 1);
 
@@ -653,7 +659,6 @@ function MyOrdersContent() {
       if (key === 'all' && hasLinkedRelationFilter) {
         query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
       } else if (key === 'feed') {
-        query = query.is('assigned_to', null);
         const feedStatusAliases = getStatusDbAliases('feed');
         if (feedStatusAliases.length === 1) {
           query = query.eq('status', feedStatusAliases[0]);
@@ -691,11 +696,11 @@ function MyOrdersContent() {
 
       const sumMin = parseFloat(filterValues.sumMin);
       if (!Number.isNaN(sumMin)) {
-        query = query.gte('price', sumMin);
+        query = query.gte('start_price', sumMin);
       }
       const sumMax = parseFloat(filterValues.sumMax);
       if (!Number.isNaN(sumMax)) {
-        query = query.lte('price', sumMax);
+        query = query.lte('start_price', sumMax);
       }
       const toIsoDate = (value, startVal) => {
         if (!value) return null;
@@ -808,7 +813,6 @@ function MyOrdersContent() {
       if (key === 'all' && hasLinkedRelationFilter) {
         query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
       } else if (key === 'feed') {
-        query = query.is('assigned_to', null);
         const feedStatusAliases = getStatusDbAliases('feed');
         if (feedStatusAliases.length === 1) {
           query = query.eq('status', feedStatusAliases[0]);
@@ -916,7 +920,7 @@ function MyOrdersContent() {
       return Number.isFinite(ts) ? ts : 0;
     };
     const parseAmount = (item) => {
-      const value = Number(item?.price ?? item?.sum ?? 0);
+      const value = Number(item?.start_price ?? item?.sum ?? 0);
       return Number.isFinite(value) ? value : 0;
     };
     const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];
@@ -1193,7 +1197,6 @@ function MyOrdersContent() {
     if (key === 'all' && hasLinkedRelationFilter) {
       query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
     } else if (key === 'feed') {
-      query = query.is('assigned_to', null);
       const feedStatusAliases = getStatusDbAliases('feed');
       if (feedStatusAliases.length === 1) {
         query = query.eq('status', feedStatusAliases[0]);

@@ -16,7 +16,7 @@ const PRIVATE_CHAT_ONLY_TEXT = '\u0411\u043e\u0442 \u0440\u0430\u0431\u043e\u044
 const GENERIC_FAILURE_TEXT = '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u0442\u044c \u0437\u0430\u044f\u0432\u043a\u0443. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437 \u0438\u043b\u0438 \u0441\u0432\u044f\u0436\u0438\u0442\u0435\u0441\u044c \u0441 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0435\u0439.';
 const MANDATORY_TELEGRAM_FIELD_KEYS = new Set(['customer_name', 'phone', 'city', 'street', 'house']);
 const HIDDEN_TELEGRAM_FIELD_KEYS = new Set(['title', 'object_name']);
-const OBJECT_MATCH_FIELD_KEYS = ['country', 'region', 'district', 'city', 'street', 'house', 'postal_code', 'office', 'floor', 'entrance', 'apartment'];
+const OBJECT_MATCH_FIELD_KEYS = ['country', 'region', 'district', 'city', 'street', 'house', 'postal_code', 'floor', 'entrance', 'apartment'];
 const ADDRESS_FIELD_KEYS = new Set([
   'country',
   'region',
@@ -25,7 +25,6 @@ const ADDRESS_FIELD_KEYS = new Set([
   'street',
   'house',
   'postal_code',
-  'office',
   'floor',
   'entrance',
   'apartment',
@@ -275,7 +274,7 @@ function similarityScore(leftRaw: unknown, rightRaw: unknown) {
 }
 
 function buildObjectSummary(address: Record<string, string>) {
-  return [address.city, address.street, address.house, address.office ? `\u043e\u0444. ${address.office}` : '']
+  return [address.city, address.street, address.house, address.apartment ? `\u043a\u0432. ${address.apartment}` : '']
     .filter(Boolean)
     .join(', ')
     .trim();
@@ -291,7 +290,6 @@ function buildFullAddress(address: Record<string, string>) {
     address.street ? `\u0443\u043b. ${address.street}` : '',
     address.house ? `\u0434. ${address.house}` : '',
     address.apartment ? `\u043a\u0432. ${address.apartment}` : '',
-    address.office ? `\u043e\u0444. ${address.office}` : '',
     address.entrance ? `\u043f\u043e\u0434\u044a\u0435\u0437\u0434 ${address.entrance}` : '',
     address.floor ? `\u044d\u0442\u0430\u0436 ${address.floor}` : '',
     address.entrance_info,
@@ -1361,7 +1359,7 @@ async function buildClientNameDiscrepancyNote(
 }
 
 const ADDRESS_TEXT_MATCH_FIELDS = ['country', 'region', 'district', 'city', 'street', 'postal_code'] as const;
-const ADDRESS_EXACT_MATCH_FIELDS = ['house', 'office', 'entrance', 'apartment', 'floor'] as const;
+const ADDRESS_EXACT_MATCH_FIELDS = ['house', 'entrance', 'apartment', 'floor'] as const;
 const ADDRESS_STREET_SYNONYMS = new Map<string, string>([
   ['ул', 'улица'],
   ['ул.', 'улица'],
@@ -1445,7 +1443,7 @@ async function applyAddressValidationForConfirmation(
 
   const { data: objectRows, error } = await admin
     .from('client_objects')
-    .select('id, country, region, district, city, street, house, postal_code, office, floor, entrance, apartment')
+    .select('id, country, region, district, city, street, house, postal_code, floor, entrance, apartment')
     .eq('client_id', clientId)
     .limit(300);
   if (error) throw error;
@@ -1739,7 +1737,7 @@ async function createClientIfNeeded(admin: AdminClient, integration: Integration
 async function findExistingObject(admin: AdminClient, clientId: string, values: Record<string, string>) {
   const { data, error } = await admin
     .from('client_objects')
-    .select('id, country, region, district, city, street, house, postal_code, office, floor, entrance, apartment')
+    .select('id, country, region, district, city, street, house, postal_code, floor, entrance, apartment')
     .eq('client_id', clientId);
   if (error) throw error;
   const incoming = Object.fromEntries(
@@ -1760,7 +1758,6 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
     house: normalizeText(values.house),
     postal_code: normalizeText(values.postal_code),
     apartment: normalizeText(values.apartment),
-    office: normalizeText(values.office),
     entrance: normalizeText(values.entrance),
     floor: normalizeText(values.floor),
     entrance_info: normalizeText(values.entrance_info),
@@ -1787,7 +1784,6 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
       house: address.house || null,
       postal_code: address.postal_code || null,
       apartment: address.apartment || null,
-      office: address.office || null,
       entrance: address.entrance || null,
       floor: address.floor || null,
       entrance_info: address.entrance_info || null,
@@ -1844,11 +1840,11 @@ async function createOrderFromConversation(admin: AdminClient, integration: Inte
         client_id: clientId,
         object_id: object.objectId,
         address_mode: object.addressMode,
-        object_name_snapshot: object.objectName,
         assigned_to: assignedTo,
         status,
         urgent: false,
         currency: company?.currency || null,
+        creation_source: 'telegram',
       })
       .select('id')
       .single();
