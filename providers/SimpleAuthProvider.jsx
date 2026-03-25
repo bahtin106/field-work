@@ -85,6 +85,18 @@ const isDuplicateProfileError = (error) => {
   return error?.code === '23505' || /duplicate key/i.test(message);
 };
 
+const isNetworkRequestError = (error) => {
+  if (!error) return false;
+  const message = String(error?.message || error || '');
+  const name = String(error?.name || '');
+  return (
+    /network request failed/i.test(message) ||
+    /failed to fetch/i.test(message) ||
+    /network error/i.test(message) ||
+    /TypeError/i.test(name)
+  );
+};
+
 export function SimpleAuthProvider({ children }) {
   const [state, setState] = useState({
     isInitializing: true,
@@ -123,6 +135,7 @@ export function SimpleAuthProvider({ children }) {
       if (!userId) return null;
 
       debugLog('[SimpleAuth] Loading profile for:', userId);
+      const loadStartedAt = Date.now();
 
       try {
         const controller = new AbortController();
@@ -217,9 +230,16 @@ export function SimpleAuthProvider({ children }) {
         return normalizeProfileData(safeData, user, 'supabase');
       } catch (error) {
         const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
-        if (isTimeout) {
+        const isNetworkError = isNetworkRequestError(error);
+        const elapsedMs = Date.now() - loadStartedAt;
+        const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
+
+        if (isTimeout || isTimeoutLikeNetwork) {
           console.warn('[SimpleAuth] Profile load timed out');
           throw new Error('profile-load-timeout');
+        } else if (isNetworkError) {
+          console.warn('[SimpleAuth] Profile network error:', error);
+          throw new Error('profile-load-network-error');
         } else {
           console.error('[SimpleAuth] Profile error:', error);
           throw error;
@@ -363,13 +383,18 @@ export function SimpleAuthProvider({ children }) {
       } catch (error) {
         if (requestId !== authRequestIdRef.current) return;
         const isTimeout = error?.message === 'profile-load-timeout';
+        const isNetworkError = error?.message === 'profile-load-network-error';
         const hasExistingProfile = !!profileRef.current;
 
         if (!shouldBlockUi && hasExistingProfile) {
           setState((prev) => ({
             ...prev,
             isInitializing: prev.isInitializing,
-            profileError: isTimeout ? 'refresh-timeout-using-current-profile' : 'refresh-error-using-current-profile',
+            profileError: isTimeout
+              ? 'refresh-timeout-using-current-profile'
+              : isNetworkError
+                ? 'refresh-network-error-using-current-profile'
+                : 'refresh-error-using-current-profile',
           }));
           return;
         }
@@ -384,7 +409,7 @@ export function SimpleAuthProvider({ children }) {
           ...prev,
           isInitializing: shouldBlockUi ? false : prev.isInitializing,
           profile: fallbackProfile,
-          profileError: 'db-error-using-fallback',
+          profileError: isNetworkError ? 'network-error-using-fallback' : 'db-error-using-fallback',
         }));
         scheduleProfileRecovery(user);
       }

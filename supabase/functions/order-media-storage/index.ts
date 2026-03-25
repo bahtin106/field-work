@@ -29,12 +29,12 @@ const json = (status: number, body: Record<string, Json>) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
-const ALLOWED_CATEGORIES = new Set(['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5']);
+const ALLOWED_CATEGORIES = new Set(['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5']);
 const CATEGORY_DIR: Record<string, string> = {
-  contract_file: 'Media_1',
-  photo_before: 'Media_2',
-  photo_after: 'Media_3',
-  act_file: 'Media_4',
+  media_file_1: 'Media_1',
+  media_file_2: 'Media_2',
+  media_file_3: 'Media_3',
+  media_file_4: 'Media_4',
   media_file_5: 'Media_5',
 };
 

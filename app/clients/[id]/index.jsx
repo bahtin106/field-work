@@ -81,23 +81,53 @@ export default function ClientViewScreen() {
     () => createEntityFieldPresentation(clientFieldSettings),
     [clientFieldSettings],
   );
-  const canShowAvatarImage = fieldUi.isVisible('avatar_url');
+  const hasPersistedClientFieldValue = React.useCallback(
+    (fieldKey) => {
+      const key = String(fieldKey || '');
+      if (!key) return false;
+      if (key === 'avatar_url') {
+        return (
+          String(client?.avatarDisplayUrl || '').trim().length > 0 ||
+          String(client?.avatarUrl || '').trim().length > 0
+        );
+      }
+      if (key.startsWith('additional_phone_')) {
+        const slotId = Number(key.replace('additional_phone_', ''));
+        if (!Number.isFinite(slotId) || slotId < 1 || slotId > 3) return false;
+        const phoneEntry = getClientAdditionalPhones(client)?.[slotId - 1];
+        return String(phoneEntry?.phone || '').trim().length > 0;
+      }
+      if (key === 'first_name') return String(client?.firstName || client?.first_name || '').trim().length > 0;
+      if (key === 'last_name') return String(client?.lastName || client?.last_name || '').trim().length > 0;
+      if (key === 'middle_name') return String(client?.middleName || client?.middle_name || '').trim().length > 0;
+      if (key === 'phone') return String(client?.phone || '').trim().length > 0;
+      if (key === 'email') return String(client?.email || '').trim().length > 0;
+      if (key === 'comment') return String(client?.comment || '').trim().length > 0;
+      return String(client?.[key] || '').trim().length > 0;
+    },
+    [client],
+  );
+  const isClientFieldVisible = React.useCallback(
+    (fieldKey) => fieldUi.isVisible(fieldKey) || hasPersistedClientFieldValue(fieldKey),
+    [fieldUi, hasPersistedClientFieldValue],
+  );
+  const canShowAvatarImage = isClientFieldVisible('avatar_url');
   const additionalPhones = React.useMemo(() => getClientAdditionalPhones(client), [client]);
   const visibleAdditionalPhones = React.useMemo(
     () =>
       additionalPhones.filter((item, index) =>
-        fieldUi.isVisible(`additional_phone_${index + 1}`) && !!item?.phone,
+        isClientFieldVisible(`additional_phone_${index + 1}`) && !!item?.phone,
       ),
-    [additionalPhones, fieldUi],
+    [additionalPhones, isClientFieldVisible],
   );
-  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'middle_name', 'comment']);
-  const canShowContactSection = fieldUi.hasVisibleFields([
+  const canShowPersonalSection = ['first_name', 'last_name', 'middle_name', 'comment'].some(isClientFieldVisible);
+  const canShowContactSection = [
     'email',
     'phone',
     'additional_phone_1',
     'additional_phone_2',
     'additional_phone_3',
-  ]);
+  ].some(isClientFieldVisible);
 
   const onCopyEmail = React.useCallback(async () => {
     const email = client?.email || '';
@@ -204,7 +234,7 @@ export default function ClientViewScreen() {
           {canShowPersonalSection ? <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader> : null}
           {canShowPersonalSection ? (
           <Card paddedXOnly>
-            {fieldUi.isVisible('first_name') || fieldUi.isVisible('last_name') || fieldUi.isVisible('middle_name') ? (
+            {isClientFieldVisible('first_name') || isClientFieldVisible('last_name') || isClientFieldVisible('middle_name') ? (
               <>
                 <LabelValueRow
                   label={t('label_full_name')}
@@ -214,10 +244,10 @@ export default function ClientViewScreen() {
                       .join(' ') || ''
                   }
                 />
-                {fieldUi.isVisible('comment') ? <View style={base.sep} /> : null}
+                {isClientFieldVisible('comment') ? <View style={base.sep} /> : null}
               </>
             ) : null}
-            {fieldUi.isVisible('comment') ? (
+            {isClientFieldVisible('comment') ? (
               <LabelValueRow label={t('clients_comment_label')} value={client?.comment || ''} />
             ) : null}
           </Card>
@@ -225,7 +255,7 @@ export default function ClientViewScreen() {
           {canShowContactSection ? <SectionHeader topSpacing="xs">{t('clients_contacts_section')}</SectionHeader> : null}
           {canShowContactSection ? (
           <Card paddedXOnly>
-            {fieldUi.isVisible('email') ? (
+            {isClientFieldVisible('email') ? (
               <>
                 <LabelValueRow
               label={t('view_label_email')}
@@ -262,10 +292,10 @@ export default function ClientViewScreen() {
                 ) : null
               }
                 />
-                {fieldUi.isVisible('phone') || visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
+                {isClientFieldVisible('phone') || visibleAdditionalPhones.length ? <View style={base.sep} /> : null}
               </>
             ) : null}
-            {fieldUi.isVisible('phone') ? (
+            {isClientFieldVisible('phone') ? (
               <>
                 <LabelValueRow
               label={t('view_label_phone')}

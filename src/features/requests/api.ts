@@ -123,9 +123,7 @@ function normalizeOrder(row) {
   const legacyPhoneVisible = row.phone_visible ?? customerPhoneVisible;
   const objectItem = row.object || row.client_object || null;
   const clientItem = row.client || null;
-  const addressFromRow = extractOrderAddress(row);
-  const addressFromObject = extractOrderAddress(objectItem);
-  const address = objectItem ? { ...addressFromRow, ...addressFromObject } : addressFromRow;
+  const address = extractOrderAddress(row);
   const addressMode = normalizeOrderAddressMode(row.address_mode);
   const customerName = buildClientDisplayName(clientItem) || String(row.fio ?? row.customer_name ?? '').trim();
   const departureTime =
@@ -138,7 +136,6 @@ function normalizeOrder(row) {
       prefix: 'Заявка от',
     }),
     address_mode: addressMode,
-    object_name_snapshot: String(row.object_name_snapshot || '').trim() || null,
     address_short: buildOrderAddressShort(address) || null,
     address_navigator_query: buildOrderAddressNavigatorQuery(address) || null,
     customer_phone_visible: customerPhoneVisible,
@@ -149,7 +146,7 @@ function normalizeOrder(row) {
     client: clientItem,
     fio: customerName || null,
     customer_name: customerName || null,
-    object_name: objectItem?.name || String(row.object_name_snapshot || '').trim() || null,
+    object_name: objectItem?.name || String(row.object_name || '').trim() || null,
     object_summary: objectItem?.summary || null,
     object_location_mode: String(objectItem?.location_mode || '').trim() || null,
     secondary_phone: clientItem?.secondary_phone || null,

@@ -80,8 +80,13 @@ async function fetchCountsMy(uid) {
     const { count } = await q.range(0, 0);
     return count || 0;
   };
+  const feedStatuses = getStatusDbAliases('feed');
   const [feedMy, allMy, newMy, progressMy] = await Promise.all([
-    fetchCount((q) => q.is('assigned_to', null)),
+    fetchCount((q) => {
+      if (feedStatuses.length === 1) return q.eq('status', feedStatuses[0]);
+      if (feedStatuses.length > 1) return q.in('status', feedStatuses);
+      return q;
+    }),
     fetchCount((q) => q.eq('assigned_to', uid)),
     fetchCount((q) => q.eq('assigned_to', uid).in('status', newStatuses)),
     fetchCount((q) => q.eq('assigned_to', uid).eq('status', inProgressStatus)),

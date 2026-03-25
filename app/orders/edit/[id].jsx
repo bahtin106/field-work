@@ -326,7 +326,6 @@ function EditOrderContent() {
   const [house, setHouse] = useState('');
   const [country, setCountry] = useState('');
   const [postalCode, setPostalCode] = useState('');
-  const [office, setOffice] = useState('');
   const [floor, setFloor] = useState('');
   const [entrance, setEntrance] = useState('');
   const [apartment, setApartment] = useState('');
@@ -384,7 +383,6 @@ function EditOrderContent() {
   const houseRef = useRef(null);
   const postalCodeRef = useRef(null);
   const countryRef = useRef(null);
-  const officeRef = useRef(null);
   const floorRef = useRef(null);
   const entranceRef = useRef(null);
   const apartmentRef = useRef(null);
@@ -470,7 +468,7 @@ function EditOrderContent() {
           hasExplicitTimeLike(departureTime)
         );
       }
-      if (key === 'price') return orderData?.price !== null && orderData?.price !== undefined;
+      if (key === 'start_price') return orderData?.start_price !== null && orderData?.start_price !== undefined;
       return false;
     },
     [departureDate, departureEndDate, departureTime, orderData],
@@ -684,8 +682,8 @@ function EditOrderContent() {
       .filter(Boolean)
       .join(' - ');
     if (liveSummary) return liveSummary;
-    return String(orderData?.object_name_snapshot || orderData?.object_name || '').trim();
-  }, [getVisibleObjectAddressDraft, orderData?.object_name, orderData?.object_name_snapshot, selectedObject]);
+    return String(orderData?.object_name || '').trim();
+  }, [getVisibleObjectAddressDraft, orderData?.object_name, selectedObject]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -868,7 +866,6 @@ function EditOrderContent() {
         setStreet(objectAddress.street);
         setHouse(objectAddress.house);
         setPostalCode(objectAddress.postal_code);
-        setOffice(objectAddress.apartment || objectAddress.office || '');
         setFloor(objectAddress.floor);
         setEntrance(objectAddress.entrance);
         setApartment(objectAddress.apartment);
@@ -1082,7 +1079,6 @@ function EditOrderContent() {
         house: String(draft.house || '').trim(),
         country: String(draft.country || '').trim(),
         postalCode: String(draft.postalCode || '').trim(),
-        office: String(draft.office || '').trim(),
         floor: String(draft.floor || '').trim(),
         entrance: String(draft.entrance || '').trim(),
         apartment: String(draft.apartment || '').trim(),
@@ -1133,7 +1129,6 @@ function EditOrderContent() {
       const nextHouse = row.house || '';
       const nextCountry = row.country ?? country ?? '';
       const nextPostalCode = row.postal_code ?? postalCode ?? '';
-      const nextOffice = row.apartment ?? row.office ?? office ?? '';
       const nextFloor = row.floor ?? floor ?? '';
       const nextEntrance = row.entrance ?? entrance ?? '';
       const nextApartment = row.apartment ?? apartment ?? '';
@@ -1187,7 +1182,7 @@ function EditOrderContent() {
       const nextWorkTypeResolved =
         typeof row.work_type_id !== 'undefined' || workTypeIdFromParams !== null;
       const nextStatus = row.status || (nextToFeed ? T('order_status_in_feed') : T('order_status_new'));
-      const nextPrice = row.price !== null && row.price !== undefined ? String(row.price) : '';
+      const nextPrice = row.start_price !== null && row.start_price !== undefined ? String(row.start_price) : '';
       const fallbackName =
         String(row.work_type_name || row.work_type?.name || workTypeNameFromParams || '').trim() || '';
       let nextAssignedEmployeeLabel = '';
@@ -1207,7 +1202,6 @@ function EditOrderContent() {
       setHouse(nextHouse);
       setCountry(nextCountry);
       setPostalCode(nextPostalCode);
-      setOffice(nextOffice);
       setFloor(nextFloor);
       setEntrance(nextEntrance);
       setApartment(nextApartment);
@@ -1253,7 +1247,6 @@ function EditOrderContent() {
         house: nextHouse,
         country: nextCountry,
         postalCode: nextPostalCode,
-        office: nextOffice,
         floor: nextFloor,
         entrance: nextEntrance,
         apartment: nextApartment,
@@ -1319,7 +1312,6 @@ function EditOrderContent() {
               house: nextHouse,
               country: nextCountry,
               postalCode: nextPostalCode,
-              office: nextOffice,
               floor: nextFloor,
               entrance: nextEntrance,
               apartment: nextApartment,
@@ -1365,7 +1357,6 @@ function EditOrderContent() {
     workTypeNameFromParams,
     country,
     postalCode,
-    office,
     floor,
     entrance,
     apartment,
@@ -1399,7 +1390,6 @@ function EditOrderContent() {
       house,
       country,
       postalCode,
-      office,
       floor,
       entrance,
       apartment,
@@ -1437,7 +1427,6 @@ function EditOrderContent() {
     house,
     country,
     postalCode,
-    office,
     floor,
     entrance,
     apartment,
@@ -1733,7 +1722,7 @@ function EditOrderContent() {
       postal_code: postalCode,
       floor,
       entrance,
-      apartment: apartment || office,
+      apartment,
       entrance_info: entranceInfo,
       parking_notes: '',
       geo_lat: geoLat,
@@ -1742,7 +1731,6 @@ function EditOrderContent() {
     }),
     [
       apartment,
-      office,
       city,
       country,
       district,
@@ -1807,7 +1795,6 @@ function EditOrderContent() {
     setStreet(next.street);
     setHouse(next.house);
     setPostalCode(next.postal_code);
-    setOffice(next.apartment || next.office || '');
     setFloor(next.floor);
     setEntrance(next.entrance);
     setApartment(next.apartment);
@@ -2098,12 +2085,6 @@ function EditOrderContent() {
         object_id:
           addressMode === ORDER_ADDRESS_MODE.OBJECT ? normalizeId(selectedObjectId) : null,
         address_mode: addressMode,
-        object_name_snapshot:
-          addressMode === ORDER_ADDRESS_MODE.OBJECT
-            ? String(
-                selectedObject?.name || orderData?.object_name_snapshot || orderData?.object_name || '',
-              ).trim() || null
-            : null,
         ...toOrderAddressPatch(activeAddressDraft),
         assigned_to: toFeed ? null : assigneeId,
         time_window_start: formatDateOnlyForStorage(normalizedDepartureDate),
@@ -2113,7 +2094,7 @@ function EditOrderContent() {
             : null,
         departure_time: formatTimeForStorage(departureTime),
         urgent,
-        ...(canEditOrderAmount ? { price: parsedPrice } : {}),
+        ...(canEditOrderAmount ? { start_price: parsedPrice } : {}),
         ...(useWorkTypes && workTypeResolved
           ? {
               work_type_id: normalizeId(workTypeId),
@@ -2137,7 +2118,6 @@ function EditOrderContent() {
         house,
         country,
         postalCode,
-        office,
         floor,
         entrance,
         apartment,

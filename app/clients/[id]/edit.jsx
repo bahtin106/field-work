@@ -288,10 +288,40 @@ export default function EditClientScreen() {
     () => createEntityFieldPresentation(clientFieldSettings),
     [clientFieldSettings],
   );
-  const canManageAvatar = fieldUi.isVisible('avatar_url');
+  const hasPersistedClientFieldValue = React.useCallback(
+    (fieldKey) => {
+      const key = String(fieldKey || '');
+      if (!key) return false;
+      if (key === 'avatar_url') {
+        return (
+          String(client?.avatarDisplayUrl || '').trim().length > 0 ||
+          String(client?.avatarUrl || '').trim().length > 0
+        );
+      }
+      if (key.startsWith('additional_phone_')) {
+        const slotId = Number(key.replace('additional_phone_', ''));
+        if (!Number.isFinite(slotId) || slotId < 1 || slotId > 3) return false;
+        const phoneEntry = getClientAdditionalPhones(client)?.[slotId - 1];
+        return String(phoneEntry?.phone || '').trim().length > 0;
+      }
+      if (key === 'first_name') return String(client?.firstName || client?.first_name || '').trim().length > 0;
+      if (key === 'last_name') return String(client?.lastName || client?.last_name || '').trim().length > 0;
+      if (key === 'middle_name') return String(client?.middleName || client?.middle_name || '').trim().length > 0;
+      if (key === 'phone') return String(client?.phone || '').trim().length > 0;
+      if (key === 'email') return String(client?.email || '').trim().length > 0;
+      if (key === 'comment') return String(client?.comment || '').trim().length > 0;
+      return String(client?.[key] || '').trim().length > 0;
+    },
+    [client],
+  );
+  const isClientFieldVisible = React.useCallback(
+    (fieldKey) => fieldUi.isVisible(fieldKey) || hasPersistedClientFieldValue(fieldKey),
+    [fieldUi, hasPersistedClientFieldValue],
+  );
+  const canManageAvatar = isClientFieldVisible('avatar_url');
   const enabledAdditionalPhoneSlots = React.useMemo(
-    () => [1, 2, 3].filter((slotId) => fieldUi.isVisible(`additional_phone_${slotId}`)),
-    [fieldUi],
+    () => [1, 2, 3].filter((slotId) => isClientFieldVisible(`additional_phone_${slotId}`)),
+    [isClientFieldVisible],
   );
   const requiredAdditionalPhoneSlots = React.useMemo(
     () => [1, 2, 3].filter((slotId) => fieldUi.isRequired(`additional_phone_${slotId}`)),
@@ -301,31 +331,35 @@ export default function EditClientScreen() {
     () => getAddableAdditionalPhoneSlotIds(enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots),
     [enabledAdditionalPhoneSlots, requiredAdditionalPhoneSlots],
   );
-  const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'last_name', 'middle_name', 'comment']);
-  const canShowContactSection = fieldUi.hasVisibleFields([
+  const canShowPersonalSection = ['first_name', 'last_name', 'middle_name', 'comment'].some(isClientFieldVisible);
+  const canShowContactSection = [
     'email',
     'phone',
     'additional_phone_1',
     'additional_phone_2',
     'additional_phone_3',
-  ]);
+  ].some(isClientFieldVisible);
   const orderedPersonalFieldKeys = React.useMemo(
     () =>
       getOrderedEntityFields(clientFieldSettings, {
-        visibleOnly: true,
+        visibleOnly: false,
         requiredFirst: true,
         fieldKeys: ['first_name', 'middle_name', 'last_name', 'comment'],
-      }).map((field) => field.fieldKey),
-    [clientFieldSettings],
+      })
+        .map((field) => field.fieldKey)
+        .filter((fieldKey) => isClientFieldVisible(fieldKey)),
+    [clientFieldSettings, isClientFieldVisible],
   );
   const orderedContactFieldKeys = React.useMemo(
     () =>
       getOrderedEntityFields(clientFieldSettings, {
-        visibleOnly: true,
+        visibleOnly: false,
         requiredFirst: true,
         fieldKeys: ['phone', 'email', 'additional_phone_1', 'additional_phone_2', 'additional_phone_3'],
-      }).map((field) => field.fieldKey),
-    [clientFieldSettings],
+      })
+        .map((field) => field.fieldKey)
+        .filter((fieldKey) => isClientFieldVisible(fieldKey)),
+    [clientFieldSettings, isClientFieldVisible],
   );
   const shouldShowError = React.useCallback(
     (fieldKey) => submittedAttempt || !!touched[fieldKey],

@@ -292,11 +292,11 @@ function DynamicOrderCard({
         );
       }
       if (key === 'departure_time') return hasExplicitDepartureTime(order);
-      if (key === 'price') {
+      if (key === 'start_price') {
         return (
-          order?.price !== null &&
-          order?.price !== undefined &&
-          String(order?.price).trim().length > 0
+          order?.start_price !== null &&
+          order?.start_price !== undefined &&
+          String(order?.start_price).trim().length > 0
         );
       }
       return String(order?.[key] || '').trim().length > 0;
@@ -453,10 +453,10 @@ function DynamicOrderCard({
 
   // Price extraction: show price from field meta or common raw keys
   const priceValue = useMemo(() => {
-    const f = getFieldByKey?.('price');
-    let v = readWithFallback(order, f, 'price');
+    const f = getFieldByKey?.('start_price');
+    let v = readWithFallback(order, f, 'start_price');
     if (v == null || v === '') {
-      v = order?.price ?? order?.total_price ?? order?.amount ?? null;
+      v = order?.start_price ?? order?.total_price ?? order?.amount ?? null;
     }
     return v;
   }, [order, getFieldByKey]);
@@ -661,7 +661,7 @@ function DynamicOrderCard({
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
             {resolvedExecutorName || executorName || '—'}
           </Text>
-        ) : (isCardFieldVisible('price') || hasOrderFieldValue('price', priceValue)) && priceValue ? (
+        ) : (isCardFieldVisible('start_price') || hasOrderFieldValue('start_price', priceValue)) && priceValue ? (
           <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
             {formatPrice(priceValue, order?.currency || companyCurrency || 'RUB')}
           </Text>

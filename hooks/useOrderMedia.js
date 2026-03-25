@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 
-const MEDIA_CATEGORIES = ['contract_file', 'photo_before', 'photo_after', 'act_file', 'media_file_5'];
+const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
 
 /** Weak per-order cache so resolved URLs survive hook re-mounts within same session. */
 const _globalResolvedCache = new Map();  // key → display URL

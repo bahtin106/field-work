@@ -285,9 +285,17 @@ export default function EditObjectScreen() {
     [objectFieldSettingsData],
   );
   const objectFieldsByKey = React.useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
+  const hasPersistedObjectFieldValue = React.useCallback(
+    (fieldKey) => String(objectItem?.[fieldKey] || '').trim().length > 0,
+    [objectItem],
+  );
   const visibleAddressFields = React.useMemo(
-    () => CLIENT_OBJECT_ADDRESS_FIELDS.filter((field) => objectFieldsByKey.get(field)?.isEnabled === true),
-    [objectFieldsByKey],
+    () =>
+      CLIENT_OBJECT_ADDRESS_FIELDS.filter(
+        (field) =>
+          objectFieldsByKey.get(field)?.isEnabled === true || hasPersistedObjectFieldValue(field),
+      ),
+    [hasPersistedObjectFieldValue, objectFieldsByKey],
   );
   const _visiblePrimaryAddressFields = React.useMemo(
     () =>
@@ -306,11 +314,17 @@ export default function EditObjectScreen() {
   const orderedPrimaryAddressFields = React.useMemo(
     () =>
       getOrderedEntityFields(objectFieldSettings, {
-        visibleOnly: true,
+        visibleOnly: false,
         requiredFirst: true,
         fieldKeys: CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
-      }).map((field) => field.fieldKey),
-    [objectFieldSettings],
+      })
+        .map((field) => field.fieldKey)
+        .filter(
+          (fieldKey) =>
+            objectFieldsByKey.get(fieldKey)?.isEnabled === true ||
+            hasPersistedObjectFieldValue(fieldKey),
+        ),
+    [hasPersistedObjectFieldValue, objectFieldSettings, objectFieldsByKey],
   );
   const orderedAdditionalInfoFields = React.useMemo(
     () =>
@@ -375,6 +389,7 @@ export default function EditObjectScreen() {
         filterOrderAddressByObjectFieldSettings(
           extractOrderAddressFromObject(draft),
           objectFieldsByKey,
+          { preserveFilledDisabled: true },
         ),
       ),
     [draft, objectFieldsByKey],

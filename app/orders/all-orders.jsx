@@ -516,7 +516,7 @@ function AllOrdersContent() {
       return Number.isFinite(ts) ? ts : 0;
     };
     const parseAmount = (item) => {
-      const value = Number(item?.price ?? item?.sum ?? 0);
+      const value = Number(item?.start_price ?? item?.sum ?? 0);
       return Number.isFinite(value) ? value : 0;
     };
     const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];

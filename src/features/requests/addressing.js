@@ -39,7 +39,7 @@ export function extractOrderAddress(source) {
     const normalized = String(source?.[field] ?? '').trim();
     result[field] = normalized || '';
   }
-  result.apartment = String(source?.apartment ?? source?.office ?? result.apartment ?? '').trim();
+  result.apartment = String(source?.apartment ?? result.apartment ?? '').trim();
   result.comment = String(source?.comment ?? source?.entrance_info ?? result.comment ?? '').trim();
   result.entrance_info = result.comment;
   result[ORDER_LOCATION_MODE_FIELD] =
@@ -55,7 +55,7 @@ export function extractOrderAddressFromObject(objectItem) {
   const source = objectItem || {};
   return extractOrderAddress({
     ...source,
-    apartment: source?.apartment || source?.office || '',
+    apartment: source?.apartment || '',
     comment: source?.comment || source?.entrance_info || '',
   });
 }
@@ -66,15 +66,21 @@ export function getObjectFieldKeyForOrderAddressField(fieldKey) {
   return ORDER_ADDRESS_OBJECT_FIELD_KEY_MAP[normalized] || normalized;
 }
 
-export function filterOrderAddressByObjectFieldSettings(address, objectFieldsByKey) {
+export function filterOrderAddressByObjectFieldSettings(address, objectFieldsByKey, options = {}) {
   const normalized = extractOrderAddress(address || {});
+  const preserveFilledDisabled = options?.preserveFilledDisabled === true;
   const result = {};
   for (const field of ORDER_ADDRESS_FIELDS) {
     const settingsFieldKey = getObjectFieldKeyForOrderAddressField(field);
-    if (objectFieldsByKey?.get(settingsFieldKey)?.isEnabled !== true) continue;
-    result[field] = String(normalized[field] || '').trim();
+    const value = String(normalized[field] || '').trim();
+    const isEnabled = objectFieldsByKey?.get(settingsFieldKey)?.isEnabled === true;
+    if (!isEnabled && !(preserveFilledDisabled && value)) continue;
+    result[field] = value;
   }
-  if (objectFieldsByKey?.get('comment')?.isEnabled === true) {
+  if (
+    objectFieldsByKey?.get('comment')?.isEnabled === true ||
+    (preserveFilledDisabled && String(result.comment || result.entrance_info || '').trim())
+  ) {
     const comment = String(result.comment || result.entrance_info || '').trim();
     result.comment = comment;
     result.entrance_info = comment;
