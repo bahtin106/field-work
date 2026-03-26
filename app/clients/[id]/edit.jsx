@@ -10,8 +10,11 @@ import EditScreenTemplate from '../../../components/layout/EditScreenTemplate';
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import LabelValueRow from '../../../components/ui/LabelValueRow';
+import { listItemStyles } from '../../../components/ui/listItemStyles';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
+import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import TextField from '../../../components/ui/TextField';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
 import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
@@ -41,7 +44,7 @@ import {
   normalizeAdditionalClientPhones,
   resolveVisibleAdditionalPhoneSlotIds,
 } from '../../../src/features/clients/additionalPhones';
-import { useClientObjects } from '../../../src/features/objects/queries';
+import { useClientObjects, useUpdateClientObjectMutation } from '../../../src/features/objects/queries';
 import { uploadClientAvatar } from '../../../src/features/clients/avatar';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useSetClientTagsMutation } from '../../../src/features/tags/queries';
@@ -232,6 +235,7 @@ export default function EditClientScreen() {
     enabled: !!clientId,
   });
   const { data: clientObjects = [] } = useClientObjects(clientId, { enabled: !!clientId && canViewObjects });
+  const updateClientObjectMutation = useUpdateClientObjectMutation();
   const updateMutation = useUpdateClientMutation();
   const deleteMutation = useDeleteClientMutation();
   const setClientTagsMutation = useSetClientTagsMutation();
@@ -265,6 +269,7 @@ export default function EditClientScreen() {
   const [cancelKey, setCancelKey] = React.useState(0);
   const [saving, setSaving] = React.useState(false);
   const [initialSnap, setInitialSnap] = React.useState(null);
+  const [primaryObjectId, setPrimaryObjectId] = React.useState('');
   const [duplicateClient, setDuplicateClient] = React.useState(null);
   const [submittedAttempt, setSubmittedAttempt] = React.useState(false);
   const [fieldErrors, setFieldErrors] = React.useState({});
@@ -280,6 +285,7 @@ export default function EditClientScreen() {
   }, [theme]);
 
   const styles = React.useMemo(() => createStyles(theme), [theme]);
+  const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const clientFieldSettings = React.useMemo(
     () => clientFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT),
     [clientFieldSettingsData],
@@ -521,6 +527,34 @@ export default function EditClientScreen() {
       }),
     [clientObjects],
   );
+  const hasSingleObject = sortedObjects.length === 1;
+  const actualPrimaryObjectId = React.useMemo(
+    () => String(sortedObjects.find((item) => item?.is_primary)?.id || ''),
+    [sortedObjects],
+  );
+  const currentPrimaryObjectId = React.useMemo(
+    () => String(sortedObjects.find((item) => item?.is_primary)?.id || sortedObjects[0]?.id || ''),
+    [sortedObjects],
+  );
+
+  React.useEffect(() => {
+    if (!sortedObjects.length) {
+      setPrimaryObjectId('');
+      return;
+    }
+    setPrimaryObjectId((prev) => {
+      if (prev && sortedObjects.some((item) => String(item?.id || '') === String(prev))) return prev;
+      return String(sortedObjects.find((item) => item?.is_primary)?.id || sortedObjects[0]?.id || '');
+    });
+  }, [sortedObjects]);
+
+  const isPrimaryDirty = React.useMemo(
+    () =>
+      sortedObjects.length > 0 &&
+      String(primaryObjectId || '').trim() !== '' &&
+      String(primaryObjectId || '') !== String(currentPrimaryObjectId || ''),
+    [currentPrimaryObjectId, primaryObjectId, sortedObjects.length],
+  );
 
   const headerName = React.useMemo(() => {
     const name = `${lastName || ''} ${firstName || ''} ${middleName || ''}`
@@ -687,7 +721,7 @@ export default function EditClientScreen() {
 
   const isDirty = React.useMemo(() => {
     if (!initialSnap) return false;
-    return (
+    const isFormDirty =
       snapshotClientForm({
         firstName,
         lastName,
@@ -699,8 +733,8 @@ export default function EditClientScreen() {
         additionalPhoneVisibleSlots: visibleAdditionalPhoneSlots,
         avatarUrl,
         tags,
-      }) !== initialSnap
-    );
+      }) !== initialSnap;
+    return isFormDirty || isPrimaryDirty;
   }, [
     avatarUrl,
     email,
@@ -713,6 +747,7 @@ export default function EditClientScreen() {
     additionalPhones,
     visibleAdditionalPhoneSlots,
     tags,
+    isPrimaryDirty,
   ]);
 
   const goBack = React.useCallback(() => {
@@ -945,6 +980,30 @@ export default function EditClientScreen() {
         });
       }
 
+      if (sortedObjects.length) {
+        const singleObjectId = hasSingleObject ? String(sortedObjects[0]?.id || '') : '';
+        if (hasSingleObject && singleObjectId && actualPrimaryObjectId !== singleObjectId) {
+          await updateClientObjectMutation.mutateAsync({
+            id: singleObjectId,
+            patch: { is_primary: true },
+          });
+        }
+
+        const nextPrimaryObjectId = String(primaryObjectId || '');
+        const activePrimaryObjectId = String(currentPrimaryObjectId || '');
+        if (!hasSingleObject && !actualPrimaryObjectId && activePrimaryObjectId) {
+          await updateClientObjectMutation.mutateAsync({
+            id: activePrimaryObjectId,
+            patch: { is_primary: true },
+          });
+        } else if (!hasSingleObject && nextPrimaryObjectId && nextPrimaryObjectId !== activePrimaryObjectId) {
+          await updateClientObjectMutation.mutateAsync({
+            id: nextPrimaryObjectId,
+            patch: { is_primary: true },
+          });
+        }
+      }
+
       if (avatarUrl && !String(avatarUrl).startsWith('http')) {
         const uploadedUrl = await uploadClientAvatar(String(clientId), avatarUrl);
         if (uploadedUrl) {
@@ -1009,10 +1068,16 @@ export default function EditClientScreen() {
     t,
     toast,
     updateMutation,
+    updateClientObjectMutation,
     setClientTagsMutation,
     settings?.enable_client_tags,
     tags,
     fieldUi,
+    sortedObjects,
+    hasSingleObject,
+    actualPrimaryObjectId,
+    primaryObjectId,
+    currentPrimaryObjectId,
   ]);
 
   if (!canEditClients) {
@@ -1168,24 +1233,47 @@ export default function EditClientScreen() {
         <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
         <Card paddedXOnly>
           {canViewObjects && sortedObjects.length ? (
-            sortedObjects.map((objectItem) => {
+            sortedObjects.map((objectItem, index) => {
+              const effectivePrimaryObjectId = String(primaryObjectId || currentPrimaryObjectId || '');
+              const isPrimary = hasSingleObject || effectivePrimaryObjectId === String(objectItem?.id || '');
               return (
-                <TextField
-                  key={objectItem.id}
-                  label={t('routes_objects_object')}
-                  value={objectItem.name || t('objects_unnamed')}
-                  pressable
-                  style={styles.field}
-                  onPress={() =>
-                    router.push({
-                      pathname: `/objects/${objectItem.id}`,
-                      params: {
-                        returnTo: `/clients/${clientId}/edit`,
-                        returnParams: JSON.stringify({ returnTo, returnParams: JSON.stringify(returnParams) }),
-                      },
-                    })
-                  }
-                />
+                <React.Fragment key={objectItem.id}>
+                  <LabelValueRow
+                    label={isPrimary ? t('clients_object_type_primary') : t('clients_object_type_additional')}
+                    valueComponent={(
+                      <Pressable
+                        onPress={() =>
+                          router.push({
+                            pathname: `/objects/${objectItem.id}`,
+                            params: {
+                              returnTo: `/clients/${clientId}/edit`,
+                              returnParams: JSON.stringify({ returnTo, returnParams: JSON.stringify(returnParams) }),
+                            },
+                          })
+                        }
+                      >
+                        <Text style={styles.objectNameLink}>
+                          {objectItem.name || t('objects_unnamed')}
+                        </Text>
+                      </Pressable>
+                    )}
+                    rightActions={
+                      hasSingleObject
+                        ? null
+                        : (
+                          <View style={base.switchWrap}>
+                            <ThemedSwitch
+                              value={isPrimary}
+                              onValueChange={(enabled) => {
+                                if (enabled) setPrimaryObjectId(String(objectItem?.id || ''));
+                              }}
+                            />
+                          </View>
+                        )
+                    }
+                  />
+                  {index < sortedObjects.length - 1 ? <View style={base.sep} /> : null}
+                </React.Fragment>
               );
             })
           ) : canViewObjects ? (
@@ -1505,6 +1593,11 @@ function createStyles(theme) {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
       marginBottom: theme.spacing.sm,
+    },
+    objectNameLink: {
+      color: theme.colors.primary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.medium,
     },
     deleteBtn: {
       alignSelf: 'stretch',

@@ -50,7 +50,7 @@ export function normalizeClientAddress(row) {
     normalized[field] = String(row[field] || '').trim();
   });
   normalized.apartment = String(row.apartment || '').trim();
-  normalized.comment = String(row.comment || row.entrance_info || '').trim();
+  normalized.comment = String(row.comment || '').trim();
   return normalized;
 }
 

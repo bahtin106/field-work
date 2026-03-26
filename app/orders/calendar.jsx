@@ -45,6 +45,12 @@ import goBackSmart from '../../lib/navigation/goBackSmart';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { usePermissions } from '../../lib/permissions';
 import {
+  ENTITY_FIELD_TYPES,
+  buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
+} from '../../src/features/fieldSettings/catalog';
+import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
+import {
   ensureRequestPrefetch,
   useCalendarRequests,
   useRequestExecutors,
@@ -187,6 +193,18 @@ function CalendarScreenContent() {
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
   const companyId = profile?.company_id || null;
   const { settings: companySettings } = useCompanySettings(companyId);
+  const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
+    enabled: !!companyId,
+  });
+  const orderFieldSettings = useMemo(
+    () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
+    [orderFieldSettingsData],
+  );
+  const orderFieldsByKey = useMemo(
+    () => getEntityFieldMap(orderFieldSettings),
+    [orderFieldSettings],
+  );
+  const departureTimeEnabled = orderFieldsByKey.get('departure_time')?.isEnabled !== false;
   const navigationPresetRef = useRef('');
 
   useEffect(() => {
@@ -1374,10 +1392,12 @@ function CalendarScreenContent() {
         order={item}
         context="calendar"
         onPress={openOrderDetails}
+        departureTimeEnabled={departureTimeEnabled}
+        orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
       />
     ),
-    [companySettings?.currency, openOrderDetails],
+    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
   );
   const ordersEmptyComponent = useMemo(
     () => <Text style={styles.noOrders}>Нет заявок</Text>,

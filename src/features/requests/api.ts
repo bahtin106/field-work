@@ -5,6 +5,7 @@ import {
   buildOrderAddressNavigatorQuery,
   buildOrderAddressShort,
   extractOrderAddress,
+  extractOrderAddressFromObject,
   normalizeOrderAddressMode,
 } from './addressing';
 import { applyOrderRelationFilters } from './relationFilters';
@@ -17,7 +18,6 @@ const OBJECT_RELATION_SELECT = `
     id,
     client_id,
     name,
-    summary,
     country,
     region,
     district,
@@ -147,7 +147,7 @@ function normalizeOrder(row) {
     fio: customerName || null,
     customer_name: customerName || null,
     object_name: objectItem?.name || String(row.object_name || '').trim() || null,
-    object_summary: objectItem?.summary || null,
+    object_summary: buildOrderAddressShort(extractOrderAddressFromObject(objectItem)) || null,
     object_location_mode: String(objectItem?.location_mode || '').trim() || null,
     secondary_phone: clientItem?.secondary_phone || null,
     contact_email: clientItem?.email || null,

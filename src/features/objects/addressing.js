@@ -118,7 +118,7 @@ export function buildClientObjectFullAddress(objectLike) {
 
 export function buildClientObjectAdditionalInfoSummary(objectLike) {
   if (!objectLike || typeof objectLike !== 'object') return '';
-  return String(objectLike.comment || objectLike.entrance_info || '').trim();
+  return String(objectLike.comment || '').trim();
 }
 
 export function buildClientObjectShortAddress(objectLike) {
@@ -158,7 +158,7 @@ export function normalizeClientObject(row) {
     normalized[field] = String(row[field] || '').trim();
   });
   normalized.apartment = String(row.apartment || '').trim();
-  normalized.comment = String(row.comment || row.entrance_info || '').trim();
+  normalized.comment = String(row.comment || '').trim();
   CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
     normalized[field] = String(row[field] || '').trim();
   });
@@ -172,8 +172,7 @@ export function normalizeClientObject(row) {
   normalized.location_mode = normalizeClientObjectLocationMode(row?.location_mode, {
     fallback: normalized.geo_lat && normalized.geo_lng ? 'map' : 'address',
   });
-  normalized.summary =
-    String(row.summary || '').trim() || buildClientObjectAddressSummary(normalized) || null;
+  normalized.summary = buildClientObjectAddressSummary(normalized) || null;
   return normalized;
 }
 

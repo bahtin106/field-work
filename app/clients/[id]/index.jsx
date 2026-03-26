@@ -165,6 +165,17 @@ export default function ClientViewScreen() {
     return copyPhoneValue(client?.phone || '');
   }, [client?.phone, copyPhoneValue]);
 
+  const sortedObjects = React.useMemo(
+    () => {
+      const objects = Array.isArray(client?.objects) ? client.objects : [];
+      return [...objects].sort((left, right) => {
+        if (!!left?.is_primary !== !!right?.is_primary) return left?.is_primary ? -1 : 1;
+        return String(left?.name || '').localeCompare(String(right?.name || ''), 'ru');
+      });
+    },
+    [client?.objects],
+  );
+
   if (!canViewClients) {
     return (
       <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
@@ -175,7 +186,6 @@ export default function ClientViewScreen() {
       </SafeAreaView>
     );
   }
-  const objects = Array.isArray(client?.objects) ? client.objects : [];
 
   return (
     <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
@@ -384,30 +394,37 @@ export default function ClientViewScreen() {
 
           <SectionHeader topSpacing="xs">{t('clients_objects_section')}</SectionHeader>
           <Card paddedXOnly>
-            {objects.length ? (
-              objects.map((objectItem) => {
+            {sortedObjects.length ? (
+              sortedObjects.map((objectItem, index) => {
+                const isPrimary = !!objectItem?.is_primary || index === 0;
                 return (
-                  <Pressable
-                    key={objectItem.id}
-                    style={base.row}
-                    disabled={!canViewObjects}
-                    onPress={() =>
-                      router.push({
-                        pathname: `/objects/${objectItem.id}`,
-                        params: {
-                          returnTo: `/clients/${clientId}`,
-                          returnParams: JSON.stringify({ returnTo, returnParams: JSON.stringify(returnParams) }),
-                        },
-                      })
-                    }
-                  >
-                    <Text style={base.label}>{t('routes_objects_object')}</Text>
-                    <View style={base.rightWrap}>
-                      <Text style={[base.value, canViewObjects ? styles.link : null]}>
-                        {objectItem.name || t('objects_unnamed')}
+                  <React.Fragment key={objectItem.id}>
+                    {index > 0 ? <View style={base.sep} /> : null}
+                    <Pressable
+                      style={base.row}
+                      disabled={!canViewObjects}
+                      onPress={() =>
+                        router.push({
+                          pathname: `/objects/${objectItem.id}`,
+                          params: {
+                            returnTo: `/clients/${clientId}`,
+                            returnParams: JSON.stringify({ returnTo, returnParams: JSON.stringify(returnParams) }),
+                          },
+                        })
+                      }
+                    >
+                      <Text style={base.label}>
+                        {isPrimary
+                          ? t('clients_object_type_primary')
+                          : t('clients_object_type_additional')}
                       </Text>
-                    </View>
-                  </Pressable>
+                      <View style={base.rightWrap}>
+                        <Text style={[base.value, canViewObjects ? styles.link : null]}>
+                          {objectItem.name || t('objects_unnamed')}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  </React.Fragment>
                 );
               })
             ) : (

@@ -1,4 +1,4 @@
-import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
+﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, LogBox, Platform, Text, View } from 'react-native';
@@ -25,7 +25,6 @@ import dismissToRoute from '../lib/navigation/dismissToRoute';
 import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
-import SettingsProvider from '../providers/SettingsProvider';
 import { SimpleAuthProvider, useAuthContext } from '../providers/SimpleAuthProvider';
 import { getRequestById } from '../src/features/requests/api';
 import { initI18n, setLocale } from '../src/i18n';
@@ -111,7 +110,7 @@ function _BrandedLoadingScreen({ theme }) {
           letterSpacing: 0.2,
         }}
       >
-        Загрузка
+        Р—Р°РіСЂСѓР·РєР°
       </Text>
       <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 12 }} />
     </View>
@@ -623,7 +622,6 @@ function RootLayoutInner() {
       onLayout={hideSplash}
     >
       <PermissionsProvider>
-        <SettingsProvider>
           <SafeAreaView
             edges={['top', 'left', 'right']}
             style={{ flex: 1, backgroundColor: theme.colors.background }}
@@ -644,11 +642,11 @@ function RootLayoutInner() {
               <Stack.Screen name="orders" />
               <Stack.Screen
                 name="app_settings/AppSettings"
-                options={{ title: 'Настройки приложения' }}
+                options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РїСЂРёР»РѕР¶РµРЅРёСЏ' }}
               />
               <Stack.Screen
                 name="company_settings/index"
-                options={{ title: 'Настройки компании' }}
+                options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РєРѕРјРїР°РЅРёРё' }}
               />
               <Stack.Screen
                 name="company_settings/sections/telegram-bot"
@@ -662,7 +660,7 @@ function RootLayoutInner() {
               <Stack.Screen name="clients/new" options={{ title: 'New Client' }} />
               <Stack.Screen name="clients/[id]/index" options={{ title: 'Client' }} />
               <Stack.Screen name="clients/[id]/edit" options={{ title: 'Edit Client' }} />
-              <Stack.Screen name="billing/index" options={{ title: 'Подписка и лицензии' }} />
+              <Stack.Screen name="billing/index" options={{ title: 'РџРѕРґРїРёСЃРєР° Рё Р»РёС†РµРЅР·РёРё' }} />
               <Stack.Screen name="admin/index" />
               <Stack.Screen name="admin/users/index" />
               <Stack.Screen name="admin/users/[id]/index" />
@@ -678,7 +676,6 @@ function RootLayoutInner() {
             {isAuthenticated && !isBlockedScreen && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}
           </SafeAreaView>
-        </SettingsProvider>
       </PermissionsProvider>
     </GestureHandlerRootView>
   );
@@ -703,3 +700,4 @@ export default function RootLayout() {
     </QueryProvider>
   );
 }
+

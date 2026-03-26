@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -131,12 +131,23 @@ function sanitizePathSegment(input: string, fallback: string) {
   return compact || fallback;
 }
 
+function buildObjectAddressSummary(objectRow: {
+  city?: string | null;
+  street?: string | null;
+  house?: string | null;
+}) {
+  return [objectRow.city, objectRow.street, objectRow.house]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 function mapYandexApiError(status: number, payload: string) {
   const text = String(payload || '').toLowerCase();
   if (status === 401 || status === 403 || text.includes('unauthorized') || text.includes('invalid_grant')) {
     return 'Yandex authorization expired. Reconnect disk';
   }
-  if (status === 423 || text.includes('resource is locked') || text.includes('������ ������������')) {
+  if (status === 423 || text.includes('resource is locked') || text.includes('пїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ')) {
     return 'Yandex resource is temporarily locked';
   }
   if (
@@ -343,7 +354,7 @@ async function getCallerAndOrderContext(
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, company_id, title, object_id, time_window_start, created_at, object:client_objects(id, name, summary)')
+    .select('id, company_id, title, object_id, time_window_start, created_at, object:client_objects(id, name, city, street, house)')
     .eq('id', orderId)
     .maybeSingle();
 
@@ -366,7 +377,7 @@ async function getCallerAndOrderContext(
       id: String(order.id),
       title: order.title || null,
       object_name: order.object?.name || null,
-      object_summary: order.object?.summary || null,
+      object_summary: buildObjectAddressSummary(order.object || {}) || null,
       time_window_start: order.time_window_start || null,
       created_at: order.created_at || null,
     },

@@ -18,7 +18,7 @@ const CLIENT_COLUMNS_WITH_COMMENT = `${CLIENT_COLUMNS_BASE}, comment`;
 const CLIENT_COLUMNS_WITH_ADDITIONAL =
   `${CLIENT_COLUMNS_WITH_COMMENT}, additional_phone_1, additional_phone_1_label, additional_phone_2, additional_phone_2_label, additional_phone_3, additional_phone_3_label`;
 const CLIENT_LIST_OBJECTS_RELATION =
-  'client_objects(id, client_id, company_id, name, is_primary, summary, country, region, city, street, house, object_tag_links(tag:company_tags(id, value, tag_type)))';
+  'client_objects(id, client_id, company_id, name, is_primary, country, region, city, street, house, apartment, object_tag_links(tag:company_tags(id, value, tag_type)))';
 const CLIENT_TAGS_RELATION = 'client_tag_links(tag:company_tags(id, value, tag_type))';
 
 function shouldFallbackWithoutAdditionalFields(error: any) {
@@ -51,8 +51,12 @@ function normalizeClient(row: any) {
   const objects = Array.isArray(row.client_objects)
     ? row.client_objects.map(normalizeClientObject).filter(Boolean)
     : [];
+  const sortedObjects = [...objects].sort((left, right) => {
+    if (!!left?.is_primary !== !!right?.is_primary) return left?.is_primary ? -1 : 1;
+    return String(left?.name || '').localeCompare(String(right?.name || ''), 'ru');
+  });
   const primaryObject =
-    objects.find((objectItem) => objectItem?.is_primary) || objects[0] || null;
+    sortedObjects.find((objectItem) => objectItem?.is_primary) || sortedObjects[0] || null;
   const additionalPhones = getClientAdditionalPhones(row);
 
   return {
@@ -72,7 +76,7 @@ function normalizeClient(row: any) {
     additionalPhones,
     avatarUrl: row.avatar_url || null,
     avatarDisplayUrl: row.avatar_display_url || row.avatar_url || null,
-    objects,
+    objects: sortedObjects,
     primaryObject,
     primaryObjectSummary: buildClientObjectAddressSummary(primaryObject) || null,
     tags: extractTagsFromLinks(row.client_tag_links),

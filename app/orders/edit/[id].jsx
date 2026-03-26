@@ -287,8 +287,8 @@ function EditOrderContent() {
 
   const { theme } = useTheme();
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
-  const canViewOrderAmount = hasPermission('canViewOrderAmount');
-  const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditOrderAmount');
+  const canViewOrderAmount = hasPermission('canViewFinanceAll');
+  const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditFinanceEntries');
   const formStyles = useEditFormStyles();
   const { settings: companySettings } = useCompanySettings();
   const {

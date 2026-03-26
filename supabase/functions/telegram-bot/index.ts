@@ -1760,6 +1760,7 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
     apartment: normalizeText(values.apartment),
     entrance: normalizeText(values.entrance),
     floor: normalizeText(values.floor),
+    comment: normalizeText(values.entrance_info),
     entrance_info: normalizeText(values.entrance_info),
     parking_notes: normalizeText(values.parking_notes),
   };
@@ -1786,7 +1787,7 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
       apartment: address.apartment || null,
       entrance: address.entrance || null,
       floor: address.floor || null,
-      entrance_info: address.entrance_info || null,
+      comment: address.comment || null,
       parking_notes: address.parking_notes || null,
     })
     .select('id, name')
