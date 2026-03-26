@@ -3715,7 +3715,7 @@ function OrderDetailsContent() {
     isInFeedStatus &&
     isFree &&
     !isReadOnlyBySubscription &&
-    (role === 'worker' || (has('canAssignExecutors') && canEditByRole()));
+    (role === 'worker' || canEditByRole());
   const canViewFinanceSection = canViewFinanceEntries;
   const currency = order?.currency || companySettings?.currency;
   const grossTotal = Number(order.start_price ?? 0) || 0;

@@ -63,6 +63,18 @@ function sanitizePathSegment(input: string, fallback: string) {
   return normalized.slice(0, 64) || fallback;
 }
 
+function buildObjectAddressSummary(objectRow: {
+  city?: string | null;
+  street?: string | null;
+  house?: string | null;
+  apartment?: string | null;
+}) {
+  return [objectRow.city, objectRow.street, objectRow.house]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 function normalizeFolderPath(input: string | null | undefined) {
   const raw = String(input || '').trim();
   if (!raw) return DEFAULT_YANDEX_ROOT;
@@ -171,7 +183,7 @@ async function getCallerAndObjectContext(
 
   const { data: objectRow, error: objectErr } = await admin
     .from('client_objects')
-    .select('id, company_id, name, summary, created_at')
+    .select('id, company_id, name, city, street, house, apartment, created_at')
     .eq('id', objectId)
     .maybeSingle();
   if (objectErr || !objectRow) throw new Error('Object not found');
@@ -192,7 +204,7 @@ async function getCallerAndObjectContext(
     object: {
       id: String(objectRow.id),
       name: String(objectRow.name || '').trim(),
-      summary: String(objectRow.summary || '').trim(),
+      summary: buildObjectAddressSummary(objectRow),
       created_at: objectRow.created_at ? String(objectRow.created_at) : null,
     },
   };

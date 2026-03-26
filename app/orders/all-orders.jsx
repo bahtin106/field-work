@@ -598,10 +598,11 @@ function AllOrdersContent() {
         context="all_orders"
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
+        orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, openOrderDetails],
+    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
   );
 
   const renderFooter = useCallback(() => {

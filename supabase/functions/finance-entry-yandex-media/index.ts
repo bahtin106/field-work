@@ -124,6 +124,17 @@ function sanitizePathSegment(input: string, fallback: string) {
   return compact || fallback;
 }
 
+function buildObjectAddressSummary(objectRow: {
+  city?: string | null;
+  street?: string | null;
+  house?: string | null;
+}) {
+  return [objectRow.city, objectRow.street, objectRow.house]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 function mapYandexApiError(status: number, payload: string) {
   const text = String(payload || '').toLowerCase();
   if (status === 401 || status === 403 || text.includes('unauthorized') || text.includes('invalid_grant')) {
@@ -338,7 +349,7 @@ async function getCallerAndFinanceEntryContext(
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, title, time_window_start, created_at, object:client_objects(id, name, summary)')
+    .select('id, title, time_window_start, created_at, object:client_objects(id, name, city, street, house)')
     .eq('id', entry.order_id)
     .maybeSingle();
   if (orderErr || !order) throw new Error('Order not found');
@@ -365,7 +376,7 @@ async function getCallerAndFinanceEntryContext(
       id: String(order.id || entry.order_id),
       title: order.title || null,
       object_name: order.object?.name || null,
-      object_summary: order.object?.summary || null,
+      object_summary: buildObjectAddressSummary(order.object || {}) || null,
       time_window_start: order.time_window_start || null,
       created_at: order.created_at || null,
     },
@@ -1260,6 +1271,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleFinanceEntryYandexMediaRequest);
 }
+
 
 
 

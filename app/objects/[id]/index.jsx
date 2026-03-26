@@ -184,13 +184,12 @@ export default function ObjectViewScreen() {
     {
       fieldKey: 'comment',
       label: t('order_field_comment'),
-      value: objectItem?.comment || objectItem?.entrance_info || '',
+      value: objectItem?.comment || '',
     },
   ]
     .filter((item) => {
       const value = String(item?.value || '').trim();
-      const isEnabled = objectFieldsByKey.get(item.fieldKey)?.isEnabled === true;
-      return isEnabled || !!value;
+      return !!value;
     })
     .map((item) => ({ label: item.label, value: String(item.value || '').trim() }));
   const additionalPhones = React.useMemo(() => getObjectAdditionalPhones(objectItem), [objectItem]);
@@ -533,7 +532,15 @@ export default function ObjectViewScreen() {
           {showObjectName ? (
             <LabelValueRow label={t('objects_field_name')} value={objectItem?.name || ''} />
           ) : null}
-          {showObjectName && showClientRow ? <View style={base.sep} /> : null}
+          {showObjectName && objectItem?.is_primary ? <View style={base.sep} /> : null}
+          {showObjectName && objectItem?.is_primary ? (
+            <LabelValueRow
+              label={t('objects_primary_client_flag')}
+              value=""
+              hideWhenEmpty={false}
+            />
+          ) : null}
+          {(showObjectName || objectItem?.is_primary) && showClientRow ? <View style={base.sep} /> : null}
           {showClientRow ? (
             <LabelValueRow
               label={t('routes_clients_client')}
@@ -558,7 +565,7 @@ export default function ObjectViewScreen() {
               }
             />
           ) : null}
-          {showObjectName || showClientRow ? <View style={base.sep} /> : null}
+          {showObjectName || objectItem?.is_primary || showClientRow ? <View style={base.sep} /> : null}
           {isCoordinatesMode ? (
             <LabelValueRow
               label={t('objects_location_coordinates')}

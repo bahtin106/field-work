@@ -64,6 +64,17 @@ function sanitizePathSegment(input: string, fallback: string) {
   return normalized.slice(0, 64) || fallback;
 }
 
+function buildObjectAddressSummary(objectRow: {
+  city?: string | null;
+  street?: string | null;
+  house?: string | null;
+}) {
+  return [objectRow.city, objectRow.street, objectRow.house]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 function canonicalUrl(raw: string) {
   const value = String(raw || '').trim();
   if (!value) return '';
@@ -195,7 +206,7 @@ async function getCallerAndOrderContext(admin: ReturnType<typeof createClient>, 
   const caller = await getCallerContext(admin, token);
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, company_id, title, created_at, time_window_start, object:client_objects(name, summary)')
+    .select('id, company_id, title, created_at, time_window_start, object:client_objects(name, city, street, house)')
     .eq('id', orderId)
     .maybeSingle();
   if (orderErr || !order) throw new Error('Order not found');
@@ -211,7 +222,15 @@ async function getCallerAndOrderContext(admin: ReturnType<typeof createClient>, 
   return {
     ...caller,
     orderId: String(order.id),
-    order,
+    order: {
+      ...order,
+      object: order?.object
+        ? {
+            name: order.object.name || null,
+            summary: buildObjectAddressSummary(order.object),
+          }
+        : null,
+    },
     companyName: String(company.name || '').trim() || 'Компания',
     mediaProvider: String(company.media_provider || 'beget_s3'),
   };
@@ -658,4 +677,3 @@ export async function handleOrderMediaStorageRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleOrderMediaStorageRequest);
 }
-

@@ -235,7 +235,7 @@ export async function searchCompanyObjectsForOrder({
       floor: String(row?.floor || '').trim(),
       entrance: String(row?.entrance || '').trim(),
       apartment: String(row?.apartment || row?.office || '').trim(),
-      comment: String(row?.comment || row?.entrance_info || '').trim(),
+      comment: String(row?.comment || '').trim(),
     }));
   });
 }

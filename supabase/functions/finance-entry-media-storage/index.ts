@@ -54,6 +54,17 @@ function sanitizePathSegment(input: string, fallback: string) {
   return normalized.slice(0, 64) || fallback;
 }
 
+function buildObjectAddressSummary(objectRow: {
+  city?: string | null;
+  street?: string | null;
+  house?: string | null;
+}) {
+  return [objectRow.city, objectRow.street, objectRow.house]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)
+    .join(', ');
+}
+
 function canonicalUrl(raw: string) {
   const value = String(raw || '').trim();
   if (!value) return '';
@@ -169,7 +180,7 @@ async function getCallerAndFinanceEntryContext(
 
   const { data: order, error: orderErr } = await admin
     .from('orders')
-    .select('id, title, created_at, time_window_start, object:client_objects(name, summary)')
+    .select('id, title, created_at, time_window_start, object:client_objects(name, city, street, house)')
     .eq('id', entry.order_id)
     .maybeSingle();
   if (orderErr || !order) throw new Error('Order not found');
@@ -195,7 +206,7 @@ async function getCallerAndFinanceEntryContext(
       created_at: order.created_at || null,
       time_window_start: order.time_window_start || null,
       object_name: order.object?.name || null,
-      object_summary: order.object?.summary || null,
+      object_summary: buildObjectAddressSummary(order.object || {}) || null,
     },
     companyName: String(company.name || '').trim() || 'Компания',
     mediaProvider: String(company.media_provider || 'beget_s3'),

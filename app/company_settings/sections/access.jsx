@@ -57,9 +57,8 @@ const BROADCAST_CLEANUP_DELAY_MS = 250;
 const REQUEST_PERMISSION_KEYS = ACCESS_SECTIONS.flatMap((section) =>
   section.permissions.map((permission) => permission.key),
 );
-const PERSISTED_PERMISSION_KEYS = Array.from(
-  new Set([...REQUEST_PERMISSION_KEYS, 'canViewFinanceOwn', 'canManageFinanceRules']),
-);
+const PERSISTED_PERMISSION_KEYS = Array.from(new Set([...REQUEST_PERMISSION_KEYS]));
+const PERSISTED_PERMISSION_IN_FILTER = `(${PERSISTED_PERMISSION_KEYS.map((key) => `"${key}"`).join(',')})`;
 
 const createDefaultMatrix = () =>
   ROLE_IDS.reduce((acc, roleId) => {
@@ -86,12 +85,9 @@ const normalizePermissionDependencies = (matrix) =>
   ROLE_IDS.reduce((acc, roleId) => {
     const rolePerms = { ...(matrix?.[roleId] || {}) };
     if (rolePerms.canEditFinanceEntries) rolePerms.canViewFinanceAll = true;
-    if (rolePerms.canViewFinanceAll) rolePerms.canViewFinanceOwn = true;
     if (!rolePerms.canViewFinanceAll) {
-      rolePerms.canViewFinanceOwn = false;
       rolePerms.canEditFinanceEntries = false;
     }
-    rolePerms.canManageFinanceRules = !!rolePerms.canEditFinanceEntries;
     acc[roleId] = rolePerms;
     return acc;
   }, {});
@@ -236,6 +232,14 @@ export default function AccessSettingsScreen() {
         }
       }
 
+      // Keep DB strictly aligned with the active permission model.
+      const { error: deleteLegacyError } = await supabase
+        .from('app_role_permissions')
+        .delete()
+        .eq('company_id', companyId)
+        .not('key', 'in', PERSISTED_PERMISSION_IN_FILTER);
+      if (deleteLegacyError) throw deleteLegacyError;
+
       const { error } = await supabase
         .from('app_role_permissions')
         .upsert(payload, { onConflict: 'company_id,role,key' });
@@ -289,14 +293,30 @@ export default function AccessSettingsScreen() {
 
     setResettingDefaults(true);
     try {
-      const { error } = await supabase
+      const defaults = normalizePermissionDependencies(createDefaultMatrix());
+      const payload = [];
+      for (const roleId of ROLE_IDS) {
+        for (const permissionKey of PERSISTED_PERMISSION_KEYS) {
+          payload.push({
+            company_id: companyId,
+            role: roleId,
+            key: permissionKey,
+            value: !!defaults[roleId]?.[permissionKey],
+          });
+        }
+      }
+
+      const { error: deleteError } = await supabase
         .from('app_role_permissions')
         .delete()
-        .eq('company_id', companyId)
-        .in('key', PERSISTED_PERMISSION_KEYS);
-      if (error) throw error;
+        .eq('company_id', companyId);
+      if (deleteError) throw deleteError;
 
-      const defaults = normalizePermissionDependencies(createDefaultMatrix());
+      const { error: upsertDefaultsError } = await supabase
+        .from('app_role_permissions')
+        .upsert(payload, { onConflict: 'company_id,role,key' });
+      if (upsertDefaultsError) throw upsertDefaultsError;
+
       setPermMatrix(defaults);
 
       try {

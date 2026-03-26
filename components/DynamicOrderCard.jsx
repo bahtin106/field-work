@@ -4,7 +4,6 @@ import { Platform, Text, TouchableOpacity, View } from 'react-native';
 import { formatCurrency } from '../lib/currency';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
-import { useSettings } from '../providers/SettingsProvider';
 import { resolveRequestTitle } from '../src/features/requests/title';
 import { useTranslation } from '../src/i18n/useTranslation';
 import OrderStatusCapsule from './ui/OrderStatusCapsule';
@@ -226,19 +225,55 @@ function looksLikeUuid(s) {
   return false;
 }
 
+function mapInputKindToLegacyType(inputKind) {
+  switch (String(inputKind || '')) {
+    case 'multiline':
+      return 'textarea';
+    case 'relation':
+      return 'select';
+    case 'media':
+      return 'file';
+    default:
+      return String(inputKind || 'text');
+  }
+}
+
 function DynamicOrderCard({
   order,
   context = 'all_orders', // 'all_orders' | 'my_orders' | 'calendar' | 'order_card'
   onPress,
   viewerRole, // 'admin' | 'dispatcher' | 'worker' (optional)
   departureTimeEnabled, // optional explicit flag from order field settings
+  orderFieldsByKey = null, // Map<fieldKey, normalized entity field>
   companyCurrency = null, // optional currency from parent screen
 }) {
   const { t } = useTranslation();
-  const settings = useSettings();
-  const { presetsByContext, getFieldByKey, isFieldVisible } = settings;
   const { theme } = useTheme();
   const lastPressAtRef = useRef(0);
+
+  const getFieldByKey = useCallback(
+    (key) => {
+      const field = orderFieldsByKey?.get?.(String(key || ''));
+      if (!field) return null;
+      return {
+        field_key: String(key || ''),
+        label: field.customLabel || t(field.labelKey, field.fallbackLabel || String(key || '')),
+        type: mapInputKindToLegacyType(field.inputKind),
+        required: field.isRequired === true,
+        storage_target: 'builtin',
+      };
+    },
+    [orderFieldsByKey, t],
+  );
+
+  const isFieldEnabledBySettings = useCallback(
+    (fieldKey) => {
+      const field = orderFieldsByKey?.get?.(String(fieldKey || ''));
+      if (!field) return true;
+      return field.isEnabled !== false;
+    },
+    [orderFieldsByKey],
+  );
   const handlePress = useCallback(() => {
     const now = Date.now();
     if (now - lastPressAtRef.current < CARD_PRESS_GUARD_MS) return;
@@ -248,22 +283,15 @@ function DynamicOrderCard({
     }
   }, [onPress, order]);
 
-  // Presets with safe defaults: exclude time_window_start from middle block
-  const preset = useMemo(() => {
-    const presetRaw = presetsByContext(context);
-    return {
-      fields:
-        Array.isArray(presetRaw?.fields) && presetRaw.fields.length > 0
-          ? presetRaw.fields.filter((k) => k !== 'time_window_start')
-          : ['title', 'customer_name', 'address'],
-      pills:
-        Array.isArray(presetRaw?.pills) && presetRaw.pills.length > 0 ? presetRaw.pills : ['status'],
-      secondary:
-        Array.isArray(presetRaw?.secondary) && presetRaw.secondary.length > 0
-          ? presetRaw.secondary
-          : ['assigned_to_name'],
-    };
-  }, [context, presetsByContext]);
+  // Keep stable defaults for card layout.
+  const preset = useMemo(
+    () => ({
+      fields: ['title', 'customer_name', 'address'],
+      pills: ['status'],
+      secondary: ['assigned_to_name'],
+    }),
+    [],
+  );
 
   const fields = useMemo(() => preset.fields, [preset.fields]);
   const pills = useMemo(() => preset.pills, [preset.pills]);
@@ -305,10 +333,9 @@ function DynamicOrderCard({
   );
   const isCardFieldVisible = useCallback(
     (fieldKey) => {
-      const visibilityContext = context === 'calendar' ? 'calendar' : 'list';
-      return isFieldVisible(fieldKey, visibilityContext) || hasOrderFieldValue(fieldKey);
+      return isFieldEnabledBySettings(fieldKey) || hasOrderFieldValue(fieldKey);
     },
-    [context, hasOrderFieldValue, isFieldVisible],
+    [hasOrderFieldValue, isFieldEnabledBySettings],
   );
 
   // Primary rows
@@ -495,8 +522,6 @@ function DynamicOrderCard({
     order?.viewerRole ||
     order?.current_user_role ||
     order?.role ||
-    settings?.role ||
-    settings?.currentRole ||
     ''
   )
     .toString()
@@ -678,11 +703,21 @@ function areCardPropsEqual(prev, next) {
     prev.order === next.order &&
     prev.context === next.context &&
     prev.viewerRole === next.viewerRole &&
+    prev.departureTimeEnabled === next.departureTimeEnabled &&
+    prev.orderFieldsByKey === next.orderFieldsByKey &&
+    prev.companyCurrency === next.companyCurrency &&
     prev.onPress === next.onPress
   );
 }
 
 const MemoizedDynamicOrderCard = memo(DynamicOrderCard, areCardPropsEqual);
 export default MemoizedDynamicOrderCard;
+
+
+
+
+
+
+
 
 
