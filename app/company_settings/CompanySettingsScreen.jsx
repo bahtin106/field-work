@@ -23,6 +23,7 @@ import { useTheme } from '../../theme/ThemeProvider';
 import { Feather } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
+import { isCompanyNameAvailable, normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -426,6 +427,40 @@ export default function CompanySettings() {
         setCompanyNameInitial(name);
       });
   }, [companyName, companyNameInitial, updateSetting, t, toast]);
+
+  const saveCompanyNameDraft = React.useCallback(async () => {
+    const normalizedName = normalizeCompanyName(companyNameDraft);
+    const validationError = validateCompanyName(normalizedName, t);
+    if (validationError) {
+      setCompanyNameError(validationError);
+      return;
+    }
+    if (normalizedName === normalizeCompanyName(companyNameInitial)) {
+      setCompanyName(normalizedName);
+      closeCompanyEditor();
+      return;
+    }
+    const available = await isCompanyNameAvailable(normalizedName, companyId);
+    if (!available) {
+      setCompanyNameError(t('errors_companyName_duplicate'));
+      return;
+    }
+    setSavingCompany(true);
+    try {
+      await toast.promise(() => updateSetting('name', normalizedName), {
+        loading: t('toast_loading'),
+        success: t('toast_companyNameSaved'),
+        error: (e) => e?.message || t('toast_error'),
+      });
+      setCompanyName(normalizedName);
+      setCompanyNameInitial(normalizedName);
+      closeCompanyEditor();
+    } catch (e) {
+      setCompanyNameError(e?.message || t('toast_error'));
+    } finally {
+      setSavingCompany(false);
+    }
+  }, [closeCompanyEditor, companyId, companyNameDraft, companyNameInitial, t, toast, updateSetting]);
 
   // Time zones list
   const tzItems = React.useMemo(() => {
@@ -1057,37 +1092,7 @@ export default function CompanySettings() {
             <UIButton
               variant="primary"
               size="md"
-              onPress={async () => {
-                const name = String(companyNameDraft || '').trim();
-                if (!name) {
-                  setCompanyNameError(t('errors_companyName_required'));
-                  return;
-                }
-                if (name.length > 64) {
-                  setCompanyNameError(t('errors_companyName_tooLong'));
-                  return;
-                }
-                if (name === companyNameInitial) {
-                  setCompanyName(name);
-                  closeCompanyEditor();
-                  return;
-                }
-                setSavingCompany(true);
-                try {
-                  await toast.promise(() => updateSetting('name', name), {
-                    loading: t('toast_loading'),
-                    success: t('toast_companyNameSaved'),
-                    error: (e) => e?.message || t('toast_error'),
-                  });
-                  setCompanyName(name);
-                  setCompanyNameInitial(name);
-                  closeCompanyEditor();
-                } catch (e) {
-                  setCompanyNameError(e?.message || t('toast_error'));
-                } finally {
-                  setSavingCompany(false);
-                }
-              }}
+              onPress={saveCompanyNameDraft}
               title={savingCompany ? t('btn_saving') : t('btn_save')}
             />
           </View>
@@ -1105,37 +1110,7 @@ export default function CompanySettings() {
             returnKeyType="done"
             maxLength={64}
             onSubmitEditing={() => {
-              const name = String(companyNameDraft || '').trim();
-              if (!name) {
-                setCompanyNameError(t('errors_companyName_required'));
-                return;
-              }
-              if (name.length > 64) {
-                setCompanyNameError(t('errors_companyName_tooLong'));
-                return;
-              }
-              if (name === companyNameInitial) {
-                setCompanyName(name);
-                closeCompanyEditor();
-                return;
-              }
-              (async () => {
-                setSavingCompany(true);
-                try {
-                  await toast.promise(() => updateSetting('name', name), {
-                    loading: t('toast_loading'),
-                    success: t('toast_companyNameSaved'),
-                    error: (e) => e?.message || t('toast_error'),
-                  });
-                  setCompanyName(name);
-                  setCompanyNameInitial(name);
-                  closeCompanyEditor();
-                } catch (e) {
-                  setCompanyNameError(e?.message || t('toast_error'));
-                } finally {
-                  setSavingCompany(false);
-                }
-              })();
+              saveCompanyNameDraft();
             }}
           />
           {companyNameError ? (
