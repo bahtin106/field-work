@@ -366,7 +366,11 @@ export default function RegisterScreen() {
         if (/already exists|email.*taken|user.*exists/i.test(String(msg))) {
           throw new Error(t('error_email_exists'));
         }
-        if (/company.*already exists|company with this name already exists|duplicate company name/i.test(String(msg))) {
+        if (
+          /company.*already exists|company with this name already exists|duplicate company name|duplicate key value|companies_name_normalized_uq/i.test(
+            String(msg),
+          )
+        ) {
           throw new Error(t('errors_companyName_duplicate'));
         }
         throw new Error(msg);
