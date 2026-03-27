@@ -174,6 +174,15 @@ async function saveSubscription(payload) {
   return data;
 }
 
+async function saveCompanyActiveStatus(payload) {
+  const { data, error } = await supabase.rpc('admin_set_company_active_super', {
+    p_company_id: payload.p_company_id,
+    p_is_active: payload.p_is_active,
+  });
+  if (error) throw error;
+  return data;
+}
+
 function ActionRow({ label, value, onPress, disabled, theme }) {
   const base = listItemStyles(theme);
   return (
@@ -358,7 +367,23 @@ export default function AdminCompanyDetailsScreen() {
     },
   });
 
+  const activationMutation = useMutation({
+    mutationFn: async (nextIsActive) =>
+      saveCompanyActiveStatus({
+        p_company_id: companyId,
+        p_is_active: !!nextIsActive,
+      }),
+    onSuccess: async (_res, nextIsActive) => {
+      await refreshAll();
+      toast.success(nextIsActive ? t('admin_company_activated') : t('admin_company_deactivated'));
+    },
+    onError: (e) => {
+      toast.error(String(e?.message || t('admin_unknown_error')));
+    },
+  });
+
   const periodEndRaw = meta?.current_period_end || data?.current_period_end || access?.period_end || null;
+  const companyIsActive = data?.is_active !== false;
   const periodEnd = parseDate(periodEndRaw);
   const isSubscriptionActive = !!periodEnd && periodEnd.getTime() > Date.now();
   const companyTimeZone = normalizeTimeZone(data?.timezone);
@@ -524,6 +549,11 @@ export default function AdminCompanyDetailsScreen() {
             <Card paddedXOnly>
               <LabelValueRow label={t('admin_companies_name')} value={data.name || ''} />
               <View style={base.sep} />
+              <LabelValueRow
+                label={t('admin_company_company_status')}
+                value={companyIsActive ? t('admin_company_status_active') : t('admin_company_status_inactive')}
+              />
+              <View style={base.sep} />
               <LabelValueRow label={t('admin_company_created_at')} value={createdAt ? formatDateTime(createdAt, companyTimeZone) : ''} />
               <View style={base.sep} />
               <LabelValueRow label={t('admin_companies_employees')} value={String(employeesCount)} />
@@ -598,6 +628,33 @@ export default function AdminCompanyDetailsScreen() {
                   handleCancelSubscriptionRequest();
                 }}
                 disabled={mutation.isPending}
+                theme={theme}
+              />
+              <View style={base.sep} />
+              <ActionRow
+                label={
+                  companyIsActive
+                    ? t('admin_company_deactivate_action')
+                    : t('admin_company_activate_action')
+                }
+                value={
+                  companyIsActive
+                    ? t('admin_company_status_active')
+                    : t('admin_company_status_inactive')
+                }
+                onPress={() =>
+                  openConfirm({
+                    title: companyIsActive
+                      ? t('admin_company_deactivate_confirm_title')
+                      : t('admin_company_activate_confirm_title'),
+                    message: companyIsActive
+                      ? t('admin_company_deactivate_confirm_message')
+                      : t('admin_company_activate_confirm_message'),
+                    action: 'activation',
+                    nextIsActive: !companyIsActive,
+                  })
+                }
+                disabled={mutation.isPending || activationMutation.isPending}
                 theme={theme}
               />
             </Card>
@@ -760,10 +817,14 @@ export default function AdminCompanyDetailsScreen() {
         title={confirmState?.title || t('admin_company_confirm_default_title')}
         message={confirmState?.message || t('admin_company_confirm_default_message')}
         confirmLabel={t('btn_apply')}
-        loading={mutation.isPending}
+        loading={mutation.isPending || activationMutation.isPending}
         onClose={() => setConfirmVisible(false)}
         onConfirm={async () => {
           if (!confirmState) return;
+          if (confirmState.action === 'activation') {
+            await activationMutation.mutateAsync(!!confirmState.nextIsActive);
+            return;
+          }
           await mutation.mutateAsync({
             periodEnd: confirmState.periodEnd,
             periodEndIso: confirmState.periodEndIso,

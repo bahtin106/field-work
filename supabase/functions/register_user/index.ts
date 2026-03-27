@@ -118,11 +118,32 @@ Deno.serve(async (req) => {
 
     // Создаём компанию если нужно
     if (account_type === 'company') {
-      console.log('Creating company:', company_name);
+      const normalizedCompanyName = String(company_name).trim().replace(/\s+/g, ' ');
+      if (!normalizedCompanyName) {
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        return new Response('company_name is required for company account type', {
+          status: 400,
+          headers: cors,
+        });
+      }
+      const { data: existingCompany } = await supabaseAdmin
+        .from('companies')
+        .select('id')
+        .ilike('name', normalizedCompanyName)
+        .maybeSingle();
+      if (existingCompany) {
+        await supabaseAdmin.auth.admin.deleteUser(userId);
+        return new Response('Company with this name already exists', {
+          status: 400,
+          headers: cors,
+        });
+      }
+
+      console.log('Creating company:', normalizedCompanyName);
       const { data: newCompany, error: companyErr } = await supabaseAdmin
         .from('companies')
         .insert({
-          name: String(company_name).trim(),
+          name: normalizedCompanyName,
           created_by: userId,
         })
         .select('id')
@@ -131,6 +152,12 @@ Deno.serve(async (req) => {
       if (companyErr) {
         console.error('Company create failed:', companyErr);
         await supabaseAdmin.auth.admin.deleteUser(userId);
+        if (String(companyErr?.code || '') === '23505') {
+          return new Response('Company with this name already exists', {
+            status: 400,
+            headers: cors,
+          });
+        }
         return new Response(`Company error: ${companyErr.message}`, {
           status: 400,
           headers: cors,

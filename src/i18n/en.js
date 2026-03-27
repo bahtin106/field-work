@@ -659,4 +659,21 @@ export default {
   company_settings_telegram_locked_field_toast: 'This field is required',
   company_settings_telegram_required_custom: 'Required',
   company_settings_telegram_optional_custom: 'Optional',
+  errors_companyName_required: 'Enter company name',
+  errors_companyName_tooLong: 'Company name is too long (max 64)',
+  errors_companyName_duplicate: 'A company with this name already exists',
+  admin_company_activated: 'Company activated',
+  admin_company_deactivated: 'Company deactivated',
+  admin_company_company_status: 'Company status',
+  admin_company_activate_action: 'Activate company',
+  admin_company_deactivate_action: 'Deactivate company',
+  admin_company_activate_confirm_title: 'Activate company?',
+  admin_company_activate_confirm_message:
+    'The company will be available again. Employees can continue after sign-in.',
+  admin_company_deactivate_confirm_title: 'Deactivate company?',
+  admin_company_deactivate_confirm_message:
+    'Sign-in will be blocked for all company employees and administrators until reactivated by super-admin.',
+  auth_access_blocked: 'Access to the app is restricted',
+  auth_blocked_by_license: 'Profile blocked due to missing license',
+  auth_company_inactive: 'Company is deactivated by super-admin. Sign-in is temporarily unavailable.',
 };

@@ -120,6 +120,8 @@ export function useAuthLogin() {
               String(accessRow.block_message || '') ||
               (blockCode === 'blocked_by_license'
                 ? t('auth_blocked_by_license')
+                : blockCode === 'company_inactive'
+                  ? t('auth_company_inactive')
                 : t('auth_access_blocked'));
             try {
               await supabase.auth.signOut();
