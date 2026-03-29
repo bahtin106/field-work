@@ -34,6 +34,7 @@ import { useSubscriptionGuard } from '../../hooks/useSubscriptionGuard';
 import { useOrderMedia } from '../../hooks/useOrderMedia';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import goBackSmart from '../../lib/navigation/goBackSmart';
+import { logClientError } from '../../lib/errorLogsClient';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
 import { financeEntryMediaStorage, financeEntryYandexMedia } from '../../lib/financeEntryMedia';
 import { orderMediaStorage } from '../../lib/orderMediaStorage';
@@ -262,7 +263,9 @@ function shouldRetryDeleteWithAlternateProvider(rawMessage) {
   return (
     message.includes('media mapping not found') ||
     message.includes('media provider is not beget s3') ||
-    message.includes('media provider is not yandex disk')
+    message.includes('media provider is not yandex disk') ||
+    message.includes('unsupported category') ||
+    isYandexProviderFailureMessage(message)
   );
 }
 
@@ -689,6 +692,7 @@ function OrderDetailsContent() {
   const [financeViewerIndex, setFinanceViewerIndex] = useState(0);
   const financeViewerRawPhotosRef = useRef([]);
   const financeEntryInspectSignatureRef = useRef('');
+  const uploadFinanceEntryLocalUriRef = useRef(null);
   const [financeViewerCategoryLabel, setFinanceViewerCategoryLabel] = useState('');
   const financeEntryViewCommentText = useMemo(
     () => String(selectedFinanceEntry?.note || '').trim(),
@@ -2128,22 +2132,77 @@ function OrderDetailsContent() {
     setFinanceEntryLocalPending([]);
   }, []);
 
-  const handleFinanceEntryPhotoUploadUri = useCallback(async (_category, uri) => {
-    if (!uri) return;
-    setFinanceEntryDraft((prev) => ({
-      ...prev,
-      photo_urls: [...(prev.photo_urls || []), String(uri)],
-    }));
-  }, []);
-
   const handleFinanceEntryPhotoUploadMultiple = useCallback(async (_category, uris = []) => {
     const nextUris = (uris || []).map((value) => String(value || '')).filter(Boolean);
     if (!nextUris.length) return;
+    const financeEntryIdValue = String(financeEntryDraft.id || '').trim();
+    if (!financeEntryIdValue) {
+      setFinanceEntryDraft((prev) => ({
+        ...prev,
+        photo_urls: [...(prev.photo_urls || []), ...nextUris],
+      }));
+      return;
+    }
+
+    const pendingItems = nextUris.map((nextUri, index) => ({
+      id: `finance_local_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
+      uri: nextUri,
+    }));
     setFinanceEntryDraft((prev) => ({
       ...prev,
       photo_urls: [...(prev.photo_urls || []), ...nextUris],
     }));
-  }, []);
+    setFinanceEntryLocalPending((prev) => [...prev, ...pendingItems]);
+
+    const mediaErrors = [];
+    for (const pendingItem of pendingItems) {
+      try {
+        const uploaded = await uploadFinanceEntryLocalUriRef.current?.(financeEntryIdValue, pendingItem.uri);
+        const uploadedUrl = String(uploaded?.url || '').trim();
+        if (!uploadedUrl) throw new Error(t('order_toast_upload_error'));
+        setFinanceEntryDraft((prev) => {
+          const current = [...(prev.photo_urls || [])];
+          const localIdx = current.findIndex((value) => String(value || '') === pendingItem.uri);
+          if (localIdx >= 0) current.splice(localIdx, 1, uploadedUrl);
+          else current.push(uploadedUrl);
+          return { ...prev, photo_urls: current };
+        });
+        setSelectedFinanceEntry((prev) => {
+          if (!prev || String(prev.id || '') !== financeEntryIdValue) return prev;
+          const nextRemote = [...(prev.photo_urls || []).map((value) => String(value || ''))];
+          if (!nextRemote.includes(uploadedUrl)) nextRemote.push(uploadedUrl);
+          return { ...prev, photo_urls: nextRemote };
+        });
+        if (!(financeEntryInitialPhotoUrlsRef.current || []).includes(uploadedUrl)) {
+          financeEntryInitialPhotoUrlsRef.current = [...(financeEntryInitialPhotoUrlsRef.current || []), uploadedUrl];
+        }
+      } catch (error) {
+        mediaErrors.push(error?.message || t('order_toast_upload_error'));
+        setFinanceEntryDraft((prev) => {
+          const current = [...(prev.photo_urls || [])];
+          const localIdx = current.findIndex((value) => String(value || '') === pendingItem.uri);
+          if (localIdx >= 0) current.splice(localIdx, 1);
+          return { ...prev, photo_urls: current };
+        });
+      } finally {
+        setFinanceEntryLocalPending((prev) => prev.filter((item) => item.id !== pendingItem.id));
+      }
+    }
+
+    if (mediaErrors.length > 0) {
+      showWarning(
+        t(
+          'finance_entry_media_partial_save',
+          'Статья сохранена, но часть фотографий не удалось обработать.',
+        ),
+      );
+    }
+  }, [financeEntryDraft.id, showWarning, t]);
+
+  const handleFinanceEntryPhotoUploadUri = useCallback(async (_category, uri) => {
+    if (!uri) return;
+    await handleFinanceEntryPhotoUploadMultiple(_category, [uri]);
+  }, [handleFinanceEntryPhotoUploadMultiple]);
 
   const removeFinanceEntryPhotoRemote = useCallback(
     async (removedUrl, rollback) => {
@@ -2153,12 +2212,34 @@ function OrderDetailsContent() {
       if (!financeEntryIdValue || isLocalFinancePhotoUrl(url)) return true;
 
       try {
-        await deleteFinanceEntryPhotoByUrl(financeEntryIdValue, url);
-        financeEntryInitialPhotoUrlsRef.current = (financeEntryInitialPhotoUrlsRef.current || []).filter(
-          (value) => String(value || '') !== url,
-        );
+        const response = await deleteFinanceEntryPhotoByUrl(financeEntryIdValue, url);
+        const nextRemoteUrlsSource = Array.isArray(response?.photo_urls)
+          ? response.photo_urls
+          : Array.isArray(response?.media_urls)
+            ? response.media_urls
+            : null;
+        const nextRemoteUrls = Array.isArray(nextRemoteUrlsSource)
+          ? nextRemoteUrlsSource.map((value) => String(value || '')).filter(Boolean)
+          : null;
+        if (Array.isArray(nextRemoteUrls)) {
+          financeEntryInitialPhotoUrlsRef.current = [...nextRemoteUrls];
+          setFinanceEntryDraft((prev) => {
+            const localUrls = (prev.photo_urls || []).filter((value) => isLocalFinancePhotoUrl(value));
+            return { ...prev, photo_urls: [...nextRemoteUrls, ...localUrls] };
+          });
+        } else {
+          financeEntryInitialPhotoUrlsRef.current = (financeEntryInitialPhotoUrlsRef.current || []).filter(
+            (value) => String(value || '') !== url,
+          );
+        }
         setSelectedFinanceEntry((prev) => {
           if (!prev || String(prev.id || '') !== financeEntryIdValue) return prev;
+          if (Array.isArray(nextRemoteUrls)) {
+            return {
+              ...prev,
+              photo_urls: nextRemoteUrls,
+            };
+          }
           return {
             ...prev,
             photo_urls: (prev.photo_urls || []).filter((value) => String(value || '') !== url),
@@ -2426,14 +2507,35 @@ function OrderDetailsContent() {
     },
     [effectiveMediaProvider, notifyCloudFallback],
   );
+  useEffect(() => {
+    uploadFinanceEntryLocalUriRef.current = uploadFinanceEntryLocalUri;
+  }, [uploadFinanceEntryLocalUri]);
 
   const deleteFinanceEntryPhotoByUrl = useCallback(async (financeEntryIdValue, url) => {
-    const payload = { finance_entry_id: financeEntryIdValue, url };
+    const normalizedOrderId = String(id || '').trim();
+    const payload = {
+      finance_entry_id: financeEntryIdValue,
+      url,
+    };
+    const orderPayload = {
+      order_id: normalizedOrderId,
+      finance_entry_id: financeEntryIdValue,
+      category: 'finance_entry_photo',
+      url,
+    };
+    const tryOrderMedia = () => orderMediaStorage('delete', orderPayload);
     const tryYandex = () => financeEntryYandexMedia('delete', payload);
     const tryBeget = () => financeEntryMediaStorage('delete', payload);
     const preferYandex = isYandexMediaUrl(url);
 
     try {
+      if (normalizedOrderId) {
+        try {
+          return await tryOrderMedia();
+        } catch (orderMediaError) {
+          console.warn('[finance-entry-photo-remove] order-media delete fallback:', orderMediaError);
+        }
+      }
       return preferYandex ? await tryYandex() : await tryBeget();
     } catch (primaryError) {
       if (!shouldRetryDeleteWithAlternateProvider(primaryError?.message || primaryError)) {
@@ -2441,7 +2543,7 @@ function OrderDetailsContent() {
       }
       return preferYandex ? await tryBeget() : await tryYandex();
     }
-  }, []);
+  }, [id]);
 
   const saveFinanceEntry = useCallback(async () => {
     if (!id || !companyId) return;
@@ -2565,10 +2667,16 @@ function OrderDetailsContent() {
         await deleteFinanceEntryMutation.mutateAsync(entry.id);
         showToast(t('finance_rule_deleted', 'Запись удалена'));
       } catch (error) {
+        logClientError(error, {
+          source: 'finance_entry_delete',
+          entry_id: String(entry?.id || ''),
+          order_id: String(id || ''),
+          company_id: String(companyId || ''),
+        });
         showWarning(error?.message || t('order_save_error'));
       }
     },
-    [deleteFinanceEntryMutation, showToast, showWarning, t],
+    [companyId, deleteFinanceEntryMutation, id, showToast, showWarning, t],
   );
 
   const confirmDeleteFinanceEntry = useCallback(async () => {
@@ -4991,14 +5099,12 @@ function OrderDetailsContent() {
           <>
             <View style={base.sep} />
             <Pressable
-              style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+              style={({ pressed }) => [{ width: '100%' }, pressed && { opacity: 0.7 }]}
               onPress={openFinanceEntryPhotosFromView}
             >
               <LabelValueRow
                 label={t('order_details_photos_section', 'Фото')}
                 value={formatFinancePhotoCount(financeEntryViewPhotoCount)}
-                middleSpacerStyle={styles.financeModalCompactSpacer}
-                rightWrapStyle={styles.financeModalRightWrap}
                 hideWhenEmpty={false}
                 rightActions={
                   <Feather
