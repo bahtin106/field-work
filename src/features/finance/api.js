@@ -37,17 +37,13 @@ const FINANCE_RULE_SELECT = `
   percent_base,
   conditions_json,
   recipient_mode,
-  recipient_user_id,
   expense_payer,
   apply_to_existing,
   note_template,
-  requires_note,
-  note_visible,
   is_enabled,
   sort_order,
   created_at,
-  updated_at,
-  recipient:profiles!company_finance_rules_recipient_user_id_fkey(id, full_name)
+  updated_at
 `;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
@@ -199,12 +195,9 @@ export async function upsertCompanyFinanceRule(payload) {
     percent_base: normalizePercentBase(payload?.kind, payload?.percent_base),
     conditions_json: normalizeRuleConditions(payload?.conditions_json),
     recipient_mode: String(payload?.recipient_mode || 'none').trim(),
-    recipient_user_id: normalizeId(payload?.recipient_user_id),
     expense_payer: normalizeExpensePayer(payload?.expense_payer),
     note_template: payload?.note_template ? String(payload.note_template).trim() : null,
     apply_to_existing: payload?.apply_to_existing === true,
-    requires_note: payload?.requires_note === true,
-    note_visible: payload?.note_visible !== false,
     is_enabled: payload?.is_enabled !== false,
     sort_order: Number.isFinite(Number(payload?.sort_order)) ? Number(payload.sort_order) : 100,
   };

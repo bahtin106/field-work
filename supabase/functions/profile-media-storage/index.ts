@@ -38,35 +38,52 @@ const binary = (status: number, body: BodyInit | null, headers: HeadersInit = {}
     },
   });
 
-const DEFAULT_YANDEX_ROOT = '/Монитор';
-const PROFILE_MEDIA_ROOT_DIR = 'Фото профилей';
+const DEFAULT_YANDEX_ROOT = '/РњРѕРЅРёС‚РѕСЂ';
+const PROFILE_MEDIA_ROOT_DIR = 'Р¤РѕС‚Рѕ РїСЂРѕС„РёР»РµР№';
 const INTERNAL_URL_PREFIX = 'yadisk://';
 const AVATARS_BUCKET = 'avatars';
 const STORAGE_ROOT_PREFIX = 'profiles';
-const VALID_ENTITY_TYPES = new Set(['employee', 'client', 'object']);
+const VALID_ENTITY_TYPES = new Set(['employee', 'client', 'object', 'feedback', 'feedback_attachment']);
 const RENDER_TTL_SEC = 60 * 60 * 24 * 30;
+const BEGET_COMPANIES_DIR = '\u041a\u043e\u043c\u043f\u0430\u043d\u0438\u0438';
+const BEGET_SUPPORT_DIR = '\u041e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u044f';
+const BEGET_SUPPORT_REQUEST_PREFIX = '\u041e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435';
 
 const ENTITY_META = {
   employee: {
     table: 'profiles',
     column: 'avatar_url',
-    yandexDir: 'Сотрудники',
+    yandexDir: 'РЎРѕС‚СЂСѓРґРЅРёРєРё',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/${entityId}`,
-    begetDir: 'Сотрудники',
+    begetDir: 'РЎРѕС‚СЂСѓРґРЅРёРєРё',
   },
   client: {
     table: 'clients',
     column: 'avatar_url',
-    yandexDir: 'Клиенты',
+    yandexDir: 'РљР»РёРµРЅС‚С‹',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/clients/${entityId}`,
-    begetDir: 'Клиенты',
+    begetDir: 'РљР»РёРµРЅС‚С‹',
   },
   object: {
     table: 'client_objects',
     column: 'photo_url',
-    yandexDir: 'Объекты',
+    yandexDir: 'РћР±СЉРµРєС‚С‹',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/objects/${entityId}`,
-    begetDir: 'Объекты',
+    begetDir: 'РћР±СЉРµРєС‚С‹',
+  },
+  feedback: {
+    table: 'feedbacks',
+    column: 'photo_url',
+    yandexDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+    storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/feedbacks/${entityId}`,
+    begetDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+  },
+  feedback_attachment: {
+    table: 'feedback_attachments',
+    column: 'photo_url',
+    yandexDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+    storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/feedback_attachments/${entityId}`,
+    begetDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
   },
 } as const;
 
@@ -270,7 +287,7 @@ function mapYandexApiError(status: number, payload: string) {
   if (status === 401 || status === 403 || text.includes('unauthorized') || text.includes('invalid_grant')) {
     return 'Yandex authorization expired. Reconnect disk';
   }
-  if (status === 423 || text.includes('resource is locked') || text.includes('ресурс заблокирован')) {
+  if (status === 423 || text.includes('resource is locked') || text.includes('СЂРµСЃСѓСЂСЃ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅ')) {
     return 'Yandex resource is temporarily locked';
   }
   if (
@@ -574,7 +591,7 @@ function buildEntityLabel(entityType: EntityType, row: Record<string, unknown>) 
     const middleName = String(row.middle_name || '').trim();
     const lastName = String(row.last_name || '').trim();
     const fullName = String(row.full_name || '').trim() || [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-    return sanitizePathSegment(fullName || `сотрудник_${shortId}`, `сотрудник_${shortId}`);
+    return sanitizePathSegment(fullName || `СЃРѕС‚СЂСѓРґРЅРёРє_${shortId}`, `СЃРѕС‚СЂСѓРґРЅРёРє_${shortId}`);
   }
 
   if (entityType === 'client') {
@@ -584,10 +601,18 @@ function buildEntityLabel(entityType: EntityType, row: Record<string, unknown>) 
       .filter(Boolean)
       .join(' ')
       .trim();
-    return sanitizePathSegment(fullName || fallback || `клиент_${shortId}`, `клиент_${shortId}`);
+    return sanitizePathSegment(fullName || fallback || `РєР»РёРµРЅС‚_${shortId}`, `РєР»РёРµРЅС‚_${shortId}`);
   }
 
-  return sanitizePathSegment(String(row.name || '').trim() || `объект_${shortId}`, `объект_${shortId}`);
+  if (entityType === 'feedback') {
+    return sanitizePathSegment(`obrashenie_${shortId}`, `obrashenie_${shortId}`);
+  }
+  if (entityType === 'feedback_attachment') {
+    const feedbackId = String(row.feedback_id || '').trim().slice(0, 8) || 'feedback';
+    return sanitizePathSegment(`obrashenie_${feedbackId}_${shortId}`, `obrashenie_${feedbackId}_${shortId}`);
+  }
+
+  return sanitizePathSegment(String(row.name || '').trim() || `РѕР±СЉРµРєС‚_${shortId}`, `РѕР±СЉРµРєС‚_${shortId}`);
 }
 
 function buildYandexFolderPath(
@@ -597,27 +622,39 @@ function buildYandexFolderPath(
   entityLabel: string,
 ) {
   const root = normalizeFolderPath(rootFolder).replace(/\/+$/, '');
-  const companyDir = sanitizePathSegment(companyName || 'Компания', 'Компания');
+  const companyDir = sanitizePathSegment(companyName || 'РљРѕРјРїР°РЅРёСЏ', 'РљРѕРјРїР°РЅРёСЏ');
   const entityDir = ENTITY_META[entityType].yandexDir;
   return `${root}/${companyDir}/${PROFILE_MEDIA_ROOT_DIR}/${entityDir}/${entityLabel}`;
 }
 
 function buildBegetStoragePrefix(
   companyName: string,
+  companyId: string,
   entityType: EntityType,
   entityLabel: string,
   entityId: string,
+  entityRow?: Record<string, unknown> | null,
 ) {
-  const companyDir = sanitizePathSegment(companyName || 'Компания', 'Компания');
+  const companyDir = sanitizePathSegment(companyName || 'company', 'company');
+  if (entityType === 'feedback_attachment') {
+    const feedbackIdRaw = String(entityRow?.feedback_id || '').trim() || String(entityId || '').trim();
+    const feedbackShort = sanitizePathSegment(feedbackIdRaw.slice(0, 8) || 'request', 'request');
+    return `${BEGET_COMPANIES_DIR}/${companyDir}/${BEGET_SUPPORT_DIR}/${BEGET_SUPPORT_REQUEST_PREFIX}_${feedbackShort}`;
+  }
+  if (entityType === 'feedback') {
+    const feedbackShort = sanitizePathSegment(String(entityId || '').trim().slice(0, 8) || 'request', 'request');
+    return `${BEGET_COMPANIES_DIR}/${companyDir}/${BEGET_SUPPORT_DIR}/${BEGET_SUPPORT_REQUEST_PREFIX}_${feedbackShort}`;
+  }
+
   const entityDir = ENTITY_META[entityType].begetDir;
   const shortId = String(entityId || '').trim().slice(0, 8) || 'item';
   const label = sanitizePathSegment(entityLabel || `${entityDir}_${shortId}`, `${entityDir}_${shortId}`);
-  return `Компании/${companyDir}/Профили/${entityDir}/${label}_${shortId}`;
+  return `РљРѕРјРїР°РЅРёРё/${companyDir}/РџСЂРѕС„РёР»Рё/${entityDir}/${label}_${shortId}`;
 }
 
 async function getEntityContext(
   admin: ReturnType<typeof createClient>,
-  companyId: string,
+  companyId: string | null,
   entityType: EntityType,
   entityId: string,
 ) {
@@ -627,7 +664,11 @@ async function getEntityContext(
       ? 'id, company_id, first_name, last_name, full_name, avatar_url'
       : entityType === 'client'
         ? 'id, company_id, first_name, last_name, middle_name, full_name, avatar_url'
-        : 'id, company_id, name, photo_url';
+        : entityType === 'feedback'
+          ? 'id, company_id, text, photo_url'
+          : entityType === 'feedback_attachment'
+            ? 'id, company_id, feedback_id, photo_url'
+          : 'id, company_id, name, photo_url';
 
   const { data, error } = await admin
     .from(meta.table)
@@ -636,7 +677,7 @@ async function getEntityContext(
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Entity not found');
-  if (String((data as any).company_id || '') !== companyId) throw new Error('Forbidden');
+  if (companyId && String((data as any).company_id || '') !== companyId) throw new Error('Forbidden');
 
   const { data: company, error: companyErr } = await admin
     .from('companies')
@@ -652,16 +693,18 @@ async function getEntityContext(
   return {
     entity: data as Record<string, unknown>,
     currentUrl,
-    companyName: String(company.name || '').trim() || 'Компания',
+    companyName: String(company.name || '').trim() || 'РљРѕРјРїР°РЅРёСЏ',
     provider: String(company.profile_media_provider || 'beget_s3'),
     table: meta.table,
     column: meta.column,
     storagePrefix: meta.storagePrefix(entityId),
     begetStoragePrefix: buildBegetStoragePrefix(
-      String(company.name || '').trim() || 'Компания',
+      String(company.name || '').trim() || 'РљРѕРјРїР°РЅРёСЏ',
+      String(companyId || (data as any).company_id || '').trim() || 'company',
       entityType,
       entityLabel,
       entityId,
+      data as Record<string, unknown>,
     ),
     entityLabel,
   };
@@ -669,6 +712,8 @@ async function getEntityContext(
 
 function assertWriteAccess(caller: { userId: string; role: string }, entityType: EntityType, entityId: string) {
   if (caller.role === 'superadmin') return;
+  if (entityType === 'feedback') return;
+  if (entityType === 'feedback_attachment') return;
   if (entityType === 'employee') {
     if (caller.role === 'admin' || caller.userId === entityId) return;
     throw new Error('Forbidden');
@@ -782,7 +827,7 @@ async function uploadToBegetStorage(
   mime: string,
 ) {
   const ext = getFileExtensionByMime(mime);
-  const path = `${storagePrefix}/аватар_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  const path = `${storagePrefix}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 
   await putBegetObject({
     key: path,
@@ -801,7 +846,7 @@ async function prepareBegetDirectUpload(
   mime: string,
 ) {
   const ext = getFileExtensionByMime(mime);
-  const path = `${storagePrefix}/аватар_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  const path = `${storagePrefix}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
   const publicUrl = buildBegetPublicUrl(path);
   const signed = await createBegetPresignedPutUrl({
     key: path,
@@ -954,17 +999,96 @@ async function commitYandexDirectUpload(args: {
 export async function cleanupProfileMediaEntity(
   admin: ReturnType<typeof createClient>,
   args: {
-    companyId: string;
+    companyId: string | null;
     entityType: EntityType;
     entityId: string;
   },
 ) {
   const { companyId, entityType, entityId } = args;
   const ctx = await getEntityContext(admin, companyId, entityType, entityId);
-  const existingMap = await getExistingExternalMap(admin, companyId, entityType, entityId);
+  const effectiveCompanyId =
+    String(companyId || (ctx.entity as Record<string, unknown>)?.company_id || '').trim() || null;
+  const feedbackIdForAttachment =
+    entityType === 'feedback_attachment'
+      ? String((ctx.entity as Record<string, unknown>)?.feedback_id || '').trim()
+      : null;
+  const feedbackId =
+    entityType === 'feedback'
+      ? entityId
+      : feedbackIdForAttachment || '';
+  const feedbackAttachmentIds: string[] = [];
+  if (feedbackId) {
+    const { data: attachmentRows } = await admin
+      .from('feedback_attachments')
+      .select('id')
+      .eq('feedback_id', feedbackId);
+    for (const row of Array.isArray(attachmentRows) ? attachmentRows : []) {
+      const attachmentId = String(row?.id || '').trim();
+      if (attachmentId) feedbackAttachmentIds.push(attachmentId);
+    }
+  }
+  const existingMap = effectiveCompanyId
+    ? await getExistingExternalMap(admin, effectiveCompanyId, entityType, entityId)
+    : null;
   if (ctx.currentUrl) {
     await updateEntityUrl(admin, entityType, entityId, null);
   }
+  if (feedbackId && feedbackAttachmentIds.length) {
+    await admin
+      .from('feedback_attachments')
+      .update({ photo_url: null })
+      .in('id', feedbackAttachmentIds)
+      .then(() => {})
+      .catch(() => {});
+  }
+
+  if (feedbackId && effectiveCompanyId) {
+    await admin
+      .from('profile_media_external_map')
+      .delete()
+      .eq('company_id', effectiveCompanyId)
+      .eq('entity_type', 'feedback')
+      .eq('entity_id', feedbackId)
+      .then(() => {})
+      .catch(() => {});
+    if (feedbackAttachmentIds.length) {
+      await admin
+        .from('profile_media_external_map')
+        .delete()
+        .eq('company_id', effectiveCompanyId)
+        .eq('entity_type', 'feedback_attachment')
+        .in('entity_id', feedbackAttachmentIds)
+        .then(() => {})
+        .catch(() => {});
+    }
+
+    const reason = `feedback_delete:${feedbackId}`;
+    await admin
+      .from('media_cleanup_queue')
+      .update({ reason, updated_at: new Date().toISOString() })
+      .is('processed_at', null)
+      .eq('entity_type', 'feedback')
+      .eq('entity_id', feedbackId)
+      .then(() => {})
+      .catch(() => {});
+    if (feedbackAttachmentIds.length) {
+      await admin
+        .from('media_cleanup_queue')
+        .update({ reason, updated_at: new Date().toISOString() })
+        .is('processed_at', null)
+        .eq('entity_type', 'feedback_attachment')
+        .in('entity_id', feedbackAttachmentIds)
+        .then(() => {})
+        .catch(() => {});
+    }
+    const { count: queuedJobs } = await admin
+      .from('media_cleanup_queue')
+      .select('id', { count: 'exact', head: true })
+      .eq('reason', reason)
+      .is('processed_at', null);
+    return { success: true, queued_cleanup_jobs: Number(queuedJobs || 0) };
+  }
+
   if (isSupabaseAvatarStorageUrl(ctx.currentUrl)) {
     await removeStoragePrefixFiles({
       admin,
@@ -1143,7 +1267,8 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
     assertWriteAccess(caller, entityType, entityId);
 
-    const ctx = await getEntityContext(admin, caller.companyId, entityType, entityId);
+    const contextCompanyId = caller.role === 'superadmin' ? null : caller.companyId;
+    const ctx = await getEntityContext(admin, contextCompanyId, entityType, entityId);
     const existingMap = await getExistingExternalMap(admin, caller.companyId, entityType, entityId);
 
     if (action === 'prepare_upload') {
@@ -1235,7 +1360,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
     if (action === 'delete' || action === 'cleanup_entity') {
       await cleanupProfileMediaEntity(admin, {
-        companyId: caller.companyId,
+        companyId: caller.role === 'superadmin' ? null : caller.companyId,
         entityType,
         entityId,
       });
@@ -1374,3 +1499,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleProfileMediaStorageRequest);
 }
+
+
+
+

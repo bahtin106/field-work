@@ -138,7 +138,6 @@ function createEmptyRuleDraft() {
     percent_value: '',
     percent_base: 'gross_after_discount',
     recipient_mode: 'company',
-    recipient_user_id: null,
     condition_payment_method: 'any',
     condition_payment_status: 'any',
     condition_min_gross_after_discount: '',
@@ -152,8 +151,6 @@ function createEmptyRuleDraft() {
     if_filters: [],
     note_template: '',
     apply_to_existing: false,
-    requires_note: false,
-    note_visible: true,
     is_enabled: true,
     sort_order: DEFAULT_SORT_ORDER,
   };
@@ -513,12 +510,9 @@ export default function FinanceRulesSettingsScreen() {
       percent_value: String(rule?.percent_value ?? ''),
       percent_base: String(rule?.percent_base || 'gross_after_discount'),
       recipient_mode: normalizeRecipientModeForKind(kind, recipientMode),
-      recipient_user_id: null,
       ...parsedConditions,
       note_template: String(rule?.note_template || ''),
       apply_to_existing: rule?.apply_to_existing === true,
-      requires_note: rule?.requires_note === true,
-      note_visible: rule?.note_visible !== false,
       is_enabled: rule?.is_enabled !== false,
       sort_order: Number.isFinite(Number(rule?.sort_order)) ? Number(rule.sort_order) : DEFAULT_SORT_ORDER,
     });
@@ -557,12 +551,9 @@ export default function FinanceRulesSettingsScreen() {
         percent_base: draft.percent_base,
         conditions_json: buildConditionsJsonFromDraft(draft),
         recipient_mode: recipientMode === 'executor' ? 'assigned_to' : 'none',
-        recipient_user_id: null,
         expense_payer: draft.kind === 'expense' ? expensePayer : 'company',
         note_template: draft.note_template,
         apply_to_existing: draft.apply_to_existing === true,
-        requires_note: draft.requires_note === true,
-        note_visible: draft.note_visible !== false,
         is_enabled: draft.is_enabled !== false,
         sort_order: parseNumberSafe(draft.sort_order, DEFAULT_SORT_ORDER),
       });
@@ -609,12 +600,9 @@ export default function FinanceRulesSettingsScreen() {
           percent_base: String(rule.percent_base || 'gross_after_discount'),
           conditions_json: rule.conditions_json || { op: 'all', conditions: [] },
           recipient_mode: String(rule.recipient_mode || 'none'),
-          recipient_user_id: rule.recipient_user_id || null,
           expense_payer: String(rule.expense_payer || 'company') === 'executor' ? 'executor' : 'company',
           note_template: String(rule.note_template || ''),
           apply_to_existing: rule.apply_to_existing === true,
-          requires_note: rule.requires_note === true,
-          note_visible: rule.note_visible !== false,
           is_enabled: nextEnabled === true,
           sort_order: parseNumberSafe(rule.sort_order, DEFAULT_SORT_ORDER),
         });
@@ -1095,7 +1083,7 @@ export default function FinanceRulesSettingsScreen() {
         selectedId={normalizedRecipientMode}
         searchable={false}
         onSelect={(item) => {
-          setDraft((prev) => ({ ...prev, recipient_mode: item.id, recipient_user_id: null }));
+          setDraft((prev) => ({ ...prev, recipient_mode: item.id }));
           setRecipientModeModalVisible(false);
         }}
         onClose={() => setRecipientModeModalVisible(false)}

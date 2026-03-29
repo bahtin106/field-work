@@ -498,6 +498,37 @@ async function removeFinanceEntryPhotoUrlAtomic(
   };
 }
 
+async function removeFinanceEntryPhotoUrlAtomicCanonical(
+  admin: ReturnType<typeof createClient>,
+  financeEntryId: string,
+  companyId: string,
+  url: string,
+) {
+  const direct = String(url || '').trim();
+  let atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, direct);
+  if (!direct || !atomic) return atomic;
+  if (!Array.isArray(atomic.photo_urls) || !atomic.photo_urls.includes(direct)) return atomic;
+
+  const needle = canonicalUrl(direct);
+  if (!needle) return atomic;
+
+  const { data: entry, error: entryErr } = await admin
+    .from('order_finance_entries')
+    .select('photo_urls')
+    .eq('id', financeEntryId)
+    .maybeSingle();
+  if (entryErr) throw entryErr;
+
+  const existingUrls = Array.isArray(entry?.photo_urls)
+    ? entry.photo_urls.map((value: unknown) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const canonicalMatch = existingUrls.find((existingUrl) => canonicalUrl(existingUrl) === needle);
+  if (!canonicalMatch || canonicalMatch === direct) return atomic;
+
+  atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, canonicalMatch);
+  return atomic;
+}
+
 async function uploadToYandex(accessToken: string, path: string, bytes: Uint8Array, mime: string) {
   const linkRes = await fetch(
     `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(path)}&overwrite=false`,
@@ -721,7 +752,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
           display_url_updated_at: new Date().toISOString(),
           created_by: ctx.userId,
         },
-        { onConflict: 'finance_entry_id,source_url' },
+        { onConflict: 'finance_entry_id,external_path' },
       );
       if (mapErr) throw mapErr;
 
@@ -818,7 +849,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
           display_url_updated_at: new Date().toISOString(),
           created_by: ctx.userId,
         },
-        { onConflict: 'finance_entry_id,source_url' },
+        { onConflict: 'finance_entry_id,external_path' },
       );
       if (mapErr) throw mapErr;
 
@@ -1192,21 +1223,34 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
       }
 
       if (!mapRow) {
-        return json(404, { success: false, message: 'Media mapping not found' });
+        const atomicResult = await removeFinanceEntryPhotoUrlAtomicCanonical(
+          admin,
+          ctx.financeEntry.id,
+          ctx.companyId,
+          sourceUrl,
+        );
+        return json(200, {
+          success: true,
+          remote_delete_skipped: true,
+          mapping_missing: true,
+          photo_urls: atomicResult?.photo_urls ?? null,
+          finance_entry_updated_at: atomicResult?.updated_at ?? null,
+        });
       }
 
       const externalPath = String((mapRow as any).external_path || '').trim();
       if (!externalPath) {
         return json(404, { success: false, message: 'Media mapping not found' });
       }
+      let remoteDeleteSkipped = false;
       if (!accessToken) {
-        return json(400, { success: false, message: 'Yandex Disk not connected' });
+        remoteDeleteSkipped = true;
+      } else {
+        await deleteYandexResourceSafe(accessToken, externalPath);
       }
 
-      await deleteYandexResourceSafe(accessToken, externalPath);
-
       const preferredSourceUrl = String(mapRow.source_url || '').trim() || sourceUrl;
-      let atomicResult = await removeFinanceEntryPhotoUrlAtomic(
+      let atomicResult = await removeFinanceEntryPhotoUrlAtomicCanonical(
         admin,
         ctx.financeEntry.id,
         ctx.companyId,
@@ -1220,7 +1264,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
         atomicResult.photo_urls.includes(preferredSourceUrl) &&
         sourceUrl !== preferredSourceUrl
       ) {
-        atomicResult = await removeFinanceEntryPhotoUrlAtomic(
+        atomicResult = await removeFinanceEntryPhotoUrlAtomicCanonical(
           admin,
           ctx.financeEntry.id,
           ctx.companyId,
@@ -1247,6 +1291,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
 
       return json(200, {
         success: true,
+        remote_delete_skipped: remoteDeleteSkipped,
         photo_urls: atomicResult?.photo_urls ?? null,
         finance_entry_updated_at: atomicResult?.updated_at ?? null,
       });

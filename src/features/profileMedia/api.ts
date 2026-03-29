@@ -3,7 +3,7 @@ import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 
-type EntityType = 'employee' | 'client' | 'object';
+type EntityType = 'employee' | 'client' | 'object' | 'feedback' | 'feedback_attachment';
 
 function inferMimeFromUri(uri: string) {
   const raw = String(uri || '').trim().toLowerCase();
@@ -167,7 +167,7 @@ export async function deleteProfileMedia(entityType: EntityType, entityId: strin
 
 export async function cleanupProfileMediaEntity(entityType: EntityType, entityId: string) {
   if (!entityType || !entityId) return;
-  await invokeProfileMedia('cleanup_entity', {
+  return invokeProfileMedia('cleanup_entity', {
     entity_type: entityType,
     entity_id: String(entityId),
   });

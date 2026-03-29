@@ -1,6 +1,7 @@
 // src/shared/feedback/FeedbackProvider.jsx
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { logClientError } from '../../../lib/errorLogsClient';
 
 const FeedbackContext = createContext(null);
 
@@ -11,13 +12,32 @@ export function FeedbackProvider({ children }) {
   const clearBanner = useCallback(() => setBanner(null), []);
   const showBanner = useCallback((message, opts = {}) => {
     if (!message) return;
+    const resolvedMessage =
+      typeof message === 'string'
+        ? message
+        : message.message || message.text || '';
+    const resolvedSeverity =
+      typeof message === 'string'
+        ? opts.severity || 'error'
+        : message.severity || opts.severity || 'error';
+
+    if (
+      (resolvedSeverity === 'error' || resolvedSeverity === 'warning') &&
+      String(resolvedMessage || '').trim()
+    ) {
+      logClientError(String(resolvedMessage), {
+        source: 'ui_banner',
+        severity: resolvedSeverity,
+      });
+    }
+
     if (typeof message === 'string') {
-      setBanner({ message, severity: opts.severity || 'error', action: opts.action || null });
+      setBanner({ message: resolvedMessage, severity: resolvedSeverity, action: opts.action || null });
       return;
     }
     setBanner({
-      message: message.message || message.text || '',
-      severity: message.severity || opts.severity || 'error',
+      message: resolvedMessage,
+      severity: resolvedSeverity,
       action: message.action || opts.action || null,
       code: message.code || null,
     });

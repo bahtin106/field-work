@@ -17,6 +17,12 @@ import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
 import { useCompanySettings } from '../hooks/useCompanySettings';
+import SupportRequestModal from '../app/company_settings/sections/SupportRequestModal';
+import {
+  countUnreadSupportRequests,
+  SUPPORT_UNREAD_REFETCH_MS,
+  SUPPORT_UNREAD_QUERY_KEY,
+} from '../src/features/supportRequests/api';
 import Button from './ui/Button';
 import Card from './ui/Card';
 import { useToast } from './ui/ToastProvider';
@@ -195,6 +201,28 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [qc, user]);
 
   const [scope, setScope] = useState('my');
+  const [supportRequestOpen, setSupportRequestOpen] = useState(false);
+  const [supportRequestNonce, setSupportRequestNonce] = useState(0);
+  const { data: unreadSupportCount = 0 } = useQuery({
+    queryKey: SUPPORT_UNREAD_QUERY_KEY,
+    queryFn: countUnreadSupportRequests,
+    enabled: isSuperAdmin,
+    staleTime: 10 * 1000,
+    refetchInterval: SUPPORT_UNREAD_REFETCH_MS,
+  });
+
+  useEffect(() => {
+    if (!isSuperAdmin) return undefined;
+    const channel = supabase
+      .channel('home-feedbacks-unread-counter')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'feedbacks' }, () => {
+        qc.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY });
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isSuperAdmin, qc]);
 
   // ====== Session / profile ======
   const { data: session } = useQuery({
@@ -319,6 +347,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     () => runSingleNavigation(() => router.push('/admin')),
     [router, runSingleNavigation],
   );
+  const openSupportRequest = useCallback(() => {
+    setSupportRequestNonce((value) => value + 1);
+    setSupportRequestOpen(true);
+  }, []);
   const showFutureFeatureToast = useCallback(() => {
     toast.info(t('feature_future'));
   }, [t, toast]);
@@ -406,14 +438,32 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           visible: isAdmin,
         },
         {
+          key: 'support',
+          title: t('company_settings_write_support'),
+          icon: 'message-square',
+          onPress: openSupportRequest,
+          visible: true,
+        },
+        {
           key: 'administration',
           title: t('settings_company_administration'),
           icon: 'shield',
           onPress: openAdministration,
           visible: isSuperAdmin,
+          badgeCount: unreadSupportCount,
         },
       ].filter((i) => i.visible),
-    [isAdmin, isSuperAdmin, openAppSettings, showFutureFeatureToast, openCompanySettings, openAdministration, t],
+    [
+      isAdmin,
+      isSuperAdmin,
+      openAppSettings,
+      showFutureFeatureToast,
+      openCompanySettings,
+      openSupportRequest,
+      openAdministration,
+      unreadSupportCount,
+      t,
+    ],
   );
 
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -522,7 +572,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   // Render UI immediately even if profile is still loading.
 
   return (
-    <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+    <>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
       <Card style={styles.cardRounded} padded={false}>
           <Pressable
           onPress={openSelfProfileEdit}
@@ -630,11 +681,20 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
                 />
                 <Text style={[styles.menuLabel, isDisabled && styles.menuLabelDisabled]}>{item.title}</Text>
               </View>
-              <FeatherIcon
-                name="chevron-right"
-                size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? theme.typography.sizes.md}
-                color={theme.colors.textSecondary || theme.colors.text}
-              />
+              <View style={styles.menuRowRight}>
+                {item.badgeCount > 0 ? (
+                  <View style={styles.menuBadge}>
+                    <Text style={styles.menuBadgeText}>
+                      {item.badgeCount > 99 ? '99+' : String(item.badgeCount)}
+                    </Text>
+                  </View>
+                ) : null}
+                <FeatherIcon
+                  name="chevron-right"
+                  size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? theme.typography.sizes.md}
+                  color={theme.colors.textSecondary || theme.colors.text}
+                />
+              </View>
             </Pressable>
           );
         })}
@@ -709,7 +769,15 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       <View style={styles.actionWrapper}>
         <Button title={t('home_btn_logout')} variant='destructive' onPress={handleLogout} />
       </View>
-    </ScrollView>
+      </ScrollView>
+
+      <SupportRequestModal
+        key={`support-request-${supportRequestNonce}`}
+        visible={supportRequestOpen}
+        onClose={() => setSupportRequestOpen(false)}
+        profile={currentProfile}
+      />
+    </>
   );
 }
 
@@ -898,6 +966,25 @@ const createStyles = (theme) => {
     menuContent: {
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    menuRowRight: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    menuBadge: {
+      borderRadius: radii.pill,
+      minWidth: spacing.lg + spacing.xs,
+      paddingHorizontal: spacing.xs,
+      paddingVertical: 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primary,
+    },
+    menuBadgeText: {
+      color: colors.onPrimary,
+      fontSize: type.sizes.xs,
+      fontWeight: type.weight.semibold,
     },
     menuIcon: { marginRight: spacing.md },
     menuLabel: {

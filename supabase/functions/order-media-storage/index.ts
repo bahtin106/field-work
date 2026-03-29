@@ -8,6 +8,7 @@ import {
   listBegetKeys,
   putBegetObject,
 } from '../_shared/beget-s3.ts';
+import { handleFinanceEntryMediaStorageRequest } from '../finance-entry-media-storage/index.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +38,32 @@ const CATEGORY_DIR: Record<string, string> = {
   media_file_4: 'Media_4',
   media_file_5: 'Media_5',
 };
+const LEGACY_CATEGORY_ALIASES: Record<string, string> = {
+  photo_1: 'media_file_1',
+  photo_2: 'media_file_2',
+  photo_3: 'media_file_3',
+  photo_4: 'media_file_4',
+  photo_5: 'media_file_5',
+  media_1: 'media_file_1',
+  media_2: 'media_file_2',
+  media_3: 'media_file_3',
+  media_4: 'media_file_4',
+  media_5: 'media_file_5',
+  media_before: 'media_file_1',
+  media_after: 'media_file_2',
+  photo_before: 'media_file_1',
+  photo_after: 'media_file_2',
+};
+
+function normalizeMediaCategory(input: string | null | undefined) {
+  const raw = String(input || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (ALLOWED_CATEGORIES.has(raw)) return raw;
+  if (LEGACY_CATEGORY_ALIASES[raw]) return LEGACY_CATEGORY_ALIASES[raw];
+  const digitMatch = raw.match(/([1-5])$/);
+  if (digitMatch?.[1]) return `media_file_${digitMatch[1]}`;
+  return '';
+}
 
 function toErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) return error.message;
@@ -376,6 +403,7 @@ export async function handleOrderMediaStorageRequest(req: Request) {
     const body = (await req.json().catch(() => ({}))) as {
       action?: string;
       order_id?: string;
+      finance_entry_id?: string;
       category?: string;
       file_base64?: string;
       mime?: string;
@@ -385,10 +413,133 @@ export async function handleOrderMediaStorageRequest(req: Request) {
     };
 
     const action = String(body.action || '').trim();
+    const financeEntryId = String(body.finance_entry_id || '').trim();
+    const rawCategory = String(body.category || '').trim().toLowerCase();
+    const isLegacyFinanceCategory = rawCategory === 'finance_entry_photo' || rawCategory === 'finance_photo';
+    if (financeEntryId && isLegacyFinanceCategory) {
+      const delegatedBody = {
+        ...body,
+        finance_entry_id: financeEntryId,
+      };
+      return handleFinanceEntryMediaStorageRequest(
+        new Request(req.url, {
+          method: req.method,
+          headers: req.headers,
+          body: JSON.stringify(delegatedBody),
+        }),
+      );
+    }
+
     const orderId = String(body.order_id || '').trim();
-    const category = String(body.category || '').trim();
     if (!action || !orderId) return json(400, { success: false, message: 'Missing action or order_id' });
-    if (category && !ALLOWED_CATEGORIES.has(category)) {
+
+    if (!financeEntryId && isLegacyFinanceCategory && action === 'delete') {
+      const ctx = await getCallerAndOrderContext(admin, token, orderId);
+      const sourceUrl = String(body.url || '').trim();
+      if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
+
+      let resolvedFinanceEntryId = '';
+      const { data: mappedRow, error: mappedErr } = await admin
+        .from('finance_entry_media_external_map')
+        .select('finance_entry_id')
+        .eq('company_id', ctx.companyId)
+        .eq('order_id', orderId)
+        .eq('provider', 'beget_s3')
+        .or(`source_url.eq.${sourceUrl},display_url.eq.${sourceUrl}`)
+        .limit(1)
+        .maybeSingle();
+      if (mappedErr) throw mappedErr;
+      resolvedFinanceEntryId = String(mappedRow?.finance_entry_id || '').trim();
+
+      if (!resolvedFinanceEntryId) {
+        const { data: candidates, error: candidatesErr } = await admin
+          .from('order_finance_entries')
+          .select('id, photo_urls')
+          .eq('company_id', ctx.companyId)
+          .eq('order_id', orderId);
+        if (candidatesErr) throw candidatesErr;
+        const needle = canonicalUrl(sourceUrl);
+        const candidate = (candidates || []).find((entry) => {
+          const urls = Array.isArray((entry as { photo_urls?: unknown[] })?.photo_urls)
+            ? (entry as { photo_urls?: unknown[] }).photo_urls
+                .map((value) => String(value || '').trim())
+                .filter(Boolean)
+            : [];
+          return urls.some((value) => value === sourceUrl || (needle && canonicalUrl(value) === needle));
+        });
+        resolvedFinanceEntryId = String((candidate as { id?: string })?.id || '').trim();
+      }
+
+      if (!resolvedFinanceEntryId) {
+        return json(404, { success: false, message: 'Finance entry media mapping not found' });
+      }
+
+      const delegatedBody = {
+        ...body,
+        finance_entry_id: resolvedFinanceEntryId,
+      };
+      return handleFinanceEntryMediaStorageRequest(
+        new Request(req.url, {
+          method: req.method,
+          headers: req.headers,
+          body: JSON.stringify(delegatedBody),
+        }),
+      );
+    }
+
+    const category = normalizeMediaCategory(body.category);
+    if (String(body.category || '').trim() && !category) {
+      if (action === 'delete') {
+        const ctx = await getCallerAndOrderContext(admin, token, orderId);
+        const sourceUrl = String(body.url || '').trim();
+        if (!sourceUrl) return json(400, { success: false, message: 'url is required' });
+
+        let resolvedFinanceEntryId = '';
+        const { data: mappedRow, error: mappedErr } = await admin
+          .from('finance_entry_media_external_map')
+          .select('finance_entry_id')
+          .eq('company_id', ctx.companyId)
+          .eq('order_id', orderId)
+          .eq('provider', 'beget_s3')
+          .or(`source_url.eq.${sourceUrl},display_url.eq.${sourceUrl}`)
+          .limit(1)
+          .maybeSingle();
+        if (mappedErr) throw mappedErr;
+        resolvedFinanceEntryId = String(mappedRow?.finance_entry_id || '').trim();
+
+        if (!resolvedFinanceEntryId) {
+          const { data: candidates, error: candidatesErr } = await admin
+            .from('order_finance_entries')
+            .select('id, photo_urls')
+            .eq('company_id', ctx.companyId)
+            .eq('order_id', orderId);
+          if (candidatesErr) throw candidatesErr;
+          const needle = canonicalUrl(sourceUrl);
+          const candidate = (candidates || []).find((entry) => {
+            const urls = Array.isArray((entry as { photo_urls?: unknown[] })?.photo_urls)
+              ? (entry as { photo_urls?: unknown[] }).photo_urls
+                  .map((value) => String(value || '').trim())
+                  .filter(Boolean)
+              : [];
+            return urls.some((value) => value === sourceUrl || (needle && canonicalUrl(value) === needle));
+          });
+          resolvedFinanceEntryId = String((candidate as { id?: string })?.id || '').trim();
+        }
+
+        if (resolvedFinanceEntryId) {
+          const delegatedBody = {
+            ...body,
+            finance_entry_id: resolvedFinanceEntryId,
+          };
+          return handleFinanceEntryMediaStorageRequest(
+            new Request(req.url, {
+              method: req.method,
+              headers: req.headers,
+              body: JSON.stringify(delegatedBody),
+            }),
+          );
+        }
+      }
       return json(400, { success: false, message: 'Invalid category' });
     }
 

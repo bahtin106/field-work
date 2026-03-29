@@ -69,6 +69,7 @@ const TextField = forwardRef(function TextField(
     onInvalidInput, // Callback когда пользователь вводит недопустимый символ
     autoGrow,
     minLines,
+    maxLines,
   },
   ref,
 ) {
@@ -93,7 +94,9 @@ const TextField = forwardRef(function TextField(
   // Используем multiline для ВСЕх полей кроме паролей (можем переопределить через пропсы)
   const effectiveMultiline = !!multiline;
 
-  const maxRows = theme.components?.input?.autoGrowMaxRows ?? 5;
+  const maxRowsFromProps =
+    Number.isFinite(maxLines) && maxLines >= 1 ? Math.max(1, Math.floor(maxLines)) : null;
+  const maxRows = maxRowsFromProps ?? theme.components?.input?.autoGrowMaxRows ?? 5;
   const fontSize = theme.typography?.sizes?.md ?? 15;
   const lineHeightRatio = theme.typography?.lineHeights?.normal ?? 1.35;
   const lineHeightValue = Math.round(fontSize * lineHeightRatio);
