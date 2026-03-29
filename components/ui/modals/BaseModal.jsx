@@ -86,6 +86,7 @@ const BaseModalImpl = (
   {
     visible,
     onClose,
+    onRequestClose,
     onShow,
     title = '',
     children,
@@ -283,6 +284,16 @@ const BaseModalImpl = (
   };
   useImperativeHandle(ref, () => ({ close }));
 
+  const requestClose = () => {
+    if (typeof onRequestClose === 'function') {
+      try {
+        onRequestClose();
+      } catch {}
+      return;
+    }
+    close();
+  };
+
   const aBackdrop = useAnimatedStyle(() => ({ opacity: op.value }));
   const aWrap = useAnimatedStyle(() => ({
     paddingBottom: animatedBottomPad.value,
@@ -366,7 +377,7 @@ const BaseModalImpl = (
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={close}
+      onRequestClose={requestClose}
       onShow={() => {
         runOpenAnimation();
         try {
@@ -389,7 +400,7 @@ const BaseModalImpl = (
             } catch {}
             return;
           }
-          if (!disableBackdropClose) close();
+          if (!disableBackdropClose) requestClose();
         }}
       >
         <Animated.View
@@ -441,7 +452,7 @@ const BaseModalImpl = (
               </View>
               <Pressable
                 hitSlop={modalTokens.closeHitSlop ?? 10}
-                onPress={close}
+                onPress={requestClose}
                 style={s.closeBtn}
                 accessibilityLabel={T('btn_close')}
               >

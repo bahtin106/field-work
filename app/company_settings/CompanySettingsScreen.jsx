@@ -731,48 +731,6 @@ export default function CompanySettings() {
           });
         } catch {}
 
-        // If recalc requested, try to detect enqueued job and wait for it (best-effort)
-        if (recalc) {
-          // read company to get recalc_job_id
-          const { data: companyRow } = await supabase
-            .from('companies')
-            .select('recalc_in_progress,recalc_job_id')
-            .eq('id', companyId)
-            .maybeSingle();
-          const jobId = companyRow?.recalc_job_id;
-          if (companyRow?.recalc_in_progress && jobId) {
-            // poll job status until done or timeout
-            const start = Date.now();
-            const timeout = 2 * 60 * 1000; // 2 minutes
-            let jobDone = false;
-            while (Date.now() - start < timeout) {
-              // check job
-              const { data: j } = await supabase
-                .from('finance_currency_recalc_jobs')
-                .select('status')
-                .eq('id', jobId)
-                .maybeSingle();
-              if (!j) break;
-              if (j.status === 'done') {
-                jobDone = true;
-                break;
-              }
-              if (j.status === 'failed') break;
-              // wait before next poll
-              await new Promise((r) => setTimeout(r, 2500));
-            }
-            // final cache invalidation after job
-            await queryClient.invalidateQueries({
-              predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'orders',
-            });
-            await refreshCompany();
-            if (!jobDone) {
-              // non-fatal: job may run later; let user know
-              toast.show(t('toast_recalc_started'), 'info');
-            }
-          }
-        }
-
         setCurrencyConfirmOpen(false);
         setPendingCurrency(null);
         setCurrencyRate('');
@@ -940,8 +898,6 @@ export default function CompanySettings() {
               disabled={!telegramBotRoute}
               onDisabledPress={!telegramBotRoute ? onSoonPress : undefined}
             />
-
-            
 
             {isAdmin ? (
               <>

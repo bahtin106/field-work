@@ -282,6 +282,52 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
   return atomic;
 }
 
+async function removeFinanceEntryPhotoUrlFallback(
+  admin: ReturnType<typeof createClient>,
+  financeEntryId: string,
+  companyId: string,
+  url: string,
+) {
+  const direct = String(url || '').trim();
+  const needle = canonicalUrl(direct);
+  const { data: entry, error: entryErr } = await admin
+    .from('order_finance_entries')
+    .select('photo_urls')
+    .eq('id', financeEntryId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (entryErr) throw entryErr;
+
+  const existingUrls = Array.isArray(entry?.photo_urls)
+    ? entry.photo_urls.map((value: unknown) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const nextUrls = existingUrls.filter((existingUrl) => {
+    if (direct && existingUrl === direct) return false;
+    if (needle && canonicalUrl(existingUrl) === needle) return false;
+    return true;
+  });
+
+  const { data: updated, error: updateErr } = await admin
+    .from('order_finance_entries')
+    .update({
+      photo_urls: nextUrls,
+      updated_at: new Date().toISOString(),
+      updated_by: null,
+    })
+    .eq('id', financeEntryId)
+    .eq('company_id', companyId)
+    .select('photo_urls, updated_at')
+    .maybeSingle();
+  if (updateErr) throw updateErr;
+
+  return {
+    photo_urls: Array.isArray(updated?.photo_urls)
+      ? updated.photo_urls.map((value: unknown) => String(value || '')).filter(Boolean)
+      : nextUrls,
+    updated_at: updated?.updated_at ? String(updated.updated_at) : null,
+  };
+}
+
 function buildFinanceEntryMediaKey(
   ctx: {
     companyName: string;
@@ -452,7 +498,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
             created_by: ctx.userId,
             file_size_bytes: fileSizeBytes,
           },
-          { onConflict: 'finance_entry_id,source_url' },
+          { onConflict: 'finance_entry_id,external_path' },
         );
         if (mapErr) throw mapErr;
       } catch (error) {
@@ -505,7 +551,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
             created_by: ctx.userId,
             file_size_bytes: bytes.length,
           },
-          { onConflict: 'finance_entry_id,source_url' },
+          { onConflict: 'finance_entry_id,external_path' },
         );
         if (mapErr) throw mapErr;
       } catch (error) {
@@ -582,19 +628,38 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       const fallbackObjectKey = keyFromBegetUrl(sourceUrl);
       const objectKey = String(row?.external_path || fallbackObjectKey || '').trim();
       const preferredSourceUrl = String(row?.source_url || '').trim() || sourceUrl;
-      let atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
-        admin,
-        ctx.financeEntryId,
-        ctx.companyId,
-        preferredSourceUrl,
-      );
-      if (
-        atomic &&
-        Array.isArray(atomic.photo_urls) &&
-        atomic.photo_urls.includes(preferredSourceUrl) &&
-        sourceUrl !== preferredSourceUrl
-      ) {
+      let atomic:
+        | {
+            photo_urls: string[];
+            updated_at: string | null;
+          }
+        | null = null;
+      try {
         atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
+          admin,
+          ctx.financeEntryId,
+          ctx.companyId,
+          preferredSourceUrl,
+        );
+        if (
+          atomic &&
+          Array.isArray(atomic.photo_urls) &&
+          atomic.photo_urls.includes(preferredSourceUrl) &&
+          sourceUrl !== preferredSourceUrl
+        ) {
+          atomic = await removeFinanceEntryPhotoUrlAtomicCanonical(
+            admin,
+            ctx.financeEntryId,
+            ctx.companyId,
+            sourceUrl,
+          );
+        }
+      } catch (atomicError) {
+        console.warn(
+          '[finance-entry-media-storage] atomic remove fallback:',
+          toErrorMessage(atomicError),
+        );
+        atomic = await removeFinanceEntryPhotoUrlFallback(
           admin,
           ctx.financeEntryId,
           ctx.companyId,
@@ -602,19 +667,23 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
         );
       }
 
-      if (row?.id != null) {
-        await admin.from('finance_entry_media_external_map').delete().eq('id', Number(row.id));
-      } else {
-        let deleteQuery = admin
-          .from('finance_entry_media_external_map')
-          .delete()
-          .eq('company_id', ctx.companyId)
-          .eq('finance_entry_id', ctx.financeEntryId)
-          .eq('provider', 'beget_s3');
-        const orConditions = [`source_url.eq.${sourceUrl}`, `display_url.eq.${sourceUrl}`];
-        if (objectKey) orConditions.push(`external_path.eq.${objectKey}`);
-        deleteQuery = deleteQuery.or(orConditions.join(','));
-        await deleteQuery;
+      try {
+        if (row?.id != null) {
+          await admin.from('finance_entry_media_external_map').delete().eq('id', Number(row.id));
+        } else {
+          let deleteQuery = admin
+            .from('finance_entry_media_external_map')
+            .delete()
+            .eq('company_id', ctx.companyId)
+            .eq('finance_entry_id', ctx.financeEntryId)
+            .eq('provider', 'beget_s3');
+          const orConditions = [`source_url.eq.${sourceUrl}`, `display_url.eq.${sourceUrl}`];
+          if (objectKey) orConditions.push(`external_path.eq.${objectKey}`);
+          deleteQuery = deleteQuery.or(orConditions.join(','));
+          await deleteQuery;
+        }
+      } catch (mapDeleteError) {
+        console.warn('[finance-entry-media-storage] map delete warning:', toErrorMessage(mapDeleteError));
       }
 
       if (objectKey) {
@@ -641,8 +710,8 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
       return json(200, {
         success: true,
         provider: 'beget_s3',
-        photo_urls: atomic.photo_urls,
-        finance_entry_updated_at: atomic.updated_at,
+        photo_urls: Array.isArray(atomic?.photo_urls) ? atomic.photo_urls : [],
+        finance_entry_updated_at: atomic?.updated_at ?? null,
       });
     }
 

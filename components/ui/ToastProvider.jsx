@@ -4,6 +4,7 @@ import { Dimensions, Keyboard, Platform, StyleSheet, Text, View } from 'react-na
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FullWindowOverlay } from 'react-native-screens';
 import { useTheme } from '../../theme';
+import { logClientError } from '../../lib/errorLogsClient';
 // --- i18n labels (safe runtime require) ---
 let __labels = null;
 try {
@@ -115,9 +116,17 @@ export default function ToastProvider({ children }) {
   const show = useCallback(
     (text, type = 'info', opts = {}) => {
       const { sticky = false, duration = 1800 } = opts || {};
+      const normalizedText = String(text ?? '');
+      if ((type === 'error' || type === 'warning') && normalizedText.trim()) {
+        logClientError(normalizedText, {
+          source: 'ui_toast',
+          severity: type,
+          sticky: !!sticky,
+        });
+      }
       // If already visible: update text/type and (re)arm timer depending on sticky
       if (visibleRef.current) {
-        setMsg({ text, type });
+        setMsg({ text: normalizedText, type });
         if (timerRef.current) {
           clearTimeout(timerRef.current);
           timerRef.current = null;
@@ -127,7 +136,7 @@ export default function ToastProvider({ children }) {
       }
       // First show: set visible and play enter animation
       visibleRef.current = true;
-      setMsg({ text, type });
+      setMsg({ text: normalizedText, type });
       ty.value = 20;
       op.value = 0;
       ty.value = withSpring(0, { mass: 0.7, damping: 16, stiffness: 180 });
@@ -191,7 +200,7 @@ export default function ToastProvider({ children }) {
 
   const renderOverlay = useCallback(
     () => (
-      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      <View pointerEvents="none" style={styles.overlayRoot}>
         <Animated.View
           pointerEvents="none"
           style={[
@@ -229,6 +238,11 @@ export function useToast() {
 
 const { width } = Dimensions.get('window');
 const styles = StyleSheet.create({
+  overlayRoot: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 2147483647,
+    elevation: 2147483647,
+  },
   container: {
     position: 'absolute',
     left: 0,
@@ -242,6 +256,7 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     zIndex: 1000,
+    elevation: 1000,
   },
   modalContainer: {
     position: 'absolute',
@@ -257,6 +272,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 16,
+    elevation: 1001,
   },
   text: { fontSize: 14, fontWeight: '500', textAlign: 'center' },
 });

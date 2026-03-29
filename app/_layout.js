@@ -19,6 +19,7 @@ import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
 import appReadyState from '../lib/appReadyState';
 import { applyAndroidSystemBars } from '../lib/systemBars';
+import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
 import dismissToRoute from '../lib/navigation/dismissToRoute';
@@ -137,6 +138,13 @@ function RootLayoutInner() {
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const isBlockedScreen = inAuthGroup && authScreen === 'blocked';
+
+  useEffect(() => {
+    installClientErrorLogging();
+    return () => {
+      uninstallClientErrorLogging();
+    };
+  }, []);
 
   useEffect(() => {
     segmentsRef.current = segments;
@@ -668,6 +676,8 @@ function RootLayoutInner() {
               <Stack.Screen name="admin/companies/index" />
               <Stack.Screen name="admin/companies/details" />
               <Stack.Screen name="admin/companies/edit" />
+              <Stack.Screen name="admin/feedbacks/index" />
+              <Stack.Screen name="admin/feedbacks/[id]/index" />
               <Stack.Screen name="admin/storage/index" />
               <Stack.Screen name="admin/server/index" />
               <Stack.Screen name="stats" options={{ title: 'Stats' }} />

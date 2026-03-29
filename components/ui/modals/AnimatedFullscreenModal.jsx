@@ -15,6 +15,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '../../../theme';
+import { useToast } from '../ToastProvider';
 
 // M3 emphasized-decelerate (enter) / emphasized-accelerate (exit)
 const EASE_IN = Easing.bezier(0.05, 0.7, 0.1, 1.0);
@@ -29,6 +30,7 @@ export default function AnimatedFullscreenModal({
   ...rest
 }) {
   const { theme } = useTheme();
+  const toast = useToast();
   const exitDuration = theme.timings?.panelToggleMs ?? 220;
   const [mounted, setMounted] = useState(false);
   const opacity = useSharedValue(0);
@@ -92,6 +94,7 @@ export default function AnimatedFullscreenModal({
       <Animated.View style={[styles.fill, animStyle]}>
         {children}
       </Animated.View>
+      {toast?.renderOverlay?.() || null}
     </Modal>
   );
 }

@@ -16,6 +16,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useTheme } from '../../../theme/ThemeProvider';
+import { useToast } from '../ToastProvider';
 import { withAlpha } from './BaseModal';
 
 const ANCHOR_GAP = 8;
@@ -33,6 +34,7 @@ export default function QuickPreviewModal({
   onClose,
 }) {
   const { theme } = useTheme();
+  const toast = useToast();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const styles = React.useMemo(() => createStyles(theme), [theme]);
   const horizontalMargin = Number(theme.spacing?.sm ?? 10);
@@ -266,6 +268,7 @@ export default function QuickPreviewModal({
           </View>
         </View>
       </Animated.View>
+      {toast?.renderOverlay?.() || null}
     </Modal>
   );
 }

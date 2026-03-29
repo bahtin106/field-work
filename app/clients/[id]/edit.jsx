@@ -346,15 +346,8 @@ export default function EditClientScreen() {
     'additional_phone_3',
   ].some(isClientFieldVisible);
   const orderedPersonalFieldKeys = React.useMemo(
-    () =>
-      getOrderedEntityFields(clientFieldSettings, {
-        visibleOnly: false,
-        requiredFirst: true,
-        fieldKeys: ['first_name', 'middle_name', 'last_name', 'comment'],
-      })
-        .map((field) => field.fieldKey)
-        .filter((fieldKey) => isClientFieldVisible(fieldKey)),
-    [clientFieldSettings, isClientFieldVisible],
+    () => ['first_name', 'middle_name', 'last_name', 'comment'].filter((fieldKey) => isClientFieldVisible(fieldKey)),
+    [isClientFieldVisible],
   );
   const orderedContactFieldKeys = React.useMemo(
     () =>

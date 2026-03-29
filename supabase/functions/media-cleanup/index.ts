@@ -36,6 +36,59 @@ function normalizeKey(value: string | null | undefined) {
   return String(value || '').replace(/^\/+/, '').trim();
 }
 
+const FEEDBACK_DELETE_REASON_PREFIX = 'feedback_delete:';
+const FEEDBACK_DELETE_MAX_ATTEMPTS = 5;
+
+function feedbackIdFromReason(reason: string | null | undefined) {
+  const raw = String(reason || '').trim();
+  if (!raw.startsWith(FEEDBACK_DELETE_REASON_PREFIX)) return '';
+  return raw.slice(FEEDBACK_DELETE_REASON_PREFIX.length).trim();
+}
+
+async function finalizeQueuedFeedbackDeletion(
+  admin: ReturnType<typeof createClient>,
+  feedbackId: string,
+) {
+  const normalizedId = String(feedbackId || '').trim();
+  if (!normalizedId) return;
+
+  const reasonTag = `${FEEDBACK_DELETE_REASON_PREFIX}${normalizedId}`;
+  const { count: pendingCount, error: pendingError } = await admin
+    .from('media_cleanup_queue')
+    .select('id', { count: 'exact', head: true })
+    .eq('reason', reasonTag)
+    .is('processed_at', null);
+  if (pendingError) throw pendingError;
+  if (Number(pendingCount || 0) > 0) return;
+
+  const { error: deleteError } = await admin
+    .from('feedbacks')
+    .delete()
+    .eq('id', normalizedId)
+    .eq('deletion_state', 'pending_cleanup');
+  if (deleteError) throw deleteError;
+}
+
+async function markQueuedFeedbackDeletionFailed(
+  admin: ReturnType<typeof createClient>,
+  feedbackId: string,
+  errorMessage: string,
+) {
+  const normalizedId = String(feedbackId || '').trim();
+  if (!normalizedId) return;
+
+  const { error } = await admin
+    .from('feedbacks')
+    .update({
+      deletion_state: 'cleanup_failed',
+      delete_failed_at: new Date().toISOString(),
+      delete_error: String(errorMessage || '').trim() || 'media_cleanup_failed',
+    })
+    .eq('id', normalizedId)
+    .eq('deletion_state', 'pending_cleanup');
+  if (error) throw error;
+}
+
 async function refreshYandexAccessToken(
   admin: ReturnType<typeof createClient>,
   companyId: string,
@@ -157,7 +210,7 @@ export async function handleMediaCleanupRequest(req: Request) {
     const nowIso = new Date().toISOString();
     let query = admin
       .from('media_cleanup_queue')
-      .select('id, provider, object_key, company_id, entity_type, entity_id, order_id, attempts')
+      .select('id, provider, object_key, company_id, entity_type, entity_id, order_id, attempts, reason')
       .is('processed_at', null)
       .lte('not_before', nowIso)
       .order('id', { ascending: true })
@@ -188,12 +241,15 @@ export async function handleMediaCleanupRequest(req: Request) {
       entity_id?: string | null;
       order_id?: string | null;
       attempts?: number | null;
+      reason?: string | null;
     }>) {
+      const reasonFeedbackId = feedbackIdFromReason(row.reason);
+      const nextAttempt = Math.max(0, Number(row.attempts || 0)) + 1;
       const lockIso = new Date().toISOString();
       const { error: lockError } = await admin
         .from('media_cleanup_queue')
         .update({
-          attempts: Math.max(0, Number(row.attempts || 0)) + 1,
+          attempts: nextAttempt,
           locked_at: lockIso,
           updated_at: lockIso,
         })
@@ -227,21 +283,40 @@ export async function handleMediaCleanupRequest(req: Request) {
           })
           .eq('id', Number(row.id));
         if (doneError) throw doneError;
+        if (reasonFeedbackId) {
+          await finalizeQueuedFeedbackDeletion(admin, reasonFeedbackId).catch((finalizeError) => {
+            console.error('[media-cleanup] finalize feedback delete failed:', toErrorMessage(finalizeError));
+          });
+        }
         processed += 1;
       } catch (error) {
-        const retryIso = new Date(Date.now() + 5 * 60 * 1000).toISOString();
         const errorMessage = toErrorMessage(error);
+        const stopRetry = reasonFeedbackId && nextAttempt >= FEEDBACK_DELETE_MAX_ATTEMPTS;
+        const retryIso = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        const patch = stopRetry
+          ? {
+              locked_at: null,
+              last_error: errorMessage,
+              processed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }
+          : {
+              locked_at: null,
+              last_error: errorMessage,
+              not_before: retryIso,
+              updated_at: new Date().toISOString(),
+            };
         const { error: failError } = await admin
           .from('media_cleanup_queue')
-          .update({
-            locked_at: null,
-            last_error: errorMessage,
-            not_before: retryIso,
-            updated_at: new Date().toISOString(),
-          })
+          .update(patch)
           .eq('id', Number(row.id));
         if (failError) {
           console.error('[media-cleanup] failed to persist retry state:', toErrorMessage(failError));
+        }
+        if (stopRetry && reasonFeedbackId) {
+          await markQueuedFeedbackDeletionFailed(admin, reasonFeedbackId, errorMessage).catch((markError) => {
+            console.error('[media-cleanup] mark feedback cleanup_failed failed:', toErrorMessage(markError));
+          });
         }
       }
     }

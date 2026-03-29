@@ -121,13 +121,17 @@ export default function ClientViewScreen() {
     [additionalPhones, isClientFieldVisible],
   );
   const canShowPersonalSection = ['first_name', 'last_name', 'middle_name', 'comment'].some(isClientFieldVisible);
-  const canShowContactSection = [
-    'email',
-    'phone',
-    'additional_phone_1',
-    'additional_phone_2',
-    'additional_phone_3',
-  ].some(isClientFieldVisible);
+  const canShowContactSection = React.useMemo(() => {
+    const hasVisibleContactField = [
+      'email',
+      'phone',
+      'additional_phone_1',
+      'additional_phone_2',
+      'additional_phone_3',
+    ].some(isClientFieldVisible);
+    if (!hasVisibleContactField) return false;
+    return hasDisplayValue(client?.email) || hasDisplayValue(client?.phone) || visibleAdditionalPhones.length > 0;
+  }, [client?.email, client?.phone, isClientFieldVisible, visibleAdditionalPhones.length]);
 
   const onCopyEmail = React.useCallback(async () => {
     const email = client?.email || '';

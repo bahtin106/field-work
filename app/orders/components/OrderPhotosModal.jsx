@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
@@ -34,14 +34,16 @@ export default function OrderPhotosModal({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedUris, setSelectedUris] = useState([]);
   const [confirmRemoveIndex, setConfirmRemoveIndex] = useState(null);
+  const pickedSessionIdsRef = useRef(new Set());
 
   useEffect(() => {
     if (!visible) {
       setSelectionMode(false);
       setSelectedUris([]);
       setConfirmRemoveIndex(null);
+      pickedSessionIdsRef.current = new Set();
     }
-  }, [visible]);
+  }, [pickedSessionIdsRef, visible]);
 
   useEffect(() => {
     setSelectionMode(false);
@@ -114,17 +116,27 @@ export default function OrderPhotosModal({
       });
       if (!result || result.canceled) return;
 
-      const uris = (result.assets || []).map((asset) => asset.uri).filter(Boolean);
-      if (!uris.length) return;
+      if (!(result.assets || []).length) return;
+
+      const next = [];
+      for (const asset of result.assets || []) {
+        const uri = String(asset?.uri || '').trim();
+        if (!uri) continue;
+        const id = String(asset?.assetId || uri);
+        if (pickedSessionIdsRef.current.has(id)) continue;
+        pickedSessionIdsRef.current.add(id);
+        next.push(uri);
+      }
+      if (!next.length) return;
 
       hapticMedium();
-      onUploadMultiple(category, uris).catch((e) =>
+      onUploadMultiple(category, next).catch((e) =>
         console.warn('[OrderPhotosModal] gallery upload error', e),
       );
     } catch (e) {
       console.warn('[OrderPhotosModal] gallery picker error', e);
     }
-  }, [category, onUploadMultiple, theme.media?.quality]);
+  }, [category, onUploadMultiple, pickedSessionIdsRef, theme.media?.quality]);
 
   const handleOpenCamera = useCallback(() => {
     hapticMedium();
