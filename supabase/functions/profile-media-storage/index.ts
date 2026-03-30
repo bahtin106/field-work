@@ -1065,7 +1065,18 @@ export async function cleanupProfileMediaEntity(
     const reason = `feedback_delete:${feedbackId}`;
     await admin
       .from('media_cleanup_queue')
-      .update({ reason, updated_at: new Date().toISOString() })
+      .update({
+        reason,
+        max_attempts: 5,
+        status: 'pending',
+        processed_at: null,
+        locked_at: null,
+        lock_expires_at: null,
+        claimed_by: null,
+        error_code: null,
+        last_error: null,
+        updated_at: new Date().toISOString(),
+      })
       .is('processed_at', null)
       .eq('entity_type', 'feedback')
       .eq('entity_id', feedbackId)
@@ -1074,7 +1085,18 @@ export async function cleanupProfileMediaEntity(
     if (feedbackAttachmentIds.length) {
       await admin
         .from('media_cleanup_queue')
-        .update({ reason, updated_at: new Date().toISOString() })
+        .update({
+          reason,
+          max_attempts: 5,
+          status: 'pending',
+          processed_at: null,
+          locked_at: null,
+          lock_expires_at: null,
+          claimed_by: null,
+          error_code: null,
+          last_error: null,
+          updated_at: new Date().toISOString(),
+        })
         .is('processed_at', null)
         .eq('entity_type', 'feedback_attachment')
         .in('entity_id', feedbackAttachmentIds)

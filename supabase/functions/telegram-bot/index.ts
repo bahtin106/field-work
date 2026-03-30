@@ -497,7 +497,8 @@ async function getEffectiveFields(
       .select('*')
       .eq('provider', TELEGRAM_PROVIDER)
       .eq('is_active', true)
-      .order('default_sort_order', { ascending: true }),
+      .order('default_sort_order', { ascending: true })
+      .order('field_key', { ascending: true }),
     admin
       .from('company_messenger_field_settings')
       .select('*')
@@ -1700,11 +1701,16 @@ async function enrichExistingClientIfNeeded(
 }
 
 async function createClientIfNeeded(admin: AdminClient, integration: IntegrationRow, values: Record<string, string>) {
+  const createClientAllowed = integration.create_client !== false;
+  const existingClientPolicy = integration.existing_client_policy === 'order_only' ? 'order_only' : 'reuse';
   const existing = await findExistingClientByIdentity(admin, integration.company_id, values);
   if (existing) {
     const clientId = String(existing.id);
     await enrichExistingClientIfNeeded(admin, clientId, values);
     return clientId;
+  }
+  if (!createClientAllowed || existingClientPolicy === 'order_only') {
+    return null;
   }
   const name = splitCustomerName(values.customer_name);
   const secondaryPhone = trimToNull(values.secondary_phone);
@@ -1749,6 +1755,9 @@ async function findExistingObject(admin: AdminClient, clientId: string, values: 
 }
 
 async function createObjectIfNeeded(admin: AdminClient, integration: IntegrationRow, clientId: string | null, values: Record<string, string>) {
+  const createObjectAllowed = integration.create_object !== false;
+  const existingObjectPolicy =
+    integration.existing_object_policy === 'always_create' ? 'always_create' : 'reuse_or_create';
   const address = {
     country: normalizeText(values.country),
     region: normalizeText(values.region),
@@ -1765,12 +1774,14 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
     parking_notes: normalizeText(values.parking_notes),
   };
   const objectName = buildObjectSummary(address) || 'Объект';
-  if (!clientId || !buildObjectSummary(address)) {
+  if (!createObjectAllowed || !clientId || !buildObjectSummary(address)) {
     return { objectId: null, address, addressMode: 'custom', objectName };
   }
-  const existing = await findExistingObject(admin, clientId, address);
-  if (existing) {
-    return { objectId: String(existing.id), address, addressMode: 'object', objectName };
+  if (existingObjectPolicy !== 'always_create') {
+    const existing = await findExistingObject(admin, clientId, address);
+    if (existing) {
+      return { objectId: String(existing.id), address, addressMode: 'object', objectName };
+    }
   }
   const { data, error } = await admin
     .from('client_objects')
