@@ -630,15 +630,20 @@ export async function handleObjectMediaStorageRequest(req: Request) {
       }
 
       if (row?.id != null) {
-        await admin.from('object_media_external_map').delete().eq('id', Number(row.id));
+        const { error: mapDeleteErr } = await admin
+          .from('object_media_external_map')
+          .delete()
+          .eq('id', Number(row.id));
+        if (mapDeleteErr) throw mapDeleteErr;
       } else {
-        await admin
+        // If URL matching failed, clear the whole slot mapping to avoid stale rows.
+        const { error: mapDeleteErr } = await admin
           .from('object_media_external_map')
           .delete()
           .eq('company_id', ctx.companyId)
           .eq('object_id', ctx.object.id)
-          .eq('category', category)
-          .or(`source_url.eq.${sourceUrl},display_url.eq.${sourceUrl}`);
+          .eq('category', category);
+        if (mapDeleteErr) throw mapDeleteErr;
       }
 
       return json(200, { success: true });

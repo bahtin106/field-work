@@ -32,12 +32,38 @@ function toErrorMessage(error: unknown) {
   return 'Unknown error';
 }
 
+function isMissingRpcError(error: unknown) {
+  const msg = String((error as { message?: string })?.message || error || '').toLowerCase();
+  return msg.includes('function') && (msg.includes('does not exist') || msg.includes('not found'));
+}
+
 function normalizeKey(value: string | null | undefined) {
   return String(value || '').replace(/^\/+/, '').trim();
 }
 
 const FEEDBACK_DELETE_REASON_PREFIX = 'feedback_delete:';
 const FEEDBACK_DELETE_MAX_ATTEMPTS = 5;
+const DEFAULT_MAX_ATTEMPTS = 40;
+const DEFAULT_RETRY_DELAY_MS = 5 * 60 * 1000;
+const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+
+function envInt(name: string, fallback: number, min: number, max: number) {
+  const raw = Number(Deno.env.get(name) || fallback);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(raw)));
+}
+
+function isNonRetryableCleanupError(errorMessage: string) {
+  const msg = String(errorMessage || '').toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes('yandex disk not connected') ||
+    msg.includes('missing company_id for yandex cleanup') ||
+    msg.includes('invalid token. service role key required') ||
+    msg.includes('invalid x-cleanup-key') ||
+    msg.includes('unsupported provider')
+  );
+}
 
 function feedbackIdFromReason(reason: string | null | undefined) {
   const raw = String(reason || '').trim();
@@ -207,32 +233,31 @@ export async function handleMediaCleanupRequest(req: Request) {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
+    const maxAttempts = envInt('MEDIA_CLEANUP_MAX_ATTEMPTS', DEFAULT_MAX_ATTEMPTS, 1, 500);
+    const retryDelayMs = envInt('MEDIA_CLEANUP_RETRY_DELAY_MS', DEFAULT_RETRY_DELAY_MS, 1_000, 24 * 60 * 60 * 1000);
+    const lockTimeoutMs = envInt(
+      'MEDIA_CLEANUP_LOCK_TIMEOUT_MS',
+      DEFAULT_LOCK_TIMEOUT_MS,
+      10_000,
+      24 * 60 * 60 * 1000,
+    );
+    const workerId = `media-cleanup@${Deno.env.get('HOSTNAME') || 'edge'}`;
+
     const nowIso = new Date().toISOString();
-    let query = admin
-      .from('media_cleanup_queue')
-      .select('id, provider, object_key, company_id, entity_type, entity_id, order_id, attempts, reason')
-      .is('processed_at', null)
-      .lte('not_before', nowIso)
-      .order('id', { ascending: true })
-      .limit(limit);
-    if (provider) query = query.eq('provider', provider);
-    const { data: rows, error } = await query;
-    if (error) throw error;
+    const staleLockIso = new Date(Date.now() - lockTimeoutMs).toISOString();
+    let usingV2Queue = false;
+    let reclaimedLocks = 0;
 
-    const queueRows = Array.isArray(rows) ? rows : [];
-    if (!queueRows.length) {
-      return json(200, {
-        success: true,
-        dry_run: dryRun,
-        provider: provider || 'all',
-        queued: 0,
-        processed: 0,
-      });
-    }
+    const claimPayload = {
+      p_limit: limit,
+      p_provider: provider || null,
+      p_lock_ms: lockTimeoutMs,
+      p_worker: workerId,
+    };
+    const { data: claimedRows, error: claimError } = await admin.rpc('claim_media_cleanup_jobs', claimPayload);
+    if (claimError && !isMissingRpcError(claimError)) throw claimError;
 
-    let processed = 0;
-    const yandexTokenCache = new Map<string, string>();
-    for (const row of queueRows as Array<{
+    let queueRows: Array<{
       id: number;
       provider: string;
       object_key: string | null;
@@ -242,19 +267,84 @@ export async function handleMediaCleanupRequest(req: Request) {
       order_id?: string | null;
       attempts?: number | null;
       reason?: string | null;
-    }>) {
-      const reasonFeedbackId = feedbackIdFromReason(row.reason);
-      const nextAttempt = Math.max(0, Number(row.attempts || 0)) + 1;
-      const lockIso = new Date().toISOString();
-      const { error: lockError } = await admin
+      max_attempts?: number | null;
+      status?: string | null;
+    }> = [];
+
+    if (!claimError) {
+      usingV2Queue = true;
+      queueRows = Array.isArray(claimedRows) ? (claimedRows as typeof queueRows) : [];
+    } else {
+      const { count, error: reclaimError } = await admin
         .from('media_cleanup_queue')
         .update({
-          attempts: nextAttempt,
-          locked_at: lockIso,
-          updated_at: lockIso,
+          locked_at: null,
+          updated_at: nowIso,
         })
-        .eq('id', Number(row.id));
-      if (lockError) throw lockError;
+        .is('processed_at', null)
+        .lt('locked_at', staleLockIso)
+        .select('id', { count: 'exact', head: true });
+      if (reclaimError) {
+        console.error('[media-cleanup] reclaim stale locks failed:', toErrorMessage(reclaimError));
+      }
+      reclaimedLocks = Number(count || 0);
+
+      let query = admin
+        .from('media_cleanup_queue')
+        .select('id, provider, object_key, company_id, entity_type, entity_id, order_id, attempts, reason')
+        .is('processed_at', null)
+        .lte('not_before', nowIso)
+        .is('locked_at', null)
+        .order('id', { ascending: true })
+        .limit(limit);
+      if (provider) query = query.eq('provider', provider);
+      const { data: rows, error } = await query;
+      if (error) throw error;
+      queueRows = Array.isArray(rows) ? (rows as typeof queueRows) : [];
+    }
+
+    if (!queueRows.length) {
+      return json(200, {
+        success: true,
+        dry_run: dryRun,
+        provider: provider || 'all',
+        queued: 0,
+        processed: 0,
+        retried: 0,
+        failed_final: 0,
+        skipped_lock_conflict: 0,
+        reclaimed_stale_locks: Number(reclaimedLocks || 0),
+      });
+    }
+
+    let processed = 0;
+    let retried = 0;
+    let failedFinal = 0;
+    let lockConflicts = 0;
+    const yandexTokenCache = new Map<string, string>();
+    for (const row of queueRows) {
+      const reasonFeedbackId = feedbackIdFromReason(row.reason);
+      const nextAttempt = Math.max(0, Number(row.attempts || 0));
+      if (!usingV2Queue) {
+        const lockIso = new Date().toISOString();
+        const lockQuery = admin
+          .from('media_cleanup_queue')
+          .update({
+            attempts: nextAttempt + 1,
+            locked_at: lockIso,
+            updated_at: lockIso,
+          })
+          .eq('id', Number(row.id))
+          .is('processed_at', null)
+          .is('locked_at', null)
+          .select('id');
+        const { data: lockRows, error: lockError } = await lockQuery;
+        if (lockError) throw lockError;
+        if (!Array.isArray(lockRows) || !lockRows.length) {
+          lockConflicts += 1;
+          continue;
+        }
+      }
       try {
         const objectKey = normalizeKey(row.object_key);
         if (!dryRun && objectKey) {
@@ -272,17 +362,32 @@ export async function handleMediaCleanupRequest(req: Request) {
           }
         }
 
-        const doneIso = new Date().toISOString();
-        const { error: doneError } = await admin
-          .from('media_cleanup_queue')
-          .update({
-            processed_at: doneIso,
-            locked_at: null,
-            last_error: null,
-            updated_at: doneIso,
-          })
-          .eq('id', Number(row.id));
-        if (doneError) throw doneError;
+        if (usingV2Queue) {
+          const { data: finalizeState, error: finalizeError } = await admin.rpc('finalize_media_cleanup_job', {
+            p_id: Number(row.id),
+            p_success: true,
+            p_error_message: null,
+            p_error_code: null,
+            p_retry_delay_ms: retryDelayMs,
+            p_force_dead_letter: false,
+          });
+          if (finalizeError) throw finalizeError;
+          if (String(finalizeState || '') !== 'succeeded') {
+            throw new Error(`Unexpected finalize state: ${String(finalizeState || 'unknown')}`);
+          }
+        } else {
+          const doneIso = new Date().toISOString();
+          const { error: doneError } = await admin
+            .from('media_cleanup_queue')
+            .update({
+              processed_at: doneIso,
+              locked_at: null,
+              last_error: null,
+              updated_at: doneIso,
+            })
+            .eq('id', Number(row.id));
+          if (doneError) throw doneError;
+        }
         if (reasonFeedbackId) {
           await finalizeQueuedFeedbackDeletion(admin, reasonFeedbackId).catch((finalizeError) => {
             console.error('[media-cleanup] finalize feedback delete failed:', toErrorMessage(finalizeError));
@@ -291,27 +396,59 @@ export async function handleMediaCleanupRequest(req: Request) {
         processed += 1;
       } catch (error) {
         const errorMessage = toErrorMessage(error);
-        const stopRetry = reasonFeedbackId && nextAttempt >= FEEDBACK_DELETE_MAX_ATTEMPTS;
-        const retryIso = new Date(Date.now() + 5 * 60 * 1000).toISOString();
-        const patch = stopRetry
-          ? {
-              locked_at: null,
-              last_error: errorMessage,
-              processed_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
+        const configuredMax = Number(row.max_attempts || maxAttempts);
+        const reasonMaxAttempts = reasonFeedbackId
+          ? Math.min(FEEDBACK_DELETE_MAX_ATTEMPTS, Math.max(1, configuredMax))
+          : Math.max(1, configuredMax);
+        const nonRetryable = isNonRetryableCleanupError(errorMessage);
+        const stopRetry = nonRetryable || nextAttempt >= reasonMaxAttempts;
+        if (usingV2Queue) {
+          const errorCode = nonRetryable ? 'non_retryable' : 'retryable';
+          const { data: finalizeState, error: finalizeError } = await admin.rpc('finalize_media_cleanup_job', {
+            p_id: Number(row.id),
+            p_success: false,
+            p_error_message: errorMessage,
+            p_error_code: errorCode,
+            p_retry_delay_ms: retryDelayMs,
+            p_force_dead_letter: stopRetry,
+          });
+          if (finalizeError) {
+            console.error('[media-cleanup] finalize failure state failed:', toErrorMessage(finalizeError));
+          } else {
+            const nextState = String(finalizeState || '');
+            if (nextState === 'dead_letter') {
+              failedFinal += 1;
+            } else if (nextState === 'retrying') {
+              retried += 1;
             }
-          : {
-              locked_at: null,
-              last_error: errorMessage,
-              not_before: retryIso,
-              updated_at: new Date().toISOString(),
-            };
-        const { error: failError } = await admin
-          .from('media_cleanup_queue')
-          .update(patch)
-          .eq('id', Number(row.id));
-        if (failError) {
-          console.error('[media-cleanup] failed to persist retry state:', toErrorMessage(failError));
+          }
+        } else {
+          const retryIso = new Date(Date.now() + retryDelayMs).toISOString();
+          const patch = stopRetry
+            ? {
+                locked_at: null,
+                last_error: `[final] ${errorMessage}`,
+                processed_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              }
+            : {
+                locked_at: null,
+                last_error: errorMessage,
+                not_before: retryIso,
+                updated_at: new Date().toISOString(),
+              };
+          const { error: failError } = await admin
+            .from('media_cleanup_queue')
+            .update(patch)
+            .eq('id', Number(row.id));
+          if (failError) {
+            console.error('[media-cleanup] failed to persist retry state:', toErrorMessage(failError));
+          }
+          if (stopRetry) {
+            failedFinal += 1;
+          } else {
+            retried += 1;
+          }
         }
         if (stopRetry && reasonFeedbackId) {
           await markQueuedFeedbackDeletionFailed(admin, reasonFeedbackId, errorMessage).catch((markError) => {
@@ -327,6 +464,10 @@ export async function handleMediaCleanupRequest(req: Request) {
       provider: provider || 'all',
       queued: queueRows.length,
       processed,
+      retried,
+      failed_final: failedFinal,
+      skipped_lock_conflict: lockConflicts,
+      reclaimed_stale_locks: Number(reclaimedLocks || 0),
     });
   } catch (error) {
     const message = toErrorMessage(error);
