@@ -1,4 +1,3 @@
-import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -14,6 +13,7 @@ import Animated, {
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
 import LabelValueRow from '../../components/ui/LabelValueRow';
+import AnimatedChevron from '../../components/ui/AnimatedChevron';
 import Button from '../../components/ui/Button';
 import {
   ThemedRefreshControl,
@@ -857,8 +857,9 @@ export default function BillingScreen() {
                     <Text style={base.label}>{t('billing_issued_licenses')}</Text>
                     <View style={[base.rightWrap, styles(theme).issuedWrap]}>
                       <Text style={[base.value, styles(theme).lineValueStrong]}>{`${currentActiveCount}/${paidSeatsTotal}`}</Text>
-                      <Feather
-                        name={licensesExpanded ? 'chevron-up' : 'chevron-down'}
+                      <AnimatedChevron
+                        expanded={licensesExpanded}
+                        iconName="chevron-down"
                         size={18}
                         color={theme.colors.textSecondary}
                       />

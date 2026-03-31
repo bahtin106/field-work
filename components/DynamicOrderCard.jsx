@@ -6,6 +6,11 @@ import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
 import { resolveRequestTitle } from '../src/features/requests/title';
 import { useTranslation } from '../src/i18n/useTranslation';
+import {
+  hasClientObjectMapPoint,
+  normalizeClientObjectLocationMode,
+  normalizeCoordinateValue,
+} from '../src/features/objects/addressing';
 import OrderStatusCapsule from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -175,6 +180,18 @@ function readWithFallback(order, field, key) {
   }
 
   if ((val == null || val === '') && key === 'address') {
+    const locationMode = normalizeClientObjectLocationMode(order?.object_location_mode || order?.location_mode, {
+      fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
+    });
+    if (locationMode === 'map' && hasClientObjectMapPoint(order)) {
+      const lat = normalizeCoordinateValue(order?.geo_lat);
+      const lng = normalizeCoordinateValue(order?.geo_lng);
+      val = lat && lng ? `${lat}, ${lng}` : '';
+      if (val) return val;
+    }
+    if (String(order?.address_mode || '').trim().toLowerCase() === 'custom') {
+      return '';
+    }
     // Р¤РѕСЂРјРёСЂСѓРµРј Р°РґСЂРµСЃ РєРѕРјРїР°РєС‚РЅРѕ: РїСЂРѕРїСѓСЃРєР°РµРј РѕР±Р»Р°СЃС‚СЊ/СЂР°Р№РѕРЅ, РїРѕРєР°Р·С‹РІР°РµРј РіРѕСЂРѕРґ,
     // СѓР»РёС†Сѓ Р±РµР· РїСЂРёСЃС‚Р°РІРєРё "ул."/"улица" Рё РЅРѕРјРµСЂ РґРѕРјР°.
     const city = order?.city || order?.town || order?.settlement || null;
@@ -312,6 +329,11 @@ function DynamicOrderCard({
         ].some((value) => String(value || '').trim().length > 0);
       }
       if (key === 'address') {
+        const locationMode = normalizeClientObjectLocationMode(order?.object_location_mode || order?.location_mode, {
+          fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
+        });
+        if (locationMode === 'map' && hasClientObjectMapPoint(order)) return true;
+        if (String(order?.address_mode || '').trim().toLowerCase() === 'custom') return false;
         const city = order?.city || order?.town || order?.settlement || '';
         const street = order?.street || order?.snt || '';
         const house = order?.house || order?.plot || '';
@@ -349,12 +371,21 @@ function DynamicOrderCard({
           else if (order?.phone_is_visible) value = order.phone;
           else if (order?.customer_phone_masked) value = order.customer_phone_masked;
         }
+        const addressIsMapPoint =
+          key === 'address' &&
+          normalizeClientObjectLocationMode(order?.object_location_mode || order?.location_mode, {
+            fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
+          }) === 'map' &&
+          hasClientObjectMapPoint(order);
         const label =
           field?.label && field.label !== key
             ? field.label
             : PRIMARY_ROW_LABEL_KEYS[key]
-              ? t(PRIMARY_ROW_LABEL_KEYS[key])
+              ? t(addressIsMapPoint ? 'objects_location_coordinates' : PRIMARY_ROW_LABEL_KEYS[key])
               : (field?.label ?? key);
+        if (key === 'address' && !value) {
+          value = t('order_details_address_not_specified');
+        }
         const visibleBySettings = isCardFieldVisible(key);
         const hasValue = hasOrderFieldValue(key, value);
         return { key, label, value, visibleBySettings, hasValue };
@@ -579,6 +610,19 @@ function DynamicOrderCard({
   }, [order?.assigned_to, executorName, showExecutor]);
 
   const mutedColor = theme?.text?.muted?.color ?? theme?.colors?.muted ?? '#8E8E93';
+  const showPrice =
+    (isCardFieldVisible('start_price') || hasOrderFieldValue('start_price', priceValue)) &&
+    priceValue !== null &&
+    priceValue !== undefined &&
+    String(priceValue).trim().length > 0;
+  const priceText = showPrice ? formatPrice(priceValue, order?.currency || companyCurrency || 'RUB') : '';
+  const footerLeftText =
+    context === 'calendar' && bottomTimeStr
+      ? bottomTimeStr
+      : showDate
+        ? formatDateShort(bottomDateIso, showDepartureTime)
+        : '';
+  const footerRightText = showExecutor ? String(resolvedExecutorName || executorName || '').trim() : '';
 
   /* ===== Render ===== */
   return (
@@ -591,6 +635,7 @@ function DynamicOrderCard({
         backgroundColor: theme.colors.card,
         borderRadius: 14,
         padding: 16,
+        minHeight: 132,
         marginHorizontal: 0,
         alignSelf: 'stretch',
         width: '100%',
@@ -641,12 +686,12 @@ function DynamicOrderCard({
       <View
         style={{
           flexDirection: 'row',
-          justifyContent: 'space-between',
           alignItems: 'center',
           marginTop: 6,
+          gap: 8,
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flex: 1.1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}>
           {showUrgentDot && (
             <View
               style={{
@@ -671,28 +716,34 @@ function DynamicOrderCard({
               </Text>
             </View>
           )}
-          {context === 'calendar' && bottomTimeStr ? (
-            <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-              {bottomTimeStr}
-            </Text>
-          ) : showDate ? (
-            <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-              {formatDateShort(bottomDateIso, showDepartureTime)}
-            </Text>
-          ) : null}
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ flex: 1, minWidth: 0, fontSize: 13, color: mutedColor }}
+          >
+            {footerLeftText || ' '}
+          </Text>
         </View>
 
-        {showExecutor ? (
-          <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-            {resolvedExecutorName || executorName || '—'}
+        <View style={{ flex: 0.9, minWidth: 0, alignItems: 'center' }}>
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ fontSize: 13, color: mutedColor, textAlign: 'center', width: '100%' }}
+          >
+            {priceText || ' '}
           </Text>
-        ) : (isCardFieldVisible('start_price') || hasOrderFieldValue('start_price', priceValue)) && priceValue ? (
-          <Text numberOfLines={1} style={{ fontSize: 13, color: mutedColor }}>
-            {formatPrice(priceValue, order?.currency || companyCurrency || 'RUB')}
+        </View>
+
+        <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%' }}
+          >
+            {footerRightText || ' '}
           </Text>
-        ) : (
-          <View style={{ width: 1, height: 1 }} />
-        )}
+        </View>
       </View>
     </TouchableOpacity>
   );

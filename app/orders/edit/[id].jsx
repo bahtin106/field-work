@@ -33,15 +33,18 @@ import {
   collectClientPhoneSearchValues,
   getClientAdditionalPhones,
 } from '../../../src/features/clients/additionalPhones';
-import { useClientObjects } from '../../../src/features/objects/queries';
+import { useClientObjects, useCreateClientObjectMutation } from '../../../src/features/objects/queries';
 import {
   getObjectAdditionalPhones,
   OBJECT_ADDITIONAL_PHONE_SLOT_IDS,
 } from '../../../src/features/objects/additionalPhones';
 import {
+  CLIENT_OBJECT_ADDRESS_FIELDS,
+  createEmptyClientObjectDraft,
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
   normalizeCoordinateValue,
+  sanitizeClientObjectPayload,
 } from '../../../src/features/objects/addressing';
 import {
   ORDER_ADDRESS_MODE,
@@ -70,6 +73,7 @@ import Card from '../../../components/ui/Card';
 import ClearButton from '../../../components/ui/ClearButton';
 import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../../components/ui/modals';
 import QuickPreviewModal from '../../../components/ui/modals/QuickPreviewModal';
+import ClientObjectEditorModal from '../../../components/objects/ClientObjectEditorModal';
 import PhoneInput from '../../../components/ui/PhoneInput';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField, { SwitchField } from '../../../components/ui/TextField';
@@ -80,8 +84,9 @@ import { supabase } from '../../../lib/supabase';
 import { t as T } from '../../../src/i18n';
 import { formatRuMask } from '../../../components/ui/phone';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
-import { FieldErrorText } from '../../../src/shared/feedback';
+import { FEEDBACK_CODES, FieldErrorText, getMessageByCode } from '../../../src/shared/feedback';
 import { getRequiredFieldLabel } from '../../../src/shared/forms/fieldValidation';
+import { getRequiredTextFieldError } from '../../../src/shared/validation/fields';
 import {
   isValidOptionalMobilePhone,
   toE164MobilePhoneOrNull,
@@ -359,6 +364,11 @@ function EditOrderContent() {
   const [previewObjectVisible, setPreviewObjectVisible] = useState(false);
   const [previewAnchor, setPreviewAnchor] = useState({ x: 0, y: 0 });
   const [objectModalVisible, setObjectModalVisible] = useState(false);
+  const [objectEditorVisible, setObjectEditorVisible] = useState(false);
+  const [objectEditorDraft, setObjectEditorDraft] = useState(() =>
+    createEmptyClientObjectDraft({ name: T('objects_new') }),
+  );
+  const [objectEditorFieldErrors, setObjectEditorFieldErrors] = useState({});
   const [parkingNotes, setParkingNotes] = useState('');
   const [geoLat, setGeoLat] = useState('');
   const [geoLng, setGeoLng] = useState('');
@@ -399,6 +409,7 @@ function EditOrderContent() {
   const { data: selectedClient } = useClient(selectedClientId, {
     enabled: !!selectedClientId,
   });
+  const createClientObjectMutation = useCreateClientObjectMutation();
   const updateClientMutation = useUpdateClientMutation();
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
@@ -591,7 +602,9 @@ function EditOrderContent() {
     const client = clients.find((item) => String(item.id) === String(selectedClientId));
     return client?.fullName || selectedClient?.fullName || selectedClient?.full_name || customerName || '';
   }, [clients, customerName, selectedClient, selectedClientId]);
-  const { data: clientObjectsByApi = [] } = useClientObjects(selectedClientId, { enabled: !!selectedClientId });
+  const { data: clientObjectsByApi = [], refetch: refetchClientObjects } = useClientObjects(selectedClientId, {
+    enabled: !!selectedClientId,
+  });
 
   const clientObjects = useMemo(() => {
     if (Array.isArray(selectedClient?.objects) && selectedClient.objects.length) return selectedClient.objects;
@@ -677,13 +690,38 @@ function EditOrderContent() {
     const selectedItem = phoneSourceItems.find((item) => item.id === phoneSourceId);
     return selectedItem?.label || T('create_order_phone_source_manual');
   }, [phoneSourceId, phoneSourceItems]);
+  const isObjectPointOnMap = useCallback((objectItem) => {
+    if (!objectItem) return false;
+    const mode = normalizeClientObjectLocationMode(objectItem?.location_mode, {
+      fallback: hasClientObjectMapPoint(objectItem) ? 'map' : 'address',
+    });
+    return mode === 'map' && hasClientObjectMapPoint(objectItem);
+  }, []);
+  const getObjectShortDescriptor = useCallback(
+    (objectItem) => {
+      if (!objectItem) return '';
+      if (isObjectPointOnMap(objectItem)) return T('objects_location_mode_map');
+      return buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || '';
+    },
+    [getVisibleObjectAddressDraft, isObjectPointOnMap],
+  );
   const selectedObjectSummary = useMemo(() => {
-    const liveSummary = [selectedObject?.name, buildOrderAddressShort(getVisibleObjectAddressDraft(selectedObject))]
-      .filter(Boolean)
-      .join(' - ');
-    if (liveSummary) return liveSummary;
+    if (selectedObject) {
+      if (isObjectPointOnMap(selectedObject)) {
+        return `${T('create_order_client_object_label')} - ${T('objects_location_mode_map')}`;
+      }
+      const liveSummary = [selectedObject?.name, getObjectShortDescriptor(selectedObject)]
+        .filter(Boolean)
+        .join(' - ');
+      if (liveSummary) return liveSummary;
+    }
     return String(orderData?.object_name || '').trim();
-  }, [getVisibleObjectAddressDraft, orderData?.object_name, selectedObject]);
+  }, [getObjectShortDescriptor, isObjectPointOnMap, orderData?.object_name, selectedObject]);
+  const selectedObjectDisplay = useMemo(() => {
+    if (selectedObjectSummary) return selectedObjectSummary;
+    if (addressMode === ORDER_ADDRESS_MODE.CUSTOM) return T('order_object_without_address');
+    return T('create_order_client_object_placeholder');
+  }, [addressMode, selectedObjectSummary]);
 
   const selectedWorkTypeName = useMemo(() => {
     const normalizedSelected = normalizeId(workTypeId);
@@ -781,6 +819,10 @@ function EditOrderContent() {
     if (!previewObject) return [];
     const previewVisibleAddress = getVisibleObjectAddressDraft(previewObject);
     const fullAddress = buildOrderAddressDisplay(previewVisibleAddress);
+    const isMapPoint = isObjectPointOnMap(previewObject);
+    const mapLat = normalizeCoordinateValue(previewObject?.geo_lat);
+    const mapLng = normalizeCoordinateValue(previewObject?.geo_lng);
+    const coordinatesValue = mapLat && mapLng ? `${mapLat}, ${mapLng}` : '';
     return [
       {
         key: 'client',
@@ -788,9 +830,11 @@ function EditOrderContent() {
         value: String(previewObject.clientName || '').trim(),
       },
       {
-        key: 'address',
-        label: T('order_details_address'),
-        value: fullAddress || T('order_details_address_not_specified'),
+        key: isMapPoint ? 'coordinates' : 'address',
+        label: isMapPoint ? T('objects_location_coordinates') : T('order_details_address'),
+        value: isMapPoint
+          ? coordinatesValue || T('objects_location_mode_map')
+          : fullAddress || T('order_details_address_not_specified'),
       },
       {
         key: 'comment',
@@ -798,7 +842,7 @@ function EditOrderContent() {
         value: String(previewVisibleAddress.comment || previewVisibleAddress.entrance_info || '').trim(),
       },
     ].filter((row) => String(row?.value || '').trim());
-  }, [getVisibleObjectAddressDraft, previewObject]);
+  }, [getVisibleObjectAddressDraft, isObjectPointOnMap, previewObject]);
 
   const openPreviewClientCard = useCallback(() => {
     if (!hasPermission('canViewClients')) return;
@@ -844,44 +888,131 @@ function EditOrderContent() {
     setPreviewObjectVisible(true);
   }, [hasPermission, selectedClientName]);
 
+  const applyObjectSelection = useCallback((objectItem) => {
+    if (!objectItem?.id) return;
+    setSelectedObjectId(objectItem.id);
+    setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
+    const objectAddress = extractOrderAddressFromObject(objectItem);
+    setCountry(objectAddress.country);
+    setRegion(objectAddress.region);
+    setDistrict(objectAddress.district);
+    setCity(objectAddress.city);
+    setStreet(objectAddress.street);
+    setHouse(objectAddress.house);
+    setPostalCode(objectAddress.postal_code);
+    setFloor(objectAddress.floor);
+    setEntrance(objectAddress.entrance);
+    setApartment(objectAddress.apartment);
+    setEntranceInfo(objectAddress.comment || objectAddress.entrance_info || '');
+    setParkingNotes('');
+    setGeoLat(objectAddress.geo_lat);
+    setGeoLng(objectAddress.geo_lng);
+    setCustomAddressLocationMode(
+      normalizeClientObjectLocationMode(objectAddress.location_mode, {
+        fallback: hasClientObjectMapPoint(objectAddress) ? 'map' : 'address',
+      }),
+    );
+  }, []);
+
+  const applyNoAddressSelection = useCallback(() => {
+    setSelectedObjectId(null);
+    setAddressMode(ORDER_ADDRESS_MODE.CUSTOM);
+    setCountry('');
+    setRegion('');
+    setDistrict('');
+    setCity('');
+    setStreet('');
+    setHouse('');
+    setPostalCode('');
+    setFloor('');
+    setEntrance('');
+    setApartment('');
+    setEntranceInfo('');
+    setParkingNotes('');
+    setGeoLat('');
+    setGeoLng('');
+    setCustomAddressLocationMode('address');
+  }, []);
+
   const objectItems = useMemo(() => {
-    if (!clientObjects.length) {
-      return [{ id: 'empty', label: T('objects_empty'), disabled: true }];
-    }
-    return clientObjects.map((objectItem) => ({
-      id: objectItem.id,
-      label: objectItem.is_primary
-        ? [objectItem.name, T('objects_primary')].filter(Boolean).join(' - ')
-        : objectItem.name,
-      subtitle: buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || undefined,
-      objectRaw: objectItem,
-      onPress: () => {
-        setSelectedObjectId(objectItem.id);
-        setAddressMode(ORDER_ADDRESS_MODE.OBJECT);
-        const objectAddress = extractOrderAddressFromObject(objectItem);
-        setCountry(objectAddress.country);
-        setRegion(objectAddress.region);
-        setDistrict(objectAddress.district);
-        setCity(objectAddress.city);
-        setStreet(objectAddress.street);
-        setHouse(objectAddress.house);
-        setPostalCode(objectAddress.postal_code);
-        setFloor(objectAddress.floor);
-        setEntrance(objectAddress.entrance);
-        setApartment(objectAddress.apartment);
-        setEntranceInfo(objectAddress.comment || objectAddress.entrance_info || '');
-        setParkingNotes('');
-        setGeoLat(objectAddress.geo_lat);
-        setGeoLng(objectAddress.geo_lng);
-        setCustomAddressLocationMode(
-          normalizeClientObjectLocationMode(objectAddress.location_mode, {
-            fallback: hasClientObjectMapPoint(objectAddress) ? 'map' : 'address',
-          }),
-        );
-        setObjectModalVisible(false);
+    return [
+      {
+        id: '__no_address__',
+        label: T('order_object_without_address'),
+        onPress: () => {
+          applyNoAddressSelection();
+          setObjectModalVisible(false);
+        },
       },
-    }));
-  }, [clientObjects, getVisibleObjectAddressDraft]);
+      ...clientObjects.map((objectItem) => ({
+        id: objectItem.id,
+        label: objectItem.is_primary
+          ? [objectItem.name, T('objects_primary')].filter(Boolean).join(' - ')
+          : objectItem.name,
+        subtitle: getObjectShortDescriptor(objectItem) || undefined,
+        objectRaw: objectItem,
+        onPress: () => {
+          applyObjectSelection(objectItem);
+          setObjectModalVisible(false);
+        },
+      })),
+    ];
+  }, [applyNoAddressSelection, applyObjectSelection, clientObjects, getObjectShortDescriptor]);
+
+  const openCreateObjectFromModal = useCallback(() => {
+    if (!selectedClientId || !hasPermission('canCreateObjects')) return;
+    setObjectModalVisible(false);
+    setObjectEditorFieldErrors({});
+    setObjectEditorDraft(createEmptyClientObjectDraft({ name: T('objects_new') }));
+    setObjectEditorVisible(true);
+  }, [hasPermission, selectedClientId]);
+
+  const handleCreateObjectFromEditor = useCallback(async () => {
+    if (!selectedClientId || createClientObjectMutation.isPending) return;
+    const objectLocationMode = normalizeClientObjectLocationMode(objectEditorDraft?.location_mode, {
+      fallback: hasClientObjectMapPoint(objectEditorDraft) ? 'map' : 'address',
+    });
+    const objectHasMapPoint = hasClientObjectMapPoint(objectEditorDraft);
+    const visibleAddressFields = CLIENT_OBJECT_ADDRESS_FIELDS.filter(
+      (field) => objectFieldsByKey.get(field)?.isEnabled === true,
+    );
+    const nextErrors = ['name', ...visibleAddressFields].reduce((acc, field) => {
+      const shouldRelaxRequired =
+        objectLocationMode === 'map' && objectHasMapPoint && CLIENT_OBJECT_ADDRESS_FIELDS.includes(field);
+      const message = getRequiredTextFieldError(objectEditorDraft?.[field], {
+        required: shouldRelaxRequired ? false : objectFieldsByKey.get(field)?.isRequired === true,
+        requiredMessage: getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, T),
+      });
+      if (!message) return acc;
+      return { ...acc, [field]: message };
+    }, {});
+    setObjectEditorFieldErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    try {
+      const createdObject = await createClientObjectMutation.mutateAsync({
+        client_id: String(selectedClientId),
+        ...sanitizeClientObjectPayload(objectEditorDraft),
+        geo_lat: normalizeCoordinateValue(objectEditorDraft?.geo_lat) || null,
+        geo_lng: normalizeCoordinateValue(objectEditorDraft?.geo_lng) || null,
+        location_mode: objectLocationMode,
+      });
+      applyObjectSelection(createdObject);
+      setObjectEditorVisible(false);
+      setObjectEditorFieldErrors({});
+      toastSuccess(T('objects_saved'));
+    } catch (error) {
+      toastError(error?.message || T('clients_save_failed'));
+    }
+  }, [
+    applyObjectSelection,
+    createClientObjectMutation,
+    objectEditorDraft,
+    objectFieldsByKey,
+    selectedClientId,
+    toastError,
+    toastSuccess,
+  ]);
 
   const openCreateClientFromModal = useCallback(() => {
     const prefill = parseClientPrefillFromSearch(clientModalSearch);
@@ -1378,7 +1509,7 @@ function EditOrderContent() {
     };
   }, []);
 
-  const isDirty = useMemo(() => {
+  const isDirty = (() => {
     if (!id || hydratedOrderIdRef.current !== id || !snapshotRef.current) return false;
     const current = buildSnapshot({
       title,
@@ -1416,43 +1547,7 @@ function EditOrderContent() {
       status: statusLabel,
     });
     return current !== snapshotRef.current;
-  }, [
-    id,
-    title,
-    description,
-    region,
-    district,
-    city,
-    street,
-    house,
-    country,
-    postalCode,
-    floor,
-    entrance,
-    apartment,
-    customerName,
-    selectedClientId,
-    selectedObjectId,
-    addressMode,
-    phoneSourceId,
-    phone,
-    entranceInfo,
-    parkingNotes,
-    geoLat,
-    geoLng,
-    customAddressLocationMode,
-    departureDate,
-    departureTime,
-    departureEndDate,
-    isDepartureRange,
-    assigneeId,
-    toFeed,
-    urgent,
-    price,
-    workTypeId,
-    statusLabel,
-    buildSnapshot,
-  ]);
+  })();
 
   useEffect(() => {
     userEditedRef.current = isDirty;
@@ -1484,6 +1579,13 @@ function EditOrderContent() {
       },
       [id, queryClient],
     ),
+  );
+  useFocusEffect(
+    useCallback(() => {
+      if (!selectedClientId) return undefined;
+      refetchClientObjects?.();
+      return undefined;
+    }, [refetchClientObjects, selectedClientId]),
   );
 
   const styles = useMemo(
@@ -1924,6 +2026,9 @@ function EditOrderContent() {
     } catch {
     }
 
+    // Allow React state from the last input event to flush before validation/save.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     const resolvedTitle = resolveTitleForSave(title, departureDate);
     const nextErrors = {};
     if (isFieldRequired('title') && !resolvedTitle) {
@@ -2070,7 +2175,18 @@ function EditOrderContent() {
         showToast(T('order_validation_client_required_for_contact_details'), 'error');
         return;
       }
-      if (selectedClientId) {
+      const currentPhoneSource =
+        selectedClient?.phone ??
+        orderData?.customer_phone_visible ??
+        orderData?.phone_visible ??
+        '';
+      const currentNormalizedPhone = toE164MobilePhoneOrNull(currentPhoneSource);
+      const shouldUpdateClientPhone =
+        !!selectedClientId &&
+        !!normalizedPhone &&
+        normalizedPhone !== currentNormalizedPhone;
+
+      if (shouldUpdateClientPhone) {
         await updateClientMutation.mutateAsync({
           id: String(selectedClientId),
           patch: {
@@ -2078,14 +2194,20 @@ function EditOrderContent() {
           },
         });
       }
+      const existingComment = String(orderData?.comment ?? '');
+      const nextComment = String(description ?? '');
+      const isCommentChanged = nextComment !== existingComment;
+
+      const { comment: _addressComment, ...addressPatch } = toOrderAddressPatch(activeAddressDraft);
+
       const payload = {
         title: resolveTitleForSave(title, normalizedDepartureDate),
-        comment: description,
         client_id: normalizeId(selectedClientId),
         object_id:
           addressMode === ORDER_ADDRESS_MODE.OBJECT ? normalizeId(selectedObjectId) : null,
         address_mode: addressMode,
-        ...toOrderAddressPatch(activeAddressDraft),
+        ...addressPatch,
+        ...(isCommentChanged ? { comment: nextComment } : {}),
         assigned_to: toFeed ? null : assigneeId,
         time_window_start: formatDateOnlyForStorage(normalizedDepartureDate),
         time_window_end:
@@ -2103,11 +2225,22 @@ function EditOrderContent() {
         ...(statusLabel ? { status: statusLabel } : {}),
       };
 
-      await updateRequestMutation.mutateAsync({
-        id,
-        patch: payload,
-        expectedUpdatedAt: orderData?.updated_at || null,
-      });
+      const saveOnce = async (expectedUpdatedAt) =>
+        updateRequestMutation.mutateAsync({
+          id,
+          patch: payload,
+          expectedUpdatedAt: expectedUpdatedAt || null,
+        });
+
+      try {
+        await saveOnce(orderData?.updated_at || null);
+      } catch (firstError) {
+        if (firstError?.code === 'CONFLICT' && firstError?.latest?.updated_at) {
+          await saveOnce(firstError.latest.updated_at);
+        } else {
+          throw firstError;
+        }
+      }
       snapshotRef.current = buildSnapshot({
         title,
         description,
@@ -2271,7 +2404,7 @@ function EditOrderContent() {
             <>
               <TextField
                 label={withRequiredLabel(T('create_order_client_object_label'), isFieldRequired('object_id'))}
-                value={selectedObjectSummary || T('create_order_client_object_placeholder')}
+                value={selectedObjectDisplay}
                 pressable
                 style={styles.field}
                 onPress={() => setObjectModalVisible(true)}
@@ -2327,7 +2460,7 @@ function EditOrderContent() {
       selectedPhoneSourceLabel,
       selectedClientId,
       selectedClientName,
-      selectedObjectSummary,
+      selectedObjectDisplay,
       setPhoneSourceModalVisible,
       styles.field,
       withRequiredLabel,
@@ -2422,19 +2555,6 @@ function EditOrderContent() {
       if (fieldKey === 'assigned_to') {
         return (
           <>
-            <SwitchField
-              label={T('create_order_label_to_feed')}
-              value={toFeed}
-              onValueChange={() => {
-                setToFeed((prev) => {
-                  const nextValue = !prev;
-                  if (nextValue) setAssigneeId(null);
-                  return nextValue;
-                });
-              }}
-              style={styles.field}
-            />
-            <View style={styles.separator} />
             <TextField
               label={withRequiredLabel(T('create_order_label_executor'), isFieldRequired('assigned_to') && !toFeed)}
               value={
@@ -2841,10 +2961,37 @@ function EditOrderContent() {
         title={T('objects_select')}
         items={objectItems}
         searchable={false}
-        selectedId={selectedObjectId}
+        footer={
+          hasPermission('canCreateObjects') ? (
+            <View style={{ marginBottom: theme.spacing.lg }}>
+              <Button
+                title={T('create_order_client_object_add')}
+                variant="secondary"
+                onPress={openCreateObjectFromModal}
+              />
+            </View>
+          ) : null
+        }
+        selectedId={selectedObjectId || (addressMode === ORDER_ADDRESS_MODE.CUSTOM ? '__no_address__' : null)}
         onItemLongPress={openObjectPreview}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setObjectModalVisible(false)}
+      />
+
+      <ClientObjectEditorModal
+        visible={objectEditorVisible}
+        title={T('objects_new_from_order')}
+        draft={objectEditorDraft}
+        fieldSettings={objectFieldSettings}
+        fieldErrors={objectEditorFieldErrors}
+        onChange={(field, value) => {
+          setObjectEditorDraft((prev) => ({ ...prev, [field]: value }));
+          setObjectEditorFieldErrors((prev) => (prev?.[field] ? { ...prev, [field]: null } : prev));
+        }}
+        onSave={handleCreateObjectFromEditor}
+        onClose={() => setObjectEditorVisible(false)}
+        saveLabel={T('objects_save_object')}
+        saving={createClientObjectMutation.isPending}
       />
 
       <DateTimeModal

@@ -63,6 +63,30 @@ function sanitizePathSegment(input: string, fallback: string) {
   return normalized.slice(0, 64) || fallback;
 }
 
+const RU_TO_LATIN: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y',
+  к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f',
+  х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+function toAsciiSlug(input: string, fallback: string) {
+  const normalized = String(input || '')
+    .trim()
+    .toLowerCase()
+    .split('')
+    .map((ch) => RU_TO_LATIN[ch] ?? ch)
+    .join('')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const safeFallback = String(fallback || 'item')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'item';
+  return (normalized || safeFallback).slice(0, 64);
+}
+
 function buildObjectAddressSummary(objectRow: {
   city?: string | null;
   street?: string | null;
@@ -333,21 +357,22 @@ async function deleteYandexResourceSafe(accessToken: string, path: string) {
 
 function buildObjectLabel(objectRow: { id: string; name: string; summary: string }) {
   const shortId = String(objectRow.id || '').slice(0, 8) || 'object';
-  const base = objectRow.name || objectRow.summary || `объект_${shortId}`;
-  const safeBase = sanitizePathSegment(base, `объект_${shortId}`);
+  const base = objectRow.name || objectRow.summary || `object-${shortId}`;
+  const safeBase = toAsciiSlug(base, `object-${shortId}`);
   return `${safeBase}_${shortId}`;
 }
 
 function buildObjectMediaKey(
-  ctx: { companyName: string; object: { id: string; name: string; summary: string } },
+  ctx: { companyId: string; companyName: string; object: { id: string; name: string; summary: string } },
   category: string,
   mime: string,
 ) {
   const ext = getFileExtensionByMime(mime);
-  const companyDir = sanitizePathSegment(ctx.companyName || 'Компания', 'Компания');
+  const companyShort = String(ctx.companyId || '').slice(0, 8) || 'company';
+  const companyDir = toAsciiSlug(ctx.companyName || `company-${companyShort}`, `company-${companyShort}`);
   const objectDir = buildObjectLabel(ctx.object);
-  const categoryDir = CATEGORY_DIR[category] || sanitizePathSegment(category, 'media');
-  return `Компании/${companyDir}/Объекты/${objectDir}/${categoryDir}/медиа_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  const categoryDir = CATEGORY_DIR[category] || toAsciiSlug(category, 'media');
+  return `companies/${companyDir}/${companyShort}/objects/${objectDir}/${categoryDir}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 }
 
 function buildObjectYandexPath(

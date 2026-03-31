@@ -54,6 +54,30 @@ function sanitizePathSegment(input: string, fallback: string) {
   return normalized.slice(0, 64) || fallback;
 }
 
+const RU_TO_LATIN: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y',
+  к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f',
+  х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+function toAsciiSlug(input: string, fallback: string) {
+  const normalized = String(input || '')
+    .trim()
+    .toLowerCase()
+    .split('')
+    .map((ch) => RU_TO_LATIN[ch] ?? ch)
+    .join('')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const safeFallback = String(fallback || 'item')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'item';
+  return (normalized || safeFallback).slice(0, 64);
+}
+
 function buildObjectAddressSummary(objectRow: {
   city?: string | null;
   street?: string | null;
@@ -132,14 +156,14 @@ function buildOrderLabel(order: {
     .map((value) => String(value || '').trim())
     .filter(Boolean)
     .join('_');
-  const base = titleCandidate || objectCandidate || `заявка_${shortId}`;
-  const safeBase = sanitizePathSegment(base, `заявка_${shortId}`);
+  const base = titleCandidate || objectCandidate || `order-${shortId}`;
+  const safeBase = toAsciiSlug(base, `order-${shortId}`);
   return `${safeBase}_${shortId}`;
 }
 
 function buildFinanceEntryLabel(entry: { id: string; title?: string | null }) {
   const shortId = String(entry.id || '').slice(0, 8) || 'entry';
-  const title = sanitizePathSegment(String(entry.title || '').trim(), `статья_${shortId}`);
+  const title = toAsciiSlug(String(entry.title || '').trim(), `entry-${shortId}`);
   return `${title}_${shortId}`;
 }
 
@@ -218,11 +242,13 @@ async function appendFinanceEntryPhotoUrlAtomic(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const { data, error } = await admin.rpc('append_order_finance_entry_photo_url', {
     p_finance_entry_id: financeEntryId,
     p_company_id: companyId,
     p_url: url,
+    p_actor_user_id: actorUserId,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
@@ -237,11 +263,13 @@ async function removeFinanceEntryPhotoUrlAtomic(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const { data, error } = await admin.rpc('remove_order_finance_entry_photo_url', {
     p_finance_entry_id: financeEntryId,
     p_company_id: companyId,
     p_url: url,
+    p_actor_user_id: actorUserId,
   });
   if (error) throw error;
   const row = Array.isArray(data) ? data[0] : data;
@@ -256,9 +284,16 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const direct = String(url || '').trim();
-  let atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, direct);
+  let atomic = await removeFinanceEntryPhotoUrlAtomic(
+    admin,
+    financeEntryId,
+    companyId,
+    direct,
+    actorUserId,
+  );
   if (!direct) return atomic;
   if (!Array.isArray(atomic.photo_urls) || !atomic.photo_urls.includes(direct)) return atomic;
 
@@ -278,7 +313,13 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
   const canonicalMatch = existingUrls.find((existingUrl) => canonicalUrl(existingUrl) === needle);
   if (!canonicalMatch || canonicalMatch === direct) return atomic;
 
-  atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, canonicalMatch);
+  atomic = await removeFinanceEntryPhotoUrlAtomic(
+    admin,
+    financeEntryId,
+    companyId,
+    canonicalMatch,
+    actorUserId,
+  );
   return atomic;
 }
 
@@ -287,6 +328,7 @@ async function removeFinanceEntryPhotoUrlFallback(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const direct = String(url || '').trim();
   const needle = canonicalUrl(direct);
@@ -312,7 +354,7 @@ async function removeFinanceEntryPhotoUrlFallback(
     .update({
       photo_urls: nextUrls,
       updated_at: new Date().toISOString(),
-      updated_by: null,
+      updated_by: actorUserId,
     })
     .eq('id', financeEntryId)
     .eq('company_id', companyId)
@@ -330,6 +372,7 @@ async function removeFinanceEntryPhotoUrlFallback(
 
 function buildFinanceEntryMediaKey(
   ctx: {
+    companyId: string;
     companyName: string;
     order: {
       id: string;
@@ -348,14 +391,16 @@ function buildFinanceEntryMediaKey(
 ) {
   const ext = getFileExtensionByMime(mime);
   const monthDir = formatMonthBucket(ctx.order.time_window_start || ctx.order.created_at || null);
-  const companyDir = sanitizePathSegment(ctx.companyName || 'Компания', 'Компания');
+  const companyShort = String(ctx.companyId || '').slice(0, 8) || 'company';
+  const companyDir = toAsciiSlug(ctx.companyName || `company-${companyShort}`, `company-${companyShort}`);
   const orderDir = buildOrderLabel(ctx.order);
   const financeDir = buildFinanceEntryLabel(ctx.financeEntry);
-  return `Компании/${companyDir}/Заявки/${monthDir}/${orderDir}/Финансы/${financeDir}/медиа_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
+  return `companies/${companyDir}/${companyShort}/orders/${monthDir}/${orderDir}/finance/${financeDir}/media_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
 }
 
 async function prepareBegetFinanceUpload(
   ctx: {
+    companyId: string;
     companyName: string;
     order: {
       id: string;
@@ -511,6 +556,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
         ctx.financeEntryId,
         ctx.companyId,
         publicUrl,
+        ctx.userId,
       );
       return json(200, {
         success: true,
@@ -564,6 +610,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
         ctx.financeEntryId,
         ctx.companyId,
         publicUrl,
+        ctx.userId,
       );
       return json(200, {
         success: true,
@@ -640,6 +687,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
           ctx.financeEntryId,
           ctx.companyId,
           preferredSourceUrl,
+          ctx.userId,
         );
         if (
           atomic &&
@@ -652,6 +700,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
             ctx.financeEntryId,
             ctx.companyId,
             sourceUrl,
+            ctx.userId,
           );
         }
       } catch (atomicError) {
@@ -664,6 +713,7 @@ export async function handleFinanceEntryMediaStorageRequest(req: Request) {
           ctx.financeEntryId,
           ctx.companyId,
           sourceUrl,
+          ctx.userId,
         );
       }
 
