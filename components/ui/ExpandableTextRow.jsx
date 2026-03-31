@@ -1,16 +1,13 @@
-import { Feather } from '@expo/vector-icons';
 import { memo, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   FadeIn,
   FadeOut,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
 } from 'react-native-reanimated';
 
 import { useTheme } from '../../theme/ThemeProvider';
 import { listItemStyles } from './listItemStyles';
+import AnimatedChevron from './AnimatedChevron';
 
 function ExpandableTextRowComponent({
   label,
@@ -44,11 +41,6 @@ function ExpandableTextRowComponent({
   const [expanded, setExpanded] = useState(Boolean(initiallyExpanded));
   const panelToggleMs =
     theme._raw?.timings?.panelToggleMs ?? theme.timings?.panelToggleMs ?? theme.components?.listItem?.height;
-  const progress = useSharedValue(initiallyExpanded ? 1 : 0);
-  const rotateDeg = chevronName === 'chevron-down' ? 180 : chevronName === 'chevron-right' ? 90 : 0;
-  const chevronStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${progress.value * rotateDeg}deg` }],
-  }));
   const chevronHitSlop = useMemo(
     () => ({
       top: Math.max(theme.components?.interactive?.hitSlop?.top ?? 10, 14),
@@ -71,7 +63,6 @@ function ExpandableTextRowComponent({
   const toggleExpanded = () => {
     const next = !expanded;
     setExpanded(next);
-    progress.value = withTiming(next ? 1 : 0, { duration: panelToggleMs });
   };
   const handleRowPress = () => {
     if (toggleOnChevronOnly) {
@@ -152,13 +143,12 @@ function ExpandableTextRowComponent({
             accessibilityRole="button"
             accessibilityState={{ expanded }}
           >
-            <Animated.View style={[styles.chevronWrap, chevronStyle]}>
-              <Feather
-                name={chevronName}
-                size={theme.components?.listItem?.chevronSize ?? theme.icons?.md}
-                color={theme.colors.textSecondary}
-              />
-            </Animated.View>
+            <AnimatedChevron
+              expanded={expanded}
+              iconName={chevronName}
+              duration={panelToggleMs}
+              style={styles.chevronWrap}
+            />
           </Pressable>
         </View>
       </Pressable>

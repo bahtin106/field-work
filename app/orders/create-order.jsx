@@ -256,6 +256,7 @@ function CreateOrderContent() {
   const [assigneeId, setAssigneeId] = useState(null);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [selectedClientObjectId, setSelectedClientObjectId] = useState(null);
+  const [withoutAddressSelected, setWithoutAddressSelected] = useState(false);
   const [stagedSelectedObjectDraft, setStagedSelectedObjectDraft] = useState(null);
   const [draftClientObject, setDraftClientObject] = useState(null);
   const [clientObjectModalVisible, setClientObjectModalVisible] = useState(false);
@@ -451,6 +452,7 @@ function CreateOrderContent() {
         assigneeId,
         selectedClientId,
         selectedClientObjectId,
+        withoutAddressSelected,
         stagedSelectedObjectDraft,
         draftClientObject,
         phoneSourceId,
@@ -473,6 +475,7 @@ function CreateOrderContent() {
     assigneeId,
     selectedClientId,
     selectedClientObjectId,
+    withoutAddressSelected,
     stagedSelectedObjectDraft,
     draftClientObject,
     phoneSourceId,
@@ -517,6 +520,7 @@ function CreateOrderContent() {
     setAssigneeId(draft.assigneeId || null);
     setSelectedClientId(draft.selectedClientId || null);
     setSelectedClientObjectId(draft.selectedClientObjectId || null);
+    setWithoutAddressSelected(!!draft.withoutAddressSelected);
     setStagedSelectedObjectDraft(draft.stagedSelectedObjectDraft || null);
     setDraftClientObject(draft.draftClientObject || null);
     setPhoneSourceId(normalizePhoneSourceId(draft.phoneSourceId));
@@ -564,6 +568,7 @@ function CreateOrderContent() {
       !!assigneeId ||
       !!selectedClientId ||
       !!selectedClientObjectId ||
+      !!withoutAddressSelected ||
       !!stagedSelectedObjectDraft ||
       !!draftClientObject ||
       phoneSourceId !== PHONE_SOURCE_IDS.MANUAL ||
@@ -581,6 +586,7 @@ function CreateOrderContent() {
     assigneeId,
     selectedClientId,
     selectedClientObjectId,
+    withoutAddressSelected,
     stagedSelectedObjectDraft,
     draftClientObject,
     phoneSourceId,
@@ -724,7 +730,7 @@ function CreateOrderContent() {
             missingKeys.push(k);
           }
         } else if (k === 'object_id') {
-          if (!selectedClientObjectId && !draftClientObject) {
+          if (!selectedClientObjectId && !draftClientObject && !withoutAddressSelected) {
             missing.push(getFieldLabel(k));
             missingKeys.push(k);
           }
@@ -761,7 +767,7 @@ function CreateOrderContent() {
     } catch {
       return { ok: true };
     }
-  }, [schema, form, departureDate, departureTime, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue, resolveTitleForSave]);
+  }, [schema, form, departureDate, departureTime, toFeed, assigneeId, normalizePhone, getFieldLabel, t, selectedClientId, selectedClientObjectId, withoutAddressSelected, draftClientObject, useWorkTypes, workTypeId, description, hasDepartureTimeValue, resolveTitleForSave]);
 
   const promptNewObjectCreation = useCallback(
     (seedDraft = null) => {
@@ -893,7 +899,12 @@ function CreateOrderContent() {
       return;
     }
 
-    if (isFieldRequired('object_id') && !selectedClientObjectId && !draftClientObject) {
+    if (
+      isFieldRequired('object_id') &&
+      !selectedClientObjectId &&
+      !draftClientObject &&
+      !withoutAddressSelected
+    ) {
       setFieldErrors((prev) => ({
         ...prev,
         object_id: { message: t('objects_select_required_for_order') },
@@ -955,6 +966,7 @@ function CreateOrderContent() {
         resolvedObject = exactMatchingObject;
         resolvedObjectId = exactMatchingObject?.id || null;
         setSelectedClientObjectId(exactMatchingObject?.id || null);
+        setWithoutAddressSelected(false);
       } else {
         const createdObject = await createClientObjectMutation.mutateAsync({
           client_id: String(selectedClientId),
@@ -966,6 +978,7 @@ function CreateOrderContent() {
         resolvedObject = createdObject || null;
         resolvedObjectId = createdObject?.id || null;
         setSelectedClientObjectId(createdObject?.id || null);
+        setWithoutAddressSelected(false);
       }
       setDraftClientObject(null);
     }
@@ -980,7 +993,7 @@ function CreateOrderContent() {
       comment: description,
       client_id: selectedClientId || null,
       object_id: resolvedObjectId || null,
-      address_mode: 'object',
+      address_mode: resolvedObjectId ? 'object' : 'custom',
       ...toOrderAddressPatch(resolvedAddressDraft),
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: formatDateOnlyForStorage(departureDate),
@@ -1030,6 +1043,7 @@ function CreateOrderContent() {
     assigneeId,
     selectedClientId,
     selectedClientObjectId,
+    withoutAddressSelected,
     selectedClientObject,
     draftClientObject,
     getField,
@@ -1423,6 +1437,21 @@ function CreateOrderContent() {
     const selectedItem = phoneSourceItems.find((item) => item.id === phoneSourceId);
     return selectedItem?.label || t('create_order_phone_source_manual');
   }, [phoneSourceId, phoneSourceItems, t]);
+  const isObjectPointOnMap = useCallback((objectItem) => {
+    if (!objectItem) return false;
+    const mode = normalizeClientObjectLocationMode(objectItem?.location_mode, {
+      fallback: hasClientObjectMapPoint(objectItem) ? 'map' : 'address',
+    });
+    return mode === 'map' && hasClientObjectMapPoint(objectItem);
+  }, []);
+  const getObjectShortDescriptor = useCallback(
+    (objectItem) => {
+      if (!objectItem) return '';
+      if (isObjectPointOnMap(objectItem)) return t('objects_location_mode_map');
+      return buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || '';
+    },
+    [getVisibleObjectAddressDraft, isObjectPointOnMap, t],
+  );
   const applyPhoneSource = useCallback(
     (sourceId, options = {}) => {
       const normalizedSourceId = normalizePhoneSourceId(sourceId);
@@ -1444,10 +1473,19 @@ function CreateOrderContent() {
     },
     [clearFieldError, resolvePhoneBySourceId],
   );
-  const selectedClientObjectSummary = useMemo(
-    () => String(activeObjectDraft?.name || '').trim() || null,
-    [activeObjectDraft],
-  );
+  const selectedClientObjectSummary = useMemo(() => {
+    const objectName = String(activeObjectDraft?.name || '').trim();
+    if (!activeObjectDraft) return null;
+    if (isObjectPointOnMap(activeObjectDraft)) {
+      return `${objectName || t('create_order_client_object_label')} - ${t('objects_location_mode_map')}`;
+    }
+    return objectName || null;
+  }, [activeObjectDraft, isObjectPointOnMap, t]);
+  const selectedClientObjectDisplay = useMemo(() => {
+    if (selectedClientObjectSummary) return selectedClientObjectSummary;
+    if (withoutAddressSelected) return t('order_object_without_address');
+    return t('create_order_client_object_placeholder');
+  }, [selectedClientObjectSummary, t, withoutAddressSelected]);
   const visibleActiveAddressDraft = useMemo(
     () => getVisibleObjectAddressDraft(activeObjectDraft),
     [activeObjectDraft, getVisibleObjectAddressDraft],
@@ -1567,6 +1605,7 @@ function CreateOrderContent() {
                       onPress={() => {
                         setSelectedClientId(null);
                         setSelectedClientObjectId(null);
+                        setWithoutAddressSelected(false);
                         setPendingSuggestedObjectSelection(null);
                         setStagedSelectedObjectDraft(null);
                         setSuggestedMatchingObject(null);
@@ -1589,16 +1628,17 @@ function CreateOrderContent() {
             <>
               <TextField
                 label={withRequiredLabel(t('create_order_client_object_label'), isFieldRequired('object_id'))}
-                value={selectedClientObjectSummary || t('create_order_client_object_placeholder')}
+                value={selectedClientObjectDisplay}
                 pressable
                 style={formStyles.field}
                 onPress={openObjectFlow}
                 error={shouldShowError('object_id') && fieldErrors?.object_id ? 'invalid' : undefined}
                 rightSlot={
-                  selectedClientObjectId || draftClientObject ? (
+                  selectedClientObjectId || draftClientObject || withoutAddressSelected ? (
                     <ClearButton
                       onPress={() => {
                         setSelectedClientObjectId(null);
+                        setWithoutAddressSelected(false);
                         setStagedSelectedObjectDraft(null);
                         setDraftClientObject(null);
                         setSuggestedMatchingObject(null);
@@ -1665,7 +1705,8 @@ function CreateOrderContent() {
       selectedClientName,
       selectedClientId,
       selectedClientObjectId,
-      selectedClientObjectSummary,
+      selectedClientObjectDisplay,
+      withoutAddressSelected,
       setField,
       setPhoneSourceModalVisible,
       shortAddressValue,
@@ -1800,18 +1841,6 @@ function CreateOrderContent() {
         case 'assigned_to':
           return (
             <>
-              {renderToggle(
-                toFeed,
-                () => {
-                  setToFeed((prev) => {
-                    const nextValue = !prev;
-                    if (nextValue) setAssigneeId(null);
-                    return nextValue;
-                  });
-                },
-                t('create_order_label_to_feed'),
-              )}
-
               <TextField
                 label={withRequiredLabel(
                   getFieldLabel('assigned_to', t('create_order_label_executor')),
@@ -2126,6 +2155,7 @@ function CreateOrderContent() {
         setPendingSuggestedObjectSelection(null);
         setSelectedClientId(client.id);
         setSelectedClientObjectId(null);
+        setWithoutAddressSelected(false);
         const primaryPhone = String(client?.phone || '').trim();
         if (primaryPhone) {
           setPhoneSourceId(PHONE_SOURCE_IDS.CLIENT_PRIMARY);
@@ -2288,6 +2318,7 @@ function CreateOrderContent() {
     });
     setSelectedClientId(item.clientId);
     setSelectedClientObjectId(item.objectId);
+    setWithoutAddressSelected(false);
     setStagedSelectedObjectDraft(nextObjectDraft);
     setDraftClientObject(null);
     setClientObjectDraft(nextObjectDraft);
@@ -2299,12 +2330,24 @@ function CreateOrderContent() {
   }, [t]);
 
   const clientObjectItems = useMemo(() => {
-    const items = [];
+    const items = [
+      {
+        id: '__no_address__',
+        label: t('order_object_without_address'),
+        onPress: () => {
+          setSelectedClientObjectId(null);
+          setWithoutAddressSelected(true);
+          setStagedSelectedObjectDraft(null);
+          setDraftClientObject(null);
+          setClientObjectModalVisible(false);
+        },
+      },
+    ];
     if (draftClientObject) {
       items.push({
         id: 'draft-object',
         label: sanitizeVisibleText(String(draftClientObject.name || '').trim(), t('objects_new')),
-        subtitle: buildOrderAddressShort(getVisibleObjectAddressDraft(draftClientObject)) || undefined,
+        subtitle: getObjectShortDescriptor(draftClientObject) || undefined,
         onPress: () => {
           setClientObjectModalVisible(false);
           setClientObjectEditorMode('draft');
@@ -2313,9 +2356,6 @@ function CreateOrderContent() {
         },
       });
     }
-    if (!clientObjects.length && items.length === 0) {
-      return [{ id: 'empty', label: t('objects_empty'), disabled: true }];
-    }
     return [
       ...items,
       ...clientObjects.map((objectItem) => ({
@@ -2323,17 +2363,18 @@ function CreateOrderContent() {
         label: objectItem.is_primary
           ? sanitizeVisibleText([objectItem.name, t('objects_primary')].filter(Boolean).join(' - '), t('objects_new'))
           : sanitizeVisibleText(objectItem.name, t('objects_new')),
-        subtitle: buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || undefined,
+        subtitle: getObjectShortDescriptor(objectItem) || undefined,
         objectRaw: objectItem,
         onPress: () => {
           setSelectedClientObjectId(objectItem.id);
+          setWithoutAddressSelected(false);
           setStagedSelectedObjectDraft(null);
           setDraftClientObject(null);
           setClientObjectModalVisible(false);
         },
       })),
     ];
-  }, [clientObjects, draftClientObject, getVisibleObjectAddressDraft, t]);
+  }, [clientObjects, draftClientObject, getObjectShortDescriptor, t]);
 
   const openObjectPreview = useCallback((item, event) => {
     if (!has('canViewObjects')) return;
@@ -2347,10 +2388,10 @@ function CreateOrderContent() {
     setPreviewObject({
       ...objectItem,
       clientName: selectedClientName || '',
-      shortAddress: buildOrderAddressShort(getVisibleObjectAddressDraft(objectItem)) || '',
+      shortAddress: getObjectShortDescriptor(objectItem) || '',
     });
     setPreviewObjectVisible(true);
-  }, [getVisibleObjectAddressDraft, has, selectedClientName]);
+  }, [getObjectShortDescriptor, has, selectedClientName]);
 
   const openCreateClientFromModal = useCallback(() => {
     const prefill = parseClientPrefillFromSearch(clientModalSearch);
@@ -2384,6 +2425,7 @@ function CreateOrderContent() {
           if (!resolvedClientId) return;
           setSelectedClientId(resolvedClientId);
           setSelectedClientObjectId(null);
+          setWithoutAddressSelected(false);
           setClientModalVisible(false);
           setClientModalSearch('');
         } catch {}
@@ -2461,14 +2503,17 @@ function CreateOrderContent() {
         });
         await refetchSelectedClient();
         setSelectedClientObjectId(updated?.id || selectedClientObjectId);
+        setWithoutAddressSelected(false);
         setStagedSelectedObjectDraft(null);
         setDraftClientObject(null);
       } else if (clientObjectEditorMode === 'persist' && selectedClientId) {
         setDraftClientObject(sanitizedDraft);
         setSelectedClientObjectId(null);
+        setWithoutAddressSelected(false);
       } else {
         setDraftClientObject(sanitizedDraft);
         setSelectedClientObjectId(null);
+        setWithoutAddressSelected(false);
       }
       setClientObjectEditorVisible(false);
     } catch (error) {
@@ -2489,6 +2534,7 @@ function CreateOrderContent() {
     enabledObjectAdditionalPhoneSlots,
     requiredObjectAdditionalPhoneSlots,
     visibleClientObjectFieldKeys,
+    setWithoutAddressSelected,
   ]);
 
   const openObjectFlow = useCallback(() => {
@@ -2715,6 +2761,7 @@ function CreateOrderContent() {
                 onPress={() => {
                   setClientObjectModalVisible(false);
                   setClientObjectEditorMode('draft');
+                  setWithoutAddressSelected(false);
                   setClientObjectDraft(createEmptyClientObjectDraft({ name: t('objects_new') }));
                   setClientObjectEditorVisible(true);
                 }}
@@ -2722,7 +2769,11 @@ function CreateOrderContent() {
             </View>
           ) : null
         }
-        selectedId={selectedClientObjectId || (draftClientObject ? 'draft-object' : null)}
+        selectedId={
+          selectedClientObjectId ||
+          (draftClientObject ? 'draft-object' : null) ||
+          (withoutAddressSelected ? '__no_address__' : null)
+        }
         onItemLongPress={openObjectPreview}
         onSelect={(item) => item?.onPress?.()}
         onClose={() => setClientObjectModalVisible(false)}

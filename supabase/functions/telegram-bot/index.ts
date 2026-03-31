@@ -1799,7 +1799,6 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
       entrance: address.entrance || null,
       floor: address.floor || null,
       comment: address.comment || null,
-      parking_notes: address.parking_notes || null,
     })
     .select('id, name')
     .single();

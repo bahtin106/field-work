@@ -457,11 +457,13 @@ async function appendFinanceEntryPhotoUrlAtomic(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const { data, error } = await admin.rpc('append_order_finance_entry_photo_url', {
     p_finance_entry_id: financeEntryId,
     p_company_id: companyId,
     p_url: url,
+    p_actor_user_id: actorUserId,
   });
   if (error) {
     if (isMissingRpcError(error)) return null;
@@ -480,11 +482,13 @@ async function removeFinanceEntryPhotoUrlAtomic(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const { data, error } = await admin.rpc('remove_order_finance_entry_photo_url', {
     p_finance_entry_id: financeEntryId,
     p_company_id: companyId,
     p_url: url,
+    p_actor_user_id: actorUserId,
   });
   if (error) {
     if (isMissingRpcError(error)) return null;
@@ -503,9 +507,16 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
   financeEntryId: string,
   companyId: string,
   url: string,
+  actorUserId: string | null,
 ) {
   const direct = String(url || '').trim();
-  let atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, direct);
+  let atomic = await removeFinanceEntryPhotoUrlAtomic(
+    admin,
+    financeEntryId,
+    companyId,
+    direct,
+    actorUserId,
+  );
   if (!direct || !atomic) return atomic;
   if (!Array.isArray(atomic.photo_urls) || !atomic.photo_urls.includes(direct)) return atomic;
 
@@ -525,7 +536,13 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
   const canonicalMatch = existingUrls.find((existingUrl) => canonicalUrl(existingUrl) === needle);
   if (!canonicalMatch || canonicalMatch === direct) return atomic;
 
-  atomic = await removeFinanceEntryPhotoUrlAtomic(admin, financeEntryId, companyId, canonicalMatch);
+  atomic = await removeFinanceEntryPhotoUrlAtomic(
+    admin,
+    financeEntryId,
+    companyId,
+    canonicalMatch,
+    actorUserId,
+  );
   return atomic;
 }
 
@@ -761,6 +778,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
         ctx.financeEntry.id,
         ctx.companyId,
         sourceUrl,
+        ctx.userId,
       );
       if (!atomicResult) {
         return json(200, {
@@ -858,6 +876,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
         ctx.financeEntry.id,
         ctx.companyId,
         sourceUrl,
+        ctx.userId,
       );
       if (!atomicResult) {
         // Migration with atomic RPC is not applied yet; keep backward-compatible response.
@@ -1089,6 +1108,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
             ctx.financeEntry.id,
             ctx.companyId,
             sourceUrl,
+            ctx.userId,
           );
           cleaned.add(sourceUrl);
           if (mapRow?.id != null) {
@@ -1228,6 +1248,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
           ctx.financeEntry.id,
           ctx.companyId,
           sourceUrl,
+          ctx.userId,
         );
         return json(200, {
           success: true,
@@ -1255,6 +1276,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
         ctx.financeEntry.id,
         ctx.companyId,
         preferredSourceUrl,
+        ctx.userId,
       );
       // Backward compatibility: if row wasn't removed (old/public/download URL mismatch),
       // retry with the originally requested URL once.
@@ -1269,6 +1291,7 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
           ctx.financeEntry.id,
           ctx.companyId,
           sourceUrl,
+          ctx.userId,
         );
       }
 

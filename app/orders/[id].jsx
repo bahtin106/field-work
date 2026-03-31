@@ -56,6 +56,7 @@ import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
 import OrderStatusCapsule from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
+import AnimatedChevron from '../../components/ui/AnimatedChevron';
 import { BaseModal, ConfirmModal, AlertModal, SelectModal } from '../../components/ui/modals';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { buildAddressForNavigator, openAddressInYandex, openCoordinatesInYandex } from '../../components/ui/map';
@@ -84,6 +85,7 @@ import {
   buildOrderAddressDisplay,
   buildOrderAddressShort,
   extractOrderAddress,
+  extractOrderAddressFromObject,
   normalizeOrderAddressMode,
 } from '../../src/features/requests/addressing';
 import {
@@ -91,6 +93,7 @@ import {
   normalizeClientObjectLocationMode,
   normalizeCoordinateValue,
 } from '../../src/features/objects/addressing';
+import { useClientObject } from '../../src/features/objects/queries';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -330,18 +333,11 @@ function FinanceAccordionRow({
               </Text>
             </View>
           ) : null}
-          <View
-            style={[
-              styles.financeSectionChevronWrap,
-              expanded ? styles.financeSectionChevronWrapExpanded : null,
-            ]}
-          >
-            <Feather
-              name="chevron-down"
-              size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? 18}
-              color={theme.colors.textSecondary}
-            />
-          </View>
+          <AnimatedChevron
+            expanded={expanded}
+            iconName="chevron-down"
+            style={styles.financeSectionChevronWrap}
+          />
         </View>
       </Pressable>
 
@@ -414,7 +410,6 @@ function OrderDetailsContent() {
   const auth = useAuth();
   const authUserId = auth.user?.id || null;
   const authRole = auth.profile?.role || null;
-  const authCompanyId = auth.profile?.company_id || null;
   const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'beget_s3';
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -502,7 +497,6 @@ function OrderDetailsContent() {
   const [users, setUsers] = useState([]);
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
-  const [useDepartments, setUseDepartmentsFlag] = useState(false);
   const [companyId, setCompanyId] = useState(null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
@@ -511,7 +505,6 @@ function OrderDetailsContent() {
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(null);
-  const [departments, setDepartments] = useState([]);
   const [amount, setAmount] = useState('');
   const canViewFinanceAll = has('canViewFinanceAll');
   const canViewFinanceEntries = canViewFinanceAll;
@@ -640,7 +633,6 @@ function OrderDetailsContent() {
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
-  const [departmentModalVisible, setDepartmentModalVisible] = useState(false);
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [orderPhotosModal, setOrderPhotosModal] = useState({ visible: false, category: null });
   const [amountEditModalVisible, setAmountEditModalVisible] = useState(false);
@@ -1162,7 +1154,7 @@ function OrderDetailsContent() {
       assigned_to: assigneeId || null,
       ...(canEditFinances
         ? {
-            price: parseMoney(amount),
+            start_price: parseMoney(amount),
             payment_status: order?.payment_status ?? null,
             payment_method: order?.payment_method ?? null,
           }
@@ -1366,26 +1358,6 @@ function OrderDetailsContent() {
           .catch(() => {})
       );
 
-      // 5e. Departments
-      const orderCompanyId = fetchedOrder?.company_id || authCompanyId || null;
-      if (orderCompanyId) {
-        bgTasks.push(
-          (async () => {
-            try {
-              const { data: companyRow } = await supabase.from('companies').select('use_departments').eq('id', orderCompanyId).maybeSingle();
-              const useDepartmentsEnabled = companyRow?.use_departments !== false;
-              setUseDepartmentsFlag(useDepartmentsEnabled);
-              if (useDepartmentsEnabled) {
-                const { data: deptList } = await supabase.from('departments').select('id, name').eq('is_enabled', true).eq('company_id', orderCompanyId).order('name', { ascending: true });
-                setDepartments(deptList || []);
-              }
-            } catch {}
-          })()
-        );
-      } else {
-        setUseDepartmentsFlag(false);
-      }
-
       // Fire all background tasks in parallel вЂ” screen is already visible
       await Promise.allSettled(bgTasks);
 
@@ -1403,7 +1375,6 @@ function OrderDetailsContent() {
     id,
     authUserId,
     authRole,
-    authCompanyId,
     hydrateFormFields,
     makeSnapshotFromOrder,
     queryClient,
@@ -2904,9 +2875,14 @@ function OrderDetailsContent() {
       return;
     }
 
+    let data = null;
     let error = null;
     try {
-      await updateRequestWithVersion(order.id, { status: mapStatusToDb('done') }, order?.updated_at || null);
+      data = await updateRequestWithVersion(
+        order.id,
+        { status: mapStatusToDb('done') },
+        order?.updated_at || null,
+      );
     } catch (e) {
       error = e;
     }
@@ -2921,9 +2897,14 @@ function OrderDetailsContent() {
       return;
     }
 
-    setOrder({ ...order, status: t('order_status_completed') });
+    const nextOrder = data || { ...order, status: t('order_status_completed') };
+    setOrder(nextOrder);
+    if (nextOrder?.id) {
+      queryClient.setQueryData(queryKeys.requests.detail(nextOrder.id), nextOrder);
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+    }
     showToast(t('order_toast_order_finished'));
-  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, showToast, t]);
+  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, queryClient, showToast, t]);
 
   const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
 
@@ -3012,6 +2993,9 @@ function OrderDetailsContent() {
   }, [order, users, userId, showToast, t, queryClient]);
 
   const _handleSubmitEdit = useCallback(async () => {
+    // Allow React state from the last input event to flush before validation/save.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     const reqCheck = validateRequiredBySchemaEdit();
     if (!reqCheck.ok) {
       showWarning(reqCheck.msg);
@@ -3039,9 +3023,13 @@ function OrderDetailsContent() {
         ? t('order_status_in_progress')
         : order.status;
 
+    const existingComment = String(order?.comment ?? '');
+    const nextComment = String(description ?? '');
+    const isCommentChanged = nextComment !== existingComment;
+
     const payload = {
       title: resolvedTitle,
-      comment: description,
+      ...(isCommentChanged ? { comment: nextComment } : {}),
       assigned_to: toFeed ? null : assigneeId,
       time_window_start: formatDateOnlyForStorage(departureDate),
       departure_time:
@@ -3050,7 +3038,7 @@ function OrderDetailsContent() {
           : null,
       status: nextStatus,
       urgent,
-      ...(canEditFinances ? { price: parseMoney(amount) } : {}),
+      ...(canEditFinances ? { start_price: parseMoney(amount) } : {}),
       ...(useWorkTypes ? { work_type_id: workTypeId } : {}),
     };
 
@@ -3060,15 +3048,25 @@ function OrderDetailsContent() {
       return;
     }
 
+    const currentPhoneSource =
+      linkedClient?.phone ?? order?.customer_phone_visible ?? order?.phone_visible ?? '';
+    const currentNormalizedPhone = toE164MobilePhoneOrNull(currentPhoneSource);
+    const shouldUpdateClientPhone =
+      !!clientIdForContacts &&
+      !!normalizedPhone &&
+      normalizedPhone !== currentNormalizedPhone;
+
     let data = null;
     let error = null;
     try {
-      await updateClientMutation.mutateAsync({
-        id: clientIdForContacts,
-        patch: {
-          phone: normalizedPhone,
-        },
-      });
+      if (shouldUpdateClientPhone) {
+        await updateClientMutation.mutateAsync({
+          id: clientIdForContacts,
+          patch: {
+            phone: normalizedPhone,
+          },
+        });
+      }
       data = await updateRequestWithVersion(targetId, payload, order?.updated_at || null);
     } catch (e) {
       error = e;
@@ -3657,6 +3655,9 @@ function OrderDetailsContent() {
   const { data: linkedClient } = useClient(linkedClientId, {
     enabled: !!linkedClientId && canViewClients,
   });
+  const { data: linkedObject } = useClientObject(linkedObjectId, {
+    enabled: !!linkedObjectId && canViewObjects,
+  });
   const customerDisplayName = useMemo(() => {
     const liveClientName = formatClientNameForOrder(linkedClient);
     if (liveClientName) return liveClientName;
@@ -3664,7 +3665,16 @@ function OrderDetailsContent() {
     if (savedCustomerName) return savedCustomerName;
     return '';
   }, [customerName, linkedClient, order?.customer_name, order?.fio]);
-  const orderAddress = useMemo(() => extractOrderAddress(order), [order]);
+  const normalizedAddressMode = useMemo(
+    () => normalizeOrderAddressMode(order?.address_mode),
+    [order?.address_mode],
+  );
+  const orderAddress = useMemo(() => {
+    if (normalizedAddressMode === 'object' && linkedObject) {
+      return extractOrderAddressFromObject(linkedObject);
+    }
+    return extractOrderAddress(order);
+  }, [linkedObject, normalizedAddressMode, order]);
   const shortOrderAddress = useMemo(() => buildOrderAddressShort(orderAddress), [orderAddress]);
   const fullOrderAddress = useMemo(() => buildOrderAddressDisplay(orderAddress), [orderAddress]);
   const orderAddressForNavigator = useMemo(
@@ -3676,12 +3686,36 @@ function OrderDetailsContent() {
   const orderHasMapPoint = useMemo(() => hasClientObjectMapPoint(orderAddress), [orderAddress]);
   const orderLocationMode = useMemo(
     () =>
-      normalizeClientObjectLocationMode(order?.object_location_mode || order?.object?.location_mode, {
+      normalizeClientObjectLocationMode(
+        linkedObject?.location_mode || order?.object_location_mode || order?.object?.location_mode,
+        {
         fallback: 'address',
       }),
-    [order?.object?.location_mode, order?.object_location_mode],
+    [linkedObject?.location_mode, order?.object?.location_mode, order?.object_location_mode],
   );
   const useCoordinatesForOrderAddress = orderLocationMode === 'map' && orderHasMapPoint;
+  const orderAddressComment = useMemo(() => {
+    const isObjectMode = normalizeOrderAddressMode(order?.address_mode) === 'object';
+    if (isObjectMode) {
+      const objectComment = String(
+        linkedObject?.comment ??
+          linkedObject?.entrance_info ??
+          order?.object?.comment ??
+          order?.object?.entrance_info ??
+          '',
+      ).trim();
+      if (objectComment) return objectComment;
+    }
+    return String(orderAddress?.entrance_info || orderAddress?.comment || '').trim();
+  }, [
+    linkedObject?.comment,
+    linkedObject?.entrance_info,
+    order?.address_mode,
+    order?.object?.comment,
+    order?.object?.entrance_info,
+    orderAddress?.comment,
+    orderAddress?.entrance_info,
+  ]);
   const orderAddressItems = useMemo(
     () =>
       [
@@ -3695,23 +3729,19 @@ function OrderDetailsContent() {
         [t('order_field_entrance'), orderAddress.entrance],
         [t('order_field_apartment'), orderAddress.apartment],
         [t('order_field_postal_code'), orderAddress.postal_code],
-        [t('order_field_comment'), orderAddress.entrance_info],
+        [t('order_field_comment'), orderAddressComment],
       ]
         .filter(([, value]) => String(value || '').trim().length > 0)
         .map(([label, value]) => ({ label, value: String(value || '').trim() })),
-    [t, orderAddress],
-  );
-  const normalizedAddressMode = useMemo(
-    () => normalizeOrderAddressMode(order?.address_mode),
-    [order?.address_mode],
+    [t, orderAddress, orderAddressComment],
   );
   const isObjectDeleted = normalizedAddressMode === 'object' && !linkedObjectId;
   const objectRowValue = useMemo(() => {
-    if (linkedObjectId) return String(order?.object_name || '').trim();
+    if (linkedObjectId) return String(linkedObject?.name || order?.object_name || '').trim();
     if (isObjectDeleted) return t('objects_deleted');
-    if (normalizedAddressMode === 'custom') return t('order_address_custom_mode');
+    if (normalizedAddressMode === 'custom') return t('order_object_without_address');
     return '';
-  }, [isObjectDeleted, linkedObjectId, normalizedAddressMode, order?.object_name, t]);
+  }, [isObjectDeleted, linkedObject?.name, linkedObjectId, normalizedAddressMode, order?.object_name, t]);
   const createdAtDisplayValue = useMemo(() => {
     if (!order?.created_at) return t('order_details_departure_not_specified');
     const createdDate = new Date(order.created_at);
@@ -4152,7 +4182,7 @@ function OrderDetailsContent() {
                 />
               ) : null}
               {isOrderFieldVisible('phone') ? <View style={base.sep} /> : null}
-              {isOrderFieldVisible('object_id') ? (
+              {isOrderFieldVisible('object_id') && normalizedAddressMode === 'object' ? (
                 useCoordinatesForOrderAddress ? (
                   <LabelValueRow
                     label={t('objects_location_coordinates')}
@@ -4804,23 +4834,6 @@ function OrderDetailsContent() {
         }}
         onClose={() => setAssigneeModalVisible(false)}
       />
-
-      {useDepartments ? (
-        <SelectModal
-          visible={departmentModalVisible}
-          title={t('order_modal_select_department')}
-          searchable={false}
-          items={departments.map((d) => ({ id: d.id, label: d.name }))}
-          onSelect={(item) => {
-            setDepartmentId(item.id);
-            setDepartmentModalVisible(false);
-          }}
-          onClose={() => setDepartmentModalVisible(false)}
-          emptyComponent={
-            <Text style={styles.modalText}>{t('order_modal_no_departments')}</Text>
-          }
-        />
-      ) : null}
 
       <BaseModal
         visible={amountEditModalVisible}

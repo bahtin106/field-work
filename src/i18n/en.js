@@ -494,6 +494,7 @@ export default {
   create_order_client_address_add: 'Create address',
   create_order_client_object_label: 'Object',
   create_order_client_object_placeholder: 'Select object',
+  order_object_without_address: 'No address',
   create_order_client_object_add: 'Create object',
   order_object_edit_requires_new_object_title: 'Cannot edit this object',
   order_object_edit_requires_new_object_message:
@@ -580,7 +581,7 @@ export default {
   order_address_preserve_manual_hint:
     'Your order address is preserved. Switch to the client object address if needed.',
   order_address_use_object_hint: 'The selected client object address is being used.',
-  order_address_custom_mode: 'Custom address',
+  order_address_custom_mode: 'No address',
   order_client_create_new: 'Create new client',
   order_client_search_empty_hint:
     'No matches found. You can create a new client using the button below.',

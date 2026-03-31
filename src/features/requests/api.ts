@@ -12,7 +12,6 @@ import { applyOrderRelationFilters } from './relationFilters';
 import { resolveRequestTitle } from './title';
 
 const DEFAULT_PAGE_SIZE = 20;
-const requestByIdInFlight = new Map<string, Promise<any>>();
 const OBJECT_RELATION_SELECT = `
   object:client_objects(
     id,
@@ -227,46 +226,56 @@ function normalizePatchForDirectUpdate(patch) {
   return { ...patch };
 }
 
+async function getRequestByIdFresh(id) {
+  const key = String(id || '').trim();
+  if (!key || !isUuid(key)) return null;
+  return getRequestById(key);
+}
+
 export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = null) {
   return measureNetwork('requests.update.withVersion', async () => {
     if (!id) throw new Error('Order id is required');
-    const hasTimeWindowEndPatch = Object.prototype.hasOwnProperty.call(
-      patch ?? {},
-      'time_window_end',
-    );
-    const hasMediaFile5Patch = Object.prototype.hasOwnProperty.call(
-      patch ?? {},
-      'media_file_5',
-    );
+    // Preferred path: DB-side atomic RPC (supports all current fields).
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
+        p_order_id: String(id),
+        p_expected_updated_at: expectedUpdatedAt,
+        p_patch: patch ?? {},
+      });
+      if (rpcError) throw rpcError;
 
-    // Preferred path: DB-side atomic RPC.
-    if (!hasTimeWindowEndPatch && !hasMediaFile5Patch) {
-      try {
-        const { data: rpcData, error: rpcError } = await supabase.rpc('update_order_if_version', {
-          p_order_id: String(id),
-          p_expected_updated_at: expectedUpdatedAt,
-          p_patch: patch ?? {},
-        });
-        if (rpcError) throw rpcError;
-
-        if (!rpcData) {
-          if (!expectedUpdatedAt) {
-            throw new Error('Order not found');
+      if (!rpcData) {
+        if (!expectedUpdatedAt) {
+          throw new Error('Order not found');
+        }
+        const latest = await getRequestById(id);
+        const retryExpectedUpdatedAt = latest?.updated_at || null;
+        // One transparent retry with fresh row version to avoid "save only on second click".
+        if (retryExpectedUpdatedAt) {
+          const { data: retryData, error: retryError } = await supabase.rpc('update_order_if_version', {
+            p_order_id: String(id),
+            p_expected_updated_at: retryExpectedUpdatedAt,
+            p_patch: patch ?? {},
+          });
+          if (!retryError && retryData) {
+            return getRequestByIdFresh(id);
           }
-          const latest = await getRequestById(id);
-          throw buildConcurrencyError('Order was modified concurrently', latest || null);
         }
+        throw buildConcurrencyError('Order was modified concurrently', latest || null);
+      }
 
-        return getRequestById(id);
-      } catch (rpcFailure) {
-        if (!shouldFallbackFromRpcFailure(rpcFailure)) {
-          throw rpcFailure;
-        }
+      return getRequestByIdFresh(id);
+    } catch (rpcFailure) {
+      if (!shouldFallbackFromRpcFailure(rpcFailure)) {
+        throw rpcFailure;
       }
     }
 
     // Fallback path before migration is applied.
-    const safePatch = normalizePatchForDirectUpdate(patch);
+    const safePatch = {
+      ...normalizePatchForDirectUpdate(patch),
+      updated_at: new Date().toISOString(),
+    };
     let query = supabase.from('orders').update(safePatch).eq('id', id);
     if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt);
     const { data, error } = await query.select('id, updated_at').maybeSingle();
@@ -277,10 +286,25 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
         throw new Error('Order not found');
       }
       const latest = await getRequestById(id);
+      const retryExpectedUpdatedAt = latest?.updated_at || null;
+      if (retryExpectedUpdatedAt) {
+        let retryQuery = supabase
+          .from('orders')
+          .update({
+            ...safePatch,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+          .eq('updated_at', retryExpectedUpdatedAt);
+        const retryResult = await retryQuery.select('id, updated_at').maybeSingle();
+        if (!retryResult.error && retryResult.data) {
+          return getRequestByIdFresh(id);
+        }
+      }
       throw buildConcurrencyError('Order was modified concurrently', latest || null);
     }
 
-    return getRequestById(id);
+    return getRequestByIdFresh(id);
   });
 }
 
@@ -329,10 +353,6 @@ export async function listRequests(params = {}) {
         if (statusValue) query = query.eq('status', statusValue);
       }
       if (executorId) query = query.eq('assigned_to', executorId);
-    }
-
-    if (departmentId != null) {
-      query = query.eq('department_id', Number(departmentId));
     }
 
     if (Array.isArray(workTypeIds) && workTypeIds.length) {
@@ -386,9 +406,6 @@ export async function listRequests(params = {}) {
         if (executorId) fallbackQuery = fallbackQuery.eq('assigned_to', executorId);
       }
 
-      if (departmentId != null) {
-        fallbackQuery = fallbackQuery.eq('department_id', Number(departmentId));
-      }
 
       if (Array.isArray(workTypeIds) && workTypeIds.length) {
         const ids = await getOrderIdsByWorkTypes(workTypeIds);
@@ -418,10 +435,7 @@ export async function listRequests(params = {}) {
 export async function getRequestById(id) {
   const key = String(id || '').trim();
   if (!key || !isUuid(key)) return null;
-  const existing = requestByIdInFlight.get(key);
-  if (existing) return existing;
-
-  const p = measureNetwork('requests.getById', async () => {
+  return measureNetwork('requests.getById', async () => {
     let { data, error } = await supabase
       .from('orders')
       .select(ORDER_SELECT_COLUMNS)
@@ -438,12 +452,7 @@ export async function getRequestById(id) {
     }
     if (error) throw error;
     return enrichOrderWithExtraFields(data);
-  }).finally(() => {
-    requestByIdInFlight.delete(key);
   });
-
-  requestByIdInFlight.set(key, p);
-  return p;
 }
 
 export async function updateRequest(id, patch, expectedUpdatedAt = null) {

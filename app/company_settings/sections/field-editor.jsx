@@ -15,6 +15,7 @@ import {
 
 import Screen from '../../../components/layout/Screen';
 import Button from '../../../components/ui/Button';
+import AnimatedChevron from '../../../components/ui/AnimatedChevron';
 import Card from '../../../components/ui/Card';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
@@ -908,11 +909,7 @@ export default function FieldEditorScreen() {
                     ) : null}
                   </View>
                   <View style={s.entityToggleChevron}>
-                    <Feather
-                      name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                      size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? 18}
-                      color={theme.colors.textSecondary}
-                    />
+                    <AnimatedChevron expanded={isExpanded} iconName="chevron-down" />
                   </View>
                 </Pressable>
                 {isExpanded ? (
