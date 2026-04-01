@@ -1,5 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import {
+  createBegetPresignedGetUrl,
   createBegetPresignedPutUrl,
   buildBegetPublicUrl,
   deleteBegetKeys,
@@ -38,52 +39,53 @@ const binary = (status: number, body: BodyInit | null, headers: HeadersInit = {}
     },
   });
 
-const DEFAULT_YANDEX_ROOT = '/РњРѕРЅРёС‚РѕСЂ';
-const PROFILE_MEDIA_ROOT_DIR = 'Р¤РѕС‚Рѕ РїСЂРѕС„РёР»РµР№';
+const DEFAULT_YANDEX_ROOT = '/monitor';
+const PROFILE_MEDIA_ROOT_DIR = 'profiles';
 const INTERNAL_URL_PREFIX = 'yadisk://';
 const AVATARS_BUCKET = 'avatars';
 const STORAGE_ROOT_PREFIX = 'profiles';
 const VALID_ENTITY_TYPES = new Set(['employee', 'client', 'object', 'feedback', 'feedback_attachment']);
 const RENDER_TTL_SEC = 60 * 60 * 24 * 30;
-const BEGET_COMPANIES_DIR = '\u041a\u043e\u043c\u043f\u0430\u043d\u0438\u0438';
-const BEGET_SUPPORT_DIR = '\u041e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u044f';
-const BEGET_SUPPORT_REQUEST_PREFIX = '\u041e\u0431\u0440\u0430\u0449\u0435\u043d\u0438\u0435';
+const BEGET_COMPANIES_DIR = 'companies';
+const BEGET_PROFILES_DIR = 'profiles';
+const BEGET_SUPPORT_DIR = 'requests';
+const BEGET_SUPPORT_REQUEST_PREFIX = 'request';
 
 const ENTITY_META = {
   employee: {
     table: 'profiles',
     column: 'avatar_url',
-    yandexDir: 'РЎРѕС‚СЂСѓРґРЅРёРєРё',
+    yandexDir: 'employees',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/${entityId}`,
-    begetDir: 'РЎРѕС‚СЂСѓРґРЅРёРєРё',
+    begetDir: 'employees',
   },
   client: {
     table: 'clients',
     column: 'avatar_url',
-    yandexDir: 'РљР»РёРµРЅС‚С‹',
+    yandexDir: 'clients',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/clients/${entityId}`,
-    begetDir: 'РљР»РёРµРЅС‚С‹',
+    begetDir: 'clients',
   },
   object: {
     table: 'client_objects',
     column: 'photo_url',
-    yandexDir: 'РћР±СЉРµРєС‚С‹',
+    yandexDir: 'objects',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/objects/${entityId}`,
-    begetDir: 'РћР±СЉРµРєС‚С‹',
+    begetDir: 'objects',
   },
   feedback: {
     table: 'feedbacks',
     column: 'photo_url',
-    yandexDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+    yandexDir: 'requests',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/feedbacks/${entityId}`,
-    begetDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+    begetDir: 'requests',
   },
   feedback_attachment: {
     table: 'feedback_attachments',
     column: 'photo_url',
-    yandexDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+    yandexDir: 'requests',
     storagePrefix: (entityId: string) => `${STORAGE_ROOT_PREFIX}/feedback_attachments/${entityId}`,
-    begetDir: 'РћР±СЂР°С‰РµРЅРёСЏ',
+    begetDir: 'requests',
   },
 } as const;
 
@@ -119,15 +121,44 @@ function normalizePath(path: string | null | undefined) {
   return String(path || '').replace(/^\/+/, '').trim();
 }
 
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+  А: 'A', а: 'a', Б: 'B', б: 'b', В: 'V', в: 'v', Г: 'G', г: 'g',
+  Д: 'D', д: 'd', Е: 'E', е: 'e', Ё: 'E', ё: 'e', Ж: 'Zh', ж: 'zh',
+  З: 'Z', з: 'z', И: 'I', и: 'i', Й: 'I', й: 'i', К: 'K', к: 'k',
+  Л: 'L', л: 'l', М: 'M', м: 'm', Н: 'N', н: 'n', О: 'O', о: 'o',
+  П: 'P', п: 'p', Р: 'R', р: 'r', С: 'S', с: 's', Т: 'T', т: 't',
+  У: 'U', у: 'u', Ф: 'F', ф: 'f', Х: 'Kh', х: 'kh', Ц: 'Ts', ц: 'ts',
+  Ч: 'Ch', ч: 'ch', Ш: 'Sh', ш: 'sh', Щ: 'Sch', щ: 'sch', Ъ: '', ъ: '',
+  Ы: 'Y', ы: 'y', Ь: '', ь: '', Э: 'E', э: 'e', Ю: 'Yu', ю: 'yu',
+  Я: 'Ya', я: 'ya',
+};
+
+function transliterateCyrillic(input: string) {
+  return Array.from(String(input || ''))
+    .map((ch) => CYRILLIC_TO_LATIN[ch] ?? ch)
+    .join('');
+}
 function sanitizePathSegment(input: string, fallback: string) {
-  const normalized = String(input || '')
+  const normalized = transliterateCyrillic(String(input || ''))
     .trim()
-    .replace(/[\\/:*?"<>|]/g, '-')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\\/:*?"<>|]+/g, '-')
     .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
     .replace(/[.]+$/g, '')
-    .replace(/^[_-]+|[_-]+$/g, '');
+    .replace(/^[_-]+|[_-]+$/g, '')
+    .toLowerCase();
   const compact = normalized.slice(0, 64);
-  return compact || fallback;
+  if (compact) return compact;
+  return (
+    transliterateCyrillic(String(fallback || 'item'))
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .replace(/^[_-]+|[_-]+$/g, '')
+      .toLowerCase()
+      .slice(0, 64) || 'item'
+  );
 }
 
 function getFileExtensionByMime(mime: string) {
@@ -287,7 +318,7 @@ function mapYandexApiError(status: number, payload: string) {
   if (status === 401 || status === 403 || text.includes('unauthorized') || text.includes('invalid_grant')) {
     return 'Yandex authorization expired. Reconnect disk';
   }
-  if (status === 423 || text.includes('resource is locked') || text.includes('СЂРµСЃСѓСЂСЃ Р·Р°Р±Р»РѕРєРёСЂРѕРІР°РЅ')) {
+  if (status === 423 || text.includes('resource is locked') || text.includes('РЎР‚Р ВµРЎРѓРЎС“РЎР‚РЎРѓ Р В·Р В°Р В±Р В»Р С•Р С”Р С‘РЎР‚Р С•Р Р†Р В°Р Р…')) {
     return 'Yandex resource is temporarily locked';
   }
   if (
@@ -590,8 +621,10 @@ function buildEntityLabel(entityType: EntityType, row: Record<string, unknown>) 
     const firstName = String(row.first_name || '').trim();
     const middleName = String(row.middle_name || '').trim();
     const lastName = String(row.last_name || '').trim();
-    const fullName = String(row.full_name || '').trim() || [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-    return sanitizePathSegment(fullName || `СЃРѕС‚СЂСѓРґРЅРёРє_${shortId}`, `СЃРѕС‚СЂСѓРґРЅРёРє_${shortId}`);
+    const fullName =
+      String(row.full_name || '').trim() ||
+      [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+    return sanitizePathSegment(fullName || `employee_${shortId}`, `employee_${shortId}`);
   }
 
   if (entityType === 'client') {
@@ -601,18 +634,18 @@ function buildEntityLabel(entityType: EntityType, row: Record<string, unknown>) 
       .filter(Boolean)
       .join(' ')
       .trim();
-    return sanitizePathSegment(fullName || fallback || `РєР»РёРµРЅС‚_${shortId}`, `РєР»РёРµРЅС‚_${shortId}`);
+    return sanitizePathSegment(fullName || fallback || `client_${shortId}`, `client_${shortId}`);
   }
 
   if (entityType === 'feedback') {
-    return sanitizePathSegment(`obrashenie_${shortId}`, `obrashenie_${shortId}`);
+    return sanitizePathSegment(`request_${shortId}`, `request_${shortId}`);
   }
   if (entityType === 'feedback_attachment') {
     const feedbackId = String(row.feedback_id || '').trim().slice(0, 8) || 'feedback';
-    return sanitizePathSegment(`obrashenie_${feedbackId}_${shortId}`, `obrashenie_${feedbackId}_${shortId}`);
+    return sanitizePathSegment(`request_${feedbackId}_${shortId}`, `request_${feedbackId}_${shortId}`);
   }
 
-  return sanitizePathSegment(String(row.name || '').trim() || `РѕР±СЉРµРєС‚_${shortId}`, `РѕР±СЉРµРєС‚_${shortId}`);
+  return sanitizePathSegment(String(row.name || '').trim() || `object_${shortId}`, `object_${shortId}`);
 }
 
 function buildYandexFolderPath(
@@ -622,7 +655,7 @@ function buildYandexFolderPath(
   entityLabel: string,
 ) {
   const root = normalizeFolderPath(rootFolder).replace(/\/+$/, '');
-  const companyDir = sanitizePathSegment(companyName || 'РљРѕРјРїР°РЅРёСЏ', 'РљРѕРјРїР°РЅРёСЏ');
+  const companyDir = sanitizePathSegment(companyName || 'company', 'company');
   const entityDir = ENTITY_META[entityType].yandexDir;
   return `${root}/${companyDir}/${PROFILE_MEDIA_ROOT_DIR}/${entityDir}/${entityLabel}`;
 }
@@ -649,7 +682,7 @@ function buildBegetStoragePrefix(
   const entityDir = ENTITY_META[entityType].begetDir;
   const shortId = String(entityId || '').trim().slice(0, 8) || 'item';
   const label = sanitizePathSegment(entityLabel || `${entityDir}_${shortId}`, `${entityDir}_${shortId}`);
-  return `РљРѕРјРїР°РЅРёРё/${companyDir}/РџСЂРѕС„РёР»Рё/${entityDir}/${label}_${shortId}`;
+  return `${BEGET_COMPANIES_DIR}/${companyDir}/${BEGET_PROFILES_DIR}/${entityDir}/${label}_${shortId}`;
 }
 
 async function getEntityContext(
@@ -693,13 +726,13 @@ async function getEntityContext(
   return {
     entity: data as Record<string, unknown>,
     currentUrl,
-    companyName: String(company.name || '').trim() || 'РљРѕРјРїР°РЅРёСЏ',
+    companyName: String(company.name || '').trim() || 'company',
     provider: String(company.profile_media_provider || 'beget_s3'),
     table: meta.table,
     column: meta.column,
     storagePrefix: meta.storagePrefix(entityId),
     begetStoragePrefix: buildBegetStoragePrefix(
-      String(company.name || '').trim() || 'РљРѕРјРїР°РЅРёСЏ',
+      String(company.name || '').trim() || 'company',
       String(companyId || (data as any).company_id || '').trim() || 'company',
       entityType,
       entityLabel,
@@ -1253,6 +1286,17 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         }
 
         if (String(row.provider || '').trim() === 'beget_s3') {
+          const begetKey = String(row.external_path || '').trim();
+          if (begetKey) {
+            try {
+              const signed = await createBegetPresignedGetUrl({
+                key: begetKey,
+                expiresInSec: 60 * 60 * 24,
+              });
+              resolvedUrls[url] = signed.url;
+              continue;
+            } catch {}
+          }
           resolvedUrls[url] = url;
           continue;
         }
@@ -1521,6 +1565,8 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 if (import.meta.main) {
   Deno.serve(handleProfileMediaStorageRequest);
 }
+
+
 
 
 

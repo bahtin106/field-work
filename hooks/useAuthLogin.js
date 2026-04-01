@@ -139,7 +139,7 @@ export function useAuthLogin() {
 
             const { data: byId } = await supabase
               .from('profiles')
-              .select('is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+              .select('is_admin_blocked, license_state, blocked_reason')
               .eq('id', uid)
               .maybeSingle();
             if (byId) {
@@ -147,7 +147,7 @@ export function useAuthLogin() {
             } else {
               const { data: byUserId } = await supabase
                 .from('profiles')
-                .select('is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+                .select('is_admin_blocked, license_state, blocked_reason')
                 .eq('user_id', uid)
                 .maybeSingle();
               profile = byUserId || null;
@@ -155,8 +155,6 @@ export function useAuthLogin() {
 
             const blockedReason = String(profile?.blocked_reason || '').toLowerCase();
             const blockedByAdmin =
-              !!profile?.is_suspended ||
-              !!profile?.suspended_at ||
               !!profile?.is_admin_blocked ||
               blockedReason === 'manual' ||
               blockedReason === 'admin_block' ||

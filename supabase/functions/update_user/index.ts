@@ -24,6 +24,8 @@ type ReqBody = {
     birthdate?: string | null;
     department_id?: string | null;
   } | null;
+  is_admin_blocked?: boolean | null;
+  blocked_reason?: string | null;
   is_suspended?: boolean | null;
   suspended_at?: string | null;
 };
@@ -44,6 +46,10 @@ serve(async (req: Request) => {
   }
 
   try {
+    const forwardedFor = req.headers.get('x-forwarded-for') || '';
+    const ipAddress = forwardedFor.split(',')[0]?.trim() || req.headers.get('x-real-ip') || null;
+    const userAgent = req.headers.get('user-agent') || null;
+
     const body = (await req.json()) as ReqBody;
     if (!body?.user_id) throw new Error('user_id is required');
 
@@ -58,7 +64,18 @@ serve(async (req: Request) => {
       global: { headers: { 'x-application': 'edge-update-user' } },
     });
 
-    const { user_id, changed_by, email, new_password, password, role, profile, is_suspended, suspended_at } =
+    const {
+      user_id,
+      changed_by,
+      email,
+      new_password,
+      password,
+      role,
+      profile,
+      is_admin_blocked,
+      blocked_reason,
+      is_suspended,
+    } =
       body;
 
     // 1) Обновление полей профиля (если переданы)
@@ -79,11 +96,19 @@ serve(async (req: Request) => {
     if (typeof role === 'string' && role.length > 0) {
       profilePatch.role = role;
     }
-    if (typeof is_suspended === 'boolean') {
-      profilePatch.is_suspended = is_suspended;
-    }
-    if (suspended_at !== undefined) {
-      profilePatch.suspended_at = suspended_at;
+    const normalizedAdminBlocked =
+      typeof is_admin_blocked === 'boolean'
+        ? is_admin_blocked
+        : typeof is_suspended === 'boolean'
+          ? is_suspended
+          : null;
+    if (typeof normalizedAdminBlocked === 'boolean') {
+      profilePatch.is_admin_blocked = normalizedAdminBlocked;
+      profilePatch.blocked_reason = normalizedAdminBlocked
+        ? String(blocked_reason || 'admin_block')
+        : null;
+    } else if (blocked_reason !== undefined) {
+      profilePatch.blocked_reason = blocked_reason;
     }
 
     const shouldSyncFullName =
@@ -137,13 +162,14 @@ serve(async (req: Request) => {
       if (passwordChanged) {
         try {
           console.log(`[UPDATE_USER] Logging password change for user ${user_id}`);
-          const { error: logErr } = await admin
-            .from('password_change_log')
-            .insert({
-              user_id,
-              changed_at: new Date().toISOString(),
-              changed_by: changed_by || user_id, // Если changed_by не указан, значит пользователь меняет свой пароль
-            });
+          const { error: logErr } = await admin.rpc('upsert_password_change_log', {
+            p_user_id: user_id,
+            p_changed_by: changed_by || user_id,
+            p_ip_address: ipAddress,
+            p_user_agent: userAgent,
+            p_source: 'edge:update_user',
+            p_window_seconds: 180,
+          });
           
           if (logErr) {
             // Логирование — не критично, но выведем в лог
@@ -169,3 +195,4 @@ serve(async (req: Request) => {
     });
   }
 });
+

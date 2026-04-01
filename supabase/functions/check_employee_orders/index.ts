@@ -109,7 +109,7 @@ Deno.serve(async (req: Request) => {
       .from('profiles')
       .select('id, first_name, last_name, full_name, role')
       .neq('id', user_id)
-      .is('is_suspended', false)
+      .is('is_admin_blocked', false)
       .order('first_name', { ascending: true });
 
     if (employeesError) {

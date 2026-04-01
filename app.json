@@ -19,12 +19,18 @@
       "package": "com.monitorapp.monitor",
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F2F2F7"
-      }
+      },
+      "runtimeVersion": "1.0.0"
     },
     "jsEngine": "hermes",
     "assetBundlePatterns": [
@@ -77,6 +83,10 @@
           "cameraPermission": "Разрешите приложению доступ к камере для съёмки фото заказов"
         }
       ]
-    ]
+    ],
+    "updates": {
+      "url": "https://u.expo.dev/3c645715-1637-4502-979c-d4690c6cf1e2"
+    },
+    "ios": {}
   }
 }

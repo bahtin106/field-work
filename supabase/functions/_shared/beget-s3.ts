@@ -1,4 +1,5 @@
 import {
+  GetObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   HeadObjectCommand,
@@ -121,6 +122,29 @@ export async function createBegetPresignedPutUrl(args: {
       'Cache-Control': args.cacheControl || 'public, max-age=31536000, immutable',
     },
   };
+}
+
+export async function createBegetPresignedGetUrl(args: {
+  key: string;
+  expiresInSec?: number;
+  responseContentType?: string;
+}) {
+  const cfg = getBegetS3Config();
+  const client = getBegetS3Client();
+  const key = String(args.key || '').replace(/^\/+/, '').trim();
+  if (!key) throw new Error('Missing object key');
+
+  const command = new GetObjectCommand({
+    Bucket: cfg.bucket,
+    Key: key,
+    ResponseContentType: String(args.responseContentType || '').trim() || undefined,
+  });
+
+  const url = await getSignedUrl(client, command, {
+    expiresIn: Math.max(60, Number(args.expiresInSec || 3600)),
+  });
+
+  return { url };
 }
 
 export async function headBegetObject(key: string) {

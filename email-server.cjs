@@ -27,6 +27,46 @@ function resolveSupabaseBaseUrl(rawUrl) {
 
 // Функция для простого хеширования пароля (bcrypt альтернатива)
 // Примечание: используем crypto вместо bcrypt
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || '').trim(),
+  );
+}
+
+async function logPasswordChange({
+  supabaseUrl,
+  supabaseServiceKey,
+  userId,
+  changedBy,
+  ipAddress,
+  userAgent,
+}) {
+  const url = resolveSupabaseBaseUrl(supabaseUrl);
+  const key = String(supabaseServiceKey || '').trim();
+  if (!url || !key || !isUuid(userId)) return;
+
+  const response = await fetch(`${url}/rest/v1/rpc/upsert_password_change_log`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      p_user_id: String(userId).trim(),
+      p_changed_by: isUuid(changedBy) ? String(changedBy).trim() : null,
+      p_ip_address: ipAddress ? String(ipAddress).trim() : null,
+      p_user_agent: userAgent ? String(userAgent).trim() : null,
+      p_source: 'email-server:update-password',
+      p_window_seconds: 180,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`password_change_log rpc failed: HTTP ${response.status} ${text}`);
+  }
+}
 function hashPassword(password) {
   // Для демонстрации используем SHA256, но это НЕ полная замена bcrypt
   // Правильное решение - установить bcrypt в контейнере
@@ -356,6 +396,27 @@ app.post('/api/update-password', async (req, res) => {
 
     const result = await response.json();
     console.log(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Password updated successfully for user: ${userId}`);
+
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const rawIp = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : String(forwardedFor || req.ip || '').split(',')[0];
+    try {
+      await logPasswordChange({
+        supabaseUrl: url,
+        supabaseServiceKey: key,
+        userId,
+        changedBy: changed_by || userId,
+        ipAddress: rawIp,
+        userAgent: req.get('user-agent'),
+      });
+      console.log(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Password change logged for user: ${userId}`);
+    } catch (logErr) {
+      console.warn(
+        `[${new Date().toISOString()}] [UPDATE_PASSWORD] Password change log failed for user ${userId}:`,
+        logErr?.message || logErr,
+      );
+    }
 
     return res.status(200).json({
       ok: true,

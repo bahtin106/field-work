@@ -1,10 +1,29 @@
-# Exclude local dev assets and large server files from EAS build archive
-supabase/
-supabase_*/
-**/.temp/
-node_modules.backup/
+# Dependencies and local caches
+node_modules/
+.expo/
+.expo-shared/
+
+# Build outputs
+android/.gradle/
+android/build/
+android/app/build/
+ios/build/
+build/
+dist/
+
+# Local backups and temp artifacts
+.codex-backups/
+backups/
+backup-secrets/
+.tmp_*
+tmp_*
+
+# Repo/internal metadata not needed for EAS archive
+.git/
+.vscode/
+.idea/
+
+# Local env/secrets
 .env
 .env.*
-*.sql
-*.md
-temp_prefetch.txt
+
