@@ -35,7 +35,6 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import ImageViewing from 'react-native-image-viewing';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -47,6 +46,7 @@ import Animated, {
 import { useTheme } from '../../../theme/ThemeProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import Button from '../../../components/ui/Button';
+import FullscreenImageViewer from './FullscreenImageViewer';
 import { BaseModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
 
 // ─── Haptic helpers ───────────────────────────────────────────────
@@ -71,11 +71,14 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   // Session photos: [{ id, uri }]
   const [photos, setPhotos] = useState([]);
   const [torch, setTorch] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState('back');
   const [isTaking, setIsTaking] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
 
   // Preview state (ImageViewing)
   const [previewIndex, setPreviewIndex] = useState(-1);
+  const previewVisible = previewIndex >= 0;
+  const previewImages = useMemo(() => photos.map((item) => item.uri), [photos]);
 
   const s = useMemo(() => buildStyles(theme, insets), [theme, insets]);
 
@@ -90,6 +93,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     if (!visible) {
       setPhotos([]);
       setTorch(false);
+      setCameraFacing('back');
       setIsTaking(false);
       setCameraReady(false);
       setPreviewIndex(-1);
@@ -150,7 +154,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     try {
       const result = await cameraRef.current.takePictureAsync({
         quality: theme.media?.quality ?? 0.85,
-        shutterSound: true,
+        shutterSound: false,
       });
       if (result?.uri) {
         setPhotos((prev) => [...prev, { id: uid(), uri: result.uri }]);
@@ -179,8 +183,15 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
 
   // ── Flash toggle ───────────────────────────────────────────
   const toggleTorch = useCallback(() => {
+    if (cameraFacing !== 'back') return;
     hapticLight();
     setTorch((prev) => !prev);
+  }, [cameraFacing]);
+
+  const toggleCameraFacing = useCallback(() => {
+    hapticLight();
+    setTorch(false);
+    setCameraFacing((prev) => (prev === 'back' ? 'front' : 'back'));
   }, []);
 
   // ── Remove photo from strip ────────────────────────────────
@@ -198,34 +209,38 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     setPreviewIndex(-1);
   }, []);
 
-  // Use refs so the FooterComponent closure always sees fresh values
+  // Use refs so handlers always see fresh values
   const photosRef = useRef(photos);
   photosRef.current = photos;
   const previewIndexRef = useRef(previewIndex);
   previewIndexRef.current = previewIndex;
 
-  const handleDeleteFromPreview = useCallback(() => {
-    const idx = previewIndexRef.current;
-    const list = photosRef.current;
-    if (idx >= 0 && idx < list.length) {
-      const id = list[idx].id;
-      setPhotos((prev) => {
-        const next = prev.filter((p) => p.id !== id);
-        if (!next.length) {
-          setPreviewIndex(-1);
-          return next;
-        }
-        setPreviewIndex(Math.min(idx, next.length - 1));
-        return next;
-      });
+  const handleDeleteFromPreview = useCallback((idxFromViewer) => {
+    const current = photosRef.current;
+    if (!Array.isArray(current) || !current.length) return;
+
+    const raw = Number.isFinite(Number(idxFromViewer))
+      ? Number(idxFromViewer)
+      : Number(previewIndexRef.current);
+    const idx = Math.max(0, Math.min(Number.isFinite(raw) ? Math.trunc(raw) : 0, current.length - 1));
+
+    hapticLight();
+    const next = current.filter((_, itemIndex) => itemIndex !== idx);
+    setPhotos(next);
+    if (!next.length) {
+      setPreviewIndex(-1);
+      return;
     }
+    setPreviewIndex(Math.min(idx, next.length - 1));
   }, []);
 
-  // ── Preview images for ImageViewing ────────────────────────
-  const previewImages = useMemo(
-    () => photos.map((p) => ({ uri: p.uri })),
-    [photos],
-  );
+  const handleModalRequestClose = useCallback(() => {
+    if (previewIndexRef.current >= 0) {
+      setPreviewIndex(-1);
+      return;
+    }
+    handleDiscard();
+  }, [handleDiscard]);
 
   // ── Thumbnail strip FlatList ───────────────────────────────
   const thumbListRef = useRef(null);
@@ -306,137 +321,112 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
     <AnimatedFullscreenModal
       visible={visible}
       animation="slide"
-      onRequestClose={handleDiscard}
+      onRequestClose={handleModalRequestClose}
     >
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <View style={s.root}>
-        {/* ── Live camera ── */}
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          flash={torch ? 'on' : 'off'}
-          enableTorch={torch}
-          mode="picture"
-          onCameraReady={() => setCameraReady(true)}
-        />
-
-        {/* ── Top bar ── */}
-        <View style={s.topBar}>
-          <Pressable
-            onPress={handleDiscard}
-            style={s.topBtn}
-            hitSlop={theme.spacing.sm}
-            accessibilityLabel={t('order_photos_close', 'Закрыть')}
-          >
-            <Feather name="x" size={theme.icons.md} color={theme.colors.onPrimary} />
-          </Pressable>
-
-          <Pressable
-            onPress={toggleTorch}
-            style={[s.topBtn, torch && s.topBtnActive]}
-            hitSlop={theme.spacing.sm}
-            accessibilityLabel={t('camera_flash', 'Вспышка')}
-          >
-            <Feather
-              name={torch ? 'zap' : 'zap-off'}
-              size={theme.icons.md}
-              color={theme.colors.onPrimary}
+        {!previewVisible ? (
+          <>
+            {/* ── Live camera ── */}
+            <CameraView
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              facing={cameraFacing}
+              flash={cameraFacing === 'back' && torch ? 'on' : 'off'}
+              enableTorch={cameraFacing === 'back' && torch}
+              mode="picture"
+              onCameraReady={() => setCameraReady(true)}
             />
-          </Pressable>
-        </View>
 
-        {/* ── Bottom panel (thumbs + controls) ── */}
-        <View style={s.bottomPanel}>
-          {/* Thumbnail strip */}
-          {photos.length > 0 ? (
-            <FlatList
-              ref={thumbListRef}
-              data={photos}
-              renderItem={renderThumb}
-              keyExtractor={thumbKeyExtractor}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.thumbList}
-              style={s.thumbListWrap}
-            />
-          ) : (
-            <View style={s.emptyStrip}>
-              <Text style={s.emptyStripText}>
-                {t('camera_no_photos_yet', 'Сделайте фото')}
-              </Text>
+            {/* ── Bottom panel (thumbs + controls) ── */}
+            <View style={s.bottomPanel}>
+              {/* Thumbnail strip */}
+              {photos.length > 0 ? (
+                <FlatList
+                  ref={thumbListRef}
+                  data={photos}
+                  renderItem={renderThumb}
+                  keyExtractor={thumbKeyExtractor}
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={s.thumbList}
+                  style={s.thumbListWrap}
+                />
+              ) : (
+                <View style={s.emptyStrip}>
+                  <Text style={s.emptyStripText}>
+                    {t('camera_no_photos_yet', 'Сделайте фото')}
+                  </Text>
+                </View>
+              )}
+
+              {/* Controls row */}
+              <View style={s.controlsRow}>
+                {/* Close (X) */}
+                <Pressable
+                  onPress={handleDiscard}
+                  style={s.controlBtn}
+                  accessibilityLabel={t('order_photos_close', 'Закрыть')}
+                >
+                  <Feather name="x" size={theme.icons.lg} color={theme.colors.onPrimary} />
+                </Pressable>
+
+                {/* Switch camera */}
+                <Pressable
+                  onPress={toggleCameraFacing}
+                  style={s.controlBtn}
+                  accessibilityLabel={t('camera_switch', 'Сменить камеру')}
+                >
+                  <Feather name="refresh-ccw" size={theme.icons.md} color={theme.colors.onPrimary} />
+                </Pressable>
+
+                {/* Shutter */}
+                <Pressable onPress={handleTakePicture} disabled={isTaking || !cameraReady}>
+                  <Animated.View style={[s.shutterOuter, shutterAnimStyle]}>
+                    <View style={s.shutterInner} />
+                  </Animated.View>
+                </Pressable>
+
+                {/* Flash */}
+                <Pressable
+                  onPress={toggleTorch}
+                  disabled={cameraFacing !== 'back'}
+                  style={[
+                    s.controlBtn,
+                    torch && s.controlBtnActive,
+                    cameraFacing !== 'back' && s.controlBtnDisabled,
+                  ]}
+                  accessibilityLabel={t('camera_flash', 'Вспышка')}
+                >
+                  <Feather
+                    name={torch ? 'zap' : 'zap-off'}
+                    size={theme.icons.md}
+                    color={theme.colors.onPrimary}
+                  />
+                </Pressable>
+
+                {/* Confirm (✓) */}
+                <Pressable
+                  onPress={handleConfirm}
+                  disabled={photos.length === 0}
+                  style={[s.controlBtn, s.confirmBtn, photos.length === 0 && s.controlBtnDisabled]}
+                  accessibilityLabel={t('camera_confirm', 'Подтвердить')}
+                >
+                  <Feather name="check" size={theme.icons.lg} color={theme.colors.onPrimary} />
+                </Pressable>
+              </View>
             </View>
-          )}
-
-          {/* Controls row */}
-          <View style={s.controlsRow}>
-            {/* Close (X) */}
-            <Pressable
-              onPress={handleDiscard}
-              style={s.controlBtn}
-              accessibilityLabel={t('order_photos_close', 'Закрыть')}
-            >
-              <Feather name="x" size={theme.icons.lg} color={theme.colors.onPrimary} />
-            </Pressable>
-
-            {/* Shutter */}
-            <Pressable onPress={handleTakePicture} disabled={isTaking || !cameraReady}>
-              <Animated.View style={[s.shutterOuter, shutterAnimStyle]}>
-                <View style={s.shutterInner} />
-              </Animated.View>
-            </Pressable>
-
-            {/* Confirm (✓) */}
-            <Pressable
-              onPress={handleConfirm}
-              disabled={photos.length === 0}
-              style={[s.controlBtn, s.confirmBtn, photos.length === 0 && s.controlBtnDisabled]}
-              accessibilityLabel={t('camera_confirm', 'Подтвердить')}
-            >
-              <Feather name="check" size={theme.icons.lg} color={theme.colors.onPrimary} />
-            </Pressable>
-          </View>
-        </View>
+          </>
+        ) : null}
       </View>
 
-      {/* ── Image preview (fullscreen zoomable) ── */}
-      <ImageViewing
+      <FullscreenImageViewer
+        visible={previewVisible}
         images={previewImages}
-        imageIndex={previewIndex >= 0 ? previewIndex : 0}
-        visible={previewIndex >= 0}
-        onRequestClose={handleClosePreview}
-        swipeToCloseEnabled
-        doubleTapToZoomEnabled
-        presentationStyle="overFullScreen"
-        backgroundColor={theme.colors.background}
-        HeaderComponent={({ imageIndex }) => (
-          <View style={s.previewHeader}>
-            <Pressable
-              onPress={handleClosePreview}
-              style={s.previewHeaderBtn}
-              hitSlop={theme.spacing.sm}
-            >
-              <Feather name="x" size={theme.icons.md} color={theme.colors.onPrimary} />
-            </Pressable>
-            <Text style={s.previewHeaderText}>
-              {`${Math.max(0, Number(imageIndex) + 1)} / ${previewImages.length}`}
-            </Text>
-            <View style={s.previewHeaderSpacer} />
-          </View>
-        )}
-        FooterComponent={() =>
-          previewIndex >= 0 ? (
-            <View style={s.previewFooter}>
-              <Button
-                variant="destructive"
-                size="md"
-                title={t('camera_delete_photo', 'Удалить фото')}
-                onPress={handleDeleteFromPreview}
-                style={s.previewDeleteBtn}
-              />
-            </View>
-          ) : null
-        }
+        initialIndex={Math.max(0, Math.min(previewIndex, Math.max(0, previewImages.length - 1)))}
+        onClose={handleClosePreview}
+        onDelete={handleDeleteFromPreview}
+        capturePreviewMode
       />
     </AnimatedFullscreenModal>
   );
@@ -448,44 +438,17 @@ function buildStyles(theme, insets) {
   const ty = theme.typography;
   const cl = theme.colors;
   const rd = theme.radii;
-  const topPad = Math.max(insets.top, sp.xl) + sp.xs;
   const bottomPad = Math.max(insets.bottom, sp.lg) + sp.sm;
   const overlayBg = cl.overlay;
   const thumbSize = sp.xxl + sp.xl; // 56
   const shutterOuterSize = sp.xxl * 2 + sp.md; // ~78
   const shutterInnerSize = shutterOuterSize - sp.sm * 2;
   const controlBtnSize = sp.xxl + sp.md; // ~46
-  const topBtnSize = sp.xxl + sp.xs; // ~38
 
   return StyleSheet.create({
     root: {
       flex: 1,
       backgroundColor: '#000',
-    },
-
-    /* Top bar */
-    topBar: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      paddingTop: topPad,
-      paddingHorizontal: sp.lg,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      zIndex: 10,
-    },
-    topBtn: {
-      width: topBtnSize,
-      height: topBtnSize,
-      borderRadius: rd.pill,
-      backgroundColor: overlayBg,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    topBtnActive: {
-      backgroundColor: cl.primary,
     },
 
     /* Bottom panel */
@@ -548,7 +511,7 @@ function buildStyles(theme, insets) {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
-      paddingHorizontal: sp.xxl + sp.lg,
+      paddingHorizontal: sp.lg,
       paddingTop: sp.md,
     },
     controlBtn: {
@@ -561,6 +524,9 @@ function buildStyles(theme, insets) {
     },
     confirmBtn: {
       backgroundColor: cl.success || cl.primary,
+    },
+    controlBtnActive: {
+      backgroundColor: cl.primary,
     },
     controlBtnDisabled: {
       opacity: 0.35,
@@ -595,40 +561,6 @@ function buildStyles(theme, insets) {
       color: cl.textSecondary,
     },
 
-    /* Preview footer */
-    previewFooter: {
-      paddingHorizontal: sp.xl,
-      paddingBottom: bottomPad,
-      alignItems: 'center',
-    },
-    previewHeader: {
-      paddingTop: Math.max(insets.top, sp.md),
-      paddingHorizontal: sp.lg,
-      paddingBottom: sp.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-    previewHeaderBtn: {
-      width: topBtnSize,
-      height: topBtnSize,
-      borderRadius: rd.pill,
-      backgroundColor: overlayBg,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    previewHeaderText: {
-      color: cl.onPrimary,
-      fontSize: ty.sizes.sm,
-      fontWeight: ty.weight?.semibold || '600',
-    },
-    previewHeaderSpacer: {
-      width: topBtnSize,
-      height: topBtnSize,
-    },
-    previewDeleteBtn: {
-      minWidth: sp.xxl * 6,
-    },
   });
 }
 

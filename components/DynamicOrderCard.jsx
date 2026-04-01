@@ -9,7 +9,6 @@ import { useTranslation } from '../src/i18n/useTranslation';
 import {
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
-  normalizeCoordinateValue,
 } from '../src/features/objects/addressing';
 import OrderStatusCapsule from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
@@ -82,21 +81,15 @@ const PRIMARY_ROW_LABEL_KEYS = {
 function formatDateShort(iso, showTime = true) {
   if (!iso) return '';
   const d = new Date(iso);
-  const months = [
-    'янв.',
-    'февр.',
-    'март',
-    'апр.',
-    'май',
-    'июнь',
-    'июль',
-    'авг.',
-    'сент.',
-    'окт.',
-    'нояб.',
-    'дек.',
-  ];
-  const dateStr = `${d.getDate()} ${months[d.getMonth()] || ''} ${d.getFullYear()}`;
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).formatToParts(d);
+  const day = parts.find((p) => p.type === 'day')?.value || String(d.getDate());
+  const month = parts.find((p) => p.type === 'month')?.value || '';
+  const year = parts.find((p) => p.type === 'year')?.value || String(d.getFullYear());
+  const dateStr = `${day} ${month} ${year}`;
   if (showTime) {
     return `${dateStr}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
   }
@@ -184,16 +177,13 @@ function readWithFallback(order, field, key) {
       fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
     });
     if (locationMode === 'map' && hasClientObjectMapPoint(order)) {
-      const lat = normalizeCoordinateValue(order?.geo_lat);
-      const lng = normalizeCoordinateValue(order?.geo_lng);
-      val = lat && lng ? `${lat}, ${lng}` : '';
-      if (val) return val;
+      return '__MAP_POINT__';
     }
     if (String(order?.address_mode || '').trim().toLowerCase() === 'custom') {
       return '';
     }
-    // Р¤РѕСЂРјРёСЂСѓРµРј Р°РґСЂРµСЃ РєРѕРјРїР°РєС‚РЅРѕ: РїСЂРѕРїСѓСЃРєР°РµРј РѕР±Р»Р°СЃС‚СЊ/СЂР°Р№РѕРЅ, РїРѕРєР°Р·С‹РІР°РµРј РіРѕСЂРѕРґ,
-    // СѓР»РёС†Сѓ Р±РµР· РїСЂРёСЃС‚Р°РІРєРё "ул."/"улица" Рё РЅРѕРјРµСЂ РґРѕРјР°.
+    // Формируем адрес компактно: пропускаем область/район, показываем город,
+    // улицу без приставки "ул."/"улица" и номер дома.
     const city = order?.city || order?.town || order?.settlement || null;
     const rawStreet = order?.street || order?.snt || null;
     const street =
@@ -371,18 +361,15 @@ function DynamicOrderCard({
           else if (order?.phone_is_visible) value = order.phone;
           else if (order?.customer_phone_masked) value = order.customer_phone_masked;
         }
-        const addressIsMapPoint =
-          key === 'address' &&
-          normalizeClientObjectLocationMode(order?.object_location_mode || order?.location_mode, {
-            fallback: hasClientObjectMapPoint(order) ? 'map' : 'address',
-          }) === 'map' &&
-          hasClientObjectMapPoint(order);
         const label =
           field?.label && field.label !== key
             ? field.label
             : PRIMARY_ROW_LABEL_KEYS[key]
-              ? t(addressIsMapPoint ? 'objects_location_coordinates' : PRIMARY_ROW_LABEL_KEYS[key])
+              ? t(key === 'address' ? 'order_details_address' : PRIMARY_ROW_LABEL_KEYS[key])
               : (field?.label ?? key);
+        if (key === 'address' && value === '__MAP_POINT__') {
+          value = t('order_address_point_on_map', 'точка на карте');
+        }
         if (key === 'address' && !value) {
           value = t('order_details_address_not_specified');
         }
@@ -560,7 +547,7 @@ function DynamicOrderCard({
   const isAdminOrDispatcher = roleRaw === 'admin' || roleRaw === 'dispatcher';
   let showExecutor = false;
   if (context === 'my_orders') {
-    showExecutor = false;
+    showExecutor = true;
   } else if (context === 'calendar') {
     showExecutor = isAdminOrDispatcher || roleRaw === '';
   } else {
@@ -673,7 +660,7 @@ function DynamicOrderCard({
       </View>
 
       {/* Details under title (no datetime here) */}
-      <View style={{ gap: 2, marginTop: 4, marginBottom: 6 }}>
+      <View style={{ gap: 2, marginTop: 4, marginBottom: 0 }}>
         {primaryRows.map((row) => (
           <Text key={row.key} numberOfLines={1} style={{ fontSize: 14, color: mutedColor }}>
             {row.label ? `${row.label}: ` : ''}
@@ -686,12 +673,12 @@ function DynamicOrderCard({
       <View
         style={{
           flexDirection: 'row',
-          alignItems: 'center',
-          marginTop: 6,
+          alignItems: 'flex-end',
+          marginTop: 0,
           gap: 8,
         }}
       >
-        <View style={{ flex: 1.1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}>
+        <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}>
           {showUrgentDot && (
             <View
               style={{
@@ -710,9 +697,13 @@ function DynamicOrderCard({
                   fontSize: 12,
                   fontWeight: '700',
                   lineHeight: 12,
+                  width: '100%',
+                  textAlign: 'center',
+                  includeFontPadding: false,
+                  textAlignVertical: 'center',
                 }}
               >
-                •
+                {t('order_urgent_short', 'с')}
               </Text>
             </View>
           )}
@@ -725,17 +716,14 @@ function DynamicOrderCard({
           </Text>
         </View>
 
-        <View style={{ flex: 0.9, minWidth: 0, alignItems: 'center' }}>
+        <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end', justifyContent: 'flex-end' }}>
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
-            style={{ fontSize: 13, color: mutedColor, textAlign: 'center', width: '100%' }}
+            style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%' }}
           >
             {priceText || ' '}
           </Text>
-        </View>
-
-        <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"

@@ -2,13 +2,12 @@
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
-import { getStatusDbAliases, mapStatusToDb } from '../lib/orderFilters';
 import { supabase } from '../lib/supabase';
 import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
@@ -28,6 +27,30 @@ import Card from './ui/Card';
 import { useToast } from './ui/ToastProvider';
 
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
+const HOME_ROUTES = {
+  appSettings: '/app_settings/AppSettings',
+  appEvents: '/app_settings/sections/events',
+  companySettings: '/company_settings',
+  cloudStorageSettings: '/company_settings/sections/yandex-disk',
+  admin: '/admin',
+  billing: '/billing',
+  createOrder: '/orders/create-order',
+};
+
+let homeCriticalWarmupStarted = false;
+let homeAdminWarmupStarted = false;
+function warmHomeCriticalRoutes() {
+  if (homeCriticalWarmupStarted) return;
+  homeCriticalWarmupStarted = true;
+  import('../app/app_settings/AppSettings').catch(() => {});
+  import('../app/company_settings/CompanySettingsScreen').catch(() => {});
+}
+
+function warmHomeAdminRoute() {
+  if (homeAdminWarmupStarted) return;
+  homeAdminWarmupStarted = true;
+  import('../app/admin/index').catch(() => {});
+}
 
 function isUuid(s) {
   return (
@@ -76,48 +99,6 @@ async function fetchProfile(uid) {
   return await resolveProfileAvatar(byId || null);
 }
 
-async function fetchCountsMy(uid) {
-  if (!uid) return { feed: 0, new: 0, progress: 0, all: 0 };
-  const newStatuses = getStatusDbAliases('new');
-  const inProgressStatus = mapStatusToDb('in_progress');
-  const fetchCount = async (filterCb) => {
-    let q = supabase.from('orders_secure_v2').select('id', { count: 'exact' });
-    q = filterCb(q);
-    const { count } = await q.range(0, 0);
-    return count || 0;
-  };
-  const feedStatuses = getStatusDbAliases('feed');
-  const [feedMy, allMy, newMy, progressMy] = await Promise.all([
-    fetchCount((q) => {
-      if (feedStatuses.length === 1) return q.eq('status', feedStatuses[0]);
-      if (feedStatuses.length > 1) return q.in('status', feedStatuses);
-      return q;
-    }),
-    fetchCount((q) => q.eq('assigned_to', uid)),
-    fetchCount((q) => q.eq('assigned_to', uid).in('status', newStatuses)),
-    fetchCount((q) => q.eq('assigned_to', uid).eq('status', inProgressStatus)),
-  ]);
-  return { feed: feedMy, new: newMy, progress: progressMy, all: allMy };
-}
-
-async function fetchCountsAll() {
-  const newStatuses = getStatusDbAliases('new');
-  const inProgressStatus = mapStatusToDb('in_progress');
-  const fetchCount = async (filterCb) => {
-    let q = supabase.from('orders_secure_v2').select('id', { count: 'exact' });
-    q = filterCb(q);
-    const { count } = await q.range(0, 0);
-    return count || 0;
-  };
-  const [feedAll, allAll, newAll, progressAll] = await Promise.all([
-    fetchCount((q) => q.is('assigned_to', null)),
-    fetchCount((q) => q),
-    fetchCount((q) => q.in('status', newStatuses)),
-    fetchCount((q) => q.eq('status', inProgressStatus)),
-  ]);
-  return { feed: feedAll, new: newAll, progress: progressAll, all: allAll };
-}
-
 function HomeWarningCard({
   styles,
   theme,
@@ -144,6 +125,7 @@ function HomeWarningCard({
       </View>
       <Pressable
         onPress={onPress}
+        unstable_pressDelay={0}
         android_ripple={{ color: theme.colors.ripple, borderless: false }}
         style={({ pressed }) => [styles.subscriptionWarningLinkRow, pressed && styles.rowPressed]}
         accessibilityRole="button"
@@ -168,15 +150,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const toast = useToast();
   const qc = useQueryClient();
-  const lastNavigationAtRef = useRef(0);
-  const NAV_GUARD_MS = 0;
-
-  const runSingleNavigation = useCallback((navigate) => {
-    const now = Date.now();
-    if (now - lastNavigationAtRef.current < NAV_GUARD_MS) return;
-    lastNavigationAtRef.current = now;
-    navigate?.();
-  }, []);
+  warmHomeCriticalRoutes();
+  const navigateTo = useCallback(
+    (href) => {
+      if (!href) return;
+      router.push(href);
+    },
+    [router],
+  );
 
   // Debug: inspect incoming auth/profile props.
   useEffect(() => {
@@ -200,7 +181,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => sub?.subscription?.unsubscribe?.();
   }, [qc, user]);
 
-  const [scope, setScope] = useState('my');
   const [supportRequestOpen, setSupportRequestOpen] = useState(false);
   const [supportRequestNonce, setSupportRequestNonce] = useState(0);
   const { data: unreadSupportCount = 0 } = useQuery({
@@ -271,81 +251,32 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   // This keeps UI responsive while permissions are still loading.
   const resolvedRole = role || currentProfile?.role || roleFromPerms || 'worker';
 
-  // Р В РЎвЂ™Р В РўвЂР В РЎВР В РЎвЂР В Р вЂ¦ Р В Р’В±Р В Р’ВµР В Р’В· Р В РЎвЂўР В Р’В¶Р В РЎвЂР В РўвЂР В Р’В°Р В Р вЂ¦Р В РЎвЂР РЋР РЏ Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В РЎВР В РЎвЂР РЋРІвЂљВ¬Р В Р’ВµР В Р вЂ¦Р В РЎвЂўР В Р вЂ 
   const isAdmin = resolvedRole === 'admin';
 
-  // Р В РЎвЂєР В Р’В±Р В Р’В»Р В Р’В°Р РЋР С“Р РЋРІР‚С™Р РЋР Р‰ Р В РЎвЂ”Р РЋР вЂљР В РЎвЂўР РЋР С“Р В РЎВР В РЎвЂўР РЋРІР‚С™Р РЋР вЂљР В Р’В°
-  const canViewAll = isAdmin || (!permsLoading && has?.('canViewAllOrders') === true);
 
-  // Р Р†Р’ВРІР‚В¦ Р В РЎСљР В РЎвЂўР В Р вЂ Р В РЎвЂўР В Р’Вµ: Р В РЎвЂ”Р РЋР вЂљР В Р’В°Р В Р вЂ Р В РЎвЂў Р В Р вЂ¦Р В Р’В° Р РЋР С“Р В РЎвЂўР В Р’В·Р В РўвЂР В Р’В°Р В Р вЂ¦Р В РЎвЂР В Р’Вµ Р В Р’В·Р В Р’В°Р РЋР РЏР В Р вЂ Р В РЎвЂўР В РЎвЂќ Р РЋРЎвЂњР РЋРІР‚РЋР В РЎвЂР РЋРІР‚С™Р РЋРІР‚в„–Р В Р вЂ Р В Р’В°Р В Р’ВµР РЋРІР‚С™ isAdmin Р В РЎвЂ Р В Р’В·Р В Р’В°Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В·Р В РЎвЂќР РЋРЎвЂњ Р В РЎвЂ”Р В Р’ВµР РЋР вЂљР В РЎВР В РЎвЂР РЋРІвЂљВ¬Р В Р’ВµР В Р вЂ¦Р В РЎвЂўР В Р вЂ 
   const canCreateOrders = !permsLoading && has?.('canCreateOrders') === true;
 
-  useEffect(() => {
-    if (!canViewAll && scope !== 'my') setScope('my');
-  }, [canViewAll, scope]);
 
-  // ====== Counters ======
-  // Р В РІР‚СљР В Р’В°Р РЋР вЂљР В Р’В°Р В Р вЂ¦Р РЋРІР‚С™Р В РЎвЂР РЋР вЂљР РЋРЎвЂњР В Р’ВµР В РЎВ, Р РЋРІР‚РЋР РЋРІР‚С™Р В РЎвЂў Р РЋР С“Р РЋРІР‚РЋР РЋРІР‚ВР РЋРІР‚С™Р РЋРІР‚РЋР В РЎвЂР В РЎвЂќР В РЎвЂ Р В Р’В·Р В Р’В°Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В¶Р В Р’В°Р РЋР вЂ№Р РЋРІР‚С™Р РЋР С“Р РЋР РЏ Р В РЎвЂќР В РЎвЂўР В РЎвЂ“Р В РўвЂР В Р’В° Р В Р’ВµР РЋР С“Р РЋРІР‚С™Р РЋР Р‰ uid Р В Р’В Р РЋР вЂљР В РЎвЂўР В Р’В»Р РЋР Р‰ Р В РЎвЂўР В РЎвЂ”Р РЋР вЂљР В Р’ВµР В РўвЂР В Р’ВµР В Р’В»Р В Р’ВµР В Р вЂ¦Р В Р’В°
-  // profileLoading Р В РЎСљР В РІР‚Сћ Р В Р’В±Р В Р’В»Р В РЎвЂўР В РЎвЂќР В РЎвЂР РЋР вЂљР РЋРЎвЂњР В Р’ВµР РЋРІР‚С™ Р РЋР С“Р РЋРІР‚РЋР В Р’ВµР РЋРІР‚С™Р РЋРІР‚РЋР В РЎвЂР В РЎвЂќР В РЎвЂ - Р В РЎвЂўР В Р вЂ¦Р В РЎвЂ Р В РЎВР В РЎвЂўР В РЎвЂ“Р РЋРЎвЂњР РЋРІР‚С™ Р В Р’В·Р В Р’В°Р В РЎвЂ“Р РЋР вЂљР РЋРЎвЂњР В Р’В¶Р В Р’В°Р РЋРІР‚С™Р РЋР Р‰Р РЋР С“Р РЋР РЏ Р В РЎвЂ”Р В Р’В°Р РЋР вЂљР В Р’В°Р В Р’В»Р В Р’В»Р В Р’ВµР В Р’В»Р РЋР Р‰Р В Р вЂ¦Р В РЎвЂў
-  const readyForCounts = !!uid && !!resolvedRole;
-
-  // Debug: readiness for counts queries.
-  useEffect(() => {
-    if (!VERBOSE_HOME_LOGS) return;
-    console.info('[UniversalHome] Counts readiness:', {
-      uid,
-      resolvedRole,
-      readyForCounts,
-      canViewAll,
-    });
-  }, [uid, resolvedRole, readyForCounts, canViewAll]);
-
-  const {
-    data: myCounts = { feed: 0, new: 0, progress: 0, all: 0 },
-    isFetched: myCountsFetched,
-  } = useQuery({
-    queryKey: ['counts', 'my', uid],
-    queryFn: () => fetchCountsMy(uid),
-    enabled: readyForCounts,
-    staleTime: 2 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-    refetchOnMount: false,
-    placeholderData: (prev) => prev,
-  });
-
-  const { data: allCounts = { feed: 0, new: 0, progress: 0, all: 0 } } = useQuery({
-    queryKey: ['counts', 'all'],
-    queryFn: fetchCountsAll,
-    enabled: readyForCounts && canViewAll,
-    staleTime: 2 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
-    refetchOnMount: false,
-    placeholderData: (prev) => prev,
-  });
-
-  // ====== Р В РЎСљР В Р’В°Р В Р вЂ Р В РЎвЂР В РЎвЂ“Р В Р’В°Р РЋРІР‚В Р В РЎвЂР РЋР РЏ ======
   const openSelfProfileEdit = useCallback(() => {
     const selfProfileId = String(currentProfile?.id || uid || '').trim();
     if (!isUuid(selfProfileId)) return;
-    runSingleNavigation(() =>
-      router.push({ pathname: '/users/[id]', params: { id: selfProfileId } }),
-    );
-  }, [currentProfile?.id, router, runSingleNavigation, uid]);
+    router.push({ pathname: '/users/[id]', params: { id: selfProfileId } });
+  }, [currentProfile?.id, router, uid]);
   const openAppSettings = useCallback(
-    () => runSingleNavigation(() => router.push('/app_settings/AppSettings')),
-    [router, runSingleNavigation],
+    () => navigateTo(HOME_ROUTES.appSettings),
+    [navigateTo],
   );
   const openCompanySettings = useCallback(
-    () => runSingleNavigation(() => router.push('/company_settings')),
-    [router, runSingleNavigation],
+    () => navigateTo(HOME_ROUTES.companySettings),
+    [navigateTo],
   );
   const openCloudStorageSettings = useCallback(
-    () => runSingleNavigation(() => router.push('/company_settings/sections/yandex-disk')),
-    [router, runSingleNavigation],
+    () => navigateTo(HOME_ROUTES.cloudStorageSettings),
+    [navigateTo],
   );
   const openAdministration = useCallback(
-    () => runSingleNavigation(() => router.push('/admin')),
-    [router, runSingleNavigation],
+    () => navigateTo(HOME_ROUTES.admin),
+    [navigateTo],
   );
   const openSupportRequest = useCallback(() => {
     setSupportRequestNonce((value) => value + 1);
@@ -355,16 +286,24 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     toast.info(t('feature_future'));
   }, [t, toast]);
   const openBilling = useCallback(
-    () => runSingleNavigation(() => router.push('/billing')),
-    [router, runSingleNavigation],
+    () => navigateTo(HOME_ROUTES.billing),
+    [navigateTo],
+  );
+  const openNotificationEvents = useCallback(
+    () => navigateTo(HOME_ROUTES.appEvents),
+    [navigateTo],
+  );
+  const openChats = useCallback(
+    () => showFutureFeatureToast(),
+    [showFutureFeatureToast],
   );
   const openCreateOrder = useCallback(() => {
     if (isReadOnlyBySubscription) {
       toast.warning(t('subscription_create_unavailable_toast'));
       return;
     }
-    runSingleNavigation(() => router.push('/orders/create-order'));
-  }, [isReadOnlyBySubscription, router, runSingleNavigation, t, toast]);
+    navigateTo(HOME_ROUTES.createOrder);
+  }, [isReadOnlyBySubscription, navigateTo, t, toast]);
   const shouldCheckCloudHealth =
     isAdmin && !!companyId && companySettings?.media_provider === 'yandex_disk';
   const {
@@ -399,18 +338,23 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     } catch {}
   };
 
-  const openOrdersWithFilter = (key) => {
-    if (scope === 'all' && canViewAll) {
-      const map = { feed: 'feed', new: 'new', progress: 'in_progress', all: 'all' };
-      runSingleNavigation(() =>
-        router.push({ pathname: '/orders/all-orders', params: { filter: map[key] || 'all' } }),
-      );
-    } else {
-      runSingleNavigation(() =>
-        router.push({ pathname: '/orders/my-orders', params: { seedFilter: key } }),
-      );
-    }
-  };
+  const quickAccessItems = useMemo(
+    () => [
+      {
+        key: 'events',
+        title: t('home_quick_events'),
+        icon: 'bell',
+        onPress: openNotificationEvents,
+      },
+      {
+        key: 'chats',
+        title: t('home_quick_chats'),
+        icon: 'message-circle',
+        onPress: openChats,
+      },
+    ],
+    [openChats, openNotificationEvents, t],
+  );
 
   const menuItems = useMemo(
     () =>
@@ -420,6 +364,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           title: t('home_menu_app_settings'),
           icon: 'sliders',
           onPress: openAppSettings,
+          route: HOME_ROUTES.appSettings,
           visible: true,
         },
         {
@@ -435,6 +380,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           title: t('home_menu_company_settings'),
           icon: 'settings',
           onPress: openCompanySettings,
+          route: HOME_ROUTES.companySettings,
           visible: isAdmin,
         },
         {
@@ -449,6 +395,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           title: t('settings_company_administration'),
           icon: 'shield',
           onPress: openAdministration,
+          route: HOME_ROUTES.admin,
           visible: isSuperAdmin,
           badgeCount: unreadSupportCount,
         },
@@ -465,6 +412,19 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       t,
     ],
   );
+
+  useEffect(() => {
+    warmHomeCriticalRoutes();
+    if (isSuperAdmin) warmHomeAdminRoute();
+    if (typeof router?.prefetch !== 'function') return;
+    const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings];
+    if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
+    routesToPrefetch.forEach((route) => {
+      try {
+        router.prefetch(route);
+      } catch {}
+    });
+  }, [isSuperAdmin, router]);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -544,13 +504,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return (a + b || fromFull || '??').toUpperCase();
   }, [firstName, lastName, fullName]);
 
-  const counts = scope === 'all' && canViewAll ? allCounts : myCounts;
   const roleLabel =
     resolvedRole === 'admin'
       ? t('role_admin')
       : resolvedRole === 'dispatcher'
         ? t('role_dispatcher')
         : t('role_worker');
+  const badgeOverflowThreshold = theme.components?.badge?.maxCount ?? 99;
+  const badgeOverflowLabel = `${badgeOverflowThreshold}+`;
 
   const hasProfileSeed = !!currentProfile?.id;
   const companyReady = !companyId || companyFetched;
@@ -560,7 +521,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     hasProfileSeed &&
     (profileFetched || !profileLoading) &&
     !permsLoading &&
-    myCountsFetched &&
     companyReady &&
     departmentReady;
 
@@ -573,10 +533,17 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   return (
     <>
-      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        delaysContentTouches={false}
+        canCancelContentTouches={false}
+      >
       <Card style={styles.cardRounded} padded={false}>
-          <Pressable
+        <Pressable
           onPress={openSelfProfileEdit}
+          unstable_pressDelay={0}
           android_ripple={{ color: theme.colors.ripple, borderless: false }}
           accessibilityRole="button"
           style={({ pressed }) => [
@@ -662,6 +629,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Pressable
               key={item.key}
               onPress={item.onPress}
+              unstable_pressDelay={0}
+              onPressIn={() => {
+                const route = item.route;
+                if (!route || typeof router?.prefetch !== 'function') return;
+                try {
+                  router.prefetch(route);
+                } catch {}
+              }}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
                 styles.menuRow,
@@ -685,7 +660,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
                 {item.badgeCount > 0 ? (
                   <View style={styles.menuBadge}>
                     <Text style={styles.menuBadgeText}>
-                      {item.badgeCount > 99 ? '99+' : String(item.badgeCount)}
+                      {item.badgeCount > badgeOverflowThreshold ? badgeOverflowLabel : String(item.badgeCount)}
                     </Text>
                   </View>
                 ) : null}
@@ -700,66 +675,40 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         })}
       </Card>
 
-      {canViewAll && (
-        <View style={styles.scopeSwitch}>
-          {['my', 'all'].map((s) => {
-            const active = scope === s;
-            return (
-              <Pressable
-                key={s}
-                onPress={() => setScope(s)}
-                android_ripple={{ color: theme.colors.ripple, borderless: false }}
-                style={({ pressed }) => [
-                  styles.scopePill,
-                  active && styles.scopePillActive,
-                  pressed && { opacity: 0.9 },
-                ]}
-                accessibilityRole="button"
-              >
-                <FeatherIcon
-                  name={s === 'my' ? 'user' : 'users'}
-                  size={theme.icons?.sm ?? theme.typography.sizes.sm + theme.spacing.xs}
-                  color={
-                    active
-                      ? theme.colors.onPrimary
-                      : theme.colors.textSecondary || theme.colors.text
-                  }
-                  style={styles.scopeIcon}
-                />
-                <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
-                  {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      )}
-
-      <View style={styles.summaryContainer}>
-        {['feed', 'new', 'progress', 'all'].map((key) => {
-          const labelMap = {
-            feed: t('home_summary_feed'),
-            new: t('home_summary_new'),
-            progress: t('home_summary_progress'),
-            all: t('home_summary_all'),
-          };
-          let numberColor = theme.colors.text;
-          if (key === 'new') numberColor = theme.colors.primary;
-          if (key === 'progress') numberColor = theme.colors.success || theme.colors.primary;
+      <Card style={[styles.cardRounded, styles.quickAccessCard]} padded={false}>
+        {quickAccessItems.map((item, index) => {
+          const isLast = index === quickAccessItems.length - 1;
           return (
             <Pressable
-              key={key}
-              onPress={() => openOrdersWithFilter(key)}
+              key={item.key}
+              onPress={item.onPress}
+              unstable_pressDelay={0}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
-              style={({ pressed }) => [styles.summaryItem, pressed && styles.rowPressed]}
+              style={({ pressed }) => [
+                styles.menuRow,
+                pressed && styles.rowPressed,
+                !isLast && styles.menuRowBorder,
+              ]}
               accessibilityRole="button"
             >
-              <Text style={[styles.summaryNumber, { color: numberColor }]}>{counts[key] ?? 0}</Text>
-              <Text style={styles.summaryLabel}>{labelMap[key]}</Text>
+              <View style={styles.menuContent}>
+                <FeatherIcon
+                  name={item.icon}
+                  size={theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs}
+                  color={theme.colors.text}
+                  style={styles.menuIcon}
+                />
+                <Text style={styles.menuLabel}>{item.title}</Text>
+              </View>
+              <FeatherIcon
+                name="chevron-right"
+                size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? theme.typography.sizes.md}
+                color={theme.colors.textSecondary || theme.colors.text}
+              />
             </Pressable>
           );
         })}
-      </View>
+      </Card>
       {canCreateOrders && (
         <View style={styles.actionWrapper}>
           <Button title={t('home_btn_create_order')} onPress={openCreateOrder} />
@@ -795,10 +744,8 @@ const createStyles = (theme) => {
   const profileMinHeight = avatarSize + spacing.xl * 2;
   const iconButtonSize = theme.components?.iconButton?.size ?? spacing.xxl;
   const badgeSize = spacing.xl;
-  const summaryNumberSize = type.sizes.xl + spacing.xs;
-  const compactTextSize = type.sizes.sm - 1;
-  const pillVertical = spacing.xs;
-  const pillHorizontal = spacing.md;
+  const badgeVerticalPadding =
+    theme.components?.badge?.paddingVertical ?? Math.max(1, Math.round(spacing.xs / 2));
 
   return StyleSheet.create({
     container: {
@@ -976,7 +923,7 @@ const createStyles = (theme) => {
       borderRadius: radii.pill,
       minWidth: spacing.lg + spacing.xs,
       paddingHorizontal: spacing.xs,
-      paddingVertical: 2,
+      paddingVertical: badgeVerticalPadding,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.primary,
@@ -994,63 +941,10 @@ const createStyles = (theme) => {
     menuLabelDisabled: {
       color: colors.textSecondary || colors.text,
     },
-    scopeSwitch: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      marginBottom: spacing.md,
-    },
-    scopePill: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: pillVertical,
-      paddingHorizontal: pillHorizontal,
-      borderRadius: radii.pill,
-      borderWidth: theme.components?.card?.borderWidth ?? 1,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-    },
-    scopePillActive: {
-      backgroundColor: colors.primary,
-      borderColor: colors.primary,
-    },
-    scopeText: {
-      fontSize: compactTextSize,
-      color: colors.textSecondary || colors.text,
-    },
-    scopeTextActive: {
-      color: colors.onPrimary,
-      fontWeight: type.weight.semibold,
-    },
-    scopeIcon: {
-      marginRight: spacing.xs,
-    },
-    summaryContainer: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      flexWrap: 'wrap',
+    quickAccessCard: {
       marginBottom: spacing.lg,
-    },
-    summaryItem: {
-      flexBasis: '48%',
-      backgroundColor: colors.surface,
-      borderWidth: theme.components?.card?.borderWidth ?? 1,
-      borderColor: colors.border,
-      borderRadius: radii.lg,
-      paddingVertical: spacing.md,
-      paddingHorizontal: spacing.lg,
-      marginBottom: spacing.md,
-      minHeight: menuRowMinHeight + spacing.xl,
-    },
-    summaryNumber: {
-      fontSize: summaryNumberSize,
-      fontWeight: type.weight.bold,
-      marginBottom: spacing.xs,
-    },
-    summaryLabel: {
-      fontSize: compactTextSize,
-      color: colors.textSecondary || colors.text,
     },
     actionWrapper: { marginBottom: spacing.md },
   });
 };
+

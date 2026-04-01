@@ -577,6 +577,8 @@ export default {
   objects_unnamed: 'Unnamed object',
   objects_select_required_for_order: 'Select an object for the order',
   order_address_map: 'Map',
+  order_address_point_on_map: 'point on map',
+  order_urgent_short: 'u',
   order_address_use_custom: 'Use custom address in order',
   order_address_preserve_manual_hint:
     'Your order address is preserved. Switch to the client object address if needed.',
@@ -638,6 +640,8 @@ export default {
   home_cloud_issue_body:
     'Storage status: {status}. New uploads are already redirected to app storage.',
   home_cloud_issue_cta: 'Open cloud settings',
+  home_quick_events: 'Events',
+  home_quick_chats: 'Chats',
   label_middle_name: 'Middle name',
   label_full_name: 'Full name',
   settings_sections_reference_items_tags: 'Tags',
