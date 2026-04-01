@@ -280,7 +280,7 @@ export default function BillingScreen() {
         role: String(a?.role || p?.role || ROLE.WORKER).toLowerCase(),
         department_id: p?.department_id || null,
         last_seen_at: p?.last_seen_at || a?.last_seen_at || null,
-        admin_blocked: asBool(a?.admin_blocked) || asBool(p?.is_admin_blocked) || asBool(p?.is_suspended),
+        admin_blocked: asBool(a?.admin_blocked) || asBool(p?.is_admin_blocked),
         license_state: a?.license_state || p?.license_state || 'active',
         has_seat: asBool(a?.has_seat),
       });

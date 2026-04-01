@@ -84,11 +84,11 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
     if (reassign_to) {
       const { data: successor, error: succErr } = await admin
         .from('profiles')
-        .select('id, is_suspended')
+        .select('id, is_admin_blocked')
         .eq('id', reassign_to)
         .single();
       if (succErr || !successor) throw new Error('Successor not found');
-      if (successor.is_suspended) throw new Error('Successor is suspended');
+      if (successor.is_admin_blocked) throw new Error('Successor is blocked');
 
       // Переназначаем все заявки (любого статуса), чтобы не терять связность
       const { error: reassignErr } = await admin

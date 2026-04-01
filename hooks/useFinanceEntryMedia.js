@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { financeEntryYandexMedia } from '../lib/financeEntryMedia';
+import { financeEntryMediaStorage, financeEntryYandexMedia } from '../lib/financeEntryMedia';
 
 function isLikelyYandexLink(url) {
   const raw = String(url || '').toLowerCase();
@@ -45,17 +45,44 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
 
   const inspectUrls = useCallback(
     async (urls = []) => {
-      if (!enabled || mediaProvider !== 'yandex_disk' || !financeEntryId) {
+      if (!enabled || !financeEntryId) {
         return { resolved_urls: {}, issues: {}, photo_urls: urls };
       }
       const targets = (urls || []).map((value) => String(value || '').trim()).filter(Boolean);
-      if (!targets.some((url) => isLikelyYandexLink(url))) {
+      if (!targets.some((url) => isLikelyYandexLink(url) || /^https?:\/\//i.test(String(url || '')))) {
         return { resolved_urls: {}, issues: {}, photo_urls: targets };
       }
-      const data = await financeEntryYandexMedia('inspect_urls', {
-        finance_entry_id: financeEntryId,
-        urls: targets,
-      });
+      const yandexUrls = targets.filter((url) => isLikelyYandexLink(url));
+      const begetUrls = targets.filter((url) => !isLikelyYandexLink(url));
+      const [yandexData, begetData] = await Promise.all([
+        yandexUrls.length
+          ? financeEntryYandexMedia('inspect_urls', {
+              finance_entry_id: financeEntryId,
+              urls: yandexUrls,
+            }).catch(() => null)
+          : Promise.resolve(null),
+        begetUrls.length
+          ? financeEntryMediaStorage('inspect_urls', {
+              finance_entry_id: financeEntryId,
+              urls: begetUrls,
+            }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+      const data = {
+        resolved_urls: {
+          ...(yandexData?.resolved_urls && typeof yandexData.resolved_urls === 'object' ? yandexData.resolved_urls : {}),
+          ...(begetData?.resolved_urls && typeof begetData.resolved_urls === 'object' ? begetData.resolved_urls : {}),
+        },
+        issues: {
+          ...(yandexData?.issues && typeof yandexData.issues === 'object' ? yandexData.issues : {}),
+          ...(begetData?.issues && typeof begetData.issues === 'object' ? begetData.issues : {}),
+        },
+        photo_urls: Array.isArray(yandexData?.photo_urls)
+          ? yandexData.photo_urls
+          : Array.isArray(begetData?.photo_urls)
+            ? begetData.photo_urls
+            : targets,
+      };
       const nextResolved =
         data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
       const nextIssues = data?.issues && typeof data.issues === 'object' ? data.issues : {};
@@ -65,13 +92,13 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       }
       return data || { resolved_urls: nextResolved, issues: nextIssues, photo_urls: targets };
     },
-    [enabled, financeEntryId, mediaProvider],
+    [enabled, financeEntryId],
   );
 
   useEffect(() => {
-    if (!enabled || mediaProvider !== 'yandex_disk' || !financeEntryId) return;
+    if (!enabled || !financeEntryId) return;
     const urls = (photoUrls || []).map((value) => String(value || '').trim()).filter(Boolean);
-    if (!urls.some((url) => isLikelyYandexLink(url))) {
+    if (!urls.some((url) => isLikelyYandexLink(url) || /^https?:\/\//i.test(String(url || '')))) {
       setResolvedUrls({});
       setIssues({});
       return;

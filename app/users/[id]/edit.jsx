@@ -605,8 +605,6 @@ export default function EditUser() {
   const isBlockedByAdmin = !!employeeData?.is_admin_blocked
     || !!employeeData?.admin_blocked
     || !!employeeData?.isSuspended
-    || !!employeeData?.is_suspended
-    || !!employeeData?.suspended_at
     || blockedReason === 'admin_blocked';
   const isBlocked = !!employeeData?.isBlocked || isBlockedByAdmin || isLicenseBlockedRaw;
   const [avatarUrl, setAvatarUrl] = useState(null);
@@ -907,22 +905,20 @@ export default function EditUser() {
     if (!userId) return null;
     const { data: prof, error } = await supabase
       .from(TABLES.profiles)
-      .select('id, company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+      .select('id, company_id, is_admin_blocked, license_state, blocked_reason')
       .eq('id', userId)
       .maybeSingle();
     if (error) throw error;
     if (!prof) return null;
 
-    const blockedNow = !!prof.is_suspended
-      || !!prof.suspended_at
-      || !!prof.is_admin_blocked
+    const blockedNow = !!prof.is_admin_blocked
       || prof.license_state === 'blocked_by_license';
 
     queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
       ...(prev || {}),
       ...prof,
       companyId: prof.company_id || prev?.companyId || null,
-      isSuspended: !!(prof.is_suspended || prof.suspended_at),
+      isSuspended: !!prof.is_admin_blocked,
       isBlocked: blockedNow,
     }));
 
@@ -1358,8 +1354,7 @@ export default function EditUser() {
     setDepartmentId(employeeData?.department_id ?? null);
     setPhone(String(employeeData?.phone || '').replace(/\D/g, ''));
     const normalizedSuspended = !!employeeData?.isSuspended
-      || !!employeeData?.is_suspended
-      || !!employeeData?.suspended_at;
+      || !!employeeData?.is_admin_blocked;
     setIsSuspended(normalizedSuspended);
     setRole(employeeData?.role || ROLE.WORKER);
 
@@ -1438,7 +1433,7 @@ export default function EditUser() {
       if (isSuperAdminEditingOther) {
         const { error: rpcErr } = await supabase.rpc('admin_update_profile_super_full', {
           p_profile_id: uid,
-          p_is_suspended: !!value,
+          p_is_admin_blocked: !!value,
         });
         if (rpcErr) throw rpcErr;
         return null;
@@ -1448,8 +1443,8 @@ export default function EditUser() {
       const { error: updErr } = await supabase
         .from(TABLES.profiles)
         .update({ 
-          is_suspended: !!value, 
-          suspended_at: value ? new Date().toISOString() : null,
+          is_admin_blocked: !!value,
+          blocked_reason: value ? 'admin_block' : null,
           updated_at: new Date().toISOString()
         })
         .eq('id', uid);
@@ -1541,13 +1536,11 @@ export default function EditUser() {
 
       const { data: currentProfile, error: profileErr } = await supabase
         .from(TABLES.profiles)
-        .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state')
+        .select('company_id, is_admin_blocked, license_state')
         .eq('id', userId)
         .maybeSingle();
       if (profileErr) throw profileErr;
-      const blockedNow = !!currentProfile?.is_suspended
-        || !!currentProfile?.suspended_at
-        || !!currentProfile?.is_admin_blocked
+      const blockedNow = !!currentProfile?.is_admin_blocked
         || currentProfile?.license_state === 'blocked_by_license';
       if (blockedNow) {
         setUnsuspendVisible(true);
@@ -1585,7 +1578,7 @@ export default function EditUser() {
       const { data, error } = await supabase
         .from(TABLES.profiles)
         .select('id, first_name, middle_name, last_name, full_name, role')
-        .eq('is_suspended', false)
+        .eq('is_admin_blocked', false)
         .neq('id', userId) // РёСЃРєР»СЋС‡Р°РµРј СЃР°РјРѕРіРѕ СЃРѕС‚СЂСѓРґРЅРёРєР°
         .order('full_name', { ascending: true });
       
@@ -1621,13 +1614,11 @@ export default function EditUser() {
       }
       const { data: currentProfile, error: profileErr } = await supabase
         .from(TABLES.profiles)
-        .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state')
+        .select('company_id, is_admin_blocked, license_state')
         .eq('id', userId)
         .maybeSingle();
       if (profileErr) throw profileErr;
-      const blockedNow = !!currentProfile?.is_suspended
-        || !!currentProfile?.suspended_at
-        || !!currentProfile?.is_admin_blocked
+      const blockedNow = !!currentProfile?.is_admin_blocked
         || currentProfile?.license_state === 'blocked_by_license';
       if (blockedNow) {
         setSuspendVisible(false);
@@ -1667,14 +1658,12 @@ export default function EditUser() {
       showInfoToast(t('toast_saving'), { sticky: true });
       const { data: currentProfile, error: profileErr } = await supabase
         .from(TABLES.profiles)
-        .select('company_id, is_suspended, suspended_at, is_admin_blocked, license_state')
+        .select('company_id, is_admin_blocked, license_state')
         .eq('id', userId)
         .maybeSingle();
       if (profileErr) throw profileErr;
 
-      const blockedByAdminNow = !!currentProfile?.is_suspended
-        || !!currentProfile?.suspended_at
-        || !!currentProfile?.is_admin_blocked;
+      const blockedByAdminNow = !!currentProfile?.is_admin_blocked;
       if (blockedByAdminNow) {
         const errS = await setSuspended(userId, false);
         if (errS) throw new Error(errS.message || t('err_unsuspend_failed'));

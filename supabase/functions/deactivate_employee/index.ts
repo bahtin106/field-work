@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
     // Проверяем существование деактивируемого сотрудника
     const { data: targetUser, error: targetError } = await supabaseAdmin
       .from('profiles')
-      .select('id, is_suspended')
+      .select('id, is_admin_blocked')
       .eq('id', user_id)
       .single();
 
@@ -97,7 +97,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (targetUser.is_suspended) {
+    if (targetUser.is_admin_blocked) {
       return new Response(
         JSON.stringify({ error: 'Сотрудник уже деактивирован' }),
         { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
@@ -109,7 +109,7 @@ Deno.serve(async (req: Request) => {
       // Проверяем, что преемник существует и активен
       const { data: successor, error: successorError } = await supabaseAdmin
         .from('profiles')
-        .select('id, is_suspended')
+        .select('id, is_admin_blocked')
         .eq('id', reassign_to)
         .single();
 
@@ -120,7 +120,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      if (successor.is_suspended) {
+      if (successor.is_admin_blocked) {
         return new Response(
           JSON.stringify({ error: 'Преемник деактивирован, выберите другого сотрудника' }),
           { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
@@ -148,8 +148,9 @@ Deno.serve(async (req: Request) => {
     const { error: deactivateError } = await supabaseAdmin
       .from('profiles')
       .update({
-        is_suspended: true,
-        suspended_at: now,
+        is_admin_blocked: true,
+        blocked_reason: 'admin_block',
+        updated_at: now,
       })
       .eq('id', user_id);
 

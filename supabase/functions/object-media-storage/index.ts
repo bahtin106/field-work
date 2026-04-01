@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import {
   buildBegetPublicUrl,
+  createBegetPresignedGetUrl,
   createBegetPresignedPutUrl,
   deleteBegetKeys,
   getBegetS3Config,
@@ -413,6 +414,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
       file_base64?: string;
       mime?: string;
       url?: string;
+      urls?: string[];
       object_key?: string;
       public_url?: string;
       external_path?: string;
@@ -425,6 +427,80 @@ export async function handleObjectMediaStorageRequest(req: Request) {
     if (!ALLOWED_CATEGORIES.has(category)) return json(400, { success: false, message: 'Invalid category' });
 
     const ctx = await getCallerAndObjectContext(admin, token, objectId);
+
+    if (action === 'inspect_urls') {
+      const urls = Array.isArray(body.urls)
+        ? body.urls.map((value) => String(value || '').trim()).filter(Boolean)
+        : [];
+      if (!urls.length) {
+        return json(200, { success: true, resolved_urls: {}, issues: {}, cleaned_urls: [], media_urls: [] });
+      }
+
+      const { data: rows, error } = await admin
+        .from('object_media_external_map')
+        .select('source_url, display_url, external_path')
+        .eq('company_id', ctx.companyId)
+        .eq('object_id', ctx.object.id)
+        .eq('category', category)
+        .eq('provider', 'beget_s3')
+        .in('source_url', urls);
+      if (error) throw error;
+
+      let candidates: Array<{ source_url?: string | null; display_url?: string | null; external_path?: string | null }> = [];
+      if (!rows?.length) {
+        const { data: allRows, error: allErr } = await admin
+          .from('object_media_external_map')
+          .select('source_url, display_url, external_path')
+          .eq('company_id', ctx.companyId)
+          .eq('object_id', ctx.object.id)
+          .eq('category', category)
+          .eq('provider', 'beget_s3');
+        if (allErr) throw allErr;
+        candidates = allRows || [];
+      }
+
+      const rowBySource = new Map<string, { source_url?: string | null; display_url?: string | null; external_path?: string | null }>();
+      for (const row of rows || []) {
+        const source = String(row?.source_url || '').trim();
+        if (source) rowBySource.set(source, row);
+      }
+
+      const resolved: Record<string, string> = {};
+      for (const url of urls) {
+        let row = rowBySource.get(url) || null;
+        if (!row && candidates.length) {
+          const needle = canonicalUrl(url);
+          row =
+            candidates.find((candidate) => {
+              const source = String(candidate?.source_url || '').trim();
+              const display = String(candidate?.display_url || '').trim();
+              return (needle && (canonicalUrl(source) === needle || canonicalUrl(display) === needle)) || source === url || display === url;
+            }) || null;
+        }
+        const key = String(row?.external_path || '').trim();
+        if (!key) {
+          resolved[url] = url;
+          continue;
+        }
+        try {
+          const signed = await createBegetPresignedGetUrl({
+            key,
+            expiresInSec: 60 * 60 * 24,
+          });
+          resolved[url] = signed.url;
+        } catch {
+          resolved[url] = url;
+        }
+      }
+
+      return json(200, {
+        success: true,
+        resolved_urls: resolved,
+        issues: {},
+        cleaned_urls: [],
+        media_urls: urls,
+      });
+    }
 
     if (action === 'prepare_upload') {
       const mime = String(body.mime || 'image/jpeg').trim() || 'image/jpeg';

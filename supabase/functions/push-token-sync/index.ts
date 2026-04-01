@@ -61,6 +61,8 @@ export async function handlePushTokenSyncRequest(req: Request) {
       push_token?: string;
       platform?: string;
       device_id?: string;
+      app_version?: string;
+      locale?: string;
       enable_notifications?: boolean;
       disable_notifications?: boolean;
       allow?: boolean;
@@ -144,11 +146,15 @@ export async function handlePushTokenSyncRequest(req: Request) {
       if (!pushToken) return json(400, { ok: false, message: 'push_token is required' });
       const platform = String(body.platform || 'unknown').trim() || 'unknown';
       const deviceId = String(body.device_id || '').trim();
+      const appVersion = String(body.app_version || '').trim();
+      const locale = String(body.locale || '').trim();
       const tokenRow: {
         user_id: string;
         token: string;
         platform: string;
         device_id?: string;
+        app_version?: string;
+        locale?: string;
         is_valid: boolean;
         invalid_reason: null;
         last_seen_at: string;
@@ -161,6 +167,8 @@ export async function handlePushTokenSyncRequest(req: Request) {
         last_seen_at: new Date().toISOString(),
       };
       if (deviceId) tokenRow.device_id = deviceId;
+      if (appVersion) tokenRow.app_version = appVersion;
+      if (locale) tokenRow.locale = locale;
 
       const { error: upErr } = await admin.from('push_tokens').upsert(tokenRow, { onConflict: 'token' });
       if (upErr) {

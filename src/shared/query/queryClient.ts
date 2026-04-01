@@ -4,6 +4,7 @@ import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persi
 import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query';
 import { AppState } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
+import { logClientError } from '../../../lib/errorLogsClient';
 
 const DEFAULT_REFOCUS_ENABLED = false;
 const QUERY_CACHE_MAX_ENTRIES = 350;
@@ -73,10 +74,24 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
       refetchOnReconnect: false,
       networkMode: 'online',
+      onError: (error, query) => {
+        logClientError(error, {
+          source: 'react_query_query',
+          queryKey: Array.isArray(query?.queryKey) ? query.queryKey : null,
+        });
+      },
     },
     mutations: {
       retry: 1,
       networkMode: 'online',
+      onError: (error, _variables, _context, mutation) => {
+        logClientError(error, {
+          source: 'react_query_mutation',
+          mutationKey: Array.isArray(mutation?.options?.mutationKey)
+            ? mutation.options.mutationKey
+            : null,
+        });
+      },
     },
   },
 });

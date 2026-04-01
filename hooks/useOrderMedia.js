@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
+import { orderMediaStorage } from '../lib/orderMediaStorage';
 
 const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
 
@@ -37,6 +38,13 @@ function setIssueCacheEntry(key, value) {
 function isLikelyYandexLink(url) {
   const raw = String(url || '').toLowerCase();
   return raw.startsWith('yadisk://') || raw.includes('yadi.sk') || raw.includes('disk.yandex');
+}
+
+function isResolvableRemoteUrl(url) {
+  const raw = String(url || '').trim().toLowerCase();
+  if (!raw) return false;
+  if (raw.startsWith('http://') || raw.startsWith('https://')) return true;
+  return raw.startsWith('yadisk://');
 }
 
 /**
@@ -96,8 +104,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     [issues, t],
   );
 
-  const canResolveYandexUrl = useCallback(
-    (sourceUrl) => Boolean(order?.id && isLikelyYandexLink(sourceUrl)),
+  const canInspectUrl = useCallback(
+    (sourceUrl) => Boolean(order?.id && isResolvableRemoteUrl(sourceUrl)),
     [order?.id],
   );
 
@@ -105,15 +113,21 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const inspectSingle = useCallback(
     async (category, sourceUrl) => {
       const key = `${category}:${sourceUrl}`;
-      if (!canResolveYandexUrl(sourceUrl)) return { resolved: false, issue: false };
+      if (!canInspectUrl(sourceUrl)) return { resolved: false, issue: false };
       if (probeInFlight.current.has(key)) return { resolved: false, issue: false };
       probeInFlight.current.add(key);
       try {
-        const data = await yandexDiskMedia('inspect_urls', {
-          order_id: order.id,
-          category,
-          urls: [sourceUrl],
-        });
+        const data = isLikelyYandexLink(sourceUrl)
+          ? await yandexDiskMedia('inspect_urls', {
+              order_id: order.id,
+              category,
+              urls: [sourceUrl],
+            })
+          : await orderMediaStorage('inspect_urls', {
+              order_id: order.id,
+              category,
+              urls: [sourceUrl],
+            });
         const resolved =
           data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
         const issuesMap =
@@ -141,7 +155,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         probeInFlight.current.delete(key);
       }
     },
-    [canResolveYandexUrl, order?.id],
+    [canInspectUrl, order?.id],
   );
 
   // ─── Full order inspection (Yandex) — parallelised ────────────
@@ -152,27 +166,42 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       const nextOrder = { ...baseOrder };
       const categoryPromises = MEDIA_CATEGORIES.filter((cat) => {
         const urls = Array.isArray(nextOrder[cat])
-          ? nextOrder[cat].filter((url) => Boolean(url && isLikelyYandexLink(url)))
+          ? nextOrder[cat].filter((url) => Boolean(url && isResolvableRemoteUrl(url)))
           : [];
         return urls.length > 0;
       }).map(async (category) => {
         const originalUrls = Array.isArray(nextOrder[category])
           ? nextOrder[category].filter(Boolean)
           : [];
-        const urls = originalUrls.filter((url) => Boolean(url && isLikelyYandexLink(url)));
+        const remoteUrls = originalUrls.filter((url) => Boolean(url && isResolvableRemoteUrl(url)));
+        const yandexUrls = remoteUrls.filter((url) => isLikelyYandexLink(url));
+        const begetUrls = remoteUrls.filter((url) => !isLikelyYandexLink(url));
         try {
-          const data = await yandexDiskMedia('inspect_urls', {
-            order_id: nextOrder.id,
-            category,
-            urls,
-          });
-          const resolved =
-            data?.resolved_urls && typeof data.resolved_urls === 'object'
-              ? data.resolved_urls
-              : {};
-          const issuesMap =
-            data?.issues && typeof data.issues === 'object' ? data.issues : {};
-          const survivingYandexUrls = Array.isArray(data?.media_urls) ? data.media_urls : urls;
+          const [yandexData, begetData] = await Promise.all([
+            yandexUrls.length
+              ? yandexDiskMedia('inspect_urls', {
+                  order_id: nextOrder.id,
+                  category,
+                  urls: yandexUrls,
+                }).catch(() => null)
+              : Promise.resolve(null),
+            begetUrls.length
+              ? orderMediaStorage('inspect_urls', {
+                  order_id: nextOrder.id,
+                  category,
+                  urls: begetUrls,
+                }).catch(() => null)
+              : Promise.resolve(null),
+          ]);
+          const resolved = {
+            ...(yandexData?.resolved_urls && typeof yandexData.resolved_urls === 'object' ? yandexData.resolved_urls : {}),
+            ...(begetData?.resolved_urls && typeof begetData.resolved_urls === 'object' ? begetData.resolved_urls : {}),
+          };
+          const issuesMap = {
+            ...(yandexData?.issues && typeof yandexData.issues === 'object' ? yandexData.issues : {}),
+            ...(begetData?.issues && typeof begetData.issues === 'object' ? begetData.issues : {}),
+          };
+          const survivingYandexUrls = Array.isArray(yandexData?.media_urls) ? yandexData.media_urls : yandexUrls;
           const survivingYandexSet = new Set(survivingYandexUrls.map((url) => String(url || '')));
           const mergedUrls = originalUrls.filter((url) => {
             const normalized = String(url || '');
@@ -183,7 +212,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         } catch (e) {
           const message = String(e?.message || '').trim() || t('order_photo_issue_temporary');
           const issuesMap = {};
-          for (const url of urls) {
+          for (const url of remoteUrls) {
             issuesMap[url] = { code: 'disk_error', message };
           }
           return { category, resolved: {}, issues: issuesMap, mediaUrls: originalUrls };
@@ -228,7 +257,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     for (const cat of MEDIA_CATEGORIES) {
       const urls = Array.isArray(order[cat]) ? order[cat].filter(Boolean) : [];
       for (const url of urls) {
-        if (!currentResolved[url] && !probedUrlsRef.current.has(url) && isLikelyYandexLink(url)) {
+        if (!currentResolved[url] && !probedUrlsRef.current.has(url) && isResolvableRemoteUrl(url)) {
           probedUrlsRef.current.add(url);
           tasks.push(inspectSingle(cat, url));
         }

@@ -14,7 +14,8 @@ function normalizeEmployee(row) {
   const isSuspended =
     !!row?.isSuspended ||
     !!row?.is_suspended ||
-    !!row?.suspended_at;
+    !!row?.is_admin_blocked ||
+    !!row?.admin_blocked;
   const isAdminBlocked =
     !!row?.is_admin_blocked ||
     !!row?.admin_blocked;
@@ -51,7 +52,7 @@ export async function listEmployees(filters = {}) {
   return measureNetwork('employees.list', async () => {
     let query = supabase
       .from('profiles')
-      .select('id, first_name, last_name, middle_name, full_name, role, department_id, last_seen_at, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, email, phone, birthdate, avatar_url')
+      .select('id, first_name, last_name, middle_name, full_name, role, department_id, last_seen_at, is_admin_blocked, license_state, blocked_reason, email, phone, birthdate, avatar_url')
       .order('full_name', { ascending: true, nullsFirst: false });
 
     if (Array.isArray(filters.departments) && filters.departments.length > 0) {
@@ -65,12 +66,10 @@ export async function listEmployees(filters = {}) {
 
     if (filters.suspended === true) {
       query = query.or(
-        'is_suspended.eq.true,suspended_at.not.is.null,is_admin_blocked.eq.true,license_state.eq.blocked_by_license',
+        'is_admin_blocked.eq.true,license_state.eq.blocked_by_license',
       );
     } else if (filters.suspended === false) {
       query = query
-        .eq('is_suspended', false)
-        .is('suspended_at', null)
         .eq('is_admin_blocked', false)
         .neq('license_state', 'blocked_by_license');
     }
@@ -128,10 +127,10 @@ export async function getEmployeeById(userId) {
             if (full) {
               const { data: profileFlags } = await supabase
                 .from('profiles')
-                .select('company_id, first_name, last_name, middle_name, full_name, email, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason')
+                .select('company_id, first_name, last_name, middle_name, full_name, email, is_admin_blocked, license_state, blocked_reason')
                 .eq('id', userId)
                 .maybeSingle();
-              const isSuspended = !!(profileFlags?.is_suspended || profileFlags?.suspended_at || full?.is_suspended || full?.suspended_at);
+              const isSuspended = !!(profileFlags?.is_admin_blocked || full?.is_suspended);
               const isAdminBlocked = !!(profileFlags?.is_admin_blocked);
               const licenseState = profileFlags?.license_state || full?.license_state || 'active';
               const blockedReason = profileFlags?.blocked_reason || full?.blocked_reason || null;
@@ -156,7 +155,6 @@ export async function getEmployeeById(userId) {
                   role: full.role,
                   last_seen_at: full.last_seen_at,
                   is_suspended: isSuspended,
-                  suspended_at: profileFlags?.suspended_at || full?.suspended_at || null,
                   is_admin_blocked: isAdminBlocked,
                   license_state: licenseState,
                   blocked_reason: blockedReason,
@@ -188,7 +186,7 @@ export async function getEmployeeById(userId) {
 
     const { data: prof, error } = await supabase
       .from('profiles')
-      .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
+      .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -230,9 +228,9 @@ export async function getEmployeeById(userId) {
       departmentName,
       companyName: null,
       companyId: safeProf?.company_id || null,
-      isSuspended: !!(safeProf?.is_suspended || safeProf?.suspended_at),
+      isSuspended: !!safeProf?.is_admin_blocked,
       isBlocked:
-        !!(safeProf?.is_suspended || safeProf?.suspended_at || safeProf?.is_admin_blocked) ||
+        !!safeProf?.is_admin_blocked ||
         safeProf?.license_state === 'blocked_by_license',
     };
   }).finally(() => {

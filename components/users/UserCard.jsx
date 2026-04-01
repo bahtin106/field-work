@@ -138,8 +138,6 @@ function UserCardContent({
     '';
 
   const isAdminBlocked =
-    item?.is_suspended === true ||
-    !!item?.suspended_at ||
     item?.is_admin_blocked === true;
   const isLicenseBlocked = item?.license_state === 'blocked_by_license';
   const isBlocked = isAdminBlocked || isLicenseBlocked;
@@ -215,8 +213,6 @@ export const UserCard = React.memo(UserCardContent, (prevProps, nextProps) => {
     prevProps.item?.full_name === nextProps.item?.full_name &&
     prevProps.item?.role === nextProps.item?.role &&
     prevProps.item?.last_seen_at === nextProps.item?.last_seen_at &&
-    prevProps.item?.is_suspended === nextProps.item?.is_suspended &&
-    prevProps.item?.suspended_at === nextProps.item?.suspended_at &&
     prevProps.item?.is_admin_blocked === nextProps.item?.is_admin_blocked &&
     prevProps.item?.license_state === nextProps.item?.license_state &&
     prevProps.departmentName === nextProps.departmentName &&

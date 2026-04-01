@@ -242,7 +242,7 @@ function RootLayoutInner() {
 
   const loadOwnAccessProfile = useCallback(async (uid) => {
     if (!uid) return null;
-    const columns = 'is_suspended, suspended_at, is_admin_blocked, license_state, blocked_reason';
+    const columns = 'is_admin_blocked, license_state, blocked_reason';
 
     const { data: byId } = await supabase
       .from('profiles')
@@ -292,8 +292,6 @@ function RootLayoutInner() {
       if (!profile) return;
 
       const blockedByAdmin =
-        !!profile?.is_suspended ||
-        !!profile?.suspended_at ||
         !!profile?.is_admin_blocked ||
         ['manual', 'admin_block', 'admin_blocked', 'blocked', 'suspended'].includes(
           String(profile?.blocked_reason || '').toLowerCase(),

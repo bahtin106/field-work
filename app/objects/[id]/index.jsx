@@ -22,6 +22,7 @@ import { usePermissions } from '../../../lib/permissions';
 import { useClientObject, useUpdateClientObjectMutation } from '../../../src/features/objects/queries';
 import { useClient } from '../../../src/features/clients/queries';
 import { uploadObjectMediaPhoto, deleteObjectMediaPhotoByUrl } from '../../../src/features/objects/media';
+import { objectMediaStorage } from '../../../lib/objectMediaStorage';
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
 import {
   ENTITY_FIELD_TYPES,
@@ -138,6 +139,7 @@ export default function ObjectViewScreen() {
   const [localPendingMap, setLocalPendingMap] = React.useState({});
   const [viewerVisible, setViewerVisible] = React.useState(false);
   const [viewerPhotos, setViewerPhotos] = React.useState([]);
+  const [resolvedObjectMediaUrls, setResolvedObjectMediaUrls] = React.useState({});
   const [viewerIndex, setViewerIndex] = React.useState(0);
   const [viewerCategoryLabel, setViewerCategoryLabel] = React.useState('');
   const viewerRawPhotosRef = React.useRef([]);
@@ -153,6 +155,53 @@ export default function ObjectViewScreen() {
     });
     objectMediaRef.current = next;
   }, [objectItem]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!objectId) {
+      setResolvedObjectMediaUrls({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const run = async () => {
+      const nextResolved = {};
+      for (const category of OBJECT_MEDIA_FIELD_KEYS) {
+        const urls = Array.isArray(objectItem?.[category])
+          ? objectItem[category].map((value) => String(value || '').trim()).filter(Boolean)
+          : [];
+        if (!urls.length) continue;
+        try {
+          const data = await objectMediaStorage('inspect_urls', {
+            object_id: objectId,
+            category,
+            urls,
+          });
+          const resolved =
+            data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
+          Object.assign(nextResolved, resolved);
+        } catch {}
+      }
+      if (!cancelled) {
+        setResolvedObjectMediaUrls(nextResolved);
+      }
+    };
+
+    run().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [objectId, objectItem]);
+
+  const getObjectMediaDisplayUrl = React.useCallback(
+    (url) => {
+      const source = String(url || '').trim();
+      if (!source) return '';
+      return resolvedObjectMediaUrls[source] || source;
+    },
+    [resolvedObjectMediaUrls],
+  );
 
   // Allow viewing object even if user cannot view clients. Client details (name/link)
   // will be shown only when `canViewClients` is true and `clientData` is available.
@@ -424,15 +473,19 @@ export default function ObjectViewScreen() {
 
   const openViewer = React.useCallback((photos, index, category, label) => {
     if (!Array.isArray(photos) || !photos.length) return;
-    const prepared = photos.map((raw) => String(raw || '').trim()).filter(Boolean);
-    if (!prepared.length) return;
-    viewerRawPhotosRef.current = prepared;
+    const preparedRaw = photos.map((raw) => String(raw || '').trim()).filter(Boolean);
+    if (!preparedRaw.length) return;
+    const preparedDisplay = preparedRaw
+      .map((raw) => String(getObjectMediaDisplayUrl(raw) || '').trim())
+      .filter(Boolean);
+    if (!preparedDisplay.length) return;
+    viewerRawPhotosRef.current = preparedRaw;
     viewerCategoryRef.current = category || null;
     setViewerCategoryLabel(label || '');
-    setViewerPhotos(prepared);
-    setViewerIndex(Math.min(index, prepared.length - 1));
+    setViewerPhotos(preparedDisplay);
+    setViewerIndex(Math.min(index, preparedDisplay.length - 1));
     setViewerVisible(true);
-  }, []);
+  }, [getObjectMediaDisplayUrl]);
 
   const closeViewer = React.useCallback(() => {
     setViewerVisible(false);
@@ -748,7 +801,7 @@ export default function ObjectViewScreen() {
         category={objectPhotosModal.category}
         photos={Array.isArray(objectItem?.[objectPhotosModal.category]) ? objectItem[objectPhotosModal.category] : []}
         pending={localPendingMap?.[objectPhotosModal.category] || []}
-        getDisplayUrl={(url) => String(url || '')}
+        getDisplayUrl={getObjectMediaDisplayUrl}
         getIssue={() => ''}
         onUploadUri={handleUploadUri}
         onUploadMultiple={handleUploadMultiple}

@@ -17,6 +17,7 @@ ios/build/
 .env
 .env.*
 backups/
+backup-secrets/
 node_modules.backup/
 
 # Local temp/debug artifacts
