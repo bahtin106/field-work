@@ -1359,10 +1359,9 @@ function CalendarScreenContent() {
   );
   const ordersListContentContainerStyle = useMemo(
     () => ({
-      paddingHorizontal: theme.spacing.md,
       paddingBottom: Math.max(theme.spacing.xl, insets.bottom),
     }),
-    [insets.bottom, theme.spacing.md, theme.spacing.xl],
+    [insets.bottom, theme.spacing.xl],
   );
   const orderKeyExtractor = useCallback(
     (item) => String(item?.id ?? item?.order_id ?? item?.uuid),
@@ -1390,14 +1389,14 @@ function CalendarScreenContent() {
     ({ item }) => (
       <DynamicOrderCard
         order={item}
-        context="calendar"
+        context={scope === 'my' ? 'my_orders' : 'all_orders'}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
+    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey, scope],
   );
   const ordersEmptyComponent = useMemo(
     () => <Text style={styles.noOrders}>Нет заявок</Text>,

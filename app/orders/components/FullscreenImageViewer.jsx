@@ -28,6 +28,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import Button from '../../../components/ui/Button';
 import { BaseModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
 import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
@@ -208,6 +209,7 @@ const ViewerContent = memo(function ViewerContent({
   onDelete,
   onRotateSave,
   categoryLabel,
+  capturePreviewMode = false,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -270,12 +272,18 @@ const ViewerContent = memo(function ViewerContent({
         paddingTop: spacing.md,
         zIndex: 10,
       },
+      footerSingle: {
+        justifyContent: 'center',
+      },
       footerBtn: {
         alignItems: 'center',
         justifyContent: 'center',
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm + spacing.xs / 2,
         borderRadius: radii.xl,
+        minWidth: spacing.xxxl * 2 + spacing.xs,
+      },
+      captureDeleteBtn: {
         minWidth: spacing.xxxl * 2 + spacing.xs,
       },
       footerLabel: {
@@ -327,7 +335,22 @@ const ViewerContent = memo(function ViewerContent({
   const [rotations, setRotations] = useState({});
 
   useEffect(() => {
-    if (!images?.length) return;
+    if (!images?.length) {
+      setLocalImages([]);
+      setLocalIndex(0);
+      setListKey((value) => value + 1);
+      setToolbarVisible(true);
+      setMenuOpen(false);
+      setInfoOpen(false);
+      setConfirmDelete(false);
+      setDeleting(false);
+      setBusy(false);
+      setRotations({});
+      rotationsRef.current = {};
+      rotationsFlushedRef.current = false;
+      zoomedMapRef.current = {};
+      return;
+    }
     dismissTranslateY.value = 0;
     dismissing.value = false;
     closeInFlightRef.current = false;
@@ -551,13 +574,6 @@ const ViewerContent = memo(function ViewerContent({
     });
   }, [currentUri, downloadToCache, formatBytes]);
 
-  const handleDeletePress = useCallback(() => {
-    haptic('Medium');
-    setMenuOpen(false);
-    setInfoOpen(false);
-    setConfirmDelete(true);
-  }, []);
-
   const handleDeleteConfirm = useCallback(async () => {
     if (deleting) return;
     setDeleting(true);
@@ -592,6 +608,17 @@ const ViewerContent = memo(function ViewerContent({
     setConfirmDelete(false);
     setDeleting(false);
   }, [deleting, handleClose, localImages, localIndex, onDelete, rotations, t, toast]);
+
+  const handleDeletePress = useCallback(() => {
+    if (capturePreviewMode) {
+      handleDeleteConfirm();
+      return;
+    }
+    haptic('Medium');
+    setMenuOpen(false);
+    setInfoOpen(false);
+    setConfirmDelete(true);
+  }, [capturePreviewMode, handleDeleteConfirm]);
 
   const handleDeleteCancel = useCallback(() => {
     setDeleting(false);
@@ -635,7 +662,34 @@ const ViewerContent = memo(function ViewerContent({
     [handleTap, handleZoomStateChange, localIndex, rotations, viewportHeight, viewportWidth],
   );
 
-  if (!imageCount) return null;
+  if (!imageCount) {
+    if (!capturePreviewMode) return null;
+    return (
+      <View style={ds.root}>
+        <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
+        <Animated.View
+          pointerEvents="box-none"
+          style={[ds.header, { paddingTop: (insets.top || 0) + theme.spacing.md }]}
+        >
+          <Pressable
+            onPress={handleClose}
+            hitSlop={theme.spacing.md}
+            style={[ds.iconBtn, { backgroundColor: overlayBg }]}
+          >
+            <Feather name="chevron-left" size={theme.icons.md} color={VIEWER_FG} />
+          </Pressable>
+          <View style={[ds.counterPill, { backgroundColor: overlayBg }]}>
+            <Text style={ds.counterText}>0 / 0</Text>
+          </View>
+        </Animated.View>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ color: VIEWER_FG, opacity: 0.7 }}>
+            {t('order_photos_empty_title', 'Нет фотографий')}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   const counterLabel = categoryLabel
     ? `${categoryLabel} · ${localIndex + 1}/${imageCount}`
@@ -698,53 +752,69 @@ const ViewerContent = memo(function ViewerContent({
           entering={FadeIn.duration(ANIM_FADE_IN)}
           exiting={FadeOut.duration(ANIM_FADE_OUT)}
           pointerEvents="box-none"
-          style={[ds.footer, { paddingBottom: (insets.bottom || 0) + theme.spacing.lg }]}
+          style={[
+            ds.footer,
+            capturePreviewMode && ds.footerSingle,
+            { paddingBottom: (insets.bottom || 0) + theme.spacing.lg },
+          ]}
         >
-          <Pressable
-            onPress={handleShare}
-            disabled={busy}
-            hitSlop={theme.spacing.sm}
-            style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-          >
-            <Feather name="share" size={theme.icons.sm} color={VIEWER_FG} />
-            <Text style={ds.footerLabel}>{t('viewer_share', 'Share')}</Text>
-          </Pressable>
-
-          <Pressable
-            onPressIn={() => pagerRef.current?.setScrollEnabled?.(false)}
-            onPressOut={restorePagerScroll}
-            onPress={(event) => {
-              event?.stopPropagation?.();
-              handleRotate();
-            }}
-            hitSlop={theme.spacing.sm}
-            style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-          >
-            <Feather name="rotate-cw" size={theme.icons.sm} color={VIEWER_FG} />
-            <Text style={ds.footerLabel}>{t('viewer_rotate', 'Rotate')}</Text>
-          </Pressable>
-
-          <Pressable
-            onPress={toggleMenu}
-            hitSlop={theme.spacing.sm}
-            style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-          >
-            <Feather name="more-horizontal" size={theme.icons.sm} color={VIEWER_FG} />
-            <Text style={ds.footerLabel}>{t('viewer_more', 'More')}</Text>
-          </Pressable>
-
-          {onDelete ? (
-            <Pressable
+          {capturePreviewMode ? (
+            <Button
+              variant="destructive"
+              size="md"
+              title={t('camera_delete_photo', 'Удалить фото')}
               onPress={handleDeletePress}
-              hitSlop={theme.spacing.sm}
-              style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-            >
-              <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
-              <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
-                {t('viewer_delete', 'Delete')}
-              </Text>
-            </Pressable>
-          ) : null}
+              style={ds.captureDeleteBtn}
+            />
+          ) : (
+            <>
+              <Pressable
+                onPress={handleShare}
+                disabled={busy}
+                hitSlop={theme.spacing.sm}
+                style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+              >
+                <Feather name="share" size={theme.icons.sm} color={VIEWER_FG} />
+                <Text style={ds.footerLabel}>{t('viewer_share', 'Share')}</Text>
+              </Pressable>
+
+              <Pressable
+                onPressIn={() => pagerRef.current?.setScrollEnabled?.(false)}
+                onPressOut={restorePagerScroll}
+                onPress={(event) => {
+                  event?.stopPropagation?.();
+                  handleRotate();
+                }}
+                hitSlop={theme.spacing.sm}
+                style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+              >
+                <Feather name="rotate-cw" size={theme.icons.sm} color={VIEWER_FG} />
+                <Text style={ds.footerLabel}>{t('viewer_rotate', 'Rotate')}</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={toggleMenu}
+                hitSlop={theme.spacing.sm}
+                style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+              >
+                <Feather name="more-horizontal" size={theme.icons.sm} color={VIEWER_FG} />
+                <Text style={ds.footerLabel}>{t('viewer_more', 'More')}</Text>
+              </Pressable>
+
+              {onDelete ? (
+                <Pressable
+                  onPress={handleDeletePress}
+                  hitSlop={theme.spacing.sm}
+                  style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+                >
+                  <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
+                  <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
+                    {t('viewer_delete', 'Delete')}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </>
+          )}
         </Animated.View>
       ) : null}
 
@@ -781,34 +851,36 @@ const ViewerContent = memo(function ViewerContent({
         ))}
       </BaseModal>
 
-      <BaseModal
-        visible={confirmDelete}
-        onClose={handleDeleteCancel}
-        title={t('order_photos_delete_single_title')}
-        maxHeightRatio={0.42}
-        footer={
-          <ModalActionsRow
-            actions={[
-              {
-                key: 'cancel',
-                title: t('order_photos_delete_single_cancel'),
-                variant: 'secondary',
-                disabled: deleting,
-                onPress: handleDeleteCancel,
-              },
-              {
-                key: 'confirm',
-                title: t('order_photos_delete_single_confirm'),
-                variant: 'destructive',
-                loading: deleting,
-                onPress: handleDeleteConfirm,
-              },
-            ]}
-          />
-        }
-      >
-        <Text style={ds.infoLabel}>{t('order_photos_delete_single_message')}</Text>
-      </BaseModal>
+      {!capturePreviewMode ? (
+        <BaseModal
+          visible={confirmDelete}
+          onClose={handleDeleteCancel}
+          title={t('order_photos_delete_single_title')}
+          maxHeightRatio={0.42}
+          footer={
+            <ModalActionsRow
+              actions={[
+                {
+                  key: 'cancel',
+                  title: t('order_photos_delete_single_cancel'),
+                  variant: 'secondary',
+                  disabled: deleting,
+                  onPress: handleDeleteCancel,
+                },
+                {
+                  key: 'confirm',
+                  title: t('order_photos_delete_single_confirm'),
+                  variant: 'destructive',
+                  loading: deleting,
+                  onPress: handleDeleteConfirm,
+                },
+              ]}
+            />
+          }
+        >
+          <Text style={ds.infoLabel}>{t('order_photos_delete_single_message')}</Text>
+        </BaseModal>
+      ) : null}
     </View>
   );
 });
@@ -821,8 +893,10 @@ function FullscreenImageViewer({
   onDelete,
   onRotateSave,
   categoryLabel,
+  capturePreviewMode = false,
 }) {
-  if (!visible || !images?.length) return null;
+  if (!visible) return null;
+  if (!capturePreviewMode && !images?.length) return null;
 
   return (
     <AnimatedFullscreenModal visible animation="fade" onRequestClose={onClose}>
@@ -835,6 +909,7 @@ function FullscreenImageViewer({
             onDelete={onDelete}
             onRotateSave={onRotateSave}
             categoryLabel={categoryLabel}
+            capturePreviewMode={capturePreviewMode}
           />
         </ToastProvider>
       </GestureHandlerRootView>
