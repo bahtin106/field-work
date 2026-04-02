@@ -240,6 +240,9 @@ const light = {
   timings: {
     requestTimeoutMs: 12000,
     backDelayMs: 300,
+    emailDebounceMs: 450,
+    invalidInputWarningMs: 2200,
+    postRegisterNavDelayMs: 500,
     presenceOnlineWindowMs: 120000,
     presenceFutureSkewMs: 300000,
     panelToggleMs: 220,
@@ -364,6 +367,9 @@ const dark = {
   timings: {
     requestTimeoutMs: 12000,
     backDelayMs: 300,
+    emailDebounceMs: 450,
+    invalidInputWarningMs: 2200,
+    postRegisterNavDelayMs: 500,
     presenceOnlineWindowMs: 120000,
     presenceFutureSkewMs: 300000,
     panelToggleMs: 220,

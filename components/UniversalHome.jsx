@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
@@ -146,7 +146,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { t } = useTranslation();
   const router = useRouter();
   const { signOut } = useAuthContext();
-  const { isSuperAdmin } = useSuperAdminAccess();
+  const { isSuperAdmin, isLoading: superAdminLoading } = useSuperAdminAccess();
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const toast = useToast();
   const qc = useQueryClient();
@@ -183,7 +183,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   const [supportRequestOpen, setSupportRequestOpen] = useState(false);
   const [supportRequestNonce, setSupportRequestNonce] = useState(0);
-  const { data: unreadSupportCount = 0 } = useQuery({
+  const { data: unreadSupportCount = 0, isFetched: unreadSupportFetched } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
     queryFn: countUnreadSupportRequests,
     enabled: isSuperAdmin,
@@ -210,7 +210,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     queryFn: fetchSession,
     staleTime: 0,
     refetchOnMount: 'stale',
-    enabled: !user,
+    enabled: !user && !providedProfile,
   });
   const uid =
     user?.id && isUuid(user.id) ? user.id : isUuid(session?.user?.id) ? session.user.id : null;
@@ -222,12 +222,12 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
-    enabled: !!uid,
+    enabled: !!uid && !providedProfile,
     initialData: providedProfile || undefined,
     staleTime: 60 * 1000,
     gcTime: 10 * 60 * 1000,
-    refetchOnMount: 'always',
-    refetchOnReconnect: true,
+    refetchOnMount: providedProfile ? false : 'always',
+    refetchOnReconnect: !providedProfile,
     placeholderData: (prev) => prev,
   });
 
@@ -240,7 +240,11 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_display_url || currentProfile?.avatar_url || null;
   const companyId = currentProfile?.company_id || null;
-  const { settings: companySettings, useDepartments } = useCompanySettings(companyId || null);
+  const {
+    settings: companySettings,
+    useDepartments,
+    isLoading: companySettingsLoading,
+  } = useCompanySettings(companyId || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
@@ -289,14 +293,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     () => navigateTo(HOME_ROUTES.billing),
     [navigateTo],
   );
-  const openNotificationEvents = useCallback(
-    () => navigateTo(HOME_ROUTES.appEvents),
-    [navigateTo],
-  );
-  const openChats = useCallback(
-    () => showFutureFeatureToast(),
-    [showFutureFeatureToast],
-  );
   const openCreateOrder = useCallback(() => {
     if (isReadOnlyBySubscription) {
       toast.warning(t('subscription_create_unavailable_toast'));
@@ -344,16 +340,18 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         key: 'events',
         title: t('home_quick_events'),
         icon: 'bell',
-        onPress: openNotificationEvents,
+        onPress: showFutureFeatureToast,
+        disabled: true,
       },
       {
         key: 'chats',
         title: t('home_quick_chats'),
         icon: 'message-circle',
-        onPress: openChats,
+        onPress: showFutureFeatureToast,
+        disabled: true,
       },
     ],
-    [openChats, openNotificationEvents, t],
+    [showFutureFeatureToast, t],
   );
 
   const menuItems = useMemo(
@@ -524,12 +522,41 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     companyReady &&
     departmentReady;
 
-  useEffect(() => {
-    if (!homeCriticalReady) return;
-    onInitialReady?.();
-  }, [homeCriticalReady, onInitialReady]);
+  const unreadSupportReady = !isSuperAdmin || unreadSupportFetched;
+  const companySettingsReady = !companyId || !isAdmin || !companySettingsLoading;
+  const subscriptionReady = !companyId || !subscriptionGuard.isLoading;
+  const cloudStatusReady = !shouldCheckCloudHealth || cloudStatusFetched || cloudStatusError;
+  const superAdminReady = !superAdminLoading;
+  const homeShellReady =
+    homeCriticalReady &&
+    unreadSupportReady &&
+    companySettingsReady &&
+    subscriptionReady &&
+    cloudStatusReady &&
+    superAdminReady;
 
-  // Render UI immediately even if profile is still loading.
+  useEffect(() => {
+    if (!homeShellReady) return;
+    onInitialReady?.();
+  }, [homeShellReady, onInitialReady]);
+
+  if (!homeShellReady) {
+    return (
+      <View style={styles.loadingRoot}>
+        <Card style={styles.loadingCard}>
+          <View style={styles.loadingRow}>
+            <ActivityIndicator
+              size={theme.components?.activityIndicator?.size ?? 'small'}
+              color={theme.colors.primary}
+            />
+            <Text style={styles.loadingText}>
+              {t('toast_loading_info', 'Загружаю информацию…')}
+            </Text>
+          </View>
+        </Card>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -678,6 +705,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       <Card style={[styles.cardRounded, styles.quickAccessCard]} padded={false}>
         {quickAccessItems.map((item, index) => {
           const isLast = index === quickAccessItems.length - 1;
+          const isDisabled = item.disabled === true;
           return (
             <Pressable
               key={item.key}
@@ -686,19 +714,21 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
                 styles.menuRow,
+                isDisabled && styles.menuRowDisabled,
                 pressed && styles.rowPressed,
                 !isLast && styles.menuRowBorder,
               ]}
               accessibilityRole="button"
+              accessibilityState={{ disabled: isDisabled }}
             >
               <View style={styles.menuContent}>
                 <FeatherIcon
                   name={item.icon}
                   size={theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs}
-                  color={theme.colors.text}
+                  color={isDisabled ? (theme.colors.textSecondary || theme.colors.text) : theme.colors.text}
                   style={styles.menuIcon}
                 />
-                <Text style={styles.menuLabel}>{item.title}</Text>
+                <Text style={[styles.menuLabel, isDisabled && styles.menuLabelDisabled]}>{item.title}</Text>
               </View>
               <FeatherIcon
                 name="chevron-right"
@@ -945,6 +975,29 @@ const createStyles = (theme) => {
       marginBottom: spacing.lg,
     },
     actionWrapper: { marginBottom: spacing.md },
+    loadingRoot: {
+      flex: 1,
+      padding: spacing.lg,
+      justifyContent: 'center',
+    },
+    loadingCard: {
+      borderRadius: radii.xl,
+      borderWidth: theme.components?.card?.borderWidth ?? 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
+    },
+    loadingRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    loadingText: {
+      color: colors.text,
+      fontSize: type.sizes.md,
+      fontWeight: type.weight.medium,
+    },
   });
 };
 

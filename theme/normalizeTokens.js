@@ -153,6 +153,10 @@ export function buildTheme(mode) {
     scrollView: {
       paddingBottom: base.components?.scrollView?.paddingBottom ?? base.spacing?.xl ?? 24,
     },
+    keyboardAware: {
+      bottomOffset: base.components?.keyboardAware?.bottomOffset ?? 40,
+      extraKeyboardSpace: base.components?.keyboardAware?.extraKeyboardSpace ?? 60,
+    },
   };
 
   // Pass-through shared media config (used by ImagePicker, etc.)
@@ -164,6 +168,9 @@ export function buildTheme(mode) {
   const timings = {
     requestTimeoutMs: base.timings?.requestTimeoutMs ?? 12000,
     backDelayMs: base.timings?.backDelayMs ?? 300,
+    emailDebounceMs: base.timings?.emailDebounceMs ?? 450,
+    invalidInputWarningMs: base.timings?.invalidInputWarningMs ?? 2200,
+    postRegisterNavDelayMs: base.timings?.postRegisterNavDelayMs ?? 500,
   };
   return {
     mode: effective,

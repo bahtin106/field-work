@@ -18,7 +18,7 @@ LogBox.ignoreLogs([
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
 import appReadyState from '../lib/appReadyState';
-import { applyAndroidSystemBars } from '../lib/systemBars';
+import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
@@ -72,7 +72,7 @@ if (!globalThis.__splashPrevented) {
   SplashScreen.preventAutoHideAsync().catch(() => {});
 }
 
-function _BrandedLoadingScreen({ theme }) {
+function _BrandedLoadingScreen({ theme, label }) {
   const isDark = theme?.mode === 'dark';
   const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.92)';
   const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(16,24,40,0.08)';
@@ -111,7 +111,7 @@ function _BrandedLoadingScreen({ theme }) {
           letterSpacing: 0.2,
         }}
       >
-        Р—Р°РіСЂСѓР·РєР°
+        {label}
       </Text>
       <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 12 }} />
     </View>
@@ -196,8 +196,12 @@ function RootLayoutInner() {
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
+    if (inAuthGroup) {
+      applyAndroidStatusBar(theme);
+      return;
+    }
     applyAndroidSystemBars(theme).catch(() => {});
-  }, [theme]);
+  }, [inAuthGroup, theme]);
 
   const shouldHoldNativeSplash =
     isInitializing || (isAuthenticated && !isBlockedScreen && !appBootReady);
@@ -618,7 +622,12 @@ function RootLayoutInner() {
       <SafeAreaView
         edges={['top', 'left', 'right']}
         style={{ flex: 1, backgroundColor: theme.colors.background }}
-      />
+      >
+        <_BrandedLoadingScreen
+          theme={theme}
+          label={t('toast_loading_info', 'Loading...')}
+        />
+      </SafeAreaView>
     );
   }
 

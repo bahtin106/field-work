@@ -1,5 +1,6 @@
 import { handlePushSendRequest } from '../push-send/index.ts';
 import { handleInviteUserRequest } from '../invite-user/index.ts';
+import { handleRegisterUserRequest } from '../register-user/index.ts';
 import { handleDeleteUserRequest } from '../delete_user/index.ts';
 import { handlePushTokenSyncRequest } from '../push-token-sync/index.ts';
 import { handleYandexDiskIntegrationRequest } from '../yandex-disk-integration/index.ts';
@@ -35,6 +36,7 @@ Deno.serve(async (req) => {
 
   if (fn === 'push-send') return handlePushSendRequest(req);
   if (fn === 'invite-user' || fn === 'invite_user') return handleInviteUserRequest(req);
+  if (fn === 'register-user' || fn === 'register_user') return handleRegisterUserRequest(req);
   if (fn === 'delete-user' || fn === 'delete_user') return handleDeleteUserRequest(req);
   if (fn === 'push-token-sync') return handlePushTokenSyncRequest(req);
   if (fn === 'yandex-disk-integration') return handleYandexDiskIntegrationRequest(req);

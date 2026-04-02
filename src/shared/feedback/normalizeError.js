@@ -9,6 +9,10 @@ const isEmailTaken = (msg = '') =>
 
 const isInvalidEmail = (msg = '') =>
   /invalid email|email.*invalid|bad email|incorrect email/i.test(msg);
+const isCompanyNameTaken = (msg = '') =>
+  /company.*already exists|company_name_taken|company.*duplicate|companies_name_normalized_uq/i.test(
+    msg,
+  );
 
 export function normalizeError(err, { t, defaultField, fieldMap } = {}) {
   const rawMessage = String(
@@ -45,6 +49,9 @@ export function normalizeError(err, { t, defaultField, fieldMap } = {}) {
   } else if (isInvalidEmail(rawMessage) || code === 'INVALID_EMAIL') {
     const field = fieldMap?.email || 'email';
     setFieldError(field, FEEDBACK_CODES.INVALID_EMAIL);
+  } else if (isCompanyNameTaken(rawMessage) || code === 'COMPANY_NAME_TAKEN') {
+    const field = fieldMap?.companyName || 'companyName';
+    setFieldError(field, t ? t('errors_companyName_duplicate') : 'Company name already exists');
   } else if (code === 'REQUIRED_FIELD') {
     setFieldError(defaultField || fieldMap?.default || null, FEEDBACK_CODES.REQUIRED_FIELD);
   } else if (rawMessage) {

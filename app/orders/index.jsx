@@ -2,6 +2,7 @@
 
 // app/orders/index.jsx
 import React from 'react';
+import { Redirect } from 'expo-router';
 import { View } from 'react-native';
 import { useAuth } from '../../components/hooks/useAuth';
 import UniversalHome from '../../components/UniversalHome';
@@ -84,6 +85,10 @@ export default function IndexScreen() {
     if (appReadyState.getBootState() === 'ready') return;
     appReadyState.setBootState('ready');
   }, [authUser?.id, homeReady]);
+
+  if (!authUser?.id) {
+    return <Redirect href='/(auth)/login' />;
+  }
 
   return (
     <View
