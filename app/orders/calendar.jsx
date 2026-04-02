@@ -116,7 +116,7 @@ function nowMs() {
 }
 
 function CalendarScreenContent() {
-  const { profile, isAuthenticated, isInitializing } = useAuth();
+  const { profile, user, isAuthenticated, isInitializing } = useAuth();
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
@@ -191,6 +191,10 @@ function CalendarScreenContent() {
   const hasEmployeeFilter = Array.isArray(executorFilterIds) && executorFilterIds.length > 0;
   const { has, loading: permissionsLoading } = usePermissions();
   const canViewAllOrders = !permissionsLoading && has('canViewAllOrders');
+  const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const canUseCalendarAllScope = canViewAllOrders && !isSoloAdmin;
   const companyId = profile?.company_id || null;
   const { settings: companySettings } = useCompanySettings(companyId);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
@@ -233,7 +237,7 @@ function CalendarScreenContent() {
   } = useCalendarRequests({
     userId: profile?.id,
     role: profile?.role,
-    scope: canViewAllOrders ? (hasEmployeeFilter ? 'all' : scope) : 'my',
+    scope: canUseCalendarAllScope ? (hasEmployeeFilter ? 'all' : scope) : 'my',
     startDate: calendarQueryRange.startDate,
     endDate: calendarQueryRange.endDate,
     refetchIntervalMs: false,
@@ -248,13 +252,13 @@ function CalendarScreenContent() {
       isAuthenticated &&
       !isInitializing &&
       !!profile?.id &&
-      canViewAllOrders &&
+      canUseCalendarAllScope &&
       (executorModalVisible || hasEmployeeFilter),
     placeholderData: (prev) => prev ?? [],
   });
   const { data: departments = [] } = useDepartmentsQuery({
     companyId,
-    enabled: !!companyId && canViewAllOrders && (executorModalVisible || hasEmployeeFilter),
+    enabled: !!companyId && canUseCalendarAllScope && (executorModalVisible || hasEmployeeFilter),
     onlyEnabled: true,
   });
 
@@ -344,19 +348,19 @@ function CalendarScreenContent() {
   }, [isCalendarLoading]);
 
   useEffect(() => {
-    if (canViewAllOrders) return;
+    if (canUseCalendarAllScope) return;
     if (scope !== 'my') setScope('my');
     if (executorFilterIds.length) setExecutorFilterIds([]);
     if (executorModalVisible) setExecutorModalVisible(false);
-  }, [canViewAllOrders, executorFilterIds, executorModalVisible, scope]);
+  }, [canUseCalendarAllScope, executorFilterIds, executorModalVisible, scope]);
 
   useFocusEffect(
     useCallback(() => {
-      if (!canViewAllOrders || openedFromOrder) return undefined;
+      if (!canUseCalendarAllScope || openedFromOrder) return undefined;
       setScope('my');
       setExecutorFilterIds([]);
       return undefined;
-    }, [canViewAllOrders, openedFromOrder]),
+    }, [canUseCalendarAllScope, openedFromOrder]),
   );
 
   useEffect(() => {
@@ -366,7 +370,7 @@ function CalendarScreenContent() {
       selectedDate: initialSelectedDate || '',
       selectedUserId: initialSelectedUserId || '',
       profileId: profile?.id || '',
-      canViewAllOrders,
+      canUseCalendarAllScope,
     });
     if (navigationPresetRef.current === presetKey) return;
 
@@ -382,7 +386,7 @@ function CalendarScreenContent() {
 
     const myProfileId = String(profile?.id || '').trim();
     if (!initialSelectedUserId) {
-      if (canViewAllOrders) {
+      if (canUseCalendarAllScope) {
         setExecutorFilterIds([]);
         setScope('all');
       } else {
@@ -400,7 +404,7 @@ function CalendarScreenContent() {
       return;
     }
 
-    if (canViewAllOrders) {
+    if (canUseCalendarAllScope) {
       setExecutorFilterIds([initialSelectedUserId]);
       setScope('all');
     } else {
@@ -408,7 +412,7 @@ function CalendarScreenContent() {
       setScope('my');
     }
     navigationPresetRef.current = presetKey;
-  }, [canViewAllOrders, initialSelectedDate, initialSelectedUserId, openedFromOrder, profile?.id]);
+  }, [canUseCalendarAllScope, initialSelectedDate, initialSelectedUserId, openedFromOrder, profile?.id]);
 
   const MONTH_LIST_MIDDLE_INDEX = CALENDAR_LAYOUT.MONTH_WINDOW_RADIUS;
 
@@ -1390,13 +1394,14 @@ function CalendarScreenContent() {
       <DynamicOrderCard
         order={item}
         context={scope === 'my' ? 'my_orders' : 'all_orders'}
+        hideExecutor={isSoloAdmin}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey, scope],
+    [companySettings?.currency, departureTimeEnabled, isSoloAdmin, openOrderDetails, orderFieldsByKey, scope],
   );
   const ordersEmptyComponent = useMemo(
     () => <Text style={styles.noOrders}>Нет заявок</Text>,
@@ -1599,7 +1604,7 @@ function CalendarScreenContent() {
                         {ordersTitleDateLabel}
                       </Text>
                       <View style={styles.ordersHeaderActions}>
-                        {canViewAllOrders ? (
+                        {canUseCalendarAllScope ? (
                           <View style={styles.scopeSwitch}>
                             {['my', 'all'].map((s) => {
                               const active = activeScope === s;
@@ -1623,7 +1628,7 @@ function CalendarScreenContent() {
                             })}
                           </View>
                         ) : null}
-                        {canViewAllOrders ? (
+                        {canUseCalendarAllScope ? (
                           <Pressable
                             onPress={() => setExecutorModalVisible(true)}
                             android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
@@ -1634,7 +1639,7 @@ function CalendarScreenContent() {
                             <Feather name="sliders" size={18} color={theme.colors.text} />
                           </Pressable>
                         ) : null}
-                        {canViewAllOrders && hasEmployeeFilter ? (
+                        {canUseCalendarAllScope && hasEmployeeFilter ? (
                           <Pressable
                             onPress={onResetCalendarFilters}
                             android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
@@ -1752,7 +1757,7 @@ function CalendarScreenContent() {
           </View>
         )}
       </View>
-      {canViewAllOrders ? (
+      {canUseCalendarAllScope ? (
         <FiltersPanel
           visible={executorModalVisible}
           onClose={() => setExecutorModalVisible(false)}

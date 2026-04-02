@@ -256,6 +256,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const resolvedRole = role || currentProfile?.role || roleFromPerms || 'worker';
 
   const isAdmin = resolvedRole === 'admin';
+  const accountType = String(
+    user?.user_metadata?.account_type || session?.user?.user_metadata?.account_type || '',
+  ).toLowerCase();
+  const isSoloAdmin = isAdmin && accountType === 'solo';
 
 
   const canCreateOrders = !permsLoading && has?.('canCreateOrders') === true;
@@ -335,23 +339,26 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   };
 
   const quickAccessItems = useMemo(
-    () => [
-      {
-        key: 'events',
-        title: t('home_quick_events'),
-        icon: 'bell',
-        onPress: showFutureFeatureToast,
-        disabled: true,
-      },
-      {
-        key: 'chats',
-        title: t('home_quick_chats'),
-        icon: 'message-circle',
-        onPress: showFutureFeatureToast,
-        disabled: true,
-      },
-    ],
-    [showFutureFeatureToast, t],
+    () =>
+      [
+        {
+          key: 'events',
+          title: t('home_quick_events'),
+          icon: 'bell',
+          onPress: showFutureFeatureToast,
+          disabled: true,
+          visible: !isSoloAdmin,
+        },
+        {
+          key: 'chats',
+          title: t('home_quick_chats'),
+          icon: 'message-circle',
+          onPress: showFutureFeatureToast,
+          disabled: true,
+          visible: !isSoloAdmin,
+        },
+      ].filter((item) => item.visible),
+    [isSoloAdmin, showFutureFeatureToast, t],
   );
 
   const menuItems = useMemo(
@@ -363,7 +370,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
           icon: 'sliders',
           onPress: openAppSettings,
           route: HOME_ROUTES.appSettings,
-          visible: true,
+          visible: !isSoloAdmin,
         },
         {
           key: 'stats',
@@ -375,7 +382,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         },
         {
           key: 'company',
-          title: t('home_menu_company_settings'),
+          title: isSoloAdmin
+            ? t('settings_title')
+            : t('home_menu_company_settings'),
           icon: 'settings',
           onPress: openCompanySettings,
           route: HOME_ROUTES.companySettings,
@@ -407,6 +416,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       openSupportRequest,
       openAdministration,
       unreadSupportCount,
+      isSoloAdmin,
       t,
     ],
   );
@@ -592,23 +602,25 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
             <Text style={styles.profileName}>
               {fullName || ''}
             </Text>
-            <View style={styles.metaRows}>
-              <Text style={styles.companyText} numberOfLines={1}>
-                {companyName || ''}
-              </Text>
-              <View style={styles.roleRow}>
-                <Text style={styles.profileRoleText} numberOfLines={1}>
-                  {roleLabel}
+            {!isSoloAdmin ? (
+              <View style={styles.metaRows}>
+                <Text style={styles.companyText} numberOfLines={1}>
+                  {companyName || ''}
                 </Text>
-              </View>
-              {useDepartments && departmentName ? (
-                <View style={styles.departmentRow}>
-                  <Text style={styles.departmentText} numberOfLines={1}>
-                    {`${t('users_department')}: ${departmentName}`}
+                <View style={styles.roleRow}>
+                  <Text style={styles.profileRoleText} numberOfLines={1}>
+                    {roleLabel}
                   </Text>
                 </View>
-              ) : null}
-            </View>
+                {useDepartments && departmentName ? (
+                  <View style={styles.departmentRow}>
+                    <Text style={styles.departmentText} numberOfLines={1}>
+                      {`${t('users_department')}: ${departmentName}`}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.profileMenuDotsWrap}>
@@ -702,43 +714,45 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         })}
       </Card>
 
-      <Card style={[styles.cardRounded, styles.quickAccessCard]} padded={false}>
-        {quickAccessItems.map((item, index) => {
-          const isLast = index === quickAccessItems.length - 1;
-          const isDisabled = item.disabled === true;
-          return (
-            <Pressable
-              key={item.key}
-              onPress={item.onPress}
-              unstable_pressDelay={0}
-              android_ripple={{ color: theme.colors.ripple, borderless: false }}
-              style={({ pressed }) => [
-                styles.menuRow,
-                isDisabled && styles.menuRowDisabled,
-                pressed && styles.rowPressed,
-                !isLast && styles.menuRowBorder,
-              ]}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: isDisabled }}
-            >
-              <View style={styles.menuContent}>
+      {quickAccessItems.length > 0 ? (
+        <Card style={[styles.cardRounded, styles.quickAccessCard]} padded={false}>
+          {quickAccessItems.map((item, index) => {
+            const isLast = index === quickAccessItems.length - 1;
+            const isDisabled = item.disabled === true;
+            return (
+              <Pressable
+                key={item.key}
+                onPress={item.onPress}
+                unstable_pressDelay={0}
+                android_ripple={{ color: theme.colors.ripple, borderless: false }}
+                style={({ pressed }) => [
+                  styles.menuRow,
+                  isDisabled && styles.menuRowDisabled,
+                  pressed && styles.rowPressed,
+                  !isLast && styles.menuRowBorder,
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isDisabled }}
+              >
+                <View style={styles.menuContent}>
+                  <FeatherIcon
+                    name={item.icon}
+                    size={theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs}
+                    color={isDisabled ? (theme.colors.textSecondary || theme.colors.text) : theme.colors.text}
+                    style={styles.menuIcon}
+                  />
+                  <Text style={[styles.menuLabel, isDisabled && styles.menuLabelDisabled]}>{item.title}</Text>
+                </View>
                 <FeatherIcon
-                  name={item.icon}
-                  size={theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs}
-                  color={isDisabled ? (theme.colors.textSecondary || theme.colors.text) : theme.colors.text}
-                  style={styles.menuIcon}
+                  name="chevron-right"
+                  size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? theme.typography.sizes.md}
+                  color={theme.colors.textSecondary || theme.colors.text}
                 />
-                <Text style={[styles.menuLabel, isDisabled && styles.menuLabelDisabled]}>{item.title}</Text>
-              </View>
-              <FeatherIcon
-                name="chevron-right"
-                size={theme.components?.listItem?.chevronSize ?? theme.icons?.md ?? theme.typography.sizes.md}
-                color={theme.colors.textSecondary || theme.colors.text}
-              />
-            </Pressable>
-          );
-        })}
-      </Card>
+              </Pressable>
+            );
+          })}
+        </Card>
+      ) : null}
       {canCreateOrders && (
         <View style={styles.actionWrapper}>
           <Button title={t('home_btn_create_order')} onPress={openCreateOrder} />

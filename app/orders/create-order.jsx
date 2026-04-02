@@ -230,7 +230,11 @@ function CreateOrderContent() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const { profile } = useAuthContext();
+  const { profile, user } = useAuthContext();
+  const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const soloAdminUserId = String(profile?.id || user?.id || '').trim() || null;
   const subscriptionGuard = useSubscriptionGuard(profile?.company_id || null);
   const { settings: companySettings } = useCompanySettings();
   const formStyles = useEditFormStyles();
@@ -378,6 +382,8 @@ function CreateOrderContent() {
   );
 
   const setField = useCallback((key, val) => setForm((s) => ({ ...s, [key]: val })), []);
+  const effectiveAssigneeId = isSoloAdmin ? soloAdminUserId : assigneeId;
+  const effectiveToFeed = isSoloAdmin ? false : toFeed;
   const orderFieldSettings = useMemo(
     () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
     [orderFieldSettingsData],
@@ -418,13 +424,14 @@ function CreateOrderContent() {
         fieldKeys: ['urgent', 'time_window_start', 'departure_time', 'assigned_to'],
       })
         .map((field) => field.fieldKey)
+        .filter((fieldKey) => !(isSoloAdmin && fieldKey === 'assigned_to'))
         .sort((left, right) => {
           const leftWeight = Number.isFinite(priority[left]) ? priority[left] : Number.MAX_SAFE_INTEGER;
           const rightWeight = Number.isFinite(priority[right]) ? priority[right] : Number.MAX_SAFE_INTEGER;
           return leftWeight - rightWeight;
         });
     },
-    [orderFieldSettings],
+    [isSoloAdmin, orderFieldSettings],
   );
   const objectFieldsByKey = useMemo(() => new Map((objectFieldSettings?.fields || []).map((field) => [String(field.fieldKey || field.field_key || ''), field])), [objectFieldSettings]);
   const getVisibleObjectAddressDraft = useCallback(
@@ -517,7 +524,7 @@ function CreateOrderContent() {
     setDepartureEndDate(draft.departureEndDate ? new Date(draft.departureEndDate) : null);
     setIsDepartureRange(!!draft.isDepartureRange);
     setWorkTypeId(draft.workTypeId || null);
-    setAssigneeId(draft.assigneeId || null);
+    setAssigneeId(isSoloAdmin ? (soloAdminUserId || null) : draft.assigneeId || null);
     setSelectedClientId(draft.selectedClientId || null);
     setSelectedClientObjectId(draft.selectedClientObjectId || null);
     setWithoutAddressSelected(!!draft.withoutAddressSelected);
@@ -525,8 +532,15 @@ function CreateOrderContent() {
     setDraftClientObject(draft.draftClientObject || null);
     setPhoneSourceId(normalizePhoneSourceId(draft.phoneSourceId));
     setUrgent(draft.urgent || false);
-    setToFeed(draft.toFeed || false);
-  }, []);
+    setToFeed(isSoloAdmin ? false : draft.toFeed || false);
+  }, [isSoloAdmin, soloAdminUserId]);
+
+  useEffect(() => {
+    if (!isSoloAdmin) return;
+    if (!soloAdminUserId) return;
+    setAssigneeId((prev) => (String(prev || '') === String(soloAdminUserId) ? prev : soloAdminUserId));
+    setToFeed(false);
+  }, [isSoloAdmin, soloAdminUserId]);
 
   const withRequiredLabel = useCallback(
     (label, required) => getRequiredFieldLabel(label, required),
@@ -556,6 +570,7 @@ function CreateOrderContent() {
 
   // � � Сџ� Ў� ‚� � С•� � � � � � Вµ� Ў� ‚� Ў� Џ� � Вµ� � С � � Вµ� Ў� ѓ� ЎвЂљ� Ў� Љ � � В»� � С‘ � � � …� � Вµ� � С—� ЎС“� Ў� ѓ� ЎвЂљ� ЎвЂ№� � Вµ � � Т‘� � В°� � � …� � � …� ЎвЂ№� � Вµ � � � �  � ЎвЂћ� � С•� Ў� ‚� � С� � Вµ
   const hasChanges = useCallback(() => {
+    const hasAssignmentChanges = isSoloAdmin ? false : (!!assigneeId || !!toFeed);
     return (
       !!(form.title?.trim()) ||
       !!(form.phone?.trim()) ||
@@ -565,15 +580,14 @@ function CreateOrderContent() {
       !!departureEndDate ||
       !!isDepartureRange ||
       !!workTypeId ||
-      !!assigneeId ||
+      hasAssignmentChanges ||
       !!selectedClientId ||
       !!selectedClientObjectId ||
       !!withoutAddressSelected ||
       !!stagedSelectedObjectDraft ||
       !!draftClientObject ||
       phoneSourceId !== PHONE_SOURCE_IDS.MANUAL ||
-      !!urgent ||
-      !!toFeed
+      !!urgent
     );
   }, [
     form,
@@ -591,6 +605,7 @@ function CreateOrderContent() {
     draftClientObject,
     phoneSourceId,
     urgent,
+    isSoloAdmin,
     toFeed,
   ]);
 
@@ -846,7 +861,7 @@ function CreateOrderContent() {
     if (isDepartureRange && (!departureEndDate || departureEndDate < departureDate)) {
       nextErrors.time_window_start = { message: t('order_validation_date_range_invalid') };
     }
-    if (isFieldRequired('assigned_to') && !toFeed && !assigneeId) {
+    if (isFieldRequired('assigned_to') && !effectiveToFeed && !effectiveAssigneeId) {
       nextErrors.assigned_to = { message: t('order_validation_executor_required') };
     }
     if (Object.keys(nextErrors).length) {
@@ -995,11 +1010,11 @@ function CreateOrderContent() {
       object_id: resolvedObjectId || null,
       address_mode: resolvedObjectId ? 'object' : 'custom',
       ...toOrderAddressPatch(resolvedAddressDraft),
-      assigned_to: toFeed ? null : assigneeId,
+      assigned_to: effectiveToFeed ? null : effectiveAssigneeId,
       time_window_start: formatDateOnlyForStorage(departureDate),
       time_window_end: isDepartureRange ? formatDateOnlyForStorage(departureEndDate) : null,
       departure_time: formatTimeForStorage(departureTime),
-      status: toFeed ? t('order_status_in_feed') : t('order_status_new'),
+      status: effectiveToFeed ? t('order_status_in_feed') : t('order_status_new'),
       urgent,
       currency: companySettings?.currency ?? null,
       creation_source: 'app',
@@ -1039,8 +1054,8 @@ function CreateOrderContent() {
     departureTime,
     departureEndDate,
     isDepartureRange,
-    toFeed,
-    assigneeId,
+    effectiveAssigneeId,
+    effectiveToFeed,
     selectedClientId,
     selectedClientObjectId,
     withoutAddressSelected,
@@ -1839,6 +1854,7 @@ function CreateOrderContent() {
             </>
           );
         case 'assigned_to':
+          if (isSoloAdmin) return null;
           return (
             <>
               <TextField
@@ -1893,6 +1909,7 @@ function CreateOrderContent() {
       showDatePicker,
       showTimePicker,
       shouldShowError,
+      isSoloAdmin,
       t,
       toFeed,
       urgent,
@@ -2118,7 +2135,7 @@ function CreateOrderContent() {
       users,
       departmentsById,
       t,
-      includeFeed: true,
+      includeFeed: !isSoloAdmin,
       onSelectFeed: () => {
         setToFeed(true);
         setAssigneeId(null);
@@ -2130,7 +2147,7 @@ function CreateOrderContent() {
         setAssigneeModalVisible(false);
       },
     });
-  }, [departments, users, t]);
+  }, [departments, isSoloAdmin, users, t]);
 
   const clientItems = useMemo(() => {
     if (!Array.isArray(clients) || clients.length === 0) {
@@ -2667,16 +2684,18 @@ function CreateOrderContent() {
         onClose={() => setWorkTypeModalVisible(false)}
       />
 
-      <SelectModal
-        visible={assigneeModalVisible}
-        title={t('create_order_modal_executor_title')}
-        items={assigneeItems}
-        searchable
-        filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
-        selectedId={toFeed ? 'feed' : assigneeId}
-        onSelect={(item) => item?.onPress?.()}
-        onClose={() => setAssigneeModalVisible(false)}
-      />
+      {!isSoloAdmin ? (
+        <SelectModal
+          visible={assigneeModalVisible}
+          title={t('create_order_modal_executor_title')}
+          items={assigneeItems}
+          searchable
+          filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
+          selectedId={toFeed ? 'feed' : assigneeId}
+          onSelect={(item) => item?.onPress?.()}
+          onClose={() => setAssigneeModalVisible(false)}
+        />
+      ) : null}
 
       <SelectModal
         visible={phoneSourceModalVisible}

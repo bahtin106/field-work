@@ -24,6 +24,7 @@ import SectionHeader from '../../../components/ui/SectionHeader';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import ListSeparator from '../../../components/ui/ListSeparator';
 import { useToast } from '../../../components/ui/ToastProvider';
+import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { pluralizeRu } from '../../../lib/pluralize';
 import {
   ENTITY_FIELD_TYPES,
@@ -60,6 +61,7 @@ export default function UserView() {
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const { user: authUser, profile: authProfile } = useAuthContext();
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
   const router = useRouter();
@@ -147,7 +149,13 @@ export default function UserView() {
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
   const meIsAdmin = !!userData?.meIsAdmin;
   const myUid = userData?.myUid || null;
-  const canEdit = meIsAdmin || (myUid && myUid === userId);
+  const isOwnProfile = !!myUid && myUid === userId;
+  const canEdit = meIsAdmin || isOwnProfile;
+  const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    isOwnProfile &&
+    String(authProfile?.role || '').toLowerCase() === 'admin' &&
+    authAccountType === 'solo';
   const handleEditPress = React.useCallback(() => {
     if (isReadOnlyBySubscription) {
       toast.warning(
@@ -341,7 +349,7 @@ export default function UserView() {
         back
         options={{
           headerTitleAlign: 'left',
-          title: t('routes.users/[id]', 'routes.users/[id]'),
+          title: t('profile_title'),
           rightTextLabel: canEdit ? t('btn_edit', 'btn_edit') : undefined,
           onRightPress: canEdit ? handleEditPress : undefined,
         }}
@@ -530,8 +538,8 @@ export default function UserView() {
         </Card>
         ) : null}
 
-        {canShowCompanySection ? <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader> : null}
-        {canShowCompanySection ? (
+        {canShowCompanySection && !isSoloAdmin ? <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader> : null}
+        {canShowCompanySection && !isSoloAdmin ? (
         <Card paddedXOnly>
           {meIsSuperAdmin && (
             <>

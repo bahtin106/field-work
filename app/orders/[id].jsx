@@ -410,6 +410,8 @@ function OrderDetailsContent() {
   const auth = useAuth();
   const authUserId = auth.user?.id || null;
   const authRole = auth.profile?.role || null;
+  const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin = String(authRole || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const mediaProvider = companySettings?.media_provider === 'yandex_disk' ? 'yandex_disk' : 'beget_s3';
   const styles = useMemo(() => createStyles(theme), [theme]);
   const base = useMemo(() => listItemStyles(theme), [theme]);
@@ -4004,7 +4006,7 @@ function OrderDetailsContent() {
               />
               <View style={base.sep} />
 
-              {isOrderFieldVisible('assigned_to') ? (
+              {!isSoloAdmin && isOrderFieldVisible('assigned_to') ? (
                 <Pressable
                   onPress={() => {
                   const assignee = order?.assigned_to || null;
@@ -4041,16 +4043,16 @@ function OrderDetailsContent() {
                   />
                 </Pressable>
               ) : null}
-              {isOrderFieldVisible('assigned_to') ? <View style={base.sep} /> : null}
+              {!isSoloAdmin && isOrderFieldVisible('assigned_to') ? <View style={base.sep} /> : null}
 
-              {isOrderFieldVisible('work_type_id') ? (
+              {useWorkTypes && isOrderFieldVisible('work_type_id') ? (
                 <LabelValueRow
                   label={t('order_details_work_type')}
                   value={workTypeName || t('order_details_work_type_not_selected')}
                   hideWhenEmpty={false}
                 />
               ) : null}
-              {isOrderFieldVisible('work_type_id') ? <View style={base.sep} /> : null}
+              {useWorkTypes && isOrderFieldVisible('work_type_id') ? <View style={base.sep} /> : null}
 
               {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? (
                 <Pressable
@@ -4102,10 +4104,10 @@ function OrderDetailsContent() {
               ) : null}
               {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? <View style={base.sep} /> : null}
 
-              {isOrderFieldVisible('comment') ? (
+              {isOrderFieldVisible('comment') && !!descriptionValue ? (
               <ExpandableTextRow
                 label={t('order_details_description')}
-                value={descriptionValue || t('order_details_description_empty')}
+                value={descriptionValue}
               />
               ) : null}
             </Card>

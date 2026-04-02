@@ -138,10 +138,11 @@ export default function BillingScreen() {
   const { theme } = useTheme();
   const toast = useToast();
   const { t } = useTranslation();
-  const { profile } = useAuthContext();
+  const { profile, user } = useAuthContext();
 
   const profileCompanyId = profile?.company_id || null;
   const profileRole = String(profile?.role || '').toLowerCase();
+  const accountType = String(user?.user_metadata?.account_type || '').toLowerCase();
   const currentUserId = profile?.id || profile?.user_id || null;
 
   const { data: profileFallback } = useQuery({
@@ -176,7 +177,9 @@ export default function BillingScreen() {
   const resolvedRole = profileRole || profileFallbackRole;
   const isRoleResolved = Boolean(resolvedRole);
   const isAdmin = resolvedRole === 'admin';
+  const isSoloAdmin = isAdmin && accountType === 'solo';
   const isOwner = entitlements?.is_owner === true || isAdmin;
+  const showLicensesSection = isOwner && !isSoloAdmin;
 
   const accessState = useCompanyAccessState(isOwner ? companyId : null);
   const access = accessState.data || null;
@@ -795,7 +798,9 @@ export default function BillingScreen() {
       background="background"
       headerOptions={{
         headerShown: !manageFilters.visible,
-        title: t('routes.billing/index') || t('routes.billing') || 'Подписка и лицензии',
+        title: isSoloAdmin
+          ? t('billing_title_solo')
+          : t('routes.billing/index') || t('routes.billing'),
       }}
     >
       <View style={{ flex: 1 }}>
@@ -848,38 +853,42 @@ export default function BillingScreen() {
             </Card>
             {isOwner ? (
               <>
-                <SectionHeader>{t('billing_license_pool_title')}</SectionHeader>
-                <Card paddedXOnly>
-                  <Pressable
-                    onPress={() => setLicensesExpanded((v) => !v)}
-                    style={({ pressed }) => [base.row, pressed ? styles(theme).pressed : null]}
-                  >
-                    <Text style={base.label}>{t('billing_issued_licenses')}</Text>
-                    <View style={[base.rightWrap, styles(theme).issuedWrap]}>
-                      <Text style={[base.value, styles(theme).lineValueStrong]}>{`${currentActiveCount}/${paidSeatsTotal}`}</Text>
-                      <AnimatedChevron
-                        expanded={licensesExpanded}
-                        iconName="chevron-down"
-                        size={18}
-                        color={theme.colors.textSecondary}
-                      />
-                    </View>
-                  </Pressable>
-                  {licensesExpanded ? (
-                    <>
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_used_seats')} value={String(usedSeatsTotal)} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_free_seats')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: freeSeatsColor }]}>{freeSeatsTotal}</Text>} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_total_employees')} value={String(totalEmployees)} />
-                      <View style={base.sep} />
-                      <LabelValueRow label={t('billing_blocked_by_license_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: blockedByLicenseColor }]}>{blockedByLicenseCount}</Text>} />
-                    </>
-                  ) : null}
-                </Card>
+                {showLicensesSection ? (
+                  <>
+                    <SectionHeader>{t('billing_license_pool_title')}</SectionHeader>
+                    <Card paddedXOnly>
+                      <Pressable
+                        onPress={() => setLicensesExpanded((v) => !v)}
+                        style={({ pressed }) => [base.row, pressed ? styles(theme).pressed : null]}
+                      >
+                        <Text style={base.label}>{t('billing_issued_licenses')}</Text>
+                        <View style={[base.rightWrap, styles(theme).issuedWrap]}>
+                          <Text style={[base.value, styles(theme).lineValueStrong]}>{`${currentActiveCount}/${paidSeatsTotal}`}</Text>
+                          <AnimatedChevron
+                            expanded={licensesExpanded}
+                            iconName="chevron-down"
+                            size={18}
+                            color={theme.colors.textSecondary}
+                          />
+                        </View>
+                      </Pressable>
+                      {licensesExpanded ? (
+                        <>
+                          <View style={base.sep} />
+                          <LabelValueRow label={t('billing_paid_seats_total')} value={String(paidSeatsTotal)} />
+                          <View style={base.sep} />
+                          <LabelValueRow label={t('billing_used_seats')} value={String(usedSeatsTotal)} />
+                          <View style={base.sep} />
+                          <LabelValueRow label={t('billing_free_seats')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: freeSeatsColor }]}>{freeSeatsTotal}</Text>} />
+                          <View style={base.sep} />
+                          <LabelValueRow label={t('billing_total_employees')} value={String(totalEmployees)} />
+                          <View style={base.sep} />
+                          <LabelValueRow label={t('billing_blocked_by_license_count')} valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: blockedByLicenseColor }]}>{blockedByLicenseCount}</Text>} />
+                        </>
+                      ) : null}
+                    </Card>
+                  </>
+                ) : null}
                 <SectionHeader>{t('billing_storage_title')}</SectionHeader>
                 <Card paddedXOnly>
                   <View style={base.row}>
@@ -925,7 +934,9 @@ export default function BillingScreen() {
                   ) : null}
                 </Card>
                 <View style={styles(theme).billingActions}>
-                  <Button title={t('billing_manage_button')} onPress={() => { setScreenError(''); setManageVisible(true); }} variant="primary" disabled={savingChanges} />
+                  {showLicensesSection ? (
+                    <Button title={t('billing_manage_button')} onPress={() => { setScreenError(''); setManageVisible(true); }} variant="primary" disabled={savingChanges} />
+                  ) : null}
                   <Button title={t('company_web_cabinet_button')} onPress={() => {}} variant="secondary" disabled={savingChanges} />
                 </View>
               </>

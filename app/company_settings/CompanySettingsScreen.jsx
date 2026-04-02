@@ -26,7 +26,9 @@ import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../
 import { isCompanyNameAvailable, normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
+import { saveUserLocale } from '../../lib/userLocale';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
+import { availableLocales, getLocale, setLocale } from '../../src/i18n';
 
 /* Helpers */
 const getDeviceTimeZone = () => {
@@ -238,9 +240,9 @@ function getCachedTimeZoneItems() {
 
 export default function CompanySettings() {
   const toast = useToast();
-  const { theme } = useTheme();
+  const { theme, mode, setMode } = useTheme();
   const router = useRouter();
-  const { profile, isInitializing } = useAuthContext();
+  const { user, profile, isInitializing } = useAuthContext();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const companyId = profile?.company_id || null;
@@ -251,6 +253,8 @@ export default function CompanySettings() {
   const normalizedProfileRole = String(profile?.role || '').toLowerCase();
   const canAccessCompanySettings = normalizedProfileRole === 'admin';
   const isAdmin = normalizedProfileRole === 'admin';
+  const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin = isAdmin && authAccountType === 'solo';
   const lastNavigationAtRef = React.useRef(0);
   const NAV_GUARD_MS = 0;
 
@@ -374,6 +378,9 @@ export default function CompanySettings() {
   const [beforeUnit, setBeforeUnit] = React.useState('min');
   const [afterUnit, setAfterUnit] = React.useState('min');
   const [tzOpen, setTzOpen] = React.useState(false);
+  const [themeOpen, setThemeOpen] = React.useState(false);
+  const [langOpen, setLangOpen] = React.useState(false);
+  const [currentLocale, setCurrentLocale] = React.useState(() => getLocale());
 
   // Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎвЂќР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В±Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В¦Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎС›Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В»Р В Р’В Р В Р вЂ№Р В Р’В Р В Р РЏР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’ВµР В Р’В Р вЂ™Р’В Р В Р Р‹Р вЂ™Р’В state Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎСљР В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎС›Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРІР‚СљР В Р’В Р вЂ™Р’В Р В РЎС›Р Р†Р вЂљР’ВР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В° Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРІР‚СњР В Р’В Р В Р вЂ№Р В Р’В Р Р†Р вЂљРЎв„ўР В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљР’ВР В Р’В Р В Р вЂ№Р В Р вЂ Р В РІР‚С™Р вЂ™Р’В¦Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎС›Р В Р’В Р вЂ™Р’В Р В РЎС›Р Р†Р вЂљР’ВР В Р’В Р В Р вЂ№Р В Р’В Р В Р РЏР В Р’В Р В Р вЂ№Р В Р вЂ Р В РІР‚С™Р РЋРІвЂћСћ Р В Р’В Р вЂ™Р’В Р В РЎС›Р Р†Р вЂљР’ВР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В°Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В¦Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В¦Р В Р’В Р В Р вЂ№Р В Р вЂ Р В РІР‚С™Р Р†РІР‚С›РІР‚вЂњР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’Вµ Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљР’ВР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В· Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎСљР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’ВµР В Р’В Р В Р вЂ№Р В Р вЂ Р Р†Р вЂљРЎв„ўР вЂ™Р’В¬Р В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В°
   React.useEffect(() => {
@@ -790,6 +797,13 @@ export default function CompanySettings() {
     const map = Object.fromEntries(phoneModeOptions.map((o) => [o.id, o.label]));
     return map[phoneMode] || '';
   }, [phoneMode, phoneModeOptions]);
+  const currentThemeLabel = React.useMemo(
+    () => t(`settings_theme_${mode || 'system'}`),
+    [mode, t],
+  );
+  React.useEffect(() => {
+    setCurrentLocale(getLocale());
+  }, [t]);
   const phoneModeItems = React.useMemo(() => {
     try {
       return (phoneModeOptions || []).map((o) => ({
@@ -829,6 +843,7 @@ export default function CompanySettings() {
   const sectionTitles = React.useMemo(
     () => ({
       COMPANY: t('settings_sections_company_title'),
+      APPEARANCE: t('settings_sections_appearance_title'),
       INTEGRATIONS: t('settings_sections_integrations_title'),
       MANAGEMENT: t('settings_sections_management_title'),
       DEPARTURE: t('settings_sections_departure_title'),
@@ -848,7 +863,11 @@ export default function CompanySettings() {
     return (
       <Screen
         background="background"
-        headerOptions={{ title: t('company_settings_title', t('settings')) }}
+        headerOptions={{
+          title: isSoloAdmin
+            ? t('settings_title')
+            : t('company_settings_title', t('settings')),
+        }}
       >
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator size="small" color={theme.colors.primary} />
@@ -862,7 +881,11 @@ export default function CompanySettings() {
   return (
     <Screen
       background="background"
-      headerOptions={{ title: t('company_settings_title', t('settings')) }}
+      headerOptions={{
+        title: isSoloAdmin
+          ? t('settings_title')
+          : t('company_settings_title', t('settings')),
+      }}
     >
       <ScrollView
         contentContainerStyle={s.contentWrap}
@@ -873,17 +896,20 @@ export default function CompanySettings() {
         <View style={s.sectionWrap}>
           <Text style={s.sectionTitle}>{sectionTitles.COMPANY}</Text>
           <View style={s.card}>
-            <SelectField
-              label={t('fields_company_name')}
-              value={companyName || t('common_specify')}
-              onPress={() => {
-                setCompanyNameDraft(companyName);
-                setCompanyNameError('');
-                setCompanyNameOpen(true);
-              }}
-            />
-
-            <View style={s.sep} />
+            {!isSoloAdmin ? (
+              <>
+                <SelectField
+                  label={t('fields_company_name')}
+                  value={companyName || t('common_specify')}
+                  onPress={() => {
+                    setCompanyNameDraft(companyName);
+                    setCompanyNameError('');
+                    setCompanyNameOpen(true);
+                  }}
+                />
+                <View style={s.sep} />
+              </>
+            ) : null}
             <SelectField
               label={t('settings_company_timezone')}
               value={timeZoneLabel}
@@ -903,7 +929,11 @@ export default function CompanySettings() {
               <>
                 <View style={s.sep} />
                 <SelectField
-                  label={t('settings_company_billing')}
+                  label={
+                    isSoloAdmin
+                      ? t('settings_company_billing_solo')
+                      : t('settings_company_billing')
+                  }
                   showValue={false}
                   onPress={billingRoute ? go(billingRoute) : undefined}
                   disabled={!billingRoute}
@@ -925,10 +955,31 @@ export default function CompanySettings() {
         </View>
 
         {/* Р В Р’В Р В Р вЂ№Р В Р’В Р РЋРІР‚вЂќР В Р Р‹Р В РІР‚С™Р В Р’В Р вЂ™Р’В°Р В Р’В Р В РІР‚В Р В Р’В Р РЋРІР‚СћР В Р Р‹Р Р†Р вЂљР Р‹Р В Р’В Р В РІР‚В¦Р В Р’В Р РЋРІР‚ВР В Р’В Р РЋРІР‚СњР В Р’В Р РЋРІР‚В */}
+        {isSoloAdmin ? (
+          <View style={s.sectionWrap}>
+            <Text style={s.sectionTitle}>{sectionTitles.APPEARANCE}</Text>
+            <View style={s.card}>
+              <SelectField
+                label={t('settings_sections_appearance_items_theme')}
+                value={currentThemeLabel}
+                onPress={() => setThemeOpen(true)}
+              />
+              <View style={s.sep} />
+              <SelectField
+                label={t('settings_sections_appearance_items_language')}
+                value={t(`language_${currentLocale}`)}
+                onPress={() => setLangOpen(true)}
+              />
+            </View>
+          </View>
+        ) : null}
+
         <View style={s.sectionWrap}>
           <Text style={s.sectionTitle}>{t('settings_sections_reference_title')}</Text>
           <View style={s.card}>
-            {SETTINGS_SECTIONS.REFERENCE.items.map((it, idx) => (
+            {SETTINGS_SECTIONS.REFERENCE.items
+              .filter((it) => !(isSoloAdmin && ['employees', 'departments'].includes(String(it?.key || ''))))
+              .map((it, idx) => (
               <React.Fragment key={it.key}>
                 {idx > 0 ? <View style={s.sep} /> : null}
                 <SelectField
@@ -967,7 +1018,10 @@ export default function CompanySettings() {
           <Text style={s.sectionTitle}>{sectionTitles.MANAGEMENT}</Text>
           <View style={s.card}>
             {SETTINGS_SECTIONS.MANAGEMENT.items
-              .filter((it) => !['work_types', 'departments'].includes(it.key))
+              .filter((it) =>
+                !['work_types', 'departments'].includes(it.key) &&
+                !(isSoloAdmin && String(it?.key || '') === 'access'),
+              )
               .map((it, idx) => (
                 <React.Fragment key={it.key}>
                   {idx > 0 ? <View style={s.sep} /> : null}
@@ -984,16 +1038,18 @@ export default function CompanySettings() {
         </View>
 
         {/* DEPARTURE */}
-        <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{sectionTitles.DEPARTURE}</Text>
-          <View style={s.card}>
-            <SelectField
-              label={t('settings_phone_mode')}
-              value={phoneModeLabel}
-              onPress={() => setPhoneModeOpen(true)}
-            />
+        {!isSoloAdmin ? (
+          <View style={s.sectionWrap}>
+            <Text style={s.sectionTitle}>{sectionTitles.DEPARTURE}</Text>
+            <View style={s.card}>
+              <SelectField
+                label={t('settings_phone_mode')}
+                value={phoneModeLabel}
+                onPress={() => setPhoneModeOpen(true)}
+              />
+            </View>
           </View>
-        </View>
+        ) : null}
 
         {/* FINANCES */}
         <View style={s.sectionWrap}>
@@ -1103,12 +1159,53 @@ export default function CompanySettings() {
         selectedId={timeZone}
         initialScrollIndex={tzInitialIndex >= 0 ? tzInitialIndex : undefined}
         listBottomInset={theme.spacing.lg}
-        isItemSelected={(item, id) =>
-          String(item?.id) === String(id) || item?.offsetMin === selectedTimeZoneOffset
-        }
+        isItemSelected={(item, id) => String(item?.id) === String(id)}
         onSelect={onPickTimeZone}
         onClose={() => setTzOpen(false)}
         searchable={false}
+      />
+
+      <SelectModal
+        visible={themeOpen}
+        title={t('settings_theme_title')}
+        items={[
+          { id: 'light', label: t('settings_theme_light') },
+          { id: 'dark', label: t('settings_theme_dark') },
+          { id: 'system', label: t('settings_theme_system') },
+        ]}
+        searchable={false}
+        selectedId={mode}
+        onSelect={(item) => {
+          setMode(item?.id || 'system');
+          setThemeOpen(false);
+        }}
+        onClose={() => setThemeOpen(false)}
+      />
+
+      <SelectModal
+        visible={langOpen}
+        title={t('settings_language_title')}
+        items={availableLocales.map((id) => ({ id, label: t(`language_${id}`) }))}
+        searchable={false}
+        selectedId={currentLocale}
+        onSelect={async (item) => {
+          const selectedLocale = String(item?.id || '').trim();
+          if (!selectedLocale) {
+            setLangOpen(false);
+            return;
+          }
+          try {
+            await setLocale(selectedLocale);
+            setCurrentLocale(selectedLocale);
+            try {
+              await saveUserLocale(selectedLocale);
+            } catch {}
+            toast.info(t('lang_changed'));
+          } finally {
+            setLangOpen(false);
+          }
+        }}
+        onClose={() => setLangOpen(false)}
       />
 
       {/* Currency picker */}

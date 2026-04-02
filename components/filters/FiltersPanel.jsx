@@ -20,6 +20,7 @@ import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { ROLE_LABELS } from '../../constants/roles';
+import { useAuth } from '../hooks/useAuth';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
 
@@ -78,6 +79,10 @@ export default function FiltersPanel({
 }) {
   const { theme } = useTheme();
   useTranslation();
+  const auth = useAuth();
+  const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   const isAssignmentMode = mode === 'assignment' && assignment;
   const isObjectsMode = mode === 'objects';
@@ -309,7 +314,13 @@ export default function FiltersPanel({
       return showSearchCategory ? [searchCategory, ...objectCategories] : objectCategories;
     }
     if (isOrdersMode) {
-      const ordersStatusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
+      const ordersStatusOptionsRaw = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
+      const ordersStatusOptions = isSoloAdmin
+        ? ordersStatusOptionsRaw.filter((statusItem) => {
+            const statusId = String(statusItem?.id ?? statusItem?.value ?? '').toLowerCase();
+            return statusId !== 'new';
+          })
+        : ordersStatusOptionsRaw;
       const ordersWorkTypes = Array.isArray(ordersFilters?.workTypes) ? ordersFilters.workTypes : [];
       const ordersClients = Array.isArray(ordersFilters?.clients) ? ordersFilters.clients : [];
       const ordersExecutors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
@@ -333,7 +344,7 @@ export default function FiltersPanel({
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departments, isAssignmentMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
+  }, [assignmentCategories, departments, isAssignmentMode, isObjectsMode, isOrdersMode, isSoloAdmin, ordersFilters, showSearchCategory]);
 
   const restoredCategoryRef = useRef(false);
   const lastCategoriesKeyRef = useRef('');
@@ -1190,7 +1201,13 @@ export default function FiltersPanel({
         );
       }
       case 'orders_statuses': {
-        const statusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
+        const statusOptionsRaw = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
+        const statusOptions = isSoloAdmin
+          ? statusOptionsRaw.filter((statusItem) => {
+              const statusId = String(statusItem?.id ?? statusItem?.value ?? '').toLowerCase();
+              return statusId !== 'new';
+            })
+          : statusOptionsRaw;
         const allSelected = !Array.isArray(draft.statuses) || draft.statuses.length === 0;
         return (
           <>

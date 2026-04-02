@@ -106,6 +106,15 @@ const createStyles = (theme, insets = {}) => {
   });
 };
 
+const resolveDeviceTimeZone = () => {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof tz === 'string' && tz.trim() ? tz.trim() : 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+
 export default function RegisterScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -263,6 +272,7 @@ export default function RegisterScreen() {
             email: String(emailToCheck).trim().toLowerCase(),
             account_type: shouldCheckCompany ? 'company' : 'solo',
             company_name: shouldCheckCompany ? normalizedCompany : null,
+            timezone: resolveDeviceTimeZone(),
           },
         });
 
@@ -435,6 +445,7 @@ export default function RegisterScreen() {
             full_name: fullName,
             account_type: accountType,
             company_name: accountType === 'company' ? normalizedCompanyName : null,
+            timezone: resolveDeviceTimeZone(),
           },
         },
       );

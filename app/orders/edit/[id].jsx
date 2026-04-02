@@ -81,6 +81,7 @@ import { useToast } from '../../../components/ui/ToastProvider';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
+import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { t as T } from '../../../src/i18n';
 import { formatRuMask } from '../../../components/ui/phone';
 import { queryKeys } from '../../../src/shared/query/queryKeys';
@@ -102,6 +103,7 @@ import { buildAssigneeSelectItems } from '../../../src/features/requests/assigne
 const HEADER_HEIGHT_FALLBACK = 56;
 const BOTTOM_SPACER_FALLBACK = 80;
 const ORDER_STATUS_KEYS = ['in_feed', 'new', 'in_progress', 'completed'];
+const SOLO_ADMIN_ORDER_STATUS_KEYS = ['in_progress', 'completed'];
 const WORK_TYPE_NONE_OPTION_ID = '__none__';
 const ORDER_CLIENT_FLOW_STORAGE_PREFIX = 'order_client_flow:';
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
@@ -291,6 +293,23 @@ function EditOrderContent() {
   });
 
   const { theme } = useTheme();
+  const { profile, user } = useAuthContext();
+  const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
+  const soloAdminUserId = String(profile?.id || user?.id || '').trim() || null;
+  const soloAdminDisplayName = useMemo(() => (
+    [profile?.first_name, profile?.middle_name, profile?.last_name].filter(Boolean).join(' ').trim()
+      || String(profile?.full_name || '').trim()
+      || String(profile?.email || user?.email || '').trim()
+  ), [
+    profile?.email,
+    profile?.first_name,
+    profile?.full_name,
+    profile?.last_name,
+    profile?.middle_name,
+    user?.email,
+  ]);
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
   const canViewOrderAmount = hasPermission('canViewFinanceAll');
   const canEditOrderAmount = canViewOrderAmount && hasPermission('canEditFinanceEntries');
@@ -352,6 +371,8 @@ function EditOrderContent() {
   const [isDepartureRange, setIsDepartureRange] = useState(false);
   const [assigneeId, setAssigneeId] = useState(null);
   const [toFeed, setToFeed] = useState(false);
+  const effectiveAssigneeId = isSoloAdmin ? soloAdminUserId : assigneeId;
+  const effectiveToFeed = isSoloAdmin ? false : toFeed;
   const [urgent, setUrgent] = useState(false);
   const [statusKey, setStatusKey] = useState(null);
   const [statusLabel, setStatusLabel] = useState('');
@@ -551,8 +572,11 @@ function EditOrderContent() {
     Object.keys(stickyPlanningFieldMap || {}).forEach((fieldKey) => {
       if (stickyPlanningFieldMap?.[fieldKey]) visible.add(fieldKey);
     });
-    return priority.filter((fieldKey) => visible.has(fieldKey));
-  }, [dynamicPlanningFieldKeys, stickyPlanningFieldMap]);
+    return priority.filter((fieldKey) => {
+      if (isSoloAdmin && fieldKey === 'assigned_to') return false;
+      return visible.has(fieldKey);
+    });
+  }, [dynamicPlanningFieldKeys, isSoloAdmin, stickyPlanningFieldMap]);
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
@@ -735,8 +759,9 @@ function EditOrderContent() {
   }, [statusLabel]);
 
   const statusItems = useMemo(() => {
-    return ORDER_STATUS_KEYS.map((k) => ({ id: k, label: T(`order_status_${k}`) }));
-  }, []);
+    const statusKeys = isSoloAdmin ? SOLO_ADMIN_ORDER_STATUS_KEYS : ORDER_STATUS_KEYS;
+    return statusKeys.map((k) => ({ id: k, label: T(`order_status_${k}`) }));
+  }, [isSoloAdmin]);
   const workTypeItems = useMemo(
     () => [
       {
@@ -1306,8 +1331,8 @@ function EditOrderContent() {
       const nextDepartureTime = parseTimeStringToDate(row.departure_time) || legacyDepartureTime || null;
       const nextDepartureEndDate = normalizeDateOrNull(row.time_window_end);
       const nextIsDepartureRange = !!nextDepartureEndDate;
-      const nextAssigneeId = row.assigned_to || null;
-      const nextToFeed = !row.assigned_to;
+      const nextAssigneeId = isSoloAdmin ? soloAdminUserId : (row.assigned_to || null);
+      const nextToFeed = isSoloAdmin ? false : !row.assigned_to;
       const nextUrgent = !!row.urgent;
       const nextWorkTypeId = normalizeId(row.work_type_id ?? workTypeIdFromParams);
       const nextWorkTypeResolved =
@@ -1317,7 +1342,9 @@ function EditOrderContent() {
       const fallbackName =
         String(row.work_type_name || row.work_type?.name || workTypeNameFromParams || '').trim() || '';
       let nextAssignedEmployeeLabel = '';
-      if (row.assigned_to && row.assignee_profile) {
+      if (isSoloAdmin) {
+        nextAssignedEmployeeLabel = soloAdminDisplayName;
+      } else if (row.assigned_to && row.assignee_profile) {
         const data = row.assignee_profile;
         const nameParts = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
         const normalizedFullName = (data.full_name || '').trim();
@@ -1407,7 +1434,7 @@ function EditOrderContent() {
       hydratedOrderIdRef.current = id;
       setFormHydrated(true);
 
-      if (row.assigned_to && !row.assignee_profile) {
+      if (!isSoloAdmin && row.assigned_to && !row.assignee_profile) {
         ensureRequestAssigneeNamePrefetch(queryClient, row.assigned_to)
           .then((data) => {
             if (cancelled || userEditedRef.current) return;
@@ -1491,8 +1518,24 @@ function EditOrderContent() {
     floor,
     entrance,
     apartment,
+    isSoloAdmin,
+    soloAdminDisplayName,
+    soloAdminUserId,
     titlePrefix,
   ]);
+  useEffect(() => {
+    if (!isSoloAdmin) return;
+    if (assigneeId !== soloAdminUserId) {
+      setAssigneeId(soloAdminUserId);
+    }
+    if (toFeed) {
+      setToFeed(false);
+    }
+    if (statusKey === 'in_feed') {
+      setStatusKey('new');
+      setStatusLabel(T('order_status_new'));
+    }
+  }, [assigneeId, isSoloAdmin, soloAdminUserId, statusKey, toFeed]);
   useEffect(() => {
     if (!assigneeId) {
       assignedLabelRequestIdRef.current += 1;
@@ -1794,7 +1837,7 @@ function EditOrderContent() {
       users: employees,
       departmentsById,
       t: T,
-      includeFeed: true,
+      includeFeed: !isSoloAdmin,
       onSelectFeed: () => {
         setAssigneeId(null);
         setToFeed(true);
@@ -1812,7 +1855,7 @@ function EditOrderContent() {
         setAssigneeModalVisible(false);
       },
     });
-  }, [departments, employees, statusKey]);
+  }, [departments, employees, isSoloAdmin, statusKey]);
   const customAddressDraft = useMemo(
     () => ({
       country,
@@ -2045,7 +2088,7 @@ function EditOrderContent() {
         message: T('order_validation_departure_time_required', 'Укажите время выезда'),
       };
     }
-    if (isFieldRequired('assigned_to') && !toFeed && !assigneeId) {
+    if (isFieldRequired('assigned_to') && !effectiveToFeed && !effectiveAssigneeId) {
       nextErrors.assigned_to = { message: T('order_validation_executor_required') };
     }
     if (isFieldRequired('work_type_id') && useWorkTypes && !workTypeId) {
@@ -2208,7 +2251,7 @@ function EditOrderContent() {
         address_mode: addressMode,
         ...addressPatch,
         ...(isCommentChanged ? { comment: nextComment } : {}),
-        assigned_to: toFeed ? null : assigneeId,
+        assigned_to: effectiveToFeed ? null : effectiveAssigneeId,
         time_window_start: formatDateOnlyForStorage(normalizedDepartureDate),
         time_window_end:
           isDepartureRange && normalizedDepartureEndDate
@@ -2553,6 +2596,9 @@ function EditOrderContent() {
       }
 
       if (fieldKey === 'assigned_to') {
+        if (isSoloAdmin) {
+          return null;
+        }
         return (
           <>
             <TextField
@@ -2591,6 +2637,7 @@ function EditOrderContent() {
       hasDepartureTimeValue,
       isDepartureRange,
       isFieldRequired,
+      isSoloAdmin,
       selectedEmployeeName,
       styles.field,
       styles.separator,
@@ -2892,16 +2939,18 @@ function EditOrderContent() {
         onClose={() => setPhoneSourceModalVisible(false)}
       />
 
-      <SelectModal
-        visible={assigneeModalVisible}
-        title={T('create_order_modal_executor_title')}
-        items={assigneeItems}
-        searchable
-        filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
-        selectedId={toFeed ? 'feed' : assigneeId}
-        onSelect={(item) => item?.onPress?.()}
-        onClose={() => setAssigneeModalVisible(false)}
-      />
+      {!isSoloAdmin ? (
+        <SelectModal
+          visible={assigneeModalVisible}
+          title={T('create_order_modal_executor_title')}
+          items={assigneeItems}
+          searchable
+          filterFn={(item, query) => matchesSearch(item?.searchIndex, query)}
+          selectedId={toFeed ? 'feed' : assigneeId}
+          onSelect={(item) => item?.onPress?.()}
+          onClose={() => setAssigneeModalVisible(false)}
+        />
+      ) : null}
 
       <SelectModal
         visible={clientModalVisible}
