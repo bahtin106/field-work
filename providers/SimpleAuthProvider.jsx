@@ -6,7 +6,8 @@ import { deletePushToken } from '../lib/supabaseHelpers';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
-const PROFILE_COLUMNS = 'id, first_name, last_name, full_name, role, avatar_url, company_id';
+const PROFILE_COLUMNS =
+  'id, first_name, middle_name, last_name, full_name, role, avatar_url, company_id, department_id';
 const PROFILE_LOAD_TIMEOUT_MS = 8000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
@@ -26,12 +27,14 @@ const buildProfileFromUser = (user, source = 'user-metadata') => {
   return {
     id: user.id,
     first_name: firstName,
+    middle_name: null,
     last_name: lastName,
     full_name: fullName,
     role: safeRole,
     avatar_url: metadata.avatar_url ?? null,
     avatar_display_url: metadata.avatar_url ?? null,
     company_id: metadata.company_id ?? null,
+    department_id: null,
     __source: source,
   };
 };
@@ -52,12 +55,14 @@ const normalizeProfileData = (profile, fallbackUser, source = 'supabase') => {
   return {
     id: profile.id ?? fallbackUser?.id ?? null,
     first_name: firstName,
+    middle_name: profile.middle_name ?? null,
     last_name: lastName,
     full_name: fullNameCandidate,
     role: safeRole,
     avatar_url: profile.avatar_url ?? null,
     avatar_display_url: profile.avatar_display_url ?? profile.avatar_url ?? null,
     company_id: profile.company_id ?? null,
+    department_id: profile.department_id ?? null,
     __source: source,
   };
 };
@@ -110,6 +115,7 @@ export function SimpleAuthProvider({ children }) {
   const profileRef = useRef(null);
   const currentUserIdRef = useRef(null);
   const initialSessionHandledRef = useRef(false);
+  const logoutInProgressRef = useRef(false);
   const recoveryTimerRef = useRef(null);
   const recoveryJobIdRef = useRef(0);
 
@@ -323,6 +329,15 @@ export function SimpleAuthProvider({ children }) {
       const nextUserId = user?.id ?? null;
       const hadUser = !!currentUserIdRef.current;
 
+      if (event === 'SIGNED_IN') {
+        logoutInProgressRef.current = false;
+      }
+
+      // During explicit logout, ignore all non-login auth events to prevent transient UI jumps.
+      if (logoutInProgressRef.current && event !== 'SIGNED_IN') {
+        return;
+      }
+
       if (event === 'SIGNED_OUT' || !nextUserId) {
         setSignedOutState();
         if (event === 'SIGNED_OUT' || hadUser) {
@@ -507,7 +522,13 @@ export function SimpleAuthProvider({ children }) {
   }, [clearProfileRecovery, handleAuthChange, recoverFromInvalidRefreshToken, setSignedOutState]);
 
   const signOut = useCallback(async () => {
+    if (logoutInProgressRef.current) return;
+    logoutInProgressRef.current = true;
+
     const currentUserId = state.user?.id || null;
+    setSignedOutState();
+    await cleanupSessionRuntime('sign-out');
+
     try {
       if (currentUserId) {
         try {
@@ -520,9 +541,6 @@ export function SimpleAuthProvider({ children }) {
       await supabase.auth.signOut();
     } catch (error) {
       console.error('SimpleAuth: signOut error', error);
-    } finally {
-      setSignedOutState();
-      await cleanupSessionRuntime('sign-out');
     }
   }, [setSignedOutState, state.user?.id]);
 

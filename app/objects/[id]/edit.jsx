@@ -1217,7 +1217,7 @@ function createStyles(theme, formStyles) {
       flexShrink: 1,
     },
     clientName: {
-      color: '#000',
+      color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
       marginTop: theme.spacing.xs,
       flexShrink: 1,
