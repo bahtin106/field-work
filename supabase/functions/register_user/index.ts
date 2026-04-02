@@ -10,6 +10,7 @@ const ACCOUNT_TYPES = new Set(['solo', 'company']);
 const PASSWORD_MIN_LENGTH = 8;
 const COMPANY_NAME_MAX_LENGTH = 64;
 const NAME_MAX_LENGTH = 64;
+const SOLO_DEFAULT_COMPANY_NAME = 'Моя компания';
 
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX_CHECK_ONLY = 40;
@@ -153,14 +154,6 @@ async function logServerIssue(
   }
 }
 
-function buildSoloCompanyName(email: string, fullName: string, userId: string) {
-  const emailLocal = (email.split('@')[0] || 'user').replace(/[^a-zA-Z0-9._-]+/g, '').slice(0, 24);
-  const base = normalizeCompanyName(`Personal ${fullName || emailLocal}`) || `Personal ${emailLocal}`;
-  const suffix = userId.slice(0, 8);
-  const maxBaseLen = Math.max(1, COMPANY_NAME_MAX_LENGTH - suffix.length - 1);
-  return `${base.slice(0, maxBaseLen)}-${suffix}`;
-}
-
 export async function handleRegisterUserRequest(req: Request) {
   const allowedOrigins = getAllowedOrigins();
 
@@ -208,6 +201,7 @@ export async function handleRegisterUserRequest(req: Request) {
     const lastName = normalizeName(body?.last_name);
     const fullName = normalizeName(body?.full_name || `${firstName} ${lastName}`);
     const companyNameInput = normalizeCompanyName(body?.company_name);
+    const companyTimeZone = text(body?.timezone) || 'UTC';
 
     if (!ACCOUNT_TYPES.has(accountType)) {
       return errorResponse(req, allowedOrigins, 'account_type must be solo or company', 400, 'INVALID_ACCOUNT_TYPE');
@@ -331,10 +325,13 @@ export async function handleRegisterUserRequest(req: Request) {
 
     let companyName = companyNameInput;
     if (accountType === 'solo') {
-      companyName = buildSoloCompanyName(email, fullName, userId);
+      companyName = SOLO_DEFAULT_COMPANY_NAME;
     }
 
     const companyPayloads: Record<string, unknown>[] = [
+      { name: companyName, timezone: companyTimeZone, created_by: userId, owner_id: userId },
+      { name: companyName, timezone: companyTimeZone, owner_id: userId },
+      { name: companyName, timezone: companyTimeZone },
       { name: companyName, created_by: userId, owner_id: userId },
       { name: companyName, owner_id: userId },
       { name: companyName },
@@ -471,6 +468,28 @@ export async function handleRegisterUserRequest(req: Request) {
       }
       await supabaseAdmin.auth.admin.deleteUser(userId);
       return errorResponse(req, allowedOrigins, `Profile error: ${profileErr.message}`, 400, 'PROFILE_WRITE_FAILED');
+    }
+
+    if (accountType === 'solo' && companyId) {
+      const { error: messengerErr } = await supabaseAdmin
+        .from('messenger_integrations')
+        .upsert(
+          {
+            company_id: companyId,
+            provider: 'telegram',
+            destination_type: 'assignee',
+            destination_user_id: userId,
+          },
+          { onConflict: 'company_id,provider' },
+        );
+      if (messengerErr) {
+        await logServerIssue(supabaseAdmin, {
+          userId,
+          name: 'RegisterTelegramDefaultRoutingWarning',
+          message: messengerErr.message,
+          extra: { code: messengerErr.code || null, companyId },
+        });
+      }
     }
 
     return jsonResponse(req, allowedOrigins, {

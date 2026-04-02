@@ -19,6 +19,7 @@ import { useToast } from '../../components/ui/ToastProvider';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { DateTimeModal, SelectModal } from '../../components/ui/modals';
 import { ANDROID_CHANNEL_ID, ANDROID_CHANNEL_NAME, APP_DEFAULTS } from '../../config/notifications';
+import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { supabase } from '../../lib/supabase';
 import {
   deletePushToken as deletePushTokenHelper,
@@ -286,6 +287,10 @@ export default function AppSettings() {
   const { t } = useTranslation();
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { user: authUser, profile: authProfile } = useAuthContext();
+  const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   const { theme, mode, setMode } = useTheme();
   const toast = useToast();
@@ -368,8 +373,8 @@ export default function AppSettings() {
           feed_orders: true,
           reminders: true,
           reminder_delay_minutes: DEFAULT_REMINDER_DELAY_MINUTES,
-          quiet_start: APP_DEFAULTS?.quietStart,
-          quiet_end: APP_DEFAULTS?.quietEnd,
+          quiet_start: null,
+          quiet_end: null,
           quiet_timezone: resolveDeviceTimeZone(),
         };
       }
@@ -699,6 +704,14 @@ export default function AppSettings() {
     }
   }, [t]);
 
+  useEffect(() => {
+    if (!isSoloAdmin || isLoadingPrefs) return;
+    if (prefs.allow === true) return;
+
+    setPrefs((prev) => ({ ...prev, allow: true }));
+    setNotificationAllow(true).catch(() => {});
+  }, [isLoadingPrefs, isSoloAdmin, prefs.allow, setNotificationAllow]);
+
   // Self-heal: re-register token only when server prefs explicitly allow notifications.
   useEffect(() => {
     let alive = true;
@@ -872,9 +885,16 @@ export default function AppSettings() {
   }, [futureFeature, onResetQuietTimes, onToggleAllow, onToggleEvent, openTimePicker, router, t]);
 
   // Inject dynamic values derived from current prefs without recalculating labels on every prefs change
+  const visibleSectionBase = useMemo(() => {
+    if (!isSoloAdmin) return sectionBase;
+    return sectionBase.filter(
+      (sec) => !['appearance', 'notifications', 'quiet', 'privacy'].includes(String(sec?.key || '')),
+    );
+  }, [isSoloAdmin, sectionBase]);
+
   const sections = useMemo(
     () =>
-      sectionBase.map((sec) => ({
+      visibleSectionBase.map((sec) => ({
         ...sec,
         items: sec.items.map((it) => {
           if (sec.key === 'notifications' && it.key === 'allow') {
@@ -899,7 +919,7 @@ export default function AppSettings() {
           return it;
         }),
       })),
-    [sectionBase, prefs, isLoadingPrefs, currentThemeLabel, t],
+    [visibleSectionBase, prefs, isLoadingPrefs, currentThemeLabel, t],
   );
 
   return (

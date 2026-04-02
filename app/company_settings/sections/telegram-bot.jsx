@@ -15,6 +15,7 @@ import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { ConfirmModal, SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { telegramBotIntegration } from '../../../lib/telegramBotIntegration';
+import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -48,8 +49,13 @@ export default function TelegramBotSettingsScreen() {
   const { t } = useTranslation();
   const toast = useToast();
   const nav = useNavigation();
+  const { user: authUser, profile: authProfile } = useAuthContext();
   const s = React.useMemo(() => styles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
+  const authUserId = String(authUser?.id || '');
+  const authAccountType = String(authUser?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -159,6 +165,13 @@ export default function TelegramBotSettingsScreen() {
   const assignees = React.useMemo(() => data?.assignees || [], [data?.assignees]);
   const config = React.useMemo(() => data?.config || {}, [data?.config]);
   const fields = React.useMemo(() => data?.fields || [], [data?.fields]);
+  const showRoutingSection = config.is_enabled === true && !isSoloAdmin;
+  const soloAssigneeId = React.useMemo(() => {
+    if (!isSoloAdmin) return '';
+    if (authUserId && assignees.some((item) => String(item?.id || '') === authUserId)) return authUserId;
+    if (assignees.length === 1) return String(assignees[0]?.id || '');
+    return '';
+  }, [assignees, authUserId, isSoloAdmin]);
   const PREFERRED_FIELD_KEYS = React.useMemo(
     () => ['customer_name', 'phone', 'city', 'street', 'house'],
     [],
@@ -461,6 +474,18 @@ export default function TelegramBotSettingsScreen() {
     dataRef.current = data;
   }, [data]);
 
+  React.useEffect(() => {
+    if (!isSoloAdmin) return;
+    if (!data || !soloAssigneeId) return;
+    const destinationType = String(data?.config?.destination_type || '');
+    const destinationUserId = String(data?.config?.destination_user_id || '');
+    if (destinationType === 'assignee' && destinationUserId === soloAssigneeId) return;
+    updateConfig({
+      destination_type: 'assignee',
+      destination_user_id: soloAssigneeId,
+    });
+  }, [data, isSoloAdmin, soloAssigneeId, updateConfig]);
+
   React.useEffect(() => () => {
     if (saveStateTimeoutRef.current) clearTimeout(saveStateTimeoutRef.current);
   }, []);
@@ -586,12 +611,12 @@ export default function TelegramBotSettingsScreen() {
           ) : null}
         </Card>
 
-        {config.is_enabled === true ? (
+        {showRoutingSection ? (
         <SectionHeader>
           {t('company_settings_telegram_routing_title')}
         </SectionHeader>
         ) : null}
-        {config.is_enabled === true ? (
+        {showRoutingSection ? (
         <Card paddedXOnly style={s.sectionCard}>
           <View style={base.row}>
             <Text
@@ -733,15 +758,17 @@ export default function TelegramBotSettingsScreen() {
         ) : null}
       </ScrollView>
 
-      <SelectModal
-        visible={assigneeModalVisible}
-        title={t('company_settings_telegram_responsible_label')}
-        items={routingModalItems}
-        selectedId={config.destination_type === 'assignee' ? config.destination_user_id : '__feed__'}
-        searchable
-        onSelect={(item) => item?.onPress?.()}
-        onClose={() => setAssigneeModalVisible(false)}
-      />
+      {showRoutingSection ? (
+        <SelectModal
+          visible={assigneeModalVisible}
+          title={t('company_settings_telegram_responsible_label')}
+          items={routingModalItems}
+          selectedId={config.destination_type === 'assignee' ? config.destination_user_id : '__feed__'}
+          searchable
+          onSelect={(item) => item?.onPress?.()}
+          onClose={() => setAssigneeModalVisible(false)}
+        />
+      ) : null}
       <ConfirmModal
         visible={regenerateConfirmVisible}
         title={t('company_settings_telegram_regenerate_confirm_title')}

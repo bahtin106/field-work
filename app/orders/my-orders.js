@@ -21,6 +21,7 @@ import DynamicOrderCard from '../../components/DynamicOrderCard';
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
 import SortSelectModal from '../../components/filters/SortSelectModal';
+import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
 import AppHeader from '../../components/navigation/AppHeader';
@@ -187,6 +188,8 @@ function MyOrdersContent() {
     screenKey: 'orders-my',
     defaults: ORDER_FILTER_DEFAULTS,
   });
+  const setFilterValue = filters.setValue;
+  const selectedStatusFilters = filters.values?.statuses;
   const revalidateFilters = filters.revalidate;
 
   useFocusEffect(
@@ -201,17 +204,27 @@ function MyOrdersContent() {
   );
 
   const orderStatusOptions = useMemo(
-    () => [
-      { id: 'new', label: t('order_status_new') },
-      { id: 'in_progress', label: t('order_status_in_progress') },
-      { id: 'done', label: t('order_status_completed') },
-    ],
-    [t],
+    () =>
+      isSoloAdmin
+        ? [
+            { id: 'in_progress', label: t('order_status_in_progress') },
+            { id: 'done', label: t('order_status_completed') },
+          ]
+        : [
+            { id: 'new', label: t('order_status_new') },
+            { id: 'in_progress', label: t('order_status_in_progress') },
+            { id: 'done', label: t('order_status_completed') },
+          ],
+    [isSoloAdmin, t],
   );
 
   const router = useRouter();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
+  const auth = useAuth();
+  const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin =
+    String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);
@@ -428,6 +441,21 @@ function MyOrdersContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const hydratedRef = useRef(false);
+  useEffect(() => {
+    if (!isSoloAdmin) return;
+    const currentStatuses = Array.isArray(selectedStatusFilters) ? selectedStatusFilters : [];
+    const allowedStatuses = currentStatuses.filter((statusKey) =>
+      statusKey === 'in_progress' || statusKey === 'done');
+    if (allowedStatuses.length !== currentStatuses.length) {
+      setFilterValue('statuses', allowedStatuses);
+    }
+  }, [isSoloAdmin, selectedStatusFilters, setFilterValue]);
+  useEffect(() => {
+    if (!isSoloAdmin) return;
+    if (filter !== 'all') {
+      setFilter('all');
+    }
+  }, [filter, isSoloAdmin]);
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -1009,13 +1037,14 @@ function MyOrdersContent() {
       <DynamicOrderCard
         order={order}
         context="my_orders"
+        hideExecutor={isSoloAdmin}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
+    [companySettings?.currency, departureTimeEnabled, isSoloAdmin, openOrderDetails, orderFieldsByKey],
   );
 
   useFocusEffect(
@@ -1047,64 +1076,66 @@ function MyOrdersContent() {
   const listHeader = useMemo(
     () => (
       <View>
-        <View style={styles.filterBar}>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterScrollContent}
-          >
-            {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
-              <Pressable
-                key={key}
-                onPress={() => setFilter(key)}
-                style={({ pressed }) => [
-                  styles.chip,
-                  filter === key && styles.chipActive,
-                  pressed && { opacity: 0.9 },
-                ]}
-                accessibilityRole="button"
-              >
-                <View style={styles.chipContent}>
-                  {key === 'feed' &&
-                    feedState !== 'none' &&
-                    (feedState === 'new' ? (
-                      <Animated.View
-                        style={[
-                          styles.feedDotBase,
-                          styles.feedDotNew,
-                          {
-                            transform: [
-                              {
-                                scale: feedPulse.interpolate({
-                                  inputRange: [0, 1],
-                                  outputRange: [1, 1.7],
-                                }),
-                              },
-                            ],
-                            opacity: feedPulse.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [0.55, 1],
-                            }),
-                          },
-                        ]}
-                      />
-                    ) : (
-                      <View style={[styles.feedDotBase, styles.feedDotSeen]} />
-                    ))}
-                  <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
-                    {{
-                      feed: t('order_status_in_feed'),
-                      all: t('common_all'),
-                      new: t('order_status_new'),
-                      progress: t('order_status_in_progress'),
-                      done: t('order_status_completed'),
-                    }[key]}
-                  </Text>
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
+        {!isSoloAdmin ? (
+          <View style={styles.filterBar}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.filterScrollContent}
+            >
+              {['feed', 'all', 'new', 'progress', 'done'].map((key) => (
+                <Pressable
+                  key={key}
+                  onPress={() => setFilter(key)}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    filter === key && styles.chipActive,
+                    pressed && { opacity: 0.9 },
+                  ]}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.chipContent}>
+                    {key === 'feed' &&
+                      feedState !== 'none' &&
+                      (feedState === 'new' ? (
+                        <Animated.View
+                          style={[
+                            styles.feedDotBase,
+                            styles.feedDotNew,
+                            {
+                              transform: [
+                                {
+                                  scale: feedPulse.interpolate({
+                                    inputRange: [0, 1],
+                                    outputRange: [1, 1.7],
+                                  }),
+                                },
+                              ],
+                              opacity: feedPulse.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [0.55, 1],
+                              }),
+                            },
+                          ]}
+                        />
+                      ) : (
+                        <View style={[styles.feedDotBase, styles.feedDotSeen]} />
+                      ))}
+                    <Text style={[styles.chipText, filter === key && styles.chipTextActive]}>
+                      {{
+                        feed: t('order_status_in_feed'),
+                        all: t('common_all'),
+                        new: t('order_status_new'),
+                        progress: t('order_status_in_progress'),
+                        done: t('order_status_completed'),
+                      }[key]}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        ) : null}
 
         <SearchFiltersBar
           value={searchQuery}
@@ -1156,6 +1187,7 @@ function MyOrdersContent() {
       filterSummaryData,
       sortedFilteredOrders.length,
       hasLinkedRelationFilter,
+      isSoloAdmin,
       relationLabel,
       t,
     ],

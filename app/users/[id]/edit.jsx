@@ -644,14 +644,12 @@ export default function EditUser() {
     });
   }, []);
 
-  const headerPrimaryName = useMemo(() => {
-    const name = `${firstName || ''} ${middleName || ''}`.replace(/\s+/g, ' ').trim();
+  const headerDisplayName = useMemo(() => {
+    const name = `${firstName || ''} ${middleName || ''} ${lastName || ''}`
+      .replace(/\s+/g, ' ')
+      .trim();
     return name || '';
-  }, [firstName, middleName]);
-  const headerSecondaryName = useMemo(
-    () => String(lastName || '').trim(),
-    [lastName],
-  );
+  }, [firstName, middleName, lastName]);
   const headerFallbackName = useMemo(
     () => t('placeholder_no_name'),
     [t],
@@ -2102,17 +2100,12 @@ export default function EditUser() {
                   ) : null}
                 </Pressable>
                 <View style={{ flex: 1 }}>
-                  {headerPrimaryName ? (
+                  {headerDisplayName ? (
                     <Text style={styles.nameTitle} numberOfLines={1} ellipsizeMode="tail">
-                      {headerPrimaryName}
+                      {headerDisplayName}
                     </Text>
                   ) : null}
-                  {headerSecondaryName ? (
-                    <Text style={styles.nameTitle} numberOfLines={1} ellipsizeMode="tail">
-                      {headerSecondaryName}
-                    </Text>
-                  ) : null}
-                  {!headerPrimaryName && !headerSecondaryName ? (
+                  {!headerDisplayName ? (
                     <Text style={styles.nameTitle} numberOfLines={1} ellipsizeMode="tail">
                       {headerFallbackName}
                     </Text>

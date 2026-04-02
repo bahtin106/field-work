@@ -248,6 +248,7 @@ function mapInputKindToLegacyType(inputKind) {
 function DynamicOrderCard({
   order,
   context = 'all_orders', // 'all_orders' | 'my_orders' | 'calendar' | 'order_card'
+  hideExecutor = false,
   onPress,
   viewerRole, // 'admin' | 'dispatcher' | 'worker' (optional)
   departureTimeEnabled, // optional explicit flag from order field settings
@@ -553,6 +554,9 @@ function DynamicOrderCard({
   } else {
     showExecutor = true;
   }
+  if (hideExecutor) {
+    showExecutor = false;
+  }
   const showDate = context !== 'calendar' && !!bottomDateIso;
   const showUrgentDot = !!order?.urgent;
 
@@ -610,6 +614,8 @@ function DynamicOrderCard({
         ? formatDateShort(bottomDateIso, showDepartureTime)
         : '';
   const footerRightText = showExecutor ? String(resolvedExecutorName || executorName || '').trim() : '';
+  const footerRightTopText = showExecutor ? (priceText || ' ') : ' ';
+  const footerRightBottomText = showExecutor ? (footerRightText || ' ') : (priceText || ' ');
 
   /* ===== Render ===== */
   return (
@@ -722,14 +728,14 @@ function DynamicOrderCard({
             ellipsizeMode="tail"
             style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%' }}
           >
-            {priceText || ' '}
+            {footerRightTopText}
           </Text>
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
             style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%' }}
           >
-            {footerRightText || ' '}
+            {footerRightBottomText}
           </Text>
         </View>
       </View>
@@ -743,6 +749,7 @@ function areCardPropsEqual(prev, next) {
     prev.context === next.context &&
     prev.viewerRole === next.viewerRole &&
     prev.departureTimeEnabled === next.departureTimeEnabled &&
+    prev.hideExecutor === next.hideExecutor &&
     prev.orderFieldsByKey === next.orderFieldsByKey &&
     prev.companyCurrency === next.companyCurrency &&
     prev.onPress === next.onPress

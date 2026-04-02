@@ -5,6 +5,7 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-nativ
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import appReadyState from '../../lib/appReadyState';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
+import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useToast } from '../ui/ToastProvider';
@@ -77,8 +78,12 @@ function BottomNavInner() {
   const pathname = usePathname() || '';
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { user } = useAuthContext();
   const { setAnchorOffset } = useToast();
   const { role, canAll, roleLoading, canAllLoading } = useUserPermissions();
+  const accountType = String(user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin = String(role || '').toLowerCase() === 'admin' && accountType === 'solo';
+  const showAllTab = canAll && !isSoloAdmin;
 
   // Синхронизация с глобальным состоянием готовности главной страницы
   const [appReady, setAppReady] = React.useState(() => appReadyState.isReady());
@@ -181,10 +186,12 @@ function BottomNavInner() {
       ? 'home'
       : pathname.startsWith(PATHS.calendar)
         ? 'calendar'
-        : pathname.startsWith(PATHS.all)
+        : pathname.startsWith(PATHS.all) && showAllTab
           ? 'all'
           : pathname.startsWith(PATHS.orders)
             ? 'orders'
+            : pathname.startsWith(PATHS.all)
+              ? 'orders'
             : null;
 
   return (
@@ -200,7 +207,7 @@ function BottomNavInner() {
     >
       {/* гарантированный ремоунт при смене canAll */}
       <View
-        key={`variant-${Number(!!canAll)}`}
+        key={`variant-${Number(!!showAllTab)}`}
         style={[styles.bar, { height: metrics.itemHeight, paddingHorizontal: metrics.ph }]}
         onLayout={(e) => {
           const h = e.nativeEvent.layout.height;
@@ -218,7 +225,7 @@ function BottomNavInner() {
           metrics={metrics}
         />
 
-        {canAll ? (
+        {showAllTab ? (
           <>
             <TabButton
               key="tab-orders"
