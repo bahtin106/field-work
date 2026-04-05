@@ -165,6 +165,15 @@ export default function TelegramBotSettingsScreen() {
   const assignees = React.useMemo(() => data?.assignees || [], [data?.assignees]);
   const config = React.useMemo(() => data?.config || {}, [data?.config]);
   const fields = React.useMemo(() => data?.fields || [], [data?.fields]);
+  const formatAssigneeLabel = React.useCallback(
+    (item) => {
+      if (!item) return t('common_select');
+      return item?.is_blocked
+        ? `${item.label} (${t('status_blocked', 'Заблокирован')})`
+        : item.label;
+    },
+    [t],
+  );
   const showRoutingSection = config.is_enabled === true && !isSoloAdmin;
   const soloAssigneeId = React.useMemo(() => {
     if (!isSoloAdmin) return '';
@@ -355,10 +364,11 @@ export default function TelegramBotSettingsScreen() {
     },
     ...assignees.map((item) => ({
       id: item.id,
-      label: item.label,
+      label: formatAssigneeLabel(item),
+      subtitle: item?.is_blocked ? t('status_blocked', 'Заблокирован') : undefined,
       onPress: () => handleAssigneeSelect(item.id),
     })),
-  ]), [assignees, handleAssigneeSelect, t]);
+  ]), [assignees, formatAssigneeLabel, handleAssigneeSelect, t]);
 
   const regenerateLink = React.useCallback(async () => {
     setStartLinkBusy(true);
@@ -654,7 +664,7 @@ export default function TelegramBotSettingsScreen() {
                   numberOfLines={1}
                 >
                   {config.destination_type === 'assignee'
-                    ? assignees.find((item) => item.id === config.destination_user_id)?.label || t('common_select')
+                    ? formatAssigneeLabel(assignees.find((item) => item.id === config.destination_user_id))
                     : t('company_settings_telegram_feed_selected')}
                 </Text>
               </View>

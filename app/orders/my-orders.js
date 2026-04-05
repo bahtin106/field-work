@@ -207,6 +207,7 @@ function MyOrdersContent() {
     () =>
       isSoloAdmin
         ? [
+            { id: 'new', label: t('order_status_new') },
             { id: 'in_progress', label: t('order_status_in_progress') },
             { id: 'done', label: t('order_status_completed') },
           ]
@@ -217,6 +218,19 @@ function MyOrdersContent() {
           ],
     [isSoloAdmin, t],
   );
+  const statusAliasToFilterKey = useMemo(() => {
+    const aliasMap = new Map();
+    orderStatusOptions.forEach((opt) => {
+      const key = String(opt?.id || '').trim();
+      if (!key) return;
+      aliasMap.set(key, key);
+      getStatusDbAliases(key).forEach((alias) => {
+        const aliasKey = String(alias || '').trim();
+        if (aliasKey) aliasMap.set(aliasKey, key);
+      });
+    });
+    return aliasMap;
+  }, [orderStatusOptions]);
 
   const router = useRouter();
   const navigation = useNavigation();
@@ -441,11 +455,15 @@ function MyOrdersContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const hydratedRef = useRef(false);
+  const ordersCountRef = useRef(Array.isArray(orders) ? orders.length : 0);
+  useEffect(() => {
+    ordersCountRef.current = Array.isArray(orders) ? orders.length : 0;
+  }, [orders]);
   useEffect(() => {
     if (!isSoloAdmin) return;
     const currentStatuses = Array.isArray(selectedStatusFilters) ? selectedStatusFilters : [];
     const allowedStatuses = currentStatuses.filter((statusKey) =>
-      statusKey === 'in_progress' || statusKey === 'done');
+      statusKey === 'new' || statusKey === 'in_progress' || statusKey === 'done');
     if (allowedStatuses.length !== currentStatuses.length) {
       setFilterValue('statuses', allowedStatuses);
     }
@@ -457,11 +475,12 @@ function MyOrdersContent() {
     }
   }, [filter, isSoloAdmin]);
 
-  // Pagination state
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
+  // Full dataset loading (batch streaming)
   const [loadingMore, setLoadingMore] = useState(false);
-  const PAGE_SIZE = 10;
+  const [totalOrdersCount, setTotalOrdersCount] = useState(0);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const PAGE_SIZE = 100;
+  const FEED_PREVIEW_SIZE = 20;
 
   // Feed indicator state (cached preview of feed)
   const FEED_SEEN_STORAGE_KEY = 'myorders_feed_seen_fp';
@@ -572,7 +591,7 @@ function MyOrdersContent() {
       }
       const { data, error } = await prefetchQuery
         .order('time_window_start', { ascending: false })
-        .range(0, PAGE_SIZE - 1);
+        .range(0, FEED_PREVIEW_SIZE - 1);
 
       if (!error && Array.isArray(data)) {
         setListCacheEntry('feed', data);
@@ -581,7 +600,7 @@ function MyOrdersContent() {
     };
 
     prefetchFeed();
-  }, [isFocused, setListCacheEntry, updateFeedMeta, listCacheMy]);
+  }, [isFocused, setListCacheEntry, updateFeedMeta, listCacheMy, FEED_PREVIEW_SIZE]);
 
   // Mark feed as seen after opening the feed tab
   useEffect(() => {
@@ -656,244 +675,163 @@ function MyOrdersContent() {
 
   useEffect(() => {
     if (!isFocused) return;
-    const fetchUserAndOrders = async (isBackground = false, pageNum = 1) => {
+    let alive = true;
+    let backgroundTimer = null;
+
+    const fetchUserAndOrders = async (isBackground = false) => {
       const key = (typeof filter === 'string' ? filter : 'all') || 'all';
       const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
-
-      // Serve cached first page immediately, then revalidate in the background
-      if (pageNum === 1) {
-        const cached = listCacheMy[cacheKey];
-        if (cached && cached.length) {
-          setOrders(cached);
-          hydratedRef.current = true;
-          seenFilterRef.current.add(cacheKey);
-          if (isBackground) {
-          } else {
-            setLoading(false);
-          }
-        } else if (!seenFilterRef.current.has(cacheKey)) {
-          setLoading(true);
-        }
+      const cached = listCacheMy[cacheKey];
+      if (cached && cached.length) {
+        setOrders(cached);
+        setTotalOrdersCount(cached.length);
+        hydratedRef.current = true;
+        seenFilterRef.current.add(cacheKey);
+        if (!isBackground) setLoading(false);
+      } else if (!seenFilterRef.current.has(cacheKey) && !isBackground) {
+        setLoading(true);
       }
 
       const { data: sessionData } = await supabase.auth.getSession();
+      if (!alive) return;
       const uid = sessionData?.session?.user?.id;
       if (!uid) {
         setOrders([]);
+        setTotalOrdersCount(0);
+        setLoadingMore(false);
         setLoading(false);
         return;
-      }
-      let query = supabase.from('orders_secure_v2').select('*');
-      if (key === 'all' && hasLinkedRelationFilter) {
-        query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
-      } else if (key === 'feed') {
-        const feedStatusAliases = getStatusDbAliases('feed');
-        if (feedStatusAliases.length === 1) {
-          query = query.eq('status', feedStatusAliases[0]);
-        } else if (feedStatusAliases.length > 1) {
-          query = query.in('status', feedStatusAliases);
-        }
-      } else {
-        query = query.eq('assigned_to', uid);
-        if (key !== 'all') {
-          const statusAliases = getStatusDbAliases(normalizeOrderStatusFilterKey(key));
-          if (statusAliases.length === 1) {
-            query = query.eq('status', statusAliases[0]);
-          } else if (statusAliases.length > 1) {
-            query = query.in('status', statusAliases);
-          }
-        }
-      }
-      if (key === 'all') {
-        query = excludeFeedStatuses(query);
       }
 
       const filterValues = filters.values;
       const statusFilters = Array.isArray(filterValues.statuses)
         ? filterValues.statuses.flatMap((code) => getStatusDbAliases(code)).filter(Boolean)
         : [];
-      if (statusFilters.length) {
-        query = query.in('status', statusFilters);
-      }
       const clientIds = Array.isArray(filterValues.clientIds)
         ? filterValues.clientIds.map(String).filter(Boolean)
         : [];
-      if (clientIds.length) {
-        query = query.in('client_id', clientIds);
-      }
-
       const sumMin = parseFloat(filterValues.sumMin);
-      if (!Number.isNaN(sumMin)) {
-        query = query.gte('start_price', sumMin);
-      }
       const sumMax = parseFloat(filterValues.sumMax);
-      if (!Number.isNaN(sumMax)) {
-        query = query.lte('start_price', sumMax);
-      }
       const toIsoDate = (value, startVal) => {
         if (!value) return null;
         const d = new Date(value);
         if (Number.isNaN(d.getTime())) return null;
-        if (startVal) {
-          d.setHours(0, 0, 0, 0);
-        } else {
-          d.setHours(23, 59, 59, 999);
-        }
+        if (startVal) d.setHours(0, 0, 0, 0);
+        else d.setHours(23, 59, 59, 999);
         return d.toISOString();
       };
-
       const dateFrom = toIsoDate(filterValues.departureDateFrom, true);
       const dateTo = toIsoDate(filterValues.departureDateTo, false);
-      if (dateFrom) query = query.gte('time_window_start', dateFrom);
-      if (dateTo) query = query.lte('time_window_start', dateTo);
 
       const selectedWorkTypes = Array.isArray(filterValues.workTypes) ? filterValues.workTypes : [];
+      let workTypeOrderIds = null;
       if (useWorkTypesFlag && selectedWorkTypes.length) {
-        const ids = await getOrderIdsByWorkTypes(selectedWorkTypes);
-        if (!ids.length) {
-          if (!alive) return;
+        workTypeOrderIds = await getOrderIdsByWorkTypes(selectedWorkTypes);
+        if (!alive) return;
+        if (!workTypeOrderIds.length) {
           const emptyResult = [];
           setOrders(emptyResult);
+          setTotalOrdersCount(0);
           setListCacheEntry(cacheKey, emptyResult);
           queryClient.setQueryData(['orders', 'my', 'recent'], emptyResult);
-          setHasMore(false);
+          if (key === 'feed') updateFeedMeta(emptyResult);
+          setLoadingMore(false);
           setLoading(false);
           return;
         }
-        query = query.in('id', ids);
       }
-      query = applyOrderRelationFilters(query, {
-        clientId: relationClientId,
-        objectIds: relationObjectIds,
-      });
-      // Paginate on the server and fetch only the current window
-      const from = (pageNum - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
 
-      const { data, error } = await query
-        .order('time_window_start', { ascending: false })
-        .range(from, to);
-
-      const normalized = Array.isArray(data)
-        ? data.map((o) => ({ ...o, time_window_start: o.time_window_start ?? null }))
-        : data;
-
-      if (!error && Array.isArray(normalized)) {
-        if (pageNum === 1) {
-          setOrders(normalized);
-          setListCacheEntry(cacheKey, normalized);
-          seenFilterRef.current.add(cacheKey);
-          if (key === 'feed') updateFeedMeta(normalized);
+      const buildOrdersQuery = (selectOptions = undefined) => {
+        let query = supabase.from('orders_secure_v2').select('*', selectOptions);
+        if (key === 'all' && hasLinkedRelationFilter) {
+          query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
+        } else if (key === 'feed') {
+          const feedStatusAliases = getStatusDbAliases('feed');
+          if (feedStatusAliases.length === 1) query = query.eq('status', feedStatusAliases[0]);
+          else if (feedStatusAliases.length > 1) query = query.in('status', feedStatusAliases);
         } else {
-          // Append the next page without discarding the already rendered items
-          setOrders((prev) => [...prev, ...normalized]);
+          query = query.eq('assigned_to', uid);
+          if (key !== 'all') {
+            const statusAliases = getStatusDbAliases(normalizeOrderStatusFilterKey(key));
+            if (statusAliases.length === 1) query = query.eq('status', statusAliases[0]);
+            else if (statusAliases.length > 1) query = query.in('status', statusAliases);
+          }
         }
-        hydratedRef.current = true;
+        if (key === 'all') query = excludeFeedStatuses(query);
+        if (statusFilters.length) query = query.in('status', statusFilters);
+        if (clientIds.length) query = query.in('client_id', clientIds);
+        if (!Number.isNaN(sumMin)) query = query.gte('start_price', sumMin);
+        if (!Number.isNaN(sumMax)) query = query.lte('start_price', sumMax);
+        if (dateFrom) query = query.gte('time_window_start', dateFrom);
+        if (dateTo) query = query.lte('time_window_start', dateTo);
+        if (Array.isArray(workTypeOrderIds) && workTypeOrderIds.length) query = query.in('id', workTypeOrderIds);
+        return applyOrderRelationFilters(query, {
+          clientId: relationClientId,
+          objectIds: relationObjectIds,
+        });
+      };
 
-        // Update pagination state after a successful page fetch
-        setHasMore(data.length === PAGE_SIZE);
-      }
-      setLoading(false);
-      setLoadingMore(false);
-    };
-
-    // When hydrated from prefetch, refresh quietly in the background for all-orders
-    if (
-      filter === 'all' &&
-      hydratedRef.current &&
-      orders.length > 0 &&
-      Array.isArray(queryClient.getQueryData(['orders', 'my', 'recent']))
-    ) {
-      // Small delay to avoid competing with initial navigation work
-      const timer = setTimeout(() => {
-        // Background refresh
-        fetchUserAndOrders(true);
-      }, 1200);
-      return () => clearTimeout(timer);
-    }
-
-    // First load for the active filter
-    setPage(1);
-    setHasMore(true);
-    fetchUserAndOrders();
-  }, [filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, orders.length, queryClient, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta, useWorkTypesFlag]);
-
-  // Infinite scroll: fetch the next page only when needed
-  const loadMore = useCallback(async () => {
-    if (loadingMore || !hasMore || loading) return;
-
-    // Loading next page silently
-
-    setLoadingMore(true);
-    try {
-      const nextPage = page + 1;
-      setPage(nextPage);
-
-      const key = (typeof filter === 'string' ? filter : 'all') || 'all';
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData?.session?.user?.id;
-      if (!uid) {
-        setHasMore(false);
+      const { data, error, count } = await buildOrdersQuery({ count: 'exact' })
+        .order('time_window_start', { ascending: false })
+        .range(0, PAGE_SIZE - 1);
+      if (!alive) return;
+      if (error || !Array.isArray(data)) {
+        setLoadingMore(false);
+        setLoading(false);
         return;
       }
 
-      let query = supabase.from('orders_secure_v2').select('*');
-      if (key === 'all' && hasLinkedRelationFilter) {
-        query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
-      } else if (key === 'feed') {
-        const feedStatusAliases = getStatusDbAliases('feed');
-        if (feedStatusAliases.length === 1) {
-          query = query.eq('status', feedStatusAliases[0]);
-        } else if (feedStatusAliases.length > 1) {
-          query = query.in('status', feedStatusAliases);
+      let aggregated = data.map((o) => ({ ...o, time_window_start: o.time_window_start ?? null }));
+      const total = Number.isFinite(count) ? Number(count) : aggregated.length;
+
+      setOrders(aggregated);
+      setTotalOrdersCount(total);
+      setListCacheEntry(cacheKey, aggregated);
+      seenFilterRef.current.add(cacheKey);
+      if (key === 'feed') updateFeedMeta(aggregated);
+      hydratedRef.current = true;
+      setLoading(false);
+
+      if (total > aggregated.length) {
+        setLoadingMore(true);
+        for (let from = aggregated.length; from < total; from += PAGE_SIZE) {
+          const to = from + PAGE_SIZE - 1;
+          const { data: chunkData, error: chunkError } = await buildOrdersQuery()
+            .order('time_window_start', { ascending: false })
+            .range(from, to);
+          if (!alive) return;
+          if (chunkError || !Array.isArray(chunkData) || chunkData.length === 0) break;
+          const chunk = chunkData.map((o) => ({ ...o, time_window_start: o.time_window_start ?? null }));
+          aggregated = [...aggregated, ...chunk];
+          setOrders(aggregated);
         }
-      } else if (key === 'all') {
-        query = query.eq('assigned_to', uid);
-      } else {
-        query = query.eq('assigned_to', uid);
-        const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
-        const statusAliases = getStatusDbAliases(normalizedStatusKey);
-        if (statusAliases.length === 1) {
-          query = query.eq('status', statusAliases[0]);
-        } else if (statusAliases.length > 1) {
-          query = query.in('status', statusAliases);
-        }
-      }
-      if (key === 'all') {
-        query = excludeFeedStatuses(query);
-      }
-      query = applyOrderRelationFilters(query, {
-        clientId: relationClientId,
-        objectIds: relationObjectIds,
-      });
-      const selectedClientIds = Array.isArray(filters.values?.clientIds)
-        ? filters.values.clientIds.map(String).filter(Boolean)
-        : [];
-      if (selectedClientIds.length) {
-        query = query.in('client_id', selectedClientIds);
       }
 
-      const from = (nextPage - 1) * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-
-      const { data, error } = await query
-        .order('time_window_start', { ascending: false })
-        .range(from, to);
-
-      if (!error && Array.isArray(data)) {
-        const normalized = data.map((o) => ({
-          ...o,
-          time_window_start: o.time_window_start ?? null,
-        }));
-        setOrders((prev) => [...prev, ...normalized]);
-        setHasMore(normalized.length === PAGE_SIZE);
-
-        // Loaded successfully
-      }
-    } finally {
+      setListCacheEntry(cacheKey, aggregated);
+      setTotalOrdersCount(Math.max(total, aggregated.length));
+      if (key === 'feed') updateFeedMeta(aggregated);
+      if (key === 'all') queryClient.setQueryData(['orders', 'my', 'recent'], aggregated);
       setLoadingMore(false);
+    };
+
+    if (
+      filter === 'all' &&
+      hydratedRef.current &&
+      ordersCountRef.current > 0 &&
+      Array.isArray(queryClient.getQueryData(['orders', 'my', 'recent']))
+    ) {
+      backgroundTimer = setTimeout(() => {
+        fetchUserAndOrders(true);
+      }, 1200);
+    } else {
+      fetchUserAndOrders();
     }
-  }, [filter, filters.values?.clientIds, hasLinkedRelationFilter, hasMore, loading, loadingMore, page, relationClientId, relationObjectIds]);
+
+    return () => {
+      alive = false;
+      if (backgroundTimer) clearTimeout(backgroundTimer);
+    };
+  }, [filter, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, queryClient, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta, useWorkTypesFlag]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -967,6 +905,32 @@ function MyOrdersContent() {
     });
     return arr;
   }, [filteredOrders, sortKey]);
+
+  const ordersFacetCounts = useMemo(() => {
+    const source = Array.isArray(orders) ? orders : [];
+    const counts = {
+      total: source.length,
+      statuses: {},
+      workTypes: {},
+      clients: {},
+    };
+    source.forEach((order) => {
+      const rawStatus = String(order?.status || '').trim();
+      const statusKey = statusAliasToFilterKey.get(rawStatus) || null;
+      if (statusKey) {
+        counts.statuses[statusKey] = (counts.statuses[statusKey] || 0) + 1;
+      }
+      const workTypeId = String(order?.work_type_id || '').trim();
+      if (workTypeId) {
+        counts.workTypes[workTypeId] = (counts.workTypes[workTypeId] || 0) + 1;
+      }
+      const clientId = String(order?.client_id || '').trim();
+      if (clientId) {
+        counts.clients[clientId] = (counts.clients[clientId] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [orders, statusAliasToFilterKey]);
 
   useEffect(() => {
     if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
@@ -1173,7 +1137,7 @@ function MyOrdersContent() {
             const resetValues = filters.reset();
             await filters.apply(resetValues);
           }}
-          metaText={`${t('common_total')}: ${sortedFilteredOrders.length}`}
+          metaText={`${t('common_shown', 'Показано')} ${sortedFilteredOrders.length} ${t('common_of', 'из')} ${Math.max(totalOrdersCount, orders.length)}`}
         />
       </View>
     ),
@@ -1185,7 +1149,10 @@ function MyOrdersContent() {
       feedPulse,
       filters,
       filterSummaryData,
+      orders.length,
+      ordersFacetCounts,
       sortedFilteredOrders.length,
+      totalOrdersCount,
       hasLinkedRelationFilter,
       isSoloAdmin,
       relationLabel,
@@ -1210,73 +1177,18 @@ function MyOrdersContent() {
   const keyExtractor = useCallback((item) => String(item.id), []);
 
   const refreshCurrentList = useCallback(async () => {
-    setPage(1);
-    setHasMore(true);
-
     const key = (typeof filter === 'string' ? filter : 'all') || 'all';
     const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
     delete listCacheMy[cacheKey];
+    seenFilterRef.current.delete(cacheKey);
     await Promise.allSettled([
       queryClient.invalidateQueries({ queryKey: ['requests'] }),
       queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
     ]);
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData?.session?.user?.id;
-      if (!uid) {
-        return;
-      }
-
-    let query = supabase.from('orders_secure_v2').select('*');
-    if (key === 'all' && hasLinkedRelationFilter) {
-      query = query.or(`assigned_to.eq.${uid},assigned_to.is.null`);
-    } else if (key === 'feed') {
-      const feedStatusAliases = getStatusDbAliases('feed');
-      if (feedStatusAliases.length === 1) {
-        query = query.eq('status', feedStatusAliases[0]);
-      } else if (feedStatusAliases.length > 1) {
-        query = query.in('status', feedStatusAliases);
-      }
-    } else if (key === 'all') {
-      query = query.eq('assigned_to', uid);
-    } else {
-      query = query.eq('assigned_to', uid);
-      const normalizedStatusKey = normalizeOrderStatusFilterKey(key);
-      const statusAliases = getStatusDbAliases(normalizedStatusKey);
-      if (statusAliases.length === 1) {
-        query = query.eq('status', statusAliases[0]);
-      } else if (statusAliases.length > 1) {
-        query = query.in('status', statusAliases);
-      }
-    }
-    if (key === 'all') {
-      query = excludeFeedStatuses(query);
-    }
-    query = applyOrderRelationFilters(query, {
-      clientId: relationClientId,
-      objectIds: relationObjectIds,
-    });
-    const selectedClientIds = Array.isArray(filters.values?.clientIds)
-      ? filters.values.clientIds.map(String).filter(Boolean)
-      : [];
-    if (selectedClientIds.length) {
-      query = query.in('client_id', selectedClientIds);
-    }
-
-    const { data, error } = await query
-      .order('time_window_start', { ascending: false })
-      .range(0, PAGE_SIZE - 1);
-
-    if (!error && Array.isArray(data)) {
-      const normalized = data.map((o) => ({
-        ...o,
-        time_window_start: o.time_window_start ?? null,
-      }));
-      setOrders(normalized);
-      setListCacheEntry(cacheKey, normalized);
-      if (key === 'feed') updateFeedMeta(normalized);
-      setHasMore(normalized.length === PAGE_SIZE);
-    }
-    }, [filter, filters.values?.clientIds, filtersFingerprint, hasLinkedRelationFilter, listCacheMy, makeCacheKey, queryClient, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta]);
+    setLoading(true);
+    setLoadingMore(false);
+    setRefreshNonce((n) => n + 1);
+  }, [filter, filtersFingerprint, listCacheMy, makeCacheKey, queryClient, relationFingerprint]);
 
   const refreshWithIndicator = useCallback(async () => {
     await refreshCurrentList();
@@ -1335,8 +1247,6 @@ function MyOrdersContent() {
           contentContainerStyle={styles.container}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
           refreshControl={<ThemedRefreshControl refreshing={bgRefreshing} onRefresh={onRefresh} />}
         />
       </View>
@@ -1352,6 +1262,7 @@ function MyOrdersContent() {
             workTypes: useWorkTypesFlag ? workTypeOptions : [],
             clients: clientOptions,
             executors: [],
+            facetCounts: ordersFacetCounts,
             showDate: true,
             showTime: true,
             showAmount: true,

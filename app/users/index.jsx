@@ -96,8 +96,8 @@ function UsersIndexContent() {
     data: users = [],
     isLoading: usersLoading,
     refetch: refreshUsers,
-  } = useEmployees(filters.values, {
-    enabled: !companyIdLoading,
+  } = useEmployees({ ...filters.values, companyId }, {
+    enabled: !companyIdLoading && !!companyId,
     refetchInterval: false,
   });
 

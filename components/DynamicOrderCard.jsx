@@ -601,6 +601,10 @@ function DynamicOrderCard({
   }, [order?.assigned_to, executorName, showExecutor]);
 
   const mutedColor = theme?.text?.muted?.color ?? theme?.colors?.muted ?? '#8E8E93';
+  const spacing = theme?.spacing || {};
+  const cardPadding = spacing.md ?? 16;
+  const rowGap = spacing.xs ?? 6;
+  const titleRightGap = spacing.xs ?? 8;
   const showPrice =
     (isCardFieldVisible('start_price') || hasOrderFieldValue('start_price', priceValue)) &&
     priceValue !== null &&
@@ -627,7 +631,7 @@ function DynamicOrderCard({
       style={{
         backgroundColor: theme.colors.card,
         borderRadius: 14,
-        padding: 16,
+        padding: cardPadding,
         minHeight: 132,
         marginHorizontal: 0,
         alignSelf: 'stretch',
@@ -649,28 +653,48 @@ function DynamicOrderCard({
       }}
     >
       {/* Header */}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          columnGap: rowGap,
+        }}
+      >
         <Text
           numberOfLines={1}
+          ellipsizeMode="tail"
           style={{
             fontSize: 16,
             fontWeight: '600',
             color: theme.colors.text,
             flex: 1,
-            paddingRight: 8,
+            minWidth: 0,
+            paddingRight: titleRightGap,
           }}
         >
           {title || '—'}
         </Text>
-        <OrderStatusCapsule status={statusTitle} />
+        <OrderStatusCapsule
+          status={statusTitle}
+          style={{ maxWidth: '48%', flexShrink: 1 }}
+          textStyle={{ flexShrink: 1 }}
+        />
       </View>
 
       {/* Details under title (no datetime here) */}
-      <View style={{ gap: 2, marginTop: 4, marginBottom: 0 }}>
+      <View style={{ gap: 2, marginTop: rowGap, marginBottom: 0 }}>
         {primaryRows.map((row) => (
-          <Text key={row.key} numberOfLines={1} style={{ fontSize: 14, color: mutedColor }}>
+          <Text
+            key={row.key}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ fontSize: 14, color: mutedColor, lineHeight: 20, minWidth: 0 }}
+          >
             {row.label ? `${row.label}: ` : ''}
-            <Text style={{ color: theme.colors.text }}>{row.value || '—'}</Text>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: theme.colors.text }}>
+              {row.value || '—'}
+            </Text>
           </Text>
         ))}
       </View>
@@ -679,9 +703,9 @@ function DynamicOrderCard({
       <View
         style={{
           flexDirection: 'row',
-          alignItems: 'flex-end',
-          marginTop: 0,
-          gap: 8,
+          alignItems: 'flex-start',
+          marginTop: rowGap,
+          gap: rowGap,
         }}
       >
         <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center' }}>
@@ -716,7 +740,7 @@ function DynamicOrderCard({
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
-            style={{ flex: 1, minWidth: 0, fontSize: 13, color: mutedColor }}
+            style={{ flex: 1, minWidth: 0, fontSize: 13, color: mutedColor, lineHeight: 18 }}
           >
             {footerLeftText || ' '}
           </Text>
@@ -726,14 +750,14 @@ function DynamicOrderCard({
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
-            style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%' }}
+            style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%', lineHeight: 18 }}
           >
             {footerRightTopText}
           </Text>
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"
-            style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%' }}
+            style={{ fontSize: 13, color: mutedColor, textAlign: 'right', width: '100%', lineHeight: 18 }}
           >
             {footerRightBottomText}
           </Text>

@@ -393,12 +393,31 @@ function CreateOrderContent() {
     [objectFieldSettingsData],
   );
   const orderedMainFieldKeys = useMemo(
-    () =>
-      getOrderedEntityFields(orderFieldSettings, {
+    () => {
+      const priority = {
+        title: 0,
+        start_price: 1,
+        comment: 2,
+        work_type_id: 3,
+      };
+      const ordered = getOrderedEntityFields(orderFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['title', 'comment', 'work_type_id'],
-      }).map((field) => field.fieldKey),
+        fieldKeys: ['title', 'start_price', 'comment', 'work_type_id'],
+      })
+        .map((field) => field.fieldKey);
+      if (!ordered.includes('start_price')) {
+        const titleIndex = ordered.indexOf('title');
+        if (titleIndex >= 0) ordered.splice(titleIndex + 1, 0, 'start_price');
+        else ordered.unshift('start_price');
+      }
+      return ordered
+        .sort((left, right) => {
+          const leftWeight = Number.isFinite(priority[left]) ? priority[left] : Number.MAX_SAFE_INTEGER;
+          const rightWeight = Number.isFinite(priority[right]) ? priority[right] : Number.MAX_SAFE_INTEGER;
+          return leftWeight - rightWeight;
+        });
+    },
     [orderFieldSettings],
   );
   const orderedCustomerFieldKeys = useMemo(
@@ -669,6 +688,13 @@ function CreateOrderContent() {
     },
     [],
   );
+  const parseDecimalOrNull = useCallback((input) => {
+    const raw = String(input ?? '').trim();
+    if (!raw) return null;
+    const normalized = raw.replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, []);
 
   const getField = useCallback(
     (key) => (schema.fields || []).find((f) => f.field_key === key) || null,
@@ -694,6 +720,7 @@ function CreateOrderContent() {
         entrance: t('order_field_entrance'),
         apartment: t('order_field_apartment'),
         comment: t('order_field_comment'),
+        start_price: t('order_field_initial_amount'),
         time_window_start: t('create_order_label_date'),
         departure_time: t('order_field_departure_time'),
         assigned_to: t('create_order_label_executor'),
@@ -864,6 +891,12 @@ function CreateOrderContent() {
     if (isFieldRequired('assigned_to') && !effectiveToFeed && !effectiveAssigneeId) {
       nextErrors.assigned_to = { message: t('order_validation_executor_required') };
     }
+    const parsedStartPrice = parseDecimalOrNull(form.start_price);
+    if (String(form.start_price ?? '').trim() && parsedStartPrice === null) {
+      nextErrors.start_price = { message: t('order_validation_amount_format') };
+    } else if (parsedStartPrice != null && parsedStartPrice < 0) {
+      nextErrors.start_price = { message: t('order_validation_amount_format') };
+    }
     if (Object.keys(nextErrors).length) {
       setFieldErrors((prev) => ({ ...prev, ...nextErrors }));
       focusField(Object.keys(nextErrors)[0]);
@@ -1005,6 +1038,7 @@ function CreateOrderContent() {
       company_id: effectiveCompanyId || null,
       title,
       work_type_id: useWorkTypes ? normalizedWorkTypeId || null : null,
+      start_price: parseDecimalOrNull(form.start_price),
       comment: description,
       client_id: selectedClientId || null,
       object_id: resolvedObjectId || null,
@@ -1086,6 +1120,7 @@ function CreateOrderContent() {
     phoneSourceId,
     subscriptionGuard.canEdit,
     resolveTitleForSave,
+    parseDecimalOrNull,
   ]);
 
   useFocusEffect(
@@ -1124,7 +1159,7 @@ function CreateOrderContent() {
     const loadUsers = async () => {
       const { data: userList, error } = await supabase
         .from('profiles')
-        .select('id, first_name, middle_name, last_name, role, department_id, email')
+        .select('id, first_name, middle_name, last_name, role, department_id, email, is_admin_blocked, license_state')
         .in('role', ['worker', 'dispatcher', 'admin']);
       if (!error && mounted) setUsers(userList || []);
     };
@@ -1346,7 +1381,7 @@ function CreateOrderContent() {
 
   const selectedAssigneeName = useMemo(() => {
     if (!assigneeId) return null;
-    const u = users.find((x) => x.id === assigneeId);
+    const u = users.find((x) => String(x?.id || '') === String(assigneeId || ''));
     return (
       [u?.first_name, u?.middle_name, u?.last_name].filter(Boolean).join(' ') ||
       t('create_order_executor_selected')
@@ -1535,7 +1570,7 @@ function CreateOrderContent() {
   );
   const renderCreateMainField = useCallback(
     (fieldKey) => {
-      if (!getField(fieldKey)) return null;
+      if (fieldKey !== 'start_price' && !getField(fieldKey)) return null;
 
       switch (fieldKey) {
         case 'title':
@@ -1556,6 +1591,16 @@ function CreateOrderContent() {
             onChangeText: setDescription,
             multiline: false,
             required: isFieldRequired('comment'),
+          });
+        case 'start_price':
+          return renderTextField({
+            fieldKey: 'start_price',
+            label: getFieldLabel('start_price', t('order_field_initial_amount')),
+            placeholder: t('order_placeholder_amount'),
+            value: String(form.start_price ?? ''),
+            onChangeText: (text) => setField('start_price', text),
+            keyboardType: 'decimal-pad',
+            required: isFieldRequired('start_price'),
           });
         case 'work_type_id':
           if (!useWorkTypes) return null;
@@ -1583,6 +1628,7 @@ function CreateOrderContent() {
     [
       description,
       fieldErrors,
+      form.start_price,
       formStyles.field,
       getField,
       getFieldLabel,
@@ -2142,7 +2188,7 @@ function CreateOrderContent() {
         setAssigneeModalVisible(false);
       },
       onSelectUser: (userId) => {
-        setAssigneeId(userId);
+        setAssigneeId(userId ? String(userId) : null);
         setToFeed(false);
         setAssigneeModalVisible(false);
       },

@@ -6,6 +6,7 @@ import {
   sanitizeClientObjectPayload,
 } from './addressing';
 import { inspectProfileMedia } from '../profileMedia/api';
+import { getMyCompanyId } from '../profile/api';
 
 const objectByIdInFlight = new Map<string, Promise<any>>();
 const OBJECT_MEDIA_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'] as const;
@@ -35,6 +36,13 @@ function normalizeMediaUrls(value: unknown) {
   return Array.from(new Set(next));
 }
 
+async function resolveScopedCompanyId(explicitCompanyId: string | null = null) {
+  const provided = String(explicitCompanyId || '').trim();
+  if (provided) return provided;
+  const mine = await getMyCompanyId();
+  return String(mine || '').trim() || null;
+}
+
 export type OrderObjectSearchResult = {
   objectId: string;
   clientId: string;
@@ -59,10 +67,13 @@ export type OrderObjectSearchResult = {
 export async function listClientObjects(clientId: string) {
   return measureNetwork('objects.listByClient', async () => {
     if (!clientId) return [];
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) return [];
     const { data, error } = await supabase
       .from('client_objects')
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .eq('client_id', clientId)
+      .eq('company_id', scopedCompanyId)
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
 
@@ -144,10 +155,13 @@ export async function getClientObjectById(objectId: string) {
   if (existing) return existing;
 
   const p = measureNetwork('objects.getById', async () => {
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) return null;
     const { data, error } = await supabase
         .from('client_objects')
         .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
         .eq('id', key)
+        .eq('company_id', scopedCompanyId)
         .maybeSingle();
 
     if (error) throw error;
@@ -287,6 +301,8 @@ export async function createClientObject(payload: Record<string, any>) {
 
 export async function updateClientObject(objectId: string, patch: Record<string, any>) {
   return measureNetwork('objects.update', async () => {
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) throw new Error('company_id is required');
     const clean = sanitizeClientObjectPayload(patch, { nameRequired: false });
     const nextPatch: Record<string, any> = {
       ...clean,
@@ -321,6 +337,7 @@ export async function updateClientObject(objectId: string, patch: Record<string,
       .from('client_objects')
       .update(nextPatch)
       .eq('id', objectId)
+      .eq('company_id', scopedCompanyId)
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .single();
     let { data, error } = await query;
@@ -331,6 +348,7 @@ export async function updateClientObject(objectId: string, patch: Record<string,
         .from('client_objects')
         .update(fallbackPatch)
         .eq('id', objectId)
+        .eq('company_id', scopedCompanyId)
         .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
         .single();
       ({ data, error } = await query);
@@ -342,7 +360,13 @@ export async function updateClientObject(objectId: string, patch: Record<string,
 
 export async function deleteClientObject(objectId: string) {
   return measureNetwork('objects.delete', async () => {
-    const { error } = await supabase.from('client_objects').delete().eq('id', objectId);
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) throw new Error('company_id is required');
+    const { error } = await supabase
+      .from('client_objects')
+      .delete()
+      .eq('id', objectId)
+      .eq('company_id', scopedCompanyId);
     if (error) throw error;
     return true;
   });

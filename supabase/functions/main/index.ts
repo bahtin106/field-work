@@ -14,6 +14,7 @@ import { handleObjectMediaStorageRequest } from '../object-media-storage/index.t
 import { handleMediaCleanupRequest } from '../media-cleanup/index.ts';
 import { handleBackfillMediaSizesRequest } from '../backfill-media-sizes/index.ts';
 import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
+import { handleSwitchAccountModeRequest } from '../switch-account-mode/index.ts';
 
 function extractFunctionName(req: Request) {
   const url = new URL(req.url);
@@ -50,6 +51,7 @@ Deno.serve(async (req) => {
   if (fn === 'media-cleanup') return handleMediaCleanupRequest(req);
   if (fn === 'backfill-media-sizes') return handleBackfillMediaSizesRequest(req);
   if (fn === 'telegram-bot') return handleTelegramBotRequest(req);
+  if (fn === 'switch-account-mode') return handleSwitchAccountModeRequest(req);
 
   return new Response(JSON.stringify({ success: false, message: `Unknown function: ${fn || 'none'}` }), {
     status: 404,

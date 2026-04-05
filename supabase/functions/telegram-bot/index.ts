@@ -587,7 +587,7 @@ async function getEffectiveFields(
 async function listAssignees(admin: AdminClient, companyId: string) {
   const { data, error } = await admin
     .from('profiles')
-    .select('id, first_name, last_name, full_name, email, role')
+    .select('id, first_name, last_name, full_name, email, role, is_admin_blocked, license_state')
     .eq('company_id', companyId)
     .neq('role', 'client')
     .order('full_name', { ascending: true });
@@ -600,6 +600,7 @@ async function listAssignees(admin: AdminClient, companyId: string) {
       normalizeText(row.email) ||
       'Без имени',
     role: String(row.role || ''),
+    is_blocked: row.is_admin_blocked === true || String(row.license_state || '') === 'blocked_by_license',
   }));
 }
 

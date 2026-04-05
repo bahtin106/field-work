@@ -20,7 +20,6 @@ import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { ROLE_LABELS } from '../../constants/roles';
-import { useAuth } from '../hooks/useAuth';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
 
@@ -79,10 +78,6 @@ export default function FiltersPanel({
 }) {
   const { theme } = useTheme();
   useTranslation();
-  const auth = useAuth();
-  const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
-  const isSoloAdmin =
-    String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   const isAssignmentMode = mode === 'assignment' && assignment;
   const isObjectsMode = mode === 'objects';
@@ -314,13 +309,7 @@ export default function FiltersPanel({
       return showSearchCategory ? [searchCategory, ...objectCategories] : objectCategories;
     }
     if (isOrdersMode) {
-      const ordersStatusOptionsRaw = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
-      const ordersStatusOptions = isSoloAdmin
-        ? ordersStatusOptionsRaw.filter((statusItem) => {
-            const statusId = String(statusItem?.id ?? statusItem?.value ?? '').toLowerCase();
-            return statusId !== 'new';
-          })
-        : ordersStatusOptionsRaw;
+      const ordersStatusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
       const ordersWorkTypes = Array.isArray(ordersFilters?.workTypes) ? ordersFilters.workTypes : [];
       const ordersClients = Array.isArray(ordersFilters?.clients) ? ordersFilters.clients : [];
       const ordersExecutors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
@@ -344,7 +333,7 @@ export default function FiltersPanel({
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departments, isAssignmentMode, isObjectsMode, isOrdersMode, isSoloAdmin, ordersFilters, showSearchCategory]);
+  }, [assignmentCategories, departments, isAssignmentMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
 
   const restoredCategoryRef = useRef(false);
   const lastCategoriesKeyRef = useRef('');
@@ -765,11 +754,21 @@ export default function FiltersPanel({
 
   const optionLabel = useMemo(
     () => ({
+      flex: 1,
       flexShrink: 1,
       fontSize: ty.sizes.md,
       color: c.text,
     }),
     [ty.sizes.md, c.text],
+  );
+  const optionCount = useMemo(
+    () => ({
+      marginLeft: sz.sm,
+      fontSize: ty.sizes.sm,
+      color: c.textSecondary,
+      fontVariant: ['tabular-nums'],
+    }),
+    [c.textSecondary, sz.sm, ty.sizes.sm],
   );
 
   const checkboxBase = useMemo(
@@ -796,6 +795,23 @@ export default function FiltersPanel({
   );
 
   const normalizedSearch = useMemo(() => (searchQuery || '').trim().toLowerCase(), [searchQuery]);
+  const orderFacetCounts = useMemo(() => {
+    const src = ordersFilters?.facetCounts;
+    return {
+      total: Number(src?.total) || 0,
+      statuses: src?.statuses && typeof src.statuses === 'object' ? src.statuses : {},
+      workTypes: src?.workTypes && typeof src.workTypes === 'object' ? src.workTypes : {},
+      clients: src?.clients && typeof src.clients === 'object' ? src.clients : {},
+    };
+  }, [ordersFilters?.facetCounts]);
+  const formatFacetCount = useMemo(
+    () => (value) => {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return null;
+      return `(${n})`;
+    },
+    [],
+  );
   const searchHasValue = normalizedSearch.length > 0;
   const matchesSearchText = useMemo(
     () => (value) => {
@@ -1201,13 +1217,7 @@ export default function FiltersPanel({
         );
       }
       case 'orders_statuses': {
-        const statusOptionsRaw = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
-        const statusOptions = isSoloAdmin
-          ? statusOptionsRaw.filter((statusItem) => {
-              const statusId = String(statusItem?.id ?? statusItem?.value ?? '').toLowerCase();
-              return statusId !== 'new';
-            })
-          : statusOptionsRaw;
+        const statusOptions = Array.isArray(ordersFilters?.statuses) ? ordersFilters.statuses : [];
         const allSelected = !Array.isArray(draft.statuses) || draft.statuses.length === 0;
         return (
           <>
@@ -1225,11 +1235,15 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              {formatFacetCount(orderFacetCounts.total) ? (
+                <Text style={optionCount}>{formatFacetCount(orderFacetCounts.total)}</Text>
+              ) : null}
             </Pressable>
             {statusOptions.map((statusItem, index) => {
               const id = String(statusItem?.id ?? statusItem?.value ?? index);
               const label = String(statusItem?.label ?? id);
               const selected = Array.isArray(draft.statuses) ? draft.statuses.includes(id) : false;
+              const statusCount = formatFacetCount(orderFacetCounts.statuses?.[id]);
               return (
                 <Pressable
                   key={`orders_status_${id}`}
@@ -1245,6 +1259,7 @@ export default function FiltersPanel({
                   <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
                     {label}
                   </Text>
+                  {statusCount ? <Text style={optionCount}>{statusCount}</Text> : null}
                 </Pressable>
               );
             })}
@@ -1270,11 +1285,15 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              {formatFacetCount(orderFacetCounts.total) ? (
+                <Text style={optionCount}>{formatFacetCount(orderFacetCounts.total)}</Text>
+              ) : null}
             </Pressable>
             {workTypes.map((workType, index) => {
               const id = String(workType?.id ?? workType?.value ?? index);
               const label = String(workType?.label ?? workType?.name ?? id);
               const selected = Array.isArray(draft.workTypes) ? draft.workTypes.includes(id) : false;
+              const workTypeCount = formatFacetCount(orderFacetCounts.workTypes?.[id]);
               return (
                 <Pressable
                   key={`orders_work_type_${id}`}
@@ -1290,6 +1309,7 @@ export default function FiltersPanel({
                   <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
                     {label}
                   </Text>
+                  {workTypeCount ? <Text style={optionCount}>{workTypeCount}</Text> : null}
                 </Pressable>
               );
             })}
@@ -1323,6 +1343,9 @@ export default function FiltersPanel({
               <Text style={[optionLabel, allSelected && { fontWeight: ty.weight.semibold }]}>
                 {t('users_showAll')}
               </Text>
+              {formatFacetCount(orderFacetCounts.total) ? (
+                <Text style={optionCount}>{formatFacetCount(orderFacetCounts.total)}</Text>
+              ) : null}
             </Pressable>
             {clients.length === 0 ? (
               <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
@@ -1333,6 +1356,7 @@ export default function FiltersPanel({
                 const id = String(client?.value ?? client?.id ?? client?.label ?? '').trim();
                 const label = String(client?.label ?? client?.name ?? id).trim();
                 const selected = Array.isArray(draft.clientIds) ? draft.clientIds.includes(id) : false;
+                const clientCount = formatFacetCount(orderFacetCounts.clients?.[id]);
                 return (
                   <Pressable
                     key={`orders_client_${id}`}
@@ -1348,6 +1372,7 @@ export default function FiltersPanel({
                     <Text style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}>
                       {label}
                     </Text>
+                    {clientCount ? <Text style={optionCount}>{clientCount}</Text> : null}
                   </Pressable>
                 );
               })

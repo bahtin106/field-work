@@ -159,6 +159,7 @@ const ORDER_FIELDS = [
     fallbackLabel: 'Медиа 1',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
+    defaultEnabled: true,
     sortOrder: 160,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_2', {
@@ -166,6 +167,7 @@ const ORDER_FIELDS = [
     fallbackLabel: 'Медиа 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
+    defaultEnabled: false,
     sortOrder: 170,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_3', {
@@ -173,6 +175,7 @@ const ORDER_FIELDS = [
     fallbackLabel: 'Медиа 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
+    defaultEnabled: false,
     sortOrder: 180,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_4', {
@@ -180,6 +183,7 @@ const ORDER_FIELDS = [
     fallbackLabel: 'Медиа 4',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
+    defaultEnabled: false,
     sortOrder: 190,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_5', {
@@ -187,6 +191,7 @@ const ORDER_FIELDS = [
     fallbackLabel: 'Медиа 5',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
+    defaultEnabled: false,
     sortOrder: 200,
   }),
 ];
@@ -661,4 +666,3 @@ export function toLegacySchemaFields(settings) {
     }))
     .sort((left, right) => left.position - right.position);
 }
-
