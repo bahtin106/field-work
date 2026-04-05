@@ -25,6 +25,12 @@ function resolveDepartmentLabel(user, departmentsById) {
   ).trim();
 }
 
+function isBlockedUser(user) {
+  const blockedByAdmin = user?.is_admin_blocked === true;
+  const blockedByLicense = String(user?.license_state || '').trim().toLowerCase() === 'blocked_by_license';
+  return blockedByAdmin || blockedByLicense;
+}
+
 export function buildAssigneeSelectItems({
   users = [],
   departmentsById = new Map(),
@@ -53,7 +59,8 @@ export function buildAssigneeSelectItems({
     const label = resolveName(user, t('common_noName'));
     const roleLabel = resolveRoleLabel(t, user?.role);
     const departmentLabel = resolveDepartmentLabel(user, departmentsById);
-    const subtitleParts = [roleLabel, departmentLabel].filter(Boolean);
+    const blockedLabel = isBlockedUser(user) ? String(t('status_blocked', 'Заблокирован')).trim() : '';
+    const subtitleParts = [roleLabel, departmentLabel, blockedLabel].filter(Boolean);
     const subtitle = subtitleParts.length ? subtitleParts.join(' • ') : undefined;
 
     result.push({
@@ -67,6 +74,7 @@ export function buildAssigneeSelectItems({
           String(user?.email || '').trim(),
           roleLabel,
           departmentLabel,
+          blockedLabel,
           String(user?.first_name || '').trim(),
           String(user?.middle_name || '').trim(),
           String(user?.last_name || '').trim(),

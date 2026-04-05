@@ -3,6 +3,26 @@ import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
 const employeeByIdInFlight = new Map<string, Promise<any>>();
 
+async function resolveCurrentUserScope() {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth?.user?.id || null;
+  if (!uid) {
+    return { uid: null, companyId: null, role: '' };
+  }
+
+  const { data: me } = await supabase
+    .from('profiles')
+    .select('role, company_id')
+    .eq('id', uid)
+    .maybeSingle();
+
+  return {
+    uid,
+    companyId: me?.company_id || null,
+    role: String(me?.role || '').toLowerCase(),
+  };
+}
+
 function normalizeEmployee(row) {
   const first_name = row?.first_name ?? row?.firstName ?? '';
   const last_name = row?.last_name ?? row?.lastName ?? '';
@@ -50,9 +70,15 @@ function normalizeEmployee(row) {
 
 export async function listEmployees(filters = {}) {
   return measureNetwork('employees.list', async () => {
+    const explicitCompanyId = String(filters?.companyId || '').trim() || null;
+    const scope = explicitCompanyId ? null : await resolveCurrentUserScope();
+    const scopedCompanyId = explicitCompanyId || scope?.companyId || null;
+    if (!scopedCompanyId) return [];
+
     let query = supabase
       .from('profiles')
       .select('id, first_name, last_name, middle_name, full_name, role, department_id, last_seen_at, is_admin_blocked, license_state, blocked_reason, email, phone, birthdate, avatar_url')
+      .eq('company_id', scopedCompanyId)
       .order('full_name', { ascending: true, nullsFirst: false });
 
     if (Array.isArray(filters.departments) && filters.departments.length > 0) {
@@ -105,10 +131,12 @@ export async function getEmployeeById(userId) {
     let rpcRow = null;
     let iAmAdmin = false;
     let iAmSuperAdmin = false;
+    let myCompanyId = null;
 
     if (uid) {
-      const { data: me } = await supabase.from('profiles').select('role').eq('id', uid).single();
-      iAmAdmin = me?.role === 'admin';
+      const { data: me } = await supabase.from('profiles').select('role, company_id').eq('id', uid).maybeSingle();
+      iAmAdmin = String(me?.role || '').toLowerCase() === 'admin';
+      myCompanyId = me?.company_id || null;
 
       try {
         const { data: superAdminFlag } = await supabase.rpc('is_super_admin');
@@ -184,11 +212,18 @@ export async function getEmployeeById(userId) {
       }
     }
 
-    const { data: prof, error } = await supabase
+    if (!iAmSuperAdmin && !myCompanyId) return null;
+
+    let profileQuery = supabase
       .from('profiles')
       .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
-      .eq('id', userId)
-      .maybeSingle();
+      .eq('id', userId);
+
+    if (!iAmSuperAdmin && myCompanyId) {
+      profileQuery = profileQuery.eq('company_id', myCompanyId);
+    }
+
+    const { data: prof, error } = await profileQuery.maybeSingle();
 
     if (error) throw error;
     if (!prof) return null;

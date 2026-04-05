@@ -29,6 +29,13 @@ function shouldFallbackWithoutAdditionalFields(error: any) {
   );
 }
 
+async function resolveScopedCompanyId(explicitCompanyId: string | null = null) {
+  const provided = String(explicitCompanyId || '').trim();
+  if (provided) return provided;
+  const mine = await getMyCompanyId();
+  return String(mine || '').trim() || null;
+}
+
 export function formatClientNameForOrder(client: any) {
   if (!client || typeof client !== 'object') return '';
 
@@ -143,16 +150,16 @@ async function canCurrentUserViewAllOrders() {
 
 export async function listClients({ companyId = null, search = '' } = {}) {
   return measureNetwork('clients.list', async () => {
+    const scopedCompanyId = await resolveScopedCompanyId(companyId);
+    if (!scopedCompanyId) return [];
+
     const buildListQuery = (useAdditional = true) => {
       const clientColumns = useAdditional ? CLIENT_COLUMNS_WITH_ADDITIONAL : CLIENT_COLUMNS_BASE;
       let query = supabase
       .from('clients')
       .select(`${clientColumns}, ${CLIENT_LIST_OBJECTS_RELATION}, ${CLIENT_TAGS_RELATION}`)
+      .eq('company_id', scopedCompanyId)
       .order('full_name', { ascending: true, nullsFirst: false });
-
-      if (companyId) {
-        query = query.eq('company_id', companyId);
-      }
 
       const normalizedSearch = String(search || '').trim();
       if (normalizedSearch) {
@@ -217,11 +224,15 @@ export async function getClientById(clientId: string) {
   if (existing) return existing;
 
   const p = measureNetwork('clients.getById', async () => {
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) return null;
+
     try {
       const { data, error } = await supabase
         .from('clients')
         .select(`${CLIENT_COLUMNS_WITH_ADDITIONAL}, client_objects(*, object_tag_links(tag:company_tags(id, value, tag_type))), ${CLIENT_TAGS_RELATION}`)
         .eq('id', key)
+        .eq('company_id', scopedCompanyId)
         .maybeSingle();
 
       if (error) throw error;
@@ -251,6 +262,7 @@ export async function getClientById(clientId: string) {
         .from('clients')
         .select(CLIENT_COLUMNS_BASE)
         .eq('id', key)
+        .eq('company_id', scopedCompanyId)
         .maybeSingle();
 
       if (error) throw error;
@@ -346,6 +358,9 @@ export function extractConflictingClientId(error: any) {
 
 export async function updateClient(clientId: string, patch: Record<string, any>) {
   return measureNetwork('clients.update', async () => {
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) throw new Error('company_id is required');
+
     const nextPatch: Record<string, any> = { ...(patch || {}) };
     if (Object.prototype.hasOwnProperty.call(nextPatch, 'secondary_phone')) {
       nextPatch.additional_phone_1 = nextPatch.secondary_phone;
@@ -355,7 +370,8 @@ export async function updateClient(clientId: string, patch: Record<string, any>)
     const { error } = await supabase
       .from('clients')
       .update(nextPatch)
-      .eq('id', clientId);
+      .eq('id', clientId)
+      .eq('company_id', scopedCompanyId);
 
     if (error) throw error;
     return getClientById(clientId);
@@ -364,7 +380,13 @@ export async function updateClient(clientId: string, patch: Record<string, any>)
 
 export async function deleteClient(clientId: string) {
   return measureNetwork('clients.delete', async () => {
-    const { error } = await supabase.from('clients').delete().eq('id', clientId);
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) throw new Error('company_id is required');
+    const { error } = await supabase
+      .from('clients')
+      .delete()
+      .eq('id', clientId)
+      .eq('company_id', scopedCompanyId);
     if (error) throw error;
     return true;
   });
@@ -373,11 +395,14 @@ export async function deleteClient(clientId: string) {
 export async function getClientOrderCount(clientId: string) {
   return measureNetwork('clients.orderCount', async () => {
     if (!clientId) return 0;
+    const scopedCompanyId = await resolveScopedCompanyId();
+    if (!scopedCompanyId) return 0;
 
     const { count, error } = await supabase
       .from('orders')
       .select('id', { count: 'exact', head: true })
-      .eq('client_id', clientId);
+      .eq('client_id', clientId)
+      .eq('company_id', scopedCompanyId);
 
     if (error) throw error;
     return Number(count || 0);

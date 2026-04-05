@@ -62,13 +62,16 @@ function UserCardContent({
           alignItems: 'center',
         },
         cardTextWrap: {
+          flex: 1,
+          minWidth: 0,
           flexShrink: 1,
-          paddingRight: sz.xl * 3,
+          paddingRight: sz.xl * 4,
         },
         cardTitle: {
           fontSize: ty.sizes.md,
           fontWeight: ty.weight.semibold,
           color: c.text,
+          lineHeight: Math.round((ty.sizes.md || 16) * (ty.lineHeights?.normal || 1.35)),
         },
         metaText: {
           fontSize: ty.sizes.sm,
@@ -161,7 +164,7 @@ function UserCardContent({
     >
       <View style={styles.cardRow}>
         <View style={styles.cardTextWrap}>
-          <Text numberOfLines={1} style={styles.cardTitle}>
+          <Text numberOfLines={2} style={styles.cardTitle}>
             {fullName || translate('common_noName')}
           </Text>
           {showDepartment ? (

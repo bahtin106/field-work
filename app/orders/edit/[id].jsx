@@ -1542,9 +1542,14 @@ function EditOrderContent() {
       setAssignedEmployeeLabel('');
       return;
     }
-    if (assignedEmployeeLabel) return;
+    if (selectedEmployee) {
+      setAssignedEmployeeLabel(
+        String(selectedEmployee?.display_name || selectedEmployee?.full_name || selectedEmployee?.email || '').trim(),
+      );
+      return;
+    }
     refreshAssignedLabel(assigneeId);
-  }, [assigneeId, refreshAssignedLabel, assignedEmployeeLabel]);
+  }, [assigneeId, refreshAssignedLabel, selectedEmployee]);
 
   useEffect(() => {
     return () => {
@@ -1846,7 +1851,18 @@ function EditOrderContent() {
         setAssigneeModalVisible(false);
       },
       onSelectUser: (userId) => {
-        setAssigneeId(userId ?? null);
+        const normalizedUserId = userId ? String(userId) : null;
+        setAssigneeId(normalizedUserId);
+        const nextSelected = (Array.isArray(employees) ? employees : []).find(
+          (user) => String(user?.id || '') === String(normalizedUserId || ''),
+        );
+        if (nextSelected) {
+          setAssignedEmployeeLabel(
+            String(nextSelected?.display_name || nextSelected?.full_name || nextSelected?.email || '').trim(),
+          );
+        } else {
+          setAssignedEmployeeLabel('');
+        }
         setToFeed(false);
         if (statusKey === 'in_feed') {
           setStatusKey('new');

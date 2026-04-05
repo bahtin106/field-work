@@ -10,6 +10,7 @@ import {
 } from './addressing';
 import { applyOrderRelationFilters } from './relationFilters';
 import { resolveRequestTitle } from './title';
+import { getMyCompanyId } from '../profile/api';
 
 const DEFAULT_PAGE_SIZE = 20;
 const OBJECT_RELATION_SELECT = `
@@ -461,13 +462,13 @@ export async function updateRequest(id, patch, expectedUpdatedAt = null) {
 
 export async function listRequestExecutors({ companyId = null } = {}) {
   return measureNetwork('requests.executors', async () => {
+    const scopedCompanyId = String(companyId || '').trim() || String(await getMyCompanyId() || '').trim();
+    if (!scopedCompanyId) return [];
     let query = supabase
       .from('profiles')
       .select('id, first_name, middle_name, last_name, full_name, email, role, department_id')
-      .neq('role', 'client');
-    if (companyId) {
-      query = query.eq('company_id', companyId);
-    }
+      .neq('role', 'client')
+      .eq('company_id', scopedCompanyId);
     const { data, error } = await query;
 
     if (error) throw error;
@@ -489,10 +490,13 @@ export async function listRequestFilterOptions() {
 export async function getAssigneeDisplayNameById(userId) {
   return measureNetwork('requests.assigneeName', async () => {
     if (!userId) return '';
+    const scopedCompanyId = String(await getMyCompanyId() || '').trim();
+    if (!scopedCompanyId) return '';
     const { data, error } = await supabase
       .from('profiles')
       .select('first_name, middle_name, last_name, full_name, email')
       .eq('id', userId)
+      .eq('company_id', scopedCompanyId)
       .maybeSingle();
     if (error) throw error;
     if (!data) return '';

@@ -146,7 +146,7 @@ export default function BillingScreen() {
   const currentUserId = profile?.id || profile?.user_id || null;
 
   const { data: profileFallback } = useQuery({
-    queryKey: ['billingProfileFallback'],
+    queryKey: ['billingProfileFallback', user?.id || 'anon'],
     queryFn: async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user?.id) return null;
@@ -230,7 +230,10 @@ export default function BillingScreen() {
     onlyEnabled: true,
     enabled: isOwner && !!companyId && useDepartments,
   });
-  const { data: employees = [] } = useEmployees(manageFilters.values, { enabled: isOwner && !!companyId });
+  const { data: employees = [] } = useEmployees(
+    { ...manageFilters.values, companyId },
+    { enabled: isOwner && !!companyId },
+  );
 
   const members = React.useMemo(() => access?.members || [], [access?.members]);
   const [manageVisible, setManageVisible] = React.useState(false);

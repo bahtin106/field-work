@@ -1,7 +1,11 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+const SUPABASE_URL =
+  Deno.env.get('SUPABASE_URL') ||
+  Deno.env.get('PROJECT_URL') ||
+  Deno.env.get('SUPABASE_PUBLIC_URL') ||
+  '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const PUSH_WORKER_KEY = Deno.env.get('PUSH_WORKER_KEY') || '';
 const PUSH_ANDROID_CHANNEL_ID = Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify';
@@ -86,6 +90,38 @@ type PushTokenRow = {
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function isTransientUpstreamError(error: unknown) {
+  const message = String((error as { message?: string })?.message || error || '').toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('upstream') ||
+    message.includes('timed out') ||
+    message.includes('timeout') ||
+    message.includes('connection') ||
+    message.includes('econnreset') ||
+    message.includes('econnrefused') ||
+    message.includes('network')
+  );
+}
+
+async function rpcWithRetry<T = unknown>(
+  fn: string,
+  args: Record<string, unknown>,
+  attempts = 3,
+): Promise<{ data: T | null; error: { message: string } | null }> {
+  let lastError: { message: string } | null = null;
+  for (let index = 0; index < attempts; index += 1) {
+    const { data, error } = await sb.rpc(fn, args);
+    if (!error) return { data: (data ?? null) as T | null, error: null };
+    lastError = { message: String(error.message || 'rpc_error') };
+    if (!isTransientUpstreamError(error) || index === attempts - 1) {
+      return { data: null, error: lastError };
+    }
+    await sleep(250 * (index + 1));
+  }
+  return { data: null, error: lastError || { message: 'rpc_error' } };
+}
 
 function tr(key: (typeof PUSH_MESSAGE_KEYS)[keyof typeof PUSH_MESSAGE_KEYS], params?: Record<string, string>) {
   let template = RU_MESSAGES[key] || key;
@@ -194,7 +230,7 @@ async function invalidateTokens(tokens: string[], reason: string) {
 }
 
 async function claimEvents(limit: number): Promise<NotificationEvent[]> {
-  const { data, error } = await sb.rpc('claim_notification_events', { p_limit: limit });
+  const { data, error } = await rpcWithRetry<NotificationEvent[]>('claim_notification_events', { p_limit: limit });
   if (error) throw new Error(`claim_notification_events failed: ${error.message}`);
   return Array.isArray(data) ? (data as NotificationEvent[]) : [];
 }
@@ -206,7 +242,7 @@ async function finishEvent(
   retryDelayMinutes: number,
 ) {
   const delay = `${Math.max(1, retryDelayMinutes)} minutes`;
-  const { error } = await sb.rpc('finish_notification_event', {
+  const { error } = await rpcWithRetry('finish_notification_event', {
     p_event_id: eventId,
     p_success: success,
     p_error: errorMessage,
@@ -218,7 +254,7 @@ async function finishEvent(
 }
 
 async function enqueueReminders() {
-  const { error } = await sb.rpc('enqueue_stale_feed_reminders', {
+  const { error } = await rpcWithRetry('enqueue_stale_feed_reminders', {
     p_delay: '20 minutes',
   });
   if (error) {
@@ -230,7 +266,7 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
   if (event.recipient_user_id) return [event.recipient_user_id];
   if (event.event_type !== 'feed_new_order') return [];
 
-  const { data, error } = await sb.rpc('get_company_notification_recipients', {
+  const { data, error } = await rpcWithRetry<Array<{ user_id: string }>>('get_company_notification_recipients', {
     p_company_id: event.company_id,
   });
   if (error) throw new Error(`profiles recipients fetch failed: ${error.message}`);
@@ -260,7 +296,9 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
 
 async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventType): Promise<string[]> {
   if (!recipientIds.length) return [];
-  const { data, error } = await sb.rpc('get_notification_prefs_bulk', { p_user_ids: recipientIds });
+  const { data, error } = await rpcWithRetry<NotificationPrefs[]>('get_notification_prefs_bulk', {
+    p_user_ids: recipientIds,
+  });
   if (error) throw new Error(`notification_prefs fetch failed: ${error.message}`);
   const { data: tzRows, error: tzError } = await sb.from('profiles').select('id, timezone').in('id', recipientIds);
   if (tzError) throw new Error(`profiles timezone fetch failed: ${tzError.message}`);
@@ -297,7 +335,7 @@ async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventT
 
 async function fetchTokensForUsers(userIds: string[]): Promise<PushTokenRow[]> {
   if (!userIds.length) return [];
-  const { data, error } = await sb.rpc('get_push_tokens_bulk', { p_user_ids: userIds });
+  const { data, error } = await rpcWithRetry<PushTokenRow[]>('get_push_tokens_bulk', { p_user_ids: userIds });
   if (error) throw new Error(`push_tokens fetch failed: ${error.message}`);
   return (data ?? []) as PushTokenRow[];
 }

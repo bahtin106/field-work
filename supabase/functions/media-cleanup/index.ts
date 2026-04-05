@@ -37,6 +37,39 @@ function isMissingRpcError(error: unknown) {
   return msg.includes('function') && (msg.includes('does not exist') || msg.includes('not found'));
 }
 
+function isTransientUpstreamError(error: unknown) {
+  const msg = String((error as { message?: string })?.message || error || '').toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes('upstream') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('connection') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('network')
+  );
+}
+
+async function rpcWithRetry<T = unknown>(
+  admin: ReturnType<typeof createClient>,
+  fn: string,
+  args: Record<string, unknown>,
+  attempts = 3,
+): Promise<{ data: T | null; error: { message: string } | null }> {
+  let lastError: { message: string } | null = null;
+  for (let index = 0; index < attempts; index += 1) {
+    const { data, error } = await admin.rpc(fn, args);
+    if (!error) return { data: (data ?? null) as T | null, error: null };
+    lastError = { message: String(error.message || 'rpc_error') };
+    if (!isTransientUpstreamError(error) || index === attempts - 1) {
+      return { data: null, error: lastError };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (index + 1)));
+  }
+  return { data: null, error: lastError || { message: 'rpc_error' } };
+}
+
 function normalizeKey(value: string | null | undefined) {
   return String(value || '').replace(/^\/+/, '').trim();
 }
@@ -254,8 +287,12 @@ export async function handleMediaCleanupRequest(req: Request) {
       p_lock_ms: lockTimeoutMs,
       p_worker: workerId,
     };
-    const { data: claimedRows, error: claimError } = await admin.rpc('claim_media_cleanup_jobs', claimPayload);
-    if (claimError && !isMissingRpcError(claimError)) throw claimError;
+    const { data: claimedRows, error: claimError } = await rpcWithRetry<unknown[]>(
+      admin,
+      'claim_media_cleanup_jobs',
+      claimPayload,
+    );
+    if (claimError && !isMissingRpcError(claimError)) throw new Error(claimError.message);
 
     let queueRows: Array<{
       id: number;
@@ -363,15 +400,19 @@ export async function handleMediaCleanupRequest(req: Request) {
         }
 
         if (usingV2Queue) {
-          const { data: finalizeState, error: finalizeError } = await admin.rpc('finalize_media_cleanup_job', {
+          const { data: finalizeState, error: finalizeError } = await rpcWithRetry<string>(
+            admin,
+            'finalize_media_cleanup_job',
+            {
             p_id: Number(row.id),
             p_success: true,
             p_error_message: null,
             p_error_code: null,
             p_retry_delay_ms: retryDelayMs,
             p_force_dead_letter: false,
-          });
-          if (finalizeError) throw finalizeError;
+            },
+          );
+          if (finalizeError) throw new Error(finalizeError.message);
           if (String(finalizeState || '') !== 'succeeded') {
             throw new Error(`Unexpected finalize state: ${String(finalizeState || 'unknown')}`);
           }
@@ -404,14 +445,18 @@ export async function handleMediaCleanupRequest(req: Request) {
         const stopRetry = nonRetryable || nextAttempt >= reasonMaxAttempts;
         if (usingV2Queue) {
           const errorCode = nonRetryable ? 'non_retryable' : 'retryable';
-          const { data: finalizeState, error: finalizeError } = await admin.rpc('finalize_media_cleanup_job', {
+          const { data: finalizeState, error: finalizeError } = await rpcWithRetry<string>(
+            admin,
+            'finalize_media_cleanup_job',
+            {
             p_id: Number(row.id),
             p_success: false,
             p_error_message: errorMessage,
             p_error_code: errorCode,
             p_retry_delay_ms: retryDelayMs,
             p_force_dead_letter: stopRetry,
-          });
+            },
+          );
           if (finalizeError) {
             console.error('[media-cleanup] finalize failure state failed:', toErrorMessage(finalizeError));
           } else {

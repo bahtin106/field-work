@@ -13,7 +13,9 @@ import {
 } from 'react-native';
 import Screen from '../../components/layout/Screen';
 import UIButton from '../../components/ui/Button';
+import Checkbox from '../../components/ui/Checkbox';
 import { BaseModal, SelectModal } from '../../components/ui/modals';
+import ModalActionsRow from '../../components/ui/modals/ModalActionsRow';
 import TextField, { SelectField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
@@ -24,6 +26,7 @@ import { Feather } from '@expo/vector-icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { COMPANY_SETTINGS_QUERY_KEY, fetchCompanySettingsByCompanyId } from '../../lib/companySettingsQuery';
 import { isCompanyNameAvailable, normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
+import { FUNCTIONS } from '../../lib/constants';
 import { getCurrencySymbol } from '../../lib/currency';
 import { supabase } from '../../lib/supabase';
 import { saveUserLocale } from '../../lib/userLocale';
@@ -380,6 +383,16 @@ export default function CompanySettings() {
   const [tzOpen, setTzOpen] = React.useState(false);
   const [themeOpen, setThemeOpen] = React.useState(false);
   const [langOpen, setLangOpen] = React.useState(false);
+  const [workModeOpen, setWorkModeOpen] = React.useState(false);
+  const [workModeConfirmOpen, setWorkModeConfirmOpen] = React.useState(false);
+  const [workModeConsentOpen, setWorkModeConsentOpen] = React.useState(false);
+  const [pendingWorkMode, setPendingWorkMode] = React.useState(null);
+  const [switchingWorkMode, setSwitchingWorkMode] = React.useState(false);
+  const [workModeConsents, setWorkModeConsents] = React.useState({
+    blockMembers: false,
+    reassignOrders: false,
+    keepLicensesIdle: false,
+  });
   const [currentLocale, setCurrentLocale] = React.useState(() => getLocale());
 
   // Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎвЂќР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В±Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В¦Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎС›Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В Р В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В»Р В Р’В Р В Р вЂ№Р В Р’В Р В Р РЏР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’ВµР В Р’В Р вЂ™Р’В Р В Р Р‹Р вЂ™Р’В state Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎСљР В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎС›Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРІР‚СљР В Р’В Р вЂ™Р’В Р В РЎС›Р Р†Р вЂљР’ВР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В° Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРІР‚СњР В Р’В Р В Р вЂ№Р В Р’В Р Р†Р вЂљРЎв„ўР В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљР’ВР В Р’В Р В Р вЂ№Р В Р вЂ Р В РІР‚С™Р вЂ™Р’В¦Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎС›Р В Р’В Р вЂ™Р’В Р В РЎС›Р Р†Р вЂљР’ВР В Р’В Р В Р вЂ№Р В Р’В Р В Р РЏР В Р’В Р В Р вЂ№Р В Р вЂ Р В РІР‚С™Р РЋРІвЂћСћ Р В Р’В Р вЂ™Р’В Р В РЎС›Р Р†Р вЂљР’ВР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В°Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В¦Р В Р’В Р вЂ™Р’В Р В Р’В Р Р†Р вЂљР’В¦Р В Р’В Р В Р вЂ№Р В Р вЂ Р В РІР‚С™Р Р†РІР‚С›РІР‚вЂњР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’Вµ Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљР’ВР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В· Р В Р’В Р вЂ™Р’В Р В Р Р‹Р Р†Р вЂљРЎСљР В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’ВµР В Р’В Р В Р вЂ№Р В Р вЂ Р Р†Р вЂљРЎв„ўР вЂ™Р’В¬Р В Р’В Р вЂ™Р’В Р В РІР‚в„ўР вЂ™Р’В°
@@ -801,6 +814,162 @@ export default function CompanySettings() {
     () => t(`settings_theme_${mode || 'system'}`),
     [mode, t],
   );
+  const currentWorkMode = React.useMemo(
+    () => (authAccountType === 'solo' ? 'solo' : 'company'),
+    [authAccountType],
+  );
+  const workModeItems = React.useMemo(
+    () => [
+      {
+        id: 'solo',
+        label: t('settings_work_mode_option_solo'),
+        subtitle: t('settings_work_mode_option_solo_desc'),
+      },
+      {
+        id: 'company',
+        label: t('settings_work_mode_option_company'),
+        subtitle: t('settings_work_mode_option_company_desc'),
+      },
+    ],
+    [t],
+  );
+  const currentWorkModeLabel = React.useMemo(
+    () =>
+      currentWorkMode === 'solo' ? t('settings_work_mode_option_solo') : t('settings_work_mode_option_company'),
+    [currentWorkMode, t],
+  );
+  const pendingWorkModeLabel = React.useMemo(
+    () => (
+      pendingWorkMode === 'solo'
+        ? t('settings_work_mode_option_solo')
+        : pendingWorkMode === 'company'
+          ? t('settings_work_mode_option_company')
+          : ''
+    ),
+    [pendingWorkMode, t],
+  );
+  const workModeConsentItems = React.useMemo(
+    () => [
+      { id: 'blockMembers', label: t('settings_work_mode_consent_block_members') },
+      { id: 'reassignOrders', label: t('settings_work_mode_consent_reassign_orders') },
+      { id: 'keepLicensesIdle', label: t('settings_work_mode_consent_keep_licenses_idle') },
+    ],
+    [t],
+  );
+  const allWorkModeConsentsAccepted = React.useMemo(
+    () => workModeConsentItems.every((item) => !!workModeConsents[item.id]),
+    [workModeConsentItems, workModeConsents],
+  );
+  const resolveWorkModeSwitchError = React.useCallback(
+    (message, code) => {
+      const normalizedCode = String(code || '').trim();
+      if (normalizedCode === 'CONSENT_REQUIRED') {
+        return t('settings_work_mode_consent_required');
+      }
+      return String(message || '').trim() || t('toast_error');
+    },
+    [t],
+  );
+  const unwrapEdgeFunctionError = React.useCallback(async (error) => {
+    const fallback = {
+      message: String(error?.message || '').trim(),
+      code: String(error?.code || '').trim(),
+    };
+    try {
+      const responseLike = error?.context;
+      if (!responseLike || typeof responseLike.json !== 'function') return fallback;
+      const payload = await responseLike.json().catch(() => null);
+      if (!payload || typeof payload !== 'object') return fallback;
+      return {
+        message: String(payload?.message || fallback.message || '').trim(),
+        code: String(payload?.code || fallback.code || '').trim(),
+      };
+    } catch {
+      return fallback;
+    }
+  }, []);
+  const onSelectWorkMode = React.useCallback(
+    (item) => {
+      const modeId = String(item?.id || '').trim();
+      if (!modeId || modeId === currentWorkMode) {
+        setWorkModeOpen(false);
+        return;
+      }
+      setPendingWorkMode(modeId);
+      setWorkModeOpen(false);
+      setWorkModeConfirmOpen(true);
+    },
+    [currentWorkMode],
+  );
+  const invokeWorkModeSwitch = React.useCallback(async () => {
+    const targetMode = String(pendingWorkMode || '').trim();
+    if (!targetMode || targetMode === currentWorkMode) {
+      setWorkModeConfirmOpen(false);
+      setWorkModeConsentOpen(false);
+      setPendingWorkMode(null);
+      setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
+      return;
+    }
+    setSwitchingWorkMode(true);
+    try {
+      const isSwitchingCompanyToSolo = currentWorkMode === 'company' && targetMode === 'solo';
+      const { data, error } = await supabase.functions.invoke(FUNCTIONS.SWITCH_ACCOUNT_MODE, {
+        body: {
+          target_mode: targetMode,
+          confirm_block_members: isSwitchingCompanyToSolo ? !!workModeConsents.blockMembers : true,
+          confirm_reassign_orders: isSwitchingCompanyToSolo ? !!workModeConsents.reassignOrders : true,
+          confirm_keep_licenses_idle: isSwitchingCompanyToSolo ? !!workModeConsents.keepLicensesIdle : true,
+        },
+      });
+      if (error) throw error;
+      if (data?.success === false) {
+        const mapped = resolveWorkModeSwitchError(data?.message, data?.code);
+        throw new Error(mapped);
+      }
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            ...(user?.user_metadata || {}),
+            account_type: targetMode,
+          },
+        });
+      } catch {}
+      toast.show(t('settings_work_mode_saved'), 'success');
+      setWorkModeConfirmOpen(false);
+      setWorkModeConsentOpen(false);
+      setPendingWorkMode(null);
+      setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
+      try {
+        await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+      } catch {}
+    } catch (e) {
+      const edgeError = await unwrapEdgeFunctionError(e);
+      toast.show(resolveWorkModeSwitchError(edgeError?.message || e?.message, edgeError?.code || e?.code), 'error');
+    } finally {
+      setSwitchingWorkMode(false);
+    }
+  }, [
+    currentWorkMode,
+    pendingWorkMode,
+    queryClient,
+    resolveWorkModeSwitchError,
+    t,
+    toast,
+    unwrapEdgeFunctionError,
+    user?.user_metadata,
+    workModeConsents.blockMembers,
+    workModeConsents.keepLicensesIdle,
+    workModeConsents.reassignOrders,
+  ]);
+  const confirmWorkModeSwitch = React.useCallback(() => {
+    const targetMode = String(pendingWorkMode || '').trim();
+    const requiresConsent = currentWorkMode === 'company' && targetMode === 'solo';
+    if (requiresConsent) {
+      setWorkModeConsentOpen(true);
+      return;
+    }
+    invokeWorkModeSwitch();
+  }, [currentWorkMode, invokeWorkModeSwitch, pendingWorkMode]);
   React.useEffect(() => {
     setCurrentLocale(getLocale());
   }, [t]);
@@ -842,7 +1011,7 @@ export default function CompanySettings() {
   // Section titles from i18n (do not trust constants' labels)
   const sectionTitles = React.useMemo(
     () => ({
-      COMPANY: t('settings_sections_company_title'),
+      GENERAL: t('settings_sections_general_title'),
       APPEARANCE: t('settings_sections_appearance_title'),
       INTEGRATIONS: t('settings_sections_integrations_title'),
       MANAGEMENT: t('settings_sections_management_title'),
@@ -894,7 +1063,7 @@ export default function CompanySettings() {
       >
         {/* COMPANY */}
         <View style={s.sectionWrap}>
-          <Text style={s.sectionTitle}>{sectionTitles.COMPANY}</Text>
+          <Text style={s.sectionTitle}>{sectionTitles.GENERAL}</Text>
           <View style={s.card}>
             {!isSoloAdmin ? (
               <>
@@ -914,6 +1083,13 @@ export default function CompanySettings() {
               label={t('settings_company_timezone')}
               value={timeZoneLabel}
               onPress={() => setTzOpen(true)}
+            />
+
+            <View style={s.sep} />
+            <SelectField
+              label={t('settings_company_work_mode')}
+              value={currentWorkModeLabel}
+              onPress={() => setWorkModeOpen(true)}
             />
 
             <View style={s.sep} />
@@ -1207,6 +1383,154 @@ export default function CompanySettings() {
         }}
         onClose={() => setLangOpen(false)}
       />
+
+      <SelectModal
+        visible={workModeOpen}
+        title={t('settings_work_mode_modal_title')}
+        items={workModeItems}
+        searchable={false}
+        selectedId={currentWorkMode}
+        onSelect={onSelectWorkMode}
+        onClose={() => setWorkModeOpen(false)}
+        multilineItems
+      />
+
+      <BaseModal
+        visible={workModeConfirmOpen}
+        onClose={() => {
+          if (switchingWorkMode) return;
+          setWorkModeConfirmOpen(false);
+          setPendingWorkMode(null);
+          setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
+        }}
+        title={t('settings_work_mode_confirm_title')}
+        footer={(
+          <ModalActionsRow
+            actions={[
+              {
+                key: 'cancel',
+                title: t('btn_cancel'),
+                variant: 'secondary',
+                disabled: switchingWorkMode,
+                onPress: () => {
+                  setWorkModeConfirmOpen(false);
+                  setPendingWorkMode(null);
+                  setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
+                },
+              },
+              {
+                key: 'continue',
+                title: t('btn_continue'),
+                variant: 'primary',
+                loading: switchingWorkMode,
+                disabled: switchingWorkMode,
+                onPress: confirmWorkModeSwitch,
+              },
+            ]}
+          />
+        )}
+      >
+        <View style={{ gap: theme.spacing.sm }}>
+          <View style={{ gap: theme.spacing.sm }}>
+            <Text style={{ color: theme.colors.text }}>
+              {`${t('settings_work_mode_confirm_message_prefix')} ${pendingWorkModeLabel}?`}
+            </Text>
+            <Text style={{ color: theme.colors.textSecondary }}>
+              {t('settings_work_mode_confirm_message_hint')}
+            </Text>
+          </View>
+        </View>
+      </BaseModal>
+
+      <BaseModal
+        visible={workModeConsentOpen}
+        onClose={() => {
+          if (switchingWorkMode) return;
+          setWorkModeConsentOpen(false);
+          setPendingWorkMode(null);
+          setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
+        }}
+        title={t('settings_work_mode_apply_title')}
+        footer={(
+          <ModalActionsRow
+            actions={[
+              {
+                key: 'cancel',
+                title: t('btn_cancel'),
+                variant: 'secondary',
+                disabled: switchingWorkMode,
+                onPress: () => {
+                  setWorkModeConsentOpen(false);
+                  setPendingWorkMode(null);
+                  setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
+                },
+              },
+              {
+                key: 'apply',
+                title: t('btn_apply'),
+                variant: 'primary',
+                loading: switchingWorkMode,
+                disabled: !allWorkModeConsentsAccepted || switchingWorkMode,
+                onPress: invokeWorkModeSwitch,
+              },
+            ]}
+          />
+        )}
+      >
+        <View style={{ gap: theme.spacing.md }}>
+          <Text style={{ color: theme.colors.textSecondary }}>
+            {t('settings_work_mode_apply_description')}
+          </Text>
+          {workModeConsentItems.map((item) => {
+            const checked = !!workModeConsents[item.id];
+            return (
+              <Pressable
+                key={item.id}
+                onPress={() =>
+                  setWorkModeConsents((prev) => ({
+                    ...prev,
+                    [item.id]: !prev[item.id],
+                  }))}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: 'row',
+                    alignItems: 'flex-start',
+                    gap: theme.spacing.sm,
+                    paddingVertical: theme.spacing.sm,
+                    paddingHorizontal: theme.spacing.sm,
+                    borderRadius: theme.radii.md,
+                    borderWidth: theme.components.card.borderWidth,
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.surface,
+                  },
+                  pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
+                ]}
+              >
+                <Checkbox
+                  value={checked}
+                  onValueChange={(value) =>
+                    setWorkModeConsents((prev) => ({
+                      ...prev,
+                      [item.id]: !!value,
+                    }))}
+                />
+                <Text
+                  style={{
+                    color: theme.colors.text,
+                    flex: 1,
+                    fontSize: theme.typography.sizes.md,
+                    lineHeight: Math.round(
+                      (theme.typography.sizes.md || 16) * (theme.typography.lineHeights?.normal || 1.35),
+                    ),
+                  }}
+                >
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </BaseModal>
 
       {/* Currency picker */}
       <SelectModal

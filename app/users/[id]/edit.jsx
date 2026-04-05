@@ -1412,19 +1412,26 @@ export default function EditUser() {
     };
   }, [userId, refetchEmployee]);
   const reassignActiveOrders = async (fromUserId, toUserId) => {
-    // РџРµСЂРµРЅР°Р·РЅР°С‡Р°РµРј Р’РЎР• Р·Р°СЏРІРєРё, РЅРµР·Р°РІРёСЃРёРјРѕ РѕС‚ СЃС‚Р°С‚СѓСЃР°
-    const { error } = await supabase
-      .from(TABLES.orders)
-      .update({ assigned_to: toUserId })
-      .eq('assigned_to', fromUserId);
-    return error;
+    const effectiveCompanyId =
+      String(employeeData?.companyId || employeeData?.company_id || '').trim() || null;
+    const { error } = await supabase.rpc('reassign_orders_with_options', {
+      p_from_user_id: fromUserId,
+      p_to_user_id: toUserId,
+      p_company_id: effectiveCompanyId,
+      p_silent_notifications: true,
+    });
+    return error || null;
   };
   const _reassignAllOrders = async (fromUserId, toUserId) => {
-    const { error } = await supabase
-      .from(TABLES.orders)
-      .update({ assigned_to: toUserId })
-      .eq('assigned_to', fromUserId);
-    return error;
+    const effectiveCompanyId =
+      String(employeeData?.companyId || employeeData?.company_id || '').trim() || null;
+    const { error } = await supabase.rpc('reassign_orders_with_options', {
+      p_from_user_id: fromUserId,
+      p_to_user_id: toUserId,
+      p_company_id: effectiveCompanyId,
+      p_silent_notifications: true,
+    });
+    return error || null;
   };
   const setSuspended = async (uid, value) => {
     try {
