@@ -10,6 +10,7 @@ import {
   hasClientObjectMapPoint,
   normalizeClientObjectLocationMode,
 } from '../src/features/objects/addressing';
+import { isOrderFinanceEnabledFromMap } from '../src/features/fieldSettings/orderFinance';
 import OrderStatusCapsule from './ui/OrderStatusCapsule';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -346,9 +347,12 @@ function DynamicOrderCard({
   );
   const isCardFieldVisible = useCallback(
     (fieldKey) => {
+      if (String(fieldKey || '') === 'start_price' && !isOrderFinanceEnabledFromMap(orderFieldsByKey)) {
+        return false;
+      }
       return isFieldEnabledBySettings(fieldKey) || hasOrderFieldValue(fieldKey);
     },
-    [hasOrderFieldValue, isFieldEnabledBySettings],
+    [hasOrderFieldValue, isFieldEnabledBySettings, orderFieldsByKey],
   );
 
   // Primary rows
@@ -497,10 +501,18 @@ function DynamicOrderCard({
     return '';
   }, [order, getFieldByKey]);
 
-  // Price extraction: show price from field meta or common raw keys
+  // Price extraction: align with "Общая сумма" from order details
   const priceValue = useMemo(() => {
-    const f = getFieldByKey?.('start_price');
-    let v = readWithFallback(order, f, 'start_price');
+    const totalRaw =
+      order?.finance_gross_total ??
+      ((Number(order?.start_price ?? 0) || 0) +
+        (Number(order?.finance_income_total ?? 0) || 0) -
+        (Number(order?.finance_discount_total ?? 0) || 0));
+    let v = Number.isFinite(Number(totalRaw)) ? Number(totalRaw) : null;
+    if (v == null || v === '') {
+      const f = getFieldByKey?.('start_price');
+      v = readWithFallback(order, f, 'start_price');
+    }
     if (v == null || v === '') {
       v = order?.start_price ?? order?.total_price ?? order?.amount ?? null;
     }
@@ -606,7 +618,7 @@ function DynamicOrderCard({
   const rowGap = spacing.xs ?? 6;
   const titleRightGap = spacing.xs ?? 8;
   const showPrice =
-    (isCardFieldVisible('start_price') || hasOrderFieldValue('start_price', priceValue)) &&
+    isCardFieldVisible('start_price') &&
     priceValue !== null &&
     priceValue !== undefined &&
     String(priceValue).trim().length > 0;

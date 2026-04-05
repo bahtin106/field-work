@@ -27,6 +27,11 @@ import {
   getOrderedEntityFields,
 } from '../../../src/features/fieldSettings/catalog';
 import {
+  enforceOrderFinanceFieldDependencies,
+  ORDER_FINANCE_ENTRIES_FIELD_KEY,
+  ORDER_FINANCE_FIELD_KEY,
+} from '../../../src/features/fieldSettings/orderFinance';
+import {
   useEntityFieldSettings,
   useSaveEntityFieldSettingsMutation,
 } from '../../../src/features/fieldSettings/queries';
@@ -98,12 +103,16 @@ const ORDER_MEDIA_RENAMABLE_FIELDS = new Set([
 ]);
 
 function cloneSettings(settings) {
-  return {
+  const cloned = {
     entityType: settings?.entityType || null,
     versionToken: settings?.versionToken || null,
     source: settings?.source || 'fallback',
     fields: (settings?.fields || []).map((field) => ({ ...field })),
   };
+  if (cloned.entityType === ENTITY_FIELD_TYPES.ORDER) {
+    cloned.fields = enforceOrderFinanceFieldDependencies(cloned.fields);
+  }
+  return cloned;
 }
 
 function buildEntityState(initialValue) {
@@ -522,7 +531,17 @@ export default function FieldEditorScreen() {
     setDrafts((prev) => {
       const current = prev[entityType] || buildFallbackEntityFieldSettings(entityType);
       const next = typeof updater === 'function' ? updater(current) : updater;
-      return { ...prev, [entityType]: next };
+      const nextFields =
+        entityType === ENTITY_FIELD_TYPES.ORDER
+          ? enforceOrderFinanceFieldDependencies(next?.fields || [])
+          : next?.fields || [];
+      return {
+        ...prev,
+        [entityType]: {
+          ...next,
+          fields: nextFields,
+        },
+      };
     });
     setDirtyMap((prev) => ({ ...prev, [entityType]: true }));
     setSaveStateMap((prev) => ({
@@ -567,9 +586,18 @@ export default function FieldEditorScreen() {
           return;
         }
       }
+      let nextFields = toggleFieldEnabled((current?.fields || []), fieldKey, nextValue);
+      if (entityType === ENTITY_FIELD_TYPES.ORDER) {
+        const normalizedKey = String(fieldKey || '');
+        if (normalizedKey === ORDER_FINANCE_FIELD_KEY && nextValue === false) {
+          nextFields = toggleFieldEnabled(nextFields, ORDER_FINANCE_ENTRIES_FIELD_KEY, false);
+        } else if (normalizedKey === ORDER_FINANCE_ENTRIES_FIELD_KEY && nextValue === true) {
+          nextFields = toggleFieldEnabled(nextFields, ORDER_FINANCE_FIELD_KEY, true);
+        }
+      }
       updateDraft(entityType, (current) => ({
         ...current,
-        fields: toggleFieldEnabled(current.fields, fieldKey, nextValue),
+        fields: nextFields,
       }));
     },
     [t, toast, updateDraft],
