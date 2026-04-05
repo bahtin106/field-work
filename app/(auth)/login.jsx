@@ -1,11 +1,12 @@
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableWithoutFeedback,
@@ -16,9 +17,25 @@ import Screen from '../../components/layout/Screen';
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
 import TextField from '../../components/ui/TextField';
+import { BaseModal } from '../../components/ui/modals';
+import { useToast } from '../../components/ui/ToastProvider';
 import { useAuthLogin } from '../../hooks/useAuthLogin';
+import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
+
+const PASSWORD_RESET_COOLDOWN_SECONDS = 60;
+const SUPPORT_MESSAGE_MAX_LEN = 2000;
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  const normalized = normalizeEmail(value);
+  if (!normalized) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
 
 const createStyles = (theme) => {
   return StyleSheet.create({
@@ -75,9 +92,45 @@ const createStyles = (theme) => {
       fontSize: theme.typography.sizes.sm,
       color: theme.colors.textSecondary,
     },
+    forgotText: {
+      textAlign: 'center',
+      marginTop: theme.spacing.xs,
+      fontSize: theme.typography.sizes.sm,
+      color: theme.colors.textSecondary,
+    },
     registerLink: {
       color: theme.colors.primary,
       fontWeight: theme.typography.weight.semibold,
+    },
+    modalText: {
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.4),
+    },
+    modalFooter: {
+      flexDirection: 'row',
+      gap: theme.spacing.sm,
+    },
+    modalFooterBtn: {
+      flex: 1,
+    },
+    modalScroll: {
+      maxHeight: 360,
+    },
+    modalContent: {
+      gap: theme.spacing.sm,
+      paddingBottom: theme.spacing.xs,
+    },
+    supportLinkText: {
+      color: theme.colors.primary,
+      fontWeight: theme.typography.weight.semibold,
+      marginTop: theme.spacing.xs,
+      textAlign: 'center',
+    },
+    modalCounter: {
+      textAlign: 'right',
+      color: theme.colors.textSecondary,
+      fontSize: theme.typography.sizes.xs,
     },
   });
 };
@@ -85,6 +138,7 @@ const createStyles = (theme) => {
 function LoginScreenContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const toast = useToast();
   const router = useRouter();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const interactive = theme.components?.interactive || {
@@ -114,6 +168,19 @@ function LoginScreenContent() {
   }, [reset]);
 
   const passwordFieldRef = useRef(null);
+  const [recoverModalVisible, setRecoverModalVisible] = useState(false);
+  const [recoverEmail, setRecoverEmail] = useState('');
+  const [recoverSending, setRecoverSending] = useState(false);
+  const [recoverFeedback, setRecoverFeedback] = useState(null);
+  const [recoverSentOnce, setRecoverSentOnce] = useState(false);
+  const [recoverCooldownUntil, setRecoverCooldownUntil] = useState(0);
+  const [, forceCooldownTick] = useState(0);
+  const [supportModalVisible, setSupportModalVisible] = useState(false);
+  const [supportEmail, setSupportEmail] = useState('');
+  const [supportName, setSupportName] = useState('');
+  const [supportMessage, setSupportMessage] = useState('');
+  const [supportSending, setSupportSending] = useState(false);
+  const [supportFeedback, setSupportFeedback] = useState(null);
 
   const handleTogglePassword = useCallback(() => {
     passwordFieldRef.current?.togglePasswordVisibility();
@@ -132,6 +199,134 @@ function LoginScreenContent() {
     clearAccessBlock?.();
     router.replace({ pathname: '/(auth)/blocked', params });
   }, [accessBlock, clearAccessBlock, router]);
+
+  const recoverCooldownLeft = Math.max(
+    0,
+    Math.ceil((Number(recoverCooldownUntil) - Date.now()) / 1000),
+  );
+  const canSendRecover = !recoverSending && recoverCooldownLeft <= 0;
+
+  useEffect(() => {
+    if (!recoverModalVisible || recoverCooldownLeft <= 0) return undefined;
+    const intervalId = setInterval(() => {
+      forceCooldownTick((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(intervalId);
+  }, [recoverCooldownLeft, recoverModalVisible]);
+
+  const openRecoverModal = useCallback(() => {
+    const nextEmail = normalizeEmail(email);
+    setRecoverEmail(nextEmail);
+    setRecoverFeedback(null);
+    setRecoverModalVisible(true);
+  }, [email]);
+
+  const openSupportModal = useCallback(() => {
+    setSupportEmail(normalizeEmail(recoverEmail || email));
+    setSupportName('');
+    setSupportMessage('');
+    setSupportFeedback(null);
+    setSupportModalVisible(true);
+  }, [email, recoverEmail]);
+
+  const closeRecoverModal = useCallback(() => {
+    if (recoverSending) return;
+    setRecoverModalVisible(false);
+    setRecoverFeedback(null);
+  }, [recoverSending]);
+
+  const sendRecover = useCallback(async () => {
+    const normalizedEmail = normalizeEmail(recoverEmail);
+    if (!isValidEmail(normalizedEmail)) {
+      setRecoverFeedback({ type: 'warning', message: t('err_email') });
+      return;
+    }
+
+    try {
+      setRecoverSending(true);
+      setRecoverFeedback(null);
+
+      const { data, error: invokeError } = await supabase.functions.invoke('request-password-reset', {
+        body: { email: normalizedEmail },
+      });
+
+      if (invokeError) throw invokeError;
+
+      const ok = data?.ok === true;
+      if (!ok) {
+        const code = String(data?.code || '');
+        if (code === 'USER_NOT_FOUND') {
+          setRecoverFeedback({ type: 'warning', message: t('login_recover_user_not_found') });
+          return;
+        }
+        if (code === 'RATE_LIMIT') {
+          const retryAfter = Math.max(1, Number(data?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
+          setRecoverCooldownUntil(Date.now() + retryAfter * 1000);
+          setRecoverSentOnce(true);
+          setRecoverFeedback({
+            type: 'warning',
+            message: t('login_recover_rate_limit').replace('{n}', String(retryAfter)),
+          });
+          return;
+        }
+        throw new Error(String(data?.message || 'reset_failed'));
+      }
+
+      setRecoverSentOnce(true);
+      setRecoverCooldownUntil(Date.now() + PASSWORD_RESET_COOLDOWN_SECONDS * 1000);
+      setRecoverFeedback({ type: 'success', message: t('login_recover_sent_hint') });
+      toast.success(t('login_recover_sent'));
+    } catch (e) {
+      const message = String(e?.message || '').trim() || t('login_recover_send_error');
+      setRecoverFeedback({ type: 'error', message });
+    } finally {
+      setRecoverSending(false);
+    }
+  }, [recoverEmail, t, toast]);
+
+  const sendSupport = useCallback(async () => {
+    const normalizedEmail = normalizeEmail(supportEmail);
+    const trimmedMessage = String(supportMessage || '').trim();
+    const trimmedName = String(supportName || '').trim();
+
+    if (!isValidEmail(normalizedEmail)) {
+      setSupportFeedback({ type: 'warning', message: t('err_email') });
+      return;
+    }
+    if (!trimmedMessage) {
+      setSupportFeedback({ type: 'warning', message: t('support_request_message_required') });
+      return;
+    }
+
+    try {
+      setSupportSending(true);
+      setSupportFeedback(null);
+      const { data, error: invokeError } = await supabase.functions.invoke('public-support-request', {
+        body: {
+          email: normalizedEmail,
+          name: trimmedName || null,
+          message: trimmedMessage,
+        },
+      });
+      if (invokeError) throw invokeError;
+      if (!data?.ok) {
+        throw new Error(String(data?.message || t('support_request_send_error')));
+      }
+      setSupportModalVisible(false);
+      setSupportMessage('');
+      setSupportName('');
+      toast.success(t('support_request_sent'));
+    } catch (e) {
+      const message = String(e?.message || '').trim() || t('support_request_send_error');
+      setSupportFeedback({ type: 'error', message });
+    } finally {
+      setSupportSending(false);
+    }
+  }, [supportEmail, supportMessage, supportName, t, toast]);
+
+  const recoverSendTitle = canSendRecover
+    ? (recoverSentOnce ? t('login_recover_send_again') : t('btn_send'))
+    : t('login_recover_send_in').replace('{n}', String(recoverCooldownLeft));
 
   return (
     <Screen background="background">
@@ -212,6 +407,16 @@ function LoginScreenContent() {
                 loading={loading}
               />
 
+              <Text style={styles.forgotText}>
+                {t('login_forgot_password')}{' '}
+                <Text
+                  style={styles.registerLink}
+                  onPress={() => !loading && openRecoverModal()}
+                >
+                  {t('login_recover_link')}
+                </Text>
+              </Text>
+
               <Text style={styles.registerText}>
                 {t('login_no_account')}{' '}
                 <Text
@@ -225,6 +430,127 @@ function LoginScreenContent() {
           </View>
         </TouchableWithoutFeedback>
       </KeyboardAvoidingView>
+
+      <BaseModal
+        visible={recoverModalVisible}
+        onClose={closeRecoverModal}
+        title={t('login_recover_modal_title')}
+        maxHeightRatio={0.64}
+        feedback={recoverFeedback}
+        footer={
+          <View style={styles.modalFooter}>
+            <View style={styles.modalFooterBtn}>
+              <Button
+                title={t('btn_cancel')}
+                variant="secondary"
+                onPress={closeRecoverModal}
+                disabled={recoverSending}
+              />
+            </View>
+            <View style={styles.modalFooterBtn}>
+              <Button
+                title={recoverSendTitle}
+                onPress={sendRecover}
+                loading={recoverSending}
+                disabled={!canSendRecover}
+              />
+            </View>
+          </View>
+        }
+      >
+        <ScrollView
+          style={styles.modalScroll}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="none"
+          showsVerticalScrollIndicator={false}
+        >
+          <Text style={styles.modalText}>{t('login_recover_modal_text')}</Text>
+          <TextField
+            value={recoverEmail}
+            onChangeText={setRecoverEmail}
+            placeholder={t('fields_email')}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            returnKeyType="done"
+            editable={!recoverSending}
+          />
+          {recoverFeedback?.type === 'error' ? (
+            <Pressable onPress={openSupportModal}>
+              <Text style={styles.supportLinkText}>{t('login_recover_contact_support')}</Text>
+            </Pressable>
+          ) : null}
+        </ScrollView>
+      </BaseModal>
+
+      <BaseModal
+        visible={supportModalVisible}
+        onClose={() => {
+          if (supportSending) return;
+          setSupportModalVisible(false);
+          setSupportFeedback(null);
+        }}
+        title={t('support_request_modal_title')}
+        maxHeightRatio={0.72}
+        feedback={supportFeedback}
+        footer={
+          <View style={styles.modalFooter}>
+            <View style={styles.modalFooterBtn}>
+              <Button
+                title={t('btn_cancel')}
+                variant="secondary"
+                onPress={() => setSupportModalVisible(false)}
+                disabled={supportSending}
+              />
+            </View>
+            <View style={styles.modalFooterBtn}>
+              <Button
+                title={supportSending ? t('btn_sending') : t('btn_send')}
+                onPress={sendSupport}
+                loading={supportSending}
+                disabled={supportSending}
+              />
+            </View>
+          </View>
+        }
+      >
+        <ScrollView
+          style={styles.modalScroll}
+          contentContainerStyle={styles.modalContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="none"
+          showsVerticalScrollIndicator={false}
+        >
+          <TextField
+            value={supportEmail}
+            onChangeText={setSupportEmail}
+            label={t('fields_email')}
+            placeholder={t('fields_email')}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            editable={!supportSending}
+          />
+          <TextField
+            value={supportName}
+            onChangeText={setSupportName}
+            label={t('view_label_name')}
+            placeholder={t('placeholder_first_name')}
+            editable={!supportSending}
+          />
+          <TextField
+            value={supportMessage}
+            onChangeText={setSupportMessage}
+            label={t('support_request_message_label')}
+            placeholder={t('support_request_message_placeholder')}
+            multiline
+            minLines={3}
+            maxLines={8}
+            maxLength={SUPPORT_MESSAGE_MAX_LEN}
+            editable={!supportSending}
+          />
+          <Text style={styles.modalCounter}>{`${String(supportMessage || '').length}/${SUPPORT_MESSAGE_MAX_LEN}`}</Text>
+        </ScrollView>
+      </BaseModal>
     </Screen>
   );
 }

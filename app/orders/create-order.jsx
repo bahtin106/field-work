@@ -38,9 +38,11 @@ import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
+  getEntityFieldMap,
   getOrderedEntityFields,
   toLegacySchemaFields,
 } from '../../src/features/fieldSettings/catalog';
+import { isOrderFinanceEnabledFromMap } from '../../src/features/fieldSettings/orderFinance';
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { getLocale } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -392,6 +394,11 @@ function CreateOrderContent() {
     () => objectFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.OBJECT),
     [objectFieldSettingsData],
   );
+  const orderFieldsByKey = useMemo(
+    () => getEntityFieldMap(orderFieldSettings),
+    [orderFieldSettings],
+  );
+  const isOrderFinanceEnabled = isOrderFinanceEnabledFromMap(orderFieldsByKey);
   const orderedMainFieldKeys = useMemo(
     () => {
       const priority = {
@@ -405,12 +412,8 @@ function CreateOrderContent() {
         requiredFirst: true,
         fieldKeys: ['title', 'start_price', 'comment', 'work_type_id'],
       })
+        .filter((field) => isOrderFinanceEnabled || field.fieldKey !== 'start_price')
         .map((field) => field.fieldKey);
-      if (!ordered.includes('start_price')) {
-        const titleIndex = ordered.indexOf('title');
-        if (titleIndex >= 0) ordered.splice(titleIndex + 1, 0, 'start_price');
-        else ordered.unshift('start_price');
-      }
       return ordered
         .sort((left, right) => {
           const leftWeight = Number.isFinite(priority[left]) ? priority[left] : Number.MAX_SAFE_INTEGER;
@@ -418,7 +421,7 @@ function CreateOrderContent() {
           return leftWeight - rightWeight;
         });
     },
-    [orderFieldSettings],
+    [isOrderFinanceEnabled, orderFieldSettings],
   );
   const orderedCustomerFieldKeys = useMemo(
     () =>
@@ -891,10 +894,10 @@ function CreateOrderContent() {
     if (isFieldRequired('assigned_to') && !effectiveToFeed && !effectiveAssigneeId) {
       nextErrors.assigned_to = { message: t('order_validation_executor_required') };
     }
-    const parsedStartPrice = parseDecimalOrNull(form.start_price);
-    if (String(form.start_price ?? '').trim() && parsedStartPrice === null) {
+    const parsedStartPrice = isOrderFinanceEnabled ? parseDecimalOrNull(form.start_price) : null;
+    if (isOrderFinanceEnabled && String(form.start_price ?? '').trim() && parsedStartPrice === null) {
       nextErrors.start_price = { message: t('order_validation_amount_format') };
-    } else if (parsedStartPrice != null && parsedStartPrice < 0) {
+    } else if (isOrderFinanceEnabled && parsedStartPrice != null && parsedStartPrice < 0) {
       nextErrors.start_price = { message: t('order_validation_amount_format') };
     }
     if (Object.keys(nextErrors).length) {
@@ -1038,7 +1041,7 @@ function CreateOrderContent() {
       company_id: effectiveCompanyId || null,
       title,
       work_type_id: useWorkTypes ? normalizedWorkTypeId || null : null,
-      start_price: parseDecimalOrNull(form.start_price),
+      start_price: isOrderFinanceEnabled ? parseDecimalOrNull(form.start_price) : null,
       comment: description,
       client_id: selectedClientId || null,
       object_id: resolvedObjectId || null,
@@ -1121,6 +1124,7 @@ function CreateOrderContent() {
     subscriptionGuard.canEdit,
     resolveTitleForSave,
     parseDecimalOrNull,
+    isOrderFinanceEnabled,
   ]);
 
   useFocusEffect(
@@ -1570,7 +1574,7 @@ function CreateOrderContent() {
   );
   const renderCreateMainField = useCallback(
     (fieldKey) => {
-      if (fieldKey !== 'start_price' && !getField(fieldKey)) return null;
+      if (!getField(fieldKey)) return null;
 
       switch (fieldKey) {
         case 'title':

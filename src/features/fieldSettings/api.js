@@ -1,9 +1,11 @@
 import { supabase } from '../../../lib/supabase';
 import {
+  ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
   getEntityFieldCatalog,
   normalizeEntityField,
 } from './catalog';
+import { enforceOrderFinanceFieldDependencies } from './orderFinance';
 
 function normalizeFieldRows(entityType, rows) {
   const byKey = new Map();
@@ -70,13 +72,18 @@ export async function listEntityFieldSettings(entityType) {
 }
 
 export async function saveEntityFieldSettings({ entityType, fields, expectedVersion = null }) {
+  const normalizedFields =
+    entityType === ENTITY_FIELD_TYPES.ORDER
+      ? enforceOrderFinanceFieldDependencies(fields)
+      : fields;
+
   const validFieldKeys = new Set(
     getEntityFieldCatalog(entityType)
       .map((field) => String(field?.fieldKey || '').trim())
       .filter(Boolean),
   );
 
-  const payload = (Array.isArray(fields) ? fields : [])
+  const payload = (Array.isArray(normalizedFields) ? normalizedFields : [])
     .map((field) => ({
       field_key: String(field.fieldKey || field.field_key || '').trim(),
       is_enabled: field.isEnabled !== false,
