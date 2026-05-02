@@ -31,6 +31,18 @@ import Animated, {
 } from 'react-native-reanimated';
 
 const Ctx = createContext(null);
+const NOOP_TOAST_API = {
+  show: () => {},
+  hide: () => {},
+  setAnchorOffset: () => {},
+  success: () => {},
+  error: () => {},
+  warning: () => {},
+  info: () => {},
+  loading: () => {},
+  promise: async (p) => (typeof p === 'function' ? p() : p),
+  renderOverlay: () => null,
+};
 
 export default function ToastProvider({ children }) {
   const { theme } = useTheme();
@@ -222,9 +234,13 @@ export default function ToastProvider({ children }) {
       {children}
 
       {msg ? (
-        <FullWindowOverlay>
-          {renderOverlay()}
-        </FullWindowOverlay>
+        Platform.OS === 'ios' ? (
+          <FullWindowOverlay>
+            {renderOverlay()}
+          </FullWindowOverlay>
+        ) : (
+          renderOverlay()
+        )
       ) : null}
     </Ctx.Provider>
   );
@@ -232,7 +248,7 @@ export default function ToastProvider({ children }) {
 
 export function useToast() {
   const c = useContext(Ctx);
-  if (!c) throw new Error('useToast must be used within ToastProvider');
+  if (!c) return NOOP_TOAST_API;
   return c;
 }
 

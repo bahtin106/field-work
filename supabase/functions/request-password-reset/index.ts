@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,10 +28,10 @@ function json(body: Record<string, unknown>, status = 200): Response {
 }
 
 function generateTempPassword(): string {
-  const words = ['pilot', 'eagle', 'tiger', 'wolf', 'bear', 'lion', 'shark', 'hawk', 'fox', 'star'];
-  const word = words[Math.floor(Math.random() * words.length)];
-  const digits = Math.floor(1000 + Math.random() * 9000);
-  return `${word}${digits}`;
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
 }
 
 function getClient() {
@@ -56,7 +56,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
     const body = (await req.json().catch(() => ({}))) as ResetRequestBody;
     const email = normalizeEmail(body?.email);
     if (!isValidEmail(email)) {
-      return json({ ok: false, code: 'INVALID_EMAIL', message: 'Введите корректный e-mail' });
+      return json({ ok: false, code: 'INVALID_EMAIL', message: 'Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅС‹Р№ e-mail' });
     }
 
     const nowMs = Date.now();
@@ -66,7 +66,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return json({
         ok: false,
         code: 'RATE_LIMIT',
-        message: 'Повторная отправка пока недоступна',
+        message: 'РџРѕРІС‚РѕСЂРЅР°СЏ РѕС‚РїСЂР°РІРєР° РїРѕРєР° РЅРµРґРѕСЃС‚СѓРїРЅР°',
         retry_after_seconds: retryAfter,
       });
     }
@@ -96,7 +96,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return json({
         ok: false,
         code: 'RATE_LIMIT',
-        message: 'Повторная отправка пока недоступна',
+        message: 'РџРѕРІС‚РѕСЂРЅР°СЏ РѕС‚РїСЂР°РІРєР° РїРѕРєР° РЅРµРґРѕСЃС‚СѓРїРЅР°',
         retry_after_seconds: retryAfter,
       });
     }
@@ -126,7 +126,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       if (requestLogId != null) {
         await admin.from('password_reset_requests').update({ status: 'user_not_found' }).eq('id', requestLogId);
       }
-      return json({ ok: false, code: 'USER_NOT_FOUND', message: 'Сотрудник с таким e-mail не найден' });
+      return json({ ok: true, cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS, message: 'If the e-mail is registered, a reset message will be sent.' });
     }
 
     const tempPassword = generateTempPassword();
@@ -170,7 +170,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
         .eq('id', requestLogId);
     }
 
-    return json({ ok: true, cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS, message: 'Письмо отправлено' });
+    return json({ ok: true, cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS, message: 'РџРёСЃСЊРјРѕ РѕС‚РїСЂР°РІР»РµРЅРѕ' });
   } catch (error) {
     const message = String((error as Error)?.message || 'Unknown error');
     try {
@@ -186,8 +186,8 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       ok: false,
       code: message.includes('EMAIL_SEND_FAILED') ? 'EMAIL_SEND_FAILED' : 'INTERNAL_ERROR',
       message: message.includes('EMAIL_SEND_FAILED')
-        ? 'Не удалось отправить письмо. Обратитесь в поддержку.'
-        : 'Не удалось восстановить пароль. Обратитесь в поддержку.',
+        ? 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ РїРёСЃСЊРјРѕ. РћР±СЂР°С‚РёС‚РµСЃСЊ РІ РїРѕРґРґРµСЂР¶РєСѓ.'
+        : 'РќРµ СѓРґР°Р»РѕСЃСЊ РІРѕСЃСЃС‚Р°РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ. РћР±СЂР°С‚РёС‚РµСЃСЊ РІ РїРѕРґРґРµСЂР¶РєСѓ.',
     });
   }
 }

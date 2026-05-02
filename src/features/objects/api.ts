@@ -78,16 +78,7 @@ export async function listClientObjects(clientId: string) {
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-      if (error) {
-        console.debug('[objects.api] listClientObjectsByCompany error:', error?.message || error);
-      }
       const rows = Array.isArray(data) ? data : [];
-      try {
-        console.debug('[objects.api] listClientObjectsByCompany rows.length=', rows.length);
-        if (rows.length > 0) console.debug('[objects.api] sample row=', JSON.stringify(rows[0]));
-      } catch (e) {
-        console.debug('[objects.api] debug log failed', e);
-      }
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
       rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
     );
@@ -106,9 +97,6 @@ export async function listClientObjects(clientId: string) {
 export async function listClientObjectsByCompany(companyId: string) {
   return measureNetwork('objects.listByCompany', async () => {
     if (!companyId) return [];
-    try {
-      console.debug('[objects.api] listClientObjectsByCompany called with companyId=', companyId);
-    } catch (e) {}
     const { data, error } = await supabase
       .from('client_objects')
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
@@ -116,14 +104,8 @@ export async function listClientObjectsByCompany(companyId: string) {
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true });
 
-    if (error) {
-      console.debug('[objects.api] listClientObjectsByCompany supabase error=', error?.message || error);
-      throw error;
-    }
+    if (error) throw error;
     const rows = Array.isArray(data) ? data : [];
-    try {
-      console.debug('[objects.api] listClientObjectsByCompany received rows.length=', rows.length);
-    } catch (e) {}
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
       rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
     );

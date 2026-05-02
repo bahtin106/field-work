@@ -5,8 +5,63 @@ const crypto = require('crypto');
 const { Client } = require('pg');
 
 const app = express();
-app.use(cors());
+const allowedOrigins = String(process.env.EMAIL_SERVER_ALLOWED_ORIGINS || 'https://monitorapp.ru,https://app.monitorapp.ru')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('CORS origin not allowed'));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Email-Server-Token'],
+}));
 app.use(express.json());
+
+const rateLimitBuckets = new Map();
+
+function getRequestIp(req) {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  return String(Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor || req.ip || 'unknown')
+    .split(',')[0]
+    .trim();
+}
+
+function rateLimit(name, maxRequests, windowMs) {
+  return (req, res, next) => {
+    const key = `${name}:${getRequestIp(req)}`;
+    const now = Date.now();
+    const bucket = rateLimitBuckets.get(key) || { count: 0, resetAt: now + windowMs };
+    if (bucket.resetAt <= now) {
+      bucket.count = 0;
+      bucket.resetAt = now + windowMs;
+    }
+    bucket.count += 1;
+    rateLimitBuckets.set(key, bucket);
+    if (bucket.count > maxRequests) {
+      return res.status(429).json({ error: 'Too many requests' });
+    }
+    return next();
+  };
+}
+
+function requireServerToken(req, res, next) {
+  const expected = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
+  if (!expected) return next();
+  const supplied = String(req.headers['x-email-server-token'] || req.headers.authorization || '')
+    .replace(/^Bearer\s+/i, '')
+    .trim();
+  const suppliedBuf = Buffer.from(supplied);
+  const expectedBuf = Buffer.from(expected);
+  if (
+    suppliedBuf.length === expectedBuf.length &&
+    crypto.timingSafeEqual(suppliedBuf, expectedBuf)
+  ) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Unauthorized' });
+}
 
 function resolveSupabaseBaseUrl(rawUrl) {
   const fallback = process.env.SUPABASE_PUBLIC_URL || 'https://supabase.monitorapp.ru';
@@ -223,7 +278,7 @@ transporter.verify((error) => {
   }
 });
 
-app.post('/send-email', async (req, res) => {
+app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireServerToken, async (req, res) => {
   try {
     const { type, email, firstName, lastName, resetLink, tempPassword } = req.body;
     if (!type || !email) {
@@ -340,10 +395,10 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.post('/api/update-password', async (req, res) => {
+app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), requireServerToken, async (req, res) => {
   try {
     const userId = req.body.user_id || req.body.userId;
-    const { password, newPassword, supabaseUrl, supabaseServiceKey, changed_by } = req.body;
+    const { password, newPassword, changed_by } = req.body;
     const finalPassword = password || newPassword;
 
     if (!userId || !finalPassword) {
@@ -354,8 +409,8 @@ app.post('/api/update-password', async (req, res) => {
       });
     }
 
-    const url = resolveSupabaseBaseUrl(supabaseUrl || process.env.SUPABASE_URL);
-    const key = supabaseServiceKey || process.env.SUPABASE_SERVICE_KEY;
+    const url = resolveSupabaseBaseUrl(process.env.SUPABASE_URL);
+    const key = process.env.SUPABASE_SERVICE_KEY;
 
     if (!url || !key) {
       console.error(`[${new Date().toISOString()}] Missing Supabase credentials`);
@@ -436,16 +491,16 @@ app.post('/api/update-password', async (req, res) => {
 });
 
 // Endpoint для обновления пароля в Supabase через Admin API
-app.post('/update-password', async (req, res) => {
+app.post('/update-password', rateLimit('legacy-update-password', 10, 60 * 1000), requireServerToken, async (req, res) => {
   try {
-    const { userId, newPassword, supabaseUrl, supabaseServiceKey } = req.body;
+    const { userId, newPassword } = req.body;
     
     if (!userId || !newPassword) {
       return res.status(400).json({ error: 'Missing userId or newPassword' });
     }
 
-    const url = resolveSupabaseBaseUrl(supabaseUrl || process.env.SUPABASE_URL);
-    const key = supabaseServiceKey || process.env.SUPABASE_SERVICE_KEY;
+    const url = resolveSupabaseBaseUrl(process.env.SUPABASE_URL);
+    const key = process.env.SUPABASE_SERVICE_KEY;
 
     if (!url || !key) {
       console.error(`[${new Date().toISOString()}] Missing Supabase credentials`);

@@ -3923,7 +3923,7 @@ function OrderDetailsContent() {
   const isOrderPaid = normalizedPaymentStatus === 'paid';
   const executorAccruedTotal =
     Number(customerFinanceTotal - financeCompanyPaidExpenseTotal + financeExecutorPaidExpenseTotal) || 0;
-  const executorFinanceTotal = isOrderPaid ? executorAccruedTotal : 0;
+  const executorFinanceTotal = executorAccruedTotal;
   const showExecutorFinanceSection = canViewFinanceSection === true;
   const showInitialCostLine =
     canViewFinanceSection &&
