@@ -36,6 +36,16 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function isUuid(value: unknown): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+    String(value || '').trim(),
+  );
+}
+
+function getBearerToken(req: Request): string {
+  return String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') {
@@ -52,6 +62,7 @@ serve(async (req: Request) => {
 
     const body = (await req.json()) as ReqBody;
     if (!body?.user_id) throw new Error('user_id is required');
+    if (!isUuid(body.user_id)) throw new Error('Invalid user_id');
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -63,6 +74,15 @@ serve(async (req: Request) => {
       auth: { persistSession: false },
       global: { headers: { 'x-application': 'edge-update-user' } },
     });
+
+    const bearer = getBearerToken(req);
+    if (!bearer) throw new Error('Unauthorized');
+
+    const {
+      data: { user: actor },
+      error: actorErr,
+    } = await admin.auth.getUser(bearer);
+    if (actorErr || !actor?.id) throw new Error('Unauthorized');
 
     const {
       user_id,
@@ -77,6 +97,52 @@ serve(async (req: Request) => {
       is_suspended,
     } =
       body;
+
+    const [{ data: actorProfile, error: actorProfileErr }, { data: targetProfile, error: targetProfileErr }] =
+      await Promise.all([
+        admin
+          .from('profiles')
+          .select('id, user_id, role, company_id')
+          .or(`id.eq.${actor.id},user_id.eq.${actor.id}`)
+          .limit(1)
+          .maybeSingle(),
+        admin
+          .from('profiles')
+          .select('id, user_id, role, company_id')
+          .eq('id', user_id)
+          .maybeSingle(),
+      ]);
+    if (actorProfileErr) throw new Error('Actor profile lookup failed');
+    if (targetProfileErr) throw new Error('Target profile lookup failed');
+    if (!actorProfile?.id || !targetProfile?.id) throw new Error('Forbidden');
+
+    const { data: superAdminRow } = await admin
+      .from('super_admins')
+      .select('user_id, profile_id')
+      .eq('is_active', true)
+      .or(`user_id.eq.${actor.id},profile_id.eq.${actor.id}`)
+      .maybeSingle();
+
+    const isSelf = actor.id === user_id || actorProfile.id === user_id || actorProfile.user_id === user_id;
+    const isSuperAdmin = !!(superAdminRow?.user_id || superAdminRow?.profile_id) || actorProfile.role === 'super_admin';
+    const isCompanyAdmin =
+      actorProfile.role === 'admin' &&
+      !!actorProfile.company_id &&
+      actorProfile.company_id === targetProfile.company_id;
+    const isPrivilegedActor = isSuperAdmin || isCompanyAdmin;
+    const hasPrivilegedFields =
+      typeof role === 'string' ||
+      typeof is_admin_blocked === 'boolean' ||
+      typeof is_suspended === 'boolean' ||
+      blocked_reason !== undefined;
+
+    if (!isPrivilegedActor) {
+      if (!isSelf || hasPrivilegedFields) throw new Error('Forbidden');
+    }
+
+    if (isCompanyAdmin && !isSuperAdmin && targetProfile.role === 'admin' && !isSelf) {
+      throw new Error('Forbidden');
+    }
 
     // 1) Обновление полей профиля (если переданы)
     const profilePatch: any = {};

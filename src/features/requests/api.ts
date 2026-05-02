@@ -119,7 +119,7 @@ function extractDepartureTimeFromLegacyDatetime(input) {
 function normalizeOrder(row) {
   if (!row) return row;
   const customerPhoneVisible =
-    row.customer_phone_visible ?? row.client?.phone ?? null;
+    row.phone ?? row.customer_phone_visible ?? row.client?.phone ?? null;
   const legacyPhoneVisible = row.phone_visible ?? customerPhoneVisible;
   const objectItem = row.object || row.client_object || null;
   const clientItem = row.client || null;

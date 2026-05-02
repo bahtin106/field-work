@@ -188,9 +188,17 @@ function MyOrdersContent() {
     screenKey: 'orders-my',
     defaults: ORDER_FILTER_DEFAULTS,
   });
+
   const setFilterValue = filters.setValue;
   const selectedStatusFilters = filters.values?.statuses;
   const revalidateFilters = filters.revalidate;
+
+  const router = useRouter();
+  const navigation = useNavigation();
+  const isFocused = useIsFocused();
+  const auth = useAuth();
+  const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
+  const isSoloAdmin = String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   useFocusEffect(
     useCallback(() => {
@@ -232,13 +240,6 @@ function MyOrdersContent() {
     return aliasMap;
   }, [orderStatusOptions]);
 
-  const router = useRouter();
-  const navigation = useNavigation();
-  const isFocused = useIsFocused();
-  const auth = useAuth();
-  const authAccountType = String(auth.user?.user_metadata?.account_type || '').toLowerCase();
-  const isSoloAdmin =
-    String(auth.profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const handleBackPress = useCallback(() => {
     goBackSmart(navigation, router, null, '/orders');
   }, [navigation, router]);

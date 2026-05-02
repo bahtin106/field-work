@@ -26,7 +26,7 @@ import {
   useRequestRealtimeSync,
   useUpdateRequestMutation,
 } from '../../../src/features/requests/queries';
-import { useClient, useClients, useUpdateClientMutation } from '../../../src/features/clients/queries';
+import { useClient, useClients } from '../../../src/features/clients/queries';
 import {
   buildAdditionalPhoneDisplayLabel,
   CLIENT_ADDITIONAL_PHONE_SLOT_IDS,
@@ -431,7 +431,6 @@ function EditOrderContent() {
     enabled: !!selectedClientId,
   });
   const createClientObjectMutation = useCreateClientObjectMutation();
-  const updateClientMutation = useUpdateClientMutation();
   const [showDateModal, setShowDateModal] = useState(false);
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [stickyPlanningFieldMap, setStickyPlanningFieldMap] = useState({});
@@ -577,10 +576,21 @@ function EditOrderContent() {
       return visible.has(fieldKey);
     });
   }, [dynamicPlanningFieldKeys, isSoloAdmin, stickyPlanningFieldMap]);
+  const generalPlanningFieldKeys = useMemo(
+    () => orderedPlanningFieldKeys.filter((fieldKey) => ['urgent', 'time_window_start', 'departure_time', 'assigned_to'].includes(fieldKey)),
+    [orderedPlanningFieldKeys],
+  );
+  const secondaryPlanningFieldKeys = useMemo(
+    () => orderedPlanningFieldKeys.filter((fieldKey) => !['urgent', 'time_window_start', 'departure_time', 'assigned_to'].includes(fieldKey)),
+    [orderedPlanningFieldKeys],
+  );
   const hydratedOrderIdRef = useRef(null);
   const snapshotRef = useRef(null);
   const userEditedRef = useRef(false);
   const allowLeaveRef = useRef(false);
+  const needsPhoneSourceRestoreRef = useRef(false);
+  const preferredPhoneSourceRestoreRef = useRef(PHONE_SOURCE_IDS.MANUAL);
+  const phoneSourceIdRef = useRef(PHONE_SOURCE_IDS.MANUAL);
   const clientFlowKeyRef = useRef(
     `edit-order-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   );
@@ -665,6 +675,25 @@ function EditOrderContent() {
       return '';
     },
     [selectedClient, selectedClientAdditionalPhones, selectedObjectAdditionalPhones],
+  );
+  const normalizeDigits = useCallback((value) => String(value || '').replace(/\D/g, ''), []);
+  const resolvePhoneSourceByValue = useCallback(
+    (value) => {
+      const target = normalizeDigits(value);
+      if (!target) return PHONE_SOURCE_IDS.MANUAL;
+      const sourceIds = [
+        PHONE_SOURCE_IDS.CLIENT_PRIMARY,
+        ...CLIENT_ADDITIONAL_PHONE_SLOT_IDS.map((slotId) =>
+          buildPhoneSourceId(PHONE_SOURCE_KIND.CLIENT_ADDITIONAL, slotId),
+        ),
+        ...OBJECT_ADDITIONAL_PHONE_SLOT_IDS.map((slotId) =>
+          buildPhoneSourceId(PHONE_SOURCE_KIND.OBJECT_ADDITIONAL, slotId),
+        ),
+      ];
+      const matchedSourceId = sourceIds.find((sourceId) => normalizeDigits(resolvePhoneBySourceId(sourceId)) === target);
+      return matchedSourceId ? normalizePhoneSourceId(matchedSourceId) : PHONE_SOURCE_IDS.MANUAL;
+    },
+    [normalizeDigits, resolvePhoneBySourceId],
   );
   const phoneSourceItems = useMemo(() => {
     const items = [
@@ -1089,6 +1118,10 @@ function EditOrderContent() {
   }, [selectedClientId]);
 
   useEffect(() => {
+    phoneSourceIdRef.current = normalizePhoneSourceId(phoneSourceId);
+  }, [phoneSourceId]);
+  useEffect(() => {
+    if (needsPhoneSourceRestoreRef.current) return;
     if (phoneSourceId === PHONE_SOURCE_IDS.MANUAL) return;
     const sourceIsAvailable = phoneSourceItems.some(
       (item) => item.id === phoneSourceId && !item.disabled,
@@ -1110,6 +1143,34 @@ function EditOrderContent() {
     setPhone(resolvedPhone);
     clearFieldError('phone');
   }, [clearFieldError, phone, phoneSourceId, phoneSourceItems, resolvePhoneBySourceId]);
+  useEffect(() => {
+    if (!needsPhoneSourceRestoreRef.current) return;
+    if (phoneSourceId !== PHONE_SOURCE_IDS.MANUAL) {
+      needsPhoneSourceRestoreRef.current = false;
+      preferredPhoneSourceRestoreRef.current = PHONE_SOURCE_IDS.MANUAL;
+      return;
+    }
+    const preferredSourceId = normalizePhoneSourceId(preferredPhoneSourceRestoreRef.current);
+    if (preferredSourceId !== PHONE_SOURCE_IDS.MANUAL) {
+      const preferredPhone = resolvePhoneBySourceId(preferredSourceId);
+      if (normalizeDigits(preferredPhone) === normalizeDigits(phone)) {
+        setPhoneSourceId(preferredSourceId);
+        return;
+      }
+    }
+    const resolvedSourceId = resolvePhoneSourceByValue(phone);
+    if (resolvedSourceId !== PHONE_SOURCE_IDS.MANUAL) {
+      setPhoneSourceId(resolvedSourceId);
+      return;
+    }
+    const hasAnySelectableSource = phoneSourceItems.some(
+      (item) => item.id !== PHONE_SOURCE_IDS.MANUAL && !item.disabled,
+    );
+    if (hasAnySelectableSource) {
+      needsPhoneSourceRestoreRef.current = false;
+      preferredPhoneSourceRestoreRef.current = PHONE_SOURCE_IDS.MANUAL;
+    }
+  }, [normalizeDigits, phone, phoneSourceId, phoneSourceItems, resolvePhoneBySourceId, resolvePhoneSourceByValue]);
 
   const selectedEmployee = useMemo(() => {
     if (!assigneeId || !employees?.length) return null;
@@ -1242,7 +1303,6 @@ function EditOrderContent() {
         selectedClientId: draft.selectedClientId || null,
         selectedObjectId: draft.selectedObjectId || null,
         addressMode: normalizeOrderAddressMode(draft.addressMode),
-        phoneSourceId: normalizePhoneSourceId(draft.phoneSourceId),
         phone: String(draft.phone || '').replace(/\D/g, ''),
         entranceInfo: String(draft.entranceInfo || '').trim(),
         parkingNotes: String(draft.parkingNotes || '').trim(),
@@ -1367,8 +1427,10 @@ function EditOrderContent() {
       setSelectedClientId(nextClientId);
       setSelectedObjectId(nextObjectId);
       setAddressMode(nextAddressMode);
+      preferredPhoneSourceRestoreRef.current = normalizePhoneSourceId(phoneSourceIdRef.current);
       setPhoneSourceId(PHONE_SOURCE_IDS.MANUAL);
       setPhone(raw);
+      needsPhoneSourceRestoreRef.current = true;
       setEntranceInfo(String(nextEntranceInfo || ''));
       setParkingNotes(String(nextParkingNotes || ''));
       setGeoLat(String(nextGeoLat || ''));
@@ -2234,25 +2296,6 @@ function EditOrderContent() {
         showToast(T('order_validation_client_required_for_contact_details'), 'error');
         return;
       }
-      const currentPhoneSource =
-        selectedClient?.phone ??
-        orderData?.customer_phone_visible ??
-        orderData?.phone_visible ??
-        '';
-      const currentNormalizedPhone = toE164MobilePhoneOrNull(currentPhoneSource);
-      const shouldUpdateClientPhone =
-        !!selectedClientId &&
-        !!normalizedPhone &&
-        normalizedPhone !== currentNormalizedPhone;
-
-      if (shouldUpdateClientPhone) {
-        await updateClientMutation.mutateAsync({
-          id: String(selectedClientId),
-          patch: {
-            phone: normalizedPhone,
-          },
-        });
-      }
       const existingComment = String(orderData?.comment ?? '');
       const nextComment = String(description ?? '');
       const isCommentChanged = nextComment !== existingComment;
@@ -2264,6 +2307,7 @@ function EditOrderContent() {
         client_id: normalizeId(selectedClientId),
         object_id:
           addressMode === ORDER_ADDRESS_MODE.OBJECT ? normalizeId(selectedObjectId) : null,
+        phone: normalizedPhone || null,
         address_mode: addressMode,
         ...addressPatch,
         ...(isCommentChanged ? { comment: nextComment } : {}),
@@ -2757,17 +2801,12 @@ function EditOrderContent() {
           } catch {}
         }}
       >
-      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('create_order_section_main')}</SectionHeader>
+      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data', 'Общие данные')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedGeneralFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditGeneralField(fieldKey)}</View>
             ))}
-          </Card>
-
-          <SectionHeader>{T('create_order_section_planning')}</SectionHeader>
-          {orderedPlanningFieldKeys.length > 0 ? (
-          <Card padded={false} style={styles.card}>
-            {orderedPlanningFieldKeys.map((fieldKey) => (
+            {generalPlanningFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditPlanningField(fieldKey)}</View>
             ))}
             <TextField
@@ -2779,9 +2818,16 @@ function EditOrderContent() {
               onPress={() => setStatusModalVisible(true)}
             />
           </Card>
+
+          {secondaryPlanningFieldKeys.length > 0 ? (
+          <Card padded={false} style={styles.card}>
+            {secondaryPlanningFieldKeys.map((fieldKey) => (
+              <View key={fieldKey}>{renderEditPlanningField(fieldKey)}</View>
+            ))}
+          </Card>
           ) : null}
 
-          <SectionHeader>{T('create_order_section_customer')}</SectionHeader>
+          <SectionHeader>{T('order_edit_section_object_data', 'Данные объекта')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedCustomerFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditCustomerField(fieldKey)}</View>
@@ -2938,6 +2984,8 @@ function EditOrderContent() {
         title={T('create_order_phone_source_modal_title')}
         items={phoneSourceItems}
         searchable={false}
+        multilineItems
+        itemTitleNumberOfLines={2}
         selectedId={phoneSourceId}
         onSelect={(item) => {
           if (!item?.id || item.disabled) return;

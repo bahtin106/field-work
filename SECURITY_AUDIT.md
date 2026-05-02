@@ -1,0 +1,33 @@
+# Security Audit
+
+Audit date: 2026-05-02
+
+Scope: Expo/React Native mobile app, Supabase Edge Functions/Postgres migrations, standalone email/password server, local/CI config, secrets and dependency surface.
+
+Detected stack:
+- Mobile: Expo SDK 54, React Native 0.81, Expo Router, Hermes.
+- Backend/API: Supabase Edge Functions (Deno), standalone Node/Express email server, one Next-style API route.
+- Database/storage/auth: Supabase Auth, Postgres, RLS migrations, Supabase Storage plus Beget S3 helpers.
+- Package manager: npm with `package-lock.json`.
+- CI/CD/config: EAS config, Android native project, Docker email server files, operational scripts.
+
+| Severity | Area | File | Problem | Exploit scenario | Fix | Status |
+|---|---|---|---|---|---|---|
+| Critical | Secrets | `credentials.json`, `my-release-key.jks` | Android release keystore metadata/password file and keystore were tracked by git. | Repository access allows signing malicious app updates or impersonating release builds. | Removed from git index and added ignore rules. Rotate release signing material. | fixed + needs manual action |
+| Critical | Secrets | `supabase/.env.local` | Local Supabase service role key present in ignored env file. | Any leak of workstation files gives full DB bypass of RLS. | Confirmed ignored; documented mandatory rotation. | needs manual action |
+| Critical | Secrets | `supabase/.temp/pooler-url` and `supabase/.temp/*` | Supabase local temp metadata, including pooler URL, was tracked. | Repo access can expose DB connection metadata. | Removed `supabase/.temp/*` from git index and ignored the directory. | fixed + needs manual action |
+| Critical | API authz | `supabase/functions/update_user/index.ts` | Edge Function used service role without verifying caller authorization. | Authenticated user could call the function and update another user's profile/password/role if they knew an ID. | Added bearer verification, actor/target profile lookup, same-company admin/super-admin/self checks, and UUID validation. | fixed |
+| High | Mobile token storage | `lib/supabase.js` | Supabase access/refresh session was persisted in AsyncStorage on native. | Malware/backup/local compromise can extract refresh tokens from app storage. | Added `expo-secure-store` and native SecureStore adapter; web keeps AsyncStorage fallback. | fixed |
+| High | Logging/privacy | `lib/errorLogsClient.js` | Console/error telemetry could serialize tokens, Authorization headers, passwords, cookies, or service keys into `error_logs`. | A thrown request object or debug log stores secrets/PII in DB. | Added recursive key-based and JWT/Bearer redaction before clipping/stringifying. | fixed |
+| High | Email/password API | `email-server.cjs` | Password update endpoints accepted Supabase URL/service key overrides from request body. | Remote caller could redirect admin calls or inject credentials; errors could expose internals. | Server now uses environment credentials only; added CORS allowlist, optional API token gate, and per-IP rate limits. | fixed |
+| High | Password reset | `supabase/functions/request-password-reset/index.ts` | Temporary passwords used low-entropy `Math.random()` word+digits and user enumeration response. | Attacker can brute-force/reset known users or enumerate valid email addresses. | Switched to crypto-random 18-char password and generic success for missing users. | fixed |
+| High | Android hardening | `android/app/src/main/AndroidManifest.xml` | `allowBackup=true`, cleartext not explicitly disabled, extra sensitive permissions present. | Device backup can include app data; unnecessary permissions increase attack surface. | Set `allowBackup=false`, `usesCleartextTraffic=false`, removed audio/overlay/write storage permissions. | fixed |
+| High | Android release signing | `android/app/build.gradle`, `credentials.json`, `my-release-key.jks` | Release build used debug signing config and release signing secrets were stored in repo files. | A production APK/AAB could be signed with public debug credentials or leaked release keystore. | Removed tracked key files and switched release signing to env/Gradle properties only. | fixed + needs manual action |
+| Medium | Mobile permissions | `app.json` | Duplicate camera permissions and unnecessary `RECORD_AUDIO`. | App asks for more permission than needed for photo workflow. | Reduced permissions to camera only. | fixed |
+| Medium | Email API abuse | `email-server.cjs`, `supabase/functions/public-support-request/index.ts` | Public email/support endpoints still need deployment-level abuse controls. | Attackers can spam support/email paths if no upstream WAF/API token is configured. | Added Node rate limit and optional token; Supabase support function remains TODO. | partial |
+| Medium | RLS/grants | `supabase/migrations/*` | Many tables have RLS hardening migrations; service-role-only `using (true)` policies appear intentional, but live DB state was not introspected. | Drift between migrations and production DB can leave broad grants or missing RLS. | Reviewed migration patterns; require live DB verification queries before claiming production state. | needs manual action |
+| Medium | Source maps/build artifacts | `dist/`, `build/`, generated JS/HTML files | Large generated artifacts exist locally; ignored, but should not be published with secrets/source maps. | Public source maps can expose internals, endpoints, or comments. | Confirmed ignored; deployment artifact review required. | needs manual action |
+| Medium | Release dev flags | `android/gradle.properties` | React Native development network inspector was enabled by default. | Debug network tooling can expose traffic metadata or alter release behavior. | Set `EX_DEV_CLIENT_NETWORK_INSPECTOR=false` by default. | fixed |
+| Medium | Dependencies | `package-lock.json` | Initial audit showed high issues in `xmldom`, `flatted`, `lodash`, `node-forge`, `tar`, `undici`, `nodemailer`. | Vulnerable build/dev/server dependencies can enable DoS, injection, traversal, or smuggling paths. | Ran non-force `npm audit fix`; remaining issues require breaking upgrades. | partial |
+| Low | Public client config | `app.json` | Supabase anon key is embedded in app config. | Users can extract anon key from bundle. | This is expected for Supabase clients; security must rely on RLS and grants, never anon secrecy. | not applicable |
+| Low | Firebase config | `google-services.json`, `android/app/google-services.json` | Firebase mobile config is tracked. | API key is extractable from app bundle. | Usually public client config; verify Firebase restrictions manually. | needs manual action |

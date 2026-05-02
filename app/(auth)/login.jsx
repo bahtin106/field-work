@@ -44,6 +44,9 @@ const createStyles = (theme) => {
       flex: 1,
       paddingHorizontal: theme.spacing.lg,
       justifyContent: 'center',
+      width: '100%',
+      maxWidth: 480,
+      alignSelf: 'center',
     },
     content: {
       justifyContent: 'center',
@@ -335,7 +338,7 @@ function LoginScreenContent() {
         enabled={Platform.OS === 'ios'}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        {Platform.OS === 'web' ? (
           <View style={styles.container}>
             <View style={styles.content}>
               <Text style={styles.title}>{t('login_title')}</Text>
@@ -428,7 +431,102 @@ function LoginScreenContent() {
               </Text>
             </View>
           </View>
-        </TouchableWithoutFeedback>
+        ) : (
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.container}>
+              <View style={styles.content}>
+                <Text style={styles.title}>{t('login_title')}</Text>
+                <Text style={styles.subtitle}>{t('login_subtitle')}</Text>
+
+                <Card paddedXOnly style={styles.fieldCard}>
+                  <TextField
+                    value={email}
+                    onChangeText={setEmail}
+                    placeholder={t('fields_email')}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    returnKeyType="next"
+                    accessibilityLabel={t('fields_email')}
+                    editable={!loading}
+                    hideSeparator={true}
+                    style={{ minHeight: 52 }}
+                  />
+                </Card>
+
+                <Card paddedXOnly style={styles.fieldCard}>
+                  <TextField
+                    ref={passwordFieldRef}
+                    value={password}
+                    onChangeText={setPassword}
+                    placeholder={t('fields_password')}
+                    secureTextEntry={true}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="password"
+                    textContentType="password"
+                    returnKeyType="done"
+                    onSubmitEditing={handleSubmit}
+                    accessibilityLabel={t('fields_password')}
+                    editable={!loading}
+                    hideSeparator={true}
+                    style={{ minHeight: 52 }}
+                  />
+                  <Pressable
+                    onPress={handleTogglePassword}
+                    style={styles.eyeButton}
+                    android_ripple={{
+                      color: theme.colors.border,
+                      borderless: interactive.rippleBorderless,
+                      radius: interactive.rippleRadius,
+                    }}
+                    accessibilityLabel={t('auth_show_password')}
+                    accessibilityRole="button"
+                    hitSlop={interactive.hitSlop}
+                    pressRetentionOffset={interactive.pressRetentionOffset}
+                    disabled={loading}
+                  >
+                    <Feather
+                      name="eye"
+                      size={theme.components.listItem.chevronSize}
+                      color={theme.colors.primary}
+                    />
+                  </Pressable>
+                </Card>
+
+                {error && <Text style={styles.errorText}>{error}</Text>}
+
+                <Button
+                  title={t('btn_login')}
+                  variant="primary"
+                  size="lg"
+                  onPress={handleSubmit}
+                  disabled={!canSubmit}
+                  loading={loading}
+                />
+
+                <Text style={styles.forgotText}>
+                  {t('login_forgot_password')}{' '}
+                  <Text
+                    style={styles.registerLink}
+                    onPress={() => !loading && openRecoverModal()}
+                  >
+                    {t('login_recover_link')}
+                  </Text>
+                </Text>
+
+                <Text style={styles.registerText}>
+                  {t('login_no_account')}{' '}
+                  <Text
+                    style={styles.registerLink}
+                    onPress={() => !loading && router.push('/(auth)/register')}
+                  >
+                    {t('register_link')}
+                  </Text>
+                </Text>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        )}
       </KeyboardAvoidingView>
 
       <BaseModal

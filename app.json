@@ -12,7 +12,8 @@
     },
     "platforms": [
       "android",
-      "ios"
+      "ios",
+      "web"
     ],
     "userInterfaceStyle": "automatic",
     "android": {
@@ -20,11 +21,7 @@
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
         "CAMERA",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO",
-        "CAMERA",
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

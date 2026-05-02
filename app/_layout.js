@@ -633,7 +633,10 @@ function RootLayoutInner() {
 
   return (
     <GestureHandlerRootView
-      style={{ flex: 1, backgroundColor: theme.colors.background }}
+      style={[
+        { flex: 1, backgroundColor: theme.colors.background },
+        Platform.OS === 'web' ? { width: '100%', maxWidth: 600, alignSelf: 'center', marginHorizontal: 'auto' } : undefined
+      ]}
       onLayout={hideSplash}
     >
       <PermissionsProvider>

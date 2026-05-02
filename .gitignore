@@ -16,6 +16,9 @@ ios/build/
 .easlrc
 .env
 .env.*
+*.jks
+credentials.json
+supabase/.temp/
 backups/
 backup-secrets/
 node_modules.backup/

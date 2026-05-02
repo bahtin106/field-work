@@ -50,6 +50,9 @@ const createStyles = (theme, insets = {}) => {
       // Убираем верхний паддинг полностью
       paddingTop: 0,
       paddingBottom: theme.components.scrollView.paddingBottom + insets.bottom,
+      width: '100%',
+      maxWidth: 480,
+      alignSelf: 'center',
     },
     title: {
       textAlign: 'center',
@@ -525,7 +528,7 @@ export default function RegisterScreen() {
       // Делаем как в new/edit: управляем нижним отступом сами через contentContainerStyle
       edges={['left', 'right']}
     >
-      <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+        {Platform.OS === 'web' ? (
           <KeyboardAwareScrollView
             ref={scrollRef}
             style={styles.flex}
@@ -543,7 +546,6 @@ export default function RegisterScreen() {
             scrollEventThrottle={16}
           >
             <Text style={styles.title}>{t('register_title')}</Text>
-
             {/* Avatar - removed */}
 
             {banner ? (
@@ -773,7 +775,264 @@ export default function RegisterScreen() {
             </Pressable>
             <PrivacyPolicyModal visible={policyVisible} onClose={() => setPolicyVisible(false)} />
           </KeyboardAwareScrollView>
-      </TouchableWithoutFeedback>
+        ) : (
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <KeyboardAwareScrollView
+              ref={scrollRef}
+              style={styles.flex}
+              contentContainerStyle={styles.content}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="none"
+              showsVerticalScrollIndicator={false}
+              bottomOffset={keyboardBottomOffset}
+              extraKeyboardSpace={extraKeyboardSpace}
+              onScroll={(e) => {
+                try {
+                  scrollYRef.current = e?.nativeEvent?.contentOffset?.y || 0;
+                } catch {}
+              }}
+              scrollEventThrottle={16}
+            >
+              <Text style={styles.title}>{t('register_title')}</Text>
+
+              <Card style={styles.section} padded={true}>
+                <SectionHeader title={t('register_section_profile')} />
+                <TextField
+                  ref={firstNameRef}
+                  value={firstName}
+                  onChangeText={(val) => {
+                    setFirstName(val);
+                    if (touched.firstName) clearFieldError('firstName');
+                  }}
+                  onBlur={() => setTouched((p) => ({ ...p, firstName: true }))}
+                  placeholder={t('fields_firstName')}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() => lastNameRef.current?.focus()}
+                  editable={!submitting}
+                  style={styles.firstField}
+                  required={true}
+                  error={firstNameError}
+                />
+                <TextField
+                  ref={lastNameRef}
+                  value={lastName}
+                  onChangeText={(val) => {
+                    setLastName(val);
+                    if (touched.lastName) clearFieldError('lastName');
+                  }}
+                  onBlur={() => setTouched((p) => ({ ...p, lastName: true }))}
+                  placeholder={t('fields_lastName')}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() => emailRef.current?.focus()}
+                  editable={!submitting}
+                  hideSeparator
+                  required={true}
+                  error={lastNameError}
+                />
+              </Card>
+
+              <Card style={styles.section} padded={true}>
+                <SectionHeader title={t('register_section_account')} />
+                <TextField
+                  ref={emailRef}
+                  value={email}
+                  onChangeText={(val) => {
+                    setEmail(val);
+                    if (touched.email) clearFieldError('email');
+                  }}
+                  onBlur={() => setTouched((p) => ({ ...p, email: true }))}
+                  placeholder={t('fields_email')}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() =>
+                    accountType === 'company'
+                      ? companyNameRef.current?.focus()
+                      : pwdRef.current?.focus()
+                  }
+                  editable={!submitting}
+                  required={true}
+                  error={emailError}
+                  hint={
+                    emailCheckStatus === 'checking'
+                      ? t('hint_checking')
+                      : emailCheckStatus === 'available'
+                        ? t('hint_available')
+                        : undefined
+                  }
+                  statusColor={
+                    emailCheckStatus === 'checking'
+                      ? theme.colors.textSecondary
+                      : emailCheckStatus === 'available'
+                        ? theme.colors.success
+                        : emailCheckStatus === 'taken'
+                          ? theme.colors.danger
+                          : undefined
+                  }
+                />
+
+                <RadioGroupField
+                  label={t('fields_accountType')}
+                  options={[
+                    { label: t('setup_type_solo'), value: 'solo' },
+                    { label: t('setup_type_company'), value: 'company' },
+                  ]}
+                  value={accountType}
+                  onChange={(val) => {
+                    setAccountType(val);
+                    if (touched.accountType) clearFieldError('accountType');
+                  }}
+                  error={accountTypeError}
+                  hideSeparator={accountType !== 'company'}
+                />
+
+                {accountType === 'company' && (
+                  <TextField
+                    ref={companyNameRef}
+                    value={companyName}
+                    onChangeText={(val) => {
+                      setCompanyName(val);
+                      if (touched.companyName) clearFieldError('companyName');
+                    }}
+                    onBlur={() => setTouched((p) => ({ ...p, companyName: true }))}
+                    placeholder={t('setup_company_name')}
+                    autoCapitalize="words"
+                    returnKeyType="next"
+                    onSubmitEditing={() => pwdRef.current?.focus()}
+                    editable={!submitting}
+                    hideSeparator
+                    required={true}
+                    error={companyNameError}
+                    hint={
+                      companyCheckStatus === 'checking'
+                        ? t('hint_checking')
+                        : companyCheckStatus === 'available'
+                          ? t('hint_available')
+                          : undefined
+                    }
+                    statusColor={
+                      companyCheckStatus === 'checking'
+                        ? theme.colors.textSecondary
+                        : companyCheckStatus === 'available'
+                          ? theme.colors.success
+                          : companyCheckStatus === 'taken'
+                            ? theme.colors.danger
+                            : undefined
+                    }
+                  />
+                )}
+              </Card>
+
+              <Card style={styles.section} padded={true}>
+                <SectionHeader title={t('register_section_password')} />
+                <TextField
+                  ref={pwdRef}
+                  value={password}
+                  onChangeText={(val) => {
+                    setPassword(val);
+                    if (invalidCharWarning) setInvalidCharWarning(false);
+                    if (touched.password) clearFieldError('password');
+                  }}
+                  onBlur={() => setTouched((p) => ({ ...p, password: true }))}
+                  onKeyPress={({ nativeEvent }) => {
+                    const char = nativeEvent.key;
+                    if (char && char.length === 1) {
+                      const cyrillicRegex = /[А-Яа-яЁё]/;
+                      if (cyrillicRegex.test(char)) {
+                        handleInvalidPasswordInput();
+                      }
+                    }
+                  }}
+                  placeholder={t('fields_password')}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="next"
+                  onSubmitEditing={() => confirmPwdRef.current?.focus()}
+                  editable={!submitting}
+                  required={true}
+                  error={passwordError}
+                  hint={invalidCharWarning ? t('register_error_invalid_chars') : undefined}
+                  statusColor={invalidCharWarning ? theme.colors.danger : undefined}
+                >
+                  <Pressable
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.passwordToggle}
+                    hitSlop={theme.components.touchable.hitSlop}
+                  >
+                    <Feather
+                      name={showPassword ? 'eye-off' : 'eye'}
+                      size={theme.components.listItem.chevronSize}
+                      color={theme.colors.overlayText}
+                    />
+                  </Pressable>
+                </TextField>
+                <TextField
+                  ref={confirmPwdRef}
+                  value={confirmPassword}
+                  onChangeText={(val) => {
+                    setConfirmPassword(val);
+                    if (touched.confirmPassword) clearFieldError('confirmPassword');
+                  }}
+                  onBlur={() => setTouched((p) => ({ ...p, confirmPassword: true }))}
+                  placeholder={t('fields_confirmPassword')}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="done"
+                  onSubmitEditing={handleRegister}
+                  editable={!submitting}
+                  hideSeparator
+                  required={true}
+                  error={confirmPasswordError}
+                />
+              </Card>
+
+              <ConsentCheckbox
+                checked={consentChecked}
+                onChange={setConsentChecked}
+                onPolicyPress={() => {
+                  Keyboard.dismiss();
+                  setPolicyVisible(true);
+                }}
+              />
+
+              <Button
+                title={t('auth_create_account')}
+                variant="primary"
+                size="lg"
+                onPress={handleRegister}
+                loading={submitting}
+                style={styles.submitButton}
+                disabled={emailCheckStatus === 'checking' || companyCheckStatus === 'checking'}
+              />
+
+              <Pressable
+                onPress={() => {
+                  if (submitting) return;
+                  router.push('/(auth)/login');
+                }}
+                disabled={submitting}
+                style={({ pressed }) => [
+                  styles.loginLinkContainer,
+                  pressed && { opacity: interactive.pressedOpacity },
+                ]}
+                hitSlop={theme.components.touchable.hitSlop}
+              >
+                <Text style={styles.loginText}>
+                  {t('register_have_account')}{' '}
+                  <Text style={styles.loginLink}>{t('login_link')}</Text>
+                </Text>
+              </Pressable>
+              <PrivacyPolicyModal visible={policyVisible} onClose={() => setPolicyVisible(false)} />
+            </KeyboardAwareScrollView>
+          </TouchableWithoutFeedback>
+        )}
     </SafeAreaView>
   );
 }
