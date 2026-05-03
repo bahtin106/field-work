@@ -72,6 +72,10 @@ function txt(v) {
   return String(v || '').trim().toLowerCase();
 }
 
+function normalizeMemberId(value) {
+  return String(value || '').trim();
+}
+
 function asBool(value) {
   if (value === true || value === 1 || value === '1' || value === 'true' || value === 't') return true;
   if (value === false || value === 0 || value === '0' || value === 'false' || value === 'f' || value == null) return false;
@@ -271,9 +275,17 @@ export default function BillingScreen() {
 
   const mergedMembers = React.useMemo(() => {
     const byProfile = new Map();
-    employees.forEach((e) => byProfile.set(e.id, e));
+    employees.forEach((e) => {
+      const id = normalizeMemberId(e?.id);
+      if (!id) return;
+      byProfile.set(id, e);
+    });
     const byAccess = new Map();
-    members.forEach((m) => byAccess.set(m.user_id, m));
+    members.forEach((m) => {
+      const id = normalizeMemberId(m?.user_id);
+      if (!id) return;
+      byAccess.set(id, m);
+    });
     const ids = new Set([...byProfile.keys(), ...byAccess.keys()]);
 
     const rows = [];
@@ -281,7 +293,7 @@ export default function BillingScreen() {
       const p = byProfile.get(id) || null;
       const a = byAccess.get(id) || null;
       rows.push({
-        user_id: id,
+        user_id: normalizeMemberId(id),
         name: a?.name || p?.display_name || p?.full_name || p?.email || String(id),
         role: String(a?.role || p?.role || ROLE.WORKER).toLowerCase(),
         department_id: p?.department_id || null,
@@ -313,7 +325,8 @@ export default function BillingScreen() {
     const init = new Set(
       mergedMembers
         .filter((m) => isMemberLicenseActive(m))
-        .map((m) => m.user_id),
+        .map((m) => normalizeMemberId(m.user_id))
+        .filter(Boolean),
     );
     setManageSelection(init);
     setInitialSelection(init);
@@ -503,7 +516,12 @@ export default function BillingScreen() {
     const toRevoke = [];
     manageSelection.forEach((id) => { if (!initialSelection.has(id)) toAssign.push(id); });
     initialSelection.forEach((id) => { if (!manageSelection.has(id)) toRevoke.push(id); });
-    const protectedAdminIds = new Set(mergedMembers.filter((m) => m.role === ROLE.ADMIN).map((m) => m.user_id));
+    const protectedAdminIds = new Set(
+      mergedMembers
+        .filter((m) => m.role === ROLE.ADMIN)
+        .map((m) => normalizeMemberId(m.user_id))
+        .filter(Boolean),
+    );
     return {
       toAssign,
       toRevoke: toRevoke.filter((id) => !protectedAdminIds.has(id)),
@@ -604,7 +622,8 @@ export default function BillingScreen() {
   }, [manageFilters, restoreManageAfterFilters]);
 
   const toggleMember = React.useCallback((member) => {
-    const memberId = String(member?.user_id || '').trim();
+    const memberId = normalizeMemberId(member?.user_id);
+    if (!memberId) return;
     if (normalizedCurrentUserId && memberId === normalizedCurrentUserId) {
       showManageModalToast(t('billing_manage_self_protected'), 'warning');
       return;
@@ -615,7 +634,7 @@ export default function BillingScreen() {
     }
     setManageSelection((prev) => {
       const next = new Set(prev);
-      if (next.has(member.user_id)) next.delete(member.user_id); else next.add(member.user_id);
+      if (next.has(memberId)) next.delete(memberId); else next.add(memberId);
       return next;
     });
     setManageError('');
@@ -628,7 +647,7 @@ export default function BillingScreen() {
       if (rpcError) throw rpcError;
       const activeOrdersCount = Number(data?.activeOrdersCount || 0);
       if (activeOrdersCount <= 0) continue;
-      const member = mergedMembers.find((m) => m.user_id === userId);
+      const member = mergedMembers.find((m) => normalizeMemberId(m.user_id) === normalizeMemberId(userId));
       conflicts.push({
         userId,
         name: member?.name || String(userId),
@@ -720,6 +739,19 @@ export default function BillingScreen() {
       }
 
       for (const userId of diff.toAssign) {
+        const member = mergedMembers.find((m) => normalizeMemberId(m.user_id) === normalizeMemberId(userId));
+        if (member && member.role !== ROLE.ADMIN) {
+          const { error: unBlockError } = await supabase
+            .from('profiles')
+            .update({
+              is_admin_blocked: false,
+              blocked_reason: null,
+            })
+            .eq('id', userId)
+            .eq('company_id', companyId)
+            .neq('role', 'admin');
+          if (unBlockError) throw unBlockError;
+        }
         const { error: rpcError } = await supabase.rpc('assign_seat', {
           p_company_id: companyId,
           p_user_id: userId,
@@ -739,7 +771,7 @@ export default function BillingScreen() {
     } finally {
       setSavingChanges(false);
     }
-  }, [companyId, getDiff, handleRpcError, manageSelection, orderConflicts, refreshAll, t, toast]);
+  }, [companyId, getDiff, handleRpcError, manageSelection, mergedMembers, orderConflicts, refreshAll, t, toast]);
 
   const isSubscriptionActive = entitlements?.status === 'active';
   const statusLabel = isSubscriptionActive ? t('billing_status_active') : t('billing_status_inactive', t('billing_status_expired'));
@@ -996,9 +1028,10 @@ export default function BillingScreen() {
           keyboardDismissMode="on-drag"
         >
           {sortedManageMembers.map((m) => {
-            const selected = manageSelection.has(m.user_id);
-            const effectiveSelected = hasChanges ? selected : isMemberLicenseActive(m);
-            const blockedVisual = !effectiveSelected || m.admin_blocked;
+            const memberId = normalizeMemberId(m.user_id);
+            const selected = manageSelection.has(memberId);
+            const effectiveSelected = selected;
+            const blockedVisual = !effectiveSelected;
             const rowBg = blockedVisual ? withAlpha(theme.colors.danger, theme.components?.pill?.backgroundAlpha ?? 0.08) : withAlpha(theme.colors.success, theme.components?.pill?.backgroundAlpha ?? 0.08);
             const rowBorder = blockedVisual ? withAlpha(theme.colors.danger, theme.components?.pill?.borderAlpha ?? 0.18) : withAlpha(theme.colors.success, theme.components?.pill?.borderAlpha ?? 0.18);
             const badgeLabel = blockedVisual
@@ -1015,10 +1048,10 @@ export default function BillingScreen() {
               : '';
             const roleDepartmentLabel = useDepartments ? `${roleLabel} • ${departmentLabel}` : roleLabel;
             return (
-              <Pressable key={m.user_id} onPress={() => toggleMember(m)} style={({ pressed }) => [styles(theme).manageRow, { backgroundColor: rowBg, borderColor: rowBorder }, pressed ? styles(theme).pressed : null]} disabled={savingChanges}>
+              <Pressable key={memberId} onPress={() => toggleMember(m)} style={({ pressed }) => [styles(theme).manageRow, { backgroundColor: rowBg, borderColor: rowBorder }, pressed ? styles(theme).pressed : null]} disabled={savingChanges}>
                 <View style={styles(theme).fill}>
                   <Text style={styles(theme).memberName} numberOfLines={1} ellipsizeMode="tail">
-                    {m.name || m.email || String(m.user_id || '')}
+                    {m.name || m.email || memberId}
                   </Text>
                   <Text style={styles(theme).memberMeta} numberOfLines={1} ellipsizeMode="tail">
                     {roleDepartmentLabel}

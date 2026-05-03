@@ -239,7 +239,7 @@ export async function searchCompanyObjectsForOrder({
 export async function createClientObject(payload: Record<string, any>) {
   return measureNetwork('objects.create', async () => {
     const clean = sanitizeClientObjectPayload(payload);
-    const insertPayload = {
+    const insertPayload: Record<string, any> = {
       client_id: payload.client_id,
       name: clean.name,
       is_primary: !!payload.is_primary,
@@ -315,14 +315,14 @@ export async function updateClientObject(objectId: string, patch: Record<string,
       }
     });
 
-    let query = supabase
+    let query: any = supabase
       .from('client_objects')
       .update(nextPatch)
       .eq('id', objectId)
       .eq('company_id', scopedCompanyId)
       .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
       .single();
-    let { data, error } = await query;
+    let { data, error }: any = await query;
     if (error && isMissingLocationModeColumnError(error) && Object.prototype.hasOwnProperty.call(nextPatch, 'location_mode')) {
       const fallbackPatch = { ...nextPatch };
       delete fallbackPatch.location_mode;

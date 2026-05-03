@@ -148,7 +148,7 @@ async function canCurrentUserViewAllOrders() {
   }
 }
 
-export async function listClients({ companyId = null, search = '' } = {}) {
+export async function listClients({ companyId = null, search = '' }: any = {}) {
   return measureNetwork('clients.list', async () => {
     const scopedCompanyId = await resolveScopedCompanyId(companyId);
     if (!scopedCompanyId) return [];
@@ -184,9 +184,9 @@ export async function listClients({ companyId = null, search = '' } = {}) {
       return query;
     };
 
-    let { data, error } = await buildListQuery(true);
+    let { data, error }: any = await buildListQuery(true);
     if (error && shouldFallbackWithoutAdditionalFields(error)) {
-      const fallbackResult = await buildListQuery(false);
+      const fallbackResult: any = await buildListQuery(false);
       data = fallbackResult.data;
       error = fallbackResult.error;
     }
@@ -199,7 +199,7 @@ export async function listClients({ companyId = null, search = '' } = {}) {
         : []),
     ]).filter(Boolean);
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls);
-    const cleanedSet = new Set(cleanedUrls);
+    const cleanedSet = new Set<string>(cleanedUrls);
     return rows.map((row) =>
       normalizeClient({
         ...applyClientMediaCleanup(row, cleanedSet),
@@ -228,7 +228,7 @@ export async function getClientById(clientId: string) {
     if (!scopedCompanyId) return null;
 
     try {
-      const { data, error } = await supabase
+      const { data, error }: any = await supabase
         .from('clients')
         .select(`${CLIENT_COLUMNS_WITH_ADDITIONAL}, client_objects(*, object_tag_links(tag:company_tags(id, value, tag_type))), ${CLIENT_TAGS_RELATION}`)
         .eq('id', key)
@@ -242,7 +242,7 @@ export async function getClientById(clientId: string) {
             ? data.client_objects.map((objectItem: any) => String(objectItem?.photo_url || '').trim())
             : []),
         ].filter(Boolean));
-      const cleanedSet = new Set(cleanedUrls);
+      const cleanedSet = new Set<string>(cleanedUrls);
       return normalizeClient({
         ...applyClientMediaCleanup(data, cleanedSet),
         avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
@@ -258,7 +258,7 @@ export async function getClientById(clientId: string) {
       if (!shouldFallbackWithoutAdditionalFields(firstFailure)) {
         throw firstFailure;
       }
-      const { data, error } = await supabase
+      const { data, error }: any = await supabase
         .from('clients')
         .select(CLIENT_COLUMNS_BASE)
         .eq('id', key)
@@ -269,7 +269,7 @@ export async function getClientById(clientId: string) {
       const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
         [String(data?.avatar_url || '').trim()].filter(Boolean),
       );
-      const cleanedSet = new Set(cleanedUrls);
+      const cleanedSet = new Set<string>(cleanedUrls);
       return normalizeClient({
         ...applyClientMediaCleanup(data, cleanedSet),
         avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,

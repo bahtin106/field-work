@@ -20,6 +20,10 @@ import {
 } from '../lib/supabaseAuthErrors';
 import { t } from '../src/i18n';
 
+function buildBlockedByAdminMessage() {
+  return `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`;
+}
+
 /**
  * Hook для авторизации с полной поддержкой жизненного цикла
  * @returns {Object} состояние и методы
@@ -122,14 +126,11 @@ export function useAuthLogin() {
                 ? t('auth_blocked_by_license')
                 : blockCode === 'company_inactive'
                   ? t('auth_company_inactive')
-                : t('auth_access_blocked'));
-            try {
-              await supabase.auth.signOut();
-            } catch {}
+                : buildBlockedByAdminMessage());
             setAccessBlock({ code: blockCode, message: blockMessage });
             setError(blockMessage);
             setLoading(false);
-            return false;
+            return true;
           }
         } else {
           const { data: userRes } = await supabase.auth.getUser();
@@ -153,43 +154,30 @@ export function useAuthLogin() {
               profile = byUserId || null;
             }
 
-            const blockedReason = String(profile?.blocked_reason || '').toLowerCase();
             const blockedByAdmin =
-              !!profile?.is_admin_blocked ||
-              blockedReason === 'manual' ||
-              blockedReason === 'admin_block' ||
-              blockedReason === 'admin_blocked' ||
-              blockedReason === 'blocked' ||
-              blockedReason === 'suspended';
+              !!profile?.is_admin_blocked;
             const blockedByLicense = String(profile?.license_state || '') === 'blocked_by_license';
 
-            if (!profile || blockedByAdmin || blockedByLicense) {
-              const blockCode = !profile
-                ? 'access_blocked'
-                : (blockedByAdmin ? 'admin_blocked' : 'blocked_by_license');
+            // Do not fail-close on profile lookup misses right after sign-in:
+            // auth state is revalidated in root layout and can block access there.
+            if (blockedByAdmin || blockedByLicense) {
+              const blockCode = blockedByAdmin ? 'admin_blocked' : 'blocked_by_license';
               const blockMessage = blockedByAdmin
-                ? t('auth_access_blocked')
-                : (!profile ? t('auth_access_blocked') : t('auth_blocked_by_license'));
-              try {
-                await supabase.auth.signOut();
-              } catch {}
+                ? buildBlockedByAdminMessage()
+                : t('auth_blocked_by_license');
               setAccessBlock({ code: blockCode, message: blockMessage });
               setError(blockMessage);
               setLoading(false);
-              return false;
+              return true;
             }
           }
         }
-      } catch {
-        // If access checks unexpectedly fail, fail closed.
-        try {
-          await supabase.auth.signOut();
-        } catch {}
-        const blockMessage = t('auth_access_blocked');
-        setAccessBlock({ code: 'access_blocked', message: blockMessage });
-        setError(blockMessage);
-        setLoading(false);
-        return false;
+      } catch (e) {
+        // Keep user signed in on transient access-check failures (e.g. mobile network/RPC hiccups).
+        // Access is still enforced by periodic checks in root layout.
+        logger.warn('Access check failed during login, allowing session and deferring recheck', {
+          error: e?.message || String(e || ''),
+        });
       }
 
       logger.info('Login successful', { email: emailTrim, hasSession: !!data.session });

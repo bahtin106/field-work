@@ -23,7 +23,7 @@ async function resolveCurrentUserScope() {
   };
 }
 
-function normalizeEmployee(row) {
+function normalizeEmployee(row: any) {
   const first_name = row?.first_name ?? row?.firstName ?? '';
   const last_name = row?.last_name ?? row?.lastName ?? '';
   const middle_name = row?.middle_name ?? row?.middleName ?? '';
@@ -68,7 +68,7 @@ function normalizeEmployee(row) {
   return normalized;
 }
 
-export async function listEmployees(filters = {}) {
+export async function listEmployees(filters: any = {}) {
   return measureNetwork('employees.list', async () => {
     const explicitCompanyId = String(filters?.companyId || '').trim() || null;
     const scope = explicitCompanyId ? null : await resolveCurrentUserScope();
@@ -106,7 +106,7 @@ export async function listEmployees(filters = {}) {
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
       rows.map((row) => String(row?.avatar_url || '').trim()).filter(Boolean),
     );
-    const cleanedSet = new Set(cleanedUrls);
+    const cleanedSet = new Set<string>(cleanedUrls);
     return rows.map((row) =>
       normalizeEmployee({
         ...row,
@@ -117,7 +117,7 @@ export async function listEmployees(filters = {}) {
   });
 }
 
-export async function getEmployeeById(userId) {
+export async function getEmployeeById(userId: any) {
   const key = String(userId || '');
   if (!key) return null;
   const existing = employeeByIdInFlight.get(key);
@@ -166,7 +166,7 @@ export async function getEmployeeById(userId) {
               const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
                 [String(full?.avatar_url || '').trim()].filter(Boolean),
               );
-              const cleanedSet = new Set(cleanedUrls);
+              const cleanedSet = new Set<string>(cleanedUrls);
               return {
                 ...normalizeEmployee({
                   id: full.profile_id,
@@ -230,7 +230,7 @@ export async function getEmployeeById(userId) {
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
       [String(prof?.avatar_url || '').trim()].filter(Boolean),
     );
-    const cleanedSet = new Set(cleanedUrls);
+    const cleanedSet = new Set<string>(cleanedUrls);
     const safeProf = {
       ...prof,
       avatar_url: cleanedSet.has(String(prof?.avatar_url || '').trim()) ? null : prof?.avatar_url,
@@ -276,7 +276,7 @@ export async function getEmployeeById(userId) {
   return p;
 }
 
-export async function listDepartments({ companyId, onlyEnabled = true } = {}) {
+export async function listDepartments({ companyId, onlyEnabled = true }: any = {}) {
   return measureNetwork('employees.departments', async () => {
     if (!companyId) return [];
 
@@ -292,7 +292,7 @@ export async function listDepartments({ companyId, onlyEnabled = true } = {}) {
   });
 }
 
-export async function updateEmployeeProfile(userId, patch) {
+export async function updateEmployeeProfile(userId: any, patch: any) {
   return measureNetwork('employees.updateProfile', async () => {
     const { error } = await supabase.from('profiles').update(patch).eq('id', userId);
     if (error) throw error;

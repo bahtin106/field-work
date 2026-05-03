@@ -54,7 +54,7 @@ const CALENDAR_SELECT_COLUMNS_FALLBACK = ORDER_SELECT_COLUMNS_FALLBACK;
 const EXTRA_ORDER_FIELDS = ['time_window_end'];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function isAuthSessionMissing(error: unknown) {
+function isAuthSessionMissing(error: any) {
   const name = String(error?.name || '').toLowerCase();
   const message = String(error?.message || '').toLowerCase();
   return name.includes('authsessionmissingerror') || message.includes('auth session missing');
@@ -172,13 +172,13 @@ function normalizeOrder(row) {
 async function enrichOrderWithExtraFields(row) {
   if (!row?.id) return normalizeOrder(row);
   try {
-    let { data, error } = await supabase
+    let { data, error }: any = await supabase
       .from('orders')
       .select(`id, ${EXTRA_ORDER_FIELDS.join(', ')}, ${OBJECT_RELATION_SELECT}, ${CLIENT_RELATION_SELECT}`)
       .eq('id', row.id)
       .maybeSingle();
     if (error && shouldFallbackWithoutClientRelation(error)) {
-      const retryResult = await supabase
+      const retryResult: any = await supabase
         .from('orders')
         .select(`id, ${EXTRA_ORDER_FIELDS.join(', ')}, ${OBJECT_RELATION_SELECT}`)
         .eq('id', row.id)
@@ -187,14 +187,14 @@ async function enrichOrderWithExtraFields(row) {
       error = retryResult.error;
     }
     if (error || !data) return normalizeOrder(row);
-    return normalizeOrder({ ...row, ...data });
+    return normalizeOrder({ ...(row || {}), ...(data || {}) });
   } catch {
     return normalizeOrder(row);
   }
 }
 
-function buildConcurrencyError(message, latest = null) {
-  const error = new Error(message || 'Request was changed by another user');
+function buildConcurrencyError(message: string, latest: any = null) {
+  const error: any = new Error(message || 'Request was changed by another user');
   error.code = 'CONFLICT';
   error.latest = latest;
   return error;
@@ -309,7 +309,7 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
   });
 }
 
-export async function listRequests(params = {}) {
+export async function listRequests(params: any = {}) {
   return measureNetwork('requests.list', async () => {
     const {
       scope = 'all',
@@ -433,7 +433,7 @@ export async function listRequests(params = {}) {
   });
 }
 
-export async function getRequestById(id) {
+export async function getRequestById(id: any) {
   const key = String(id || '').trim();
   if (!key || !isUuid(key)) return null;
   return measureNetwork('requests.getById', async () => {
@@ -456,11 +456,11 @@ export async function getRequestById(id) {
   });
 }
 
-export async function updateRequest(id, patch, expectedUpdatedAt = null) {
+export async function updateRequest(id: any, patch: any, expectedUpdatedAt: any = null) {
   return updateRequestWithVersion(id, patch, expectedUpdatedAt);
 }
 
-export async function listRequestExecutors({ companyId = null } = {}) {
+export async function listRequestExecutors({ companyId = null }: any = {}) {
   return measureNetwork('requests.executors', async () => {
     const scopedCompanyId = String(companyId || '').trim() || String(await getMyCompanyId() || '').trim();
     if (!scopedCompanyId) return [];
@@ -487,7 +487,7 @@ export async function listRequestFilterOptions() {
   });
 }
 
-export async function getAssigneeDisplayNameById(userId) {
+export async function getAssigneeDisplayNameById(userId: any) {
   return measureNetwork('requests.assigneeName', async () => {
     if (!userId) return '';
     const scopedCompanyId = String(await getMyCompanyId() || '').trim();
@@ -512,7 +512,7 @@ export async function listCalendarRequests({
   scope = 'my',
   startDate = null,
   endDate = null,
-} = {}) {
+}: any = {}) {
   return measureNetwork('requests.calendar', async () => {
     if (!userId) return [];
     const normalizedScope = scope === 'all' ? 'all' : 'my';

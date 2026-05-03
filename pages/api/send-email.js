@@ -1,8 +1,28 @@
 import { sendInviteEmail, sendPasswordResetEmail } from '@/lib/mailer';
+import crypto from 'crypto';
+
+function timingSafeStringEqual(left, right) {
+  const leftBuf = Buffer.from(String(left || ''));
+  const rightBuf = Buffer.from(String(right || ''));
+  return leftBuf.length === rightBuf.length && crypto.timingSafeEqual(leftBuf, rightBuf);
+}
+
+function isAuthorized(req) {
+  const expected = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
+  if (!expected) return false;
+  const supplied = String(req.headers['x-email-server-token'] || req.headers.authorization || '')
+    .replace(/^Bearer\s+/i, '')
+    .trim();
+  return supplied && timingSafeStringEqual(supplied, expected);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  if (!isAuthorized(req)) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {

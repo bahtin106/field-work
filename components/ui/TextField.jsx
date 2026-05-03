@@ -5,14 +5,12 @@ import {
   Animated,
   Easing,
   Keyboard,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { deriveNextPasswordValue, maskPasswordValue } from '../../lib/passwordInputMasking';
 import { t as T } from '../../src/i18n';
 import { useAutoScrollOnInvalid } from '../../src/shared/forms/FormAutoScrollContext';
 import { getFieldValidationState, getRequiredFieldLabel } from '../../src/shared/forms/fieldValidation';
@@ -70,6 +68,9 @@ const TextField = forwardRef(function TextField(
     autoGrow,
     minLines,
     maxLines,
+    floatingLabel = false,
+    floatingLabelShiftX = 0,
+    floatingLabelGapScale = 1,
   },
   ref,
 ) {
@@ -84,6 +85,13 @@ const TextField = forwardRef(function TextField(
   const [showPassword, setShowPassword] = useState(false);
   const baseInputHeight =
     theme.components?.input?.height ?? theme.components?.listItem?.height ?? 48;
+  const floatingCfg = theme.components?.input?.floatingLabel || {};
+  const floatingActivePaddingTop = floatingCfg.activePaddingTop ?? 22;
+  const floatingActivePaddingBottom = floatingCfg.activePaddingBottom ?? 2;
+  const floatingRestTranslateY = floatingCfg.restTranslateY ?? 6;
+  const floatingActiveTranslateYBase = floatingCfg.activeTranslateY ?? -10;
+  const floatingActiveScale = floatingCfg.activeScale ?? 0.83;
+  const floatingGapStep = floatingCfg.gapStep ?? 8;
   const sepConfig = theme.components?.input?.separator || {};
   const sepHeight = sepConfig.height ?? theme.components?.listItem?.dividerWidth ?? 1;
   const sepEnabled = sepConfig.enabled ?? sepHeight > 0;
@@ -166,8 +174,20 @@ const TextField = forwardRef(function TextField(
   // Правильное вычисление secureTextEntry: скрываем пароль ТОЛЬКО если это поле пароля И showPassword=false
   const effectiveSecureTextEntry = secureTextEntry ? !showPassword : false;
   const effectiveValue = value != null ? String(value) : '';
-  const useInstantMasking = Platform.OS === 'android' && secureTextEntry && effectiveSecureTextEntry;
-  const displayedValue = useInstantMasking ? maskPasswordValue(effectiveValue) : effectiveValue;
+  const hasValue = effectiveValue.length > 0;
+  const floatingLabelActive = focused || hasValue;
+  const useInstantMasking = false;
+  const displayedValue = effectiveValue;
+  const floatingAnim = useRef(new Animated.Value(floatingLabelActive ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(floatingAnim, {
+      toValue: floatingLabelActive ? 1 : 0,
+      duration: 170,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: false,
+    }).start();
+  }, [floatingAnim, floatingLabelActive, floatingLabelGapScale, floatingLabelShiftX]);
   const handleInputChange = React.useCallback(
     (text) => {
       if (!useInstantMasking) {
@@ -220,7 +240,7 @@ const TextField = forwardRef(function TextField(
 
   return (
     <View ref={containerRef} style={style}>
-      {resolvedLabel ? <Text style={s.topLabel}>{String(resolvedLabel)}</Text> : null}
+      {!floatingLabel && resolvedLabel ? <Text style={s.topLabel}>{String(resolvedLabel)}</Text> : null}
       <View
         style={[
           s.wrap,
@@ -242,11 +262,11 @@ const TextField = forwardRef(function TextField(
             ref={inputRef}
             value={displayedValue}
             onChangeText={handleInputChange}
-            placeholder={placeholder ? String(placeholder) : undefined}
+            placeholder={floatingLabel ? undefined : (placeholder ? String(placeholder) : undefined)}
             placeholderTextColor={theme.colors.inputPlaceholder}
             keyboardType={
               keyboardType ||
-              (secureTextEntry ? (Platform.OS === 'android' ? 'visible-password' : 'default') : 'default')
+              'default'
             }
             secureTextEntry={useInstantMasking ? false : effectiveSecureTextEntry}
             autoCorrect={false}
@@ -284,6 +304,12 @@ const TextField = forwardRef(function TextField(
             onSubmitEditing={handleSubmitEditing}
             style={[
               s.input,
+              floatingLabel
+                ? {
+                    paddingTop: floatingLabelActive ? floatingActivePaddingTop : 0,
+                    paddingBottom: floatingLabelActive ? floatingActivePaddingBottom : 0,
+                  }
+                : null,
               effectiveMultiline && {
                 flex: undefined,
                 width: '100%',
@@ -295,6 +321,44 @@ const TextField = forwardRef(function TextField(
             includeFontPadding={false}
             textAlignVertical={effectiveMultiline ? 'top' : 'center'}
           />
+          {floatingLabel && resolvedLabel ? (
+            <Animated.Text
+              pointerEvents="none"
+              style={[
+                s.floatingLabel,
+                {
+                  color: isErr ? theme.colors.danger : focused ? theme.colors.primary : theme.colors.textSecondary,
+                  opacity: floatingAnim.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }),
+                  transform: [
+                    {
+                      translateX: floatingAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, floatingLabelShiftX],
+                      }),
+                    },
+                    {
+                      translateY: floatingAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [
+                          floatingRestTranslateY,
+                          floatingActiveTranslateYBase -
+                            floatingGapStep * Math.max(0, floatingLabelGapScale - 1),
+                        ],
+                      }),
+                    },
+                    {
+                      scale: floatingAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [1, floatingActiveScale],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              {String(resolvedLabel)}
+            </Animated.Text>
+          ) : null}
           {pressable ? (
             <Pressable
               onPress={onPress}
@@ -371,6 +435,12 @@ const styles = (t, isError, focused, autoGrow = false, baseHeightOverride, isMul
       flex: 1,
       justifyContent: isMultiline ? 'flex-start' : 'center',
       position: 'relative',
+    },
+    floatingLabel: {
+      position: 'absolute',
+      left: 0,
+      fontWeight: '500',
+      includeFontPadding: false,
     },
     separator: {
       height: sepHeight,

@@ -3,10 +3,9 @@
 // Built on expo-image for native-level caching (like Instagram / Telegram).
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Text } from 'react-native';
 import { Image } from 'expo-image';
 import { useTheme } from '../../theme';
-import { Ionicons } from '@expo/vector-icons';
 
 const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
 
@@ -80,11 +79,15 @@ export default function CachedImage({
           style,
         ]}
       >
-        <Ionicons
-          name="image-outline"
-          size={Math.min((width || 80) * 0.35, 32)}
-          color={theme.colors.textSecondary}
-        />
+        <Text
+          style={{
+            color: theme.colors.textSecondary,
+            fontSize: Math.min((width || 80) * 0.32, 24),
+            lineHeight: Math.min((width || 80) * 0.32, 24),
+          }}
+        >
+          □
+        </Text>
       </View>
     );
   }

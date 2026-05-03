@@ -1,5 +1,5 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -10,7 +10,27 @@ export default function AuthBlockedScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { signOut } = useAuthContext();
+  const code = String(params?.code || '').trim().toLowerCase();
+  const rawMessage = String(params?.message || '').trim();
+  const messageFromParams = (() => {
+    if (!rawMessage) return '';
+    try {
+      return decodeURIComponent(rawMessage);
+    } catch {
+      return rawMessage;
+    }
+  })();
+
+  const resolvedMessage = (() => {
+    if (messageFromParams) return messageFromParams;
+    if (code === 'blocked_by_license') return t('auth_blocked_by_license');
+    if (code === 'company_inactive') return t('auth_company_inactive');
+    if (code === 'admin_blocked') return t('auth_blocked_subtitle');
+    if (code === 'access_blocked') return t('auth_access_blocked');
+    return `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`;
+  })();
 
   return (
     <Screen background="background">
@@ -18,7 +38,7 @@ export default function AuthBlockedScreen() {
         <Card>
           <View style={styles(theme).content}>
             <Text style={styles(theme).title}>{t('auth_blocked_title')}</Text>
-            <Text style={styles(theme).message}>{t('auth_blocked_subtitle')}</Text>
+            <Text style={styles(theme).message}>{resolvedMessage}</Text>
             <Pressable
               style={({ pressed }) => [styles(theme).button, pressed ? { opacity: 0.85 } : null]}
               onPress={async () => {

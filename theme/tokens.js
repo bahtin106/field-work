@@ -124,6 +124,14 @@ const light = {
       autoGrowMaxRows: 5,
       labelSpacing: 4, // Отступ между лейблом и полем
       fieldSpacing: 2, // Вертикальный отступ между полями внутри карточек
+      floatingLabel: {
+        activePaddingTop: 22,
+        activePaddingBottom: 2,
+        restTranslateY: 6,
+        activeTranslateY: -10,
+        activeScale: 0.83,
+        gapStep: 8,
+      },
       separator: {
         enabled: true,
         insetX: 'md', // 12px - компактный инсет
@@ -218,6 +226,13 @@ const light = {
     keyboardAware: {
       bottomOffset: 40,
       extraKeyboardSpace: 60,
+    },
+    authRegister: {
+      contentTopSpacing: 'sm',
+      formCardTopPadding: 'md',
+      formCardBottomPadding: 'xs',
+      floatingLabelShiftX: -2,
+      floatingLabelGapScale: 2,
     },
     calendarYear: {
       monthTitleSize: 11, // Компактный размер названия месяца
@@ -377,3 +392,5 @@ const dark = {
 };
 
 export const tokens = { light, dark };
+
+

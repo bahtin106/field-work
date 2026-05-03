@@ -58,6 +58,7 @@ import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matchin
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import DeferredScreen from '../../src/shared/perf/DeferredScreen';
+import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
@@ -136,7 +137,17 @@ function AllOrdersContent() {
   const { t } = useTranslation();
   const { has, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
-  const effectiveAllowed = allowed ?? (!permLoading ? has('canViewAllOrders') : null);
+  const offlineMode = !getOfflineSnapshot().isOnline;
+  const permissionByRole = !permLoading ? has('canViewAllOrders') : null;
+  const isExplicitlyDeniedOnline =
+    !offlineMode && allowed === false && permissionByRole === false;
+  const effectiveAllowed = offlineMode
+    ? true
+    : allowed === true || permissionByRole === true
+      ? true
+      : isExplicitlyDeniedOnline
+        ? false
+        : null;
 
   useEffect(() => {
     markScreenMount('AllRequests');
@@ -314,7 +325,7 @@ function AllOrdersContent() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useAllRequests(allRequestsParams, { enabled: effectiveAllowed === true });
+  } = useAllRequests(allRequestsParams, { enabled: effectiveAllowed !== false });
 
   const { data: executorsData } = useRequestExecutors({ enabled: effectiveAllowed === true });
   const executors = useMemo(() => executorsData ?? EMPTY_ARRAY, [executorsData]);

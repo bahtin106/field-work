@@ -1,5 +1,5 @@
 // app/company_settings/index.jsx
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import {
   ActivityIndicator,
@@ -19,6 +19,7 @@ import ModalActionsRow from '../../components/ui/modals/ModalActionsRow';
 import TextField, { SelectField } from '../../components/ui/TextField';
 import { useToast } from '../../components/ui/ToastProvider';
 import { PHONE_MODE_OPTIONS, SETTINGS_SECTIONS } from '../../constants/settings';
+import { EXCHANGE_RATE_ENDPOINTS } from '../../config/externalUrls';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -245,6 +246,7 @@ export default function CompanySettings() {
   const toast = useToast();
   const { theme, mode, setMode } = useTheme();
   const router = useRouter();
+  const pathname = usePathname();
   const { user, profile, isInitializing } = useAuthContext();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -259,6 +261,7 @@ export default function CompanySettings() {
   const authAccountType = String(user?.user_metadata?.account_type || '').toLowerCase();
   const isSoloAdmin = isAdmin && authAccountType === 'solo';
   const lastNavigationAtRef = React.useRef(0);
+  const accessRedirectInFlightRef = React.useRef(false);
   const NAV_GUARD_MS = 0;
 
   const runSingleNavigation = React.useCallback((navigate) => {
@@ -270,10 +273,22 @@ export default function CompanySettings() {
 
   React.useEffect(() => {
     if (isInitializing) return;
-    if (!canAccessCompanySettings) {
-      router.replace('/orders');
+    if (canAccessCompanySettings) {
+      accessRedirectInFlightRef.current = false;
+      return;
     }
-  }, [canAccessCompanySettings, isInitializing, router]);
+    if (accessRedirectInFlightRef.current) return;
+    if (typeof pathname === 'string' && !pathname.startsWith('/company_settings')) return;
+    accessRedirectInFlightRef.current = true;
+    const rafId = requestAnimationFrame(() => {
+      try {
+        router.replace('/orders');
+      } catch {
+        accessRedirectInFlightRef.current = false;
+      }
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [canAccessCompanySettings, isInitializing, pathname, router]);
 
   // Load company settings via shared query cache.
   const {
@@ -580,7 +595,7 @@ export default function CompanySettings() {
     const providers = [
       // exchangerate.host
       async () => {
-        const url = `https://api.exchangerate.host/latest?base=${encodeURIComponent(base)}&symbols=${encodeURIComponent(
+        const url = `${EXCHANGE_RATE_ENDPOINTS.exchangerateHost}?base=${encodeURIComponent(base)}&symbols=${encodeURIComponent(
           target,
         )}`;
         const r = await fetch(url);
@@ -589,14 +604,14 @@ export default function CompanySettings() {
       },
       // ER-API (open.er-api.com)
       async () => {
-        const url = `https://open.er-api.com/v6/latest/${encodeURIComponent(base)}`;
+        const url = `${EXCHANGE_RATE_ENDPOINTS.openErApi}/${encodeURIComponent(base)}`;
         const r = await fetch(url);
         const j = await r.json();
         return j?.rates?.[target] ?? null;
       },
       // exchangerate-api.com (another free endpoint)
       async () => {
-        const url = `https://api.exchangerate-api.com/v4/latest/${encodeURIComponent(base)}`;
+        const url = `${EXCHANGE_RATE_ENDPOINTS.exchangerateApi}/${encodeURIComponent(base)}`;
         const r = await fetch(url);
         const j = await r.json();
         return j?.rates?.[target] ?? null;

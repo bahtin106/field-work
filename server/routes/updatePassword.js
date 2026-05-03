@@ -3,10 +3,34 @@
 // И подключите его в основное приложение
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 
 // Используйте свой Supabase admin клиент
 const { supabaseAdmin } = require('../lib/supabase'); // или как у вас называется
+
+function timingSafeStringEqual(left, right) {
+  const leftBuf = Buffer.from(String(left || ''));
+  const rightBuf = Buffer.from(String(right || ''));
+  return leftBuf.length === rightBuf.length && crypto.timingSafeEqual(leftBuf, rightBuf);
+}
+
+function requireUpdatePasswordToken(req, res, next) {
+  const expected = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
+  if (!expected) {
+    return res.status(503).json({ ok: false, message: 'EMAIL_SERVER_API_TOKEN is required' });
+  }
+
+  const supplied = String(req.headers['x-email-server-token'] || req.headers.authorization || '')
+    .replace(/^Bearer\s+/i, '')
+    .trim();
+
+  if (!timingSafeStringEqual(supplied, expected)) {
+    return res.status(401).json({ ok: false, message: 'Unauthorized' });
+  }
+
+  return next();
+}
 
 /**
  * POST /api/update-password
@@ -21,7 +45,7 @@ const { supabaseAdmin } = require('../lib/supabase'); // или как у вас
  *   email?: string (новый email если меняется)
  * }
  */
-router.post('/update-password', async (req, res) => {
+router.post('/update-password', requireUpdatePasswordToken, async (req, res) => {
   try {
     const { user_id, password, changed_by, email } = req.body;
 

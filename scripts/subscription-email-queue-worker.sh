@@ -6,6 +6,10 @@ BATCH_LIMIT="${SUBSCRIPTION_EMAIL_BATCH_LIMIT:-100}"
 MAX_BATCHES="${SUBSCRIPTION_EMAIL_MAX_BATCHES:-5}"
 PROCESSING_TIMEOUT="${SUBSCRIPTION_EMAIL_PROCESSING_TIMEOUT:-15 minutes}"
 EMAIL_API_URL="${EMAIL_API_URL:-http://localhost:3000/send-email}"
+EMAIL_AUTH_HEADER=()
+if [[ -n "${EMAIL_SERVER_API_TOKEN:-}" ]]; then
+  EMAIL_AUTH_HEADER=(-H "X-Email-Server-Token: ${EMAIL_SERVER_API_TOKEN}")
+fi
 PSQL_CMD="docker exec -i supabase-db psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1"
 
 exec 9>"$LOCK_FILE"
@@ -60,7 +64,7 @@ SQL_EOF
     BATCH_CLAIMED=$((BATCH_CLAIMED + 1))
 
     tmp_body="$(mktemp)"
-    http_code="$(curl -sS --max-time 30 -o "$tmp_body" -w "%{http_code}" -X POST "$EMAIL_API_URL" -H 'Content-Type: application/json' --data "$body_json" || echo '000')"
+    http_code="$(curl -sS --max-time 30 -o "$tmp_body" -w "%{http_code}" -X POST "$EMAIL_API_URL" -H 'Content-Type: application/json' "${EMAIL_AUTH_HEADER[@]}" --data "$body_json" || echo '000')"
     response_body="$(cat "$tmp_body" 2>/dev/null || true)"
     rm -f "$tmp_body"
 

@@ -1,6 +1,7 @@
 ﻿import { useMemo } from 'react';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { useCompanyEntitlements } from './useCompanyEntitlements';
+import { APP_RUNTIME_CONFIG } from '../config/appRuntime';
 
 export function useSubscriptionGuard(companyId) {
   const { profile } = useAuthContext();
@@ -30,7 +31,7 @@ export function useSubscriptionGuard(companyId) {
     isLoading: guardLoading,
     isOwner,
     entitlements: data,
-    upgradeUrl: process.env.EXPO_PUBLIC_BILLING_WEBSITE_URL || 'https://example.com/billing',
+    upgradeUrl: APP_RUNTIME_CONFIG.billingWebsiteUrl || null,
     refresh,
   };
 }

@@ -44,9 +44,13 @@ function normalizeLang(locale) {
 }
 
 async function sendEmail(emailServiceUrl, payload) {
+  const serverToken = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
   const response = await fetch(`${emailServiceUrl.replace(/\/$/, '')}/send-email`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(serverToken ? { 'X-Email-Server-Token': serverToken } : {}),
+    },
     body: JSON.stringify(payload),
   });
 
@@ -84,12 +88,15 @@ async function main() {
   const serviceKey =
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     process.env.SUPABASE_SERVICE_KEY;
-  const emailServiceUrl = process.env.EMAIL_SERVICE_URL || 'https://api.monitorapp.ru';
+  const emailServiceUrl = process.env.EMAIL_SERVICE_URL || process.env.EXPO_PUBLIC_EMAIL_SERVICE_URL;
   const now = new Date();
   const todayUtc = startOfUtcDay(now);
 
   if (!supabaseUrl || !serviceKey) {
     throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_SERVICE_KEY) are required');
+  }
+  if (!emailServiceUrl) {
+    throw new Error('EMAIL_SERVICE_URL is required for subscription reminder delivery');
   }
 
   const supabase = createClient(supabaseUrl, serviceKey, {

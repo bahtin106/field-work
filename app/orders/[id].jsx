@@ -1,5 +1,6 @@
 ﻿import { useFocusEffect } from '@react-navigation/native';
 import { format } from 'date-fns';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ru } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
@@ -68,11 +69,13 @@ import {
   ensureRequestPrefetch,
   useRequest,
   useRequestRealtimeSync,
+  useUpdateRequestMutation,
 } from '../../src/features/requests/queries';
 import { updateRequestWithVersion } from '../../src/features/requests/api';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import {
   financeQueryKeys,
+  syncOfflineFinanceOutbox,
   useDeleteOrderFinanceEntryMutation,
   useOrderFinanceEntries,
   useUpsertOrderFinanceEntryMutation,
@@ -116,10 +119,12 @@ import OrderPhotosModal from './components/OrderPhotosModal';
 import FullscreenImageViewer from './components/FullscreenImageViewer';
 import { useToast } from '../../components/ui/ToastProvider';
 import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
+import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
 const PHOTO_MIME_TYPE = 'image/jpeg';
+const ORDER_PHOTO_UPLOAD_QUEUE_KEY = 'offline.orderPhotoUploadQueue.v1';
 const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
@@ -194,6 +199,23 @@ function formatDateOnlyForStorage(input) {
   const parsed = input instanceof Date ? input : new Date(input);
   if (!parsed || Number.isNaN(parsed?.getTime?.())) return null;
   return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+}
+
+async function readOrderPhotoUploadQueue() {
+  try {
+    const raw = await AsyncStorage.getItem(ORDER_PHOTO_UPLOAD_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeOrderPhotoUploadQueue(items) {
+  await AsyncStorage.setItem(
+    ORDER_PHOTO_UPLOAD_QUEUE_KEY,
+    JSON.stringify(Array.isArray(items) ? items : []),
+  );
 }
 
 const REQUEST_SYNC_FIELDS = [
@@ -733,6 +755,7 @@ function OrderDetailsContent() {
   const [resolvedClientId, setResolvedClientId] = useState(null);
   const [localPendingMap, setLocalPendingMap] = useState({});
   const cloudFallbackNoticeShownRef = useRef(false);
+  const orderPhotoQueueFlushInFlightRef = useRef(false);
 
   // в”Ђв”Ђв”Ђ Centralised media hook (caching, resolution, Yandex/Storage) в”Ђв”Ђв”Ђ
   const orderMedia = useOrderMedia({ order, mediaProvider, t });
@@ -756,11 +779,34 @@ function OrderDetailsContent() {
     staleTime: 45 * 1000,
     refetchOnMount: false,
   });
+  const updateRequestMutation = useUpdateRequestMutation();
   const financeEntriesQuery = useOrderFinanceEntries(id, {
     enabled: !!id && canViewFinanceSection,
   });
   const upsertFinanceEntryMutation = useUpsertOrderFinanceEntryMutation(id);
   const deleteFinanceEntryMutation = useDeleteOrderFinanceEntryMutation(id);
+  const saveOrderPatch = useCallback(
+    async (targetId, patch, options = {}) => {
+      const base =
+        options?.base ||
+        queryClient.getQueryData(queryKeys.requests.detail(targetId)) ||
+        orderRef.current ||
+        null;
+      const expectedUpdatedAt =
+        options?.expectedUpdatedAt !== undefined
+          ? options.expectedUpdatedAt
+          : base?.updated_at || null;
+      const next = await updateRequestMutation.mutateAsync({
+        id: targetId,
+        patch,
+        expectedUpdatedAt,
+        base,
+      });
+      if (next?.id) setOrder((prev) => ({ ...(prev || {}), ...next }));
+      return next;
+    },
+    [queryClient, updateRequestMutation],
+  );
   const financeEntries = useMemo(
     () => (Array.isArray(financeEntriesQuery.data) ? financeEntriesQuery.data : []),
     [financeEntriesQuery.data],
@@ -1048,11 +1094,7 @@ function OrderDetailsContent() {
 
       setFinanceSaving(true);
       try {
-        const updatedOrder = await updateRequestWithVersion(
-          order.id,
-          { [field]: parsed },
-          order?.updated_at || null,
-        );
+        const updatedOrder = await saveOrderPatch(order.id, { [field]: parsed });
         setOrder(updatedOrder || order);
         const [requestRefresh] = await Promise.all([
           refetchRequestData?.(),
@@ -1074,7 +1116,7 @@ function OrderDetailsContent() {
         setFinanceSaving(false);
       }
     },
-    [financeEntriesQuery, order, parseMoney, refetchRequestData, showToast, showWarning, t],
+    [financeEntriesQuery, order, parseMoney, refetchRequestData, saveOrderPatch, showToast, showWarning, t],
   );
 
   const saveOrderPaymentField = useCallback(
@@ -1082,7 +1124,7 @@ function OrderDetailsContent() {
       if (!order?.id || !patch || typeof patch !== 'object') return;
       setFinanceSaving(true);
       try {
-        const updatedOrder = await updateRequestWithVersion(order.id, patch, order?.updated_at || null);
+        const updatedOrder = await saveOrderPatch(order.id, patch);
         setOrder(updatedOrder || order);
         const [requestRefresh] = await Promise.all([
           refetchRequestData?.(),
@@ -1102,7 +1144,7 @@ function OrderDetailsContent() {
         setFinanceSaving(false);
       }
     },
-    [financeEntriesQuery, order, refetchRequestData, showToast, t],
+    [financeEntriesQuery, order, refetchRequestData, saveOrderPatch, showToast, t],
   );
 
   const handleQrPaymentPress = useCallback(() => {
@@ -1482,6 +1524,41 @@ function OrderDetailsContent() {
         const cur = orderRef.current;
         const orderId = cur?.id;
         if (!orderId) return false;
+        const isOnlineNow = getOfflineSnapshot().isOnline;
+        if (!isOnlineNow && opts?.allowOfflineQueue !== false) {
+          const localUrl = String(uri || '').trim();
+          if (!localUrl) return false;
+          const buildUpdatedLocal = (arr) => {
+            const list = [...(arr || [])];
+            if (replaceUrl) {
+              const ri = list.indexOf(replaceUrl);
+              if (ri >= 0) {
+                list[ri] = localUrl;
+                return list;
+              }
+            }
+            if (!list.includes(localUrl)) list.unshift(localUrl);
+            return list;
+          };
+
+          setOrder((o) => ({ ...o, [category]: buildUpdatedLocal(o?.[category]) }));
+          queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
+            if (!old) return old;
+            return { ...old, [category]: buildUpdatedLocal(old?.[category]) };
+          });
+
+          const queueItems = await readOrderPhotoUploadQueue();
+          queueItems.push({
+            id: `order-photo:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+            orderId: String(orderId),
+            category: String(category || ''),
+            localUrl,
+            createdAt: new Date().toISOString(),
+          });
+          await writeOrderPhotoUploadQueue(queueItems);
+          if (!silent) showToast('Фото сохранено офлайн. Загрузим автоматически при появлении интернета.');
+          return true;
+        }
 
         const manipulated = await ImageManipulator.manipulateAsync(
           uri,
@@ -1656,11 +1733,10 @@ function OrderDetailsContent() {
         const updated = buildUpdated(latest[category]);
         try {
           if (replaceUrl || !providerMediaUrls) {
-            await updateRequestWithVersion(
-              orderId,
-              { [category]: updated },
-              providerOrderUpdatedAt || latest?.updated_at || null,
-            );
+            await saveOrderPatch(orderId, { [category]: updated }, {
+              expectedUpdatedAt: providerOrderUpdatedAt || latest?.updated_at || null,
+              base: latest,
+            });
           }
           setOrder((o) => ({ ...o, [category]: buildUpdated(o[category]) }));
           queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
@@ -1695,7 +1771,7 @@ function OrderDetailsContent() {
         return false;
       }
     },
-    [effectiveMediaProvider, notifyCloudFallback, queryClient, showToast, t],
+    [effectiveMediaProvider, notifyCloudFallback, queryClient, saveOrderPatch, showToast, t],
   );
 
   const compressAndUploadMultiple = useCallback(
@@ -2540,7 +2616,17 @@ function OrderDetailsContent() {
   }, [id]);
 
   const saveFinanceEntry = useCallback(async () => {
-    if (!id || !companyId) return;
+    if (!id) return;
+    const resolvedCompanyId =
+      companyId ||
+      order?.company_id ||
+      requestData?.company_id ||
+      auth?.user?.company_id ||
+      null;
+    if (!resolvedCompanyId) {
+      showWarning(t('order_save_error'));
+      return;
+    }
     const title = String(financeEntryDraft.title || '').trim();
     const rawAmount = String(financeEntryDraft.input_amount ?? '').trim();
     const rawPercent = String(financeEntryDraft.input_percent ?? '').trim();
@@ -2571,7 +2657,7 @@ function OrderDetailsContent() {
     try {
       const savedEntry = await upsertFinanceEntryMutation.mutateAsync({
         id: financeEntryDraft.id || undefined,
-        company_id: companyId,
+        company_id: resolvedCompanyId,
         order_id: id,
         kind: financeEntryDraft.kind,
         calc_mode: financeEntryDraft.calc_mode,
@@ -2637,6 +2723,7 @@ function OrderDetailsContent() {
       showWarning(error?.message || t('order_save_error'));
     }
   }, [
+    auth?.user?.company_id,
     companyId,
     deleteFinanceEntryPhotoByUrl,
     financeEntriesQuery,
@@ -2647,6 +2734,7 @@ function OrderDetailsContent() {
     isValidFinanceNumericInput,
     isLocalFinancePhotoUrl,
     parseMoney,
+    requestData?.company_id,
     showToast,
     showWarning,
     setFinanceEntryFieldErrors,
@@ -2654,6 +2742,7 @@ function OrderDetailsContent() {
     t,
     uploadFinanceEntryLocalUri,
     upsertFinanceEntryMutation,
+    order?.company_id,
   ]);
 
   const removeFinanceEntry = useCallback(
@@ -2695,7 +2784,7 @@ function OrderDetailsContent() {
   }, []);
 
   const removePhoto = useCallback(
-    (category, index) => {
+    async (category, index) => {
       const cur = orderRef.current;
       const orderId = cur?.id;
       if (!orderId) return;
@@ -2712,6 +2801,34 @@ function OrderDetailsContent() {
         if (!old) return old;
         return { ...old, [category]: filterOut(old[category]) };
       });
+
+      const isOnlineNow = getOfflineSnapshot().isOnline;
+      if (!isOnlineNow) {
+        try {
+          const queueItems = await readOrderPhotoUploadQueue();
+          const remaining = queueItems.filter((item) => {
+            if (String(item?.orderId || '') !== String(orderId)) return true;
+            if (String(item?.category || '') !== String(category || '')) return true;
+            if (String(item?.localUrl || '') !== String(removed || '')) return true;
+            return String(item?.operation || 'upload') !== 'upload';
+          });
+          if (/^https?:\/\//i.test(String(removed || ''))) {
+            remaining.push({
+              id: `order-photo-delete:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+              orderId: String(orderId),
+              category: String(category || ''),
+              targetUrl: String(removed || ''),
+              operation: 'delete',
+              createdAt: new Date().toISOString(),
+            });
+          }
+          await writeOrderPhotoUploadQueue(remaining);
+          showToast('Фото удалено офлайн. Синхронизируем автоматически.');
+        } catch {
+          showToast(t('order_toast_delete_error'));
+        }
+        return;
+      }
 
       // Background: actual deletion
       const rollback = () => {
@@ -2733,28 +2850,26 @@ function OrderDetailsContent() {
         showToast(t('order_toast_delete_error'));
       };
 
-      (async () => {
-        try {
-          const updated = filterOut(cur[category]);
+      try {
+        const updated = filterOut(cur[category]);
 
-          const data = await deleteOrderMediaByUrl(orderId, category, removed);
-          const mediaUrls = Array.isArray(data?.media_urls)
-            ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
-            : null;
-          if (!mediaUrls) {
-            await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
-          }
-        } catch (e) {
-          console.warn('[removePhoto] background deletion failed:', e);
-          rollback();
+        const data = await deleteOrderMediaByUrl(orderId, category, removed);
+        const mediaUrls = Array.isArray(data?.media_urls)
+          ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
+          : null;
+        if (!mediaUrls) {
+          await saveOrderPatch(orderId, { [category]: updated }, { base: cur });
         }
-      })();
+      } catch (e) {
+        console.warn('[removePhoto] background deletion failed:', e);
+        rollback();
+      }
     },
-    [queryClient, showToast, t, deleteOrderMediaByUrl],
+    [deleteOrderMediaByUrl, queryClient, saveOrderPatch, showToast, t],
   );
 
   const removePhotosBatch = useCallback(
-    (category, urls = []) => {
+    async (category, urls = []) => {
       const cur = orderRef.current;
       const orderId = cur?.id;
       if (!orderId) return;
@@ -2780,6 +2895,37 @@ function OrderDetailsContent() {
         if (!old) return old;
         return { ...old, [category]: nextPhotos };
       });
+
+      const isOnlineNow = getOfflineSnapshot().isOnline;
+      if (!isOnlineNow) {
+        try {
+          const queueItems = await readOrderPhotoUploadQueue();
+          let nextQueue = queueItems.filter((item) => {
+            if (String(item?.orderId || '') !== String(orderId)) return true;
+            if (String(item?.category || '') !== String(category || '')) return true;
+            const localUrl = String(item?.localUrl || '');
+            if (!localUrl) return true;
+            if (!selectedSet.has(localUrl)) return true;
+            return String(item?.operation || 'upload') !== 'upload';
+          });
+          for (const removed of selected) {
+            if (!/^https?:\/\//i.test(String(removed || ''))) continue;
+            nextQueue.push({
+              id: `order-photo-delete:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+              orderId: String(orderId),
+              category: String(category || ''),
+              targetUrl: String(removed || ''),
+              operation: 'delete',
+              createdAt: new Date().toISOString(),
+            });
+          }
+          await writeOrderPhotoUploadQueue(nextQueue);
+          showToast('Фото удалены офлайн. Синхронизируем автоматически.');
+        } catch {
+          showToast(t('order_toast_delete_error'));
+        }
+        return;
+      }
 
       const restoreFailed = (failedUrls) => {
         const failedSet = new Set((failedUrls || []).map((value) => String(value || '')));
@@ -2815,35 +2961,33 @@ function OrderDetailsContent() {
         });
       };
 
-      (async () => {
-        const failedUrls = [];
-        for (const removed of selected) {
-          try {
-            const updated = buildPersistedPhotos(failedUrls);
-            const data = await deleteOrderMediaByUrl(orderId, category, removed);
-            const mediaUrls = Array.isArray(data?.media_urls)
-              ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
-              : null;
-            if (!mediaUrls) {
-              await updateRequestWithVersion(orderId, { [category]: updated }, cur?.updated_at || null);
-            }
-          } catch (error) {
-            console.warn('[removePhotosBatch] background deletion failed:', error);
-            failedUrls.push(removed);
+      const failedUrls = [];
+      for (const removed of selected) {
+        try {
+          const updated = buildPersistedPhotos(failedUrls);
+          const data = await deleteOrderMediaByUrl(orderId, category, removed);
+          const mediaUrls = Array.isArray(data?.media_urls)
+            ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
+            : null;
+          if (!mediaUrls) {
+            await saveOrderPatch(orderId, { [category]: updated }, { base: cur });
           }
+        } catch (error) {
+          console.warn('[removePhotosBatch] background deletion failed:', error);
+          failedUrls.push(removed);
         }
+      }
 
-        if (failedUrls.length) {
-          restoreFailed(failedUrls);
-          showToast(
-            failedUrls.length === selected.length
-              ? t('order_toast_delete_error')
-              : t('order_toast_delete_partial_error', 'Часть фото удалить не удалось'),
-          );
-        }
-      })();
+      if (failedUrls.length) {
+        restoreFailed(failedUrls);
+        showToast(
+          failedUrls.length === selected.length
+            ? t('order_toast_delete_error')
+            : t('order_toast_delete_partial_error', 'Часть фото удалить не удалось'),
+        );
+      }
     },
-    [queryClient, showToast, t, deleteOrderMediaByUrl],
+    [deleteOrderMediaByUrl, queryClient, saveOrderPatch, showToast, t],
   );
 
   const canFinishOrder = useCallback(() => {
@@ -2905,11 +3049,7 @@ function OrderDetailsContent() {
     let data = null;
     let error = null;
     try {
-      data = await updateRequestWithVersion(
-        order.id,
-        { status: mapStatusToDb('done') },
-        order?.updated_at || null,
-      );
+      data = await saveOrderPatch(order.id, { status: mapStatusToDb('done') });
     } catch (e) {
       error = e;
     }
@@ -2931,7 +3071,7 @@ function OrderDetailsContent() {
       queryClient.invalidateQueries({ queryKey: ['requests'] });
     }
     showToast(t('order_toast_order_finished'));
-  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, queryClient, showToast, t]);
+  }, [getOrderFieldLabel, isOrderFieldVisible, order, orderFieldsByKey, queryClient, saveOrderPatch, showToast, t]);
 
   const onFinishPress = useCallback(() => handleFinishOrder(), [handleFinishOrder]);
 
@@ -3094,7 +3234,7 @@ function OrderDetailsContent() {
           },
         });
       }
-      data = await updateRequestWithVersion(targetId, payload, order?.updated_at || null);
+      data = await saveOrderPatch(targetId, payload, { base: order });
     } catch (e) {
       error = e;
     }
@@ -3174,6 +3314,7 @@ function OrderDetailsContent() {
     t,
     linkedClient,
     resolvedClientId,
+    saveOrderPatch,
     updateClientMutation,
     resolveTitleForSave,
     titlePrefix,
@@ -3513,6 +3654,69 @@ function OrderDetailsContent() {
   );
 
   useEffect(() => {
+    if (!id || !order?.id) return;
+    if (!getOfflineSnapshot().isOnline) return;
+    if (orderPhotoQueueFlushInFlightRef.current) return;
+
+    let cancelled = false;
+    const flushQueue = async () => {
+      orderPhotoQueueFlushInFlightRef.current = true;
+      try {
+        let queueItems = await readOrderPhotoUploadQueue();
+        if (!Array.isArray(queueItems) || !queueItems.length) return;
+        const mine = queueItems.filter((item) => String(item?.orderId || '') === String(order.id));
+        if (!mine.length) return;
+
+        for (const item of mine) {
+          if (cancelled) break;
+          if (!getOfflineSnapshot().isOnline) break;
+          const operation = String(item?.operation || 'upload');
+          const category = String(item?.category || '').trim();
+          if (!category) continue;
+
+          let ok = false;
+          if (operation === 'delete') {
+            const targetUrl = String(item?.targetUrl || '').trim();
+            if (!targetUrl) continue;
+            try {
+              await deleteOrderMediaByUrl(order.id, category, targetUrl);
+              ok = true;
+            } catch (error) {
+              console.warn('[order-photo-queue] delete flush failed', error);
+            }
+          } else {
+            const localUrl = String(item?.localUrl || '').trim();
+            if (!localUrl) continue;
+            ok = await uploadLocalUri(category, localUrl, {
+              replaceUrl: localUrl,
+              silent: true,
+              allowOfflineQueue: false,
+            });
+          }
+          if (!ok) continue;
+          queueItems = queueItems.filter((entry) => String(entry?.id || '') !== String(item?.id || ''));
+          await writeOrderPhotoUploadQueue(queueItems);
+        }
+      } catch (error) {
+        console.warn('[order-photo-queue] flush failed', error);
+      } finally {
+        orderPhotoQueueFlushInFlightRef.current = false;
+      }
+    };
+
+    flushQueue().catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteOrderMediaByUrl, id, order?.id, uploadLocalUri]);
+
+  useEffect(() => {
+    if (!id) return;
+    if (!getOfflineSnapshot().isOnline) return;
+    syncOfflineFinanceOutbox(queryClient, id).catch(() => {});
+  }, [id, queryClient]);
+
+  useEffect(() => {
     const fields = toLegacySchemaFields(orderFieldSettings).filter(
       (field) => !REMOVED_ORDER_OBJECT_FIELDS.has(String(field?.field_key || '')),
     );
@@ -3675,8 +3879,9 @@ function OrderDetailsContent() {
     fallbackDate: order?.time_window_start,
   });
   const descriptionValue = useMemo(() => String(order?.comment ?? '').trim(), [order?.comment]);
-  const canViewClients = has('canViewClients');
-  const canViewObjects = has('canViewObjects');
+  const offlineMode = !getOfflineSnapshot().isOnline;
+  const canViewClients = has('canViewClients') || permsLoading || offlineMode;
+  const canViewObjects = has('canViewObjects') || permsLoading || offlineMode;
   const linkedClientId = order?.client_id ? String(order.client_id) : resolvedClientId;
   const linkedObjectId = order?.object_id ? String(order.object_id) : null;
   const { data: linkedClient } = useClient(linkedClientId, {
@@ -3916,8 +4121,7 @@ function OrderDetailsContent() {
   const executorPaidExpenseEntries = visibleFinanceExpenseEntries.filter(
     (entry) => resolveExpensePayer(entry) === 'executor',
   );
-  const customerFinanceTotal =
-    Number(order.finance_gross_total ?? grossTotal + financeIncomeTotal - financeDiscountTotal) || 0;
+  const customerFinanceTotal = Number(grossTotal + financeIncomeTotal - financeDiscountTotal) || 0;
   const normalizedPaymentStatus = normalizePaymentStatus(order?.payment_status);
   const normalizedPaymentMethod = normalizePaymentMethod(order?.payment_method);
   const isOrderPaid = normalizedPaymentStatus === 'paid';

@@ -102,12 +102,17 @@ fi
 
 SENT=0
 FAILED=0
+EMAIL_AUTH_HEADER=()
+if [[ -n "${EMAIL_SERVER_API_TOKEN:-}" ]]; then
+  EMAIL_AUTH_HEADER=(-H "X-Email-Server-Token: ${EMAIL_SERVER_API_TOKEN}")
+fi
 
 while IFS=$'\t' read -r notification_id email_body; do
   [[ -z "${notification_id:-}" ]] && continue
 
   RESPONSE=$(curl -sS --max-time 30 -X POST http://localhost:3000/send-email \
     -H 'Content-Type: application/json' \
+    "${EMAIL_AUTH_HEADER[@]}" \
     --data "$email_body" || true)
 
   if echo "$RESPONSE" | grep -q '"success":true'; then

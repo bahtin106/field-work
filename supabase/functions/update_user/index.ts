@@ -230,7 +230,7 @@ serve(async (req: Request) => {
           console.log(`[UPDATE_USER] Logging password change for user ${user_id}`);
           const { error: logErr } = await admin.rpc('upsert_password_change_log', {
             p_user_id: user_id,
-            p_changed_by: changed_by || user_id,
+            p_changed_by: actorProfile.id || actor.id,
             p_ip_address: ipAddress,
             p_user_agent: userAgent,
             p_source: 'edge:update_user',

@@ -48,7 +48,7 @@ Deno.serve(async (req: Request) => {
     // Проверяем роль (только admin)
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('profiles')
-      .select('role')
+      .select('role, company_id')
       .eq('id', user.id)
       .single();
 
@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
     // Проверяем существование деактивируемого сотрудника
     const { data: targetUser, error: targetError } = await supabaseAdmin
       .from('profiles')
-      .select('id, is_admin_blocked')
+      .select('id, is_admin_blocked, company_id')
       .eq('id', user_id)
       .single();
 
@@ -94,6 +94,13 @@ Deno.serve(async (req: Request) => {
       return new Response(
         JSON.stringify({ error: 'Сотрудник не найден' }),
         { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+      );
+    }
+
+    if (!profile.company_id || targetUser.company_id !== profile.company_id) {
+      return new Response(
+        JSON.stringify({ error: 'Access denied' }),
+        { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
       );
     }
 
@@ -109,7 +116,7 @@ Deno.serve(async (req: Request) => {
       // Проверяем, что преемник существует и активен
       const { data: successor, error: successorError } = await supabaseAdmin
         .from('profiles')
-        .select('id, is_admin_blocked')
+        .select('id, is_admin_blocked, company_id')
         .eq('id', reassign_to)
         .single();
 
@@ -128,6 +135,13 @@ Deno.serve(async (req: Request) => {
       }
 
       // Переназначаем все активные заявки
+      if (successor.company_id !== profile.company_id) {
+        return new Response(
+          JSON.stringify({ error: 'Successor not found' }),
+          { status: 404, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
+        );
+      }
+
       const { error: reassignError } = await supabaseAdmin
         .from('orders')
         .update({ assigned_to: reassign_to })

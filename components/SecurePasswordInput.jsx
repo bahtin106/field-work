@@ -1,7 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { deriveNextPasswordValue, maskPasswordValue } from '../lib/passwordInputMasking';
 import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -49,8 +48,8 @@ const SecurePasswordInput = React.forwardRef(
     );
 
     const effectiveValue = value != null ? String(value) : '';
-    const useInstantMasking = Platform.OS === 'android' && isSecure;
-    const displayValue = useInstantMasking ? maskPasswordValue(effectiveValue) : effectiveValue;
+    const useInstantMasking = false;
+    const displayValue = effectiveValue;
 
     const handleChangeText = (text) => {
       if (!useInstantMasking) {
@@ -87,7 +86,7 @@ const SecurePasswordInput = React.forwardRef(
           secureTextEntry={useInstantMasking ? false : isSecure}
           textContentType="password"
           autoComplete={Platform.OS === 'android' ? 'password' : undefined}
-          keyboardType={Platform.OS === 'android' ? 'visible-password' : 'default'}
+          keyboardType="default"
           returnKeyType={returnKeyType}
           onSubmitEditing={onSubmitEditing}
           autoCapitalize="none"
