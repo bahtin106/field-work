@@ -8,10 +8,10 @@ import { SelectField, SwitchField } from '../../../components/ui/TextField';
 import { SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
-import { PERM_KEYS, TBL } from '../../../lib/constants';
-import { readProfile, readRolePerm, getUid } from '../../../lib/supabaseHelpers';
+import { TBL } from '../../../lib/constants';
+import { getUid } from '../../../lib/supabaseHelpers';
+import { usePermissions } from '../../../lib/permissions';
 import { supabase } from '../../../lib/supabase';
-import { devWarn as __devLog } from '../../../src/utils/dev';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme';
 
@@ -86,6 +86,7 @@ export default function NotificationEventsScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const toast = useToast();
+  const { has: hasPermission, loading: permissionsLoading } = usePermissions();
   const s = React.useMemo(() => styles(theme), [theme]);
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const mountedRef = React.useRef(true);
@@ -159,26 +160,7 @@ export default function NotificationEventsScreen() {
     toast.error(t('errors_loadSettings'));
   }, [error, t, toast]);
 
-  const { data: canCreateOrdersData } = useQuery({
-    queryKey: ['appSettings', 'eventsPerm'],
-    queryFn: async () => {
-      try {
-        const uid = await getUid();
-        const profile = await readProfile(uid);
-        if (!profile?.company_id || !profile?.role) return false;
-        const permValue = await readRolePerm(profile.company_id, profile.role, PERM_KEYS.CAN_CREATE_ORDERS);
-        const v = String(permValue ?? '').trim().toLowerCase();
-        return v in { 1: 1, true: 1, t: 1, yes: 1, y: 1 };
-      } catch (e) {
-        __devLog('events perm load failed:', e?.message || e);
-        return false;
-      }
-    },
-    staleTime: 2 * 60 * 1000,
-    gcTime: 5 * 60 * 1000,
-    placeholderData: (prev) => prev ?? false,
-  });
-  const canCreateOrders = !!canCreateOrdersData;
+  const canCreateOrders = !permissionsLoading && hasPermission('canCreateOrders');
 
   const savePrefs = React.useCallback(
     async (patch) => {

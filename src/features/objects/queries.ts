@@ -1,8 +1,14 @@
 import { useEffect } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
 import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
+import {
+  enqueueObjectUpdate,
+  getOfflineSnapshot,
+  isOfflineLikeError,
+  syncOfflineOutbox,
+} from '../../shared/offline/offlineStatus';
 import {
   createClientObject,
   deleteClientObject,
@@ -13,22 +19,42 @@ import {
   updateClientObject,
 } from './api';
 
-export function useClientObjects(clientId, options = {}) {
+export function useClientObjects(clientId: any, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.objects.byClient(clientId),
-    queryFn: () => listClientObjects(String(clientId || '')),
+    queryFn: async () => {
+      try {
+        return await listClientObjects(String(clientId || ''));
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = queryClient.getQueryData(queryKeys.objects.byClient(clientId));
+        return Array.isArray(cached) ? cached : [];
+      }
+    },
     enabled: !!clientId,
     staleTime: 30 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
-export function useCompanyObjects(companyId, options = {}) {
+export function useCompanyObjects(companyId: any, options: any = {}) {
+  const queryClient = useQueryClient();
   const result = useQuery({
     queryKey: queryKeys.objects.byCompany(companyId),
-    queryFn: () => listClientObjectsByCompany(String(companyId || '')),
+    queryFn: async () => {
+      try {
+        return await listClientObjectsByCompany(String(companyId || ''));
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = queryClient.getQueryData(queryKeys.objects.byCompany(companyId));
+        return Array.isArray(cached) ? cached : [];
+      }
+    },
     enabled: !!companyId,
     staleTime: 30 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 
@@ -45,17 +71,34 @@ export function useCompanyObjects(companyId, options = {}) {
   return result;
 }
 
-export function useClientObject(objectId, options = {}) {
+export function useClientObject(objectId: any, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.objects.detail(objectId),
-    queryFn: () => getClientObjectById(String(objectId || '')),
+    queryFn: async () => {
+      try {
+        return await getClientObjectById(String(objectId || ''));
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const fromDetail = queryClient.getQueryData(queryKeys.objects.detail(objectId));
+        if (fromDetail) return fromDetail;
+        const lists = queryClient.getQueriesData({ queryKey: ['objects'] }) || [];
+        for (const [, value] of lists) {
+          const arr = Array.isArray(value) ? value : [];
+          const found = arr.find((row: any) => String(row?.id || '') === String(objectId || ''));
+          if (found) return found;
+        }
+        throw error;
+      }
+    },
     enabled: !!objectId,
     staleTime: 60 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
-export function useSearchCompanyObjectsForOrder(params = {}, options = {}) {
+export function useSearchCompanyObjectsForOrder(params: any = {}, options: any = {}) {
   const {
     query = '',
     street = '',
@@ -84,7 +127,7 @@ export function useSearchCompanyObjectsForOrder(params = {}, options = {}) {
   });
 }
 
-export function useClientObjectsRealtimeSync({ enabled = true, companyId = null } = {}) {
+export function useClientObjectsRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -100,7 +143,7 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
           table: 'client_objects',
           filter: `company_id=eq.${companyId}`,
         },
-        (payload) => {
+        (payload: any) => {
           try {
             console.debug('[useClientObjectsRealtimeSync] payload event=', payload?.event, 'table=', payload?.table, 'new.id=', payload?.new?.id, 'old.id=', payload?.old?.id);
             const objectId = payload?.new?.id || payload?.old?.id;
@@ -130,7 +173,7 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
           table: 'object_tag_links',
           filter: `company_id=eq.${companyId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const objectId = String(payload?.new?.object_id || payload?.old?.object_id || '');
           if (objectId) {
             void invalidateNow(queryClient, queryKeys.objects.detail(objectId));
@@ -183,12 +226,55 @@ export function useUpdateClientObjectMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Record<string, any> }) =>
-      updateClientObject(id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Record<string, any> }) => {
+      const base = queryClient.getQueryData(queryKeys.objects.detail(id)) as Record<string, any> | null;
+      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      if (!online) {
+        const queued = await enqueueObjectUpdate({ id, patch, base });
+        return {
+          ...(base || {}),
+          ...(patch || {}),
+          id,
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+      try {
+        return await updateClientObject(id, patch);
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const queued = await enqueueObjectUpdate({ id, patch, base });
+        return {
+          ...(base || {}),
+          ...(patch || {}),
+          id,
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+    },
+    onMutate: async ({ id, patch }: any) => {
+      const detailKey = queryKeys.objects.detail(id);
+      await queryClient.cancelQueries({ queryKey: detailKey });
+      const previous = queryClient.getQueryData(detailKey);
+      if (previous && typeof previous === 'object') {
+        queryClient.setQueryData(detailKey, {
+          ...(previous as Record<string, any>),
+          ...(patch || {}),
+          __offlinePending: !onlineManager.isOnline(),
+        });
+      }
+      return { previous, detailKey };
+    },
+    onError: (_error, _variables, context: any) => {
+      if (context?.previous) {
+        queryClient.setQueryData(context.detailKey, context.previous);
+      }
+    },
     onSuccess: (updated: any) => {
       const clientId = String(updated?.client_id || '');
       if (updated?.id) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(updated.id) });
+        queryClient.setQueryData(queryKeys.objects.detail(updated.id), updated);
       }
       if (clientId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
@@ -196,6 +282,9 @@ export function useUpdateClientObjectMutation() {
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       queryClient.invalidateQueries({ queryKey: ['requests'] });
+      if (updated?.__offlinePending) {
+        syncOfflineOutbox(queryClient).catch(() => {});
+      }
     },
   });
 }

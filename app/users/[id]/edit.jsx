@@ -1186,7 +1186,27 @@ export default function EditUser() {
       }));
       queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
       if (meId && String(meId) === String(userId)) {
+        const normalizedUserId = String(userId);
+        const nextProfileSnapshot = {
+          first_name: firstName.trim() || null,
+          middle_name: middleName.trim() || null,
+          last_name: lastName.trim() || null,
+          full_name: buildFullName(firstName, middleName, lastName) || null,
+          email: normalizeOptionalEmail(email),
+          phone: normalizeOptionalPhoneForSave(phone),
+          birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
+          role,
+          department_id: departmentId || null,
+          avatar_url: savedAvatarUrl,
+          avatar_display_url: savedAvatarUrl,
+        };
+        queryClient.setQueryData(['profile', normalizedUserId], (prev) => ({
+          ...(prev || {}),
+          ...nextProfileSnapshot,
+          id: (prev && prev.id) || normalizedUserId,
+        }));
         queryClient.invalidateQueries({ queryKey: queryKeys.profile.me() });
+        queryClient.invalidateQueries({ queryKey: ['profile', normalizedUserId] });
       }
       refetchEmployee().catch(() => {});
       allowLeaveRef.current = true;
@@ -1444,21 +1464,42 @@ export default function EditUser() {
         return null;
       }
 
-      // РџСЂСЏРјРѕРµ РѕР±РЅРѕРІР»РµРЅРёРµ РІ Р±Р°Р·Рµ РґР°РЅРЅС‹С… С‡РµСЂРµР· Supabase РєР»РёРµРЅС‚
-      const { error: updErr } = await supabase
+      // 1) Resolve canonical profile row (supports id/user_id drift).
+      const { data: targetProfile, error: targetErr } = await supabase
         .from(TABLES.profiles)
-        .update({ 
+        .select('id, company_id, is_admin_blocked, blocked_reason')
+        .or(`id.eq.${uid},user_id.eq.${uid}`)
+        .limit(1)
+        .maybeSingle();
+      if (targetErr) throw targetErr;
+      if (!targetProfile?.id) {
+        throw new Error(t('err_suspend_failed'));
+      }
+
+      // 2) Write block state to canonical row.
+      const { data: updatedProfile, error: updErr } = await supabase
+        .from(TABLES.profiles)
+        .update({
           is_admin_blocked: !!value,
           blocked_reason: value ? 'admin_block' : null,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', uid);
-      
+        .eq('id', targetProfile.id)
+        .select('id, is_admin_blocked, blocked_reason')
+        .maybeSingle();
+
       if (updErr) {
         console.error('Error updating suspension status:', updErr);
         throw updErr;
       }
-      
+
+      // 3) Verify persisted state to avoid silent no-op updates.
+      const persisted = updatedProfile || targetProfile;
+      const blockedPersisted = !!persisted?.is_admin_blocked;
+      if (Boolean(value) !== blockedPersisted) {
+        throw new Error(t('err_suspend_failed'));
+      }
+
       return null;
     } catch (e) {
       console.error('setSuspended error:', e);
@@ -1502,9 +1543,18 @@ export default function EditUser() {
       // 2. РћС‚РїСЂР°РІР»СЏРµРј РїР°СЂРѕР»СЊ РїРѕ email
       console.debug('[Edit] [Password Reset] Sending email to:', email);
       
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token;
+      if (!accessToken) throw new Error(t('err_reset_password_failed'));
+
       const emailResponse = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({
           type: 'password-reset',
           email,
@@ -1630,6 +1680,8 @@ export default function EditUser() {
         setUnsuspendVisible(true);
         return;
       }
+      const errSuspend = await setSuspended(userId, true);
+      if (errSuspend) throw new Error(errSuspend.message || t('err_suspend_failed'));
       const companyIdForSeat = employeeData?.companyId || employeeData?.company_id || currentProfile?.company_id || null;
       if (!companyIdForSeat) throw new Error(t('billing_unknown_error'));
       const { error: rpcErr } = await supabase.rpc('revoke_seat', {

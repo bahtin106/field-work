@@ -21,6 +21,7 @@ export default function AdminHomeScreen() {
   const nav = useNavigation();
   const router = useRouter();
   const { isAllowed, isLoading } = useRequireSuperAdmin();
+  const lastHeaderTitleRef = React.useRef('');
   const queryClient = useQueryClient();
   const { data: unreadCount = 0 } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
@@ -43,16 +44,24 @@ export default function AdminHomeScreen() {
     };
   }, [isAllowed, queryClient]);
 
+  const adminHeaderTitle = React.useMemo(
+    () => t('routes.admin/index') || t('routes.admin'),
+    [t],
+  );
+
   React.useEffect(() => {
     const rafId = requestAnimationFrame(() => {
       if (typeof nav?.setParams !== 'function') return;
       if (typeof nav?.isFocused === 'function' && !nav.isFocused()) return;
+      if (!adminHeaderTitle) return;
+      if (lastHeaderTitleRef.current === adminHeaderTitle) return;
       try {
-        nav.setParams({ headerTitle: t('routes.admin/index') || t('routes.admin') });
+        nav.setParams({ headerTitle: adminHeaderTitle });
+        lastHeaderTitleRef.current = adminHeaderTitle;
       } catch {}
     });
     return () => cancelAnimationFrame(rafId);
-  }, [nav, t]);
+  }, [adminHeaderTitle, nav]);
 
   if (isLoading || !isAllowed) {
     return <Screen background="background" />;

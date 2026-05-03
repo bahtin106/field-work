@@ -1,7 +1,6 @@
 FROM email-server:latest
 
-# Copy the updated email-server.js
-COPY email-server-updated.js /app/email-server.js
+# Copy the maintained hardened email server.
+COPY email-server.cjs /app/email-server.js
 
-# Start the application
 CMD ["node", "/app/email-server.js"]

@@ -27,6 +27,26 @@ function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
 }
 
+function emailServiceHeaders(): Record<string, string> {
+  const token = String(Deno.env.get('EMAIL_SERVER_API_TOKEN') || '').trim();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { 'X-Email-Server-Token': token } : {}),
+  };
+}
+
+function getEmailServiceUrl(): string {
+  const value = String(
+    Deno.env.get('EMAIL_SERVICE_URL') ||
+      Deno.env.get('EXPO_PUBLIC_EMAIL_SERVICE_URL') ||
+      '',
+  )
+    .trim()
+    .replace(/\/+$/, '');
+  if (!value) throw new Error('EMAIL_SERVICE_URL is required');
+  return value;
+}
+
 function generateTempPassword(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
   const bytes = new Uint8Array(18);
@@ -135,10 +155,10 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
     });
     if (updateError) throw new Error(`Auth update failed: ${updateError.message}`);
 
-    const emailServiceUrl = Deno.env.get('EMAIL_SERVICE_URL') || 'https://api.monitorapp.ru';
+    const emailServiceUrl = getEmailServiceUrl();
     const response = await fetch(`${emailServiceUrl}/send-email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: emailServiceHeaders(),
       body: JSON.stringify({
         type: 'password-reset',
         email,

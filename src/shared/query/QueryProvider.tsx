@@ -1,12 +1,10 @@
-import Constants from 'expo-constants';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useEffect } from 'react';
 import { configureQueryEnvironment, persistOptions, persister, queryClient } from './queryClient';
+import { scheduleSmartPrefetch } from './smartPrefetch';
 
-const isDevRuntime = typeof __DEV__ !== 'undefined' && __DEV__;
-const isExpoGo = Constants?.appOwnership === 'expo';
-const shouldPersistQueryCache = !isDevRuntime && !isExpoGo;
+const shouldPersistQueryCache = true;
 
 export function QueryProvider({ children }) {
   useEffect(() => {
@@ -14,8 +12,13 @@ export function QueryProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    const cancel = scheduleSmartPrefetch(queryClient);
+    return cancel;
+  }, []);
+
+  useEffect(() => {
     if (shouldPersistQueryCache) return;
-    persister.removeClient?.().catch(() => {});
+    Promise.resolve(persister.removeClient?.()).catch(() => {});
   }, []);
 
   if (!shouldPersistQueryCache) {

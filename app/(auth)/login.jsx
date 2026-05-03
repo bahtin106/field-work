@@ -1,5 +1,6 @@
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
@@ -20,6 +21,7 @@ import TextField from '../../components/ui/TextField';
 import { BaseModal } from '../../components/ui/modals';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useAuthLogin } from '../../hooks/useAuthLogin';
+import { consumeAuthBlockNotice } from '../../lib/authBlockNotice';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
@@ -143,6 +145,8 @@ function LoginScreenContent() {
   const { t } = useTranslation();
   const toast = useToast();
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const isFocused = useIsFocused();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const interactive = theme.components?.interactive || {
     hitSlop: { top: 8, bottom: 8, left: 8, right: 8 },
@@ -184,6 +188,7 @@ function LoginScreenContent() {
   const [supportMessage, setSupportMessage] = useState('');
   const [supportSending, setSupportSending] = useState(false);
   const [supportFeedback, setSupportFeedback] = useState(null);
+  const [forcedBlockedMessage, setForcedBlockedMessage] = useState('');
 
   const handleTogglePassword = useCallback(() => {
     passwordFieldRef.current?.togglePasswordVisibility();
@@ -195,13 +200,53 @@ function LoginScreenContent() {
 
   useEffect(() => {
     if (!accessBlock?.code) return;
-    const params = {
-      code: accessBlock.code,
-      message: accessBlock.message || '',
-    };
+    const fallbackMessage = `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`;
+    const nextMessage = String(accessBlock.message || '').trim() || fallbackMessage;
+    router.replace({
+      pathname: '/(auth)/blocked',
+      params: {
+        code: String(accessBlock.code || 'access_blocked'),
+        message: nextMessage,
+        ts: String(Date.now()),
+      },
+    });
     clearAccessBlock?.();
-    router.replace({ pathname: '/(auth)/blocked', params });
-  }, [accessBlock, clearAccessBlock, router]);
+  }, [accessBlock, clearAccessBlock, router, t]);
+
+  useEffect(() => {
+    const blocked = String(params?.blocked || '').trim() === '1';
+    if (!blocked) return;
+
+    const message = String(params?.message || '').trim();
+    if (message) {
+      setForcedBlockedMessage(message);
+      return;
+    }
+
+    const code = String(params?.code || '').trim().toLowerCase();
+    if (code === 'blocked_by_license') {
+      setForcedBlockedMessage(t('auth_blocked_by_license'));
+      return;
+    }
+    if (code === 'company_inactive') {
+      setForcedBlockedMessage(t('auth_company_inactive'));
+      return;
+    }
+    setForcedBlockedMessage(`${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`);
+  }, [params?.blocked, params?.code, params?.message, t]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const restoreNotice = async () => {
+      const nextMessage = await consumeAuthBlockNotice();
+      if (!nextMessage || cancelled) return;
+      setForcedBlockedMessage(nextMessage);
+    };
+    restoreNotice();
+    return () => {
+      cancelled = true;
+    };
+  }, [isFocused]);
 
   const recoverCooldownLeft = Math.max(
     0,
@@ -278,14 +323,13 @@ function LoginScreenContent() {
       setRecoverSentOnce(true);
       setRecoverCooldownUntil(Date.now() + PASSWORD_RESET_COOLDOWN_SECONDS * 1000);
       setRecoverFeedback({ type: 'success', message: t('login_recover_sent_hint') });
-      toast.success(t('login_recover_sent'));
     } catch (e) {
       const message = String(e?.message || '').trim() || t('login_recover_send_error');
       setRecoverFeedback({ type: 'error', message });
     } finally {
       setRecoverSending(false);
     }
-  }, [recoverEmail, t, toast]);
+  }, [recoverEmail, t]);
 
   const sendSupport = useCallback(async () => {
     const normalizedEmail = normalizeEmail(supportEmail);
@@ -399,7 +443,11 @@ function LoginScreenContent() {
                 </Pressable>
               </Card>
 
-              {error && <Text style={styles.errorText}>{error}</Text>}
+              {forcedBlockedMessage ? (
+                <Text style={styles.errorText}>{forcedBlockedMessage}</Text>
+              ) : error ? (
+                <Text style={styles.errorText}>{error}</Text>
+              ) : null}
 
               <Button
                 title={t('btn_login')}
@@ -493,7 +541,11 @@ function LoginScreenContent() {
                   </Pressable>
                 </Card>
 
-                {error && <Text style={styles.errorText}>{error}</Text>}
+                {forcedBlockedMessage ? (
+                  <Text style={styles.errorText}>{forcedBlockedMessage}</Text>
+                ) : error ? (
+                  <Text style={styles.errorText}>{error}</Text>
+                ) : null}
 
                 <Button
                   title={t('btn_login')}

@@ -575,7 +575,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         delaysContentTouches={false}
-        canCancelContentTouches={false}
       >
       <Card style={styles.cardRounded} padded={false}>
         <Pressable

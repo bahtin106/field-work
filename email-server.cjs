@@ -2,10 +2,10 @@ const express = require('express');
 const nodemailer = require('nodemailer');
 const cors = require('cors');
 const crypto = require('crypto');
-const { Client } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
-const allowedOrigins = String(process.env.EMAIL_SERVER_ALLOWED_ORIGINS || 'https://monitorapp.ru,https://app.monitorapp.ru')
+const allowedOrigins = String(process.env.EMAIL_SERVER_ALLOWED_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
@@ -46,37 +46,133 @@ function rateLimit(name, maxRequests, windowMs) {
   };
 }
 
-function requireServerToken(req, res, next) {
-  const expected = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
-  if (!expected) return next();
-  const supplied = String(req.headers['x-email-server-token'] || req.headers.authorization || '')
+let supabaseAdminClient = null;
+
+function timingSafeStringEqual(left, right) {
+  const leftBuf = Buffer.from(String(left || ''));
+  const rightBuf = Buffer.from(String(right || ''));
+  return leftBuf.length === rightBuf.length && crypto.timingSafeEqual(leftBuf, rightBuf);
+}
+
+function getConfiguredServerToken() {
+  return String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
+}
+
+function getSuppliedServerToken(req) {
+  return String(req.headers['x-email-server-token'] || req.headers.authorization || '')
     .replace(/^Bearer\s+/i, '')
     .trim();
-  const suppliedBuf = Buffer.from(supplied);
-  const expectedBuf = Buffer.from(expected);
-  if (
-    suppliedBuf.length === expectedBuf.length &&
-    crypto.timingSafeEqual(suppliedBuf, expectedBuf)
-  ) {
-    return next();
+}
+
+function hasValidServerToken(req) {
+  const expected = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
+  if (!expected) return false;
+  return timingSafeStringEqual(getSuppliedServerToken(req), expected);
+}
+
+function requireServerToken(req, res, next) {
+  if (!getConfiguredServerToken()) {
+    return res.status(503).json({ error: 'EMAIL_SERVER_API_TOKEN is required' });
   }
+  if (hasValidServerToken(req)) return next();
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
+function getBearerUserToken(req) {
+  const raw = String(req.headers.authorization || '').trim();
+  if (!/^Bearer\s+/i.test(raw)) return '';
+  const token = raw.replace(/^Bearer\s+/i, '').trim();
+  const serverToken = getConfiguredServerToken();
+  if (serverToken && timingSafeStringEqual(token, serverToken)) return '';
+  return token;
+}
+
+function getSupabaseAdminClient() {
+  if (supabaseAdminClient) return supabaseAdminClient;
+  const url = resolveSupabaseBaseUrl(process.env.SUPABASE_URL);
+  const key = String(
+    process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  ).trim();
+  if (!url || !key) return null;
+  supabaseAdminClient = createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  return supabaseAdminClient;
+}
+
+async function getAuthenticatedCaller(req) {
+  const token = getBearerUserToken(req);
+  if (!token) return null;
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new Error('Missing Supabase configuration for user auth');
+  }
+
+  const {
+    data: { user },
+    error: authError,
+  } = await admin.auth.getUser(token);
+  if (authError || !user?.id) return null;
+
+  const { data: profile, error: profileError } = await admin
+    .from('profiles')
+    .select('id, user_id, role, company_id')
+    .or(`id.eq.${user.id},user_id.eq.${user.id}`)
+    .limit(1)
+    .maybeSingle();
+  if (profileError || !profile) return null;
+
+  const { data: superAdminRow } = await admin
+    .from('super_admins')
+    .select('user_id, profile_id')
+    .eq('is_active', true)
+    .or(`user_id.eq.${user.id},profile_id.eq.${user.id}`)
+    .maybeSingle();
+
+  const role = String(profile.role || '').trim().toLowerCase();
+  const isSuperAdmin = role === 'super_admin' || !!(superAdminRow?.user_id || superAdminRow?.profile_id);
+  return {
+    user,
+    profile,
+    isPrivilegedEmailSender: isSuperAdmin || role === 'admin',
+  };
+}
+
+async function requireSendEmailAuth(req, res, next) {
+  try {
+    if (hasValidServerToken(req)) {
+      req.emailAuth = { kind: 'server' };
+      return next();
+    }
+
+    const caller = await getAuthenticatedCaller(req);
+    if (!caller) return res.status(401).json({ error: 'Unauthorized' });
+    if (!caller.isPrivilegedEmailSender) return res.status(403).json({ error: 'Forbidden' });
+
+    req.emailAuth = { kind: 'user', userId: caller.user.id, profileId: caller.profile.id };
+    return next();
+  } catch (error) {
+    console.error('[EMAIL_AUTH] Failed:', error?.message || error);
+    return res.status(500).json({ error: 'Email auth failed' });
+  }
+}
+
 function resolveSupabaseBaseUrl(rawUrl) {
-  const fallback = process.env.SUPABASE_PUBLIC_URL || 'https://supabase.monitorapp.ru';
+  const publicUrl = String(process.env.SUPABASE_PUBLIC_URL || '').trim().replace(/\/+$/, '');
   const candidate = String(rawUrl || '').trim();
-  if (!candidate) return fallback;
+  if (!candidate) return publicUrl;
 
   try {
     const parsed = new URL(candidate);
     const host = String(parsed.hostname || '').toLowerCase();
-    if (!host || host === 'supabase-kong' || host === 'localhost' || host.endsWith('.internal')) {
-      return fallback;
+    if (!host) return publicUrl;
+    if ((host === 'supabase-kong' || host === 'localhost' || host.endsWith('.internal')) && publicUrl) {
+      return publicUrl;
     }
     return parsed.origin;
   } catch {
-    return fallback;
+    return publicUrl;
   }
 }
 
@@ -278,11 +374,14 @@ transporter.verify((error) => {
   }
 });
 
-app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireServerToken, async (req, res) => {
+app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmailAuth, async (req, res) => {
   try {
     const { type, email, firstName, lastName, resetLink, tempPassword } = req.body;
     if (!type || !email) {
       return res.status(400).json({ error: 'Missing required fields: type, email' });
+    }
+    if (req.emailAuth?.kind === 'user' && type !== 'password-reset') {
+      return res.status(403).json({ error: 'Forbidden' });
     }
 
     let subject, html, text;
@@ -410,7 +509,7 @@ app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), re
     }
 
     const url = resolveSupabaseBaseUrl(process.env.SUPABASE_URL);
-    const key = process.env.SUPABASE_SERVICE_KEY;
+    const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!url || !key) {
       console.error(`[${new Date().toISOString()}] Missing Supabase credentials`);
@@ -500,7 +599,7 @@ app.post('/update-password', rateLimit('legacy-update-password', 10, 60 * 1000),
     }
 
     const url = resolveSupabaseBaseUrl(process.env.SUPABASE_URL);
-    const key = process.env.SUPABASE_SERVICE_KEY;
+    const key = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
 
     if (!url || !key) {
       console.error(`[${new Date().toISOString()}] Missing Supabase credentials`);

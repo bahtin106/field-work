@@ -2,7 +2,7 @@ import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
 
-function isAuthSessionMissing(error: unknown) {
+function isAuthSessionMissing(error: any) {
   const name = String(error?.name || '').toLowerCase();
   const message = String(error?.message || '').toLowerCase();
   return name.includes('authsessionmissingerror') || message.includes('auth session missing');

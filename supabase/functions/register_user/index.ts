@@ -206,6 +206,13 @@ export async function handleRegisterUserRequest(req: Request) {
     const fullName = normalizeName(body?.full_name || `${firstName} ${lastName}`);
     const companyNameInput = normalizeCompanyName(body?.company_name);
     const companyTimeZone = text(body?.timezone) || 'UTC';
+    const consentOffer = body?.consent_offer === true;
+    const consentPrivacyPolicy = body?.consent_privacy_policy === true;
+    const consentPersonalData = body?.consent_personal_data === true;
+    const consentCookies = body?.consent_cookies === true;
+    const consentSource = text(body?.consent_source) || 'mobile_app';
+    const consentDocuments =
+      body?.consent_documents && typeof body.consent_documents === 'object' ? body.consent_documents : {};
 
     if (!ACCOUNT_TYPES.has(accountType)) {
       return errorResponse(req, allowedOrigins, 'account_type must be solo or company', 400, 'INVALID_ACCOUNT_TYPE');
@@ -283,6 +290,10 @@ export async function handleRegisterUserRequest(req: Request) {
         email_available: !existingUser,
         company_available: accountType === 'company' ? !existingCompany : true,
       });
+    }
+
+    if (!consentOffer || !consentPrivacyPolicy || !consentPersonalData || !consentCookies) {
+      return errorResponse(req, allowedOrigins, 'Missing required legal consents', 409, 'CONSENT_REQUIRED');
     }
 
     if (existingUser) {
@@ -494,6 +505,34 @@ export async function handleRegisterUserRequest(req: Request) {
           extra: { code: messengerErr.code || null, companyId },
         });
       }
+    }
+
+    const { error: consentErr } = await supabaseAdmin.from('registration_consents').insert({
+      user_id: userId,
+      company_id: companyId,
+      email,
+      account_type: accountType,
+      consent_offer: consentOffer,
+      consent_privacy_policy: consentPrivacyPolicy,
+      consent_personal_data: consentPersonalData,
+      consent_cookies: consentCookies,
+      consent_source: consentSource,
+      consent_documents: consentDocuments,
+      user_agent: text(req.headers.get('user-agent') || '') || null,
+      ip_address: getClientIp(req),
+    });
+    if (consentErr) {
+      await logServerIssue(supabaseAdmin, {
+        userId,
+        name: 'RegisterConsentWriteError',
+        message: consentErr.message,
+        extra: { code: consentErr.code || null, companyId, email },
+      });
+      if (companyId) {
+        await supabaseAdmin.from('companies').delete().eq('id', companyId);
+      }
+      await supabaseAdmin.auth.admin.deleteUser(userId);
+      return errorResponse(req, allowedOrigins, `Consent error: ${consentErr.message}`, 400, 'CONSENT_WRITE_FAILED');
     }
 
     return jsonResponse(req, allowedOrigins, {

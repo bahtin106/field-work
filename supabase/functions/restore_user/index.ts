@@ -37,23 +37,56 @@ Deno.serve(async (req) => {
       },
     });
 
-    console.log(`[restore_user] Attempting to restore user: ${email}`);
+    const authHeader = req.headers.get('Authorization') || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!token) {
+      return new Response('Unauthorized', { status: 401, headers: cors });
+    }
+
+    const { data: callerAuth, error: callerAuthError } = await supabaseAdmin.auth.getUser(token);
+    if (callerAuthError || !callerAuth?.user?.id) {
+      return new Response('Unauthorized', { status: 401, headers: cors });
+    }
+
+    const { data: callerProfile, error: callerProfileError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, role, company_id')
+      .eq('id', callerAuth.user.id)
+      .single();
+    if (callerProfileError || !callerProfile || callerProfile.role !== 'admin') {
+      return new Response('Forbidden', { status: 403, headers: cors });
+    }
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const { data: restoredProfile, error: restoredProfileError } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .ilike('email', normalizedEmail)
+      .maybeSingle();
+    if (restoredProfileError) {
+      return new Response('Profile lookup failed', { status: 400, headers: cors });
+    }
+    if (!restoredProfile || restoredProfile.company_id !== callerProfile.company_id) {
+      return new Response('User not found', { status: 404, headers: cors });
+    }
+
+    console.log(`[restore_user] Attempting to restore user: ${normalizedEmail}`);
 
     // 1. Проверяем, существует ли уже
     const { data: existing } = await supabaseAdmin.auth.admin.listUsers();
-    const userExists = existing?.users?.some((u) => u.email === email);
+    const userExists = existing?.users?.some((u) => String(u.email || '').toLowerCase() === normalizedEmail);
 
     if (userExists) {
       console.log(`[restore_user] User already exists: ${email}`);
       return new Response(
-        JSON.stringify({ error: 'User already exists', email }),
+        JSON.stringify({ error: 'User already exists', email: normalizedEmail }),
         { status: 409, headers: { ...cors, 'Content-Type': 'application/json' } }
       );
     }
 
     // 2. Создаём нового пользователя с подтверждённым email
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email,
+      email: normalizedEmail,
       password,
       email_confirm: true, // Сразу подтверждаем
       user_metadata: {
@@ -73,17 +106,13 @@ Deno.serve(async (req) => {
     console.log(`[restore_user] User created successfully:`, newUser?.user?.id);
 
     // 3. Получаем профиль из public.profiles если есть
-    const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('*')
-      .eq('email', email)
-      .maybeSingle();
+    const profile = restoredProfile;
 
     // 4. Если профиля нет, создаём (опционально)
     if (!profile && newUser?.user?.id) {
       await supabaseAdmin.from('profiles').insert({
         id: newUser.user.id,
-        email,
+        email: normalizedEmail,
         first_name: firstName || '',
         last_name: lastName || '',
         created_at: new Date().toISOString(),
@@ -93,7 +122,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: `User ${email} restored successfully`,
+        message: `User ${normalizedEmail} restored successfully`,
         userId: newUser?.user?.id,
       }),
       { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } }

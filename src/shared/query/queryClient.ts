@@ -5,13 +5,15 @@ import { QueryClient, focusManager, onlineManager } from '@tanstack/react-query'
 import { AppState } from 'react-native';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
 import { logClientError } from '../../../lib/errorLogsClient';
+import { setOfflineNetState } from '../offline/offlineStatus';
 
 const DEFAULT_REFOCUS_ENABLED = false;
 const QUERY_CACHE_MAX_ENTRIES = 350;
 const INACTIVE_QUERY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const CACHE_MAINTENANCE_INTERVAL_MS = 3 * 60 * 1000;
-const PERSIST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PERSIST_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 350 * 1024;
+const HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 220 * 1024;
 const DEFAULT_QUERY_STALE_MS = 60 * 1000;
 const DEFAULT_QUERY_GC_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_RETRIES = 2;
@@ -64,7 +66,6 @@ function retryDelay(attemptIndex: number) {
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      keepPreviousData: true,
       placeholderData: (prev) => prev,
       staleTime: DEFAULT_QUERY_STALE_MS,
       gcTime: DEFAULT_QUERY_GC_MS,
@@ -73,23 +74,15 @@ export const queryClient = new QueryClient({
       refetchOnMount: false,
       refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
       refetchOnReconnect: false,
-      networkMode: 'online',
-      onError: (error, query) => {
-        logClientError(error, {
-          source: 'react_query_query',
-          queryKey: Array.isArray(query?.queryKey) ? query.queryKey : null,
-        });
-      },
+      networkMode: 'offlineFirst',
     },
     mutations: {
       retry: 1,
-      networkMode: 'online',
-      onError: (error, _variables, _context, mutation) => {
+      networkMode: 'offlineFirst',
+      onError: (error) => {
         logClientError(error, {
           source: 'react_query_mutation',
-          mutationKey: Array.isArray(mutation?.options?.mutationKey)
-            ? mutation.options.mutationKey
-            : null,
+          mutationKey: null,
         });
       },
     },
@@ -209,7 +202,7 @@ queryClient.setQueryDefaults(COMPANY_SETTINGS_QUERY_KEY, {
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 
-queryClient.setQueryDefaults(['session'], { retry: 0, gcTime: 0, cacheTime: 0 });
+queryClient.setQueryDefaults(['session'], { retry: 0, gcTime: 0 });
 queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: 5 * 60 * 1000 });
 queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: 5 * 60 * 1000 });
 queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: 5 * 60 * 1000 });
@@ -284,9 +277,10 @@ export function configureQueryEnvironment() {
   listenersConfigured = true;
 
   onlineManager.setEventListener((setOnline) =>
-    NetInfo.addEventListener((state) =>
-      setOnline(Boolean(state.isConnected) && state.isInternetReachable !== false),
-    ),
+    NetInfo.addEventListener((state) => {
+      setOfflineNetState(state);
+      setOnline(Boolean(state.isConnected) && state.isInternetReachable !== false);
+    }),
   );
 
   focusManager.setEventListener((handleFocus) => {
@@ -309,7 +303,7 @@ export function configureQueryEnvironment() {
 
 export const persistOptions = {
   persister,
-  buster: 'perf-policy-v2-2026-03-20',
+  buster: 'offline-v1-2026-05-02',
   maxAge: PERSIST_MAX_AGE_MS,
   dehydrateOptions: {
     shouldDehydrateQuery: (q) => {
@@ -323,6 +317,19 @@ export const persistOptions = {
         try {
           const serialized = JSON.stringify(q.state.data);
           return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
+        } catch {
+          return false;
+        }
+      }
+      if (
+        (key0 === 'clients' && key1 === 'list') ||
+        (key0 === 'objects' && (key1 === 'by-company' || key1 === 'by-client')) ||
+        (key0 === 'employees' && key1 === 'list')
+      ) {
+        if (q.state.status !== 'success') return false;
+        try {
+          const serialized = JSON.stringify(q.state.data);
+          return serialized.length <= HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
         } catch {
           return false;
         }

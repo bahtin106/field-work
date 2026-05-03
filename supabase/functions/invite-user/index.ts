@@ -6,8 +6,9 @@ const SUPABASE_SERVICE_ROLE_KEY =
 const EMAIL_SERVICE_URL = String(
   Deno.env.get('EMAIL_SERVICE_URL') ||
     Deno.env.get('EXPO_PUBLIC_EMAIL_SERVICE_URL') ||
-    'http://email-server:3000',
+    '',
 ).replace(/\/+$/, '');
+const EMAIL_SERVER_API_TOKEN = String(Deno.env.get('EMAIL_SERVER_API_TOKEN') || '').trim();
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +17,9 @@ const corsHeaders = {
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+}
+if (!EMAIL_SERVICE_URL) {
+  throw new Error('EMAIL_SERVICE_URL is required');
 }
 
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -36,6 +40,13 @@ type InviteBody = {
 
 function err(message: string, status = 400): Response {
   return Response.json({ success: false, message }, { status, headers: corsHeaders });
+}
+
+function emailServiceHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    ...(EMAIL_SERVER_API_TOKEN ? { 'X-Email-Server-Token': EMAIL_SERVER_API_TOKEN } : {}),
+  };
 }
 
 function generateTempPassword(): string {
@@ -212,7 +223,7 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
 
     const emailRes = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: emailServiceHeaders(),
       body: JSON.stringify({
         type: 'invite',
         email,

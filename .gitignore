@@ -6,6 +6,8 @@ dist/
 # RN/Android/iOS
 android/app/build/
 android/build/
+android/.gradle/
+android/app/.cxx/
 ios/build/
 # IDE/OS
 .vscode/
@@ -22,6 +24,8 @@ supabase/.temp/
 backups/
 backup-secrets/
 node_modules.backup/
+*.agekey
+*.log
 
 # Local temp/debug artifacts
 .tmp_*

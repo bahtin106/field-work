@@ -3,8 +3,11 @@
 // Handles both beget_s3 and yandex_disk providers.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { cacheDirectory, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 import { orderMediaStorage } from '../lib/orderMediaStorage';
+import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
 
 const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
 
@@ -12,6 +15,8 @@ const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media
 const _globalResolvedCache = new Map();  // key → display URL
 const _globalIssuesCache   = new Map();  // key → issue object
 const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
+const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v1';
+const ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES = 220;
 
 function pruneMapCache(map, maxEntries = GLOBAL_MEDIA_CACHE_MAX_ENTRIES) {
   while (map.size > maxEntries) {
@@ -47,6 +52,34 @@ function isResolvableRemoteUrl(url) {
   return raw.startsWith('yadisk://');
 }
 
+function makeLocalFileName(url) {
+  const normalized = encodeURIComponent(String(url || '').trim()).slice(0, 180);
+  return `order_media_${normalized}.jpg`;
+}
+
+function normalizeUrlCacheKey(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return raw.split('?')[0].split('#')[0];
+  }
+}
+
+function pruneLocalCacheMap(mapObj, maxEntries = ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES) {
+  const obj = mapObj && typeof mapObj === 'object' ? mapObj : {};
+  const keys = Object.keys(obj);
+  if (keys.length <= maxEntries) return obj;
+  const overflow = keys.length - maxEntries;
+  for (let i = 0; i < overflow; i += 1) {
+    delete obj[keys[i]];
+  }
+  return obj;
+}
+
 /**
  * Resolves display URLs for order media — parallelised for speed.
  *
@@ -64,6 +97,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const probedUrlsRef = useRef(new Set()); // tracks URLs already probed this session
   const isMounted = useRef(true);
   const resolvedRef = useRef(resolvedUrls); // always-current snapshot (no stale closures)
+  const localCacheRef = useRef({});
 
   useEffect(() => {
     isMounted.current = true;
@@ -71,6 +105,56 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       isMounted.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        if (cancelled || !parsed || typeof parsed !== 'object') return;
+        localCacheRef.current = parsed;
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const persistLocalCache = useCallback(async () => {
+    try {
+      localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
+      await AsyncStorage.setItem(ORDER_MEDIA_LOCAL_CACHE_KEY, JSON.stringify(localCacheRef.current || {}));
+    } catch {}
+  }, []);
+
+  const ensureLocalCached = useCallback(async (sourceUrl, displayUrl) => {
+    const src = String(sourceUrl || '').trim();
+    const remote = String(displayUrl || src).trim();
+    if (!src || !remote) return;
+    if (!/^https?:\/\//i.test(remote)) return;
+    try {
+      const existing = String(localCacheRef.current?.[src] || '').trim();
+      if (existing) {
+        const info = await getInfoAsync(existing);
+        if (info?.exists) return;
+      }
+      const path = `${cacheDirectory}${makeLocalFileName(src)}`;
+      const result = await downloadAsync(remote, path);
+      if (result?.uri) {
+        const normalizedSrc = normalizeUrlCacheKey(src);
+        const normalizedRemote = normalizeUrlCacheKey(remote);
+        localCacheRef.current = {
+          ...(localCacheRef.current || {}),
+          [src]: result.uri,
+          ...(normalizedSrc ? { [normalizedSrc]: result.uri } : {}),
+          ...(normalizedRemote ? { [normalizedRemote]: result.uri } : {}),
+        };
+        localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
+        await persistLocalCache();
+      }
+    } catch {}
+  }, [persistLocalCache]);
 
   // Keep resolvedRef always in sync for proactive effect
   useEffect(() => {
@@ -81,7 +165,14 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const getDisplayUrl = useCallback(
     (sourceUrl) => {
       if (!sourceUrl) return '';
-      return resolvedUrls[sourceUrl] || sourceUrl;
+      const normalizedSource = normalizeUrlCacheKey(sourceUrl);
+      const local = String(
+        localCacheRef.current?.[sourceUrl] ||
+          localCacheRef.current?.[normalizedSource] ||
+          '',
+      ).trim();
+      if (!getOfflineSnapshot().isOnline && local) return local;
+      return resolvedUrls[sourceUrl] || local || sourceUrl;
     },
     [resolvedUrls],
   );
@@ -238,9 +329,15 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         setResolvedUrls(nextResolved);
         setIssues(nextIssues);
       }
+      if (getOfflineSnapshot().isOnline) {
+        const cachedPairs = Object.entries(nextResolved);
+        if (cachedPairs.length) {
+          await Promise.allSettled(cachedPairs.map(([source, display]) => ensureLocalCached(source, display)));
+        }
+      }
       return nextOrder;
     },
-    [t],
+    [ensureLocalCached, t],
   );
 
   // ─── Sync photos from Supabase Storage ───────────────────────────
@@ -265,6 +362,20 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     }
     if (tasks.length) Promise.allSettled(tasks).catch(() => {});
   }, [order, inspectSingle]);
+
+  useEffect(() => {
+    if (!order?.id) return;
+    if (!getOfflineSnapshot().isOnline) return;
+    const jobs = [];
+    for (const cat of MEDIA_CATEGORIES) {
+      const urls = Array.isArray(order?.[cat]) ? order[cat].filter(Boolean) : [];
+      for (const src of urls) {
+        const display = resolvedRef.current?.[src] || src;
+        jobs.push(ensureLocalCached(src, display));
+      }
+    }
+    if (jobs.length) Promise.allSettled(jobs).catch(() => {});
+  }, [ensureLocalCached, order]);
 
   // ─── Clear caches on provider/order switch ──────────────────────
   const clearCaches = useCallback(() => {

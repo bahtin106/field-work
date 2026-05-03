@@ -50,7 +50,7 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
 
     const { data: meProfile, error: meErr } = await admin
       .from('profiles')
-      .select('id, role')
+      .select('id, role, company_id')
       .eq('id', authData.user.id)
       .single();
     if (meErr || !meProfile) throw new Error('Profile not found');
@@ -63,10 +63,13 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
     // Проверяем, что пользователь существует
     const { data: target, error: targetErr } = await admin
       .from('profiles')
-      .select('id, email, company_id')
+      .select('id, email, company_id, role')
       .eq('id', user_id)
       .single();
     if (targetErr || !target) throw new Error('User not found');
+    if (!meProfile.company_id || target.company_id !== meProfile.company_id) {
+      throw new Error('Access denied');
+    }
 
     // Подсчитываем все заявки сотрудника
     const { count: totalCount, error: totalCountError } = await admin
@@ -84,10 +87,11 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
     if (reassign_to) {
       const { data: successor, error: succErr } = await admin
         .from('profiles')
-        .select('id, is_admin_blocked')
+        .select('id, is_admin_blocked, company_id')
         .eq('id', reassign_to)
         .single();
       if (succErr || !successor) throw new Error('Successor not found');
+      if (successor.company_id !== meProfile.company_id) throw new Error('Successor not found');
       if (successor.is_admin_blocked) throw new Error('Successor is blocked');
 
       // Переназначаем все заявки (любого статуса), чтобы не терять связность

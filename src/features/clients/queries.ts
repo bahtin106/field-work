@@ -1,8 +1,14 @@
 import { useEffect } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
 import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
+import {
+  enqueueClientUpdate,
+  getOfflineSnapshot,
+  isOfflineLikeError,
+  syncOfflineOutbox,
+} from '../../shared/offline/offlineStatus';
 import {
   createClient,
   getClientDeleteBlockers,
@@ -13,26 +19,53 @@ import {
   updateClient,
 } from './api';
 
-export function useClients(params = {}, options = {}) {
+export function useClients(params: any = {}, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.clients.list(params),
-    queryFn: () => listClients(params),
+    queryFn: async () => {
+      try {
+        return await listClients(params);
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = queryClient.getQueryData(queryKeys.clients.list(params));
+        return Array.isArray(cached) ? cached : [];
+      }
+    },
     staleTime: 30 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
-export function useClient(id, options = {}) {
+export function useClient(id: any, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.clients.detail(id),
-    queryFn: () => getClientById(String(id || '')),
+    queryFn: async () => {
+      try {
+        return await getClientById(String(id || ''));
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const fromDetail = queryClient.getQueryData(queryKeys.clients.detail(id));
+        if (fromDetail) return fromDetail;
+        const lists = queryClient.getQueriesData({ queryKey: ['clients'] }) || [];
+        for (const [, value] of lists) {
+          const arr = Array.isArray(value) ? value : [];
+          const found = arr.find((row: any) => String(row?.id || '') === String(id || ''));
+          if (found) return found;
+        }
+        throw error;
+      }
+    },
     enabled: !!id,
     staleTime: 60 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
-export function useClientOrderCount(id, options = {}) {
+export function useClientOrderCount(id: any, options: any = {}) {
   return useQuery({
     queryKey: queryKeys.clients.orderCount(id),
     queryFn: () => getClientOrderCount(String(id || '')),
@@ -42,7 +75,7 @@ export function useClientOrderCount(id, options = {}) {
   });
 }
 
-export function useClientDeleteBlockers(id, options = {}) {
+export function useClientDeleteBlockers(id: any, options: any = {}) {
   return useQuery({
     queryKey: ['clients', 'delete-blockers', String(id || '')],
     queryFn: () => getClientDeleteBlockers(String(id || '')),
@@ -52,7 +85,7 @@ export function useClientDeleteBlockers(id, options = {}) {
   });
 }
 
-export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}) {
+export function useClientsRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -68,7 +101,7 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}
           table: 'clients',
           filter: `company_id=eq.${companyId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const rowId = payload?.new?.id || payload?.old?.id;
           if (rowId) {
             queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(rowId) });
@@ -87,7 +120,7 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}
           table: 'client_objects',
           filter: `company_id=eq.${companyId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const clientId = payload?.new?.client_id || payload?.old?.client_id;
           if (clientId) {
             queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
@@ -105,7 +138,7 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null } = {}
           table: 'client_tag_links',
           filter: `company_id=eq.${companyId}`,
         },
-        (payload) => {
+        (payload: any) => {
           const clientId = String(payload?.new?.client_id || payload?.old?.client_id || '');
           if (clientId) {
             void invalidateNow(queryClient, queryKeys.clients.detail(clientId));
@@ -153,13 +186,59 @@ export function useUpdateClientMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Record<string, any> }) =>
-      updateClient(id, patch),
+    mutationFn: async ({ id, patch }: { id: string; patch: Record<string, any> }) => {
+      const base = queryClient.getQueryData(queryKeys.clients.detail(id)) as Record<string, any> | null;
+      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      if (!online) {
+        const queued = await enqueueClientUpdate({ id, patch, base });
+        return {
+          ...(base || {}),
+          ...(patch || {}),
+          id,
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+      try {
+        return await updateClient(id, patch);
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const queued = await enqueueClientUpdate({ id, patch, base });
+        return {
+          ...(base || {}),
+          ...(patch || {}),
+          id,
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+    },
+    onMutate: async ({ id, patch }) => {
+      const detailKey = queryKeys.clients.detail(id);
+      await queryClient.cancelQueries({ queryKey: detailKey });
+      const previous = queryClient.getQueryData(detailKey);
+      if (previous && typeof previous === 'object') {
+        queryClient.setQueryData(detailKey, {
+          ...(previous as Record<string, any>),
+          ...(patch || {}),
+          __offlinePending: !onlineManager.isOnline(),
+        });
+      }
+      return { previous, detailKey };
+    },
+    onError: (_error, _variables, context: any) => {
+      if (context?.previous) {
+        queryClient.setQueryData(context.detailKey, context.previous);
+      }
+    },
     onSuccess: (updated: any) => {
       if (updated?.id) {
         queryClient.setQueryData(queryKeys.clients.detail(updated.id), updated);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
+      if (updated?.__offlinePending) {
+        syncOfflineOutbox(queryClient).catch(() => {});
+      }
     },
   });
 }
@@ -181,7 +260,7 @@ export function useDeleteClientMutation() {
   });
 }
 
-export async function ensureClientPrefetch(queryClient, id) {
+export async function ensureClientPrefetch(queryClient: any, id: any) {
   if (!id) return null;
   return queryClient.ensureQueryData({
     queryKey: queryKeys.clients.detail(id),

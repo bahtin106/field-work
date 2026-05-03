@@ -31,6 +31,8 @@ import { getRequestById } from '../src/features/requests/api';
 import { initI18n, setLocale } from '../src/i18n';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { FeedbackProvider } from '../src/shared/feedback';
+import OfflineStatusBanner from '../src/shared/offline/OfflineStatusBanner';
+import { getOfflineSnapshot, isOfflineLikeError } from '../src/shared/offline/offlineStatus';
 import QueryProvider from '../src/shared/query/QueryProvider';
 import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
@@ -65,7 +67,7 @@ function LastSeenTracker() {
   return null;
 }
 
-const ACCESS_REVALIDATE_INTERVAL_MS = 2 * 60 * 1000;
+const ACCESS_REVALIDATE_INTERVAL_MS = 15 * 1000;
 
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
@@ -215,13 +217,8 @@ function RootLayoutInner() {
     if (isInitializing) return;
     if (!isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
-      return;
     }
-
-    if (isAuthenticated && inAuthGroup && !isBlockedScreen) {
-      router.replace('/orders');
-    }
-  }, [inAuthGroup, isAuthenticated, isBlockedScreen, isInitializing, router]);
+  }, [inAuthGroup, isAuthenticated, isInitializing, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
@@ -280,8 +277,21 @@ function RootLayoutInner() {
         if (accessRow?.can_login === false) {
           const code = String(accessRow.block_code || 'access_blocked');
           const message = String(accessRow.block_message || '');
+          const fallbackMessage =
+            code === 'blocked_by_license'
+              ? t('auth_blocked_by_license')
+              : code === 'company_inactive'
+                ? t('auth_company_inactive')
+                : `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`;
           if (!isBlockedScreen) {
-            router.replace({ pathname: '/(auth)/blocked', params: { code, message } });
+            router.replace({
+              pathname: '/(auth)/blocked',
+              params: {
+                code,
+                message: message || fallbackMessage,
+                ts: String(Date.now()),
+              },
+            });
           }
           return;
         }
@@ -292,20 +302,45 @@ function RootLayoutInner() {
         return;
       }
 
+      if (!getOfflineSnapshot().isOnline || isOfflineLikeError(accessError)) {
+        // Never treat connectivity problems as account blocking.
+        return;
+      }
+
       const profile = await loadOwnAccessProfile(user.id);
-      if (!profile) return;
+      if (!profile) {
+        if (!getOfflineSnapshot().isOnline) return;
+        if (!isBlockedScreen) {
+          router.replace({
+            pathname: '/(auth)/blocked',
+            params: {
+              code: 'access_blocked',
+              message: `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`,
+              ts: String(Date.now()),
+            },
+          });
+        }
+        return;
+      }
 
       const blockedByAdmin =
-        !!profile?.is_admin_blocked ||
-        ['manual', 'admin_block', 'admin_blocked', 'blocked', 'suspended'].includes(
-          String(profile?.blocked_reason || '').toLowerCase(),
-        );
+        !!profile?.is_admin_blocked;
       const blockedByLicense = String(profile?.license_state || '') === 'blocked_by_license';
       const blocked = blockedByAdmin || blockedByLicense;
 
       if (blocked && !isBlockedScreen) {
         const code = blockedByAdmin ? 'admin_blocked' : 'blocked_by_license';
-        router.replace({ pathname: '/(auth)/blocked', params: { code, message: '' } });
+        const fallbackMessage = blockedByAdmin
+          ? `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`
+          : t('auth_blocked_by_license');
+        router.replace({
+          pathname: '/(auth)/blocked',
+          params: {
+            code,
+            message: fallbackMessage,
+            ts: String(Date.now()),
+          },
+        });
       } else if (!blocked && isBlockedScreen) {
         router.replace('/orders');
       }
@@ -314,7 +349,7 @@ function RootLayoutInner() {
     } finally {
       accessCheckInFlightRef.current = false;
     }
-  }, [isAuthenticated, isInitializing, loadOwnAccessProfile, router, user?.id]);
+  }, [isAuthenticated, isInitializing, loadOwnAccessProfile, router, t, user?.id]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
@@ -331,6 +366,56 @@ function RootLayoutInner() {
     return () => {
       clearInterval(intervalId);
       appStateSub?.remove?.();
+    };
+  }, [enforceAccess, isAuthenticated, isInitializing, user?.id]);
+
+  useEffect(() => {
+    if (isInitializing || !isAuthenticated) return;
+    if (inAuthGroup && !isBlockedScreen) {
+      enforceAccess();
+    }
+  }, [enforceAccess, inAuthGroup, isAuthenticated, isBlockedScreen, isInitializing]);
+
+  useEffect(() => {
+    if (isInitializing || !isAuthenticated || !user?.id) return undefined;
+
+    const channelById = supabase
+      .channel(`self-access-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`,
+        },
+        () => {
+          enforceAccess();
+        },
+      )
+      .subscribe();
+
+    const channelByUserId = supabase
+      .channel(`self-access-user-id-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          enforceAccess();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channelById);
+        supabase.removeChannel(channelByUserId);
+      } catch {}
     };
   }, [enforceAccess, isAuthenticated, isInitializing, user?.id]);
 
@@ -644,6 +729,7 @@ function RootLayoutInner() {
             edges={['top', 'left', 'right']}
             style={{ flex: 1, backgroundColor: theme.colors.background }}
           >
+            {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
             <Stack
               initialRouteName={isAuthenticated ? 'orders' : '(auth)'}
               screenOptions={{

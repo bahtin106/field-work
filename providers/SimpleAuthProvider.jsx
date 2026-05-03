@@ -102,6 +102,11 @@ const isNetworkRequestError = (error) => {
   );
 };
 
+const isSessionExpiredLikeError = (error) => {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('сессия истекла') || message.includes('session expired') || message.includes('no session');
+};
+
 export function SimpleAuthProvider({ children }) {
   const [state, setState] = useState({
     isInitializing: true,
@@ -231,7 +236,11 @@ export function SimpleAuthProvider({ children }) {
                 avatar_display_url: resolvedUrls[avatarUrl] || data?.avatar_url || null,
               };
         } catch (profileMediaError) {
-          console.warn('[SimpleAuth] Profile media inspect skipped:', profileMediaError);
+          if (isSessionExpiredLikeError(profileMediaError)) {
+            debugLog('[SimpleAuth] Profile media inspect skipped: session missing');
+          } else {
+            console.warn('[SimpleAuth] Profile media inspect skipped:', profileMediaError);
+          }
         }
         return normalizeProfileData(safeData, user, 'supabase');
       } catch (error) {
@@ -538,7 +547,7 @@ export function SimpleAuthProvider({ children }) {
           }
         } catch {}
       }
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
     } catch (error) {
       console.error('SimpleAuth: signOut error', error);
     }

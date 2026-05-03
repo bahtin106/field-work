@@ -2739,7 +2739,7 @@ function EditOrderContent() {
     );
   }
 
-  if (orderError) {
+  if (orderError && !orderData) {
     return (
       <EditScreenTemplate scrollEnabled={false}>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>

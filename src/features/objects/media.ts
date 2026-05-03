@@ -42,7 +42,7 @@ export async function uploadObjectMediaPhoto(
       }
 
       const uploadResult = await uploadAsync(uploadUrl, uri, {
-        httpMethod: uploadMethod,
+        httpMethod: uploadMethod as any,
         headers: uploadHeaders,
         uploadType: FileSystemUploadType.BINARY_CONTENT,
       });

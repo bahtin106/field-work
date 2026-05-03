@@ -148,6 +148,13 @@ android {
     androidResources {
         ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
     }
+
+    externalNativeBuild {
+        cmake {
+            // Windows path-length mitigation for RN New Architecture CMake/Ninja outputs.
+            buildStagingDirectory "C:/cxxfw"
+        }
+    }
 }
 
 // Apply static values from `gradle.properties` to the `android.packagingOptions`

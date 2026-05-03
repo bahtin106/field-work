@@ -1,7 +1,13 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
+import {
+  enqueueRequestUpdate,
+  getOfflineSnapshot,
+  isOfflineLikeError,
+  syncOfflineOutbox,
+} from '../../shared/offline/offlineStatus';
 import {
   getAssigneeDisplayNameById,
   getRequestById,
@@ -14,21 +20,49 @@ import {
 
 const PAGE_SIZE = 20;
 
-function mergePages(data) {
+function mergePages(data: any) {
   const pages = data?.pages || [];
   return pages.flatMap((page) => (Array.isArray(page) ? page : []));
 }
 
-function useRequestInfiniteQuery(queryKey, params, options = {}) {
+function findRequestInListCaches(queryClient: any, id: any) {
+  const targetId = String(id || '').trim();
+  if (!targetId) return null;
+  const listEntries = queryClient.getQueriesData({ queryKey: ['requests'] }) || [];
+  for (const [, value] of listEntries) {
+    const candidate = Array.isArray(value?.pages)
+      ? value.pages.flatMap((page: any) => (Array.isArray(page) ? page : []))
+      : Array.isArray(value)
+        ? value
+        : [];
+    const found = candidate.find((row: any) => String(row?.id || '').trim() === targetId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function useRequestInfiniteQuery(queryKey: any, params: any, options: any = {}) {
+  const queryClient = useQueryClient();
   const query = useInfiniteQuery({
     queryKey,
-    queryFn: ({ pageParam = 1 }) => listRequests({ ...params, page: pageParam, pageSize: PAGE_SIZE }),
+    queryFn: async ({ pageParam = 1 }) => {
+      try {
+        return await listRequests({ ...params, page: pageParam, pageSize: PAGE_SIZE });
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached: any = queryClient.getQueryData(queryKey);
+        const pages = Array.isArray(cached?.pages) ? cached.pages : [];
+        const fromCache = pages[Number(pageParam) - 1];
+        return Array.isArray(fromCache) ? fromCache : [];
+      }
+    },
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {
       if (!Array.isArray(lastPage) || lastPage.length < PAGE_SIZE) return undefined;
       return allPages.length + 1;
     },
     staleTime: 20 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 
@@ -40,29 +74,47 @@ function useRequestInfiniteQuery(queryKey, params, options = {}) {
   };
 }
 
-function invalidateClientDeleteBlockersNamespace(queryClient) {
+function invalidateClientDeleteBlockersNamespace(queryClient: any) {
   queryClient.invalidateQueries({ queryKey: ['clients', 'delete-blockers'] });
 }
 
-export function useAllRequests(params = {}, options = {}) {
+export function useAllRequests(params: any = {}, options: any = {}) {
   return useRequestInfiniteQuery(queryKeys.requests.all(params), { ...params, scope: 'all' }, options);
 }
 
-export function useMyRequests(params = {}, options = {}) {
+export function useMyRequests(params: any = {}, options: any = {}) {
   return useRequestInfiniteQuery(queryKeys.requests.my(params), { ...params, scope: 'my' }, options);
 }
 
-export function useRequest(id, options = {}) {
+export function useRequest(id: any, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.requests.detail(id),
-    queryFn: () => getRequestById(id),
+    queryFn: async () => {
+      try {
+        return await getRequestById(id);
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const fromDetail = queryClient.getQueryData(queryKeys.requests.detail(id));
+        if (fromDetail) return fromDetail;
+        const fromLists = findRequestInListCaches(queryClient, id);
+        if (fromLists) return fromLists;
+        throw error;
+      }
+    },
+    initialData: () => {
+      const fromDetail = queryClient.getQueryData(queryKeys.requests.detail(id));
+      if (fromDetail) return fromDetail;
+      return findRequestInListCaches(queryClient, id);
+    },
     enabled: !!id,
     staleTime: 45 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
-export function useRequestExecutors({ companyId = null, ...options } = {}) {
+export function useRequestExecutors({ companyId = null, ...options }: any = {}) {
   return useQuery({
     queryKey: queryKeys.requests.executors(companyId),
     queryFn: () => listRequestExecutors({ companyId }),
@@ -71,7 +123,7 @@ export function useRequestExecutors({ companyId = null, ...options } = {}) {
   });
 }
 
-export function useRequestFilterOptions(options = {}) {
+export function useRequestFilterOptions(options: any = {}) {
   return useQuery({
     queryKey: queryKeys.requests.filterOptions(),
     queryFn: listRequestFilterOptions,
@@ -89,7 +141,7 @@ export function useCalendarRequests({
   isScreenActive = true,
   refetchIntervalMs = false,
   enabled = true,
-} = {}) {
+}: any = {}) {
   return useQuery({
     queryKey: queryKeys.requests.calendar({ userId, role, scope, startDate, endDate }),
     queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
@@ -101,7 +153,7 @@ export function useCalendarRequests({
   });
 }
 
-export function useRequestRealtimeSync({ enabled = true, companyId = null } = {}) {
+export function useRequestRealtimeSync({ enabled = true, companyId = null }: any = {}) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -134,7 +186,7 @@ export function useRequestRealtimeSync({ enabled = true, companyId = null } = {}
           table: 'orders',
           ...(filter ? { filter } : {}),
         },
-        (payload) => {
+        (payload: any) => {
           const rowId = payload?.new?.id || payload?.old?.id;
           if (rowId) {
             changedIds.add(rowId);
@@ -161,18 +213,59 @@ export function useUpdateRequestMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, patch, expectedUpdatedAt = null }) =>
-      updateRequest(id, patch, expectedUpdatedAt),
-    onMutate: async ({ id, patch }) => {
+    mutationFn: async (variables: any) => {
+      const { id, patch, expectedUpdatedAt = null, base = null } = variables || {};
+      const baseSnapshot = base || queryClient.getQueryData(queryKeys.requests.detail(id)) || null;
+      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      if (!online) {
+        const queued = await enqueueRequestUpdate({
+          id,
+          patch,
+          base: baseSnapshot,
+          expectedUpdatedAt,
+        });
+        return {
+          ...(baseSnapshot || {}),
+          ...(patch || {}),
+          id,
+          updated_at: expectedUpdatedAt || baseSnapshot?.updated_at || new Date().toISOString(),
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+
+      try {
+        return await updateRequest(id, patch, expectedUpdatedAt);
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const queued = await enqueueRequestUpdate({
+          id,
+          patch,
+          base: baseSnapshot,
+          expectedUpdatedAt,
+        });
+        return {
+          ...(baseSnapshot || {}),
+          ...(patch || {}),
+          id,
+          updated_at: expectedUpdatedAt || baseSnapshot?.updated_at || new Date().toISOString(),
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+    },
+    onMutate: async (variables: any) => {
+      const { id, patch, base } = variables || {};
       const detailKey = queryKeys.requests.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
       const previous = queryClient.getQueryData(detailKey);
-      if (previous) {
-        queryClient.setQueryData(detailKey, { ...previous, ...patch });
+      const baseSnapshot = base || previous || null;
+      if (baseSnapshot) {
+        queryClient.setQueryData(detailKey, { ...baseSnapshot, ...patch, __offlinePending: !onlineManager.isOnline() });
       }
-      return { previous, detailKey };
+      return { previous, detailKey, base: baseSnapshot };
     },
-    onError: (error, _variables, context) => {
+    onError: (error: any, _variables, context: any) => {
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
@@ -186,6 +279,9 @@ export function useUpdateRequestMutation() {
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
       invalidateClientDeleteBlockersNamespace(queryClient);
+      if (next?.__offlinePending) {
+        syncOfflineOutbox(queryClient).catch(() => {});
+      }
     },
     onSettled: () => {
       invalidateClientDeleteBlockersNamespace(queryClient);
@@ -193,7 +289,7 @@ export function useUpdateRequestMutation() {
   });
 }
 
-export async function ensureRequestPrefetch(queryClient, id) {
+export async function ensureRequestPrefetch(queryClient: any, id: any) {
   if (!id) return null;
   return queryClient.ensureQueryData({
     queryKey: queryKeys.requests.detail(id),
@@ -202,7 +298,7 @@ export async function ensureRequestPrefetch(queryClient, id) {
   });
 }
 
-export async function ensureRequestAssigneeNamePrefetch(queryClient, userId) {
+export async function ensureRequestAssigneeNamePrefetch(queryClient: any, userId: any) {
   if (!userId) return '';
   return queryClient.ensureQueryData({
     queryKey: queryKeys.requests.assigneeName(userId),
@@ -212,8 +308,8 @@ export async function ensureRequestAssigneeNamePrefetch(queryClient, userId) {
 }
 
 export async function ensureCalendarRequestsPrefetch(
-  queryClient,
-  { userId, role, scope = 'my', startDate = null, endDate = null } = {},
+  queryClient: any,
+  { userId, role, scope = 'my', startDate = null, endDate = null }: any = {},
 ) {
   if (!userId) return [];
   return queryClient.ensureQueryData({

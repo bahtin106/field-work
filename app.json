@@ -43,9 +43,6 @@
       "backgroundColor": "#FFFFFF"
     },
     "extra": {
-      "supabaseUrl": "https://supabase.monitorapp.ru",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzcwMTI0NjE4LCJleHAiOjIwODU0ODQ2MTh9.AHQIpGhGL9NH8i6v6oNs7counMqIjmbpjFNZ0BHXc4w",
-      "emailServiceUrl": "https://api.monitorapp.ru",
       "eas": {
         "projectId": "3c645715-1637-4502-979c-d4690c6cf1e2"
       }
