@@ -362,6 +362,23 @@ export default function AppSettings() {
         .maybeSingle();
 
       if (prefsErr) {
+        const rawMessage = String(prefsErr?.message || prefsErr || '').toLowerCase();
+        const isPermissionDenied =
+          rawMessage.includes('permission denied') ||
+          rawMessage.includes('row level security') ||
+          rawMessage.includes('rls');
+        if (isPermissionDenied) {
+          return {
+            allow: true,
+            new_orders: true,
+            feed_orders: true,
+            reminders: true,
+            reminder_delay_minutes: DEFAULT_REMINDER_DELAY_MINUTES,
+            quiet_start: null,
+            quiet_end: null,
+            quiet_timezone: resolveDeviceTimeZone(),
+          };
+        }
         __devLog('NOTIF_PREFS load error:', prefsErr.message || prefsErr);
         throw prefsErr;
       }

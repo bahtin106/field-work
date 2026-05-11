@@ -42,6 +42,7 @@ import {
   normalizeOptionalEmail,
 } from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
+import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import {
@@ -685,6 +686,10 @@ export default function EditUser() {
   const [newPassword, setNewPassword] = useState('');
   const [_showPassword, _setShowPassword] = useState(false);
   const [confirmPassword, setConfirmPassword] = useState('');
+  const newPasswordChecks = useMemo(
+    () => getPasswordStrengthChecks(newPassword),
+    [newPassword],
+  );
   const [passwordFieldResetKey, setPasswordFieldResetKey] = useState(0);
   const [resetPwdVisible, setResetPwdVisible] = useState(false);
   const [resettingPwd, setResettingPwd] = useState(false);
@@ -1305,6 +1310,18 @@ export default function EditUser() {
     if (meId && meId === userId && newPassword && newPassword.length) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
         setFieldErrors({ newPassword: { message: t('error_password_too_short') || `Минимум ${MIN_PASSWORD_LENGTH}` } });
+        return;
+      }
+      if (!newPasswordChecks.hasUpper) {
+        setFieldErrors({ newPassword: { message: 'Хотя бы одна заглавная буква' } });
+        return;
+      }
+      if (!newPasswordChecks.hasLower) {
+        setFieldErrors({ newPassword: { message: 'Хотя бы одна строчная буква' } });
+        return;
+      }
+      if (!newPasswordChecks.hasDigit) {
+        setFieldErrors({ newPassword: { message: 'Хотя бы одна цифра' } });
         return;
       }
       if (confirmPassword !== newPassword) {
@@ -2303,6 +2320,40 @@ export default function EditUser() {
                     onSubmitEditing={() => confirmPwdRef.current?.focus?.()}
                   />
                   <FieldErrorText message={fieldErrors.newPassword?.message} />
+                  <View style={{ gap: 4, marginBottom: theme.spacing.sm }}>
+                    <Text
+                      style={{
+                        fontSize: theme.typography.sizes.sm,
+                        color: newPasswordChecks.minLength ? theme.colors.success : theme.colors.textSecondary,
+                      }}
+                    >
+                      Минимум 8 символов
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: theme.typography.sizes.sm,
+                        color: newPasswordChecks.hasUpper ? theme.colors.success : theme.colors.textSecondary,
+                      }}
+                    >
+                      Хотя бы одна заглавная буква
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: theme.typography.sizes.sm,
+                        color: newPasswordChecks.hasLower ? theme.colors.success : theme.colors.textSecondary,
+                      }}
+                    >
+                      Хотя бы одна строчная буква
+                    </Text>
+                    <Text
+                      style={{
+                        fontSize: theme.typography.sizes.sm,
+                        color: newPasswordChecks.hasDigit ? theme.colors.success : theme.colors.textSecondary,
+                      }}
+                    >
+                      Хотя бы одна цифра
+                    </Text>
+                  </View>
 
                   <View style={{ height: theme.spacing.sm }} />
 

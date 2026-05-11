@@ -1,4 +1,4 @@
-﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,6 +12,10 @@ const inMemoryCooldownMap = (globalThis as any).__PWD_RESET_COOLDOWN_MAP__ || ne
 
 type ResetRequestBody = {
   email?: string;
+  code?: string;
+  password?: string;
+  new_password?: string;
+  newPassword?: string;
 };
 
 function normalizeEmail(value: unknown): string {
@@ -27,6 +31,15 @@ function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: corsHeaders });
 }
 
+function getClient() {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') || Deno.env.get('PROJECT_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error('Missing SUPABASE_URL/PROJECT_URL or SUPABASE_SERVICE_ROLE_KEY/SERVICE_ROLE_KEY');
+  }
+  return createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+}
+
 function emailServiceHeaders(): Record<string, string> {
   const token = String(Deno.env.get('EMAIL_SERVER_API_TOKEN') || '').trim();
   return {
@@ -39,7 +52,7 @@ function getEmailServiceUrl(): string {
   const value = String(
     Deno.env.get('EMAIL_SERVICE_URL') ||
       Deno.env.get('EXPO_PUBLIC_EMAIL_SERVICE_URL') ||
-      '',
+      'https://api.monitorapp.ru',
   )
     .trim()
     .replace(/\/+$/, '');
@@ -47,20 +60,18 @@ function getEmailServiceUrl(): string {
   return value;
 }
 
-function generateTempPassword(): string {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
-  const bytes = new Uint8Array(18);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+function normalizeVerifyErrorCode(raw: unknown): string {
+  const code = String(raw || '').trim().toUpperCase();
+  if (!code) return 'VERIFY_FAILED';
+  if (code === 'INVALID_CODE' || code === 'CODE_EXPIRED' || code === 'TOO_MANY_ATTEMPTS') return code;
+  return 'VERIFY_FAILED';
 }
 
-function getClient() {
-  const supabaseUrl = Deno.env.get('SUPABASE_URL') || Deno.env.get('PROJECT_URL');
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY');
-  if (!supabaseUrl || !serviceRoleKey) {
-    throw new Error('Missing SUPABASE_URL/PROJECT_URL or SUPABASE_SERVICE_ROLE_KEY/SERVICE_ROLE_KEY');
-  }
-  return createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+function normalizeVerifyErrorMessage(code: string): string {
+  if (code === 'INVALID_CODE') return 'Неверный код подтверждения';
+  if (code === 'CODE_EXPIRED') return 'Срок действия кода истёк. Запросите новый';
+  if (code === 'TOO_MANY_ATTEMPTS') return 'Слишком много попыток. Запросите новый код';
+  return 'Не удалось проверить код подтверждения';
 }
 
 export async function handleRequestPasswordReset(req: Request): Promise<Response> {
@@ -73,10 +84,99 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
   let requestLogId: number | null = null;
 
   try {
-    const body = (await req.json().catch(() => ({}))) as ResetRequestBody;
+    const rawBody = await req.json().catch(() => ({} as any));
+    const body = (() => {
+      if (!rawBody) return {} as ResetRequestBody;
+      if (typeof rawBody === 'string') {
+        try {
+          return JSON.parse(rawBody) as ResetRequestBody;
+        } catch {
+          return {} as ResetRequestBody;
+        }
+      }
+      if (typeof rawBody === 'object' && rawBody !== null) {
+        const candidate = (rawBody as any).body;
+        if (candidate && typeof candidate === 'object') return candidate as ResetRequestBody;
+        return rawBody as ResetRequestBody;
+      }
+      return {} as ResetRequestBody;
+    })();
     const email = normalizeEmail(body?.email);
+    const code = String(body?.code || '').trim();
+    const nextPassword = String(body?.new_password || body?.newPassword || body?.password || '').trim();
+
     if (!isValidEmail(email)) {
-      return json({ ok: false, code: 'INVALID_EMAIL', message: 'Р’РІРµРґРёС‚Рµ РєРѕСЂСЂРµРєС‚РЅС‹Р№ e-mail' });
+      return json({ ok: false, code: 'INVALID_EMAIL', message: 'Введите корректный e-mail' });
+    }
+
+    const admin = getClient();
+    const { data: profileRows, error: profileError } = await admin
+      .from('profiles')
+      .select('id, first_name, last_name, email')
+      .ilike('email', email)
+      .limit(1);
+    if (profileError) throw profileError;
+    const profile = Array.isArray(profileRows) ? profileRows[0] : null;
+
+    if (code && nextPassword) {
+      if (!/^\d{6}$/.test(code)) {
+        return json({ ok: false, code: 'INVALID_CODE', message: 'Неверный код подтверждения' });
+      }
+      if (nextPassword.length < 8) {
+        return json({ ok: false, code: 'INVALID_PASSWORD', message: 'Пароль должен быть не короче 8 символов' });
+      }
+      if (!profile?.id) {
+        return json({ ok: false, code: 'USER_NOT_FOUND', message: 'Сотрудник с таким e-mail не найден' });
+      }
+
+      const emailServiceUrl = getEmailServiceUrl();
+      const verifyRes = await fetch(`${emailServiceUrl}/registration/verify-code`, {
+        method: 'POST',
+        headers: emailServiceHeaders(),
+        body: JSON.stringify({ email, code, purpose: 'recovery' }),
+      });
+      const verifyPayload = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok || verifyPayload?.ok !== true) {
+        const errCode = normalizeVerifyErrorCode(verifyPayload?.code);
+        return json({ ok: false, code: errCode, message: normalizeVerifyErrorMessage(errCode) }, errCode === 'TOO_MANY_ATTEMPTS' ? 429 : 400);
+      }
+
+      const proofToken = String(verifyPayload?.registration_token || '').trim();
+      if (!proofToken) {
+        return json({ ok: false, code: 'VERIFY_FAILED', message: 'Не удалось проверить код подтверждения' }, 500);
+      }
+
+      const consumeRes = await fetch(`${emailServiceUrl}/registration/consume-token`, {
+        method: 'POST',
+        headers: emailServiceHeaders(),
+        body: JSON.stringify({ email, registration_token: proofToken, purpose: 'recovery' }),
+      });
+      const consumePayload = await consumeRes.json().catch(() => ({}));
+      if (!consumeRes.ok || consumePayload?.ok !== true) {
+        return json({ ok: false, code: 'TOKEN_INVALID', message: 'Код подтверждения недействителен. Запросите новый код' }, 400);
+      }
+
+      const { error: updateError } = await admin.auth.admin.updateUserById(String(profile.id), {
+        password: nextPassword,
+      });
+      if (updateError) throw new Error(`Auth update failed: ${updateError.message}`);
+
+      try {
+        await admin.rpc('upsert_password_change_log', {
+          p_user_id: String(profile.id),
+          p_changed_by: String(profile.id),
+          p_ip_address: ipAddress,
+          p_user_agent: userAgent,
+          p_source: 'edge:request-password-reset:code',
+          p_window_seconds: 180,
+        });
+      } catch {}
+
+      return json({ ok: true, message: 'Пароль успешно обновлён' });
+    }
+
+    if (code || nextPassword) {
+      return json({ ok: false, code: 'INVALID_INPUT', message: 'Для подтверждения нужны и код, и новый пароль' }, 400);
     }
 
     const nowMs = Date.now();
@@ -86,12 +186,11 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return json({
         ok: false,
         code: 'RATE_LIMIT',
-        message: 'РџРѕРІС‚РѕСЂРЅР°СЏ РѕС‚РїСЂР°РІРєР° РїРѕРєР° РЅРµРґРѕСЃС‚СѓРїРЅР°',
+        message: 'Повторная отправка пока недоступна',
         retry_after_seconds: retryAfter,
       });
     }
 
-    const admin = getClient();
     const { data: lastRequestRow } = await admin
       .from('password_reset_requests')
       .select('requested_at')
@@ -116,7 +215,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       return json({
         ok: false,
         code: 'RATE_LIMIT',
-        message: 'РџРѕРІС‚РѕСЂРЅР°СЏ РѕС‚РїСЂР°РІРєР° РїРѕРєР° РЅРµРґРѕСЃС‚СѓРїРЅР°',
+        message: 'Повторная отправка пока недоступна',
         retry_after_seconds: retryAfter,
       });
     }
@@ -134,54 +233,32 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
     if (!logInsertError && logRow?.id != null) requestLogId = Number(logRow.id);
     inMemoryCooldownMap.set(email, Date.now() + PASSWORD_RESET_COOLDOWN_SECONDS * 1000);
 
-    const { data: profileRows, error: profileError } = await admin
-      .from('profiles')
-      .select('id, first_name, last_name, email')
-      .ilike('email', email)
-      .limit(1);
-    if (profileError) throw profileError;
-
-    const profile = Array.isArray(profileRows) ? profileRows[0] : null;
     if (!profile?.id) {
       if (requestLogId != null) {
         await admin.from('password_reset_requests').update({ status: 'user_not_found' }).eq('id', requestLogId);
       }
-      return json({ ok: true, cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS, message: 'If the e-mail is registered, a reset message will be sent.' });
+      return json({ ok: false, code: 'USER_NOT_FOUND', message: 'Сотрудник с таким e-mail не найден' });
     }
-
-    const tempPassword = generateTempPassword();
-    const { error: updateError } = await admin.auth.admin.updateUserById(String(profile.id), {
-      password: tempPassword,
-    });
-    if (updateError) throw new Error(`Auth update failed: ${updateError.message}`);
 
     const emailServiceUrl = getEmailServiceUrl();
-    const response = await fetch(`${emailServiceUrl}/send-email`, {
+    const sendRes = await fetch(`${emailServiceUrl}/registration/send-code`, {
       method: 'POST',
       headers: emailServiceHeaders(),
-      body: JSON.stringify({
-        type: 'password-reset',
-        email,
-        firstName: String(profile?.first_name || '').trim(),
-        lastName: String(profile?.last_name || '').trim(),
-        tempPassword,
-      }),
+      body: JSON.stringify({ email, purpose: 'recovery' }),
     });
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`EMAIL_SEND_FAILED: ${text || String(response.status)}`);
+    const sendPayload = await sendRes.json().catch(() => ({}));
+    if (!sendRes.ok || sendPayload?.ok !== true) {
+      const retryAfter = Math.max(1, Number(sendPayload?.retry_after_seconds) || PASSWORD_RESET_COOLDOWN_SECONDS);
+      if (sendPayload?.code === 'RATE_LIMITED') {
+        return json({
+          ok: false,
+          code: 'RATE_LIMIT',
+          message: 'Повторная отправка пока недоступна',
+          retry_after_seconds: retryAfter,
+        });
+      }
+      throw new Error(`EMAIL_SEND_FAILED: ${String(sendPayload?.message || sendRes.status)}`);
     }
-
-    try {
-      await admin.rpc('upsert_password_change_log', {
-        p_user_id: String(profile.id),
-        p_changed_by: String(profile.id),
-        p_ip_address: ipAddress,
-        p_user_agent: userAgent,
-        p_source: 'edge:request-password-reset',
-        p_window_seconds: 180,
-      });
-    } catch {}
 
     if (requestLogId != null) {
       await admin
@@ -190,7 +267,12 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
         .eq('id', requestLogId);
     }
 
-    return json({ ok: true, cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS, message: 'РџРёСЃСЊРјРѕ РѕС‚РїСЂР°РІР»РµРЅРѕ' });
+    return json({
+      ok: true,
+      cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
+      expires_in_seconds: Number(sendPayload?.expires_in_seconds) || 900,
+      message: 'Код отправлен на email',
+    });
   } catch (error) {
     const message = String((error as Error)?.message || 'Unknown error');
     try {
@@ -206,8 +288,8 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       ok: false,
       code: message.includes('EMAIL_SEND_FAILED') ? 'EMAIL_SEND_FAILED' : 'INTERNAL_ERROR',
       message: message.includes('EMAIL_SEND_FAILED')
-        ? 'РќРµ СѓРґР°Р»РѕСЃСЊ РѕС‚РїСЂР°РІРёС‚СЊ РїРёСЃСЊРјРѕ. РћР±СЂР°С‚РёС‚РµСЃСЊ РІ РїРѕРґРґРµСЂР¶РєСѓ.'
-        : 'РќРµ СѓРґР°Р»РѕСЃСЊ РІРѕСЃСЃС‚Р°РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ. РћР±СЂР°С‚РёС‚РµСЃСЊ РІ РїРѕРґРґРµСЂР¶РєСѓ.',
+        ? 'Не удалось отправить письмо. Обратитесь в поддержку.'
+        : 'Не удалось восстановить пароль. Обратитесь в поддержку.',
     });
   }
 }

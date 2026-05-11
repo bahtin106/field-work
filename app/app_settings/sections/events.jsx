@@ -125,7 +125,23 @@ export default function NotificationEventsScreen() {
         .eq('user_id', uid)
         .maybeSingle();
 
-      if (prefsErr) throw prefsErr;
+      if (prefsErr) {
+        const rawMessage = String(prefsErr?.message || prefsErr || '').toLowerCase();
+        const isPermissionDenied =
+          rawMessage.includes('permission denied') ||
+          rawMessage.includes('row level security') ||
+          rawMessage.includes('rls');
+        if (isPermissionDenied) {
+          return {
+            allow: true,
+            new_orders: true,
+            feed_orders: true,
+            reminders: true,
+            reminder_delay_minutes: DEFAULT_REMINDER_DELAY_MINUTES,
+          };
+        }
+        throw prefsErr;
+      }
       if (!data) {
         return {
           allow: true,
