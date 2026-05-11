@@ -263,7 +263,23 @@ async function enqueueReminders() {
 }
 
 async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
-  if (event.recipient_user_id) return [event.recipient_user_id];
+  if (event.recipient_user_id) {
+    const recipient = String(event.recipient_user_id || '').trim();
+    if (!recipient) return [];
+
+    // Do not notify user about assignment action they performed themselves.
+    if (event.event_type === 'assigned_new_order') {
+      const actorId = normalizedId((event.payload as any)?.actor_user_id);
+      const creatorId = normalizedId((event.payload as any)?.creator_user_id);
+      const updatedById = normalizedId((event.payload as any)?.updated_by_user_id);
+      const recipientId = normalizedId(recipient);
+      if (recipientId && (recipientId === actorId || recipientId === creatorId || recipientId === updatedById)) {
+        return [];
+      }
+    }
+
+    return [recipient];
+  }
   if (event.event_type !== 'feed_new_order') return [];
 
   const { data, error } = await rpcWithRetry<Array<{ user_id: string }>>('get_company_notification_recipients', {

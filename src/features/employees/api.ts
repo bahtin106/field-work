@@ -246,6 +246,19 @@ export async function getEmployeeById(userId: any) {
         .maybeSingle();
       departmentName = departmentRow?.name || null;
     }
+    let companyName = null;
+    if (safeProf?.company_id) {
+      try {
+        const { data: companyRow } = await supabase
+          .from('companies')
+          .select('name')
+          .eq('id', safeProf.company_id)
+          .maybeSingle();
+        companyName = companyRow?.name || null;
+      } catch {
+        companyName = null;
+      }
+    }
 
     let email = '';
     if (rpcRow?.email) {
@@ -261,7 +274,7 @@ export async function getEmployeeById(userId: any) {
       meIsSuperAdmin: iAmSuperAdmin,
       myUid: uid,
       departmentName,
-      companyName: null,
+      companyName,
       companyId: safeProf?.company_id || null,
       isSuspended: !!safeProf?.is_admin_blocked,
       isBlocked:

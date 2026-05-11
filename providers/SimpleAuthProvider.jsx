@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
+import { createLogger } from '../lib/logger';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
 import { supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
@@ -11,8 +12,8 @@ const PROFILE_COLUMNS =
 const PROFILE_LOAD_TIMEOUT_MS = 8000;
 const PROFILE_RECOVERY_ATTEMPTS = 4;
 const PROFILE_RECOVERY_BASE_DELAY_MS = 1200;
-const IS_DEV = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
 const INVALID_REFRESH_TOKEN_RE = /invalid refresh token|refresh token.+already used/i;
+const log = createLogger('SimpleAuth');
 
 const buildProfileFromUser = (user, source = 'user-metadata') => {
   if (!user?.id) return null;
@@ -78,18 +79,6 @@ const isAbortLikeError = (error) => {
 const isInvalidRefreshTokenError = (error) =>
   INVALID_REFRESH_TOKEN_RE.test(String(error?.message || error || ''));
 
-const isUserIdColumnMissingError = (error) => {
-  if (!error) return false;
-  const message = String(error?.message || '');
-  return error?.code === '42703' || /user_id/i.test(message);
-};
-
-const isDuplicateProfileError = (error) => {
-  if (!error) return false;
-  const message = String(error?.message || '');
-  return error?.code === '23505' || /duplicate key/i.test(message);
-};
-
 const isNetworkRequestError = (error) => {
   if (!error) return false;
   const message = String(error?.message || error || '');
@@ -100,6 +89,20 @@ const isNetworkRequestError = (error) => {
     /network error/i.test(message) ||
     /TypeError/i.test(name)
   );
+};
+
+const tryBootstrapMyProfileFromAuth = async () => {
+  try {
+    const { error } = await supabase.rpc('bootstrap_my_profile_from_auth');
+    if (error) {
+      log.warn('bootstrap_my_profile_from_auth failed:', error);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    log.warn('bootstrap_my_profile_from_auth exception:', error);
+    return false;
+  }
 };
 
 const isSessionExpiredLikeError = (error) => {
@@ -129,7 +132,7 @@ export function SimpleAuthProvider({ children }) {
   }, [state.profile]);
 
   const debugLog = useCallback((...args) => {
-    if (IS_DEV) console.debug(...args);
+    log.debug(...args);
   }, []);
 
   const clearProfileRecovery = useCallback(() => {
@@ -170,58 +173,20 @@ export function SimpleAuthProvider({ children }) {
         }
 
         if (!data) {
-          debugLog('[SimpleAuth] Creating new profile...');
-          const insertPayloads = [
-            { id: userId, user_id: userId, role: 'worker' },
-            { id: userId, role: 'worker' },
-          ];
-          let createdProfile = null;
-          let createError = null;
+          debugLog('[SimpleAuth] Profile missing, requesting server bootstrap...');
+          await tryBootstrapMyProfileFromAuth();
 
-          for (const payload of insertPayloads) {
-            const { data: created, error: createErr } = await supabase
-              .from('profiles')
-              .insert(payload)
-              .select(PROFILE_COLUMNS)
-              .maybeSingle();
+          const { data: retriedProfile, error: retryError } = await supabase
+            .from('profiles')
+            .select(PROFILE_COLUMNS)
+            .eq('id', userId)
+            .maybeSingle();
 
-            if (!createErr) {
-              createdProfile = created;
-              break;
-            }
-
-            if (isUserIdColumnMissingError(createErr) && 'user_id' in payload) {
-              createError = createErr;
-              continue;
-            }
-
-            if (isDuplicateProfileError(createErr)) {
-              createError = createErr;
-              break;
-            }
-
-            createError = createErr;
-            break;
+          if (retryError) throw retryError;
+          if (!retriedProfile) {
+            throw new Error('profile-not-found-after-bootstrap');
           }
-
-          if (!createdProfile && isDuplicateProfileError(createError)) {
-            const { data: existingProfile, error: refetchError } = await supabase
-              .from('profiles')
-              .select(PROFILE_COLUMNS)
-              .eq('id', userId)
-              .maybeSingle();
-
-            if (refetchError) {
-              throw refetchError;
-            }
-            createdProfile = existingProfile;
-          }
-
-          if (!createdProfile) {
-            throw createError || new Error('profile-create-failed');
-          }
-
-          return normalizeProfileData(createdProfile, user, 'created');
+          return normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
         }
 
         debugLog('[SimpleAuth] Profile loaded:', data.role);
@@ -239,7 +204,7 @@ export function SimpleAuthProvider({ children }) {
           if (isSessionExpiredLikeError(profileMediaError)) {
             debugLog('[SimpleAuth] Profile media inspect skipped: session missing');
           } else {
-            console.warn('[SimpleAuth] Profile media inspect skipped:', profileMediaError);
+            log.warn('Profile media inspect skipped:', profileMediaError);
           }
         }
         return normalizeProfileData(safeData, user, 'supabase');
@@ -250,13 +215,13 @@ export function SimpleAuthProvider({ children }) {
         const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
 
         if (isTimeout || isTimeoutLikeNetwork) {
-          console.warn('[SimpleAuth] Profile load timed out');
+          log.warn('Profile load timed out');
           throw new Error('profile-load-timeout');
         } else if (isNetworkError) {
-          console.warn('[SimpleAuth] Profile network error:', error);
+          log.warn('Profile network error:', error);
           throw new Error('profile-load-network-error');
         } else {
-          console.error('[SimpleAuth] Profile error:', error);
+          log.error('Profile error:', error);
           throw error;
         }
       }
@@ -456,7 +421,7 @@ export function SimpleAuthProvider({ children }) {
           if (!mounted) return;
 
           if (error) {
-            console.warn('SimpleAuth: getSession error (attempt %s/%s)', attempt, MAX_ATTEMPTS, error);
+            log.warn(`getSession error (attempt ${attempt}/${MAX_ATTEMPTS})`, error);
             if (isInvalidRefreshTokenError(error)) {
               await recoverFromInvalidRefreshToken();
               return;
@@ -475,12 +440,7 @@ export function SimpleAuthProvider({ children }) {
           }
           return;
         } catch (error) {
-          console.warn(
-            'SimpleAuth: initial session load error (attempt %s/%s)',
-            attempt,
-            MAX_ATTEMPTS,
-            error,
-          );
+          log.warn(`initial session load error (attempt ${attempt}/${MAX_ATTEMPTS})`, error);
           if (!mounted) return;
           if (isInvalidRefreshTokenError(error)) {
             await recoverFromInvalidRefreshToken();
@@ -517,7 +477,7 @@ export function SimpleAuthProvider({ children }) {
       // avoids deadlocks with methods like auth.updateUser() in React Native.
       setTimeout(() => {
         handleAuthChange(event, session).catch((error) => {
-          console.error('[SimpleAuth] onAuthStateChange handler failed:', error);
+          log.error('onAuthStateChange handler failed:', error);
         });
       }, 0);
     });
@@ -549,7 +509,7 @@ export function SimpleAuthProvider({ children }) {
       }
       await supabase.auth.signOut({ scope: 'local' });
     } catch (error) {
-      console.error('SimpleAuth: signOut error', error);
+      log.error('signOut error', error);
     }
   }, [setSignedOutState, state.user?.id]);
 

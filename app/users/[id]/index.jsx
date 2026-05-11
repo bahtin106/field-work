@@ -114,6 +114,7 @@ export default function UserView() {
   const lastSeenAt = userData?.last_seen_at || null;
   const companyName = userData?.companyName || null;
   const companyId = userData?.companyId || null;
+  const hasCompanyValue = hasDisplayValue(companyName || companyId);
   const { useDepartments } = useCompanySettings(companyId || null);
   const employeeFieldSettings = React.useMemo(
     () => employeeFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE),
@@ -128,12 +129,11 @@ export default function UserView() {
   const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
   const canShowCompanySection =
     fieldUi.hasVisibleFields(['department_id', 'role']) &&
-    ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role'));
+    ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role') || hasCompanyValue);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
     String(subscriptionGuard.reason || '').startsWith('subscription_');
-  const meIsSuperAdmin = !!userData?.meIsSuperAdmin;
   const err = loadError?.message || '';
   const ROLE_LABELS = React.useMemo(
     () => ({
@@ -541,14 +541,10 @@ export default function UserView() {
         {canShowCompanySection && !isSoloAdmin ? <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader> : null}
         {canShowCompanySection && !isSoloAdmin ? (
         <Card paddedXOnly>
-          {meIsSuperAdmin && (
+          {hasCompanyValue && (
             <>
-                {hasDisplayValue(companyName || companyId) ? (
-                  <>
-                    <LabelValueRow label={t('admin_users_company')} value={companyName || companyId} />
-                    <ListSeparator />
-                  </>
-              ) : null}
+              <LabelValueRow label={t('admin_users_company')} value={companyName || companyId} />
+              <ListSeparator />
             </>
           )}
           {useDepartments && fieldUi.isVisible('department_id') ? (

@@ -10,7 +10,15 @@ const ACCOUNT_TYPES = new Set(['solo', 'company']);
 const PASSWORD_MIN_LENGTH = 8;
 const COMPANY_NAME_MAX_LENGTH = 64;
 const NAME_MAX_LENGTH = 64;
-const SOLO_DEFAULT_COMPANY_NAME = 'Моя компания';
+const SOLO_DEFAULT_COMPANY_NAME = '\u041c\u043e\u044f \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u044f';
+const EMAIL_SERVICE_URL = String(
+  Deno.env.get('EMAIL_SERVICE_URL') ||
+    Deno.env.get('EXPO_PUBLIC_EMAIL_SERVICE_URL') ||
+    '',
+)
+  .trim()
+  .replace(/\/+$/, '');
+const EMAIL_SERVER_API_TOKEN = String(Deno.env.get('EMAIL_SERVER_API_TOKEN') || '').trim();
 
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const RATE_LIMIT_MAX_CHECK_ONLY = 40;
@@ -25,7 +33,6 @@ globalState.__registerRateLimitStore = rateLimitStore;
 function text(value: unknown) {
   return String(value ?? '').trim();
 }
-
 function normalizeEmail(value: unknown) {
   return text(value).toLowerCase();
 }
@@ -104,6 +111,13 @@ function checkRateLimit(clientIp: string, mode: 'check' | 'register') {
   prev.count += 1;
   rateLimitStore.set(key, prev);
   return true;
+}
+
+function emailServiceHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    ...(EMAIL_SERVER_API_TOKEN ? { 'X-Email-Server-Token': EMAIL_SERVER_API_TOKEN } : {}),
+  };
 }
 
 function jsonResponse(req: Request, allowedOrigins: string[], payload: unknown, status = 200) {
@@ -210,6 +224,7 @@ export async function handleRegisterUserRequest(req: Request) {
     const consentPrivacyPolicy = body?.consent_privacy_policy === true;
     const consentPersonalData = body?.consent_personal_data === true;
     const consentCookies = body?.consent_cookies === true;
+    const registrationToken = text(body?.registration_token);
     const consentSource = text(body?.consent_source) || 'mobile_app';
     const consentDocuments =
       body?.consent_documents && typeof body.consent_documents === 'object' ? body.consent_documents : {};
@@ -231,6 +246,9 @@ export async function handleRegisterUserRequest(req: Request) {
       }
       if (!lastName || lastName.length > NAME_MAX_LENGTH) {
         return errorResponse(req, allowedOrigins, 'last_name is required and must be valid', 400, 'INVALID_LAST_NAME');
+      }
+      if (!registrationToken) {
+        return errorResponse(req, allowedOrigins, 'Email verification is required', 409, 'EMAIL_VERIFICATION_REQUIRED');
       }
     }
 
@@ -296,6 +314,25 @@ export async function handleRegisterUserRequest(req: Request) {
       return errorResponse(req, allowedOrigins, 'Missing required legal consents', 409, 'CONSENT_REQUIRED');
     }
 
+    if (!EMAIL_SERVICE_URL) {
+      return errorResponse(req, allowedOrigins, 'email verification service is not configured', 500, 'SERVER_MISCONFIGURED');
+    }
+
+    const verifyTokenRes = await fetch(`${EMAIL_SERVICE_URL}/registration/consume-token`, {
+      method: 'POST',
+      headers: emailServiceHeaders(),
+      body: JSON.stringify({
+        email,
+        registration_token: registrationToken,
+        purpose: 'register',
+      }),
+    });
+
+    const verifyTokenPayload = await verifyTokenRes.json().catch(() => ({}));
+    if (!verifyTokenRes.ok || verifyTokenPayload?.ok !== true) {
+      return errorResponse(req, allowedOrigins, 'Email verification failed', 409, 'EMAIL_VERIFICATION_FAILED');
+    }
+
     if (existingUser) {
       return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
     }
@@ -304,12 +341,16 @@ export async function handleRegisterUserRequest(req: Request) {
       return errorResponse(req, allowedOrigins, 'Company with this name already exists', 400, 'COMPANY_NAME_TAKEN');
     }
 
+    const metadataCompanyName = accountType === 'company' ? companyNameInput : SOLO_DEFAULT_COMPANY_NAME;
     const metadata: Record<string, unknown> = {
       first_name: firstName,
       last_name: lastName,
       full_name: fullName,
       role: 'admin',
       account_type: accountType,
+      company_name: metadataCompanyName,
+      timezone: companyTimeZone,
+      registration_source: 'edge_register_user',
     };
 
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({

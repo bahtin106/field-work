@@ -4,6 +4,7 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
+import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import {
@@ -227,6 +228,7 @@ export default function AdminCompanyDetailsScreen() {
   const [addDaysVisible, setAddDaysVisible] = React.useState(false);
   const [paidSeatsVisible, setPaidSeatsVisible] = React.useState(false);
   const [confirmVisible, setConfirmVisible] = React.useState(false);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = React.useState(false);
 
   const [daysInput, setDaysInput] = React.useState('0');
   const [paidSeatsInput, setPaidSeatsInput] = React.useState('0');
@@ -376,6 +378,53 @@ export default function AdminCompanyDetailsScreen() {
     onSuccess: async (_res, nextIsActive) => {
       await refreshAll();
       toast.success(nextIsActive ? t('admin_company_activated') : t('admin_company_deactivated'));
+    },
+    onError: (e) => {
+      toast.error(String(e?.message || t('admin_unknown_error')));
+    },
+  });
+
+  const deleteCompanyMutation = useMutation({
+    mutationFn: async () => {
+      const { data: body, error: invokeError } = await supabase.functions.invoke('admin-delete-company', {
+        body: {
+          company_id: companyId,
+          confirm: true,
+        },
+      });
+      if (invokeError) {
+        const context = invokeError?.context;
+        if (context && typeof context.clone === 'function') {
+          try {
+            const txt = await context.clone().text();
+            if (txt) {
+              try {
+                const parsed = JSON.parse(txt);
+                throw new Error(String(parsed?.message || invokeError?.message || t('admin_unknown_error')));
+              } catch {
+                throw new Error(txt);
+              }
+            }
+          } catch {}
+        }
+        throw new Error(String(invokeError?.message || t('admin_unknown_error')));
+      }
+      if (body?.success !== true) {
+        throw new Error(String(body?.message || t('admin_unknown_error')));
+      }
+      return body;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['adminCompanies'] }),
+        queryClient.invalidateQueries({ queryKey: companyKey }),
+        queryClient.invalidateQueries({ queryKey: metaKey }),
+        queryClient.invalidateQueries({ queryKey: accessKey }),
+      ]);
+      toast.success('Компания удалена безвозвратно');
+      try {
+        nav.goBack();
+      } catch {}
     },
     onError: (e) => {
       toast.error(String(e?.message || t('admin_unknown_error')));
@@ -658,6 +707,15 @@ export default function AdminCompanyDetailsScreen() {
                 theme={theme}
               />
             </Card>
+            <View style={{ marginTop: theme.spacing.md }}>
+              <UIButton
+                title="Удалить компанию"
+                variant="destructive"
+                onPress={() => setDeleteConfirmVisible(true)}
+                disabled={deleteCompanyMutation.isPending}
+                loading={deleteCompanyMutation.isPending}
+              />
+            </View>
             </>
           ) : null}
         </ScrollView>
@@ -832,6 +890,19 @@ export default function AdminCompanyDetailsScreen() {
             applyPeriodEnd: confirmState.applyPeriodEnd !== false,
             applyPaidSeats: confirmState.applyPaidSeats === true,
           });
+        }}
+      />
+
+      <ConfirmModal
+        visible={deleteConfirmVisible}
+        title="Удалить компанию безвозвратно?"
+        message="Будут безвозвратно удалены компания, все пользователи, заявки, клиенты и все остальные данные, связанные с этой компанией. Это действие нельзя отменить."
+        confirmLabel="Удалить навсегда"
+        confirmVariant="destructive"
+        loading={deleteCompanyMutation.isPending}
+        onClose={() => setDeleteConfirmVisible(false)}
+        onConfirm={async () => {
+          await deleteCompanyMutation.mutateAsync();
         }}
       />
     </Screen>

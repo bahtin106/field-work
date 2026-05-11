@@ -68,6 +68,7 @@ function LastSeenTracker() {
 }
 
 const ACCESS_REVALIDATE_INTERVAL_MS = 15 * 1000;
+const ACCESS_CHECK_MIN_GAP_MS = 1200;
 
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
@@ -132,6 +133,7 @@ function RootLayoutInner() {
   const [appBootReady, setAppBootReady] = useState(() => appReadyState.isReady());
   const segmentsRef = useRef(segments);
   const accessCheckInFlightRef = useRef(false);
+  const lastAccessCheckAtRef = useRef(0);
   const pushSyncInFlightRef = useRef(false);
   const pushSyncDoneForUserRef = useRef(null);
   const notificationOpenInFlightRef = useRef(false);
@@ -140,6 +142,22 @@ function RootLayoutInner() {
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const isBlockedScreen = inAuthGroup && authScreen === 'blocked';
+
+  const isSamePath = useCallback((targetPath) => {
+    const current = String(pathname || '').trim().replace(/\/+$/, '') || '/';
+    const target = String(targetPath || '').trim().replace(/\/+$/, '') || '/';
+    return current === target;
+  }, [pathname]);
+
+  const hasAccessRelevantProfileChange = useCallback((payload) => {
+    if (!payload || typeof payload !== 'object') return true;
+    const next = payload.new && typeof payload.new === 'object' ? payload.new : null;
+    const prev = payload.old && typeof payload.old === 'object' ? payload.old : null;
+    if (!next || !prev) return true;
+
+    const watchedColumns = ['is_admin_blocked', 'license_state', 'blocked_reason', 'company_id'];
+    return watchedColumns.some((column) => String(next?.[column] ?? '') !== String(prev?.[column] ?? ''));
+  }, []);
 
   useEffect(() => {
     installClientErrorLogging();
@@ -263,6 +281,9 @@ function RootLayoutInner() {
   const enforceAccess = useCallback(async () => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
     if (accessCheckInFlightRef.current) return;
+    const now = Date.now();
+    if (now - lastAccessCheckAtRef.current < ACCESS_CHECK_MIN_GAP_MS) return;
+    lastAccessCheckAtRef.current = now;
 
     accessCheckInFlightRef.current = true;
     try {
@@ -297,7 +318,9 @@ function RootLayoutInner() {
         }
 
         if (isBlockedScreen) {
-          router.replace('/orders');
+          if (!isSamePath('/orders')) {
+            router.replace('/orders');
+          }
         }
         return;
       }
@@ -309,17 +332,7 @@ function RootLayoutInner() {
 
       const profile = await loadOwnAccessProfile(user.id);
       if (!profile) {
-        if (!getOfflineSnapshot().isOnline) return;
-        if (!isBlockedScreen) {
-          router.replace({
-            pathname: '/(auth)/blocked',
-            params: {
-              code: 'access_blocked',
-              message: `${t('auth_access_blocked')}. ${t('auth_blocked_subtitle')}`,
-              ts: String(Date.now()),
-            },
-          });
-        }
+        // Fail-open: transient profile lookup issues should not kick active users into a block loop.
         return;
       }
 
@@ -342,14 +355,16 @@ function RootLayoutInner() {
           },
         });
       } else if (!blocked && isBlockedScreen) {
-        router.replace('/orders');
+        if (!isSamePath('/orders')) {
+          router.replace('/orders');
+        }
       }
     } catch {
       // noop
     } finally {
       accessCheckInFlightRef.current = false;
     }
-  }, [isAuthenticated, isInitializing, loadOwnAccessProfile, router, t, user?.id]);
+  }, [isAuthenticated, isInitializing, isSamePath, loadOwnAccessProfile, router, t, user?.id]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
@@ -389,7 +404,8 @@ function RootLayoutInner() {
           table: 'profiles',
           filter: `id=eq.${user.id}`,
         },
-        () => {
+        (payload) => {
+          if (!hasAccessRelevantProfileChange(payload)) return;
           enforceAccess();
         },
       )
@@ -405,7 +421,8 @@ function RootLayoutInner() {
           table: 'profiles',
           filter: `user_id=eq.${user.id}`,
         },
-        () => {
+        (payload) => {
+          if (!hasAccessRelevantProfileChange(payload)) return;
           enforceAccess();
         },
       )
@@ -417,7 +434,7 @@ function RootLayoutInner() {
         supabase.removeChannel(channelByUserId);
       } catch {}
     };
-  }, [enforceAccess, isAuthenticated, isInitializing, user?.id]);
+  }, [enforceAccess, hasAccessRelevantProfileChange, isAuthenticated, isInitializing, user?.id]);
 
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return undefined;
@@ -452,75 +469,112 @@ function RootLayoutInner() {
   }, [isAuthenticated, isInitializing, user?.id]);
 
   const extractOrderIdFromNotificationResponse = useCallback((response) => {
-    const rawData = response?.notification?.request?.content?.data;
-    let data = rawData;
-    if (typeof data === 'string') {
-      try {
-        data = JSON.parse(data);
-      } catch {
-        data = {};
+    const normalizeNotificationData = (raw) => {
+      let value = raw;
+      if (typeof value === 'string') {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          return {};
+        }
       }
-    }
-    if (!data || typeof data !== 'object') data = {};
+      if (!value || typeof value !== 'object') return {};
+      return value;
+    };
 
-    const directId =
-      data.order_id ??
-      data.orderId ??
-      (data.entity_type === 'order' ? data.entity_id : null) ??
-      data.request_id ??
-      null;
-    if (directId != null && String(directId).trim() !== '') {
-      return String(directId).trim();
-    }
+    const extractOrderIdFromData = (data) => {
+      if (!data || typeof data !== 'object') return null;
 
-    const params = data.params;
-    if (params && typeof params === 'object' && params.id != null && String(params.id).trim() !== '') {
-      return String(params.id).trim();
-    }
+      const directId =
+        data.order_id ??
+        data.orderId ??
+        (data.entity_type === 'order' ? data.entity_id : null) ??
+        data.request_id ??
+        null;
+      if (directId != null && String(directId).trim() !== '') {
+        return String(directId).trim();
+      }
 
-    const route = String(data.route || data.path || '').trim();
-    if (route) {
-      const match = route.match(/\/orders\/([^/?#]+)/i);
-      if (match?.[1]) return String(match[1]).trim();
-    }
+      const paramsRaw = data.params;
+      const params = normalizeNotificationData(paramsRaw);
+      if (params.id != null && String(params.id).trim() !== '') {
+        return String(params.id).trim();
+      }
 
-    return null;
+      const route = String(data.route || data.path || '').trim();
+      if (route) {
+        const match = route.match(/\/orders\/([^/?#]+)/i);
+        if (match?.[1]) return String(match[1]).trim();
+      }
+
+      return null;
+    };
+
+    const notification = response?.notification;
+    const contentData = normalizeNotificationData(notification?.request?.content?.data);
+    const remoteData = normalizeNotificationData(notification?.request?.trigger?.remoteMessage?.data);
+    const bundledData = normalizeNotificationData(remoteData?.data);
+
+    return (
+      extractOrderIdFromData(contentData) ||
+      extractOrderIdFromData(remoteData) ||
+      extractOrderIdFromData(bundledData) ||
+      null
+    );
   }, []);
 
   const extractOrderIdFromNotificationContent = useCallback((notification) => {
-    const rawData = notification?.request?.content?.data;
-    let data = rawData;
-    if (typeof data === 'string') {
-      try {
-        data = JSON.parse(data);
-      } catch {
-        data = {};
+    const normalizeNotificationData = (raw) => {
+      let value = raw;
+      if (typeof value === 'string') {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          return {};
+        }
       }
-    }
-    if (!data || typeof data !== 'object') return null;
+      if (!value || typeof value !== 'object') return {};
+      return value;
+    };
 
-    const directId =
-      data.order_id ??
-      data.orderId ??
-      (data.entity_type === 'order' ? data.entity_id : null) ??
-      data.request_id ??
-      null;
-    if (directId != null && String(directId).trim() !== '') {
-      return String(directId).trim();
-    }
+    const extractOrderIdFromData = (data) => {
+      if (!data || typeof data !== 'object') return null;
 
-    const params = data.params;
-    if (params && typeof params === 'object' && params.id != null && String(params.id).trim() !== '') {
-      return String(params.id).trim();
-    }
+      const directId =
+        data.order_id ??
+        data.orderId ??
+        (data.entity_type === 'order' ? data.entity_id : null) ??
+        data.request_id ??
+        null;
+      if (directId != null && String(directId).trim() !== '') {
+        return String(directId).trim();
+      }
 
-    const route = String(data.route || data.path || '').trim();
-    if (route) {
-      const match = route.match(/\/orders\/([^/?#]+)/i);
-      if (match?.[1]) return String(match[1]).trim();
-    }
+      const paramsRaw = data.params;
+      const params = normalizeNotificationData(paramsRaw);
+      if (params.id != null && String(params.id).trim() !== '') {
+        return String(params.id).trim();
+      }
 
-    return null;
+      const route = String(data.route || data.path || '').trim();
+      if (route) {
+        const match = route.match(/\/orders\/([^/?#]+)/i);
+        if (match?.[1]) return String(match[1]).trim();
+      }
+
+      return null;
+    };
+
+    const contentData = normalizeNotificationData(notification?.request?.content?.data);
+    const remoteData = normalizeNotificationData(notification?.request?.trigger?.remoteMessage?.data);
+    const bundledData = normalizeNotificationData(remoteData?.data);
+
+    return (
+      extractOrderIdFromData(contentData) ||
+      extractOrderIdFromData(remoteData) ||
+      extractOrderIdFromData(bundledData) ||
+      null
+    );
   }, []);
 
   const dismissPresentedNotificationsForOrder = useCallback(

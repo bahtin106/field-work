@@ -22,6 +22,7 @@ import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
+  getPasswordStrengthChecks,
   getPasswordValidationErrors,
   isValidPassword,
 } from '../../lib/authValidation';
@@ -57,7 +58,16 @@ export default function SetPasswordScreen() {
     headerHeight,
   });
 
-  const passwordValid = useMemo(() => isValidPassword(password), [password]);
+  const passwordChecks = useMemo(() => getPasswordStrengthChecks(password), [password]);
+  const passwordValid = useMemo(
+    () =>
+      isValidPassword(password) &&
+      passwordChecks.minLength &&
+      passwordChecks.hasUpper &&
+      passwordChecks.hasLower &&
+      passwordChecks.hasDigit,
+    [password, passwordChecks],
+  );
   const passwordsMatch = useMemo(
     () => !password || password === confirmPassword,
     [password, confirmPassword],
@@ -99,6 +109,15 @@ export default function SetPasswordScreen() {
           marginVertical: theme.spacing.sm,
           fontSize: theme.typography.sizes.sm,
         },
+        passwordRules: {
+          marginTop: 4,
+          marginBottom: theme.spacing.sm,
+          gap: 4,
+        },
+        passwordRuleText: {
+          fontSize: theme.typography.sizes.sm,
+          lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.25),
+        },
       }),
     [theme, insets],
   );
@@ -122,6 +141,9 @@ export default function SetPasswordScreen() {
           errors.push(t('err_password_invalid_chars'));
         }
       }
+      if (!passwordChecks.hasUpper) errors.push('Хотя бы одна заглавная буква');
+      if (!passwordChecks.hasLower) errors.push('Хотя бы одна строчная буква');
+      if (!passwordChecks.hasDigit) errors.push('Хотя бы одна цифра');
     }
 
     if (password.length > 0 && confirmPassword.length > 0 && !passwordsMatch) {
@@ -129,7 +151,7 @@ export default function SetPasswordScreen() {
     }
 
     setValidationErrors(errors);
-  }, [password, confirmPassword, passwordsMatch, submittedAttempt, t]);
+  }, [password, confirmPassword, passwordsMatch, submittedAttempt, t, passwordChecks]);
 
   const handleInvalidPasswordInput = useCallback(() => {
     setInvalidCharWarning(true);
@@ -285,6 +307,40 @@ export default function SetPasswordScreen() {
                   </View>
                 }
               />
+            </View>
+            <View style={styles.passwordRules}>
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  { color: passwordChecks.minLength ? theme.colors.success : theme.colors.textSecondary },
+                ]}
+              >
+                Минимум 8 символов
+              </Text>
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  { color: passwordChecks.hasUpper ? theme.colors.success : theme.colors.textSecondary },
+                ]}
+              >
+                Хотя бы одна заглавная буква
+              </Text>
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  { color: passwordChecks.hasLower ? theme.colors.success : theme.colors.textSecondary },
+                ]}
+              >
+                Хотя бы одна строчная буква
+              </Text>
+              <Text
+                style={[
+                  styles.passwordRuleText,
+                  { color: passwordChecks.hasDigit ? theme.colors.success : theme.colors.textSecondary },
+                ]}
+              >
+                Хотя бы одна цифра
+              </Text>
             </View>
 
             <TextField

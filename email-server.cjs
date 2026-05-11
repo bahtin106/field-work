@@ -20,6 +20,13 @@ app.use(cors({
 app.use(express.json());
 
 const rateLimitBuckets = new Map();
+const registrationCodeStore = new Map();
+const registrationProofStore = new Map();
+
+const REG_CODE_TTL_MS = 10 * 60 * 1000;
+const REG_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
+const REG_CODE_MAX_ATTEMPTS = 6;
+const REG_PROOF_TTL_MS = 20 * 60 * 1000;
 
 function getRequestIp(req) {
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -44,6 +51,43 @@ function rateLimit(name, maxRequests, windowMs) {
     }
     return next();
   };
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function maskEmailForLog(value) {
+  const email = normalizeEmail(value);
+  const [name, domain] = email.split('@');
+  if (!name || !domain) return '<invalid-email>';
+  return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function hashCode(code) {
+  return crypto.createHash('sha256').update(String(code || ''), 'utf8').digest('hex');
+}
+
+function generateSixDigitCode() {
+  const value = crypto.randomInt(0, 1000000);
+  return String(value).padStart(6, '0');
+}
+
+function generateProofToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+
+function cleanupRegistrationStores(now = Date.now()) {
+  for (const [email, entry] of registrationCodeStore.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now) {
+      registrationCodeStore.delete(email);
+    }
+  }
+  for (const [token, entry] of registrationProofStore.entries()) {
+    if (!entry || Number(entry.expiresAt || 0) <= now || entry.consumed === true) {
+      registrationProofStore.delete(token);
+    }
+  }
 }
 
 let supabaseAdminClient = null;
@@ -492,6 +536,199 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 * 1000), requireServerToken, async (req, res) => {
+  try {
+    cleanupRegistrationStores();
+    const email = normalizeEmail(req.body?.email);
+    const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ ok: false, code: 'INVALID_EMAIL', message: 'Invalid email' });
+    }
+    if (purpose !== 'register' && purpose !== 'recovery') {
+      return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE', message: 'Invalid purpose' });
+    }
+
+    const now = Date.now();
+    const existing = registrationCodeStore.get(email);
+    if (existing && Number(existing.cooldownUntil || 0) > now) {
+      const retryAfter = Math.max(1, Math.ceil((existing.cooldownUntil - now) / 1000));
+      return res.status(429).json({ ok: false, code: 'RATE_LIMITED', retry_after_seconds: retryAfter });
+    }
+
+    const code = generateSixDigitCode();
+    const expiresAt = now + REG_CODE_TTL_MS;
+    const cooldownUntil = now + REG_CODE_RESEND_COOLDOWN_MS;
+    registrationCodeStore.set(email, {
+      codeHash: hashCode(code),
+      email,
+      purpose,
+      createdAt: now,
+      expiresAt,
+      cooldownUntil,
+      attempts: 0,
+      verifiedAt: null,
+    });
+
+    const isRecoveryPurpose = purpose === 'recovery';
+    const subject = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
+    const verifyBaseUrl = String(
+      isRecoveryPurpose
+        ? (process.env.PASSWORD_RESET_VERIFY_URL || 'https://monitorapp.ru/set-password')
+        : (process.env.REGISTRATION_VERIFY_URL || 'https://monitorapp.ru/verify-email'),
+    ).trim();
+    const verifyUrl = `${verifyBaseUrl}${verifyBaseUrl.includes('?') ? '&' : '?'}email=${encodeURIComponent(email)}`;
+    const heading = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
+    const description = isRecoveryPurpose
+      ? 'Чтобы установить новый пароль в сервисе <strong>Монитор</strong>, введите код ниже на странице восстановления.'
+      : 'Чтобы завершить регистрацию в сервисе <strong>Монитор</strong>, введите код ниже на странице подтверждения.';
+    const hint = isRecoveryPurpose
+      ? 'Код действует 15 минут. Если вы не запрашивали восстановление пароля, просто проигнорируйте это письмо.'
+      : 'Код действует 15 минут. Если вы не регистрировались в Монитор, просто проигнорируйте это письмо.';
+    const textPrefix = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
+    const html = `
+      <div style="margin:0; padding:0; background:#f3f6fb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+        <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
+          <div style="background:#ffffff; border:1px solid #e3e8f0; border-radius:18px; padding:28px;">
+            <h1 style="margin:0 0 14px; color:#0f1b34; font-size:46px; line-height:1.05; font-weight:900;">
+              ${heading}
+            </h1>
+            <p style="margin:0 0 16px; color:#33415c; font-size:16px; line-height:1.5;">
+              ${description}
+            </p>
+            <div style="margin:16px 0 8px; color:#64748b; font-size:16px; line-height:1.4; font-weight:600;">
+              Код подтверждения
+            </div>
+            <div style="margin:0 0 18px; border:1px dashed #9ec5ff; border-radius:14px; background:#f8fbff; padding:18px 14px; text-align:center;">
+              <span style="display:inline-block; color:#0f1b34; font-size:52px; line-height:1; letter-spacing:8px; font-weight:800;">${code}</span>
+            </div>
+            <a href="${verifyUrl}" style="display:inline-block; background:#2563eb; color:#ffffff; text-decoration:none; font-weight:700; font-size:16px; line-height:1; border-radius:12px; padding:15px 20px;">
+              Открыть страницу подтверждения
+            </a>
+            <p style="margin:18px 0 0; color:#64748b; font-size:14px; line-height:1.5;">
+              ${hint}
+            </p>
+          </div>
+        </div>
+      </div>
+    `;
+    const text = `${textPrefix}\n\nКод подтверждения: ${code}\n\nОткрыть страницу подтверждения: ${verifyUrl}\n\n${hint}`;
+
+    const info = await transporter.sendMail({
+      from: process.env.SMTP_FROM || 'MonitorApp <noreply@monitorapp.ru>',
+      replyTo: process.env.SMTP_REPLY_TO || 'support@monitorapp.ru',
+      to: email,
+      subject,
+      html,
+      text,
+    });
+
+    console.log(`[${new Date().toISOString()}] Registration code sent to ${maskEmailForLog(email)}: ${info.messageId}`);
+    return res.status(200).json({
+      ok: true,
+      cooldown_seconds: Math.floor(REG_CODE_RESEND_COOLDOWN_MS / 1000),
+      expires_in_seconds: Math.floor(REG_CODE_TTL_MS / 1000),
+    });
+  } catch (error) {
+    console.error('[/registration/send-code] Error:', error);
+    return res.status(500).json({ ok: false, code: 'SEND_FAILED', message: 'Failed to send verification code' });
+  }
+});
+
+app.post('/registration/verify-code', rateLimit('registration-verify-code', 50, 60 * 1000), requireServerToken, async (req, res) => {
+  try {
+    cleanupRegistrationStores();
+    const email = normalizeEmail(req.body?.email);
+    const code = String(req.body?.code || '').trim();
+    const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ ok: false, code: 'INVALID_EMAIL' });
+    }
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, code: 'INVALID_CODE' });
+    }
+    if (purpose !== 'register' && purpose !== 'recovery') {
+      return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE' });
+    }
+
+    const entry = registrationCodeStore.get(email);
+    if (!entry || Number(entry.expiresAt || 0) <= Date.now()) {
+      registrationCodeStore.delete(email);
+      return res.status(400).json({ ok: false, code: 'CODE_EXPIRED' });
+    }
+
+    const attempts = Number(entry.attempts || 0) + 1;
+    entry.attempts = attempts;
+    if (attempts > REG_CODE_MAX_ATTEMPTS) {
+      registrationCodeStore.delete(email);
+      return res.status(429).json({ ok: false, code: 'TOO_MANY_ATTEMPTS' });
+    }
+
+    if (!timingSafeStringEqual(hashCode(code), String(entry.codeHash || ''))) {
+      registrationCodeStore.set(email, entry);
+      return res.status(400).json({ ok: false, code: 'INVALID_CODE' });
+    }
+
+    const proofToken = generateProofToken();
+    registrationProofStore.set(proofToken, {
+      email,
+      purpose,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + REG_PROOF_TTL_MS,
+      consumed: false,
+    });
+    registrationCodeStore.delete(email);
+
+    return res.status(200).json({
+      ok: true,
+      registration_token: proofToken,
+      expires_in_seconds: Math.floor(REG_PROOF_TTL_MS / 1000),
+    });
+  } catch (error) {
+    console.error('[/registration/verify-code] Error:', error);
+    return res.status(500).json({ ok: false, code: 'VERIFY_FAILED' });
+  }
+});
+
+app.post('/registration/consume-token', rateLimit('registration-consume-token', 100, 60 * 1000), requireServerToken, async (req, res) => {
+  try {
+    cleanupRegistrationStores();
+    const email = normalizeEmail(req.body?.email);
+    const token = String(req.body?.registration_token || '').trim();
+    const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
+
+    if (!email || !token) {
+      return res.status(400).json({ ok: false, code: 'INVALID_INPUT' });
+    }
+    if (purpose !== 'register' && purpose !== 'recovery') {
+      return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE' });
+    }
+
+    const entry = registrationProofStore.get(token);
+    if (!entry) {
+      return res.status(400).json({ ok: false, code: 'INVALID_TOKEN' });
+    }
+    if (entry.consumed === true) {
+      return res.status(400).json({ ok: false, code: 'TOKEN_ALREADY_USED' });
+    }
+    if (Number(entry.expiresAt || 0) <= Date.now()) {
+      registrationProofStore.delete(token);
+      return res.status(400).json({ ok: false, code: 'TOKEN_EXPIRED' });
+    }
+    if (normalizeEmail(entry.email) !== email || String(entry.purpose || '') !== purpose) {
+      return res.status(400).json({ ok: false, code: 'TOKEN_MISMATCH' });
+    }
+
+    entry.consumed = true;
+    registrationProofStore.set(token, entry);
+    cleanupRegistrationStores();
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error('[/registration/consume-token] Error:', error);
+    return res.status(500).json({ ok: false, code: 'CONSUME_FAILED' });
+  }
 });
 
 app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), requireServerToken, async (req, res) => {

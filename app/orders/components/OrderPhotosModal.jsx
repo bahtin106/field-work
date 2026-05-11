@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Feather } from '@expo/vector-icons';
 
 import { BaseModal, ConfirmModal } from '../../../components/ui/modals';
+import { useToast } from '../../../components/ui/ToastProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import PhotoCaptureFlowModal from './PhotoCaptureFlowModal';
@@ -29,6 +30,7 @@ export default function OrderPhotosModal({
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const toast = useToast();
 
   const [cameraVisible, setCameraVisible] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
@@ -104,16 +106,32 @@ export default function OrderPhotosModal({
   const handleGallery = useCallback(async () => {
     hapticTap();
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) return;
+      let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+      if (!perm?.granted) {
+        perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      }
+      if (!perm?.granted) {
+        toast.error(t('order_no_gallery_permission'));
+        return;
+      }
 
-      const result = await ImagePicker.launchImageLibraryAsync({
-        quality: theme.media?.quality ?? 1,
-        allowsMultipleSelection: true,
-        mediaTypes: ['images'],
-        orderedSelection: true,
-        selectionLimit: 20,
-      });
+      let result;
+      try {
+        result = await ImagePicker.launchImageLibraryAsync({
+          quality: theme.media?.quality ?? 1,
+          allowsMultipleSelection: true,
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          orderedSelection: true,
+          selectionLimit: 20,
+        });
+      } catch (multiSelectError) {
+        console.warn('[OrderPhotosModal] gallery multi-select failed, fallback to single pick', multiSelectError);
+        result = await ImagePicker.launchImageLibraryAsync({
+          quality: theme.media?.quality ?? 1,
+          allowsMultipleSelection: false,
+          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        });
+      }
       if (!result || result.canceled) return;
 
       if (!(result.assets || []).length) return;
@@ -135,8 +153,9 @@ export default function OrderPhotosModal({
       );
     } catch (e) {
       console.warn('[OrderPhotosModal] gallery picker error', e);
+      toast.error(t('toast_error'));
     }
-  }, [category, onUploadMultiple, pickedSessionIdsRef, theme.media?.quality]);
+  }, [category, onUploadMultiple, pickedSessionIdsRef, t, theme.media?.quality, toast]);
 
   const handleOpenCamera = useCallback(() => {
     hapticMedium();

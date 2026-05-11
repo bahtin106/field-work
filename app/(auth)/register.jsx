@@ -1,9 +1,11 @@
 import { Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   Linking,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -14,7 +16,6 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import Button from '../../components/ui/Button';
 import Card from '../../components/ui/Card';
-import Checkbox from '../../components/ui/Checkbox';
 import TextField from '../../components/ui/TextField';
 import {
   FEEDBACK_CODES,
@@ -28,17 +29,17 @@ import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
 import {
   AUTH_CONSTRAINTS,
   filterPasswordInput,
+  getPasswordStrengthChecks,
   isValidEmail,
-  isValidHumanName,
   isValidPassword,
   normalizeHumanName,
 } from '../../lib/authValidation';
 import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
-import { normalizeCompanyName, validateCompanyName } from '../../lib/companyName';
 import { FUNCTIONS } from '../../lib/constants';
 import { logClientError } from '../../lib/errorLogsClient';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import TurnstileWidget from '../../src/shared/security/TurnstileWidget';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
 import { LEGAL_LINKS } from '../../config/externalUrls';
@@ -51,6 +52,23 @@ const resolveDeviceTimeZone = () => {
     return 'UTC';
   }
 };
+
+const REGISTER_FINGERPRINT_KEY = 'register_client_fingerprint_v1';
+const REGISTER_PENDING_KEY = 'register_pending_v1';
+const REGISTER_CODE_COOLDOWN_PREFIX = 'register_code_cooldown_until:';
+
+async function getOrCreateRegisterClientFingerprint() {
+  try {
+    const existing = String((await AsyncStorage.getItem(REGISTER_FINGERPRINT_KEY)) || '').trim();
+    if (existing) return existing;
+    const seed = `${Date.now()}-${Math.random()}-${Math.random()}`;
+    const normalized = seed.replace(/[^a-zA-Z0-9.-]/g, '').slice(0, 96) || `rfp-${Date.now()}`;
+    await AsyncStorage.setItem(REGISTER_FINGERPRINT_KEY, normalized);
+    return normalized;
+  } catch {
+    return `rfp-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+  }
+}
 
 const createStyles = (theme, insets = {}) => {
   const bottomInset = insets.bottom ?? 0;
@@ -176,6 +194,16 @@ const createStyles = (theme, insets = {}) => {
       marginTop: theme.spacing.xs,
       marginHorizontal: theme.spacing.xs,
     },
+    passwordRules: {
+      marginHorizontal: theme.spacing.md,
+      marginTop: 2,
+      marginBottom: theme.spacing.xs,
+      gap: 4,
+    },
+    passwordRuleText: {
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.25),
+    },
     banner: {
       marginBottom: theme.spacing.md,
     },
@@ -225,6 +253,90 @@ function AvailabilityStatus({ status, availableText, checkingText, theme, styles
   );
 }
 
+function pickMessageFromPayload(payload) {
+  if (!payload) return '';
+  if (typeof payload === 'string') return payload;
+  return String(payload.message || payload.error || payload.details || payload.hint || '').trim();
+}
+
+async function _resolveRegisterInvokeError(invokeError, t) {
+  const statusCode =
+    Number(invokeError?.context?.status || invokeError?.status || invokeError?.code || 0) || 0;
+
+  let payloadMessage = '';
+  let payloadCode = '';
+  const context = invokeError?.context;
+  if (context && typeof context.clone === 'function') {
+    try {
+      const bodyText = await context.clone().text();
+      if (bodyText) {
+        try {
+          const parsed = JSON.parse(bodyText);
+          payloadMessage = pickMessageFromPayload(parsed);
+          payloadCode = String(parsed?.code || '').trim();
+        } catch {
+          payloadMessage = bodyText.trim();
+        }
+      }
+    } catch {}
+  }
+
+  const raw = `${payloadCode} ${payloadMessage} ${String(invokeError?.message || '')}`.trim();
+  if (/EMAIL_TAKEN|already exists|email.*taken|user.*exists/i.test(raw)) {
+    return new Error(t('error_email_exists'));
+  }
+  if (/COMPANY_NAME_TAKEN|company.*already exists|duplicate/i.test(raw)) {
+    return new Error(t('errors_companyName_duplicate'));
+  }
+  if (/CONSENT_REQUIRED/i.test(raw)) {
+    return new Error(t('register_error_consent_required'));
+  }
+  if (/EMAIL_VERIFICATION_REQUIRED|EMAIL_VERIFICATION_FAILED/i.test(raw)) {
+    return new Error(t('register_code_verify_required'));
+  }
+  if (/CODE_EXPIRED/i.test(raw)) {
+    return new Error(t('register_code_expired'));
+  }
+  if (statusCode === 429 || /RATE_LIMITED|too many requests/i.test(raw)) {
+    return new Error(t('err_invite_rate_limit'));
+  }
+  if (!payloadMessage && /edge function returned a non-2xx status code/i.test(raw)) {
+    return new Error(t('error_profile_not_updated'));
+  }
+
+  return new Error(payloadMessage || String(invokeError?.message || t('error_profile_not_updated')));
+}
+
+async function parseInvokeErrorDetails(invokeError) {
+  const statusCode =
+    Number(invokeError?.context?.status || invokeError?.status || invokeError?.code || 0) || 0;
+  let payloadCode = '';
+  let payloadMessage = '';
+
+  const context = invokeError?.context;
+  if (context && typeof context.clone === 'function') {
+    try {
+      const bodyText = await context.clone().text();
+      if (bodyText) {
+        try {
+          const parsed = JSON.parse(bodyText);
+          payloadCode = String(parsed?.code || '').trim();
+          payloadMessage = pickMessageFromPayload(parsed);
+        } catch {
+          payloadMessage = bodyText.trim();
+        }
+      }
+    } catch {}
+  }
+
+  const fallbackMessage = String(invokeError?.message || '').trim();
+  return {
+    statusCode,
+    code: payloadCode,
+    message: payloadMessage || fallbackMessage,
+  };
+}
+
 export default function RegisterScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -247,25 +359,24 @@ export default function RegisterScreen() {
     floatingLabelGapScale: registerUi.floatingLabelGapScale ?? 2,
   };
 
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
+  const [firstName] = useState('Пользователь');
+  const [lastName] = useState('Monitor');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [createCompanyProfile, setCreateCompanyProfile] = useState(false);
-  const [companyName, setCompanyName] = useState('');
+  const _createCompanyProfile = false;
+  const [companyName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
-  const [consentOfferChecked, setConsentOfferChecked] = useState(false);
-  const [consentPrivacyChecked, setConsentPrivacyChecked] = useState(false);
-  const [consentPersonalDataChecked, setConsentPersonalDataChecked] = useState(false);
-  const [consentCookiesChecked, setConsentCookiesChecked] = useState(false);
+  const [consentAccepted] = useState(true);
   const [emailCheckStatus, setEmailCheckStatus] = useState(null);
   const [invalidCharWarning, setInvalidCharWarning] = useState(false);
   const [companyCheckStatus, setCompanyCheckStatus] = useState(null);
+  const [codeSent, setCodeSent] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState('');
 
   const emailCheckTimeoutRef = useRef(null);
   const invalidInputTimeoutRef = useRef(null);
@@ -288,19 +399,26 @@ export default function RegisterScreen() {
   });
 
   const emailValid = useMemo(() => isValidEmail(email), [email]);
-  const passwordValid = useMemo(() => isValidPassword(password), [password]);
+  const passwordChecks = useMemo(() => getPasswordStrengthChecks(password), [password]);
+  const passwordValid = useMemo(
+    () =>
+      isValidPassword(password) &&
+      passwordChecks.minLength &&
+      passwordChecks.hasUpper &&
+      passwordChecks.hasLower &&
+      passwordChecks.hasDigit,
+    [password, passwordChecks],
+  );
   const passwordsMatch = useMemo(
     () => !password || password === confirmPassword,
     [password, confirmPassword],
   );
   const checkingAvailability =
     emailCheckStatus === 'checking' || companyCheckStatus === 'checking';
-  const accountType = createCompanyProfile ? 'company' : 'solo';
-  const allConsentsAccepted =
-    consentOfferChecked &&
-    consentPrivacyChecked &&
-    consentPersonalDataChecked &&
-    consentCookiesChecked;
+  const accountType = 'solo';
+  const allConsentsAccepted = consentAccepted;
+  const turnstileSiteKey = String(process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY || '').trim();
+  const requiresTurnstile = Platform.OS === 'web' && turnstileSiteKey.length > 0;
 
   const shouldShowError = useCallback(
     (field) => submittedAttempt || !!touched[field],
@@ -314,29 +432,31 @@ export default function RegisterScreen() {
       return next;
     });
   }, []);
+
+  const savePendingRegisterDraft = useCallback(async (payload) => {
+    try {
+      await AsyncStorage.setItem(REGISTER_PENDING_KEY, JSON.stringify(payload || {}));
+    } catch {}
+  }, []);
+
+  const saveCodeCooldownUntil = useCallback(async (emailValue, cooldownUntilTs) => {
+    try {
+      const normalizedEmail = String(emailValue || '').trim().toLowerCase();
+      if (!normalizedEmail) return;
+      await AsyncStorage.setItem(
+        `${REGISTER_CODE_COOLDOWN_PREFIX}${normalizedEmail}`,
+        String(Math.max(0, Number(cooldownUntilTs || 0))),
+      );
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    setCodeSent(false);
+  }, [email]);
   const requiredMsg = useMemo(
     () => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t),
     [t],
   );
-  const companyNameValidationMessage = useMemo(
-    () => validateCompanyName(companyName, t),
-    [companyName, t],
-  );
-
-  const firstNameError =
-    fieldErrors.firstName?.message ||
-    (shouldShowError('firstName') && !firstName.trim()
-      ? requiredMsg
-      : firstName.trim() && !isValidHumanName(firstName)
-        ? requiredMsg
-        : null);
-  const lastNameError =
-    fieldErrors.lastName?.message ||
-    (shouldShowError('lastName') && !lastName.trim()
-      ? requiredMsg
-      : lastName.trim() && !isValidHumanName(lastName)
-        ? requiredMsg
-        : null);
   const emailError =
     fieldErrors.email?.message ||
     ((shouldShowError('email') || emailCheckStatus === 'taken') && !email.trim()
@@ -353,22 +473,6 @@ export default function RegisterScreen() {
       : password.length > 0 && !passwordValid
         ? getMessageByCode(FEEDBACK_CODES.PASSWORD_TOO_SHORT, t)
         : null);
-  const confirmPasswordError =
-    fieldErrors.confirmPassword?.message ||
-    (shouldShowError('confirmPassword') && !confirmPassword.trim()
-      ? requiredMsg
-      : confirmPassword.length > 0 && !passwordsMatch
-        ? getMessageByCode(FEEDBACK_CODES.PASSWORD_MISMATCH, t)
-        : null);
-  const companyNameError =
-    fieldErrors.companyName?.message ||
-    (accountType === 'company' && companyCheckStatus === 'taken'
-      ? t('errors_companyName_duplicate')
-      : shouldShowError('companyName') &&
-          accountType === 'company' &&
-          companyNameValidationMessage
-        ? companyNameValidationMessage
-        : null);
 
   const openLegalLink = useCallback(async (url) => {
     try {
@@ -378,15 +482,15 @@ export default function RegisterScreen() {
   }, []);
 
   const checkRegistrationAvailability = useCallback(
-    async ({ emailToCheck, accountTypeToCheck, companyNameToCheck }) => {
+    async ({ emailToCheck, accountTypeToCheck: _accountTypeToCheck, companyNameToCheck }) => {
       if (!emailToCheck || !isValidEmail(emailToCheck)) {
         setEmailCheckStatus(null);
         setCompanyCheckStatus(null);
         return;
       }
-      const normalizedCompany = normalizeCompanyName(companyNameToCheck);
-      const shouldCheckCompany =
-        accountTypeToCheck === 'company' && !validateCompanyName(normalizedCompany, t);
+      const _normalizedCompany = String(companyNameToCheck || '').trim();
+      const shouldCheckCompany = false;
+      const clientFingerprint = await getOrCreateRegisterClientFingerprint();
 
       try {
         setEmailCheckStatus('checking');
@@ -400,8 +504,9 @@ export default function RegisterScreen() {
           body: {
             check_only: true,
             email: String(emailToCheck).trim().toLowerCase(),
-            account_type: shouldCheckCompany ? 'company' : 'solo',
-            company_name: shouldCheckCompany ? normalizedCompany : null,
+            account_type: 'solo',
+            company_name: null,
+            client_fingerprint: clientFingerprint,
             timezone: resolveDeviceTimeZone(),
           },
         });
@@ -427,7 +532,7 @@ export default function RegisterScreen() {
         setCompanyCheckStatus(null);
       }
     },
-    [t],
+    [],
   );
 
   useEffect(() => {
@@ -497,19 +602,17 @@ export default function RegisterScreen() {
 
     const normalizedFirstName = normalizeHumanName(firstName);
     const normalizedLastName = normalizeHumanName(lastName);
-    const normalizedCompanyName = normalizeCompanyName(companyName);
-    const missingFirst = !normalizedFirstName;
-    const missingLast = !normalizedLastName;
-    const invalidFirstName = !!normalizedFirstName && !isValidHumanName(normalizedFirstName);
-    const invalidLastName = !!normalizedLastName && !isValidHumanName(normalizedLastName);
+    const _normalizedCompanyName = '';
+    const missingFirst = false;
+    const missingLast = false;
+    const invalidFirstName = false;
+    const invalidLastName = false;
     const invalidEmail = !emailValid;
     const invalidPwd = !passwordValid;
     const mismatchPwd = !passwordsMatch;
     const emailTaken = emailCheckStatus === 'taken';
-    const companyTaken = companyCheckStatus === 'taken';
-    const companyNameValidationError =
-      accountType === 'company' ? validateCompanyName(normalizedCompanyName, t) : null;
-    const needsCompanyName = accountType === 'company' && !!companyNameValidationError;
+    const companyTaken = false;
+    const needsCompanyName = false;
 
     if (
       emailTaken ||
@@ -549,8 +652,6 @@ export default function RegisterScreen() {
           message: getMessageByCode(FEEDBACK_CODES.PASSWORD_MISMATCH, t),
         };
       }
-      if (needsCompanyName) nextFieldErrors.companyName = { message: companyNameValidationError };
-      if (companyTaken) nextFieldErrors.companyName = { message: t('errors_companyName_duplicate') };
       if (Object.keys(nextFieldErrors).length) setFieldErrors(nextFieldErrors);
       if (!allConsentsAccepted) {
         showBanner({
@@ -559,10 +660,10 @@ export default function RegisterScreen() {
         });
       }
       scrollToFirstInvalid([
-        { invalid: missingFirst, ref: firstNameRef },
-        { invalid: missingLast, ref: lastNameRef },
+        { invalid: false, ref: firstNameRef },
+        { invalid: false, ref: lastNameRef },
         { invalid: invalidEmail || emailTaken, ref: emailRef },
-        { invalid: needsCompanyName || companyTaken, ref: companyNameRef },
+        { invalid: false, ref: companyNameRef },
         { invalid: invalidPwd, ref: pwdRef },
         { invalid: mismatchPwd, ref: confirmPwdRef },
       ]);
@@ -574,59 +675,74 @@ export default function RegisterScreen() {
 
     try {
       const fullName = `${normalizedFirstName} ${normalizedLastName}`.replace(/\s+/g, ' ').trim();
+      const normalizedEmail = String(email).trim().toLowerCase();
+      const clientFingerprint = await getOrCreateRegisterClientFingerprint();
+      if (requiresTurnstile && !turnstileToken && !codeSent) {
+        throw new Error(t('register_code_verify_required'));
+      }
 
-      const { data: body, error: invokeError } = await supabase.functions.invoke(
-        FUNCTIONS.REGISTER_USER,
+      const { data: requestCodeData, error: requestCodeError } = await supabase.functions.invoke(
+        FUNCTIONS.REGISTER_REQUEST_CODE,
         {
           body: {
-            email: String(email).trim().toLowerCase(),
-            password: String(password),
-            first_name: normalizedFirstName,
-            last_name: normalizedLastName,
-            full_name: fullName,
-            account_type: accountType,
-            company_name: accountType === 'company' ? normalizedCompanyName : null,
-            timezone: resolveDeviceTimeZone(),
-            consent_offer: true,
-            consent_privacy_policy: true,
-            consent_personal_data: true,
-            consent_cookies: true,
-            consent_source: 'mobile_app',
-            consent_documents: {
-              offer_url: LEGAL_LINKS.offer,
-              privacy_url: LEGAL_LINKS.privacy,
-              personal_data_url: LEGAL_LINKS.personalData,
-              cookies_url: LEGAL_LINKS.cookies,
-            },
+            email: normalizedEmail,
+            account_type: 'solo',
+            company_name: null,
+            client_fingerprint: clientFingerprint,
+            bot_token: turnstileToken || null,
           },
         },
       );
 
-      if (invokeError) {
-        const msg = String(invokeError?.message || '');
-        if (/EMAIL_TAKEN|already exists|email.*taken|user.*exists/i.test(msg)) {
-          throw new Error(t('error_email_exists'));
+      if (requestCodeError || requestCodeData?.ok === false) {
+        const responseCode = String(requestCodeData?.code || '').trim();
+        if (responseCode === 'EMAIL_TAKEN') throw new Error(t('error_email_exists'));
+        if (responseCode === 'COMPANY_NAME_TAKEN') throw new Error(t('errors_companyName_duplicate'));
+        if (responseCode === 'RATE_LIMITED') throw new Error(t('err_invite_rate_limit'));
+        if (responseCode === 'BOT_CHALLENGE_REQUIRED') throw new Error(t('register_code_verify_required'));
+
+        if (requestCodeError) {
+          const details = await parseInvokeErrorDetails(requestCodeError);
+          if (details.code === 'RATE_LIMITED' || details.statusCode === 429) {
+            throw new Error(t('err_invite_rate_limit'));
+          }
+          if (details.code === 'BOT_CHALLENGE_REQUIRED') {
+            throw new Error(t('register_code_verify_required'));
+          }
+          if (/EMAIL_SERVICE_URL|SERVER_MISCONFIGURED/i.test(details.message || '')) {
+            throw new Error('Сервис отправки писем временно недоступен. Попробуйте позже');
+          }
+          if (details.message) {
+            throw new Error(details.message);
+          }
         }
-        if (/COMPANY_NAME_TAKEN|company.*already exists|duplicate/i.test(msg)) {
-          throw new Error(t('errors_companyName_duplicate'));
+
+        if (String(requestCodeData?.message || '').trim()) {
+          throw new Error(String(requestCodeData.message).trim());
         }
-        throw invokeError;
+        throw new Error(t('register_code_send_failed'));
       }
 
-      const userId = body?.user_id;
-      if (!userId) throw new Error(t('error_profile_not_updated'));
+      const cooldownSeconds = Number(requestCodeData?.cooldown_seconds || 60);
+      const cooldownUntil = Date.now() + Math.max(1, cooldownSeconds) * 1000;
 
-      const { error: loginErr } = await supabase.auth.signInWithPassword({
-        email: String(email).trim().toLowerCase(),
+      await savePendingRegisterDraft({
+        email: normalizedEmail,
         password: String(password),
+        first_name: normalizedFirstName,
+        last_name: normalizedLastName,
+        full_name: fullName,
+        account_type: 'solo',
+        company_name: null,
       });
+      await saveCodeCooldownUntil(normalizedEmail, cooldownUntil);
 
-      if (loginErr) {
-        showSuccessToast(t('register_success_please_login'));
-        setTimeout(() => router.replace('/(auth)/login'), theme.timings.postRegisterNavDelayMs);
-      } else {
-        showSuccessToast(t('register_success'));
-      }
+      showSuccessToast(t('register_code_sent'));
+      router.push({
+        pathname: '/(auth)/register-code',
+        params: { email: normalizedEmail },
+      });
+      return;
     } catch (e) {
       logClientError(e, { source: 'register_submit' });
       const normalized = normalizeError(e, {
@@ -656,35 +772,19 @@ export default function RegisterScreen() {
     passwordValid,
     allConsentsAccepted,
     emailCheckStatus,
-    companyCheckStatus,
-    accountType,
-    companyName,
+    codeSent,
+    turnstileToken,
+    requiresTurnstile,
     router,
     t,
     showSuccessToast,
     showBanner,
     clearBanner,
+    savePendingRegisterDraft,
+    saveCodeCooldownUntil,
     requiredMsg,
     scrollToFirstInvalid,
-    theme.timings.postRegisterNavDelayMs,
   ]);
-
-  const renderConsent = (checked, setChecked, prefix, linkText, url, showDivider = true) => (
-    <>
-      <View style={styles.consentRow}>
-        <Checkbox value={checked} onValueChange={setChecked} />
-        <View style={styles.consentTextWrap}>
-          <Text style={styles.consentText}>
-            {prefix}{' '}
-            <Text style={styles.consentLink} onPress={() => openLegalLink(url)}>
-              {linkText}
-            </Text>
-          </Text>
-        </View>
-      </View>
-      {showDivider ? <View style={styles.consentDivider} /> : null}
-    </>
-  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
@@ -722,50 +822,6 @@ export default function RegisterScreen() {
           <View style={styles.section}>
             <Card padded={false} paddedXOnly style={styles.formCard}>
               <TextField
-                ref={firstNameRef}
-                label={t('label_first_name')}
-                value={firstName}
-                onChangeText={(val) => {
-                  setFirstName(val);
-                  clearFieldError('firstName');
-                }}
-                onBlur={() => setTouched((prev) => ({ ...prev, firstName: true }))}
-                placeholder={t('placeholder_first_name')}
-                autoCapitalize="words"
-                autoCorrect={false}
-                returnKeyType="next"
-                onSubmitEditing={() => lastNameRef.current?.focus()}
-                editable={!submitting}
-                required
-                forceValidation={submittedAttempt}
-                error={firstNameError ? 'invalid' : undefined}
-                style={styles.field}
-                {...sharedFieldProps}
-              />
-              <FieldErrorText message={firstNameError} style={styles.fieldWithErrorGap} />
-              <TextField
-                ref={lastNameRef}
-                label={t('label_last_name')}
-                value={lastName}
-                onChangeText={(val) => {
-                  setLastName(val);
-                  clearFieldError('lastName');
-                }}
-                onBlur={() => setTouched((prev) => ({ ...prev, lastName: true }))}
-                placeholder={t('placeholder_last_name')}
-                autoCapitalize="words"
-                autoCorrect={false}
-                returnKeyType="next"
-                onSubmitEditing={() => emailRef.current?.focus()}
-                editable={!submitting}
-                required
-                forceValidation={submittedAttempt}
-                error={lastNameError ? 'invalid' : undefined}
-                style={styles.field}
-                {...sharedFieldProps}
-              />
-              <FieldErrorText message={lastNameError} style={styles.fieldWithErrorGap} />
-              <TextField
                 ref={emailRef}
                 label={t('label_email')}
                 value={email}
@@ -779,7 +835,7 @@ export default function RegisterScreen() {
                 autoCapitalize="none"
                 autoCorrect={false}
                 returnKeyType="next"
-                onSubmitEditing={() => companyNameRef.current?.focus()}
+                onSubmitEditing={() => pwdRef.current?.focus()}
                 editable={!submitting}
                 required
                 forceValidation={submittedAttempt}
@@ -795,61 +851,13 @@ export default function RegisterScreen() {
                 styles={styles}
               />
               <FieldErrorText message={emailError} style={styles.fieldWithErrorGap} />
-              <View style={styles.companyToggleRow}>
-                <Checkbox
-                  value={createCompanyProfile}
-                  onValueChange={(nextValue) => {
-                    setCreateCompanyProfile(nextValue);
-                    if (!nextValue) {
-                      setCompanyCheckStatus(null);
-                      clearFieldError('companyName');
-                    }
-                  }}
-                />
-                <Text style={styles.companyToggleText}>
-                  {t('register_create_company_profile')}
-                </Text>
-              </View>
-              {createCompanyProfile ? (
-              <TextField
-                ref={companyNameRef}
-                label={t('register_company_name')}
-                value={companyName}
-                onChangeText={(val) => {
-                  setCompanyName(val);
-                  clearFieldError('companyName');
-                }}
-                onBlur={() => setTouched((prev) => ({ ...prev, companyName: true }))}
-                placeholder={t('register_company_name_placeholder')}
-                autoCapitalize="words"
-                returnKeyType="next"
-                onSubmitEditing={() => pwdRef.current?.focus()}
-                editable={!submitting}
-                required
-                forceValidation={submittedAttempt}
-                error={companyNameError ? 'invalid' : undefined}
-                style={styles.field}
-                {...sharedFieldProps}
-              />
-              ) : null}
-              {createCompanyProfile ? (
-              <AvailabilityStatus
-                status={companyCheckStatus}
-                availableText={t('hint_available')}
-                checkingText={t('hint_checking')}
-                theme={theme}
-                styles={styles}
-              />
-              ) : null}
-              {createCompanyProfile ? (
-              <FieldErrorText message={companyNameError} style={styles.fieldWithErrorGap} />
-              ) : null}
               <TextField
                 ref={pwdRef}
                 label={t('register_label_password')}
                 value={password}
                 onChangeText={(val) => {
                   setPassword(val);
+                  setConfirmPassword(val);
                   if (invalidCharWarning) setInvalidCharWarning(false);
                   clearFieldError('password');
                 }}
@@ -858,8 +866,8 @@ export default function RegisterScreen() {
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
-                returnKeyType="next"
-                onSubmitEditing={() => confirmPwdRef.current?.focus()}
+                returnKeyType="done"
+                onSubmitEditing={handleRegister}
                 editable={!submitting}
                 required
                 forceValidation={submittedAttempt}
@@ -892,72 +900,71 @@ export default function RegisterScreen() {
                 {...sharedFieldProps}
               />
               <FieldErrorText message={passwordError} style={styles.fieldWithErrorGap} />
-              <TextField
-                ref={confirmPwdRef}
-                label={t('label_password_repeat')}
-                value={confirmPassword}
-                onChangeText={(val) => {
-                  setConfirmPassword(val);
-                  clearFieldError('confirmPassword');
-                }}
-                onBlur={() => setTouched((prev) => ({ ...prev, confirmPassword: true }))}
-                placeholder={t('placeholder_repeat_password')}
-                secureTextEntry={!showPassword}
-                autoCapitalize="none"
-                autoCorrect={false}
-                returnKeyType="done"
-                onSubmitEditing={handleRegister}
-                editable={!submitting}
-                required
-                forceValidation={submittedAttempt}
-                error={confirmPasswordError ? 'invalid' : undefined}
-                filterInput={filterPasswordInput}
-                maxLength={AUTH_CONSTRAINTS.PASSWORD.MAX_LENGTH}
-                hideSeparator
-                style={styles.field}
-                {...sharedFieldProps}
-              />
-              <FieldErrorText message={confirmPasswordError} style={styles.fieldWithErrorGap} />
+              <View style={styles.passwordRules}>
+                <Text
+                  style={[
+                    styles.passwordRuleText,
+                    { color: passwordChecks.minLength ? theme.colors.success : theme.colors.textSecondary },
+                  ]}
+                >
+                  Минимум 8 символов
+                </Text>
+                <Text
+                  style={[
+                    styles.passwordRuleText,
+                    { color: passwordChecks.hasUpper ? theme.colors.success : theme.colors.textSecondary },
+                  ]}
+                >
+                  Хотя бы одна заглавная буква
+                </Text>
+                <Text
+                  style={[
+                    styles.passwordRuleText,
+                    { color: passwordChecks.hasLower ? theme.colors.success : theme.colors.textSecondary },
+                  ]}
+                >
+                  Хотя бы одна строчная буква
+                </Text>
+                <Text
+                  style={[
+                    styles.passwordRuleText,
+                    { color: passwordChecks.hasDigit ? theme.colors.success : theme.colors.textSecondary },
+                  ]}
+                >
+                  Хотя бы одна цифра
+                </Text>
+              </View>
             </Card>
           </View>
 
           <View style={styles.consentPanel}>
-            {renderConsent(
-              consentOfferChecked,
-              setConsentOfferChecked,
-              t('register_consent_offer_prefix'),
-              t('register_consent_offer_link'),
-              LEGAL_LINKS.offer,
-            )}
-            {renderConsent(
-              consentPrivacyChecked,
-              setConsentPrivacyChecked,
-              t('register_consent_privacy_prefix'),
-              t('register_consent_privacy_link'),
-              LEGAL_LINKS.privacy,
-            )}
-            {renderConsent(
-              consentPersonalDataChecked,
-              setConsentPersonalDataChecked,
-              t('register_consent_personal_data_prefix'),
-              t('register_consent_personal_data_link'),
-              LEGAL_LINKS.personalData,
-            )}
-            {renderConsent(
-              consentCookiesChecked,
-              setConsentCookiesChecked,
-              t('register_consent_cookies_prefix'),
-              t('register_consent_cookies_link'),
-              LEGAL_LINKS.cookies,
-              false,
-            )}
-            {!allConsentsAccepted && submittedAttempt ? (
-              <Text style={styles.consentErrorText}>{t('register_error_consent_required')}</Text>
-            ) : null}
+            <View style={styles.consentRow}>
+              <View style={styles.consentTextWrap}>
+                <Text style={styles.consentText}>
+                  Нажимая кнопку, вы соглашаетесь с{' '}
+                  <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.offer)}>
+                    офертой
+                  </Text>
+                  ,{' '}
+                  <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.privacy)}>
+                    политикой конфиденциальности
+                  </Text>
+                  ,{' '}
+                  <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.personalData)}>
+                    обработкой персональных данных
+                  </Text>{' '}
+                  и{' '}
+                  <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.cookies)}>
+                    cookies
+                  </Text>
+                  .
+                </Text>
+              </View>
+            </View>
           </View>
 
           <Button
-            title={t('register_button')}
+            title={t('register_code_request_button')}
             variant="primary"
             size="lg"
             onPress={handleRegister}
@@ -965,6 +972,18 @@ export default function RegisterScreen() {
             disabled={submitting || checkingAvailability}
             style={styles.submitButton}
           />
+          {requiresTurnstile ? (
+            <View style={[styles.field, { marginTop: theme.spacing.sm }]}>
+              <TurnstileWidget
+                siteKey={turnstileSiteKey}
+                onTokenChange={setTurnstileToken}
+                onError={(error) => {
+                  logClientError(error, { source: 'register_turnstile' });
+                  setTurnstileToken('');
+                }}
+              />
+            </View>
+          ) : null}
 
           <Pressable
             onPress={() => {

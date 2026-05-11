@@ -2,7 +2,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigation, useRouter } from 'expo-router';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
@@ -34,7 +34,7 @@ export default function AdminCompaniesScreen() {
     nav.setParams({ headerTitle: t('routes.admin/companies') });
   }, [nav, t]);
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isRefetching, error, refetch } = useQuery({
     queryKey: ['adminCompanies', search],
     queryFn: () => fetchCompanies(search.trim()),
     enabled: isAllowed,
@@ -47,7 +47,16 @@ export default function AdminCompaniesScreen() {
 
   return (
     <Screen background="background">
-      <ScrollView contentContainerStyle={styles(theme).content}>
+      <ScrollView
+        contentContainerStyle={styles(theme).content}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefetching && !isLoading}
+            onRefresh={refetch}
+            tintColor={theme.colors.primary}
+          />
+        }
+      >
         <Card style={styles(theme).card}>
           <TextInput
             value={search}
