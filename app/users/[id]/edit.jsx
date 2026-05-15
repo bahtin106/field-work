@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
+  Dimensions,
   Keyboard,
   Platform,
   Pressable,
@@ -45,10 +46,6 @@ import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
-import {
-  updateCurrentUserPasswordViaBackend,
-  updatePasswordViaBackend,
-} from '../../../lib/passwordUpdateClient';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
 import {
@@ -259,6 +256,12 @@ function isSamePasswordError(error) {
   );
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || '').trim(),
+  );
+}
+
 async function withTimeout(promise, ms, timeoutMessage = 'timeout') {
   let timer = null;
   try {
@@ -273,11 +276,37 @@ async function withTimeout(promise, ms, timeoutMessage = 'timeout') {
   }
 }
 
-async function updateUserPasswordViaFunction({ userId, newPassword, changedBy }) {
-  return updatePasswordViaBackend({
+async function updateUserAuthViaFunction({ userId, profileId, changedBy, email, password }) {
+  const normalizedUserId = String(userId || '').trim();
+  const normalizedProfileId = String(profileId || '').trim();
+  const body = {
+    ...(isUuid(normalizedUserId) ? { user_id: normalizedUserId } : {}),
+    ...(isUuid(normalizedProfileId) ? { profile_id: normalizedProfileId } : {}),
+    changed_by: String(changedBy || normalizedUserId || normalizedProfileId || '').trim(),
+  };
+  if (!body.user_id && !body.profile_id) {
+    throw new Error('Invalid user id');
+  }
+  const normalizedEmail = normalizeOptionalEmail(email);
+  if (normalizedEmail) body.email = normalizedEmail;
+  if (password && String(password).length > 0) body.password = String(password);
+
+  const { data, error } = await supabase.functions.invoke(FUNCTIONS.UPDATE_USER, {
+    body,
+  });
+  if (error) throw error;
+  if (data?.ok === false || data?.success === false) {
+    throw new Error(data?.message || data?.error || 'Auth update failed');
+  }
+  return data || { ok: true };
+}
+
+async function updateUserPasswordViaFunction({ userId, profileId, newPassword, changedBy }) {
+  return updateUserAuthViaFunction({
     userId,
-    password: newPassword,
+    profileId,
     changedBy,
+    password: newPassword,
   });
 }
 
@@ -676,6 +705,7 @@ export default function EditUser() {
   const [withYear, setWithYear] = useState(true);
   const [dobModalVisible, setDobModalVisible] = useState(false);
   const [confirmPwdVisible, setConfirmPwdVisible] = useState(false);
+  const [confirmSensitiveReason, setConfirmSensitiveReason] = useState(null);
   const [_pendingSave, setPendingSave] = useState(false);
   const [_focusFirst, setFocusFirst] = useState(false);
   const [_focusLast, setFocusLast] = useState(false);
@@ -891,6 +921,8 @@ export default function EditUser() {
   const scrollRef = useRef(null);
   const _pwdRef = useRef(null);
   const confirmPwdRef = useRef(null);
+  const activePasswordFieldRef = useRef(null); // 'new' | 'confirm' | null
+  const keyboardHeightRef = useRef(0);
   const firstNameRef = useRef(null);
   const middleNameRef = useRef(null);
   const lastNameRef = useRef(null);
@@ -903,6 +935,76 @@ export default function EditUser() {
   const insets = useSafeAreaInsets();
   const scrollYRef = useRef(0);
   const headerHeight = theme?.components?.header?.height ?? 56;
+  const ensurePasswordFieldVisible = useCallback(
+    (fieldRef, extraBottomGap = 24) => {
+      const currentField = fieldRef?.current;
+      if (!currentField) return;
+
+      const doScrollCheck = () => {
+        try {
+          const nativeField = currentField?.getNativeRef?.() || currentField;
+          if (!nativeField?.measureInWindow) return false;
+
+          nativeField.measureInWindow((_x, y, _w, h) => {
+            try {
+              const screenHeight = Dimensions.get('window').height;
+              const keyboardHeight = Number(keyboardHeightRef.current || 0);
+              if (keyboardHeight <= 0) return;
+
+              const visibleBottom = screenHeight - keyboardHeight - (insets.bottom || 0);
+              const fieldBottom = y + h;
+              const overlap = fieldBottom + extraBottomGap - visibleBottom;
+              if (overlap > 0) {
+                const current = Number(scrollYRef.current || 0);
+                scrollRef.current?.scrollTo?.({ y: Math.max(0, current + overlap), animated: true });
+              }
+            } catch {}
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      if (doScrollCheck()) return;
+
+      ensureVisibleField({
+        fieldRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
+    },
+    [headerHeight, insets.bottom],
+  );
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', (e) => {
+      keyboardHeightRef.current = Number(e?.endCoordinates?.height || 0);
+    });
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardHeightRef.current = 0;
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(showEvent, () => {
+      if (activePasswordFieldRef.current === 'confirm') {
+        ensurePasswordFieldVisible(confirmPwdRef, 36);
+        setTimeout(() => ensurePasswordFieldVisible(confirmPwdRef, 36), Platform.OS === 'android' ? 110 : 70);
+      } else if (activePasswordFieldRef.current === 'new') {
+        ensurePasswordFieldVisible(_pwdRef, 24);
+        setTimeout(() => ensurePasswordFieldVisible(_pwdRef, 24), Platform.OS === 'android' ? 110 : 70);
+      }
+    });
+    return () => sub.remove();
+  }, [ensurePasswordFieldVisible]);
 
   const syncEmployeeBlockState = useCallback(async () => {
     if (!userId) return null;
@@ -1017,6 +1119,20 @@ export default function EditUser() {
       setErr('');
       showInfoToast(t('toast_saving'));
       let savedAvatarUrl = avatarUrl || null;
+      const edgeTargetProfileId = [
+        employeeData?.id,
+        employeeData?.profile_id,
+        employeeData?.profileId,
+        userId,
+      ]
+        .map((v) => String(v || '').trim())
+        .find((v) => isUuid(v));
+      if (!edgeTargetProfileId) throw new Error('Invalid user id');
+      const normalizedNextEmail = normalizeOptionalEmail(email);
+      const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
+      const shouldUpdateAuthEmail =
+        !!normalizedNextEmail &&
+        normalizedNextEmail.toLowerCase() !== normalizedCurrentEmail.toLowerCase();
 
       // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "нет изменений", Р° РЅРµ "удалить"
       if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
@@ -1075,11 +1191,13 @@ export default function EditUser() {
           .eq('id', userId);
         if (middleNameErr) throw middleNameErr;
 
-        if (newPassword && newPassword.length) {
+        if (shouldUpdateAuthEmail || (newPassword && newPassword.length)) {
           await withTimeout(
-            updateUserPasswordViaFunction({
-              userId,
-              newPassword,
+            updateUserAuthViaFunction({
+              userId: null,
+              profileId: edgeTargetProfileId,
+              email: shouldUpdateAuthEmail ? normalizedNextEmail : null,
+              password: newPassword && newPassword.length ? newPassword : null,
               changedBy: meId || userId,
             }),
             15000,
@@ -1110,12 +1228,14 @@ export default function EditUser() {
         if (profErr) throw profErr;
 
         // Р•СЃР»Рё РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј email-server API
-        if (newPassword && newPassword.length) {
+        if (shouldUpdateAuthEmail || (newPassword && newPassword.length)) {
           await withTimeout(
-            updateUserPasswordViaFunction({
-              userId,
-              newPassword,
+            updateUserAuthViaFunction({
+              userId: null,
+              profileId: edgeTargetProfileId,
               changedBy: meId,
+              email: shouldUpdateAuthEmail ? normalizedNextEmail : null,
+              password: newPassword && newPassword.length ? newPassword : null,
             }),
             15000,
             'password-update-timeout',
@@ -1144,9 +1264,16 @@ export default function EditUser() {
 
         if (profErr) throw profErr;
 
-        // Р•СЃР»Рё РЅСѓР¶РЅРѕ РѕР±РЅРѕРІРёС‚СЊ РїР°СЂРѕР»СЊ вЂ” РёСЃРїРѕР»СЊР·СѓРµРј email-server API
-        if (newPassword && newPassword.length) {
-          await updateCurrentUserPasswordViaBackend(newPassword);
+        if (shouldUpdateAuthEmail || (newPassword && newPassword.length)) {
+          const authPatch = {};
+          if (shouldUpdateAuthEmail) authPatch.email = normalizedNextEmail;
+          if (newPassword && newPassword.length) authPatch.password = newPassword;
+          const { error: selfAuthErr } = await withTimeout(
+            supabase.auth.updateUser(authPatch),
+            15000,
+            'password-update-timeout',
+          );
+          if (selfAuthErr) throw selfAuthErr;
         }
       }
 
@@ -1155,6 +1282,7 @@ export default function EditUser() {
       // Force remount of password inputs to clear native masked text state on Android.
       setPasswordFieldResetKey((prev) => prev + 1);
       setConfirmPwdVisible(false);
+      setConfirmSensitiveReason(null);
       setPendingSave(false);
       setInitialSnap(
         JSON.stringify({
@@ -1216,6 +1344,14 @@ export default function EditUser() {
       refetchEmployee().catch(() => {});
       allowLeaveRef.current = true;
       showSuccessToast(t('toast_success'));
+      if (shouldUpdateAuthEmail) {
+        showInfoToast(
+          t(
+            'toast_email_change_next_steps',
+            'Письма отправлены на текущий и новый e-mail. Подтвердите смену через ссылку в письме на новом адресе.',
+          ),
+        );
+      }
       // После успешного сохранения возвращаемся на предыдущую страницу
       if (navigation && typeof navigation.goBack === 'function') {
         navigation.goBack();
@@ -1274,6 +1410,20 @@ export default function EditUser() {
       emailRef.current?.focus?.();
       return;
     }
+    const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
+    const normalizedNextEmail = normalizeOptionalEmail(email);
+    if (normalizedCurrentEmail && !normalizedNextEmail) {
+      setFieldErrors({ email: { message: requiredMsg } });
+      ensureVisibleField({
+        fieldRef: emailRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
+      emailRef.current?.focus?.();
+      return;
+    }
     if (fieldUi.isVisible('phone') && fieldUi.isRequired('phone') && !hasPhoneValue(phone)) {
       setFieldErrors({ phone: { message: requiredMsg } });
       ensureVisibleField({
@@ -1307,7 +1457,11 @@ export default function EditUser() {
       return;
     }
     // Р•СЃР»Рё СЂРµРґР°РєС‚РёСЂСѓРµРј СЃРѕР±СЃС‚РІРµРЅРЅС‹Р№ РїСЂРѕС„РёР»СЊ Рё Р·Р°РґР°РЅ РЅРѕРІС‹Р№ РїР°СЂРѕР»СЊ вЂ” РїСЂРѕРІРµСЂСЏРµРј РµРіРѕ
-    if (meId && meId === userId && newPassword && newPassword.length) {
+    const hasPasswordChange = !!(meId && meId === userId && newPassword && newPassword.length);
+    const hasEmailChange =
+      !!normalizedNextEmail &&
+      normalizedNextEmail.toLowerCase() !== normalizedCurrentEmail.toLowerCase();
+    if (hasPasswordChange) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
         setFieldErrors({ newPassword: { message: t('error_password_too_short') || `Минимум ${MIN_PASSWORD_LENGTH}` } });
         return;
@@ -1328,7 +1482,11 @@ export default function EditUser() {
         setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'Пароли не совпадают' } });
         return;
       }
-      // РџРѕРґС‚РІРµСЂР¶РґР°РµРј РґРµР№СЃС‚РІРёРµ (РїРѕРєР°Р¶РµРј РјРѕРґР°Р» РїРѕРґС‚РІРµСЂР¶РґРµРЅРёСЏ)
+    }
+    if (hasPasswordChange || hasEmailChange) {
+      setConfirmSensitiveReason(
+        hasPasswordChange && hasEmailChange ? 'password_and_email' : hasPasswordChange ? 'password' : 'email',
+      );
       setConfirmPwdVisible(true);
       return;
     }
@@ -1541,13 +1699,23 @@ export default function EditUser() {
       setResettingPwd(true);
       setErr('');
       showInfoToast(t('toast_reset_password_sending'), { sticky: true });
+      const edgeTargetProfileId = [
+        employeeData?.id,
+        employeeData?.profile_id,
+        employeeData?.profileId,
+        userId,
+      ]
+        .map((v) => String(v || '').trim())
+        .find((v) => isUuid(v));
+      if (!edgeTargetProfileId) throw new Error('Invalid user id');
 
       const tempPassword = generateTempPassword();
       
       // 1. Обновляем пароль через edge function update_user
       await withTimeout(
         updateUserPasswordViaFunction({
-          userId,
+          userId: null,
+          profileId: edgeTargetProfileId,
           newPassword: tempPassword,
           changedBy: meId || userId,
         }),
@@ -2316,6 +2484,13 @@ export default function EditUser() {
                     }}
                     placeholder={t('register_placeholder_password')}
                     inputStyle={styles.field}
+                    onFocus={() => {
+                      activePasswordFieldRef.current = 'new';
+                      ensurePasswordFieldVisible(_pwdRef, 24);
+                    }}
+                    onBlur={() => {
+                      if (activePasswordFieldRef.current === 'new') activePasswordFieldRef.current = null;
+                    }}
                     returnKeyType="next"
                     onSubmitEditing={() => confirmPwdRef.current?.focus?.()}
                   />
@@ -2367,6 +2542,13 @@ export default function EditUser() {
                     }}
                     placeholder={t('placeholder_repeat_password')}
                     inputStyle={styles.field}
+                    onFocus={() => {
+                      activePasswordFieldRef.current = 'confirm';
+                      ensurePasswordFieldVisible(confirmPwdRef, 36);
+                    }}
+                    onBlur={() => {
+                      if (activePasswordFieldRef.current === 'confirm') activePasswordFieldRef.current = null;
+                    }}
                     returnKeyType="done"
                     onSubmitEditing={handleSave}
                   />
@@ -2439,15 +2621,34 @@ export default function EditUser() {
               confirmVariant="destructive"
               onConfirm={confirmCancel}
             />
-            {/* Confirm password update */}
+            {/* Confirm sensitive updates (password/email) */}
             <ConfirmModal
               visible={confirmPwdVisible}
               onClose={() => {
                 setConfirmPwdVisible(false);
+                setConfirmSensitiveReason(null);
                 setPendingSave(false);
               }}
-              title={t('dlg_confirm_pwd_title')}
-              message={t('dlg_confirm_pwd_msg')}
+              title={
+                confirmSensitiveReason === 'email'
+                  ? t('dlg_confirm_email_title', 'Изменить e-mail?')
+                  : confirmSensitiveReason === 'password_and_email'
+                    ? t('dlg_confirm_pwd_email_title', 'Изменить пароль и e-mail?')
+                    : t('dlg_confirm_pwd_title')
+              }
+              message={
+                confirmSensitiveReason === 'email'
+                  ? t(
+                      'dlg_confirm_email_msg',
+                      'Вы изменяете e-mail. На текущий и новый адрес будут отправлены письма. После сохранения подтвердите смену через письмо на новом e-mail. Сохранить изменения?',
+                    )
+                  : confirmSensitiveReason === 'password_and_email'
+                    ? t(
+                        'dlg_confirm_pwd_email_msg',
+                        'Вы изменяете пароль и e-mail. На текущий и новый адрес будут отправлены письма. После сохранения подтвердите смену через письмо на новом e-mail. Сохранить изменения?',
+                      )
+                    : t('dlg_confirm_pwd_msg')
+              }
               confirmLabel={saving ? t('toast_saving') : t('header_save')}
               cancelLabel={t('header_cancel')}
               confirmVariant="primary"

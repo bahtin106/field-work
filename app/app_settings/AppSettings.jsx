@@ -485,6 +485,14 @@ export default function AppSettings() {
       const uid = await getUid();
       let error = null;
       for (let attempt = 0; attempt < 4; attempt += 1) {
+        const snapshot = currentPrefsRef.current || {};
+        const basePayload = {
+          allow: snapshot.allow !== false,
+          new_orders: snapshot.new_orders !== false,
+          feed_orders: snapshot.feed_orders !== false,
+          reminders: snapshot.reminders !== false,
+          reminder_delay_minutes: Number(snapshot.reminder_delay_minutes) || DEFAULT_REMINDER_DELAY_MINUTES,
+        };
         const payload = { ...patch };
         unsupportedColsRef.current.forEach((col) => {
           delete payload[col];
@@ -492,7 +500,7 @@ export default function AppSettings() {
 
         const result = await supabase
           .from(TBL.NOTIF_PREFS)
-          .upsert({ user_id: uid, ...payload }, { onConflict: 'user_id', returning: 'minimal' });
+          .upsert({ user_id: uid, ...basePayload, ...payload }, { onConflict: 'user_id', returning: 'minimal' });
         error = result.error || null;
         if (!error) break;
 
@@ -506,7 +514,14 @@ export default function AppSettings() {
         if (/permission denied/i.test(error.message)) msg = t('errors_noSettingsAccess');
         else if (/row level security|rls/i.test(error.message)) msg = t('errors_rls');
         else if (/timeout|network|failed to fetch/i.test(error.message)) msg = t('errors_network');
-        return { ok: false, message: msg };
+        return {
+          ok: false,
+          message: msg,
+          rawMessage: String(error?.message || ''),
+          rawCode: error?.code ? String(error.code) : null,
+          rawDetails: error?.details ? String(error.details) : null,
+          rawHint: error?.hint ? String(error.hint) : null,
+        };
       }
       await refreshPrefs();
       return { ok: true };
@@ -515,7 +530,14 @@ export default function AppSettings() {
       let msg = t('errors_saveShort');
       if (m.includes('no_auth')) msg = t('errors_noAuth');
       else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
-      return { ok: false, message: msg };
+      return {
+        ok: false,
+        message: msg,
+        rawMessage: String(e?.message || e || ''),
+        rawCode: e?.code ? String(e.code) : null,
+        rawDetails: e?.details ? String(e.details) : null,
+        rawHint: e?.hint ? String(e.hint) : null,
+      };
     }
   }, [refreshPrefs, t]);
 
@@ -596,15 +618,17 @@ export default function AppSettings() {
     [prefs.quiet_end, prefs.quiet_start],
   );
 
-  const onTimePicked = async (_ev, dateOrUndefined) => {
+  const onTimePicked = async (maybeDate, maybeMetaOrDate) => {
     if (!timePickerOpen) return;
-    if (!dateOrUndefined) {
+    const pickedDate =
+      maybeMetaOrDate instanceof Date ? maybeMetaOrDate : (maybeDate instanceof Date ? maybeDate : null);
+    if (!pickedDate) {
       resetIncompleteQuietLocal();
       setTimePickerOpen(null);
       return;
     }
 
-    const hhmm = toTimeStr(dateOrUndefined);
+    const hhmm = toTimeStr(pickedDate);
     const patch = timePickerOpen === 'start' ? { quiet_start: hhmm } : { quiet_end: hhmm };
 
     const prevPrefs = prefs;
@@ -634,7 +658,7 @@ export default function AppSettings() {
     if (toTimeStr(next.quiet_start) === toTimeStr(next.quiet_end)) {
       const resetPatch = { quiet_start: null, quiet_end: null };
       setPrefs((p) => ({ ...p, ...resetPatch }));
-      const { ok, message } = await savePrefs(resetPatch);
+      const { ok, message } = await setQuietHours(null, null, resolveDeviceTimeZone());
       if (!ok) {
         setPrefs(prevPrefs);
         toast.error(message || t('quiet_saveFail'));
@@ -645,14 +669,25 @@ export default function AppSettings() {
     }
 
     const deviceTz = resolveDeviceTimeZone();
-    const { ok, message } = await savePrefs({
+    const baseQuietPatch = {
       quiet_start: toTimeStr(next.quiet_start),
       quiet_end: toTimeStr(next.quiet_end),
-      quiet_timezone: deviceTz,
-    });
-    if (!ok) {
+    };
+
+    const saveResult = await setQuietHours(baseQuietPatch.quiet_start, baseQuietPatch.quiet_end, deviceTz);
+
+    if (!saveResult.ok) {
+      __devLog('notification_prefs quiet save error:', {
+        message: saveResult.message || 'unknown_save_error',
+        rawMessage: saveResult.rawMessage || null,
+        rawCode: saveResult.rawCode || null,
+        rawDetails: saveResult.rawDetails || null,
+        rawHint: saveResult.rawHint || null,
+        patch: baseQuietPatch,
+        timezone: deviceTz,
+      });
       setPrefs(prevPrefs);
-      toast.error(message || t('quiet_saveFail'));
+      toast.error(saveResult.message || t('quiet_saveFail'));
     } else {
       toast.info(
         `${t('quiet_range')}${toTimeStr(next.quiet_start)} ${t('common_to')} ${toTimeStr(next.quiet_end)}`,
@@ -720,6 +755,55 @@ export default function AppSettings() {
       return { ok: false, message: msg };
     }
   }, [t]);
+
+  const setQuietHours = useCallback(async (quietStart, quietEnd, quietTimezone = null) => {
+    try {
+      const patchStart = quietStart ?? null;
+      const patchEnd = quietEnd ?? null;
+      const patchTz = (typeof quietTimezone === 'string' && quietTimezone.trim())
+        ? quietTimezone.trim()
+        : null;
+
+      // Primary path: DB-side SECURITY DEFINER RPC (no edge relay).
+      let { error: rpcErr } = await supabase.rpc('set_quiet_hours_self', {
+        p_quiet_start: patchStart,
+        p_quiet_end: patchEnd,
+        p_quiet_timezone: patchTz,
+      });
+      if (rpcErr && /quiet_timezone/i.test(String(rpcErr?.message || ''))) {
+        ({ error: rpcErr } = await supabase.rpc('set_quiet_hours_self', {
+          p_quiet_start: patchStart,
+          p_quiet_end: patchEnd,
+          p_quiet_timezone: null,
+        }));
+      }
+      if (rpcErr) {
+        // Fallback: update existing row only (still no edge calls).
+        const uid = await getUid();
+        let patch = { quiet_start: patchStart, quiet_end: patchEnd };
+        if (patchTz) patch = { ...patch, quiet_timezone: patchTz };
+        let { error: updateErr } = await supabase.from(TBL.NOTIF_PREFS).update(patch).eq('user_id', uid);
+        if (updateErr && /quiet_timezone/i.test(String(updateErr?.message || ''))) {
+          ({ error: updateErr } = await supabase
+            .from(TBL.NOTIF_PREFS)
+            .update({ quiet_start: patchStart, quiet_end: patchEnd })
+            .eq('user_id', uid));
+        }
+        if (updateErr) throw updateErr;
+      }
+
+      await refreshPrefs();
+      return { ok: true };
+    } catch (e) {
+      let msg = t('quiet_saveFail');
+      const rawMessage = String(e?.message || e || '');
+      const m = rawMessage.toLowerCase();
+      if (m.includes('no_auth') || m.includes('unauthorized')) msg = t('errors_noAuth');
+      else if (m.includes('permission denied') || m.includes('rls')) msg = t('errors_rls');
+      else if (m.includes('failed to fetch') || m.includes('network')) msg = t('errors_network');
+      return { ok: false, message: msg, rawMessage };
+    }
+  }, [refreshPrefs, t]);
 
   useEffect(() => {
     if (!isSoloAdmin || isLoadingPrefs) return;
@@ -856,14 +940,14 @@ export default function AppSettings() {
     const prev = { quiet_start: prefs.quiet_start, quiet_end: prefs.quiet_end };
     const patch = { quiet_start: null, quiet_end: null };
     setPrefs((p) => ({ ...p, ...patch }));
-    const { ok, message } = await savePrefs(patch);
+    const { ok, message } = await setQuietHours(null, null, resolveDeviceTimeZone());
     if (!ok) {
       setPrefs((p) => ({ ...p, ...prev }));
       toast.error(message || t('quiet_saveFail'));
     } else {
       toast.info(t('quiet_off'));
     }
-  }, [prefs.quiet_end, prefs.quiet_start, savePrefs, t, toast]);
+  }, [prefs.quiet_end, prefs.quiet_start, setQuietHours, t, toast]);
 
   const sectionBase = useMemo(() => {
     const resolvePressHandler = (sectionKey, itemKey) => {

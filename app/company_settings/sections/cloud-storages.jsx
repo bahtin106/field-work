@@ -1,5 +1,4 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import Constants from 'expo-constants';
 import React from 'react';
 import { Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
@@ -107,8 +106,6 @@ export default function YandexDiskIntegrationScreen() {
   }, [toast, t]);
 
   const canAccess = String(profile?.role || '').toLowerCase() === 'admin';
-  const isExpoGo = Constants.appOwnership === 'expo';
-
   const refreshStatus = React.useCallback(async () => {
     if (!canAccess) return;
     setLoading(true);
@@ -176,10 +173,6 @@ export default function YandexDiskIntegrationScreen() {
   }, [params, canAccess, refreshStatus, router, t, toast]);
 
   const startConnect = React.useCallback(async () => {
-    if (isExpoGo) {
-      toast.error(t('company_integrations_yandex_expo_go_warning'));
-      return;
-    }
     setLoading(true);
     try {
       const data = await yandexDiskIntegration('start');
@@ -191,7 +184,7 @@ export default function YandexDiskIntegrationScreen() {
     } finally {
       setLoading(false);
     }
-  }, [isExpoGo, t, toast]);
+  }, [t, toast]);
 
   const disconnect = React.useCallback(async () => {
     setLoading(true);
@@ -424,9 +417,6 @@ export default function YandexDiskIntegrationScreen() {
                   onPress={disconnect}
                   disabled={loading}
                 />
-                {isExpoGo ? (
-                  <Text style={styles.hintText}>{t('company_integrations_yandex_expo_go_hint')}</Text>
-                ) : null}
               </View>
             </>
           ) : (
@@ -436,9 +426,6 @@ export default function YandexDiskIntegrationScreen() {
                 onPress={startConnect}
                 disabled={loading}
               />
-              {isExpoGo ? (
-                <Text style={styles.hintText}>{t('company_integrations_yandex_expo_go_hint')}</Text>
-              ) : null}
             </View>
           )}
         </Card>

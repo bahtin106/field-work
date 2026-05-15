@@ -10,6 +10,7 @@ import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
+import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
@@ -85,7 +86,7 @@ async function fetchProfile(uid) {
   try {
     const { data: byUserId } = await supabase
       .from('profiles')
-      .select('full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
+      .select('id, full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
       .eq('user_id', uid)
       .maybeSingle();
     if (byUserId) return await resolveProfileAvatar(byUserId);
@@ -93,10 +94,26 @@ async function fetchProfile(uid) {
 
   const { data: byId } = await supabase
     .from('profiles')
-    .select('full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
+    .select('id, full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
     .eq('id', uid)
     .maybeSingle();
   return await resolveProfileAvatar(byId || null);
+}
+
+function mergeProfileSnapshot(prev, snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return prev || null;
+  const nextAvatarUrl = Object.prototype.hasOwnProperty.call(snapshot, 'avatar_url')
+    ? snapshot.avatar_url ?? null
+    : prev?.avatar_url ?? null;
+  const avatarChanged = String(prev?.avatar_url || '') !== String(nextAvatarUrl || '');
+  return {
+    ...(prev || {}),
+    ...snapshot,
+    avatar_url: nextAvatarUrl,
+    avatar_display_url: avatarChanged
+      ? nextAvatarUrl
+      : prev?.avatar_display_url ?? nextAvatarUrl ?? null,
+  };
 }
 
 function HomeWarningCard({
@@ -222,16 +239,36 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   } = useQuery({
     queryKey: ['profile', uid],
     queryFn: () => fetchProfile(uid),
-    enabled: !!uid && !providedProfile,
+    enabled: !!uid,
     initialData: providedProfile || undefined,
-    staleTime: 60 * 1000,
+    staleTime: 0,
     gcTime: 10 * 60 * 1000,
-    refetchOnMount: providedProfile ? false : 'always',
-    refetchOnReconnect: !providedProfile,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
 
   const currentProfile = profileData || providedProfile || null;
+  const { data: profileFallback } = useQuery({
+    queryKey: ['homeProfileFallback', uid || 'anon'],
+    queryFn: async () => {
+      const {
+        data: { user: authUser },
+      } = await supabase.auth.getUser();
+      if (!authUser?.id) return null;
+      const { data: p, error: pErr } = await supabase
+        .from('profiles')
+        .select('id, company_id, role')
+        .eq('id', authUser.id)
+        .maybeSingle();
+      if (pErr) throw pErr;
+      return p || null;
+    },
+    enabled: !!uid,
+    staleTime: 60 * 1000,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
+  });
 
   const fullName =
     `${currentProfile?.first_name || ''} ${currentProfile?.middle_name || ''} ${currentProfile?.last_name || ''}`.trim() ||
@@ -239,7 +276,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const firstName = currentProfile?.first_name || '';
   const lastName = currentProfile?.last_name || '';
   const avatarUrl = currentProfile?.avatar_display_url || currentProfile?.avatar_url || null;
-  const companyId = currentProfile?.company_id || null;
+  const companyId = currentProfile?.company_id || profileFallback?.company_id || null;
   const {
     settings: companySettings,
     useDepartments,
@@ -248,12 +285,12 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
-    String(subscriptionGuard.reason || '').startsWith('subscription_');
+    subscriptionGuard.entitlements != null &&
+    subscriptionGuard.reason === 'subscription_expired';
   const deptIdFromProfile = currentProfile?.department_id || null;
 
-  // Prefer explicit role from props, then profile, then permissions fallback.
-  // This keeps UI responsive while permissions are still loading.
-  const resolvedRole = role || currentProfile?.role || roleFromPerms || 'worker';
+  // The profile query is the live source for the home screen; the prop is only a boot-time seed.
+  const resolvedRole = currentProfile?.role || role || roleFromPerms || 'worker';
 
   const isAdmin = resolvedRole === 'admin';
   const accountType = String(
@@ -438,36 +475,28 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   useEffect(() => {
     if (!uid) return undefined;
+    const profileId = String(currentProfile?.id || uid || '').trim();
+    if (!isUuid(profileId)) return undefined;
+    const applyProfileChange = (payload) => {
+      const snapshot = payload?.eventType === 'DELETE' ? null : payload?.new || null;
+      if (snapshot?.id) {
+        qc.setQueryData(['profile', uid], (prev) => mergeProfileSnapshot(prev, snapshot));
+      }
+      qc.invalidateQueries({ queryKey: ['profile', uid] });
+    };
     const channel = supabase
-      .channel(`home-profile-${uid}`)
+      .channel(`home-profile-${profileId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${uid}` },
-        () => {
-          qc.invalidateQueries({ queryKey: ['profile', uid] });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles', filter: `user_id=eq.${uid}` },
-        () => {
-          qc.invalidateQueries({ queryKey: ['profile', uid] });
-        },
+        { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${profileId}` },
+        applyProfileChange,
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [qc, uid]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!uid) return undefined;
-      qc.invalidateQueries({ queryKey: ['profile', uid] });
-      return undefined;
-    }, [qc, uid]),
-  );
+  }, [currentProfile?.id, qc, uid]);
 
   // Fetch company name if companyId is available
   const { data: companyRow, isFetched: companyFetched } = useQuery({
@@ -478,8 +507,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       return data || null;
     },
     enabled: !!companyId,
-    staleTime: 5 * 60 * 1000,
-    refetchOnMount: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
   });
 
   const companyName = companyRow?.name || null;
@@ -494,11 +524,76 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       return data || null;
     },
     enabled: useDepartments && !!departmentIdToUse,
-    staleTime: 60 * 1000,
+    staleTime: 0,
     refetchOnMount: 'always',
+    refetchOnReconnect: true,
   });
 
   const departmentName = departmentRow?.name || null;
+
+  useEffect(() => {
+    if (!companyId) return undefined;
+    const refreshCompanyData = (payload) => {
+      if (payload?.new?.id) {
+        qc.setQueryData(['company', companyId], (prev) => ({ ...(prev || {}), ...payload.new }));
+      }
+      qc.invalidateQueries({ queryKey: ['company', companyId] });
+      qc.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+      qc.invalidateQueries({ queryKey: ['companyEntitlements', companyId] });
+      qc.invalidateQueries({ queryKey: ['cloud-storage-status', companyId] });
+    };
+    const channel = supabase
+      .channel(`home-company-${companyId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'companies', filter: `id=eq.${companyId}` },
+        refreshCompanyData,
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [companyId, qc]);
+
+  useEffect(() => {
+    if (!departmentIdToUse) return undefined;
+    const channel = supabase
+      .channel(`home-department-${departmentIdToUse}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'departments', filter: `id=eq.${departmentIdToUse}` },
+        (payload) => {
+          if (payload?.new?.id) {
+            qc.setQueryData(['department', departmentIdToUse], (prev) => ({ ...(prev || {}), ...payload.new }));
+          }
+          qc.invalidateQueries({ queryKey: ['department', departmentIdToUse] });
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [departmentIdToUse, qc]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!uid) return undefined;
+      qc.invalidateQueries({ queryKey: ['profile', uid] });
+      if (companyId) {
+        qc.invalidateQueries({ queryKey: ['company', companyId] });
+        qc.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+        qc.invalidateQueries({ queryKey: ['companyEntitlements', companyId] });
+        qc.invalidateQueries({ queryKey: ['cloud-storage-status', companyId] });
+      }
+      if (departmentIdToUse) {
+        qc.invalidateQueries({ queryKey: ['department', departmentIdToUse] });
+      }
+      if (isSuperAdmin) {
+        qc.invalidateQueries({ queryKey: SUPPORT_UNREAD_QUERY_KEY });
+      }
+      return undefined;
+    }, [companyId, departmentIdToUse, isSuperAdmin, qc, uid]),
+  );
 
   const initials = useMemo(() => {
     const a = (firstName || '').trim().slice(0, 1);
@@ -544,13 +639,18 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     subscriptionReady &&
     cloudStatusReady &&
     superAdminReady;
+  const [homeShellReadyLatched, setHomeShellReadyLatched] = useState(false);
+  useEffect(() => {
+    if (homeShellReady) setHomeShellReadyLatched(true);
+  }, [homeShellReady]);
+  const shouldShowHomeLoader = !homeShellReadyLatched && !homeShellReady;
 
   useEffect(() => {
     if (!homeShellReady) return;
     onInitialReady?.();
   }, [homeShellReady, onInitialReady]);
 
-  if (!homeShellReady) {
+  if (shouldShowHomeLoader) {
     return (
       <View style={styles.loadingRoot}>
         <Card style={styles.loadingCard}>

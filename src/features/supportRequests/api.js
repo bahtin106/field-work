@@ -1,5 +1,5 @@
 ﻿import { supabase } from '../../../lib/supabase';
-import { cleanupProfileMediaEntity, uploadProfileMedia } from '../profileMedia/api';
+import { cleanupProfileMediaEntity, inspectProfileMedia, uploadProfileMedia } from '../profileMedia/api';
 
 export const SUPPORT_MESSAGE_MAX_LEN = 2000;
 export const SUPPORT_PHOTO_MAX_COUNT = 5;
@@ -104,6 +104,44 @@ async function loadAttachmentsByFeedbackIds(feedbackIds) {
     map.get(feedbackId).push(url);
   }
   return map;
+}
+
+async function resolveSupportPhotoUrls(rows) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const urls = Array.from(
+    new Set(
+      sourceRows
+        .flatMap((row) => [
+          String(row?.photo_url || '').trim(),
+          ...(Array.isArray(row?.photo_urls)
+            ? row.photo_urls.map((value) => String(value || '').trim())
+            : []),
+        ])
+        .filter(Boolean),
+    ),
+  );
+
+  if (!urls.length) return sourceRows;
+
+  try {
+    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls);
+    const cleanedSet = new Set((cleanedUrls || []).map((url) => String(url || '').trim()).filter(Boolean));
+    const resolveUrl = (url) => {
+      const raw = String(url || '').trim();
+      if (!raw || cleanedSet.has(raw)) return null;
+      return String(resolvedUrls?.[raw] || raw).trim() || null;
+    };
+
+    return sourceRows.map((row) => ({
+      ...row,
+      photo_url: resolveUrl(row?.photo_url),
+      photo_urls: Array.isArray(row?.photo_urls)
+        ? row.photo_urls.map(resolveUrl).filter(Boolean)
+        : [],
+    }));
+  } catch {
+    return sourceRows;
+  }
 }
 
 async function loadProfilesAndCompanies(rows) {
@@ -322,8 +360,9 @@ export async function listSupportRequests({ limit = 200 } = {}) {
     ...row,
     photo_urls: attachmentsByFeedbackId.get(String(row?.id || '').trim()) || [],
   }));
+  const rowsWithResolvedPhotos = await resolveSupportPhotoUrls(rowsWithPhotos);
   const { profilesById, companiesById } = await loadProfilesAndCompanies(rows);
-  return rowsWithPhotos.map((row) => mapFeedbackRow(row, profilesById, companiesById));
+  return rowsWithResolvedPhotos.map((row) => mapFeedbackRow(row, profilesById, companiesById));
 }
 
 export async function getSupportRequestById(feedbackId) {
@@ -345,9 +384,10 @@ export async function getSupportRequestById(feedbackId) {
     ...data,
     photo_urls: attachmentsByFeedbackId.get(String(data?.id || '').trim()) || [],
   };
+  const [dataWithResolvedPhotos] = await resolveSupportPhotoUrls([dataWithPhotos]);
 
   const { profilesById, companiesById } = await loadProfilesAndCompanies([dataWithPhotos]);
-  return mapFeedbackRow(dataWithPhotos, profilesById, companiesById);
+  return mapFeedbackRow(dataWithResolvedPhotos || dataWithPhotos, profilesById, companiesById);
 }
 
 export async function markSupportRequestRead(feedbackId, readByUserId) {

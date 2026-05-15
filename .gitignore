@@ -26,6 +26,7 @@ backup-secrets/
 node_modules.backup/
 *.agekey
 *.log
+test-results/
 
 # Local temp/debug artifacts
 .tmp_*

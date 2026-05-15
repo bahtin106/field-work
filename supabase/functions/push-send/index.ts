@@ -43,7 +43,7 @@ const RU_MESSAGES: Record<(typeof PUSH_MESSAGE_KEYS)[keyof typeof PUSH_MESSAGE_K
   push_order_untitled: 'без названия',
 };
 
-type EventType = 'feed_new_order' | 'assigned_new_order' | 'feed_stale_reminder';
+type EventType = 'feed_new_order' | 'assigned_new_order' | 'feed_stale_reminder' | 'support_feedback_new';
 
 type NotificationEvent = {
   id: number;
@@ -213,7 +213,8 @@ function isInQuietHours(
 
 function getEventPrefKey(
   eventType: EventType,
-): keyof Pick<NotificationPrefs, 'new_orders' | 'feed_orders' | 'reminders'> {
+): keyof Pick<NotificationPrefs, 'new_orders' | 'feed_orders' | 'reminders'> | null {
+  if (eventType === 'support_feedback_new') return null;
   if (eventType === 'assigned_new_order') return 'new_orders';
   if (eventType === 'feed_stale_reminder') return 'reminders';
   return 'feed_orders';
@@ -339,7 +340,7 @@ async function filterRecipientsByPrefs(recipientIds: string[], eventType: EventT
       continue;
     }
     if (!prefs.allow) continue;
-    if (!prefs[prefKey]) continue;
+    if (prefKey && !prefs[prefKey]) continue;
     const prefTimeZone = normalizeTimeZone(prefs.quiet_timezone);
     const profileTimeZone = profileTzByUser.get(userId) || null;
     const effectiveTimeZone = prefTimeZone || profileTimeZone || 'UTC';
@@ -376,6 +377,22 @@ async function resolveOrderTitle(event: NotificationEvent): Promise<string> {
 }
 
 async function getEventText(event: NotificationEvent): Promise<{ title: string; body: string; orderLabel: string }> {
+  if (event.event_type === 'support_feedback_new') {
+    const author =
+      String((event.payload as any)?.author_name || (event.payload as any)?.contact || '')
+        .replace(/\s+/g, ' ')
+        .trim() || 'Пользователь';
+    const message =
+      String((event.payload as any)?.message_excerpt || '')
+        .replace(/\s+/g, ' ')
+        .trim() || 'Откройте обращение';
+    return {
+      title: 'Новое обращение',
+      body: `${author}: ${message}`,
+      orderLabel: '',
+    };
+  }
+
   const orderLabel = await resolveOrderTitle(event);
 
   if (event.event_type === 'feed_stale_reminder') {
@@ -427,20 +444,32 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
   if (!valid.length) return { sentUsers: 0, firstError: null as string | null };
 
   const text = await getEventText(event);
+  const feedbackId = String((event.payload as any)?.feedback_id || event.order_id || '').trim();
+  const isSupportFeedback = event.event_type === 'support_feedback_new';
   const messages = valid.map((row) => ({
     to: row.token,
     title: text.title,
     body: text.body,
-    data: {
-      order_id: event.order_id,
-      order_title: text.orderLabel,
-      event_type: event.event_type,
-      route: `/orders/${event.order_id}`,
-      params: { id: event.order_id, returnTo: '/orders/my-orders' },
-      entity_type: 'order',
-      entity_id: event.order_id,
-      ...(event.payload || {}),
-    },
+    data: isSupportFeedback
+      ? {
+          feedback_id: feedbackId,
+          event_type: event.event_type,
+          route: `/admin/feedbacks/${feedbackId}`,
+          params: { id: feedbackId },
+          entity_type: 'support_feedback',
+          entity_id: feedbackId,
+          ...(event.payload || {}),
+        }
+      : {
+          order_id: event.order_id,
+          order_title: text.orderLabel,
+          event_type: event.event_type,
+          route: `/orders/${event.order_id}`,
+          params: { id: event.order_id, returnTo: '/orders/my-orders' },
+          entity_type: 'order',
+          entity_id: event.order_id,
+          ...(event.payload || {}),
+        },
     sound: 'default' as const,
     channelId: PUSH_ANDROID_CHANNEL_ID,
     priority: 'high' as const,

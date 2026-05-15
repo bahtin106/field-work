@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Animated, {
@@ -51,6 +51,7 @@ import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/sha
 const BILLING_PROFILE_FALLBACK_STALE_MS = 60 * 1000;
 const BILLING_MEMBER_STATS_STALE_MS = 10 * 1000;
 const { width: WINDOW_WIDTH } = Dimensions.get('window');
+const BILLING_PORTAL_URL = 'https://monitorapp.ru/login?next=%2Fbilling&redirect=%2Fbilling&returnTo=%2Fbilling';
 
 function StatusBadge({ theme, color, label }) {
   return (
@@ -428,6 +429,16 @@ export default function BillingScreen() {
     ]);
   }, [accessRefresh, companyId, queryClient, refetchPaidSeatsRpc, refresh, refreshStorageUsage]);
 
+  const openBillingPortal = React.useCallback(async () => {
+    try {
+      const supported = await Linking.canOpenURL(BILLING_PORTAL_URL);
+      if (!supported) throw new Error('unsupported_url');
+      await Linking.openURL(BILLING_PORTAL_URL);
+    } catch {
+      toast.error(t('billing_open_portal_error', 'Не удалось открыть страницу оплаты'));
+    }
+  }, [t, toast]);
+
   useScreenRefreshRegistration('billing.screen', () => refreshAll(), !!companyId);
 
   const refreshWithMinDelay = React.useCallback(async () => {
@@ -773,13 +784,17 @@ export default function BillingScreen() {
     }
   }, [companyId, getDiff, handleRpcError, manageSelection, mergedMembers, orderConflicts, refreshAll, t, toast]);
 
-  const isSubscriptionActive = entitlements?.status === 'active';
-  const statusLabel = isSubscriptionActive ? t('billing_status_active') : t('billing_status_inactive', t('billing_status_expired'));
-  const statusColor = isSubscriptionActive ? theme.colors.success : theme.colors.danger;
   const periodEndDate = React.useMemo(
     () => (entitlements?.current_period_end ? new Date(entitlements.current_period_end) : null),
     [entitlements?.current_period_end],
   );
+  const isPeriodActuallyExpired = React.useMemo(
+    () => !!periodEndDate && periodEndDate.getTime() <= Date.now(),
+    [periodEndDate],
+  );
+  const isSubscriptionActive = entitlements?.status === 'active' && !isPeriodActuallyExpired;
+  const statusLabel = isSubscriptionActive ? t('billing_status_active') : t('billing_status_inactive', t('billing_status_expired'));
+  const statusColor = isSubscriptionActive ? theme.colors.success : theme.colors.danger;
   const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
   const periodEndLabel = React.useMemo(
     () => formatPeriodEndLabel(periodEndDate),
@@ -795,11 +810,19 @@ export default function BillingScreen() {
     return diffPreciseDays(periodEndDate);
   }, [entitlements?.days_left, periodEndDate]);
   const daysLeftColor = React.useMemo(() => {
-    if (!periodEndDate || daysLeft <= 0) return theme.colors.danger;
+    if (!periodEndDate || isPeriodActuallyExpired || daysLeft <= 0) return theme.colors.danger;
     if (daysLeft > 14) return theme.colors.success;
     if (daysLeft >= 7) return theme.colors.warning;
     return theme.colors.warningStrong || theme.colors.warning;
-  }, [daysLeft, periodEndDate, theme.colors.danger, theme.colors.success, theme.colors.warning, theme.colors.warningStrong]);
+  }, [
+    daysLeft,
+    isPeriodActuallyExpired,
+    periodEndDate,
+    theme.colors.danger,
+    theme.colors.success,
+    theme.colors.warning,
+    theme.colors.warningStrong,
+  ]);
 
   const filterSummary = React.useMemo(() => {
     const parts = [];
@@ -972,7 +995,7 @@ export default function BillingScreen() {
                   {showLicensesSection ? (
                     <Button title={t('billing_manage_button')} onPress={() => { setScreenError(''); setManageVisible(true); }} variant="primary" disabled={savingChanges} />
                   ) : null}
-                  <Button title={t('company_web_cabinet_button')} onPress={() => {}} variant="secondary" disabled={savingChanges} />
+                  <Button title={t('company_web_cabinet_button')} onPress={openBillingPortal} variant="secondary" disabled={savingChanges} />
                 </View>
               </>
             ) : (
