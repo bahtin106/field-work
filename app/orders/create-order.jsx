@@ -367,13 +367,6 @@ function CreateOrderContent() {
       prefix: t('order_auto_title_prefix', 'Заявка от'),
     });
   }
-  const titlePreviewValue = useMemo(
-    () =>
-      String(form.title || '').trim()
-        ? String(form.title || '')
-        : autoTitleRef.current,
-    [form.title],
-  );
   const resolveTitleForSave = useCallback(
     (value, fallbackDate = null) =>
       resolveRequestTitle(value, {
@@ -1581,8 +1574,8 @@ function CreateOrderContent() {
           return renderTextField({
             fieldKey: 'title',
             label: getFieldLabel('title'),
-            placeholder: t('create_order_placeholder_title'),
-            value: titlePreviewValue,
+            placeholder: autoTitleRef.current || t('create_order_placeholder_title'),
+            value: String(form.title ?? ''),
             onChangeText: (text) => setField('title', text),
             required: isFieldRequired('title'),
           });
@@ -1644,7 +1637,6 @@ function CreateOrderContent() {
       setField,
       shouldShowError,
       t,
-      titlePreviewValue,
       useWorkTypes,
       withRequiredLabel,
     ],

@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
@@ -33,6 +33,16 @@ const SecurePasswordInput = React.forwardRef(
     const [touched, setTouched] = useState(false);
     const inputRef = useRef(null);
     const lastKeyRef = useRef(null);
+    useImperativeHandle(ref, () => ({
+      focus: () => inputRef.current?.focus?.(),
+      blur: () => inputRef.current?.blur?.(),
+      clear: () => inputRef.current?.clear?.(),
+      isFocused: () => inputRef.current?.isFocused?.() || false,
+      measure: (cb) => inputRef.current?.measure?.(cb),
+      measureInWindow: (cb) => inputRef.current?.measureInWindow?.(cb),
+      getNativeRef: () => inputRef.current,
+      ...inputRef.current,
+    }));
 
     const validationState = getFieldValidationState({
       label: placeholder,
@@ -76,7 +86,7 @@ const SecurePasswordInput = React.forwardRef(
     return (
       <View style={[styles.container, style]}>
         <TextInput
-          ref={ref || inputRef}
+          ref={inputRef}
           style={[styles.input, inputStyle]}
           value={displayValue}
           onChangeText={handleChangeText}

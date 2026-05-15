@@ -26,11 +26,13 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 
 const Ctx = createContext(null);
+const TOAST_SHADOW_PAD = 12;
+const TOAST_ENTER_DURATION = 180;
+const TOAST_EXIT_DURATION = 140;
 const NOOP_TOAST_API = {
   show: () => {},
   hide: () => {},
@@ -59,6 +61,7 @@ export default function ToastProvider({ children }) {
   // Reanimated shared values
   const ty = useSharedValue(20); // translateY
   const op = useSharedValue(0); // opacity
+  const scale = useSharedValue(0.985);
   const bottom = useSharedValue((insets?.bottom || 0) + anchorOffset);
 
   useEffect(() => {
@@ -118,12 +121,13 @@ export default function ToastProvider({ children }) {
       timerRef.current = null;
     }
     // плавное скрытие вниз + фейд
-    ty.value = withTiming(20, { duration: 200, easing: Easing.in(Easing.quad) });
-    op.value = withTiming(0, { duration: 180, easing: Easing.in(Easing.quad) }, () => {
+    ty.value = withTiming(22, { duration: TOAST_EXIT_DURATION, easing: Easing.in(Easing.cubic) }, () => {
       if (!mounted.value) return;
       runOnJS(endHide)();
     });
-  }, [ty, op, mounted]);
+    op.value = withTiming(0, { duration: TOAST_EXIT_DURATION, easing: Easing.in(Easing.quad) });
+    scale.value = withTiming(0.985, { duration: TOAST_EXIT_DURATION, easing: Easing.in(Easing.quad) });
+  }, [ty, op, scale, mounted]);
 
   const show = useCallback(
     (text, type = 'info', opts = {}) => {
@@ -149,17 +153,19 @@ export default function ToastProvider({ children }) {
       // First show: set visible and play enter animation
       visibleRef.current = true;
       setMsg({ text: normalizedText, type });
-      ty.value = 20;
+      ty.value = 18;
       op.value = 0;
-      ty.value = withSpring(0, { mass: 0.7, damping: 16, stiffness: 180 });
-      op.value = withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) });
+      scale.value = 0.985;
+      ty.value = withTiming(0, { duration: TOAST_ENTER_DURATION, easing: Easing.out(Easing.cubic) });
+      op.value = withTiming(1, { duration: TOAST_ENTER_DURATION, easing: Easing.out(Easing.quad) });
+      scale.value = withTiming(1, { duration: TOAST_ENTER_DURATION, easing: Easing.out(Easing.cubic) });
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
       if (!sticky) timerRef.current = setTimeout(hide, duration);
     },
-    [ty, op, hide],
+    [ty, op, scale, hide],
   );
 
   const value = {
@@ -205,28 +211,35 @@ export default function ToastProvider({ children }) {
 
   // styles driven by reanimated
   const aStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: ty.value }],
+    transform: [{ translateY: ty.value }, { scale: scale.value }],
     opacity: op.value,
-    bottom: bottom.value,
+    bottom: bottom.value - TOAST_SHADOW_PAD,
   }));
 
   const renderOverlay = useCallback(
-    () => (
-      <View pointerEvents="none" style={styles.overlayRoot}>
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.portalContainer,
-            aStyle,
-          ]}
-        >
-          <View pointerEvents="none" style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
-            <Text style={[styles.text, { color: p.fg }]}>{msg?.text}</Text>
-          </View>
-        </Animated.View>
-      </View>
-    ),
-    [aStyle, msg?.text, p.bg, p.border, p.fg],
+    () => {
+      if (!msg) return null;
+      return (
+        <View pointerEvents="none" style={styles.overlayRoot}>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.portalContainer,
+              aStyle,
+            ]}
+          >
+            <View pointerEvents="none" style={styles.toastSurface}>
+              <View pointerEvents="none" style={styles.toastShadowAmbient} />
+              <View pointerEvents="none" style={styles.toastShadowKey} />
+              <View pointerEvents="none" style={[styles.toast, { backgroundColor: p.bg, borderColor: p.border }]}>
+                <Text style={[styles.text, { color: p.fg }]}>{msg.text}</Text>
+              </View>
+            </View>
+          </Animated.View>
+        </View>
+      );
+    },
+    [aStyle, msg, p.bg, p.border, p.fg],
   );
 
   return (
@@ -270,9 +283,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
+    padding: TOAST_SHADOW_PAD,
+    overflow: 'visible',
     alignItems: 'center',
     zIndex: 1000,
-    elevation: 1000,
   },
   modalContainer: {
     position: 'absolute',
@@ -282,13 +296,27 @@ const styles = StyleSheet.create({
     zIndex: 1000,
   },
   toast: {
-    minWidth: Math.min(560, width - 24),
-    maxWidth: Math.min(560, width - 24),
+    width: '100%',
     borderWidth: 1,
     paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 16,
-    elevation: 1001,
+  },
+  toastSurface: {
+    width: Math.min(560, width - 24),
+    overflow: 'visible',
+  },
+  toastShadowAmbient: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.10)',
+    transform: [{ translateY: 4 }, { scale: 0.98 }],
+  },
+  toastShadowKey: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.07)',
+    transform: [{ translateY: 8 }, { scaleX: 0.94 }, { scaleY: 0.92 }],
   },
   text: { fontSize: 14, fontWeight: '500', textAlign: 'center' },
 });

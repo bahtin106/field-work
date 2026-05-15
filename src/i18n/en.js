@@ -84,6 +84,15 @@ export default {
   settings_events_reminder_unit_hours: 'hours',
   settings_events_reminder_unit_days: 'days',
   dlg_confirm_pwd_title: 'Change password?',
+  dlg_confirm_pwd_msg: 'You are changing the password. Save changes?',
+  dlg_confirm_email_title: 'Change email?',
+  dlg_confirm_email_msg:
+    'You are changing the email. Messages will be sent to both your current and new email addresses. After saving, confirm the change via the link sent to the new email. Save changes?',
+  dlg_confirm_pwd_email_title: 'Change password and email?',
+  dlg_confirm_pwd_email_msg:
+    'You are changing the password and email. Messages will be sent to both your current and new email addresses. After saving, confirm the change via the link sent to the new email. Save changes?',
+  toast_email_change_next_steps:
+    'Messages were sent to your current and new email addresses. Confirm the change via the link in the message sent to the new email.',
   error_new_password_same_as_old: 'New password should be different from the old password.',
   push_open_issue_title: 'Notification',
   push_open_order_unavailable:

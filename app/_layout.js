@@ -28,6 +28,7 @@ import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
 import { SimpleAuthProvider, useAuthContext } from '../providers/SimpleAuthProvider';
 import { getRequestById } from '../src/features/requests/api';
+import { getSupportRequestById } from '../src/features/supportRequests/api';
 import { initI18n, setLocale } from '../src/i18n';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { FeedbackProvider } from '../src/shared/feedback';
@@ -523,6 +524,60 @@ function RootLayoutInner() {
     );
   }, []);
 
+  const extractSupportFeedbackIdFromNotificationResponse = useCallback((response) => {
+    const normalizeNotificationData = (raw) => {
+      let value = raw;
+      if (typeof value === 'string') {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          return {};
+        }
+      }
+      if (!value || typeof value !== 'object') return {};
+      return value;
+    };
+
+    const extractFeedbackIdFromData = (data) => {
+      if (!data || typeof data !== 'object') return null;
+
+      const directId =
+        data.feedback_id ??
+        data.feedbackId ??
+        (data.entity_type === 'support_feedback' ? data.entity_id : null) ??
+        null;
+      if (directId != null && String(directId).trim() !== '') {
+        return String(directId).trim();
+      }
+
+      const params = normalizeNotificationData(data.params);
+      if (params.id != null && String(params.id).trim() !== '') {
+        const route = String(data.route || data.path || '').trim();
+        if (route.includes('/admin/feedbacks')) return String(params.id).trim();
+      }
+
+      const route = String(data.route || data.path || '').trim();
+      if (route) {
+        const match = route.match(/\/admin\/feedbacks\/([^/?#]+)/i);
+        if (match?.[1]) return String(match[1]).trim();
+      }
+
+      return null;
+    };
+
+    const notification = response?.notification;
+    const contentData = normalizeNotificationData(notification?.request?.content?.data);
+    const remoteData = normalizeNotificationData(notification?.request?.trigger?.remoteMessage?.data);
+    const bundledData = normalizeNotificationData(remoteData?.data);
+
+    return (
+      extractFeedbackIdFromData(contentData) ||
+      extractFeedbackIdFromData(remoteData) ||
+      extractFeedbackIdFromData(bundledData) ||
+      null
+    );
+  }, []);
+
   const extractOrderIdFromNotificationContent = useCallback((notification) => {
     const normalizeNotificationData = (raw) => {
       let value = raw;
@@ -618,10 +673,35 @@ function RootLayoutInner() {
     (response) => {
       const requestId = String(response?.notification?.request?.identifier || '').trim();
       const actionId = String(response?.actionIdentifier || '').trim();
+      const feedbackId = String(extractSupportFeedbackIdFromNotificationResponse(response) || '').trim();
       const orderId = String(extractOrderIdFromNotificationResponse(response) || '').trim();
-      return `${requestId}|${actionId}|${orderId}`;
+      return `${requestId}|${actionId}|${feedbackId || orderId}`;
     },
-    [extractOrderIdFromNotificationResponse],
+    [extractOrderIdFromNotificationResponse, extractSupportFeedbackIdFromNotificationResponse],
+  );
+
+  const openSupportFeedbackFromNotification = useCallback(
+    async (feedbackId) => {
+      if (!feedbackId || notificationOpenInFlightRef.current) return;
+      notificationOpenInFlightRef.current = true;
+      try {
+        const feedback = await getSupportRequestById(feedbackId);
+        if (!feedback?.id) {
+          router.replace('/admin/feedbacks');
+          return;
+        }
+
+        router.push({
+          pathname: '/admin/feedbacks/[id]',
+          params: { id: feedback.id },
+        });
+      } catch {
+        router.replace('/admin/feedbacks');
+      } finally {
+        notificationOpenInFlightRef.current = false;
+      }
+    },
+    [router],
   );
 
   const openOrderFromNotification = useCallback(
@@ -681,6 +761,15 @@ function RootLayoutInner() {
       if (dedupeKey && lastHandledNotificationKeyRef.current === dedupeKey) return;
       if (dedupeKey) lastHandledNotificationKeyRef.current = dedupeKey;
 
+      const feedbackId = extractSupportFeedbackIdFromNotificationResponse(response);
+      if (feedbackId) {
+        await openSupportFeedbackFromNotification(feedbackId);
+        try {
+          await Notifications?.clearLastNotificationResponseAsync?.();
+        } catch {}
+        return;
+      }
+
       const orderId = extractOrderIdFromNotificationResponse(response);
       if (!orderId) return;
 
@@ -723,12 +812,14 @@ function RootLayoutInner() {
       receivedSub?.remove?.();
     };
   }, [
+    extractSupportFeedbackIdFromNotificationResponse,
     extractOrderIdFromNotificationContent,
     extractOrderIdFromNotificationResponse,
     getNotificationResponseKey,
     isAuthenticated,
     isBlockedScreen,
     isInitializing,
+    openSupportFeedbackFromNotification,
     openOrderFromNotification,
   ]);
 

@@ -66,6 +66,9 @@ export async function handlePushTokenSyncRequest(req: Request) {
       enable_notifications?: boolean;
       disable_notifications?: boolean;
       allow?: boolean;
+      quiet_start?: string | null;
+      quiet_end?: string | null;
+      quiet_timezone?: string | null;
     };
 
     const action = String(body.action || 'upsert').trim();
@@ -201,6 +204,92 @@ export async function handlePushTokenSyncRequest(req: Request) {
       const allow = body.allow === true;
       await upsertAllowPrefs(allow);
       return json(200, { ok: true });
+    }
+
+    if (action === 'set_quiet') {
+      const quietStartRaw = body.quiet_start == null ? null : String(body.quiet_start).trim();
+      const quietEndRaw = body.quiet_end == null ? null : String(body.quiet_end).trim();
+      const quietTimezoneRaw = body.quiet_timezone == null ? null : String(body.quiet_timezone).trim();
+      const quietStart = quietStartRaw || null;
+      const quietEnd = quietEndRaw || null;
+      const quietTimezone = quietTimezoneRaw || null;
+
+      let supportsReminderDelay = true;
+      let supportsQuietTimezone = true;
+      let prefs: {
+        allow?: boolean | null;
+        new_orders?: boolean | null;
+        feed_orders?: boolean | null;
+        reminders?: boolean | null;
+        reminder_delay_minutes?: number | null;
+      } | null = null;
+
+      const fullPrefs = await admin
+        .from('notification_prefs')
+        .select('allow, new_orders, feed_orders, reminders, reminder_delay_minutes')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (fullPrefs.error && isMissingReminderDelayColumnError(fullPrefs.error)) {
+        supportsReminderDelay = false;
+        const legacyPrefs = await admin
+          .from('notification_prefs')
+          .select('allow, new_orders, feed_orders, reminders')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (legacyPrefs.error) {
+          console.error('[push-token-sync][set-quiet-select-legacy]', normalizeError(legacyPrefs.error));
+          throw legacyPrefs.error;
+        }
+        prefs = legacyPrefs.data;
+      } else {
+        if (fullPrefs.error) {
+          console.error('[push-token-sync][set-quiet-select]', normalizeError(fullPrefs.error));
+          throw fullPrefs.error;
+        }
+        prefs = fullPrefs.data;
+      }
+
+      const rowBase: Record<string, unknown> = {
+        user_id: user.id,
+        allow: prefs?.allow !== false,
+        new_orders: prefs?.new_orders ?? true,
+        feed_orders: prefs?.feed_orders ?? true,
+        reminders: prefs?.reminders ?? true,
+        quiet_start: quietStart,
+        quiet_end: quietEnd,
+      };
+      if (supportsReminderDelay) {
+        rowBase.reminder_delay_minutes = Number.isFinite(prefs?.reminder_delay_minutes)
+          ? Number(prefs?.reminder_delay_minutes)
+          : 20;
+      }
+      if (quietTimezone) {
+        rowBase.quiet_timezone = quietTimezone;
+      }
+
+      let result = await admin.from('notification_prefs').upsert(rowBase, { onConflict: 'user_id' });
+      let upErr = result.error;
+      if (upErr && quietTimezone) {
+        const msg = normalizeError(upErr).toLowerCase();
+        const quietTimezoneMissing =
+          msg.includes('notification_prefs') &&
+          msg.includes('quiet_timezone') &&
+          (msg.includes('does not exist') || msg.includes('could not find'));
+        if (quietTimezoneMissing) {
+          supportsQuietTimezone = false;
+          const retryRow = { ...rowBase };
+          delete retryRow.quiet_timezone;
+          result = await admin.from('notification_prefs').upsert(retryRow, { onConflict: 'user_id' });
+          upErr = result.error;
+        }
+      }
+      if (upErr) {
+        console.error('[push-token-sync][set-quiet-upsert]', normalizeError(upErr));
+        throw upErr;
+      }
+
+      return json(200, { ok: true, supports_quiet_timezone: supportsQuietTimezone });
     }
 
     if (action === 'delete') {

@@ -176,6 +176,8 @@ export function useUserPermissions() {
   }, [qc]);
 
   const pollTimer = useRef(null);
+  const lastRealtimeRefreshAtRef = useRef(0);
+  const REALTIME_REFRESH_MIN_INTERVAL_MS = 5000;
   const kickoffSafetyPoll = useCallback(() => {
     if (pollTimer.current) {
       clearInterval(pollTimer.current);
@@ -189,7 +191,7 @@ export function useUserPermissions() {
         clearInterval(pollTimer.current);
         pollTimer.current = null;
       }
-    }, 1200);
+    }, 4000);
   }, [doRefresh]);
 
   const appStateRef = useRef(AppState.currentState);
@@ -203,6 +205,9 @@ export function useUserPermissions() {
 
       ch = supabase.channel('permissions', { config: { broadcast: { self: true } } });
       ch.on('broadcast', { event: 'perm_changed' }, () => {
+        const now = Date.now();
+        if (now - lastRealtimeRefreshAtRef.current < REALTIME_REFRESH_MIN_INTERVAL_MS) return;
+        lastRealtimeRefreshAtRef.current = now;
         doRefresh();
         kickoffSafetyPoll();
       });
@@ -221,6 +226,9 @@ export function useUserPermissions() {
             'postgres_changes',
             { event: evt, schema: 'public', table: 'app_role_permissions', filter },
             () => {
+              const now = Date.now();
+              if (now - lastRealtimeRefreshAtRef.current < REALTIME_REFRESH_MIN_INTERVAL_MS) return;
+              lastRealtimeRefreshAtRef.current = now;
               doRefresh();
               kickoffSafetyPoll();
             },

@@ -60,18 +60,21 @@ async function fetchEntitlements(companyId) {
 
 export function useCompanyEntitlements(companyId) {
   const queryClient = useQueryClient();
-  const [cached, setCached] = React.useState(null);
-  const [hasFreshData, setHasFreshData] = React.useState(false);
+  const [cacheEntry, setCacheEntry] = React.useState({ companyId: null, data: null });
+  const [freshEntry, setFreshEntry] = React.useState({ companyId: null, hasFreshData: false });
+  const cached = cacheEntry.companyId === companyId ? cacheEntry.data : null;
+  const hasFreshData =
+    freshEntry.companyId === companyId ? freshEntry.hasFreshData : false;
 
   React.useEffect(() => {
-    setHasFreshData(false);
+    setFreshEntry({ companyId: companyId || null, hasFreshData: false });
   }, [companyId]);
 
   React.useEffect(() => {
     let alive = true;
     (async () => {
       const prev = await loadCached(companyId);
-      if (alive && prev) setCached(prev);
+      if (alive) setCacheEntry({ companyId: companyId || null, data: prev || null });
     })();
     return () => {
       alive = false;
@@ -84,8 +87,8 @@ export function useCompanyEntitlements(companyId) {
     queryFn: async () => {
       const fresh = await fetchEntitlements(companyId);
       await saveCached(companyId, fresh);
-      setCached(fresh);
-      setHasFreshData(true);
+      setCacheEntry({ companyId: companyId || null, data: fresh || null });
+      setFreshEntry({ companyId: companyId || null, hasFreshData: true });
       return fresh;
     },
     placeholderData: (prev) => prev ?? cached ?? null,
@@ -95,13 +98,14 @@ export function useCompanyEntitlements(companyId) {
     refetchIntervalInBackground: false,
     refetchOnMount: 'always',
   });
+  const { refetch } = query;
 
   useFocusEffect(
     React.useCallback(() => {
       if (!companyId) return undefined;
-      query.refetch();
+      refetch();
       return undefined;
-    }, [companyId, query]),
+    }, [companyId, refetch]),
   );
 
   React.useEffect(() => {
@@ -117,6 +121,6 @@ export function useCompanyEntitlements(companyId) {
     ...query,
     data: query.data ?? cached ?? null,
     hasFreshData,
-    refresh: query.refetch,
+    refresh: refetch,
   };
 }

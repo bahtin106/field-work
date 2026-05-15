@@ -126,6 +126,7 @@ export function SimpleAuthProvider({ children }) {
   const logoutInProgressRef = useRef(false);
   const recoveryTimerRef = useRef(null);
   const recoveryJobIdRef = useRef(0);
+  const profileLoadInFlightRef = useRef(new Map());
 
   useEffect(() => {
     profileRef.current = state.profile;
@@ -148,83 +149,93 @@ export function SimpleAuthProvider({ children }) {
       const userId = user?.id;
       if (!userId) return null;
 
-      debugLog('[SimpleAuth] Loading profile for:', userId);
-      const loadStartedAt = Date.now();
+      const inFlight = profileLoadInFlightRef.current.get(userId);
+      if (inFlight) return inFlight;
 
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), PROFILE_LOAD_TIMEOUT_MS);
+      const loadPromise = (async () => {
+        debugLog('Loading profile for:', userId);
+        const loadStartedAt = Date.now();
 
-        let data;
-        let error;
         try {
-          ({ data, error } = await supabase
-            .from('profiles')
-            .select(PROFILE_COLUMNS)
-            .eq('id', userId)
-            .abortSignal(controller.signal)
-            .maybeSingle());
-        } finally {
-          clearTimeout(timeoutId);
-        }
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), PROFILE_LOAD_TIMEOUT_MS);
 
-        if (error) {
-          throw error;
-        }
-
-        if (!data) {
-          debugLog('[SimpleAuth] Profile missing, requesting server bootstrap...');
-          await tryBootstrapMyProfileFromAuth();
-
-          const { data: retriedProfile, error: retryError } = await supabase
-            .from('profiles')
-            .select(PROFILE_COLUMNS)
-            .eq('id', userId)
-            .maybeSingle();
-
-          if (retryError) throw retryError;
-          if (!retriedProfile) {
-            throw new Error('profile-not-found-after-bootstrap');
+          let data;
+          let error;
+          try {
+            ({ data, error } = await supabase
+              .from('profiles')
+              .select(PROFILE_COLUMNS)
+              .eq('id', userId)
+              .abortSignal(controller.signal)
+              .maybeSingle());
+          } finally {
+            clearTimeout(timeoutId);
           }
-          return normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
-        }
 
-        debugLog('[SimpleAuth] Profile loaded:', data.role);
-        let safeData = data;
-        try {
-          const avatarUrl = String(data?.avatar_url || '').trim();
-          const { cleanedUrls, resolvedUrls } = await inspectProfileMedia([avatarUrl].filter(Boolean));
-          safeData = cleanedUrls.includes(avatarUrl)
-            ? { ...data, avatar_url: null, avatar_display_url: null }
-            : {
-                ...data,
-                avatar_display_url: resolvedUrls[avatarUrl] || data?.avatar_url || null,
-              };
-        } catch (profileMediaError) {
-          if (isSessionExpiredLikeError(profileMediaError)) {
-            debugLog('[SimpleAuth] Profile media inspect skipped: session missing');
+          if (error) {
+            throw error;
+          }
+
+          if (!data) {
+            debugLog('Profile missing, requesting server bootstrap...');
+            await tryBootstrapMyProfileFromAuth();
+
+            const { data: retriedProfile, error: retryError } = await supabase
+              .from('profiles')
+              .select(PROFILE_COLUMNS)
+              .eq('id', userId)
+              .maybeSingle();
+
+            if (retryError) throw retryError;
+            if (!retriedProfile) {
+              throw new Error('profile-not-found-after-bootstrap');
+            }
+            return normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
+          }
+
+          debugLog('Profile loaded:', data.role);
+          let safeData = data;
+          try {
+            const avatarUrl = String(data?.avatar_url || '').trim();
+            const { cleanedUrls, resolvedUrls } = await inspectProfileMedia([avatarUrl].filter(Boolean));
+            safeData = cleanedUrls.includes(avatarUrl)
+              ? { ...data, avatar_url: null, avatar_display_url: null }
+              : {
+                  ...data,
+                  avatar_display_url: resolvedUrls[avatarUrl] || data?.avatar_url || null,
+                };
+          } catch (profileMediaError) {
+            if (isSessionExpiredLikeError(profileMediaError)) {
+              debugLog('Profile media inspect skipped: session missing');
+            } else {
+              log.warn('Profile media inspect skipped:', profileMediaError);
+            }
+          }
+          return normalizeProfileData(safeData, user, 'supabase');
+        } catch (error) {
+          const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
+          const isNetworkError = isNetworkRequestError(error);
+          const elapsedMs = Date.now() - loadStartedAt;
+          const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
+
+          if (isTimeout || isTimeoutLikeNetwork) {
+            log.warn('Profile load timed out');
+            throw new Error('profile-load-timeout');
+          } else if (isNetworkError) {
+            log.warn('Profile network error:', error);
+            throw new Error('profile-load-network-error');
           } else {
-            log.warn('Profile media inspect skipped:', profileMediaError);
+            log.error('Profile error:', error);
+            throw error;
           }
+        } finally {
+          profileLoadInFlightRef.current.delete(userId);
         }
-        return normalizeProfileData(safeData, user, 'supabase');
-      } catch (error) {
-        const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
-        const isNetworkError = isNetworkRequestError(error);
-        const elapsedMs = Date.now() - loadStartedAt;
-        const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
+      })();
 
-        if (isTimeout || isTimeoutLikeNetwork) {
-          log.warn('Profile load timed out');
-          throw new Error('profile-load-timeout');
-        } else if (isNetworkError) {
-          log.warn('Profile network error:', error);
-          throw new Error('profile-load-network-error');
-        } else {
-          log.error('Profile error:', error);
-          throw error;
-        }
-      }
+      profileLoadInFlightRef.current.set(userId, loadPromise);
+      return loadPromise;
     },
     [debugLog],
   );
@@ -275,6 +286,7 @@ export function SimpleAuthProvider({ children }) {
 
   const setSignedOutState = useCallback(() => {
     clearProfileRecovery();
+    profileLoadInFlightRef.current.clear();
     authRequestIdRef.current += 1;
     currentUserIdRef.current = null;
     initialSessionHandledRef.current = false;
@@ -357,7 +369,7 @@ export function SimpleAuthProvider({ children }) {
         const profile = await loadProfile(user);
         if (requestId !== authRequestIdRef.current) return;
 
-        debugLog('[SimpleAuth] Setting profile state:', {
+        debugLog('Setting profile state:', {
           hasProfile: !!profile,
           role: profile?.role,
           source: profile?.__source,
@@ -389,7 +401,7 @@ export function SimpleAuthProvider({ children }) {
         }
 
         const fallbackProfile = buildProfileFromUser(user, 'metadata-fallback');
-        debugLog('[SimpleAuth] Using fallback profile:', {
+        debugLog('Using fallback profile:', {
           role: fallbackProfile?.role,
           source: fallbackProfile?.__source,
         });

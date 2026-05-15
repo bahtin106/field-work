@@ -7,9 +7,11 @@
 
 import { serve } from 'https://deno.land/std@0.210.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { handleYandexDiskIntegrationRequest } from '../yandex-disk-integration/index.ts';
 
 type ReqBody = {
   user_id: string;
+  profile_id?: string | null;
   changed_by?: string | null;
   email?: string | null;
   new_password?: string | null;
@@ -42,11 +44,103 @@ function isUuid(value: unknown): boolean {
   );
 }
 
+function isMissingColumn(error: any, column: string): boolean {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.code === '42703' && message.includes(column.toLowerCase());
+}
+
 function getBearerToken(req: Request): string {
   return String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
 }
 
-serve(async (req: Request) => {
+async function getProfileFlexible(admin: any, lookupId: string) {
+  const id = String(lookupId || '').trim();
+  if (!id) return { data: null, error: null };
+
+  const trySelectBy = async (column: string, selectColumns: string) => admin
+    .from('profiles')
+    .select(selectColumns)
+    .eq(column, id)
+    .limit(1)
+    .maybeSingle();
+
+  const selectVariants = [
+    'id, user_id, role, company_id, email',
+    'id, user_id, role, company_id',
+    'id, role, company_id',
+  ];
+
+  let userIdColumnAvailable = true;
+  for (const selectColumns of selectVariants) {
+    const byId = await trySelectBy('id', selectColumns);
+    if (!byId?.error && byId?.data) return byId;
+    if (!byId?.error) break;
+
+    if (isMissingColumn(byId.error, 'email')) continue;
+    if (isMissingColumn(byId.error, 'user_id')) {
+      userIdColumnAvailable = false;
+      continue;
+    }
+
+    return byId;
+  }
+
+  if (!userIdColumnAvailable) return { data: null, error: null };
+
+  for (const selectColumns of selectVariants) {
+    if (!selectColumns.includes('user_id')) continue;
+    const byUserId = await trySelectBy('user_id', selectColumns);
+    if (!byUserId?.error && byUserId?.data) return byUserId;
+    if (!byUserId?.error) break;
+
+    if (isMissingColumn(byUserId.error, 'email')) continue;
+    if (isMissingColumn(byUserId.error, 'user_id')) return { data: null, error: null };
+
+    return byUserId;
+  }
+
+  return { data: null, error: null };
+}
+
+async function resolveAuthUserId(admin: any, actorId: string, actorProfileId: string, targetProfile: any) {
+  const targetProfileId = String(targetProfile?.id || '').trim();
+  const targetProfileUserId = String(targetProfile?.user_id || '').trim();
+  const targetProfileEmail = String(targetProfile?.email || '').trim().toLowerCase();
+
+  if (
+    (targetProfileId && actorProfileId && targetProfileId === actorProfileId) ||
+    (targetProfileUserId && actorId && targetProfileUserId === actorId)
+  ) {
+    return actorId;
+  }
+
+  const authCandidates = [targetProfileUserId, targetProfileId].filter(
+    (v, idx, arr) => !!v && arr.indexOf(v) === idx,
+  );
+  for (const candidate of authCandidates) {
+    if (!isUuid(candidate)) continue;
+    const { data, error } = await admin.auth.admin.getUserById(candidate);
+    if (!error && data?.user?.id) return String(data.user.id);
+  }
+
+  if (targetProfileEmail) {
+    let page = 1;
+    const perPage = 200;
+    for (let i = 0; i < 10; i += 1) {
+      const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+      if (error) break;
+      const users = data?.users || [];
+      const match = users.find((u: any) => String(u?.email || '').trim().toLowerCase() === targetProfileEmail);
+      if (match?.id) return String(match.id);
+      if (users.length < perPage) break;
+      page += 1;
+    }
+  }
+
+  return '';
+}
+
+export async function handleUpdateUserRequest(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ ok: false, message: 'Method not allowed' }), {
@@ -56,13 +150,32 @@ serve(async (req: Request) => {
   }
 
   try {
+    // Self-hosted fallback:
+    // some deployments may route `yandex-disk-integration` traffic to `update_user`.
+    // If request looks like Yandex integration action, delegate to the intended handler.
+    const bodyProbe = await req.clone().json().catch(() => null);
+    const delegatedAction = String(bodyProbe?.action || '').trim().toLowerCase();
+    if (
+      delegatedAction &&
+      ['status', 'start', 'complete', 'disconnect', 'set_folder', 'set_provider', 'set_profile_provider'].includes(
+        delegatedAction,
+      )
+    ) {
+      return await handleYandexDiskIntegrationRequest(req);
+    }
+
     const forwardedFor = req.headers.get('x-forwarded-for') || '';
     const ipAddress = forwardedFor.split(',')[0]?.trim() || req.headers.get('x-real-ip') || null;
     const userAgent = req.headers.get('user-agent') || null;
 
     const body = (await req.json()) as ReqBody;
-    if (!body?.user_id) throw new Error('user_id is required');
-    if (!isUuid(body.user_id)) throw new Error('Invalid user_id');
+    const rawUserId = String(body?.user_id || '').trim();
+    const rawProfileId = String(body?.profile_id || '').trim();
+    let targetLookupId = isUuid(rawUserId)
+      ? rawUserId
+      : isUuid(rawProfileId)
+        ? rawProfileId
+        : '';
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -98,23 +211,29 @@ serve(async (req: Request) => {
     } =
       body;
 
+    const hasPrivilegedFields =
+      typeof role === 'string' ||
+      typeof is_admin_blocked === 'boolean' ||
+      typeof is_suspended === 'boolean' ||
+      blocked_reason !== undefined;
+    const nextEmail = typeof email === 'string' ? email.trim() : '';
+    const nextPassword = password || new_password;
+    const needsAuthMutation = !!(nextEmail || (nextPassword && nextPassword.length >= 6));
+    if (!targetLookupId && !hasPrivilegedFields) {
+      targetLookupId = String(actor.id || '').trim();
+    }
+    if (!targetLookupId) throw new Error('Invalid user_id');
+
     const [{ data: actorProfile, error: actorProfileErr }, { data: targetProfile, error: targetProfileErr }] =
       await Promise.all([
-        admin
-          .from('profiles')
-          .select('id, user_id, role, company_id')
-          .or(`id.eq.${actor.id},user_id.eq.${actor.id}`)
-          .limit(1)
-          .maybeSingle(),
-        admin
-          .from('profiles')
-          .select('id, user_id, role, company_id')
-          .eq('id', user_id)
-          .maybeSingle(),
+        getProfileFlexible(admin, String(actor.id || '')),
+        getProfileFlexible(admin, String(targetLookupId || '')),
       ]);
-    if (actorProfileErr) throw new Error('Actor profile lookup failed');
+    if (actorProfileErr) {
+      console.warn('[UPDATE_USER] Actor profile lookup warning:', actorProfileErr?.message || actorProfileErr);
+    }
     if (targetProfileErr) throw new Error('Target profile lookup failed');
-    if (!actorProfile?.id || !targetProfile?.id) throw new Error('Forbidden');
+    if (!targetProfile?.id) throw new Error('Forbidden');
 
     const { data: superAdminRow } = await admin
       .from('super_admins')
@@ -123,24 +242,46 @@ serve(async (req: Request) => {
       .or(`user_id.eq.${actor.id},profile_id.eq.${actor.id}`)
       .maybeSingle();
 
-    const isSelf = actor.id === user_id || actorProfile.id === user_id || actorProfile.user_id === user_id;
-    const isSuperAdmin = !!(superAdminRow?.user_id || superAdminRow?.profile_id) || actorProfile.role === 'super_admin';
+    const targetAuthUserId = await resolveAuthUserId(
+      admin,
+      String(actor.id || '').trim(),
+      String(actorProfile?.id || '').trim(),
+      targetProfile,
+    );
+    const targetProfileId = String(targetProfile.id || '').trim();
+    if (needsAuthMutation && (!targetAuthUserId || !isUuid(targetAuthUserId))) {
+      throw new Error('Target auth user lookup failed');
+    }
+    const targetAuthUserIdSafe = isUuid(targetAuthUserId) ? String(targetAuthUserId) : '';
+    const targetProfileUserId = String((targetProfile as any)?.user_id || '').trim();
+
+    const actorProfileId = String(actorProfile?.id || actor.id || '').trim();
+    const actorRole = String(actorProfile?.role || '').trim().toLowerCase();
+    const actorCompanyId = (actorProfile as any)?.company_id ?? null;
+    const targetCompanyId = (targetProfile as any)?.company_id ?? null;
+    const targetRole = String((targetProfile as any)?.role || '').trim().toLowerCase();
+
+    const isSelf =
+      actor.id === targetLookupId ||
+      actor.id === user_id ||
+      actor.id === targetAuthUserIdSafe ||
+      actor.id === targetProfileUserId ||
+      actorProfileId === targetLookupId ||
+      actorProfileId === user_id ||
+      actorProfileId === targetProfileId ||
+      actor.id === targetAuthUserIdSafe;
+    const isSuperAdmin = !!(superAdminRow?.user_id || superAdminRow?.profile_id) || actorRole === 'super_admin';
     const isCompanyAdmin =
-      actorProfile.role === 'admin' &&
-      !!actorProfile.company_id &&
-      actorProfile.company_id === targetProfile.company_id;
+      actorRole === 'admin' &&
+      !!actorCompanyId &&
+      actorCompanyId === targetCompanyId;
     const isPrivilegedActor = isSuperAdmin || isCompanyAdmin;
-    const hasPrivilegedFields =
-      typeof role === 'string' ||
-      typeof is_admin_blocked === 'boolean' ||
-      typeof is_suspended === 'boolean' ||
-      blocked_reason !== undefined;
 
     if (!isPrivilegedActor) {
       if (!isSelf || hasPrivilegedFields) throw new Error('Forbidden');
     }
 
-    if (isCompanyAdmin && !isSuperAdmin && targetProfile.role === 'admin' && !isSelf) {
+    if (isCompanyAdmin && !isSuperAdmin && targetRole === 'admin' && !isSelf) {
       throw new Error('Forbidden');
     }
 
@@ -194,7 +335,7 @@ serve(async (req: Request) => {
       const { error: profErr } = await admin
         .from('profiles')
         .update(profilePatch)
-        .eq('id', user_id);
+        .eq('id', targetProfileId);
       if (profErr) throw new Error('Profiles update failed: ' + profErr.message);
     }
 
@@ -210,27 +351,30 @@ serve(async (req: Request) => {
     }
 
     if (Object.keys(authPatch).length > 0) {
-      console.log(`[UPDATE_USER] Updating auth for user ${user_id}:`, {
+      if (!targetAuthUserIdSafe) {
+        throw new Error('Target auth user lookup failed');
+      }
+      console.log(`[UPDATE_USER] Updating auth for user ${targetAuthUserIdSafe}:`, {
         hasEmail: !!authPatch.email,
         hasPassword: passwordChanged,
       });
       
-      const { error: authErr } = await admin.auth.admin.updateUserById(user_id, authPatch);
+      const { error: authErr } = await admin.auth.admin.updateUserById(targetAuthUserIdSafe, authPatch);
       
       if (authErr) {
-        console.error(`[UPDATE_USER] Auth update failed for user ${user_id}:`, authErr);
+        console.error(`[UPDATE_USER] Auth update failed for user ${targetAuthUserIdSafe}:`, authErr);
         throw new Error('Auth update failed: ' + authErr.message);
       }
       
-      console.log(`[UPDATE_USER] Auth update successful for user ${user_id}`);
+      console.log(`[UPDATE_USER] Auth update successful for user ${targetAuthUserIdSafe}`);
 
       // 3) Логируем изменение пароля в таблицу password_change_log (если существует)
       if (passwordChanged) {
         try {
-          console.log(`[UPDATE_USER] Logging password change for user ${user_id}`);
+          console.log(`[UPDATE_USER] Logging password change for user ${targetAuthUserIdSafe}`);
           const { error: logErr } = await admin.rpc('upsert_password_change_log', {
-            p_user_id: user_id,
-            p_changed_by: actorProfile.id || actor.id,
+            p_user_id: targetAuthUserIdSafe,
+            p_changed_by: actorProfileId || actor.id,
             p_ip_address: ipAddress,
             p_user_agent: userAgent,
             p_source: 'edge:update_user',
@@ -241,7 +385,7 @@ serve(async (req: Request) => {
             // Логирование — не критично, но выведем в лог
             console.warn(`[UPDATE_USER] Failed to log password change:`, logErr.message);
           } else {
-            console.log(`[UPDATE_USER] Password change logged successfully for user ${user_id}`);
+            console.log(`[UPDATE_USER] Password change logged successfully for user ${targetAuthUserIdSafe}`);
           }
         } catch (logException) {
           console.warn(`[UPDATE_USER] Exception while logging password change:`, logException);
@@ -260,5 +404,9 @@ serve(async (req: Request) => {
       status: 200, // Всегда 200, чтобы клиент не падал с generic ошибкой
     });
   }
-});
+}
+
+if (import.meta.main) {
+  serve(handleUpdateUserRequest);
+}
 

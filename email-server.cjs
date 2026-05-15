@@ -280,12 +280,17 @@ const transporter = nodemailer.createTransport({
 const SUBSCRIPTION_EMAIL_TEXT = Object.freeze({
   ru: {
     subjects: {
-      warning_7d: 'Подписка MonitorApp скоро закончится',
-      warning_1d: 'Подписка MonitorApp заканчивается завтра',
-      expired: 'Подписка MonitorApp закончилась',
+      warning_7d: 'Монитор: подписка скоро закончится',
+      warning_1d: 'Монитор: подписка заканчивается завтра',
+      expired: 'Монитор: подписка закончилась, доступ ограничен',
+    },
+    preheaders: {
+      warning_7d: 'Напоминание о продлении подписки, чтобы команда продолжала работу без ограничений.',
+      warning_1d: 'Подписка заканчивается завтра. Продлите её заранее, чтобы избежать ограничений доступа.',
+      expired: 'Подписка уже завершена. После оплаты доступ сотрудников восстановится автоматически.',
     },
     greeting: 'Здравствуйте',
-    closing: 'С уважением, команда MonitorApp',
+    closing: 'С уважением, команда Монитор',
     warning_intro: 'Срок подписки вашей компании скоро заканчивается.',
     warning_days_left: 'До окончания подписки осталось: {days} дн.',
     warning_period_end: 'Дата окончания подписки: {date}',
@@ -298,16 +303,26 @@ const SUBSCRIPTION_EMAIL_TEXT = Object.freeze({
     expired_mode: 'Сейчас приложение доступно только в режиме чтения и только для администратора.',
     expired_blocked: 'Остальные сотрудники заблокированы до оплаты подписки.',
     expired_recovery: 'После оплаты доступ сотрудников будет восстановлен автоматически.',
+    expired_edit_blocked: 'Администратор может входить в сервис без ограничений, но редактирование недоступно до оплаты.',
     company_label: 'Компания',
+    pay_button: 'Оплатить подписку',
+    pay_hint: 'Кнопка откроет страницу оплаты. Если вы не авторизованы, сначала откроется вход, затем страница оплаты.',
+    what_now: 'Что сейчас происходит',
+    what_after_expiry: 'Что произойдет после окончания подписки',
   },
   en: {
     subjects: {
-      warning_7d: 'Your MonitorApp subscription is ending soon',
-      warning_1d: 'Your MonitorApp subscription ends tomorrow',
-      expired: 'Your MonitorApp subscription has expired',
+      warning_7d: 'Monitor: your subscription ends soon',
+      warning_1d: 'Monitor: your subscription ends tomorrow',
+      expired: 'Monitor: subscription expired, access is restricted',
+    },
+    preheaders: {
+      warning_7d: 'Renew now to avoid team access restrictions.',
+      warning_1d: 'Without renewal, part of your team will lose access tomorrow.',
+      expired: 'Employees are already blocked. Access is restored automatically after payment.',
     },
     greeting: 'Hello',
-    closing: 'Best regards, MonitorApp team',
+    closing: 'Best regards, Monitor team',
     warning_intro: 'Your company subscription is about to expire.',
     warning_days_left: 'Days left until expiration: {days}.',
     warning_period_end: 'Subscription end date: {date}',
@@ -320,7 +335,12 @@ const SUBSCRIPTION_EMAIL_TEXT = Object.freeze({
     expired_mode: 'The app is now available in read-only mode and only for the admin.',
     expired_blocked: 'Other employees are blocked until payment.',
     expired_recovery: 'After payment, employee access will be restored automatically.',
+    expired_edit_blocked: 'The admin can sign in, but editing remains disabled until payment.',
     company_label: 'Company',
+    pay_button: 'Pay Subscription',
+    pay_hint: 'The button opens billing. If you are not logged in, sign in first and then continue to billing.',
+    what_now: 'Current access mode',
+    what_after_expiry: 'What happens after subscription expiry',
   },
 });
 
@@ -348,8 +368,15 @@ function formatDateByLang(iso, lang) {
 function buildSubscriptionReminderEmail(payload = {}) {
   const lang = pickLang(payload.lang);
   const dict = SUBSCRIPTION_EMAIL_TEXT[lang];
-  const fullName = `${payload.firstName || ''} ${payload.lastName || ''}`.trim();
-  const helloName = fullName || 'Admin';
+  const normalizeRecipientName = (name) => {
+    const value = String(name || '').trim();
+    if (!value) return '';
+    if (/^\?{2,}/.test(value)) return '';
+    if (/^[\?\s]+$/.test(value)) return '';
+    return value;
+  };
+  const fullName = normalizeRecipientName(`${payload.firstName || ''} ${payload.lastName || ''}`.trim());
+  const helloName = fullName || (lang === 'ru' ? 'администратор' : 'admin');
   const companyName = String(payload.companyName || '').trim();
   const eventKeyRaw = String(payload.subscriptionEvent || '').trim().toLowerCase();
   const isExpired = eventKeyRaw === 'expired' || eventKeyRaw === 'expired_0d';
@@ -362,6 +389,7 @@ function buildSubscriptionReminderEmail(payload = {}) {
   const daysLeft = Number.isFinite(Number(payload.daysLeft)) ? Math.max(0, Number(payload.daysLeft)) : null;
 
   const subject = dict.subjects[normalizedEvent];
+  const preheader = dict.preheaders?.[normalizedEvent] || dict.preheaders?.expired || '';
   const intro = isExpired ? dict.expired_intro : dict.warning_intro;
   const lines = [];
   if (!isExpired && daysLeft != null) {
@@ -373,21 +401,38 @@ function buildSubscriptionReminderEmail(payload = {}) {
   const companyLine = companyName ? `${dict.company_label}: ${companyName}` : '';
 
   const impacts = isExpired
-    ? [dict.expired_mode, dict.expired_blocked, dict.expired_recovery]
+    ? [dict.expired_mode, dict.expired_edit_blocked, dict.expired_blocked, dict.expired_recovery]
     : [dict.warning_impact_1, dict.warning_impact_2, dict.warning_impact_3, dict.warning_pay_note];
+  const billingUrl = 'https://monitorapp.ru/login?next=%2Fbilling&redirect=%2Fbilling&returnTo=%2Fbilling';
+  const impactTitle = isExpired ? dict.what_now : dict.what_after_expiry;
 
   const html = `
-    <div style="font-family: Arial, sans-serif; max-width: 640px; margin: 0 auto;">
-      <h2>${subject}</h2>
-      <p>${dict.greeting}, ${helloName}.</p>
-      <p>${intro}</p>
-      ${companyLine ? `<p><strong>${companyLine}</strong></p>` : ''}
-      ${lines.map((line) => `<p>${line}</p>`).join('')}
-      <p style="margin-top: 20px;"><strong>${dict.warning_impact_title}</strong></p>
-      <ul style="padding-left: 20px;">
-        ${impacts.map((line) => `<li style="margin-bottom: 8px;">${line}</li>`).join('')}
-      </ul>
-      <p style="margin-top: 24px; color: #666;">${dict.closing}</p>
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      ${preheader}
+    </div>
+    <div style="font-family:Arial,sans-serif;background:#f3f4f6;padding:24px 12px;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:14px;padding:24px;">
+        <h2 style="margin:0 0 12px;font-size:22px;line-height:1.3;color:#111827;">${subject}</h2>
+        <p style="margin:0 0 12px;color:#374151;">${dict.greeting}, ${helloName}.</p>
+        <p style="margin:0 0 12px;color:#111827;">${intro}</p>
+        ${companyLine ? `<p style="margin:0 0 12px;color:#111827;"><strong>${companyLine}</strong></p>` : ''}
+        ${lines.map((line) => `<p style="margin:0 0 8px;color:#374151;">${line}</p>`).join('')}
+
+        <div style="margin-top:18px;padding:14px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;">
+          <p style="margin:0 0 10px;font-weight:700;color:#9a3412;">${impactTitle}</p>
+          <ul style="margin:0;padding-left:18px;color:#7c2d12;">
+            ${impacts.map((line) => `<li style="margin-bottom:8px;">${line}</li>`).join('')}
+          </ul>
+        </div>
+
+        <div style="margin-top:18px;">
+          <a href="${billingUrl}" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:10px;font-weight:700;">
+            ${dict.pay_button}
+          </a>
+        </div>
+
+        <p style="margin-top:24px;color:#6b7280;">${dict.closing}</p>
+      </div>
     </div>
   `;
 
@@ -401,6 +446,8 @@ function buildSubscriptionReminderEmail(payload = {}) {
     '',
     dict.warning_impact_title,
     ...impacts.map((line) => `- ${line}`),
+    '',
+    `${dict.pay_button}: ${billingUrl}`,
     '',
     dict.closing,
   ]

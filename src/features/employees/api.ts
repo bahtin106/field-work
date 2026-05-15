@@ -3,21 +3,55 @@ import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
 const employeeByIdInFlight = new Map<string, Promise<any>>();
 
+function isMissingUserIdColumn(error: any) {
+  return error?.code === '42703' || /user_id/i.test(String(error?.message || ''));
+}
+
+function withoutUserIdColumn(columns: any) {
+  if (columns !== '*') {
+    const safeColumns = String(columns || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter((item) => item && item !== 'user_id')
+      .join(', ');
+    if (safeColumns) return safeColumns;
+  }
+  return columns;
+}
+
+async function selectProfileByLookup(lookupId: any, columns = '*') {
+  const id = String(lookupId || '').trim();
+  if (!id) return { data: null, error: null };
+
+  const result = await supabase
+    .from('profiles')
+    .select(columns)
+    .or(`id.eq.${id},user_id.eq.${id}`)
+    .maybeSingle();
+
+  if (result.error && isMissingUserIdColumn(result.error)) {
+    return supabase
+      .from('profiles')
+      .select(withoutUserIdColumn(columns))
+      .eq('id', id)
+      .maybeSingle();
+  }
+
+  return result;
+}
+
 async function resolveCurrentUserScope() {
   const { data: auth } = await supabase.auth.getUser();
   const uid = auth?.user?.id || null;
   if (!uid) {
-    return { uid: null, companyId: null, role: '' };
+    return { uid: null, profileId: null, companyId: null, role: '' };
   }
 
-  const { data: me } = await supabase
-    .from('profiles')
-    .select('role, company_id')
-    .eq('id', uid)
-    .maybeSingle();
+  const { data: me } = await selectProfileByLookup(uid, 'id, user_id, role, company_id');
 
   return {
     uid,
+    profileId: me?.id || null,
     companyId: me?.company_id || null,
     role: String(me?.role || '').toLowerCase(),
   };
@@ -132,11 +166,13 @@ export async function getEmployeeById(userId: any) {
     let iAmAdmin = false;
     let iAmSuperAdmin = false;
     let myCompanyId = null;
+    let myProfileId = null;
 
     if (uid) {
-      const { data: me } = await supabase.from('profiles').select('role, company_id').eq('id', uid).maybeSingle();
+      const { data: me } = await selectProfileByLookup(uid, 'id, user_id, role, company_id');
       iAmAdmin = String(me?.role || '').toLowerCase() === 'admin';
       myCompanyId = me?.company_id || null;
+      myProfileId = me?.id || null;
 
       try {
         const { data: superAdminFlag } = await supabase.rpc('is_super_admin');
@@ -147,8 +183,10 @@ export async function getEmployeeById(userId: any) {
 
       if (iAmSuperAdmin) {
         try {
+          const { data: targetProfile } = await selectProfileByLookup(userId, 'id');
+          const targetProfileId = targetProfile?.id || userId;
           const { data: fullRows, error: fullErr } = await supabase.rpc('admin_get_user_profile_full', {
-            p_profile_id: userId,
+            p_profile_id: targetProfileId,
           });
           if (!fullErr) {
             const full = Array.isArray(fullRows) ? fullRows[0] : null;
@@ -156,7 +194,7 @@ export async function getEmployeeById(userId: any) {
               const { data: profileFlags } = await supabase
                 .from('profiles')
                 .select('company_id, first_name, last_name, middle_name, full_name, email, is_admin_blocked, license_state, blocked_reason')
-                .eq('id', userId)
+                .eq('id', targetProfileId)
                 .maybeSingle();
               const isSuspended = !!(profileFlags?.is_admin_blocked || full?.is_suspended);
               const isAdminBlocked = !!(profileFlags?.is_admin_blocked);
@@ -205,25 +243,44 @@ export async function getEmployeeById(userId: any) {
       }
 
       if (iAmAdmin) {
-        const { data: rpc } = await supabase.rpc('admin_get_profile_with_email', {
-          target_user_id: userId,
-        });
-        rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
+        try {
+          const { data: rpc, error: rpcError } = await supabase.rpc('admin_get_profile_with_email', {
+            target_user_id: userId,
+          });
+          if (!rpcError) {
+            rpcRow = Array.isArray(rpc) ? rpc[0] : rpc;
+          }
+        } catch {
+          rpcRow = null;
+        }
       }
     }
 
-    if (!iAmSuperAdmin && !myCompanyId) return null;
+    const { data: targetLookup, error: targetLookupError } = await selectProfileByLookup(
+      userId,
+      'id, user_id, company_id',
+    );
+    if (targetLookupError) throw targetLookupError;
 
-    let profileQuery = supabase
-      .from('profiles')
-      .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
-      .eq('id', userId);
+    const targetProfileId = targetLookup?.id || String(userId || '').trim();
+    const isOwnProfile =
+      !!uid &&
+      (
+        String(userId || '') === String(uid) ||
+        String(targetLookup?.id || '') === String(myProfileId || '') ||
+        String(targetLookup?.user_id || '') === String(uid)
+      );
 
-    if (!iAmSuperAdmin && myCompanyId) {
-      profileQuery = profileQuery.eq('company_id', myCompanyId);
+    if (!iAmSuperAdmin && !isOwnProfile && !myCompanyId) return null;
+    if (!iAmSuperAdmin && !isOwnProfile && targetLookup?.company_id !== myCompanyId) {
+      return null;
     }
 
-    const { data: prof, error } = await profileQuery.maybeSingle();
+    const { data: prof, error } = await supabase
+      .from('profiles')
+      .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
+      .eq('id', targetProfileId)
+      .maybeSingle();
 
     if (error) throw error;
     if (!prof) return null;
@@ -263,7 +320,7 @@ export async function getEmployeeById(userId: any) {
     let email = '';
     if (rpcRow?.email) {
       email = rpcRow.email;
-    } else if (uid && userId === uid && authEmail) {
+    } else if (isOwnProfile && authEmail) {
       email = authEmail;
     }
 
