@@ -38,6 +38,7 @@ import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
 import { useCompanyStorageUsage } from '../../hooks/useCompanyStorageUsage';
 import { useCompanyAccessState } from '../../hooks/useCompanyAccessState';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
+import { getBillingPortalUrl } from '../../lib/authRedirects';
 import { supabase } from '../../lib/supabase';
 import { STORAGE_LIMITS } from '../../lib/constants';
 import { listItemStyles } from '../../components/ui/listItemStyles';
@@ -51,7 +52,7 @@ import { EMPLOYEE_SORT, employeeSortOptions, sortEmployees } from '../../src/sha
 const BILLING_PROFILE_FALLBACK_STALE_MS = 60 * 1000;
 const BILLING_MEMBER_STATS_STALE_MS = 10 * 1000;
 const { width: WINDOW_WIDTH } = Dimensions.get('window');
-const BILLING_PORTAL_URL = 'https://monitorapp.ru/login?next=%2Fbilling&redirect=%2Fbilling&returnTo=%2Fbilling';
+const BILLING_PORTAL_URL = getBillingPortalUrl();
 
 function StatusBadge({ theme, color, label }) {
   return (
@@ -93,10 +94,13 @@ function diffPreciseDays(targetDate, now = new Date()) {
   return Math.max(0, Math.ceil((targetDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
 }
 
-function formatPeriodEndLabel(date) {
+function resolveBillingLocale(locale) {
+  return String(locale || '').trim().toLowerCase().startsWith('en') ? 'en-US' : 'ru-RU';
+}
+
+function formatPeriodEndLabel(date, locale) {
   if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-  const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
-  return new Intl.DateTimeFormat(locale, {
+  return new Intl.DateTimeFormat(resolveBillingLocale(locale), {
     timeZone: 'Europe/Moscow',
     day: '2-digit',
     month: 'long',
@@ -116,15 +120,14 @@ function formatRuUnit(value, forms) {
 function formatRemainingLabel(targetDate, now = new Date(), locale) {
   if (!(targetDate instanceof Date) || Number.isNaN(targetDate.getTime())) return '';
   const diffMs = targetDate.getTime() - now.getTime();
+  const isEn = resolveBillingLocale(locale).startsWith('en');
   if (diffMs <= 0) {
-    return String(locale || '').toLowerCase().startsWith('en') ? 'Expired' : 'Истекла';
+    return isEn ? 'Expired' : '\u0418\u0441\u0442\u0435\u043a\u043b\u0430';
   }
 
   const totalDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-  const isEn = String(locale || '').toLowerCase().startsWith('en');
-
   if (isEn) return `${totalDays} days left`;
-  return `Осталось ${totalDays} ${formatRuUnit(totalDays, ['день', 'дня', 'дней'])}`;
+  return `\u041e\u0441\u0442\u0430\u043b\u043e\u0441\u044c ${totalDays} ${formatRuUnit(totalDays, ['\u0434\u0435\u043d\u044c', '\u0434\u043d\u044f', '\u0434\u043d\u0435\u0439'])}`;
 }
 
 function _formatStorage(valueBytes) {
@@ -142,7 +145,7 @@ export default function BillingScreen() {
   const queryClient = useQueryClient();
   const { theme } = useTheme();
   const toast = useToast();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { profile, user } = useAuthContext();
 
   const profileCompanyId = profile?.company_id || null;
@@ -795,14 +798,14 @@ export default function BillingScreen() {
   const isSubscriptionActive = entitlements?.status === 'active' && !isPeriodActuallyExpired;
   const statusLabel = isSubscriptionActive ? t('billing_status_active') : t('billing_status_inactive', t('billing_status_expired'));
   const statusColor = isSubscriptionActive ? theme.colors.success : theme.colors.danger;
-  const locale = Intl.DateTimeFormat?.().resolvedOptions?.().locale;
+  const billingLocale = React.useMemo(() => resolveBillingLocale(locale), [locale]);
   const periodEndLabel = React.useMemo(
-    () => formatPeriodEndLabel(periodEndDate),
-    [periodEndDate],
+    () => formatPeriodEndLabel(periodEndDate, billingLocale),
+    [billingLocale, periodEndDate],
   );
   const remainingLabel = React.useMemo(
-    () => formatRemainingLabel(periodEndDate, new Date(), locale),
-    [locale, periodEndDate],
+    () => formatRemainingLabel(periodEndDate, new Date(), billingLocale),
+    [billingLocale, periodEndDate],
   );
   const daysLeft = React.useMemo(() => {
     const backendDaysLeft = Number(entitlements?.days_left);

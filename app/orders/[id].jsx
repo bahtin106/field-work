@@ -13,6 +13,7 @@ import {
   InteractionManager,
   Keyboard,
   Linking,
+  Platform,
   Pressable,
   Animated as RNAnimated,
   ScrollView,
@@ -36,6 +37,7 @@ import { useOrderMedia } from '../../hooks/useOrderMedia';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { logClientError } from '../../lib/errorLogsClient';
+import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
 import { financeEntryMediaStorage, financeEntryYandexMedia } from '../../lib/financeEntryMedia';
 import { orderMediaStorage } from '../../lib/orderMediaStorage';
@@ -127,6 +129,7 @@ const PHOTO_MIME_TYPE = 'image/jpeg';
 const ORDER_PHOTO_UPLOAD_QUEUE_KEY = 'offline.orderPhotoUploadQueue.v1';
 const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
+const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph):\/\//i;
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'country',
   'region',
@@ -144,6 +147,21 @@ const REMOVED_ORDER_OBJECT_FIELDS = new Set([
 
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 const EXECUTOR_NAME_CACHE_MAX_ENTRIES = 300;
+
+async function resolveRotateSourceUri(sourceUri, filePrefix) {
+  const source = String(sourceUri || '').trim();
+  if (!source) throw new Error('rotate source uri is empty');
+  if (LOCAL_MEDIA_URI_RE.test(source)) return source;
+
+  const targetDir = cacheDirectory || '';
+  if (!targetDir) throw new Error('rotate cache directory is unavailable');
+
+  const localPath = `${targetDir}${filePrefix}_${Date.now()}.jpg`;
+  const downloaded = await downloadAsync(source, localPath);
+  const localUri = downloaded?.uri;
+  if (!localUri) throw new Error('rotate source download returned empty uri');
+  return localUri;
+}
 
 function getCachedExecutorName(userId) {
   if (!userId || !EXECUTOR_NAME_CACHE.has(userId)) return '';
@@ -540,6 +558,10 @@ function OrderDetailsContent() {
   const canViewFinanceSection = canViewFinanceAll && isOrderFinanceEnabled;
   const canEditFinanceEntries = has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled;
   const canEditFinances = has('canEditFinanceEntries') && isOrderFinanceEnabled;
+  const canViewOrderPhotos = has('canViewOrderPhotos');
+  const canAddOrderPhotosFromGallery = has('canAddGalleryPhotos');
+  const canAddOrderPhotosFromCamera = has('canAddCameraPhotos');
+  const canAddOrderPhotos = canAddOrderPhotosFromGallery || canAddOrderPhotosFromCamera;
   const isAdminUser = String(role || authRole || '').toLowerCase() === 'admin';
   const cloudFallbackActive =
     mediaProvider === 'yandex_disk' && effectiveMediaProvider === 'beget_s3';
@@ -717,6 +739,8 @@ function OrderDetailsContent() {
   const [financeSaving, setFinanceSaving] = useState(false);
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerPhotos, setViewerPhotos] = useState([]);
+  const [orderPhotosModalSuspended, setOrderPhotosModalSuspended] = useState(false);
+  const [pendingOrderPhotoViewer, setPendingOrderPhotoViewer] = useState(null);
   const [financeViewerVisible, setFinanceViewerVisible] = useState(false);
   const [financeViewerPhotos, setFinanceViewerPhotos] = useState([]);
   const [financeViewerIndex, setFinanceViewerIndex] = useState(0);
@@ -756,6 +780,8 @@ function OrderDetailsContent() {
   const [localPendingMap, setLocalPendingMap] = useState({});
   const cloudFallbackNoticeShownRef = useRef(false);
   const orderPhotoQueueFlushInFlightRef = useRef(false);
+  const orderPhotoRotateJobsRef = useRef(new Map());
+  const financePhotoRotateJobsRef = useRef(new Map());
 
   // в”Ђв”Ђв”Ђ Centralised media hook (caching, resolution, Yandex/Storage) в”Ђв”Ђв”Ђ
   const orderMedia = useOrderMedia({ order, mediaProvider, t });
@@ -1519,6 +1545,8 @@ function OrderDetailsContent() {
   const uploadLocalUri = useCallback(
     async (category, uri, opts) => {
       const replaceUrl = opts?.replaceUrl || null;
+      const replaceIndex = Number.isInteger(opts?.replaceIndex) ? opts.replaceIndex : -1;
+      const replaceOnly = opts?.replaceOnly === true;
       const silent = opts?.silent === true;
       try {
         const cur = orderRef.current;
@@ -1528,6 +1556,12 @@ function OrderDetailsContent() {
         if (!isOnlineNow && opts?.allowOfflineQueue !== false) {
           const localUrl = String(uri || '').trim();
           if (!localUrl) return false;
+          const currentList = Array.isArray(cur?.[category]) ? cur[category] : [];
+          const canReplaceOffline =
+            (replaceUrl && currentList.includes(replaceUrl)) ||
+            (replaceIndex >= 0 && replaceIndex < currentList.length);
+          if (replaceOnly && !canReplaceOffline) return false;
+
           const buildUpdatedLocal = (arr) => {
             const list = [...(arr || [])];
             if (replaceUrl) {
@@ -1537,6 +1571,11 @@ function OrderDetailsContent() {
                 return list;
               }
             }
+            if (replaceIndex >= 0 && replaceIndex < list.length) {
+              list[replaceIndex] = localUrl;
+              return list;
+            }
+            if (replaceOnly) return list;
             if (!list.includes(localUrl)) list.unshift(localUrl);
             return list;
           };
@@ -1725,18 +1764,50 @@ function OrderDetailsContent() {
               return list;
             }
           }
+          if (replaceIndex >= 0 && replaceIndex < list.length) {
+            list[replaceIndex] = publicUrl;
+            return list;
+          }
+          if (replaceOnly) return list;
           if (providerMediaUrls) return [...providerMediaUrls];
           // Prepend new photos so they appear at the start
           if (!list.includes(publicUrl)) list.unshift(publicUrl);
           return list;
         };
         const updated = buildUpdated(latest[category]);
+        if (replaceOnly && !updated.includes(publicUrl)) {
+          try {
+            const payload = { order_id: orderId, category, url: publicUrl };
+            if (isYandexMediaUrl(publicUrl)) {
+              await yandexDiskMedia('delete', payload);
+            } else {
+              await orderMediaStorage('delete', payload);
+            }
+          } catch (cleanupError) {
+            console.warn('[uploadLocalUri] replace-only cleanup failed:', cleanupError);
+          }
+          return false;
+        }
+
         try {
           if (replaceUrl || !providerMediaUrls) {
             await saveOrderPatch(orderId, { [category]: updated }, {
               expectedUpdatedAt: providerOrderUpdatedAt || latest?.updated_at || null,
               base: latest,
             });
+          }
+          if (typeof opts?.onUploaded === 'function') {
+            try {
+              opts.onUploaded({
+                category,
+                publicUrl,
+                url: publicUrl,
+                localUri: manipulated.uri,
+                originalUri: uri,
+                replaceIndex,
+                replaceUrl,
+              });
+            } catch {}
           }
           setOrder((o) => ({ ...o, [category]: buildUpdated(o[category]) }));
           queryClient.setQueryData(queryKeys.requests.detail(orderId), (old) => {
@@ -2193,8 +2264,9 @@ function OrderDetailsContent() {
   ]);
 
   const openFinanceEntryPhotosModal = useCallback(() => {
+    if (!canViewOrderPhotos) return;
     setFinanceEntryPhotosModalVisible(true);
-  }, []);
+  }, [canViewOrderPhotos]);
 
   const closeFinanceEntryPhotosModal = useCallback(() => {
     setFinanceEntryPhotosModalVisible(false);
@@ -2409,53 +2481,103 @@ function OrderDetailsContent() {
     const rawPhotos = [...(financeViewerRawPhotosRef.current || [])];
     if (!rawPhotos.length) return;
 
-    (async () => {
-      for (const [indexStr, degrees] of Object.entries(rotationsMap || {})) {
-        if (!degrees) continue;
-        const idx = Number(indexStr);
-        const rawUrl = rawPhotos[idx];
-        if (!rawUrl) continue;
-        const previousDisplayUrl = financeEntryMedia.getDisplayUrl(rawUrl) || rawUrl;
+    const runJob = async (jobKey) => {
+      const job = financePhotoRotateJobsRef.current.get(jobKey);
+      if (!job || job.running) return;
+      job.running = true;
+
+      while ((((job.pendingDegrees % 360) + 360) % 360) !== 0) {
+        const degrees = ((job.pendingDegrees % 360) + 360) % 360;
+        job.pendingDegrees = 0;
+        const sourceUrl = String(job.currentUrl || '').trim();
+        const previousDisplayUrl = financeEntryMedia.getDisplayUrl(sourceUrl) || job.displayUrl || sourceUrl;
+
         try {
-          const localPath = `${cacheDirectory}finance_rotate_${Date.now()}_${idx}.jpg`;
-          const { uri: localUri } = await downloadAsync(previousDisplayUrl, localPath);
+          const localUri = await resolveRotateSourceUri(previousDisplayUrl, `finance_rotate_${job.index}`);
           const manipulated = await ImageManipulator.manipulateAsync(
             localUri,
             [{ rotate: degrees }],
             { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
           );
+          const rotatedUri = manipulated?.uri;
+          if (!rotatedUri) throw new Error('rotate manipulation returned empty uri');
 
-          // Optimistic UI: show rotated image immediately.
-          financeEntryMedia.setDisplayUrl(rawUrl, manipulated.uri);
+          financeEntryMedia.setDisplayUrl(sourceUrl, rotatedUri);
+          job.displayUrl = rotatedUri;
 
           const financeEntryId = String(financeEntryDraft.id || '').trim();
           if (!financeEntryId) {
-            financeEntryMedia.setDisplayUrl(rawUrl, previousDisplayUrl);
+            if ((((job.pendingDegrees % 360) + 360) % 360) === 0) {
+              financeEntryMedia.setDisplayUrl(sourceUrl, previousDisplayUrl);
+            }
             continue;
           }
 
-          const uploaded = await uploadFinanceEntryLocalUri(financeEntryId, manipulated.uri);
+          const uploaded = await uploadFinanceEntryLocalUri(financeEntryId, rotatedUri);
           const uploadedUrl = String(uploaded?.url || '').trim();
 
           if (!uploadedUrl) {
-            financeEntryMedia.setDisplayUrl(rawUrl, previousDisplayUrl);
+            if ((((job.pendingDegrees % 360) + 360) % 360) === 0) {
+              financeEntryMedia.setDisplayUrl(sourceUrl, previousDisplayUrl);
+            }
             continue;
           }
 
+          financeEntryMedia.setDisplayUrl(uploadedUrl, rotatedUri);
           setFinanceEntryDraft((prev) => ({
             ...prev,
-            photo_urls: (prev.photo_urls || []).map((value) => (value === rawUrl ? uploadedUrl : value)),
+            photo_urls: (prev.photo_urls || []).map((value, index) => {
+              if (value === sourceUrl) return uploadedUrl;
+              if (index === job.index && value === job.currentUrl) return uploadedUrl;
+              return value;
+            }),
           }));
-          financeViewerRawPhotosRef.current = (financeViewerRawPhotosRef.current || []).map((value) =>
-            value === rawUrl ? uploadedUrl : value,
-          );
-          financeEntryMedia.removeFromCache(rawUrl);
+          financeViewerRawPhotosRef.current = (financeViewerRawPhotosRef.current || []).map((value, index) => {
+            if (value === sourceUrl) return uploadedUrl;
+            if (index === job.index && value === job.currentUrl) return uploadedUrl;
+            return value;
+          });
+          job.currentUrl = uploadedUrl;
+          job.displayUrl = rotatedUri;
+          financeEntryMedia.removeFromCache(sourceUrl);
         } catch (error) {
           console.warn('[FinanceViewer] rotate save error:', error);
-          financeEntryMedia.setDisplayUrl(rawUrl, previousDisplayUrl);
+          if ((((job.pendingDegrees % 360) + 360) % 360) === 0) {
+            financeEntryMedia.setDisplayUrl(sourceUrl, previousDisplayUrl);
+          }
         }
       }
-    })();
+
+      job.running = false;
+      if ((((job.pendingDegrees % 360) + 360) % 360) !== 0) {
+        void runJob(jobKey);
+      } else {
+        financePhotoRotateJobsRef.current.delete(jobKey);
+      }
+    };
+
+    for (const [indexStr, degreesValue] of Object.entries(rotationsMap || {})) {
+      const degrees = ((Number(degreesValue || 0) % 360) + 360) % 360;
+      if (!degrees) continue;
+      const idx = Number(indexStr);
+      if (!Number.isInteger(idx)) continue;
+      const rawUrl = rawPhotos[idx];
+      if (!rawUrl) continue;
+      const jobKey = `finance:${financeEntryDraft.id || 'draft'}:${idx}:${rawUrl}`;
+      const existing = financePhotoRotateJobsRef.current.get(jobKey);
+      if (existing) {
+        existing.pendingDegrees = (existing.pendingDegrees + degrees) % 360;
+      } else {
+        financePhotoRotateJobsRef.current.set(jobKey, {
+          currentUrl: rawUrl,
+          displayUrl: financeEntryMedia.getDisplayUrl(rawUrl) || rawUrl,
+          index: idx,
+          pendingDegrees: degrees,
+          running: false,
+        });
+      }
+      void runJob(jobKey);
+    }
   }, [financeEntryDraft.id, financeEntryMedia, uploadFinanceEntryLocalUri]);
 
   const uploadFinanceEntryLocalUri = useCallback(
@@ -3132,12 +3254,22 @@ function OrderDetailsContent() {
       }
 
       if (accepted) {
+        try {
+          await queryClient.invalidateQueries({ queryKey: queryKeys.requests.detail(order.id) });
+          const refreshedOrder = await ensureRequestPrefetch(queryClient, order.id);
+          if (refreshedOrder) latestOrder = refreshedOrder;
+        } catch {}
+
         const me = (users || []).find((u) => u.id === userId);
-        setOrder((prev) => ({
-          ...(prev || {}),
+        const nextOrder = {
+          ...(order || {}),
+          ...(latestOrder || {}),
           assigned_to: userId,
           status: latestOrder?.status || t('order_status_in_progress'),
-        }));
+        };
+        setOrder(nextOrder);
+        queryClient.setQueryData(queryKeys.requests.detail(order.id), nextOrder);
+        queryClient.invalidateQueries({ queryKey: ['requests'] });
         setExecutorName(
           me ? `${me.first_name || ''} ${me.middle_name || ''} ${me.last_name || ''}`.trim() : null,
         );
@@ -3499,6 +3631,17 @@ function OrderDetailsContent() {
     setViewerVisible(false);
   }, []);
 
+  const handleOrderPhotosModalDismiss = useCallback(() => {
+    if (!pendingOrderPhotoViewer) return;
+    const { photos, index, category, label } = pendingOrderPhotoViewer;
+    setPendingOrderPhotoViewer(null);
+    openViewer(photos, index, category, label);
+  }, [openViewer, pendingOrderPhotoViewer]);
+
+  const handleViewerDismiss = useCallback(() => {
+    if (orderPhotosModalSuspended) setOrderPhotosModalSuspended(false);
+  }, [orderPhotosModalSuspended]);
+
   const handleViewerDelete = useCallback(
     (viewerIdx) => {
       const category = viewerCategoryRef.current;
@@ -3521,57 +3664,103 @@ function OrderDetailsContent() {
       const rawPhotos = [...(viewerRawPhotosRef.current || [])];
       if (!category || !rawPhotos.length) return;
 
-      // Fire-and-forget вЂ” runs entirely in background
-      (async () => {
-        for (const [indexStr, degrees] of Object.entries(rotationsMap)) {
-          if (!degrees) continue;
-          const idx = Number(indexStr);
-          const rawUrl = rawPhotos[idx];
-          if (!rawUrl) continue;
-          const previousDisplayUrl = orderMediaRef.current.getDisplayUrl(rawUrl) || rawUrl;
+      const runJob = async (jobKey) => {
+        const job = orderPhotoRotateJobsRef.current.get(jobKey);
+        if (!job || job.running) return;
+        job.running = true;
+
+        while ((((job.pendingDegrees % 360) + 360) % 360) !== 0) {
+          const degrees = ((job.pendingDegrees % 360) + 360) % 360;
+          job.pendingDegrees = 0;
+          const sourceUrl = String(job.currentUrl || '').trim();
+          const previousDisplayUrl = orderMediaRef.current.getDisplayUrl(sourceUrl) || job.displayUrl || sourceUrl;
 
           try {
-            const localPath = `${cacheDirectory}rotate_src_${Date.now()}.jpg`;
-            const { uri: localUri } = await downloadAsync(previousDisplayUrl, localPath);
-
+            const localUri = await resolveRotateSourceUri(previousDisplayUrl, `rotate_src_${job.index}`);
             const manipulated = await ImageManipulator.manipulateAsync(
               localUri,
               [{ rotate: degrees }],
               { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
             );
+            const rotatedUri = manipulated?.uri;
+            if (!rotatedUri) throw new Error('rotate manipulation returned empty uri');
 
-            // Optimistic UI: show rotated image immediately.
-            orderMediaRef.current.setDisplayUrl(rawUrl, manipulated.uri);
+            orderMediaRef.current.setDisplayUrl(sourceUrl, rotatedUri);
+            job.displayUrl = rotatedUri;
 
-            // Replace in place вЂ” the old URL is swapped for the new one at the same index
-            const success = await uploadLocalUri(category, manipulated.uri, {
-              replaceUrl: rawUrl,
+            let uploadedUrl = '';
+            const success = await uploadLocalUri(category, rotatedUri, {
+              replaceUrl: sourceUrl,
+              replaceIndex: job.index,
+              replaceOnly: true,
               silent: true,
+              onUploaded: ({ publicUrl, localUri: uploadedLocalUri }) => {
+                uploadedUrl = String(publicUrl || '').trim();
+                if (!uploadedUrl) return;
+                orderMediaRef.current.setDisplayUrl(uploadedUrl, uploadedLocalUri || rotatedUri);
+                viewerRawPhotosRef.current = (viewerRawPhotosRef.current || []).map((value) =>
+                  value === sourceUrl ? uploadedUrl : value,
+                );
+                job.currentUrl = uploadedUrl;
+                job.displayUrl = uploadedLocalUri || rotatedUri;
+              },
             });
+
             if (success) {
-              // Delete old file from storage in background
               const orderId = orderRef.current?.id;
-              if (orderId) {
+              if (orderId && sourceUrl && sourceUrl !== uploadedUrl) {
                 try {
-                  if (isYandexMediaUrl(rawUrl)) {
-                    await yandexDiskMedia('delete', { order_id: orderId, category, url: rawUrl });
+                  if (isYandexMediaUrl(sourceUrl)) {
+                    await yandexDiskMedia('delete', { order_id: orderId, category, url: sourceUrl });
                   } else {
-                    await orderMediaStorage('delete', { order_id: orderId, category, url: rawUrl });
+                    await orderMediaStorage('delete', { order_id: orderId, category, url: sourceUrl });
                   }
                 } catch (delErr) {
                   console.warn('[Viewer] old rotated file cleanup:', delErr);
                 }
               }
-              orderMediaRef.current.removeFromCache(rawUrl);
-            } else {
-              orderMediaRef.current.setDisplayUrl(rawUrl, previousDisplayUrl);
+              orderMediaRef.current.removeFromCache(sourceUrl);
+            } else if ((((job.pendingDegrees % 360) + 360) % 360) === 0) {
+              orderMediaRef.current.setDisplayUrl(sourceUrl, previousDisplayUrl);
             }
           } catch (e) {
             console.warn('[Viewer] rotate save error:', e);
-            orderMediaRef.current.setDisplayUrl(rawUrl, previousDisplayUrl);
+            if ((((job.pendingDegrees % 360) + 360) % 360) === 0) {
+              orderMediaRef.current.setDisplayUrl(sourceUrl, previousDisplayUrl);
+            }
           }
         }
-      })();
+
+        job.running = false;
+        if ((((job.pendingDegrees % 360) + 360) % 360) !== 0) {
+          void runJob(jobKey);
+        } else {
+          orderPhotoRotateJobsRef.current.delete(jobKey);
+        }
+      };
+
+      for (const [indexStr, degreesValue] of Object.entries(rotationsMap || {})) {
+        const degrees = ((Number(degreesValue || 0) % 360) + 360) % 360;
+        if (!degrees) continue;
+        const idx = Number(indexStr);
+        if (!Number.isInteger(idx)) continue;
+        const rawUrl = rawPhotos[idx];
+        if (!rawUrl) continue;
+        const jobKey = `${category}:${idx}:${rawUrl}`;
+        const existing = orderPhotoRotateJobsRef.current.get(jobKey);
+        if (existing) {
+          existing.pendingDegrees = (existing.pendingDegrees + degrees) % 360;
+        } else {
+          orderPhotoRotateJobsRef.current.set(jobKey, {
+            currentUrl: rawUrl,
+            displayUrl: orderMediaRef.current.getDisplayUrl(rawUrl) || rawUrl,
+            index: idx,
+            pendingDegrees: degrees,
+            running: false,
+          });
+        }
+        void runJob(jobKey);
+      }
     },
     [uploadLocalUri],
   );
@@ -3612,6 +3801,22 @@ function OrderDetailsContent() {
   useEffect(() => {
     applyNavBar();
   }, [applyNavBar]);
+
+  useEffect(() => {
+    if (!canViewOrderPhotos && orderPhotosModal.visible) {
+      setOrderPhotosModal({ visible: false, category: null });
+      setOrderPhotosModalSuspended(false);
+      setPendingOrderPhotoViewer(null);
+    }
+    if (!canViewOrderPhotos && financeEntryPhotosModalVisible) {
+      closeFinanceEntryPhotosModal();
+    }
+  }, [
+    canViewOrderPhotos,
+    closeFinanceEntryPhotosModal,
+    financeEntryPhotosModalVisible,
+    orderPhotosModal.visible,
+  ]);
 
   const handleUploadUri = useCallback(
     async (category, uri) => {
@@ -3884,6 +4089,7 @@ function OrderDetailsContent() {
   const canViewObjects = has('canViewObjects') || permsLoading || offlineMode;
   const linkedClientId = order?.client_id ? String(order.client_id) : resolvedClientId;
   const linkedObjectId = order?.object_id ? String(order.object_id) : null;
+  const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, authRole);
   const { data: linkedClient } = useClient(linkedClientId, {
     enabled: !!linkedClientId && canViewClients,
   });
@@ -3981,13 +4187,14 @@ function OrderDetailsContent() {
     return format(createdDate, 'dd.MM.yyyy, HH:mm', { locale: ru });
   }, [order?.created_at, t]);
   const orderPhoneRawValue = useMemo(
-    () => String(order?.phone ?? order?.customer_phone_visible ?? order?.phone_visible ?? '').trim(),
-    [order?.customer_phone_visible, order?.phone, order?.phone_visible],
+    () => (canShowOrderPhone ? String(order?.phone ?? order?.customer_phone_visible ?? order?.phone_visible ?? '').trim() : ''),
+    [canShowOrderPhone, order?.customer_phone_visible, order?.phone, order?.phone_visible],
   );
   const orderPhoneDisplayValue = useMemo(() => {
+    if (!canShowOrderPhone) return t('order_details_phone_hidden');
     if (!orderPhoneRawValue) return t('order_details_departure_not_specified');
     return formatRuMask(orderPhoneRawValue);
-  }, [orderPhoneRawValue, t]);
+  }, [canShowOrderPhone, orderPhoneRawValue, t]);
   const openOrderPhoneDialer = useCallback(async () => {
     if (!orderPhoneRawValue) return;
     const dialTarget = toE164(orderPhoneRawValue) || `+${normalizeRu(orderPhoneRawValue)}`;
@@ -4132,9 +4339,9 @@ function OrderDetailsContent() {
   const showInitialCostLine =
     canViewFinanceSection &&
     isOrderFieldVisible('start_price');
-  const visibleMediaFields = ORDER_MEDIA_FIELD_KEYS.filter(
-    (fieldKey) => isOrderFieldVisible(fieldKey),
-  );
+  const visibleMediaFields = canViewOrderPhotos
+    ? ORDER_MEDIA_FIELD_KEYS.filter((fieldKey) => isOrderFieldVisible(fieldKey))
+    : [];
   return (
     <>
       <SafeAreaView
@@ -4849,7 +5056,13 @@ function OrderDetailsContent() {
 
             <OrderPhotosModal
               visible={orderPhotosModal.visible}
-              onClose={() => setOrderPhotosModal({ visible: false, category: null })}
+              suspended={orderPhotosModalSuspended}
+              onDismiss={handleOrderPhotosModalDismiss}
+              onClose={() => {
+                setPendingOrderPhotoViewer(null);
+                setOrderPhotosModalSuspended(false);
+                setOrderPhotosModal({ visible: false, category: null });
+              }}
               category={orderPhotosModal.category}
               photos={order?.[orderPhotosModal.category] || []}
               pending={localPendingMap[orderPhotosModal.category] || []}
@@ -4859,6 +5072,9 @@ function OrderDetailsContent() {
               onUploadMultiple={handleUploadMultiple}
               onRemove={removePhoto}
               onRemoveMany={removePhotosBatch}
+              canAddFromCamera={canAddOrderPhotosFromCamera}
+              canAddFromGallery={canAddOrderPhotosFromGallery}
+              canRemovePhotos={canAddOrderPhotos}
               onOpenViewer={(photos, idx) => {
                 const catLabels = {
                   media_file_1: getOrderFieldLabel('media_file_1', t('order_media_field_1', 'Медиа 1')),
@@ -4867,7 +5083,14 @@ function OrderDetailsContent() {
                   media_file_4: getOrderFieldLabel('media_file_4', t('order_media_field_4', 'Медиа 4')),
                   media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5', 'Медиа 5')),
                 };
-                openViewer(photos, idx, orderPhotosModal.category, catLabels[orderPhotosModal.category] || '');
+                const category = orderPhotosModal.category;
+                const label = catLabels[category] || '';
+                if (Platform.OS === 'ios') {
+                  setPendingOrderPhotoViewer({ photos, index: idx, category, label });
+                  setOrderPhotosModalSuspended(true);
+                  return;
+                }
+                openViewer(photos, idx, category, label);
               }}
             />
 
@@ -4934,6 +5157,7 @@ function OrderDetailsContent() {
         images={viewerPhotos}
         initialIndex={viewerIndex}
         onClose={closeViewer}
+        onDismiss={handleViewerDismiss}
         onDelete={handleViewerDelete}
         onRotateSave={handleViewerRotateSave}
         categoryLabel={viewerCategoryLabel}
@@ -5449,12 +5673,14 @@ function OrderDetailsContent() {
               Keyboard.dismiss();
             }}
           />
-          <TextField
-            label={t('order_details_photos_section', 'Фото')}
-            value={formatFinancePhotoCount((financeEntryDraft.photo_urls || []).length)}
-            pressable
-            onPress={openFinanceEntryPhotosModal}
-          />
+          {canViewOrderPhotos ? (
+            <TextField
+              label={t('order_details_photos_section', 'Фото')}
+              value={formatFinancePhotoCount((financeEntryDraft.photo_urls || []).length)}
+              pressable
+              onPress={openFinanceEntryPhotosModal}
+            />
+          ) : null}
         </ScrollView>
       </BaseModal>
 
@@ -5470,6 +5696,9 @@ function OrderDetailsContent() {
         onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
         onRemove={handleFinanceEntryPhotoRemove}
         onRemoveMany={handleFinanceEntryPhotoRemoveMany}
+        canAddFromCamera={canAddOrderPhotosFromCamera}
+        canAddFromGallery={canAddOrderPhotosFromGallery}
+        canRemovePhotos={canAddOrderPhotos && canEditFinanceEntries}
         onOpenViewer={openFinanceEntryViewer}
       />
 

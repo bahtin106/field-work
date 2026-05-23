@@ -1,7 +1,9 @@
 import { Feather } from '@expo/vector-icons';
+import NetInfo from '@react-native-community/netinfo';
 import React from 'react';
 import { Animated, Easing, Platform, RefreshControl, StyleSheet, View } from 'react-native';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { getOfflineSnapshot, setOfflineNetState } from '../../src/shared/offline/offlineStatus';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useToast } from './ToastProvider';
@@ -190,6 +192,8 @@ export function useManagedRefresh(refreshAction, options = {}) {
   const timeoutMessage =
     options.timeoutMessage ?? t('refresh_timeout', 'Could not refresh the data. Check your connection and try again');
   const failedMessage = options.failedMessage ?? t('refresh_failed', 'Could not refresh the data');
+  const offlineMessage =
+    options.offlineMessage ?? t('refresh_offline', 'No internet connection. Showing saved data.');
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [didSucceed, setDidSucceed] = React.useState(true);
@@ -222,6 +226,14 @@ export function useManagedRefresh(refreshAction, options = {}) {
 
     let timeoutId = null;
     try {
+      const netState = await NetInfo.fetch();
+      setOfflineNetState(netState);
+      if (!getOfflineSnapshot().isOnline) {
+        setDidSucceed(false);
+        toast.info(offlineMessage);
+        return;
+      }
+
       await Promise.race([
         Promise.resolve().then(() => refreshAction()),
         new Promise((_, reject) => {
@@ -232,7 +244,7 @@ export function useManagedRefresh(refreshAction, options = {}) {
           }, timeoutMs);
         }),
       ]);
-      setDidSucceed(true);
+      setDidSucceed(getOfflineSnapshot().isOnline);
     } catch (error) {
       setDidSucceed(false);
       if (error?.code === 'REFRESH_TIMEOUT') {
@@ -253,7 +265,7 @@ export function useManagedRefresh(refreshAction, options = {}) {
       setRefreshing(false);
       inFlightRef.current = false;
     }
-  }, [failedMessage, refreshAction, slowMessage, slowWarningMs, t, timeoutMessage, timeoutMs, toast]);
+  }, [failedMessage, offlineMessage, refreshAction, slowMessage, slowWarningMs, t, timeoutMessage, timeoutMs, toast]);
 
   return {
     refreshing,

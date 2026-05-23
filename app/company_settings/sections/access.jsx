@@ -22,6 +22,7 @@ const ACCESS_SECTIONS = [
       { key: 'canEditOrders', labelKey: 'access_settings_perm_edit_orders' },
       { key: 'canViewAllOrders', labelKey: 'access_settings_perm_view_all_orders' },
       { key: 'canDeleteOrders', labelKey: 'access_settings_perm_delete_orders' },
+      { key: 'canViewOrderPhotos', labelKey: 'access_settings_perm_view_order_photos' },
       { key: 'canAddGalleryPhotos', labelKey: 'access_settings_perm_add_gallery_photos' },
       { key: 'canAddCameraPhotos', labelKey: 'access_settings_perm_add_camera_photos' },
       { key: 'canViewFinanceAll', labelKey: 'access_settings_perm_view_order_finance_field' },
@@ -32,6 +33,7 @@ const ACCESS_SECTIONS = [
     id: 'clients',
     titleKey: 'access_settings_section_clients',
     permissions: [
+      { key: 'canViewClientPhones', labelKey: 'access_settings_perm_view_client_phones' },
       { key: 'canEditClients', labelKey: 'access_settings_perm_edit_clients' },
       { key: 'canDeleteClients', labelKey: 'access_settings_perm_delete_clients' },
     ],
@@ -40,6 +42,7 @@ const ACCESS_SECTIONS = [
     id: 'objects',
     titleKey: 'access_settings_section_objects',
     permissions: [
+      { key: 'canViewObjectPhones', labelKey: 'access_settings_perm_view_object_phones' },
       { key: 'canEditObjects', labelKey: 'access_settings_perm_edit_objects' },
       { key: 'canDeleteObjects', labelKey: 'access_settings_perm_delete_objects' },
     ],

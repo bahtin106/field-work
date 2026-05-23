@@ -29,6 +29,7 @@ export const CLIENT_OBJECT_CONTACT_FIELDS = [
 ];
 
 export const CLIENT_OBJECT_MEDIA_FIELDS = ['media_file_1', 'media_file_2', 'media_file_3'];
+export const CLIENT_OBJECT_MEDIA_LABEL_FIELDS = CLIENT_OBJECT_MEDIA_FIELDS.map((field) => `${field}_label`);
 
 export const CLIENT_OBJECT_ADDRESS_FIELDS = [
   ...CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
@@ -80,6 +81,9 @@ export function createEmptyClientObjectDraft(overrides = {}) {
     additional_phone_2_label: '',
     additional_phone_3: '',
     additional_phone_3_label: '',
+    media_file_1_label: '',
+    media_file_2_label: '',
+    media_file_3_label: '',
     ...overrides,
   };
 }
@@ -167,6 +171,9 @@ export function normalizeClientObject(row) {
       ? row[field].map((value) => String(value || '').trim()).filter(Boolean)
       : [];
   });
+  CLIENT_OBJECT_MEDIA_LABEL_FIELDS.forEach((field) => {
+    normalized[field] = String(row?.[field] || '').trim();
+  });
   normalized.geo_lat = normalizeCoordinateValue(row?.geo_lat);
   normalized.geo_lng = normalizeCoordinateValue(row?.geo_lng);
   normalized.location_mode = normalizeClientObjectLocationMode(row?.location_mode, {
@@ -185,6 +192,11 @@ export function sanitizeClientObjectPayload(draft, { nameRequired = true } = {})
   });
   CLIENT_OBJECT_CONTACT_FIELDS.forEach((field) => {
     next[field] = String(draft?.[field] || '').trim() || null;
+  });
+  CLIENT_OBJECT_MEDIA_LABEL_FIELDS.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(draft || {}, field)) {
+      next[field] = String(draft?.[field] || '').trim() || null;
+    }
   });
   return next;
 }

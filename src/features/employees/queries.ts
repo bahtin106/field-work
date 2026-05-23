@@ -108,12 +108,47 @@ export function useUpdateEmployeeMutation() {
   return useMutation({
     mutationFn: ({ id, patch }: any) => updateEmployeeProfile(id, patch),
     onSuccess: (updated) => {
-      if (updated?.id) {
-        queryClient.setQueryData(queryKeys.employees.detail(updated.id), updated);
-      }
+      if (updated?.id) updateEmployeeQueryCaches(queryClient, updated.id, updated);
       queryClient.invalidateQueries({ queryKey: ['employees'] });
     },
   });
+}
+
+export function updateEmployeeQueryCaches(queryClient: any, employeeId: any, patchOrUpdater: any) {
+  const id = String(employeeId || '').trim();
+  if (!id || !queryClient) return null;
+
+  const resolveNext = (prev: any) => {
+    const patch = typeof patchOrUpdater === 'function' ? patchOrUpdater(prev) : patchOrUpdater;
+    if (!patch || typeof patch !== 'object') return prev;
+    return {
+      ...(prev || {}),
+      ...patch,
+      id: patch.id || prev?.id || id,
+    };
+  };
+
+  let nextDetail: any = null;
+  queryClient.setQueryData(queryKeys.employees.detail(id), (prev: any) => {
+    nextDetail = resolveNext(prev);
+    return nextDetail;
+  });
+
+  const lists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] }) || [];
+  lists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    let changed = false;
+    const nextList = value.map((row: any) => {
+      if (String(row?.id || '') !== id) return row;
+      changed = true;
+      return resolveNext(row);
+    });
+    if (changed) {
+      queryClient.setQueryData(key, nextList);
+    }
+  });
+
+  return nextDetail;
 }
 
 export async function ensureEmployeePrefetch(queryClient: any, id: any) {

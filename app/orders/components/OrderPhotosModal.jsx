@@ -14,6 +14,13 @@ import PhotoGrid from './PhotoGrid';
 const hapticTap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 const hapticMedium = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
+const getImagePickerMediaTypesImages = () => {
+  if (ImagePicker.MediaType?.Images) return ImagePicker.MediaType.Images;
+  if (ImagePicker.MediaType?.images) return ImagePicker.MediaType.images;
+  if (ImagePicker.MediaType?.image) return ImagePicker.MediaType.image;
+  return ['images'];
+};
+
 export default function OrderPhotosModal({
   visible,
   onClose,
@@ -27,6 +34,11 @@ export default function OrderPhotosModal({
   onRemove,
   onRemoveMany,
   onOpenViewer,
+  suspended = false,
+  onDismiss,
+  canAddFromCamera = true,
+  canAddFromGallery = true,
+  canRemovePhotos = true,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -36,21 +48,43 @@ export default function OrderPhotosModal({
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedUris, setSelectedUris] = useState([]);
   const [confirmRemoveIndex, setConfirmRemoveIndex] = useState(null);
+  const [removeConfirmVisible, setRemoveConfirmVisible] = useState(false);
   const pickedSessionIdsRef = useRef(new Set());
+  const removeConfirmResetTimerRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      if (removeConfirmResetTimerRef.current) clearTimeout(removeConfirmResetTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!visible) {
       setSelectionMode(false);
       setSelectedUris([]);
       setConfirmRemoveIndex(null);
+      setRemoveConfirmVisible(false);
       pickedSessionIdsRef.current = new Set();
     }
   }, [pickedSessionIdsRef, visible]);
 
   useEffect(() => {
+    if (!canAddFromCamera && cameraVisible) setCameraVisible(false);
+  }, [cameraVisible, canAddFromCamera]);
+
+  useEffect(() => {
+    if (!canRemovePhotos && selectionMode) {
+      setSelectionMode(false);
+      setSelectedUris([]);
+    }
+  }, [canRemovePhotos, selectionMode]);
+
+  useEffect(() => {
     setSelectionMode(false);
     setSelectedUris([]);
     setConfirmRemoveIndex(null);
+    setRemoveConfirmVisible(false);
   }, [category]);
 
   useEffect(() => {
@@ -88,6 +122,7 @@ export default function OrderPhotosModal({
 
   const handleSaveFromCamera = useCallback(
     (uris) => {
+      if (!canAddFromCamera) return;
       if (!uris || !uris.length) return;
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (uris.length === 1) {
@@ -100,10 +135,11 @@ export default function OrderPhotosModal({
         );
       }
     },
-    [category, onUploadMultiple, onUploadUri],
+    [canAddFromCamera, category, onUploadMultiple, onUploadUri],
   );
 
   const handleGallery = useCallback(async () => {
+    if (!canAddFromGallery) return;
     hapticTap();
     try {
       let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
@@ -117,19 +153,21 @@ export default function OrderPhotosModal({
 
       let result;
       try {
+        const mediaTypes = getImagePickerMediaTypesImages();
         result = await ImagePicker.launchImageLibraryAsync({
           quality: theme.media?.quality ?? 1,
           allowsMultipleSelection: true,
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes,
           orderedSelection: true,
           selectionLimit: 20,
         });
       } catch (multiSelectError) {
         console.warn('[OrderPhotosModal] gallery multi-select failed, fallback to single pick', multiSelectError);
+        const mediaTypes = getImagePickerMediaTypesImages();
         result = await ImagePicker.launchImageLibraryAsync({
           quality: theme.media?.quality ?? 1,
           allowsMultipleSelection: false,
-          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+          mediaTypes,
         });
       }
       if (!result || result.canceled) return;
@@ -155,12 +193,13 @@ export default function OrderPhotosModal({
       console.warn('[OrderPhotosModal] gallery picker error', e);
       toast.error(t('toast_error'));
     }
-  }, [category, onUploadMultiple, pickedSessionIdsRef, t, theme.media?.quality, toast]);
+  }, [canAddFromGallery, category, onUploadMultiple, pickedSessionIdsRef, t, theme.media?.quality, toast]);
 
   const handleOpenCamera = useCallback(() => {
+    if (!canAddFromCamera) return;
     hapticMedium();
     setCameraVisible(true);
-  }, []);
+  }, [canAddFromCamera]);
 
   const handleCloseCamera = useCallback(() => {
     setCameraVisible(false);
@@ -168,20 +207,38 @@ export default function OrderPhotosModal({
 
   const handleRemove = useCallback(
     (idx) => {
+      if (!canRemovePhotos) return;
+      if (removeConfirmResetTimerRef.current) clearTimeout(removeConfirmResetTimerRef.current);
       setConfirmRemoveIndex(idx);
+      setRemoveConfirmVisible(false);
     },
-    [],
+    [canRemovePhotos],
   );
 
   const closeRemoveConfirm = useCallback(() => {
-    setConfirmRemoveIndex(null);
+    setRemoveConfirmVisible(false);
+    if (removeConfirmResetTimerRef.current) clearTimeout(removeConfirmResetTimerRef.current);
+    removeConfirmResetTimerRef.current = setTimeout(() => {
+      setConfirmRemoveIndex(null);
+      removeConfirmResetTimerRef.current = null;
+    }, 280);
   }, []);
 
   const confirmRemove = useCallback(() => {
     if (confirmRemoveIndex == null) return;
     hapticMedium();
     onRemove?.(category, confirmRemoveIndex);
+    setConfirmRemoveIndex(null);
+    setRemoveConfirmVisible(false);
   }, [category, confirmRemoveIndex, onRemove]);
+
+  const handleBaseDismiss = useCallback(() => {
+    if (confirmRemoveIndex != null && !removeConfirmVisible) {
+      setRemoveConfirmVisible(true);
+      return;
+    }
+    onDismiss?.();
+  }, [confirmRemoveIndex, onDismiss, removeConfirmVisible]);
 
   const handleOpenViewer = useCallback(
     (list, idx) => {
@@ -192,10 +249,11 @@ export default function OrderPhotosModal({
 
   const handleDeleteSelected = useCallback(() => {
     if (!selectedUris.length || !onRemoveMany) return;
+    if (!canRemovePhotos) return;
     hapticMedium();
     onRemoveMany(category, selectedUris);
     exitSelectionMode();
-  }, [category, exitSelectionMode, onRemoveMany, selectedUris]);
+  }, [canRemovePhotos, category, exitSelectionMode, onRemoveMany, selectedUris]);
 
   const count = (photos || []).length;
   const unavailableCount = useMemo(
@@ -252,12 +310,18 @@ export default function OrderPhotosModal({
       );
     }
 
+    if (!canAddFromCamera && !canAddFromGallery) return null;
+
     return (
       <View style={s.footerWrap}>
         <View style={s.footerRow}>
           <Pressable
             onPress={handleOpenCamera}
-            style={({ pressed }) => [s.actionBtn, pressed && s.actionBtnPressed]}
+            style={({ pressed }) => [
+              s.actionBtn,
+              !canAddFromCamera && s.hidden,
+              pressed && s.actionBtnPressed,
+            ]}
             accessibilityRole="button"
             accessibilityLabel={t('order_photo_source_camera', 'Камера')}
           >
@@ -270,7 +334,11 @@ export default function OrderPhotosModal({
           </Pressable>
           <Pressable
             onPress={handleGallery}
-            style={({ pressed }) => [s.actionBtn, pressed && s.actionBtnPressed]}
+            style={({ pressed }) => [
+              s.actionBtn,
+              !canAddFromGallery && s.hidden,
+              pressed && s.actionBtnPressed,
+            ]}
             accessibilityRole="button"
             accessibilityLabel={t('order_photo_source_gallery', 'Галерея')}
           >
@@ -285,6 +353,8 @@ export default function OrderPhotosModal({
       </View>
     );
   }, [
+    canAddFromCamera,
+    canAddFromGallery,
     deleteDisabled,
     exitSelectionMode,
     handleDeleteSelected,
@@ -300,8 +370,9 @@ export default function OrderPhotosModal({
   return (
     <>
       <BaseModal
-        visible={visible}
-        onClose={onClose}
+        visible={visible && !suspended && confirmRemoveIndex == null}
+        onClose={suspended || confirmRemoveIndex != null ? undefined : onClose}
+        onDismiss={handleBaseDismiss}
         title={t('order_photos_title', 'Фотографии')}
         maxHeightRatio={0.85}
         footer={footer}
@@ -323,22 +394,23 @@ export default function OrderPhotosModal({
           getDisplayUrl={getDisplayUrl}
           getIssue={getIssue}
           onOpenViewer={handleOpenViewer}
-          onRemove={handleRemove}
+          onRemove={canRemovePhotos ? handleRemove : undefined}
+          canAddPhotos={canAddFromCamera || canAddFromGallery}
           selectionMode={selectionMode}
           selectedUris={selectedUris}
-          onEnterSelectionMode={enterSelectionMode}
-          onToggleSelect={toggleSelection}
+          onEnterSelectionMode={canRemovePhotos ? enterSelectionMode : undefined}
+          onToggleSelect={canRemovePhotos ? toggleSelection : undefined}
         />
       </BaseModal>
 
       <PhotoCaptureFlowModal
-        visible={cameraVisible}
+        visible={cameraVisible && canAddFromCamera}
         onClose={handleCloseCamera}
         onSave={handleSaveFromCamera}
       />
 
       <ConfirmModal
-        visible={confirmRemoveIndex != null}
+        visible={removeConfirmVisible}
         onClose={closeRemoveConfirm}
         title={t('order_photos_delete_single_title')}
         message={t('order_photos_delete_single_message')}
@@ -403,6 +475,9 @@ function buildStyles(theme) {
     },
     actionBtnPressed: {
       opacity: 0.75,
+    },
+    hidden: {
+      display: 'none',
     },
     actionBtnIcon: {
       width: theme.icons?.md ?? 22,

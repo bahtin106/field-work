@@ -86,6 +86,7 @@ export default function ObjectsIndex() {
   const params = useLocalSearchParams();
   const { profile } = useAuthContext();
   const { has } = usePermissions();
+  const canViewClientPhones = has('canViewClientPhones');
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState(OBJECT_SORT.NAME_ASC);
   const [q, setQ] = useState('');
@@ -240,12 +241,12 @@ export default function ObjectsIndex() {
             client?.email,
             ...(Array.isArray(item?.tags) ? item.tags.map((tag) => tag?.value) : []),
           ],
-          phones: collectClientPhoneSearchValues(client),
+          phones: canViewClientPhones ? collectClientPhoneSearchValues(client) : [],
         }),
         debouncedQ,
       );
     });
-  }, [activeTagFilter, debouncedQ, filteredByPanel]);
+  }, [activeTagFilter, canViewClientPhones, debouncedQ, filteredByPanel]);
 
   const sortOptions = useMemo(() => objectSortOptions(t), []);
 

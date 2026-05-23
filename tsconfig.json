@@ -1,4 +1,4 @@
 {
   "extends": "expo/tsconfig.base",
-  "exclude": ["supabase/functions/**/*"]
+  "exclude": ["supabase/functions/**/*", "tmp_*", ".tmp_*"]
 }

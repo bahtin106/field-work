@@ -36,6 +36,7 @@ import { useEmployee, useEmployeesRealtimeSync } from '../../../src/features/emp
 import { getDict, useI18nVersion } from '../../../src/i18n';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
+import { useOfflineSnapshot } from '../../../src/shared/offline/offlineStatus';
 import { useSubscriptionGuard } from '../../../hooks/useSubscriptionGuard';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { useTheme } from '../../../theme';
@@ -61,6 +62,7 @@ export default function UserView() {
   const base = React.useMemo(() => listItemStyles(theme), [theme]);
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const { isOnline } = useOfflineSnapshot();
   const { user: authUser, profile: authProfile } = useAuthContext();
   const { id } = useLocalSearchParams();
   const userId = Array.isArray(id) ? id[0] : id;
@@ -241,13 +243,14 @@ export default function UserView() {
   const isOnlineNow = React.useCallback(
     (ts) => {
       const d = parsePgTs(ts);
+      if (!isOnline) return false;
       if (!d) return false;
       const diff = Date.now() - d.getTime();
       const onlineWindowMs = Number(theme?.timings?.presenceOnlineWindowMs ?? 120000);
       const futureSkewMs = Number(theme?.timings?.presenceFutureSkewMs ?? 300000);
       return diff <= onlineWindowMs && diff >= -futureSkewMs;
     },
-    [parsePgTs, theme?.timings?.presenceFutureSkewMs, theme?.timings?.presenceOnlineWindowMs],
+    [isOnline, parsePgTs, theme?.timings?.presenceFutureSkewMs, theme?.timings?.presenceOnlineWindowMs],
   );
 
   const getRelativeTime = React.useCallback(

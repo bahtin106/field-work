@@ -5,11 +5,15 @@ import { useOfflineSync } from './useOfflineSync';
 
 export default function OfflineStatusBanner({ enabled = true }) {
   const { theme } = useTheme();
-  const { isOnline, isPoorConnection, isSyncing, outbox } = useOfflineSync({ enabled });
+  const { isNetworkKnown, isOnline, isPoorConnection, isSyncing, outbox } = useOfflineSync({ enabled });
 
   const pending = Number(outbox?.pending || 0);
   const conflicts = Number(outbox?.conflicts || 0);
   const failed = Number(outbox?.failed || 0);
+
+  if (!isNetworkKnown && pending === 0 && conflicts === 0 && failed === 0 && !isSyncing) {
+    return null;
+  }
 
   if (isOnline && !isPoorConnection && pending === 0 && conflicts === 0 && failed === 0 && !isSyncing) {
     return null;

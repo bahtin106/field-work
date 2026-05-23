@@ -1,10 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useIsRestoring } from '@tanstack/react-query';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
 import { supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
+import { queryClient } from '../src/shared/query/queryClient';
+import { queryKeys } from '../src/shared/query/queryKeys';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
 const PROFILE_COLUMNS =
@@ -111,6 +114,7 @@ const isSessionExpiredLikeError = (error) => {
 };
 
 export function SimpleAuthProvider({ children }) {
+  const isRestoringQueryCache = useIsRestoring();
   const [state, setState] = useState({
     isInitializing: true,
     isAuthenticated: false,
@@ -134,6 +138,26 @@ export function SimpleAuthProvider({ children }) {
 
   const debugLog = useCallback((...args) => {
     log.debug(...args);
+  }, []);
+
+  const getCachedProfileForUser = useCallback((userId) => {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return null;
+
+    const cached = queryClient.getQueryData(queryKeys.profile.me());
+    if (cached && typeof cached === 'object' && String(cached.id || '') === normalizedUserId) {
+      return normalizeProfileData(cached, null, 'query-cache');
+    }
+
+    return null;
+  }, []);
+
+  const rememberProfileSnapshot = useCallback((profile) => {
+    if (!profile?.id) return;
+    queryClient.setQueryData(queryKeys.profile.me(), profile);
+    if (profile.company_id) {
+      queryClient.setQueryData(queryKeys.profile.companyId(), profile.company_id);
+    }
   }, []);
 
   const clearProfileRecovery = useCallback(() => {
@@ -191,7 +215,9 @@ export function SimpleAuthProvider({ children }) {
             if (!retriedProfile) {
               throw new Error('profile-not-found-after-bootstrap');
             }
-            return normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
+            const profile = normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
+            rememberProfileSnapshot(profile);
+            return profile;
           }
 
           debugLog('Profile loaded:', data.role);
@@ -212,7 +238,9 @@ export function SimpleAuthProvider({ children }) {
               log.warn('Profile media inspect skipped:', profileMediaError);
             }
           }
-          return normalizeProfileData(safeData, user, 'supabase');
+          const profile = normalizeProfileData(safeData, user, 'supabase');
+          rememberProfileSnapshot(profile);
+          return profile;
         } catch (error) {
           const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
           const isNetworkError = isNetworkRequestError(error);
@@ -220,9 +248,13 @@ export function SimpleAuthProvider({ children }) {
           const isTimeoutLikeNetwork = isNetworkError && elapsedMs >= PROFILE_LOAD_TIMEOUT_MS - 300;
 
           if (isTimeout || isTimeoutLikeNetwork) {
+            const cachedProfile = getCachedProfileForUser(userId);
+            if (cachedProfile) return cachedProfile;
             log.warn('Profile load timed out');
             throw new Error('profile-load-timeout');
           } else if (isNetworkError) {
+            const cachedProfile = getCachedProfileForUser(userId);
+            if (cachedProfile) return cachedProfile;
             log.warn('Profile network error:', error);
             throw new Error('profile-load-network-error');
           } else {
@@ -237,7 +269,7 @@ export function SimpleAuthProvider({ children }) {
       profileLoadInFlightRef.current.set(userId, loadPromise);
       return loadPromise;
     },
-    [debugLog],
+    [debugLog, getCachedProfileForUser, rememberProfileSnapshot],
   );
 
   const scheduleProfileRecovery = useCallback(
@@ -259,6 +291,7 @@ export function SimpleAuthProvider({ children }) {
           if (recoveryJobId !== recoveryJobIdRef.current) return;
           if (currentUserIdRef.current !== userId) return;
           if (!profile) return;
+          rememberProfileSnapshot(profile);
 
           setState((prev) => {
             if (prev.user?.id !== userId) return prev;
@@ -281,7 +314,7 @@ export function SimpleAuthProvider({ children }) {
 
       recoveryTimerRef.current = setTimeout(run, PROFILE_RECOVERY_BASE_DELAY_MS);
     },
-    [clearProfileRecovery, loadProfile],
+    [clearProfileRecovery, loadProfile, rememberProfileSnapshot],
   );
 
   const setSignedOutState = useCallback(() => {
@@ -336,7 +369,9 @@ export function SimpleAuthProvider({ children }) {
       if (userChanged) {
         clearProfileRecovery();
         currentUserIdRef.current = nextUserId;
-        await cleanupSessionRuntime('user-changed');
+        if (hadUser) {
+          await cleanupSessionRuntime('user-changed');
+        }
       }
 
       const isNonBlockingSameUserEvent =
@@ -400,7 +435,7 @@ export function SimpleAuthProvider({ children }) {
           return;
         }
 
-        const fallbackProfile = buildProfileFromUser(user, 'metadata-fallback');
+        const fallbackProfile = getCachedProfileForUser(nextUserId) || buildProfileFromUser(user, 'metadata-fallback');
         debugLog('Using fallback profile:', {
           role: fallbackProfile?.role,
           source: fallbackProfile?.__source,
@@ -415,10 +450,12 @@ export function SimpleAuthProvider({ children }) {
         scheduleProfileRecovery(user);
       }
     },
-    [clearProfileRecovery, debugLog, loadProfile, scheduleProfileRecovery, setSignedOutState],
+    [clearProfileRecovery, debugLog, getCachedProfileForUser, loadProfile, scheduleProfileRecovery, setSignedOutState],
   );
 
   useEffect(() => {
+    if (isRestoringQueryCache) return undefined;
+
     let mounted = true;
 
     const loadInitialSession = async () => {
@@ -500,7 +537,13 @@ export function SimpleAuthProvider({ children }) {
       clearTimeout(fallbackTimeout);
       subscription?.unsubscribe?.();
     };
-  }, [clearProfileRecovery, handleAuthChange, recoverFromInvalidRefreshToken, setSignedOutState]);
+  }, [
+    clearProfileRecovery,
+    handleAuthChange,
+    isRestoringQueryCache,
+    recoverFromInvalidRefreshToken,
+    setSignedOutState,
+  ]);
 
   const signOut = useCallback(async () => {
     if (logoutInProgressRef.current) return;

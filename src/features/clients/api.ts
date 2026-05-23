@@ -148,10 +148,50 @@ async function canCurrentUserViewAllOrders() {
   }
 }
 
+async function canCurrentUserViewPhonePermission(permissionKey: string) {
+  try {
+    const { data, error } = await supabase.rpc('current_user_has_app_permission', {
+      p_key: permissionKey,
+      p_default: true,
+    });
+    if (error) throw error;
+    return data !== false;
+  } catch {
+    return false;
+  }
+}
+
+function maskClientPhones(row: any, canViewClientPhones: boolean, canViewObjectPhones = true) {
+  if (!row || typeof row !== 'object') return row;
+  const next = { ...row };
+  if (!canViewClientPhones) {
+    next.phone = null;
+    next.additional_phone_1 = null;
+    next.additional_phone_1_label = null;
+    next.additional_phone_2 = null;
+    next.additional_phone_2_label = null;
+    next.additional_phone_3 = null;
+    next.additional_phone_3_label = null;
+  }
+  if (!canViewObjectPhones && Array.isArray(next.client_objects)) {
+    next.client_objects = next.client_objects.map((objectItem: any) => ({
+      ...objectItem,
+      additional_phone_1: null,
+      additional_phone_1_label: null,
+      additional_phone_2: null,
+      additional_phone_2_label: null,
+      additional_phone_3: null,
+      additional_phone_3_label: null,
+    }));
+  }
+  return next;
+}
+
 export async function listClients({ companyId = null, search = '' }: any = {}) {
   return measureNetwork('clients.list', async () => {
     const scopedCompanyId = await resolveScopedCompanyId(companyId);
     if (!scopedCompanyId) return [];
+    const canViewClientPhones = await canCurrentUserViewPhonePermission('canViewClientPhones');
 
     const buildListQuery = (useAdditional = true) => {
       const clientColumns = useAdditional ? CLIENT_COLUMNS_WITH_ADDITIONAL : CLIENT_COLUMNS_BASE;
@@ -169,9 +209,11 @@ export async function listClients({ companyId = null, search = '' }: any = {}) {
           `last_name.ilike.%${normalizedSearch}%`,
           `middle_name.ilike.%${normalizedSearch}%`,
           `email.ilike.%${normalizedSearch}%`,
-          `phone.ilike.%${normalizedSearch}%`,
         ];
-        if (useAdditional) {
+        if (canViewClientPhones) {
+          searchFilters.push(`phone.ilike.%${normalizedSearch}%`);
+        }
+        if (useAdditional && canViewClientPhones) {
           searchFilters.push(
             `additional_phone_1.ilike.%${normalizedSearch}%`,
             `additional_phone_2.ilike.%${normalizedSearch}%`,
@@ -200,19 +242,20 @@ export async function listClients({ companyId = null, search = '' }: any = {}) {
     ]).filter(Boolean);
     const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(urls);
     const cleanedSet = new Set<string>(cleanedUrls);
-    return rows.map((row) =>
-      normalizeClient({
-        ...applyClientMediaCleanup(row, cleanedSet),
+    return rows.map((row) => {
+      const maskedRow = maskClientPhones(row, canViewClientPhones);
+      return normalizeClient({
+        ...applyClientMediaCleanup(maskedRow, cleanedSet),
         avatar_display_url: resolvedUrls[String(row?.avatar_url || '').trim()] || row?.avatar_url || null,
-        client_objects: Array.isArray(row?.client_objects)
-          ? row.client_objects.map((objectItem: any) => ({
+        client_objects: Array.isArray(maskedRow?.client_objects)
+          ? maskedRow.client_objects.map((objectItem: any) => ({
               ...objectItem,
               photo_display_url:
                 resolvedUrls[String(objectItem?.photo_url || '').trim()] || objectItem?.photo_url || null,
             }))
-          : row?.client_objects,
-      }),
-    );
+          : maskedRow?.client_objects,
+      });
+    });
   });
 }
 
@@ -226,6 +269,10 @@ export async function getClientById(clientId: string) {
   const p = measureNetwork('clients.getById', async () => {
     const scopedCompanyId = await resolveScopedCompanyId();
     if (!scopedCompanyId) return null;
+    const [canViewClientPhones, canViewObjectPhones] = await Promise.all([
+      canCurrentUserViewPhonePermission('canViewClientPhones'),
+      canCurrentUserViewPhonePermission('canViewObjectPhones'),
+    ]);
 
     try {
       const { data, error }: any = await supabase
@@ -243,11 +290,12 @@ export async function getClientById(clientId: string) {
             : []),
         ].filter(Boolean));
       const cleanedSet = new Set<string>(cleanedUrls);
+      const maskedData = maskClientPhones(data, canViewClientPhones, canViewObjectPhones);
       return normalizeClient({
-        ...applyClientMediaCleanup(data, cleanedSet),
+        ...applyClientMediaCleanup(maskedData, cleanedSet),
         avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
-        client_objects: Array.isArray(data?.client_objects)
-          ? data.client_objects.map((objectItem: any) => ({
+        client_objects: Array.isArray(maskedData?.client_objects)
+          ? maskedData.client_objects.map((objectItem: any) => ({
               ...objectItem,
               photo_display_url:
                 resolvedUrls[String(objectItem?.photo_url || '').trim()] || objectItem?.photo_url || null,
@@ -271,7 +319,7 @@ export async function getClientById(clientId: string) {
       );
       const cleanedSet = new Set<string>(cleanedUrls);
       return normalizeClient({
-        ...applyClientMediaCleanup(data, cleanedSet),
+        ...applyClientMediaCleanup(maskClientPhones(data, canViewClientPhones), cleanedSet),
         avatar_display_url: resolvedUrls[String(data?.avatar_url || '').trim()] || data?.avatar_url || null,
       });
     }

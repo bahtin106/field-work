@@ -187,9 +187,9 @@ export default function SelectModal({
                 index,
               })
         }
-        initialNumToRender={Math.max(1, data.length)}
-        maxToRenderPerBatch={Math.max(1, data.length)}
-        windowSize={Math.max(3, data.length)}
+        initialNumToRender={Math.min(Math.max(1, data.length), 16)}
+        maxToRenderPerBatch={Math.min(Math.max(1, data.length), 24)}
+        windowSize={7}
         removeClippedSubviews={false}
         ItemSeparatorComponent={() => <View style={{ height: theme.spacing.sm }} />}
         contentContainerStyle={{

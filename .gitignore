@@ -35,4 +35,6 @@ root.html
 root2.html
 CON
 .codex-backups/
+.codex-checkpoints/
+.codex-remote-work/
 build/

@@ -3,19 +3,22 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 const TELEGRAM_PROVIDER = 'telegram';
 const FEED_STATUS = '\u0412 \u043b\u0435\u043d\u0442\u0435';
 const NEW_STATUS = '\u041d\u043e\u0432\u044b\u0439';
-const CONFIRM_TEXT = '✅ \u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438';
+const CONFIRM_TEXT = '\u2705 \u0417\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0441\u043e\u0437\u0434\u0430\u043d\u0438\u0435 \u0437\u0430\u044f\u0432\u043a\u0438';
 const RESTART_TEXT = '\u041d\u0430\u0447\u0430\u0442\u044c \u0437\u0430\u043d\u043e\u0432\u043e';
 const BACK_TEXT = '\u041d\u0430\u0437\u0430\u0434';
 const NEXT_TEXT = '\u0414\u0430\u043b\u0435\u0435';
 const SKIP_TEXT = '\u041f\u0440\u043e\u043f\u0443\u0441\u0442\u0438\u0442\u044c';
-const CANCEL_TEXT = '❌ \u041e\u0442\u043c\u0435\u043d\u0438\u0442\u044c \u0437\u0430\u044f\u0432\u043a\u0443';
-const CREATE_NEW_REQUEST_TEXT = '✅ \u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043d\u043e\u0432\u0443\u044e \u0437\u0430\u044f\u0432\u043a\u0443';
+const CANCEL_TEXT = '\u274c \u041e\u0442\u043c\u0435\u043d\u0438\u0442\u044c \u0437\u0430\u044f\u0432\u043a\u0443';
+const CREATE_NEW_REQUEST_TEXT = '\u2705 \u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043d\u043e\u0432\u0443\u044e \u0437\u0430\u044f\u0432\u043a\u0443';
 const KEEP_CURRENT_REQUEST_TEXT = '\u041d\u0435 \u0441\u0435\u0439\u0447\u0430\u0441';
+const EDIT_CANCEL_TEXT = '\u0412\u0435\u0440\u043d\u0443\u0442\u044c\u0441\u044f \u043a \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0435';
 
 const PRIVATE_CHAT_ONLY_TEXT = '\u0411\u043e\u0442 \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442 \u0442\u043e\u043b\u044c\u043a\u043e \u0432 \u043b\u0438\u0447\u043d\u043e\u043c \u0447\u0430\u0442\u0435.';
 const GENERIC_FAILURE_TEXT = '\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0431\u0440\u0430\u0431\u043e\u0442\u0430\u0442\u044c \u0437\u0430\u044f\u0432\u043a\u0443. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0451 \u0440\u0430\u0437 \u0438\u043b\u0438 \u0441\u0432\u044f\u0436\u0438\u0442\u0435\u0441\u044c \u0441 \u043a\u043e\u043c\u043f\u0430\u043d\u0438\u0435\u0439.';
-const MANDATORY_TELEGRAM_FIELD_KEYS = new Set(['customer_name', 'phone', 'city', 'street', 'house']);
-const HIDDEN_TELEGRAM_FIELD_KEYS = new Set(['title', 'object_name']);
+const BOT_NOT_CONFIGURED_TEXT = '\u0411\u043e\u0442 \u043f\u043e\u043a\u0430 \u043d\u0435 \u043d\u0430\u0441\u0442\u0440\u043e\u0435\u043d. \u041a\u043e\u043c\u043f\u0430\u043d\u0438\u0438 \u043d\u0443\u0436\u043d\u043e \u0432\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u043d\u043e \u043f\u043e\u043b\u0435 \u0434\u043b\u044f \u0437\u0430\u043f\u0440\u043e\u0441\u0430.';
+const BOT_EMPTY_FIELDS_SAVE_ERROR = '\u0412\u043a\u043b\u044e\u0447\u0438\u0442\u0435 \u0445\u043e\u0442\u044f \u0431\u044b \u043e\u0434\u043d\u043e \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e\u0435 \u043f\u043e\u043b\u0435 \u0434\u043b\u044f Telegram-\u0431\u043e\u0442\u0430.';
+const MANDATORY_TELEGRAM_FIELD_KEYS = new Set<string>(['customer_name', 'phone']);
+const HIDDEN_TELEGRAM_FIELD_KEYS = new Set(['title', 'object_name', 'office']);
 const OBJECT_MATCH_FIELD_KEYS = ['country', 'region', 'district', 'city', 'street', 'house', 'postal_code', 'floor', 'entrance', 'apartment'];
 const ADDRESS_FIELD_KEYS = new Set([
   'country',
@@ -31,6 +34,22 @@ const ADDRESS_FIELD_KEYS = new Set([
   'entrance_info',
   'parking_notes',
 ]);
+const BOT_FIELD_SETTING_DEPENDENCIES: Record<string, Array<{ entityType: string; fieldKey: string }>> = {
+  secondary_phone: [{ entityType: 'client', fieldKey: 'additional_phone_1' }],
+  email: [{ entityType: 'client', fieldKey: 'email' }],
+  comment: [{ entityType: 'order', fieldKey: 'comment' }],
+  country: [{ entityType: 'object', fieldKey: 'country' }],
+  region: [{ entityType: 'object', fieldKey: 'region' }],
+  district: [{ entityType: 'object', fieldKey: 'district' }],
+  city: [{ entityType: 'object', fieldKey: 'city' }],
+  street: [{ entityType: 'object', fieldKey: 'street' }],
+  house: [{ entityType: 'object', fieldKey: 'house' }],
+  postal_code: [{ entityType: 'object', fieldKey: 'postal_code' }],
+  floor: [{ entityType: 'object', fieldKey: 'floor' }],
+  entrance: [{ entityType: 'object', fieldKey: 'entrance' }],
+  apartment: [{ entityType: 'object', fieldKey: 'apartment' }],
+  entrance_info: [{ entityType: 'object', fieldKey: 'comment' }],
+};
 const MESSAGE_RATE_LIMIT_MS = 700;
 
 const corsHeaders = {
@@ -77,6 +96,8 @@ type EffectiveField = {
   is_enabled: boolean;
   is_required: boolean;
   supports_required: boolean;
+  disabled_by_field_settings?: boolean;
+  unavailable_reason?: string | null;
 };
 
 type ConversationRow = {
@@ -309,7 +330,7 @@ function conversationKeyboard(kind: 'collecting' | 'confirming', required: boole
   }
   if (editMode) {
     return {
-      keyboard: [[{ text: CANCEL_TEXT }]],
+      keyboard: [[{ text: EDIT_CANCEL_TEXT }], [{ text: CANCEL_TEXT }]],
       resize_keyboard: true,
     };
   }
@@ -323,7 +344,7 @@ function conversationKeyboard(kind: 'collecting' | 'confirming', required: boole
 function phoneKeyboard(required: boolean, hasValue = false, editMode = false) {
   const rows = [[{ text: '\u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c \u043d\u043e\u043c\u0435\u0440', request_contact: true }]];
   if (editMode) {
-    rows.push([{ text: CANCEL_TEXT }]);
+    rows.push([{ text: EDIT_CANCEL_TEXT }], [{ text: CANCEL_TEXT }]);
     return { keyboard: rows, resize_keyboard: true };
   }
   if (hasValue) rows.push([{ text: NEXT_TEXT }]);
@@ -353,7 +374,7 @@ async function sendTelegramRequest(method: string, payload: Record<string, unkno
   const botToken = Deno.env.get('TELEGRAM_BOT_TOKEN') || '';
   if (!botToken) throw new Error('Missing TELEGRAM_BOT_TOKEN');
   const response = await fetch(`https://api.telegram.org/bot${botToken}/${method}`, {
-    method: 'POST',
+    'method': 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(10_000),
@@ -371,7 +392,7 @@ async function sendTelegramMessage(
   return sendTelegramRequest('sendMessage', {
     chat_id: chatId,
     text,
-    parse_mode: 'HTML',
+    'parse_mode': 'HTML',
     reply_markup: options.removeKeyboard
       ? { remove_keyboard: true }
       : options.inlineKeyboard
@@ -392,7 +413,7 @@ async function editTelegramMessageText(
     chat_id: chatId,
     message_id: normalized,
     text,
-    parse_mode: 'HTML',
+    'parse_mode': 'HTML',
     reply_markup: options.inlineKeyboard ? { inline_keyboard: options.inlineKeyboard } : undefined,
   });
 }
@@ -485,13 +506,57 @@ async function ensureIntegration(admin: AdminClient, companyId: string) {
   return data as IntegrationRow;
 }
 
+async function getDisabledEntityFieldKeys(admin: AdminClient, companyId: string) {
+  const { data, error } = await admin
+    .from('company_entity_field_settings')
+    .select('entity_type, field_key, is_enabled')
+    .eq('company_id', companyId)
+    .eq('is_enabled', false);
+  if (error) throw error;
+
+  const disabled = new Set<string>();
+  for (const row of Array.isArray(data) ? data : []) {
+    const entityType = normalizeText(row?.entity_type);
+    const fieldKey = normalizeText(row?.field_key);
+    if (entityType && fieldKey) disabled.add(`${entityType}:${fieldKey}`);
+  }
+  return disabled;
+}
+
+function isDisabledByEntityFieldSettings(fieldKey: string, disabledEntityFields: Set<string>) {
+  const dependencies = BOT_FIELD_SETTING_DEPENDENCIES[fieldKey] || [];
+  return dependencies.some((dependency) =>
+    disabledEntityFields.has(`${dependency.entityType}:${dependency.fieldKey}`),
+  );
+}
+
+async function hasEnabledFieldInPayload(
+  admin: AdminClient,
+  companyId: string,
+  fields: Array<Record<string, unknown>>,
+) {
+  if (MANDATORY_TELEGRAM_FIELD_KEYS.size > 0) return true;
+  const disabledEntityFields = await getDisabledEntityFieldKeys(admin, companyId);
+  return (Array.isArray(fields) ? fields : []).some((field) => {
+    const fieldKey = normalizeText(field.field_key);
+    if (!fieldKey || HIDDEN_TELEGRAM_FIELD_KEYS.has(fieldKey)) return false;
+    if (MANDATORY_TELEGRAM_FIELD_KEYS.has(fieldKey)) return true;
+    if (field.is_enabled === false) return false;
+    return !isDisabledByEntityFieldSettings(fieldKey, disabledEntityFields);
+  });
+}
+
 async function getEffectiveFields(
   admin: AdminClient,
   integration: IntegrationRow,
   options: { includeDisabled?: boolean } = {},
 ) {
   const includeDisabled = options.includeDisabled === true;
-  const [{ data: catalog, error: catalogError }, { data: settings, error: settingsError }] = await Promise.all([
+  const [
+    { data: catalog, error: catalogError },
+    { data: settings, error: settingsError },
+    disabledEntityFields,
+  ] = await Promise.all([
     admin
       .from('messenger_field_catalog')
       .select('*')
@@ -504,6 +569,7 @@ async function getEffectiveFields(
       .select('*')
       .eq('company_id', integration.company_id)
       .eq('provider', TELEGRAM_PROVIDER),
+    getDisabledEntityFieldKeys(admin, integration.company_id),
   ]);
   if (catalogError) throw catalogError;
   if (settingsError) throw settingsError;
@@ -520,6 +586,7 @@ async function getEffectiveFields(
       if (HIDDEN_TELEGRAM_FIELD_KEYS.has(fieldKey)) return null;
       const setting = settingsByKey.get(fieldKey);
       const isMandatory = MANDATORY_TELEGRAM_FIELD_KEYS.has(fieldKey);
+      const disabledByFieldSettings = isDisabledByEntityFieldSettings(fieldKey, disabledEntityFields);
       return {
         field_key: fieldKey,
         entity_scope: String(item.entity_scope || 'order') as EffectiveField['entity_scope'],
@@ -528,59 +595,22 @@ async function getEffectiveFields(
         prompt: String(item.prompt || fieldKey),
         placeholder: normalizeText(item.placeholder) || null,
         sort_order: Number(setting?.sort_order ?? item.default_sort_order ?? 0) || 0,
-        is_enabled: isMandatory
+        is_enabled: disabledByFieldSettings
+          ? false
+          : isMandatory
           ? true
           : setting?.is_enabled !== undefined
             ? setting.is_enabled !== false
             : item.default_enabled !== false,
-        is_required: isMandatory ? true : setting?.is_required === true,
-        supports_required: item.supports_required !== false,
+        is_required: isMandatory,
+        supports_required: false,
+        disabled_by_field_settings: disabledByFieldSettings,
+        unavailable_reason: disabledByFieldSettings ? 'field_settings_disabled' : null,
       } as EffectiveField;
     })
     .filter(Boolean)
     .filter((field) => includeDisabled || field.is_enabled)
     .sort((a, b) => a.sort_order - b.sort_order);
-
-  const requiredKeys = new Set(rows.map((field) => field.field_key));
-  for (const key of [...MANDATORY_TELEGRAM_FIELD_KEYS]) {
-    if (!requiredKeys.has(key)) {
-      const source = (Array.isArray(catalog) ? catalog : []).find((row) => String(row.field_key || '') === key);
-      if (source) {
-        rows.push({
-          field_key: key,
-          entity_scope: String(source.entity_scope || 'order') as EffectiveField['entity_scope'],
-          input_kind: String(source.input_kind || 'text'),
-          label: String(source.label || key),
-          prompt: String(source.prompt || key),
-          placeholder: normalizeText(source.placeholder) || null,
-          sort_order: Number(source.default_sort_order || 0) || 0,
-          is_enabled: true,
-          is_required: true,
-          supports_required: true,
-        });
-      }
-    }
-  }
-  for (const key of ['city', 'street', 'house']) {
-    if (!rows.some((field) => field.field_key === key)) {
-      const source = (Array.isArray(catalog) ? catalog : []).find((row) => String(row.field_key || '') === key);
-      if (source) {
-        rows.push({
-          field_key: key,
-          entity_scope: String(source.entity_scope || 'object') as EffectiveField['entity_scope'],
-          input_kind: String(source.input_kind || 'text'),
-          label: String(source.label || key),
-          prompt: String(source.prompt || key),
-          placeholder: normalizeText(source.placeholder) || null,
-          sort_order: Number(source.default_sort_order || 0) || 0,
-          is_enabled: true,
-          is_required: true,
-          supports_required: true,
-        });
-      }
-    }
-  }
-
   return rows.sort((a, b) => a.sort_order - b.sort_order);
 }
 
@@ -622,19 +652,19 @@ async function upsertCompanyFieldSettings(
     .eq('provider', TELEGRAM_PROVIDER);
 
   const rows = (Array.isArray(fields) ? fields : [])
-    .map((field) => ({
-      field_key: normalizeText(field.field_key),
-      company_id: companyId,
-      provider: TELEGRAM_PROVIDER,
-      is_enabled: MANDATORY_TELEGRAM_FIELD_KEYS.has(normalizeText(field.field_key))
-        ? true
-        : field.is_enabled !== false,
-      is_required: MANDATORY_TELEGRAM_FIELD_KEYS.has(normalizeText(field.field_key))
-        ? true
-        : field.is_required === true,
-      sort_order: Number(field.sort_order || 0) || 0,
-    }))
-    .filter((row) => row.field_key);
+    .map((field) => {
+      const fieldKey = normalizeText(field.field_key);
+      const isMandatory = MANDATORY_TELEGRAM_FIELD_KEYS.has(fieldKey);
+      return {
+        field_key: fieldKey,
+        company_id: companyId,
+        provider: TELEGRAM_PROVIDER,
+        is_enabled: isMandatory ? true : field.is_enabled !== false,
+        is_required: isMandatory,
+        sort_order: Number(field.sort_order || 0) || 0,
+      };
+    })
+    .filter((row) => row.field_key && !HIDDEN_TELEGRAM_FIELD_KEYS.has(row.field_key));
 
   if (!rows.length) return;
   const { error } = await admin
@@ -652,7 +682,7 @@ async function handleStatus(req: Request, admin: AdminClient) {
   ]);
   return json(200, {
     success: true,
-    pattern: 'shared_bot_per_company_link',
+    'pattern': 'shared_bot_per_company_link',
     start_link: buildStartLink(integration.onboarding_token),
     webhook_url: getWebhookUrl(),
     config: integration,
@@ -670,6 +700,16 @@ async function handleSaveConfig(req: Request, admin: AdminClient, body: Record<s
 
   if (destinationType === 'assignee' && !destinationUserId) {
     return json(400, { success: false, message: 'Нужно выбрать ответственного.' });
+  }
+  if (
+    config.is_enabled === true &&
+    !(await hasEnabledFieldInPayload(
+      admin,
+      caller.companyId,
+      Array.isArray(body.fields) ? (body.fields as Array<Record<string, unknown>>) : [],
+    ))
+  ) {
+    return json(400, { success: false, message: BOT_EMPTY_FIELDS_SAVE_ERROR });
   }
   if (destinationUserId) {
     const { data: assignee, error } = await admin
@@ -693,9 +733,9 @@ async function handleSaveConfig(req: Request, admin: AdminClient, body: Record<s
         destination_type: destinationType,
         destination_user_id: destinationUserId,
         create_client: true,
-        existing_client_policy: 'reuse',
+        'existing_client_policy': 'reuse',
         create_object: true,
-        existing_object_policy: 'reuse_or_create',
+        'existing_object_policy': 'reuse_or_create',
         welcome_message: normalizeText(config.welcome_message) || null,
         success_message: normalizeText(config.success_message) || null,
         failure_message: normalizeText(config.failure_message) || null,
@@ -873,11 +913,50 @@ function readConversationState(conversation: ConversationRow | null) {
   return { state, values, ui };
 }
 
+function filterValuesByFields(values: Record<string, string>, fields: EffectiveField[] | null | undefined) {
+  if (!Array.isArray(fields) || !fields.length) return {};
+  const allowedKeys = new Set(fields.map((field) => field.field_key));
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values || {})) {
+    if (allowedKeys.has(key)) next[key] = value;
+  }
+  return next;
+}
+
+function hasClientInput(values: Record<string, string>) {
+  return Boolean(
+    trimToNull(values.customer_name) ||
+    trimToNull(values.phone) ||
+    trimToNull(values.secondary_phone) ||
+    trimToNull(values.email),
+  );
+}
+
+function assertRequiredClientValues(values: Record<string, string>) {
+  if (!trimToNull(values.customer_name)) {
+    throw new Error('CUSTOMER_NAME_REQUIRED');
+  }
+  if (!toE164PhoneOrNull(values.phone)) {
+    throw new Error('CUSTOMER_PHONE_REQUIRED');
+  }
+}
+
 function buildConversationState(
   values: Record<string, string>,
   ui: Record<string, unknown> = {},
 ) {
   return { values, ui };
+}
+
+function isConversationForIntegration(
+  conversation: ConversationRow | null,
+  integration: IntegrationRow | null,
+) {
+  if (!conversation || !integration) return false;
+  return (
+    normalizeText(conversation.company_id) === normalizeText(integration.company_id) &&
+    normalizeText(conversation.integration_id) === normalizeText(integration.id)
+  );
 }
 
 function getTrackedBotMessageId(conversation: ConversationRow | null) {
@@ -1136,7 +1215,7 @@ const SURNAME_SUFFIXES = [
 
 function tokenizeCustomerName(raw: string) {
   const prepared = normalizeText(raw)
-    .replace(/([A-Za-zА-Яа-яЁё])\.\s*([A-Za-zА-Яа-яЁё])\.?/gu, '$1. $2.')
+    .replace(/([\p{L}])\.\s*([\p{L}])\.?/gu, '$1. $2.')
     .replace(/[,\n\r;()]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -1151,7 +1230,7 @@ function tokenizeCustomerName(raw: string) {
 
 function isInitialToken(token: string) {
   const compact = normalizeText(token).replace(/\./g, '');
-  return compact.length === 1 && /^[A-Za-zА-Яа-яЁё]$/u.test(compact);
+  return compact.length === 1 && /^\p{L}$/u.test(compact);
 }
 
 function isPatronymicToken(token: string) {
@@ -1236,27 +1315,27 @@ function splitCustomerName(raw: string) {
 }
 
 const NAME_EQUIVALENTS: Record<string, string> = {
-  саша: 'александр',
-  саня: 'александр',
-  alex: 'александр',
-  алекс: 'александр',
-  лёша: 'алексей',
-  леша: 'алексей',
-  дима: 'дмитрий',
-  миша: 'михаил',
-  серёжа: 'сергей',
-  сережа: 'сергей',
-  вова: 'владимир',
-  женя: 'евгений',
-  катя: 'екатерина',
-  оля: 'ольга',
+  'саша': 'александр',
+  'саня': 'александр',
+  'alex': 'александр',
+  'алекс': 'александр',
+  'лёша': 'алексей',
+  'леша': 'алексей',
+  'дима': 'дмитрий',
+  'миша': 'михаил',
+  'серёжа': 'сергей',
+  'сережа': 'сергей',
+  'вова': 'владимир',
+  'женя': 'евгений',
+  'катя': 'екатерина',
+  'оля': 'ольга',
 };
 
 function normalizeNameTokenForCompare(raw: unknown) {
   const token = normalizeText(raw)
     .toLowerCase()
-    .replace(/ё/g, 'е')
-    .replace(/[^a-zа-я0-9-]+/g, '')
+    .replace(/\u0451/g, '\u0435')
+    .replace(/[^\p{L}\p{N}-]+/gu, '')
     .trim();
   if (!token) return '';
   return NAME_EQUIVALENTS[token] || token;
@@ -1297,7 +1376,7 @@ function compareClientNamesSmart(inputNameRaw: unknown, dbNameRaw: unknown) {
 
   if (!inputTokens.length || !dbTokens.length) return 'uncertain' as const;
 
-  const meaningfulInput = inputTokens.filter((token) => token.length > 1 || /^[a-zа-я0-9]$/i.test(token));
+  const meaningfulInput = inputTokens.filter((token) => token.length > 1 || /^[\p{L}\p{N}]$/u.test(token));
   if (!meaningfulInput.length) return 'uncertain' as const;
 
   let strongMatches = 0;
@@ -1376,7 +1455,7 @@ const ADDRESS_STREET_SYNONYMS = new Map<string, string>([
 function normalizeAddressTextForMatch(raw: unknown) {
   const base = normalizeText(raw)
     .toLowerCase()
-    .replace(/ё/g, 'е')
+    .replace(/\u0451/g, '\u0435')
     .replace(/[.,/#!$%^&*;:{}=_`~()"'\[\]-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -1546,7 +1625,7 @@ async function moveConversationToConfirmation(
   const prepared = await applyAddressValidationForConfirmation(admin, integration, values, ui);
   return saveConversation(admin, {
     ...conversation,
-    status: 'confirming',
+    'status': 'confirming',
     current_field_key: null,
     state: buildConversationState(prepared.values, {
       ...prepared.ui,
@@ -1702,16 +1781,13 @@ async function enrichExistingClientIfNeeded(
 }
 
 async function createClientIfNeeded(admin: AdminClient, integration: IntegrationRow, values: Record<string, string>) {
-  const createClientAllowed = integration.create_client !== false;
-  const existingClientPolicy = integration.existing_client_policy === 'order_only' ? 'order_only' : 'reuse';
+  assertRequiredClientValues(values);
+  if (!hasClientInput(values)) return null;
   const existing = await findExistingClientByIdentity(admin, integration.company_id, values);
   if (existing) {
     const clientId = String(existing.id);
     await enrichExistingClientIfNeeded(admin, clientId, values);
     return clientId;
-  }
-  if (!createClientAllowed || existingClientPolicy === 'order_only') {
-    return null;
   }
   const name = splitCustomerName(values.customer_name);
   const secondaryPhone = trimToNull(values.secondary_phone);
@@ -1788,7 +1864,9 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
     .from('client_objects')
     .insert({
       client_id: clientId,
+      company_id: integration.company_id,
       name: objectName,
+      'location_mode': 'address',
       country: address.country || null,
       region: address.region || null,
       district: address.district || null,
@@ -1810,23 +1888,30 @@ async function createObjectIfNeeded(admin: AdminClient, integration: Integration
     return {
       objectId: String(conflictObject.id),
       address,
-      addressMode: 'object',
+      'addressMode': 'object',
       objectName: normalizeText(conflictObject.name) || objectName,
     };
   }
   return { objectId: String(data.id), address, addressMode: 'object', objectName: normalizeText(data.name) || objectName };
 }
 
-async function createOrderFromConversation(admin: AdminClient, integration: IntegrationRow, values: Record<string, string>) {
-  const clientId = await createClientIfNeeded(admin, integration, values);
-  const object = await createObjectIfNeeded(admin, integration, clientId, values);
+async function createOrderFromConversation(
+  admin: AdminClient,
+  integration: IntegrationRow,
+  values: Record<string, string>,
+  fields: EffectiveField[] = [],
+) {
+  const activeValues = filterValuesByFields(values, fields);
+  assertRequiredClientValues(activeValues);
+  const clientId = await createClientIfNeeded(admin, integration, activeValues);
+  const object = await createObjectIfNeeded(admin, integration, clientId, activeValues);
   const nameDiscrepancyNote = await buildClientNameDiscrepancyNote(
     admin,
     integration.company_id,
     clientId,
-    values,
+    activeValues,
   );
-  const finalComment = appendOrderCommentNote(values.comment, nameDiscrepancyNote);
+  const finalComment = appendOrderCommentNote(activeValues.comment, nameDiscrepancyNote);
   const assignedTo =
     integration.destination_type === 'assignee'
       ? normalizeUuidOrNull(integration.destination_user_id)
@@ -1847,16 +1932,29 @@ async function createOrderFromConversation(admin: AdminClient, integration: Inte
       .from('orders')
       .insert({
         company_id: integration.company_id,
-        title: titleFromValues(values),
+        title: titleFromValues(activeValues),
         comment: finalComment,
+        phone: trimToNull(activeValues.phone),
         client_id: clientId,
         object_id: object.objectId,
         address_mode: object.addressMode,
+        country: object.address.country || null,
+        region: object.address.region || null,
+        district: object.address.district || null,
+        city: object.address.city || null,
+        street: object.address.street || null,
+        house: object.address.house || null,
+        postal_code: object.address.postal_code || null,
+        floor: object.address.floor || null,
+        entrance: object.address.entrance || null,
+        apartment: object.address.apartment || null,
+        entrance_info: object.address.entrance_info || object.address.comment || null,
+        parking_notes: object.address.parking_notes || null,
         assigned_to: assignedTo,
         status,
         urgent: false,
         currency: company?.currency || null,
-        creation_source: 'telegram',
+        'creation_source': 'telegram',
       })
       .select('id')
       .single();
@@ -2010,7 +2108,7 @@ async function resetConversationToIdle(admin: AdminClient, conversation: Convers
     ...conversation,
     company_id: null,
     integration_id: null,
-    status: 'idle',
+    'status': 'idle',
     current_field_key: null,
     state: buildConversationState({}, {
       ...ui,
@@ -2064,10 +2162,10 @@ async function handleConfirmationCallback(
 
   if (data === 'confirm:submit') {
     try {
-      const result = await createOrderFromConversation(admin, integration, values);
+      const result = await createOrderFromConversation(admin, integration, values, fields);
       conversation = await saveConversation(admin, {
         ...conversation,
-        status: 'completed',
+        'status': 'completed',
         current_field_key: null,
         state: buildConversationState(values, readConversationState(conversation).ui),
         completed_at: new Date().toISOString(),
@@ -2127,7 +2225,7 @@ async function handleConfirmationCallback(
     const { ui } = readConversationState(conversation);
     conversation = await saveConversation(admin, {
       ...conversation,
-      status: 'idle',
+      'status': 'idle',
       current_field_key: null,
       state: buildConversationState({}, ui),
       completed_at: new Date().toISOString(),
@@ -2150,7 +2248,7 @@ async function handleConfirmationCallback(
       const { ui } = readConversationState(conversation);
       conversation = await saveConversation(admin, {
         ...conversation,
-        status: 'collecting',
+        'status': 'collecting',
         current_field_key: previous.field_key,
         state: buildConversationState(values, {
           ...ui,
@@ -2174,17 +2272,17 @@ async function handleConfirmationCallback(
     const { ui } = readConversationState(conversation);
     conversation = await saveConversation(admin, {
       ...conversation,
-      status: 'collecting',
+      'status': 'collecting',
       current_field_key: targetField.field_key,
       state: buildConversationState(values, {
         ...ui,
         return_to_confirmation: true,
-        confirmation_menu: 'main',
+        'confirmation_menu': 'main',
       }),
       last_message_at: new Date().toISOString(),
     });
     await promptField(admin, conversation, callback.chatId, fields, targetField, values, {
-      prefix: 'Измените это поле.',
+      'prefix': 'Измените это поле.',
     });
     await answerTelegramCallback(callback.callbackId);
     return json(200, { success: true });
@@ -2205,6 +2303,14 @@ async function restartConversation(
 ) {
   const firstField = nextField(fields, null);
   const { ui } = readConversationState(conversation);
+  const previousBotMessageId = getTrackedBotMessageId(conversation);
+  const previousConfirmationMessageId = getTrackedConfirmationMessageId(conversation);
+  const previousProgressMessageId = getTrackedProgressMessageId(conversation);
+  if (previousProgressMessageId) await safeDeleteTelegramMessage(chatId, previousProgressMessageId);
+  if (previousConfirmationMessageId) await safeDeleteTelegramMessage(chatId, previousConfirmationMessageId);
+  if (previousBotMessageId && previousBotMessageId !== previousConfirmationMessageId) {
+    await safeDeleteTelegramMessage(chatId, previousBotMessageId);
+  }
   const companyName = await getCompanyDisplayName(admin, integration.company_id);
   const introText = [
     companyName ? `Вы заполняете заявку для компании «${companyName}».` : 'Вы заполняете новую заявку.',
@@ -2221,7 +2327,7 @@ async function restartConversation(
     external_username: username || null,
     company_id: integration.company_id,
     integration_id: integration.id,
-    status: 'collecting',
+    'status': 'collecting',
     current_field_key: firstField?.field_key || null,
     state: buildConversationState({}, {
       ...ui,
@@ -2229,7 +2335,7 @@ async function restartConversation(
       pending_restart_integration_id: null,
       direct_start_notice: false,
       return_to_confirmation: false,
-      confirmation_menu: 'main',
+      'confirmation_menu': 'main',
       bot_message_id: null,
       confirmation_message_id: null,
       progress_message_id: null,
@@ -2248,6 +2354,10 @@ async function restartConversation(
       {},
       { prefix: introText || null },
     );
+  } else {
+    await showConversationNotice(admin, nextConversation, chatId, BOT_NOT_CONFIGURED_TEXT, {
+      removeKeyboard: true,
+    });
   }
 }
 
@@ -2313,7 +2423,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       external_chat_id: chatId,
       external_user_id: callback?.userId || message?.userId || null,
       external_username: callback?.username || message?.username || null,
-      status: 'idle',
+      'status': 'idle',
       state: buildConversationState({}, {}),
       last_message_at: new Date(0).toISOString(),
     });
@@ -2375,7 +2485,18 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       return json(200, { success: true });
     }
     const fields = await getEffectiveFields(admin, integration);
-    if (conversation.status === 'completed') {
+    if (!fields.length) {
+      conversation = await showConversationNotice(
+        admin,
+        conversation,
+        message.chatId,
+        BOT_NOT_CONFIGURED_TEXT,
+        { removeKeyboard: true },
+      );
+      await safeDeleteTelegramMessage(message.chatId, message.messageId);
+      return json(200, { success: true });
+    }
+    if (conversation.status === 'completed' && isConversationForIntegration(conversation, integration)) {
       await promptNewRequestConfirmation(admin, conversation, integration, message.chatId);
       await safeDeleteTelegramMessage(message.chatId, message.messageId);
       return json(200, { success: true });
@@ -2393,7 +2514,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     const { ui } = readConversationState(conversation);
     conversation = await saveConversation(admin, {
       ...conversation,
-      status: 'idle',
+      'status': 'idle',
       current_field_key: null,
       state: buildConversationState({}, ui),
       completed_at: new Date().toISOString(),
@@ -2436,6 +2557,17 @@ async function handleWebhook(admin: AdminClient, req: Request) {
   }
 
   const fields = await getEffectiveFields(admin, integration);
+  if (!fields.length) {
+    conversation = await showConversationNotice(
+      admin,
+      conversation,
+      message.chatId,
+      BOT_NOT_CONFIGURED_TEXT,
+      { removeKeyboard: true },
+    );
+    await safeDeleteTelegramMessage(message.chatId, message.messageId);
+    return json(200, { success: true });
+  }
   const { values, ui } = readConversationState(conversation);
 
   if (conversation.status === 'completed' || ui.awaiting_restart_confirmation === true) {
@@ -2480,6 +2612,20 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     return json(200, { success: true });
   }
 
+  if (text === EDIT_CANCEL_TEXT && ui.return_to_confirmation === true) {
+    conversation = await moveConversationToConfirmation(
+      admin,
+      conversation,
+      integration,
+      values,
+      ui,
+    );
+    const { values: confirmedValues } = readConversationState(conversation);
+    await promptConfirmationRich(admin, conversation, message.chatId, fields, confirmedValues);
+    await safeDeleteTelegramMessage(message.chatId, message.messageId);
+    return json(200, { success: true });
+  }
+
   if (text === RESTART_TEXT || text.toLowerCase() === '/restart') {
     await restartConversation(admin, conversation, integration, fields, message.chatId, message.userId, message.username);
     await safeDeleteTelegramMessage(message.chatId, message.messageId);
@@ -2497,12 +2643,12 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       const { ui } = readConversationState(conversation);
       conversation = await saveConversation(admin, {
         ...conversation,
-        status: 'collecting',
+        'status': 'collecting',
         current_field_key: previous.field_key,
       state: buildConversationState(values, {
         ...ui,
         return_to_confirmation: true,
-        confirmation_menu: 'main',
+        'confirmation_menu': 'main',
       }),
       last_message_at: new Date().toISOString(),
     });
@@ -2536,7 +2682,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     const { ui } = readConversationState(conversation);
     conversation = await saveConversation(admin, {
       ...conversation,
-      status: 'collecting',
+      'status': 'collecting',
       current_field_key: previous.field_key,
       state: buildConversationState(values, {
         ...ui,
@@ -2558,10 +2704,10 @@ async function handleWebhook(admin: AdminClient, req: Request) {
       return json(200, { success: true });
     }
     try {
-      const result = await createOrderFromConversation(admin, integration, values);
+      const result = await createOrderFromConversation(admin, integration, values, fields);
       conversation = await saveConversation(admin, {
         ...conversation,
-        status: 'completed',
+        'status': 'completed',
         current_field_key: null,
         state: buildConversationState(values, readConversationState(conversation).ui),
         completed_at: new Date().toISOString(),
@@ -2643,7 +2789,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
     if (next) {
       conversation = await saveConversation(admin, {
         ...conversation,
-        status: 'collecting',
+        'status': 'collecting',
         current_field_key: next.field_key,
         state: buildConversationState(values, {
           ...ui,
@@ -2717,7 +2863,7 @@ async function handleWebhook(admin: AdminClient, req: Request) {
   if (next) {
     conversation = await saveConversation(admin, {
       ...conversation,
-      status: 'collecting',
+      'status': 'collecting',
       current_field_key: next.field_key,
       state: buildConversationState(values, {
         ...uiAfterInput,

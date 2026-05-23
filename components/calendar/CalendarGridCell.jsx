@@ -9,6 +9,7 @@ const OUTSIDE_MONTH_META_DOT_OPACITY = 0.45;
 const EVENT_META_MIN_WIDTH_RATIO = 0.5;
 const EVENT_META_HORIZONTAL_INSET = 4;
 const EVENT_META_BOTTOM_INSET_RATIO = 0.12;
+const DAY_NUMBER_WITH_EVENTS_SHIFT_RATIO = 0.1;
 
 function CalendarGridCellComponent({
   cell,
@@ -38,6 +39,9 @@ function CalendarGridCellComponent({
   const isTodaySelected = isSelectedDay && isToday;
   const showOutline = isSelectedDay && !isToday;
   const highlightTodayWhenNotSelected = isToday && !isSelectedDay;
+  const dayNumberEventShift = eventCount > 0
+    ? { transform: [{ translateY: -Math.max(3, dayCellSize * DAY_NUMBER_WITH_EVENTS_SHIFT_RATIO) }] }
+    : null;
 
   const outsideMonthTextStyle = showOutsideMonthDeemphasis
     ? { color: theme.colors.textSecondary, opacity: OUTSIDE_MONTH_TEXT_OPACITY }
@@ -47,6 +51,9 @@ function CalendarGridCellComponent({
     : null;
   const outsideMonthMetaDotStyle = showOutsideMonthDeemphasis
     ? { backgroundColor: theme.colors.textSecondary, opacity: OUTSIDE_MONTH_META_DOT_OPACITY }
+    : null;
+  const selectedTodayEventCountStyle = isTodaySelected
+    ? { color: theme.colors.onPrimary || '#FFFFFF' }
     : null;
 
   return (
@@ -75,6 +82,7 @@ function CalendarGridCellComponent({
         <Text
           style={[
             styles.dayNumber,
+            dayNumberEventShift,
             outsideMonthTextStyle,
             showOutline && styles.dayNumberSelected,
             isTodaySelected && styles.dayNumberToday,
@@ -108,7 +116,10 @@ function CalendarGridCellComponent({
               }}
             >
               <Animated.View style={[{ position: 'absolute' }, eventCountAnimatedStyle]}>
-                <Text style={[styles.eventCount, outsideMonthMetaTextStyle]} numberOfLines={1}>
+                <Text
+                  style={[styles.eventCount, outsideMonthMetaTextStyle, selectedTodayEventCountStyle]}
+                  numberOfLines={1}
+                >
                   {eventCount}
                 </Text>
               </Animated.View>

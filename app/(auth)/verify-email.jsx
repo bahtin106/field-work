@@ -68,8 +68,16 @@ export default function VerifyEmailScreen() {
         // Проверяем есть ли token и type в URL
         const token = params.token;
         const type = params.type;
+        const email = String(params.email || '').trim().toLowerCase();
 
         if (!token || type !== 'email_confirmation') {
+          if (email) {
+            router.replace({
+              pathname: '/(auth)/register-code',
+              params: { email },
+            });
+            return;
+          }
           // Если это просто открыли экран без параметров
           setStatus('error');
           setErrorMessage('Некорректная ссылка подтверждения');

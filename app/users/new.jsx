@@ -1,19 +1,22 @@
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
+import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, Image, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Keyboard, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Theme / layout / UI
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import Card from '../../components/ui/Card';
+import ClearButton from '../../components/ui/ClearButton';
 import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { listItemStyles } from '../../components/ui/listItemStyles';
-import { ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import { BaseModal, ConfirmModal, DateTimeModal, SelectModal } from '../../components/ui/modals';
+import AvatarCropModal from '../../components/ui/AvatarCropModal';
 import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
@@ -170,6 +173,55 @@ async function resolveInviteInvokeErrorMessage(inviteError, t) {
   return mapInviteErrorToUiMessage(rawMessage, statusCode, t);
 }
 
+function AvatarSheetModal({
+  visible,
+  hasAvatar,
+  onTakePhoto,
+  onPickFromLibrary,
+  onDeletePhoto,
+  onViewPhoto,
+  onClose,
+}) {
+  const { t } = useTranslation();
+  const { theme } = useTheme();
+  const ICON_SM = theme.icons?.sm ?? 18;
+
+  const chevron = (color) => (
+    <Feather name="chevron-right" size={ICON_SM} color={color} />
+  );
+
+  const items = [
+    { id: 'camera', label: t('profile_photo_take'), right: chevron(theme.colors.textSecondary) },
+    { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
+    ...(hasAvatar
+      ? [
+          { id: 'view', label: 'Просмотреть фото', right: chevron(theme.colors.textSecondary) },
+          { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
+        ]
+      : []),
+  ];
+
+  return (
+    <SelectModal
+      visible={visible}
+      title={t('profile_photo_title')}
+      items={items}
+      searchable={false}
+      onSelect={(it) => {
+        try {
+          if (it.id === 'camera') onTakePhoto?.();
+          else if (it.id === 'library') onPickFromLibrary?.();
+          else if (it.id === 'delete') onDeletePhoto?.();
+          else if (it.id === 'view') onViewPhoto?.();
+        } finally {
+          onClose?.();
+        }
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
 export default function NewUserScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -199,6 +251,10 @@ export default function NewUserScreen() {
   const [birthdate, setBirthdate] = useState(null);
   const [withYear, setWithYear] = useState(true);
   const [dobModalVisible, setDobModalVisible] = useState(false);
+  const defaultBirthdateInitial = useMemo(() => {
+    const today = new Date();
+    return new Date(today.getFullYear() - 30, today.getMonth(), today.getDate(), 12, 0, 0, 0);
+  }, []);
 
   const [departmentId, setDepartmentId] = useState(null);
   const { data: companyId } = useMyCompanyIdQuery();
@@ -220,6 +276,10 @@ export default function NewUserScreen() {
 
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [avatarSheet, setAvatarSheet] = useState(false);
+  const [cropVisible, setCropVisible] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
+  const [viewAvatarVisible, setViewAvatarVisible] = useState(false);
+  const [avatarKey, setAvatarKey] = useState(0);
 
   useEffect(() => {
     if (!useDepartments && departmentId !== null) {
@@ -588,7 +648,10 @@ export default function NewUserScreen() {
             rightSlot={
               birthdate ? (
                 <ClearButton
-                  onPress={() => setBirthdate(null)}
+                  onPress={() => {
+                    setBirthdate(null);
+                    clearFieldError('birthdate');
+                  }}
                   accessibilityLabel={t('common_clear')}
                 />
               ) : null
@@ -771,6 +834,9 @@ export default function NewUserScreen() {
       return null;
     }
   };
+  const deleteAvatar = async () => {
+    setAvatarUrl(null);
+  };
   const pickFromCamera = async () => {
     const ok = await ensureCameraPerms();
     if (!ok) {
@@ -778,12 +844,15 @@ export default function NewUserScreen() {
       return;
     }
     const res = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
+      allowsEditing: false,
       aspect: [1, 1],
       quality: MEDIA_QUALITY,
       mediaTypes: IMAGE_MEDIA_TYPES,
     });
-    if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
+    if (!res.canceled && res.assets && res.assets[0]?.uri) {
+      setCropSrc(res.assets[0].uri);
+      setCropVisible(true);
+    }
   };
   const pickFromLibrary = async () => {
     const ok = await ensureLibraryPerms();
@@ -792,13 +861,27 @@ export default function NewUserScreen() {
       return;
     }
     const res = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: true,
+      allowsEditing: false,
       aspect: [1, 1],
       quality: MEDIA_QUALITY,
       mediaTypes: IMAGE_MEDIA_TYPES,
       selectionLimit: 1,
     });
-    if (!res.canceled && res.assets && res.assets[0]?.uri) setAvatarUrl(res.assets[0].uri);
+    if (!res.canceled && res.assets && res.assets[0]?.uri) {
+      setCropSrc(res.assets[0].uri);
+      setCropVisible(true);
+    }
+  };
+
+  const onCropCancel = () => {
+    setCropVisible(false);
+    setCropSrc(null);
+  };
+
+  const onCropConfirm = async (croppedUri) => {
+    setCropVisible(false);
+    setCropSrc(null);
+    setAvatarUrl(croppedUri);
   };
 
   const _warn = (key) => {
@@ -1068,14 +1151,24 @@ export default function NewUserScreen() {
           <View style={styles.headerRow}>
             <Pressable
               style={styles.avatar}
-              onPress={canManageAvatar ? () => setAvatarSheet(true) : undefined}
+              onPress={canManageAvatar
+                ? () => {
+                    setAvatarKey((k) => k + 1);
+                    setAvatarSheet(true);
+                  }
+                : undefined}
               disabled={!canManageAvatar}
               accessibilityRole={canManageAvatar ? 'button' : undefined}
               accessibilityLabel={canManageAvatar ? t('a11y_change_avatar') : undefined}
               accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
             >
               {canManageAvatar && avatarUrl ? (
-                <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+                <ExpoImage
+                  source={{ uri: avatarUrl }}
+                  style={styles.avatarImg}
+                  contentFit="cover"
+                  cachePolicy="none"
+                />
               ) : (
                 <Text style={styles.avatarText}>{initials || '*'}</Text>
               )}
@@ -1174,42 +1267,41 @@ export default function NewUserScreen() {
         />
 
         {canManageAvatar ? (
-          <SelectModal
+          <AvatarSheetModal
+            key={`avatar-${avatarKey}`}
             visible={avatarSheet}
+            hasAvatar={!!avatarUrl}
+            onTakePhoto={pickFromCamera}
+            onPickFromLibrary={pickFromLibrary}
+            onDeletePhoto={deleteAvatar}
+            onViewPhoto={() => {
+              setViewAvatarVisible(true);
+            }}
             onClose={() => setAvatarSheet(false)}
-            title={t('profile_photo_title')}
-            items={[
-              {
-                id: 'camera',
-                label: t('profile_photo_take'),
-                onPress: () => {
-                  setAvatarSheet(false);
-                  pickFromCamera();
-                },
-              },
-              {
-                id: 'gallery',
-                label: t('profile_photo_choose'),
-                onPress: () => {
-                  setAvatarSheet(false);
-                  pickFromLibrary();
-                },
-              },
-              ...(avatarUrl
-                ? [
-                    {
-                      id: 'remove',
-                      label: t('profile_photo_delete'),
-                      onPress: () => {
-                        setAvatarSheet(false);
-                        setAvatarUrl(null);
-                      },
-                    },
-                  ]
-                : []),
-            ]}
-            searchable={false}
           />
+        ) : null}
+        <AvatarCropModal visible={cropVisible} uri={cropSrc} onCancel={onCropCancel} onConfirm={onCropConfirm} />
+
+        {canManageAvatar ? (
+          <BaseModal
+            visible={viewAvatarVisible}
+            onClose={() => setViewAvatarVisible(false)}
+            title={t('profile_photo_title')}
+            maxHeightRatio={0.9}
+          >
+            <View style={{ alignItems: 'center', padding: theme.spacing.md }}>
+              {avatarUrl ? (
+                <ExpoImage
+                  source={{ uri: avatarUrl }}
+                  style={{ width: '100%', height: undefined, aspectRatio: 1, borderRadius: theme.radii.lg }}
+                  contentFit="contain"
+                  cachePolicy="none"
+                />
+              ) : (
+                <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'Нет фото'}</Text>
+              )}
+            </View>
+          </BaseModal>
         ) : null}
 
         {useDepartments ? (
@@ -1244,11 +1336,12 @@ export default function NewUserScreen() {
           mode="date"
           allowOmitYear={true}
           omitYearDefault={withYear}
-          initial={birthdate || new Date()}
+          initial={birthdate || defaultBirthdateInitial}
           onApply={(dateObj, extra) => {
             try {
               const d = new Date(dateObj);
               setBirthdate(d);
+              clearFieldError('birthdate');
               if (extra && typeof extra.withYear === 'boolean') setWithYear(extra.withYear);
             } finally {
               setDobModalVisible(false);

@@ -8,17 +8,12 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
   FadeOut,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
 } from 'react-native-reanimated';
-import PagerView from 'react-native-pager-view';
-import { Zoomable } from '@likashefqet/react-native-image-zoom';
+import ImageZoom from 'react-native-image-pan-zoom';
 import { Feather } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
@@ -42,10 +37,7 @@ const ICON_BTN_SIZE = 40;
 const MAX_SCALE = 4;
 const DOUBLE_TAP_SCALE = 2.5;
 const ZOOM_EPSILON = 1.01;
-const PAGE_GAP = 12;
-const CLOSE_SWIPE_DISTANCE = 140;
-const CLOSE_SWIPE_MIN_VELOCITY = 1350;
-const ACTIVE_PAGE_BUFFER = 1;
+const PAGE_SWIPE_THRESHOLD = 48;
 
 const haptic = (style = 'Light') =>
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {});
@@ -76,17 +68,28 @@ const getContainSize = (sourceWidth, sourceHeight, maxWidth, maxHeight) => {
   };
 };
 
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const getPanLimit = (imageSize, cropSize, scale) => {
+  const scaledSize = imageSize * scale;
+  if (scaledSize <= cropSize) return 0;
+  return (scaledSize - cropSize) / 2 / scale;
+};
+
 const ZoomablePage = memo(function ZoomablePage({
   height,
   index,
   isActive,
   onTap,
-  onZoomStateChange,
+  onSwipePage,
   rotation,
   uri,
   width,
 }) {
   const [naturalSize, setNaturalSize] = useState(null);
+  const pageSwipeLockedRef = useRef(false);
+  const pendingPageSwipeRef = useRef(null);
+  const pageSwipeTimerRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -115,89 +118,120 @@ const ZoomablePage = memo(function ZoomablePage({
   const renderHeight = isSideways ? fitted.width : fitted.height;
 
   const zoomRef = useRef(null);
-  const isZoomedRef = useRef(false);
-  const zoomScale = useSharedValue(1);
-
-  const handleZoomState = useCallback(
-    (zoomed) => {
-      if (isZoomedRef.current === zoomed) return;
-      isZoomedRef.current = zoomed;
-      onZoomStateChange(index, zoomed);
-    },
-    [index, onZoomStateChange],
-  );
+  const currentScaleRef = useRef(1);
+  const [centerOn, setCenterOn] = useState(null);
 
   useEffect(() => {
     if (isActive) return;
-    isZoomedRef.current = false;
-    onZoomStateChange(index, false);
+    currentScaleRef.current = 1;
+    setCenterOn({ x: 0, y: 0, scale: 1, duration: 0 });
     zoomRef.current?.reset?.();
-  }, [index, isActive, onZoomStateChange]);
+  }, [isActive]);
 
   useEffect(() => {
     if (!isActive) return;
-    zoomScale.value = 1;
-    isZoomedRef.current = false;
-    onZoomStateChange(index, false);
+    currentScaleRef.current = 1;
+    setCenterOn({ x: 0, y: 0, scale: 1, duration: 0 });
     zoomRef.current?.reset?.();
-  }, [index, isActive, onZoomStateChange, rotation, zoomScale]);
+  }, [isActive, rotation]);
+
+  useEffect(
+    () => () => {
+      if (pageSwipeTimerRef.current) clearTimeout(pageSwipeTimerRef.current);
+      pendingPageSwipeRef.current = null;
+    },
+    [],
+  );
+
+  const handleOuterRange = useCallback(
+    (offset) => {
+      if (!isActive || pageSwipeLockedRef.current || Math.abs(offset || 0) < PAGE_SWIPE_THRESHOLD) return;
+      pageSwipeLockedRef.current = true;
+      pendingPageSwipeRef.current = index + (offset > 0 ? -1 : 1);
+      pageSwipeTimerRef.current = setTimeout(() => {
+        pageSwipeLockedRef.current = false;
+      }, 320);
+    },
+    [index, isActive],
+  );
+
+  const handleMove = useCallback((position) => {
+    currentScaleRef.current = Number(position?.scale || 1);
+  }, []);
+
+  const handleRelease = useCallback(
+    (_vx, scale) => {
+      currentScaleRef.current = Number(scale || 1);
+      const nextPage = pendingPageSwipeRef.current;
+      pendingPageSwipeRef.current = null;
+      if (nextPage == null) return;
+
+      requestAnimationFrame(() => {
+        onSwipePage(nextPage);
+      });
+    },
+    [onSwipePage],
+  );
+
+  const handleDoubleTap = useCallback(
+    ({ locationX, locationY }) => {
+      if (currentScaleRef.current > ZOOM_EPSILON) {
+        currentScaleRef.current = 1;
+        setCenterOn({ x: 0, y: 0, scale: 1, duration: 140 });
+        return;
+      }
+
+      const nextScale = DOUBLE_TAP_SCALE;
+      const rawX = ((width / 2 - Number(locationX || width / 2)) * (nextScale - 1)) / nextScale;
+      const rawY = ((height / 2 - Number(locationY || height / 2)) * (nextScale - 1)) / nextScale;
+      const xLimit = getPanLimit(renderWidth, width, nextScale);
+      const yLimit = getPanLimit(renderHeight, height, nextScale);
+      const x = clamp(rawX, -xLimit, xLimit);
+      const y = clamp(rawY, -yLimit, yLimit);
+
+      currentScaleRef.current = nextScale;
+      setCenterOn({ x, y, scale: nextScale, duration: 140 });
+    },
+    [height, renderHeight, renderWidth, width],
+  );
 
   return (
     <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
-      <View
-        collapsable={false}
-        style={{
-          width,
-          height,
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
+      <ImageZoom
+        key={`${uri}_${normalizedRotation}`}
+        ref={zoomRef}
+        cropWidth={width}
+        cropHeight={height}
+        imageWidth={renderWidth}
+        imageHeight={renderHeight}
+        minScale={1}
+        maxScale={MAX_SCALE}
+        enableDoubleClickZoom={false}
+        doubleClickInterval={220}
+        maxOverflow={0}
+        panToMove={isActive}
+        pinchToZoom={isActive}
+        enableCenterFocus
+        useNativeDriver
+        centerOn={centerOn}
+        onClick={onTap}
+        onDoubleClick={handleDoubleTap}
+        onMove={handleMove}
+        responderRelease={handleRelease}
+        horizontalOuterRangeOffset={handleOuterRange}
+        onStartShouldSetPanResponder={() => isActive}
+        onMoveShouldSetPanResponder={() => isActive}
       >
-        <Zoomable
-          key={`${uri}_${normalizedRotation}`}
-          ref={zoomRef}
-          minScale={1}
-          maxScale={MAX_SCALE}
-          scale={zoomScale}
-          doubleTapScale={DOUBLE_TAP_SCALE}
-          maxPanPointers={1}
-          isPanEnabled={isActive}
-          isPinchEnabled={isActive}
-          isSingleTapEnabled={isActive}
-          isDoubleTapEnabled={isActive}
-          onSingleTap={onTap}
-          onPinchStart={() => handleZoomState(true)}
-          onPinchEnd={() => handleZoomState(zoomScale.value > ZOOM_EPSILON)}
-          onPanStart={() => handleZoomState(true)}
-          onPanEnd={() => handleZoomState(zoomScale.value > ZOOM_EPSILON)}
-          onResetAnimationEnd={() => handleZoomState(false)}
+        <RNImage
+          source={{ uri }}
+          resizeMode="contain"
           style={{
-            width,
-            height,
-            alignItems: 'center',
-            justifyContent: 'center',
+            width: renderWidth,
+            height: renderHeight,
+            transform: [{ rotate: `${normalizedRotation}deg` }],
           }}
-        >
-          <View
-            style={{
-              width,
-              height,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <RNImage
-              source={{ uri }}
-              resizeMode="contain"
-              style={{
-                width: renderWidth,
-                height: renderHeight,
-                transform: [{ rotate: `${normalizedRotation}deg` }],
-              }}
-            />
-          </View>
-        </Zoomable>
-      </View>
+        />
+      </ImageZoom>
     </View>
   );
 });
@@ -216,13 +250,9 @@ const ViewerContent = memo(function ViewerContent({
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
-  const pagerRef = useRef(null);
   const rotationsRef = useRef({});
   const rotationsFlushedRef = useRef(false);
-  const zoomedMapRef = useRef({});
   const closeInFlightRef = useRef(false);
-  const dismissTranslateY = useSharedValue(0);
-  const dismissing = useSharedValue(false);
 
   const overlayBg = useMemo(() => withAlpha(VIEWER_BG, VIEWER_OVERLAY_ALPHA), []);
 
@@ -325,7 +355,6 @@ const ViewerContent = memo(function ViewerContent({
 
   const [localImages, setLocalImages] = useState([]);
   const [localIndex, setLocalIndex] = useState(0);
-  const [listKey, setListKey] = useState(0);
   const [toolbarVisible, setToolbarVisible] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -338,7 +367,6 @@ const ViewerContent = memo(function ViewerContent({
     if (!images?.length) {
       setLocalImages([]);
       setLocalIndex(0);
-      setListKey((value) => value + 1);
       setToolbarVisible(true);
       setMenuOpen(false);
       setInfoOpen(false);
@@ -348,15 +376,11 @@ const ViewerContent = memo(function ViewerContent({
       setRotations({});
       rotationsRef.current = {};
       rotationsFlushedRef.current = false;
-      zoomedMapRef.current = {};
       return;
     }
-    dismissTranslateY.value = 0;
-    dismissing.value = false;
     closeInFlightRef.current = false;
     setLocalImages([...images]);
     setLocalIndex(Math.max(0, Math.min(initialIndex, images.length - 1)));
-    setListKey((value) => value + 1);
     setToolbarVisible(true);
     setMenuOpen(false);
     setInfoOpen(false);
@@ -366,18 +390,11 @@ const ViewerContent = memo(function ViewerContent({
     setRotations({});
     rotationsRef.current = {};
     rotationsFlushedRef.current = false;
-    zoomedMapRef.current = {};
-  }, [dismissing, dismissTranslateY, images, initialIndex]);
+  }, [images, initialIndex]);
 
   useEffect(() => {
     rotationsRef.current = rotations;
   }, [rotations]);
-
-  useEffect(() => {
-    pagerRef.current?.setScrollEnabled?.(
-      !(zoomedMapRef.current[localIndex] || false) && imageCount > 1,
-    );
-  }, [imageCount, listKey, localIndex]);
 
   const imageCount = localImages.length;
 
@@ -418,59 +435,6 @@ const ViewerContent = memo(function ViewerContent({
     flushRotations();
   }, [flushRotations]);
 
-  const dismissAnimatedStyle = useAnimatedStyle(() => ({
-    opacity: 1 - Math.min(0.35, Math.abs(dismissTranslateY.value) / (viewportHeight * 2)),
-    transform: [{ translateY: dismissTranslateY.value }],
-  }), [viewportHeight]);
-
-  const closeSwipeGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .enabled(!(zoomedMapRef.current[localIndex] || false))
-        .maxPointers(1)
-        .minDistance(20)
-        .activeOffsetY([-30, 30])
-        .failOffsetX([-8, 8])
-        .onUpdate((event) => {
-          if (dismissing.value) return;
-          const verticalDominant = Math.abs(event.translationY) > Math.abs(event.translationX) * 1.25;
-          if (!verticalDominant) return;
-          dismissTranslateY.value = event.translationY;
-        })
-        .onEnd((event) => {
-          if (dismissing.value) return;
-          const verticalDominant = Math.abs(event.translationY) > Math.abs(event.translationX) * 1.25;
-          if (!verticalDominant) {
-            dismissTranslateY.value = withTiming(0, { duration: 170 });
-            return;
-          }
-          const distanceY = Math.abs(event.translationY);
-          const velocityY = Math.abs(event.velocityY);
-          const shouldClose =
-            distanceY >= CLOSE_SWIPE_DISTANCE ||
-            (velocityY >= CLOSE_SWIPE_MIN_VELOCITY && distanceY >= 36);
-
-          if (shouldClose) {
-            dismissing.value = true;
-            const targetY = event.translationY >= 0 ? viewportHeight : -viewportHeight;
-            dismissTranslateY.value = withTiming(targetY, { duration: 220 }, (finished) => {
-              if (finished) {
-                runOnJS(handleClose)();
-              }
-            });
-            return;
-          }
-
-          dismissing.value = false;
-          dismissTranslateY.value = withTiming(0, { duration: 170 });
-        })
-        .onFinalize(() => {
-          if (dismissing.value) return;
-          dismissTranslateY.value = withTiming(0, { duration: 170 });
-        }),
-    [dismissing, dismissTranslateY, handleClose, localIndex, viewportHeight],
-  );
-
   const handleTap = useCallback(() => {
     if (menuOpen || infoOpen) {
       setMenuOpen(false);
@@ -480,36 +444,28 @@ const ViewerContent = memo(function ViewerContent({
     setToolbarVisible((visible) => !visible);
   }, [infoOpen, menuOpen]);
 
-  const handleZoomStateChange = useCallback((index, zoomed) => {
-    zoomedMapRef.current[index] = zoomed;
-    if (index === localIndex) {
-      pagerRef.current?.setScrollEnabled?.(!zoomed && imageCount > 1);
-    }
-  }, [imageCount, localIndex]);
-
-  const restorePagerScroll = useCallback(() => {
-    pagerRef.current?.setScrollEnabled?.(
-      !(zoomedMapRef.current[localIndex] || false) && imageCount > 1,
-    );
-  }, [imageCount, localIndex]);
-
-  const handlePageSelected = useCallback((event) => {
-    const nextIndex = Math.max(0, Math.min(localImages.length - 1, event?.nativeEvent?.position || 0));
-    setLocalIndex(nextIndex);
-    pagerRef.current?.setScrollEnabled?.(
-      !(zoomedMapRef.current[nextIndex] || false) && localImages.length > 1,
-    );
-  }, [localImages.length]);
+  const handleSwipePage = useCallback(
+    (nextIndex) => {
+      const clampedIndex = Math.max(0, Math.min(localImages.length - 1, nextIndex));
+      if (clampedIndex === localIndex) return;
+      setLocalIndex(clampedIndex);
+    },
+    [localImages.length, localIndex],
+  );
 
   const currentUri = localImages[localIndex];
 
   const handleRotate = useCallback(() => {
     if (!currentUri) return;
     haptic();
-    setRotations((prev) => ({
-      ...prev,
-      [localIndex]: ((prev[localIndex] || 0) + 90) % 360,
-    }));
+    setRotations((prev) => {
+      const next = {
+        ...prev,
+        [localIndex]: ((prev[localIndex] || 0) + 90) % 360,
+      };
+      rotationsRef.current = next;
+      return next;
+    });
   }, [currentUri, localIndex]);
 
   const handleShare = useCallback(async () => {
@@ -604,7 +560,6 @@ const ViewerContent = memo(function ViewerContent({
     setRotations(nextRotations);
     setLocalImages(remaining);
     setLocalIndex(Math.min(idx, remaining.length - 1));
-    setListKey((value) => value + 1);
     setConfirmDelete(false);
     setDeleting(false);
   }, [deleting, handleClose, localImages, localIndex, onDelete, rotations, t, toast]);
@@ -653,13 +608,13 @@ const ViewerContent = memo(function ViewerContent({
         index={index}
         isActive={index === localIndex}
         onTap={handleTap}
-        onZoomStateChange={handleZoomStateChange}
+        onSwipePage={handleSwipePage}
         rotation={rotations[index] || 0}
         uri={item}
         width={viewportWidth}
       />
     ),
-    [handleTap, handleZoomStateChange, localIndex, rotations, viewportHeight, viewportWidth],
+    [handleSwipePage, handleTap, localIndex, rotations, viewportHeight, viewportWidth],
   );
 
   if (!imageCount) {
@@ -699,33 +654,9 @@ const ViewerContent = memo(function ViewerContent({
     <View style={ds.root}>
       <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
 
-      <GestureDetector gesture={closeSwipeGesture}>
-        <Animated.View style={[ds.gallery, dismissAnimatedStyle]}>
-          <PagerView
-            key={listKey}
-            ref={pagerRef}
-            initialPage={localIndex}
-            scrollEnabled={imageCount > 1}
-            overScrollMode="never"
-            offscreenPageLimit={1}
-            pageMargin={PAGE_GAP}
-            onPageSelected={handlePageSelected}
-            style={ds.gallery}
-          >
-            {localImages.map((item, index) => (
-              <View
-                key={`${item}_${index}`}
-                collapsable={false}
-                style={{ width: viewportWidth, height: viewportHeight }}
-              >
-                {Math.abs(index - localIndex) <= ACTIVE_PAGE_BUFFER
-                  ? renderPage({ item, index })
-                  : null}
-              </View>
-            ))}
-          </PagerView>
-        </Animated.View>
-      </GestureDetector>
+      <View style={ds.gallery}>
+        {renderPage({ item: localImages[localIndex], index: localIndex })}
+      </View>
 
       {toolbarVisible ? (
         <Animated.View
@@ -779,8 +710,6 @@ const ViewerContent = memo(function ViewerContent({
               </Pressable>
 
               <Pressable
-                onPressIn={() => pagerRef.current?.setScrollEnabled?.(false)}
-                onPressOut={restorePagerScroll}
                 onPress={(event) => {
                   event?.stopPropagation?.();
                   handleRotate();
@@ -894,12 +823,12 @@ function FullscreenImageViewer({
   onRotateSave,
   categoryLabel,
   capturePreviewMode = false,
+  onDismiss,
 }) {
-  if (!visible) return null;
   if (!capturePreviewMode && !images?.length) return null;
 
   return (
-    <AnimatedFullscreenModal visible animation="fade" onRequestClose={onClose}>
+    <AnimatedFullscreenModal visible={visible} animation="fade" onRequestClose={onClose} onDismiss={onDismiss}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <ToastProvider>
           <ViewerContent

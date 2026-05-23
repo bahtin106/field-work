@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { onlineManager, type QueryClient } from '@tanstack/react-query';
+import { useSyncExternalStore } from 'react';
 import { getRequestById, updateRequest } from '../../features/requests/api';
 import { getClientById, updateClient } from '../../features/clients/api';
 import { getClientObjectById, updateClientObject } from '../../features/objects/api';
@@ -29,9 +30,16 @@ type Listener = () => void;
 
 let lastNetState: NetInfoState | null = null;
 let isSyncing = false;
+let cachedOfflineSnapshot: {
+  isNetworkKnown: boolean;
+  isOnline: boolean;
+  isPoorConnection: boolean;
+  isSyncing: boolean;
+} | null = null;
 const listeners = new Set<Listener>();
 
 function emit() {
+  cachedOfflineSnapshot = null;
   for (const listener of Array.from(listeners)) {
     try {
       listener();
@@ -45,24 +53,33 @@ export function subscribeOfflineState(listener: Listener) {
 }
 
 export function getOfflineSnapshot() {
-  const isConnected = lastNetState?.isConnected !== false;
+  if (cachedOfflineSnapshot) return cachedOfflineSnapshot;
+
+  const isNetworkKnown = lastNetState !== null;
+  const isConnected = lastNetState?.isConnected === true;
   const reachable = lastNetState?.isInternetReachable;
-  const isInternetReachable = reachable !== false;
+  const isInternetReachable = reachable === true || (reachable == null && isConnected);
   const isExpensive = !!lastNetState?.details?.isConnectionExpensive;
   const cellularGeneration = String((lastNetState?.details as any)?.cellularGeneration || '');
   const isPoorConnection = isConnected && isInternetReachable && (isExpensive || cellularGeneration === '2g');
 
-  return {
-    isOnline: isConnected && isInternetReachable,
+  cachedOfflineSnapshot = {
+    isNetworkKnown,
+    isOnline: isNetworkKnown && isConnected && isInternetReachable,
     isPoorConnection,
     isSyncing,
   };
+  return cachedOfflineSnapshot;
 }
 
 export function setOfflineNetState(state: NetInfoState | null) {
   lastNetState = state;
   onlineManager.setOnline(Boolean(state?.isConnected) && state?.isInternetReachable !== false);
   emit();
+}
+
+export function useOfflineSnapshot() {
+  return useSyncExternalStore(subscribeOfflineState, getOfflineSnapshot, getOfflineSnapshot);
 }
 
 export function isOfflineLikeError(error: any) {

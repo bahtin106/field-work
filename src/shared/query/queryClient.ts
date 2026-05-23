@@ -15,7 +15,7 @@ const PERSIST_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 350 * 1024;
 const HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 220 * 1024;
 const DEFAULT_QUERY_STALE_MS = 60 * 1000;
-const DEFAULT_QUERY_GC_MS = 30 * 60 * 1000;
+const DEFAULT_QUERY_GC_MS = PERSIST_MAX_AGE_MS;
 const DEFAULT_MAX_RETRIES = 2;
 
 function getErrorStatus(error: any): number | null {
@@ -91,121 +91,121 @@ export const queryClient = new QueryClient({
 
 queryClient.setQueryDefaults(['requests', 'all'], {
   staleTime: 20 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['requests', 'my'], {
   staleTime: 20 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['requests', 'calendar'], {
   staleTime: 20 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['requests', 'detail'], {
   staleTime: 45 * 1000,
-  gcTime: 45 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['employees', 'list'], {
   staleTime: 60 * 1000,
-  gcTime: 45 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
 });
 queryClient.setQueryDefaults(['employees', 'detail'], {
   staleTime: 120 * 1000,
-  gcTime: 45 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
 });
 queryClient.setQueryDefaults(['employees', 'departments'], {
   staleTime: 10 * 60 * 1000,
-  gcTime: 60 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
 });
 queryClient.setQueryDefaults(['clients'], {
   staleTime: 45 * 1000,
-  gcTime: 45 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['objects'], {
   staleTime: 45 * 1000,
-  gcTime: 45 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['finance'], {
   staleTime: 30 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['appSettings'], {
   staleTime: 2 * 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyEntitlements'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyStorageUsage'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyAccessState'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['companyPaidSeatsTotal'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['billingMemberStats'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminCompanies'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminCompany'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminCompanySubscriptionMeta'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['adminUsers'], {
   staleTime: 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['tags'], {
   staleTime: 30 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 queryClient.setQueryDefaults(['field-settings'], {
   staleTime: 5 * 60 * 1000,
-  gcTime: 60 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: false,
 });
 queryClient.setQueryDefaults(COMPANY_SETTINGS_QUERY_KEY, {
   staleTime: 5 * 60 * 1000,
-  gcTime: 30 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
 
 queryClient.setQueryDefaults(['session'], { retry: 0, gcTime: 0 });
-queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: 5 * 60 * 1000 });
-queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: 5 * 60 * 1000 });
-queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: 5 * 60 * 1000 });
+queryClient.setQueryDefaults(['userRole'], { retry: 1, gcTime: PERSIST_MAX_AGE_MS });
+queryClient.setQueryDefaults(['perm-canViewAll'], { retry: 1, gcTime: PERSIST_MAX_AGE_MS });
+queryClient.setQueryDefaults(['profile'], { retry: 1, gcTime: PERSIST_MAX_AGE_MS });
 
 export const persister = createAsyncStoragePersister({ storage: AsyncStorage });
 
@@ -221,6 +221,37 @@ function getObserverCount(query: any): number {
   return 0;
 }
 
+function isDurableOfflineQuery(queryKey: any): boolean {
+  const key0 = Array.isArray(queryKey) ? queryKey[0] : null;
+  const key1 = Array.isArray(queryKey) ? queryKey[1] : null;
+  if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar' || key1 === 'detail')) {
+    return true;
+  }
+  if (key0 === 'employees' && (key1 === 'list' || key1 === 'detail' || key1 === 'departments')) {
+    return true;
+  }
+  if (key0 === 'clients' || key0 === 'objects' || key0 === 'tags' || key0 === 'field-settings') {
+    return true;
+  }
+  if (key0 === 'profile' && (key1 === 'me' || key1 === 'company-id')) {
+    return true;
+  }
+  if (
+    key0 === 'appSettings' ||
+    key0 === 'companyEntitlements' ||
+    key0 === 'companyStorageUsage' ||
+    key0 === 'companyAccessState' ||
+    key0 === 'companyPaidSeatsTotal' ||
+    key0 === 'billingMemberStats'
+  ) {
+    return true;
+  }
+  if (Array.isArray(queryKey) && Array.isArray(COMPANY_SETTINGS_QUERY_KEY)) {
+    return COMPANY_SETTINGS_QUERY_KEY.every((part, index) => queryKey[index] === part);
+  }
+  return false;
+}
+
 function trimQueryCount(maxEntries = QUERY_CACHE_MAX_ENTRIES) {
   const all = queryClient.getQueryCache().getAll();
   if (all.length <= maxEntries) return 0;
@@ -228,7 +259,11 @@ function trimQueryCount(maxEntries = QUERY_CACHE_MAX_ENTRIES) {
   const needToRemove = all.length - maxEntries;
   const removable = all
     .filter((q) => getObserverCount(q) === 0)
-    .sort((a, b) => (a?.state?.dataUpdatedAt || 0) - (b?.state?.dataUpdatedAt || 0));
+    .sort((a, b) => {
+      const durableOrder = Number(isDurableOfflineQuery(a.queryKey)) - Number(isDurableOfflineQuery(b.queryKey));
+      if (durableOrder !== 0) return durableOrder;
+      return (a?.state?.dataUpdatedAt || 0) - (b?.state?.dataUpdatedAt || 0);
+    });
 
   const candidates = removable.slice(0, needToRemove);
   for (const q of candidates) {
@@ -244,6 +279,7 @@ function pruneInactiveOldQueries(maxAgeMs = INACTIVE_QUERY_MAX_AGE_MS) {
 
   for (const q of all) {
     const isActive = getObserverCount(q) > 0;
+    if (isDurableOfflineQuery(q.queryKey)) continue;
     const updatedAt = q?.state?.dataUpdatedAt || 0;
     if (!isActive && updatedAt > 0 && updatedAt < cutoff) {
       queryClient.removeQueries({ queryKey: q.queryKey, exact: true });
@@ -309,7 +345,10 @@ export const persistOptions = {
     shouldDehydrateQuery: (q) => {
       const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
       const key1 = Array.isArray(q.queryKey) ? q.queryKey[1] : null;
-      if (key0 === 'session' || key0 === 'userRole' || key0 === 'profile' || key0 === 'perm-canViewAll') {
+      if (key0 === 'session' || key0 === 'userRole' || key0 === 'perm-canViewAll') {
+        return false;
+      }
+      if (key0 === 'profile' && key1 !== 'me' && key1 !== 'company-id') {
         return false;
       }
       if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) {

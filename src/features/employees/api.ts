@@ -85,6 +85,7 @@ function normalizeEmployee(row: any) {
     is_admin_blocked: isAdminBlocked,
     license_state: licenseState,
     display_name: full_name_raw || row?.email || '',
+    userId: row?.user_id ?? row?.userId ?? null,
     // add camelCase aliases expected by UI
     firstName: first_name || '',
     lastName: last_name || '',
@@ -191,11 +192,10 @@ export async function getEmployeeById(userId: any) {
           if (!fullErr) {
             const full = Array.isArray(fullRows) ? fullRows[0] : null;
             if (full) {
-              const { data: profileFlags } = await supabase
-                .from('profiles')
-                .select('company_id, first_name, last_name, middle_name, full_name, email, is_admin_blocked, license_state, blocked_reason')
-                .eq('id', targetProfileId)
-                .maybeSingle();
+              const { data: profileFlags } = await selectProfileByLookup(
+                targetProfileId,
+                'id, user_id, company_id, first_name, last_name, middle_name, full_name, email, is_admin_blocked, license_state, blocked_reason',
+              );
               const isSuspended = !!(profileFlags?.is_admin_blocked || full?.is_suspended);
               const isAdminBlocked = !!(profileFlags?.is_admin_blocked);
               const licenseState = profileFlags?.license_state || full?.license_state || 'active';
@@ -208,6 +208,7 @@ export async function getEmployeeById(userId: any) {
               return {
                 ...normalizeEmployee({
                   id: full.profile_id,
+                  user_id: profileFlags?.user_id ?? full.user_id,
                   first_name: profileFlags?.first_name ?? full.first_name,
                   last_name: profileFlags?.last_name ?? full.last_name,
                   middle_name: profileFlags?.middle_name ?? full.middle_name,
@@ -276,11 +277,10 @@ export async function getEmployeeById(userId: any) {
       return null;
     }
 
-    const { data: prof, error } = await supabase
-      .from('profiles')
-      .select('id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at')
-      .eq('id', targetProfileId)
-      .maybeSingle();
+    const { data: prof, error } = await selectProfileByLookup(
+      targetProfileId,
+      'id, user_id, first_name, last_name, middle_name, full_name, phone, avatar_url, department_id, company_id, is_admin_blocked, license_state, blocked_reason, birthdate, role, last_seen_at',
+    );
 
     if (error) throw error;
     if (!prof) return null;

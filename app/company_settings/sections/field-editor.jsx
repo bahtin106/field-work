@@ -4,7 +4,6 @@ import React from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -20,6 +19,7 @@ import Card from '../../../components/ui/Card';
 import ThemedSwitch from '../../../components/ui/ThemedSwitch';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
+import { KeyboardAwareScrollView } from '../../../lib/keyboardControllerCompat';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import {
   ENTITY_FIELD_TYPES,
@@ -47,7 +47,7 @@ const ENTITY_ROWS = [
   {
     id: ENTITY_FIELD_TYPES.OBJECT,
     titleKey: 'field_settings_tab_object',
-    fallbackTitle: 'Новые объекты',
+    fallbackTitle: 'Объекты',
   },
   {
     id: ENTITY_FIELD_TYPES.EMPLOYEE,
@@ -735,21 +735,32 @@ export default function FieldEditorScreen() {
           <View style={[base.row, s.fieldRow, field.isEnabled === false ? s.fieldRowDisabled : null]}>
             <View style={s.fieldInfo}>
               <View style={s.fieldTitleRow}>
-                {allowCustomLabelEdit && !isLabelEditing ? (
+                {allowCustomLabelEdit ? (
                   <Pressable
-                    onPress={() => openLabelEditor(entityType, field)}
+                    onPress={() => {
+                      if (isLabelEditing) {
+                        applyLabelEditor();
+                        labelInputRef.current?.blur?.();
+                      } else {
+                        openLabelEditor(entityType, field);
+                      }
+                    }}
                     style={({ pressed }) => [
                       s.fieldEditIconBtn,
                       s.fieldEditIconBtnInline,
                       pressed ? s.fieldEditIconBtnPressed : null,
                     ]}
                     accessibilityRole="button"
-                    accessibilityLabel={t('common_edit', 'Изменить')}
+                    accessibilityLabel={
+                      isLabelEditing
+                        ? t('btn_save', 'Save')
+                        : t('common_edit', 'Изменить')
+                    }
                   >
                     <Feather
-                      name="edit-2"
+                      name={isLabelEditing ? 'check' : 'edit-2'}
                       size={Math.max(10, Math.round((theme.icons?.sm ?? 16) / 1.5))}
-                      color={theme.colors.textSecondary}
+                      color={isLabelEditing ? theme.colors.primary : theme.colors.textSecondary}
                     />
                   </Pressable>
                 ) : null}
@@ -813,6 +824,7 @@ export default function FieldEditorScreen() {
       applyLabelEditor,
       s,
       t,
+      theme.colors.primary,
       theme.colors.textSecondary,
       theme.icons?.sm,
     ],
@@ -868,10 +880,13 @@ export default function FieldEditorScreen() {
 
   return (
     <Screen background="background" scroll={false}>
-      <ScrollView
+      <KeyboardAwareScrollView
         ref={scrollRef}
         contentContainerStyle={s.content}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
+        bottomOffset={theme.components?.keyboardAware?.bottomOffset ?? 40}
+        extraKeyboardSpace={theme.components?.keyboardAware?.extraKeyboardSpace ?? 0}
         stickyHeaderIndices={[0]}
       >
         <View style={s.stickyHeaderShell}>
@@ -950,7 +965,7 @@ export default function FieldEditorScreen() {
             );
           })}
         </Card>
-      </ScrollView>
+      </KeyboardAwareScrollView>
       <View style={s.footerBar}>
         <Button
           title={isSavingAny ? t('btn_saving', 'Saving...') : t('btn_save', 'Save')}

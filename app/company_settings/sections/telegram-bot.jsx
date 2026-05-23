@@ -23,7 +23,7 @@ function fieldLabel(field) {
   return String(field?.label || field?.field_key || '').trim();
 }
 
-const LOCKED_FIELD_KEYS = new Set(['customer_name', 'phone', 'city', 'street', 'house']);
+const LOCKED_FIELD_KEYS = new Set(['customer_name', 'phone']);
 const CLIENT_FIELD_KEYS = new Set(['customer_name', 'phone', 'secondary_phone', 'email']);
 const ADDRESS_FIELD_KEYS = new Set([
   'country',
@@ -36,7 +36,8 @@ const ADDRESS_FIELD_KEYS = new Set([
   'floor',
   'entrance',
   'apartment',
-  'comment',
+  'entrance_info',
+  'parking_notes',
 ]);
 const FIELD_SWITCH_COLUMN_WIDTH = 72;
 
@@ -98,8 +99,8 @@ export default function TelegramBotSettingsScreen() {
         config: next?.config || {},
         fields: (next?.fields || []).map((field, index) => ({
           field_key: field.field_key,
-          is_enabled: field.is_enabled !== false,
-          is_required: field.is_required === true,
+          is_enabled: LOCKED_FIELD_KEYS.has(String(field.field_key || '')) ? true : field.is_enabled !== false,
+          is_required: LOCKED_FIELD_KEYS.has(String(field.field_key || '')),
           sort_order: index + 1,
         })),
       });
@@ -142,8 +143,8 @@ export default function TelegramBotSettingsScreen() {
           config: next?.config || {},
           fields: (next?.fields || []).map((field, index) => ({
             field_key: field.field_key,
-            is_enabled: field.is_enabled !== false,
-            is_required: field.is_required === true,
+              is_enabled: LOCKED_FIELD_KEYS.has(String(field.field_key || '')) ? true : field.is_enabled !== false,
+              is_required: LOCKED_FIELD_KEYS.has(String(field.field_key || '')),
             sort_order: index + 1,
           })),
         });
@@ -217,6 +218,13 @@ export default function TelegramBotSettingsScreen() {
     [orderedFields],
   );
 
+  const enabledAvailableFieldCount = React.useMemo(
+    () => orderedFields.filter((field) =>
+      field?.disabled_by_field_settings !== true && field?.is_enabled !== false
+    ).length,
+    [orderedFields],
+  );
+
   const setLocalData = React.useCallback((nextOrUpdater) => {
     localVersionRef.current += 1;
     setData((prev) => {
@@ -252,8 +260,8 @@ export default function TelegramBotSettingsScreen() {
     config: snapshot?.config || {},
     fields: (snapshot?.fields || []).map((field, index) => ({
       field_key: field.field_key,
-      is_enabled: field.is_enabled !== false,
-      is_required: field.is_required === true,
+      is_enabled: LOCKED_FIELD_KEYS.has(String(field.field_key || '')) ? true : field.is_enabled !== false,
+      is_required: LOCKED_FIELD_KEYS.has(String(field.field_key || '')),
       sort_order: index + 1,
     })),
   }), []);
@@ -304,6 +312,10 @@ export default function TelegramBotSettingsScreen() {
   }, [buildSavePayload, markSaved, serializePayload, t, toast]);
 
   const toggleBotEnabled = React.useCallback(async (value) => {
+    if (value === true && enabledAvailableFieldCount <= 0) {
+      toast.info(t('company_settings_telegram_at_least_one_field_toast'));
+      return;
+    }
     const previous = data;
     const nextSnapshot = {
       ...(data || {}),
@@ -326,7 +338,7 @@ export default function TelegramBotSettingsScreen() {
         dataRef.current = previous;
       }
     }
-  }, [data, saveSnapshot, setLocalData]);
+  }, [data, enabledAvailableFieldCount, saveSnapshot, setLocalData, t, toast]);
 
   const handleRouteToFeedToggle = React.useCallback((value) => {
     if (value) {
@@ -405,22 +417,19 @@ export default function TelegramBotSettingsScreen() {
       toast.info(t('company_settings_telegram_locked_field_toast'));
       return;
     }
-    updateField(field.field_key, {
-      is_enabled: value,
-      is_required: value ? field.is_required === true : false,
-    });
-  }, [t, toast, updateField]);
-
-  const handleFieldRequiredToggle = React.useCallback((field, value) => {
-    if (LOCKED_FIELD_KEYS.has(String(field?.field_key || ''))) {
-      toast.info(t('company_settings_telegram_locked_field_toast'));
+    if (field?.disabled_by_field_settings === true) {
+      toast.info(t('company_settings_telegram_field_disabled_by_settings'));
+      return;
+    }
+    if (value === false && field?.is_enabled !== false && enabledAvailableFieldCount <= 1) {
+      toast.info(t('company_settings_telegram_at_least_one_field_toast'));
       return;
     }
     updateField(field.field_key, {
-      is_enabled: value ? true : field.is_enabled !== false,
-      is_required: value === true,
+      is_enabled: value,
+      is_required: false,
     });
-  }, [t, toast, updateField]);
+  }, [enabledAvailableFieldCount, t, toast, updateField]);
 
   const saveStatusText = React.useMemo(() => {
     if (saveState === 'error') return t('company_settings_telegram_status_error');
@@ -434,11 +443,14 @@ export default function TelegramBotSettingsScreen() {
 
   const renderFieldRow = React.useCallback((field) => {
     const isLocked = LOCKED_FIELD_KEYS.has(String(field.field_key || ''));
+    const isDisabledBySettings = !isLocked && field?.disabled_by_field_settings === true;
     return (
       <Pressable
         key={field.field_key}
         onPress={() => {
-          if (isLocked) {
+          if (isDisabledBySettings) {
+            toast.info(t('company_settings_telegram_field_disabled_by_settings'));
+          } else if (isLocked) {
             toast.info(t('company_settings_telegram_locked_field_toast'));
           }
         }}
@@ -447,6 +459,7 @@ export default function TelegramBotSettingsScreen() {
           s.fieldRow,
           field.is_enabled === false ? s.fieldRowDisabled : null,
           isLocked ? s.fieldRowLocked : null,
+          isDisabledBySettings ? s.fieldRowLocked : null,
         ]}
       >
         <View style={s.fieldInfo}>
@@ -461,24 +474,17 @@ export default function TelegramBotSettingsScreen() {
           </Text>
         </View>
         <View style={s.fieldControls}>
-          <View style={[s.fieldSwitchCell, isLocked ? s.lockedControl : null]}>
+          <View style={[s.fieldSwitchCell, isLocked || isDisabledBySettings ? s.lockedControl : null]}>
             <ThemedSwitch
               value={isLocked ? true : field.is_enabled !== false}
               onValueChange={(value) => handleFieldToggle(field, value)}
-              disabled={isLocked}
-            />
-          </View>
-          <View style={[s.fieldSwitchCell, isLocked ? s.lockedControl : null]}>
-            <ThemedSwitch
-              value={isLocked ? true : field.is_required === true}
-              onValueChange={(value) => handleFieldRequiredToggle(field, value)}
-              disabled={isLocked}
+              disabled={isLocked || isDisabledBySettings}
             />
           </View>
         </View>
       </Pressable>
     );
-  }, [base.label, base.row, handleFieldRequiredToggle, handleFieldToggle, s, t, toast]);
+  }, [base.label, base.row, handleFieldToggle, s, t, toast]);
 
   React.useEffect(() => {
     dataRef.current = data;
@@ -694,7 +700,6 @@ export default function TelegramBotSettingsScreen() {
               </View>
               <View style={s.fieldControls}>
                 <Text style={s.fieldColumnTitle}>{t('company_settings_telegram_show_column')}</Text>
-                <Text style={s.fieldColumnTitle}>{t('company_settings_telegram_required_column')}</Text>
               </View>
             </View>
             <View style={base.sep} />
@@ -984,8 +989,8 @@ const styles = (theme) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: theme.spacing.sm,
-      width: FIELD_SWITCH_COLUMN_WIDTH * 2 + theme.spacing.sm,
-      justifyContent: 'space-between',
+      width: FIELD_SWITCH_COLUMN_WIDTH,
+      justifyContent: 'center',
     },
     fieldSwitchCell: {
       width: FIELD_SWITCH_COLUMN_WIDTH,

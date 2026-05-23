@@ -43,11 +43,16 @@ import {
   normalizeOptionalEmail,
 } from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
+import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
-import { useDepartmentsQuery, useEmployee } from '../../../src/features/employees/queries';
+import {
+  updateEmployeeQueryCaches,
+  useDepartmentsQuery,
+  useEmployee,
+} from '../../../src/features/employees/queries';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -1019,7 +1024,7 @@ export default function EditUser() {
     const blockedNow = !!prof.is_admin_blocked
       || prof.license_state === 'blocked_by_license';
 
-    queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
+    updateEmployeeQueryCaches(queryClient, userId, (prev) => ({
       ...(prev || {}),
       ...prof,
       companyId: prof.company_id || prev?.companyId || null,
@@ -1127,6 +1132,12 @@ export default function EditUser() {
       ]
         .map((v) => String(v || '').trim())
         .find((v) => isUuid(v));
+      const edgeTargetAuthUserId = [
+        employeeData?.user_id,
+        employeeData?.userId,
+      ]
+        .map((v) => String(v || '').trim())
+        .find((v) => isUuid(v));
       if (!edgeTargetProfileId) throw new Error('Invalid user id');
       const normalizedNextEmail = normalizeOptionalEmail(email);
       const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
@@ -1194,7 +1205,7 @@ export default function EditUser() {
         if (shouldUpdateAuthEmail || (newPassword && newPassword.length)) {
           await withTimeout(
             updateUserAuthViaFunction({
-              userId: null,
+              userId: edgeTargetAuthUserId || null,
               profileId: edgeTargetProfileId,
               email: shouldUpdateAuthEmail ? normalizedNextEmail : null,
               password: newPassword && newPassword.length ? newPassword : null,
@@ -1231,7 +1242,7 @@ export default function EditUser() {
         if (shouldUpdateAuthEmail || (newPassword && newPassword.length)) {
           await withTimeout(
             updateUserAuthViaFunction({
-              userId: null,
+              userId: edgeTargetAuthUserId || null,
               profileId: edgeTargetProfileId,
               changedBy: meId,
               email: shouldUpdateAuthEmail ? normalizedNextEmail : null,
@@ -1268,8 +1279,11 @@ export default function EditUser() {
           const authPatch = {};
           if (shouldUpdateAuthEmail) authPatch.email = normalizedNextEmail;
           if (newPassword && newPassword.length) authPatch.password = newPassword;
+          const authOptions = shouldUpdateAuthEmail
+            ? { emailRedirectTo: getEmailChangeRedirectUrl() }
+            : undefined;
           const { error: selfAuthErr } = await withTimeout(
-            supabase.auth.updateUser(authPatch),
+            supabase.auth.updateUser(authPatch, authOptions),
             15000,
             'password-update-timeout',
           );
@@ -1299,12 +1313,17 @@ export default function EditUser() {
           avatar: savedAvatarUrl,
         }),
       );
-      queryClient.setQueryData(queryKeys.employees.detail(userId), (prev) => ({
-        ...(prev || {}),
+      const nextEmployeeSnapshot = {
         first_name: firstName.trim() || null,
         middle_name: middleName.trim() || null,
         last_name: lastName.trim() || null,
         full_name: buildFullName(firstName, middleName, lastName) || null,
+        display_name: buildFullName(firstName, middleName, lastName) || normalizeOptionalEmail(email) || '',
+        firstName: firstName.trim() || '',
+        middleName: middleName.trim() || '',
+        lastName: lastName.trim() || '',
+        fullName: buildFullName(firstName, middleName, lastName) || null,
+        displayName: buildFullName(firstName, middleName, lastName) || normalizeOptionalEmail(email) || '',
         email: normalizeOptionalEmail(email),
         phone: normalizeOptionalPhoneForSave(phone),
         birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
@@ -1316,7 +1335,8 @@ export default function EditUser() {
         isSuspended: !!isSuspended,
         meIsAdmin,
         myUid: meId,
-      }));
+      };
+      updateEmployeeQueryCaches(queryClient, userId, nextEmployeeSnapshot);
       queryClient.invalidateQueries({ queryKey: queryKeys.employees.detail(userId) });
       if (meId && String(meId) === String(userId)) {
         const normalizedUserId = String(userId);
@@ -1707,6 +1727,12 @@ export default function EditUser() {
       ]
         .map((v) => String(v || '').trim())
         .find((v) => isUuid(v));
+      const edgeTargetAuthUserId = [
+        employeeData?.user_id,
+        employeeData?.userId,
+      ]
+        .map((v) => String(v || '').trim())
+        .find((v) => isUuid(v));
       if (!edgeTargetProfileId) throw new Error('Invalid user id');
 
       const tempPassword = generateTempPassword();
@@ -1714,7 +1740,7 @@ export default function EditUser() {
       // 1. Обновляем пароль через edge function update_user
       await withTimeout(
         updateUserPasswordViaFunction({
-          userId: null,
+          userId: edgeTargetAuthUserId || null,
           profileId: edgeTargetProfileId,
           newPassword: tempPassword,
           changedBy: meId || userId,
@@ -1754,8 +1780,7 @@ export default function EditUser() {
       if (!emailResponse.ok) {
         const emailError = await emailResponse.text();
         console.warn('[Edit] [Password Reset] Email send failed:', emailError);
-        // РџР°СЂРѕР»СЊ СѓР¶Рµ РѕР±РЅРѕРІР»РµРЅ, РїРѕРєР°Р·С‹РІР°РµРј СѓСЃРїРµС… РґР°Р¶Рµ РµСЃР»Рё email РЅРµ РѕС‚РїСЂР°РІРёР»СЃСЏ
-        showSuccessToast(t('toast_reset_password_sent'));
+        throw new Error('Пароль обновлен, но письмо не отправлено. Проверьте email-сервис и повторите сброс.');
       } else {
         showSuccessToast(t('toast_reset_password_sent'));
       }
@@ -1955,9 +1980,13 @@ export default function EditUser() {
       // Р’С‹Р·С‹РІР°РµРј RPC С„СѓРЅРєС†РёСЋ РґР»СЏ РїСЂРѕРІРµСЂРєРё Р·Р°СЏРІРѕРє
       console.debug('[onAskDelete] calling check_employee_orders for userId:', userId);
 
-      const { data, error } = await supabase.rpc('check_employee_orders', {
-        employee_id: userId
-      });
+      const { data, error } = await withTimeout(
+        supabase.rpc('check_employee_orders', {
+          employee_id: userId,
+        }),
+        15000,
+        'check-orders-timeout',
+      );
 
       console.debug('[onAskDelete] result:', { data, error });
 
@@ -1975,11 +2004,15 @@ export default function EditUser() {
       setPickerItems(availableEmployees || []);
       setSuccessor(null);
       setSuccessorError('');
+      toast.hide();
       setDeleteVisible(true);
     } catch (e) {
       console.error('Ошибка при проверке заявок:', e);
-      setErr(e?.message || t('err_check_orders_failed'));
-      showError(e?.message || t('err_check_orders_failed'));
+      const message = e?.message === 'check-orders-timeout'
+        ? t('err_check_orders_failed')
+        : e?.message || t('err_check_orders_failed');
+      setErr(message);
+      showError(message);
     }
   };
 

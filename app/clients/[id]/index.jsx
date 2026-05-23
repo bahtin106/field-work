@@ -61,6 +61,7 @@ export default function ClientViewScreen() {
   const canViewClients = has('canViewClients');
   const canEditClients = has('canEditClients');
   const canViewObjects = has('canViewObjects');
+  const canViewClientPhones = has('canViewClientPhones');
 
   const { data: client } = useClient(clientId, { enabled: !!clientId && canViewClients });
   const { data: clientFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT, {
@@ -92,6 +93,7 @@ export default function ClientViewScreen() {
         );
       }
       if (key.startsWith('additional_phone_')) {
+        if (!canViewClientPhones) return false;
         const slotId = Number(key.replace('additional_phone_', ''));
         if (!Number.isFinite(slotId) || slotId < 1 || slotId > 3) return false;
         const phoneEntry = getClientAdditionalPhones(client)?.[slotId - 1];
@@ -100,26 +102,45 @@ export default function ClientViewScreen() {
       if (key === 'first_name') return String(client?.firstName || client?.first_name || '').trim().length > 0;
       if (key === 'last_name') return String(client?.lastName || client?.last_name || '').trim().length > 0;
       if (key === 'middle_name') return String(client?.middleName || client?.middle_name || '').trim().length > 0;
-      if (key === 'phone') return String(client?.phone || '').trim().length > 0;
+      if (key === 'phone') return canViewClientPhones && String(client?.phone || '').trim().length > 0;
       if (key === 'email') return String(client?.email || '').trim().length > 0;
       if (key === 'comment') return String(client?.comment || '').trim().length > 0;
       return String(client?.[key] || '').trim().length > 0;
     },
-    [client],
+    [canViewClientPhones, client],
   );
   const isClientFieldVisible = React.useCallback(
-    (fieldKey) => fieldUi.isVisible(fieldKey) || hasPersistedClientFieldValue(fieldKey),
-    [fieldUi, hasPersistedClientFieldValue],
+    (fieldKey) => {
+      const key = String(fieldKey || '');
+      if (key === 'phone' || key.startsWith('additional_phone_')) {
+        return canViewClientPhones && (fieldUi.isVisible(key) || hasPersistedClientFieldValue(key));
+      }
+      return fieldUi.isVisible(key) || hasPersistedClientFieldValue(key);
+    },
+    [canViewClientPhones, fieldUi, hasPersistedClientFieldValue],
   );
   const canShowAvatarImage = isClientFieldVisible('avatar_url');
   const additionalPhones = React.useMemo(() => getClientAdditionalPhones(client), [client]);
   const visibleAdditionalPhones = React.useMemo(
     () =>
       additionalPhones.filter((item, index) =>
-        isClientFieldVisible(`additional_phone_${index + 1}`) && !!item?.phone,
+        canViewClientPhones && isClientFieldVisible(`additional_phone_${index + 1}`) && !!item?.phone,
       ),
-    [additionalPhones, isClientFieldVisible],
+    [additionalPhones, canViewClientPhones, isClientFieldVisible],
   );
+  const fullName = React.useMemo(
+    () =>
+      [client?.lastName, client?.firstName, client?.middleName]
+        .filter((p) => !!p && String(p).trim() !== '')
+        .join(' '),
+    [client?.firstName, client?.lastName, client?.middleName],
+  );
+  const showFullNameRow =
+    (isClientFieldVisible('first_name') ||
+      isClientFieldVisible('last_name') ||
+      isClientFieldVisible('middle_name')) &&
+    hasDisplayValue(fullName);
+  const showCommentRow = isClientFieldVisible('comment') && hasDisplayValue(client?.comment);
   const canShowPersonalSection = ['first_name', 'last_name', 'middle_name', 'comment'].some(isClientFieldVisible);
   const canShowContactSection = React.useMemo(() => {
     const hasVisibleContactField = [
@@ -248,20 +269,16 @@ export default function ClientViewScreen() {
           {canShowPersonalSection ? <SectionHeader topSpacing="xs">{t('section_personal')}</SectionHeader> : null}
           {canShowPersonalSection ? (
           <Card paddedXOnly>
-            {isClientFieldVisible('first_name') || isClientFieldVisible('last_name') || isClientFieldVisible('middle_name') ? (
+            {showFullNameRow ? (
               <>
                 <LabelValueRow
                   label={t('label_full_name')}
-                  value={
-                    [client?.lastName, client?.firstName, client?.middleName]
-                      .filter((p) => !!p && String(p).trim() !== '')
-                      .join(' ') || ''
-                  }
+                  value={fullName}
                 />
-                {isClientFieldVisible('comment') ? <View style={base.sep} /> : null}
+                {showCommentRow ? <View style={base.sep} /> : null}
               </>
             ) : null}
-            {isClientFieldVisible('comment') ? (
+            {showCommentRow ? (
               <LabelValueRow label={t('clients_comment_label')} value={client?.comment || ''} />
             ) : null}
           </Card>

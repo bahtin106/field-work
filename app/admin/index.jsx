@@ -77,6 +77,7 @@ export default function AdminHomeScreen() {
       onPress: () => router.push('/admin/feedbacks'),
       badgeCount: unreadCount,
     },
+    { key: 'promocodes', icon: 'percent', title: 'Промокоды', onPress: () => router.push('/admin/promocodes') },
     { key: 'storage', icon: 'hard-drive', title: t('admin_menu_storage'), onPress: () => router.push('/admin/storage') },
     { key: 'server', icon: 'server', title: t('admin_menu_server'), onPress: () => router.push('/admin/server') },
   ];

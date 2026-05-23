@@ -5,8 +5,8 @@
 // Props: same as RN Modal + `animation` ("slide" | "fade", default "slide").
 // Eliminates JS-bridge lag from native animationType.
 
-import { useCallback, useEffect, useState } from 'react';
-import { Dimensions, Modal, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Dimensions, Modal, Platform, StyleSheet } from 'react-native';
 import Animated, {
   Easing,
   runOnJS,
@@ -33,13 +33,24 @@ export default function AnimatedFullscreenModal({
   const toast = useToast();
   const exitDuration = theme.timings?.panelToggleMs ?? 220;
   const [mounted, setMounted] = useState(false);
+  const [nativeDismissPending, setNativeDismissPending] = useState(false);
+  const dismissNotifiedRef = useRef(false);
   const opacity = useSharedValue(0);
   const translateY = useSharedValue(0);
 
-  const doUnmount = useCallback(() => {
-    setMounted(false);
+  const notifyDismiss = useCallback(() => {
+    if (dismissNotifiedRef.current) return;
+    dismissNotifiedRef.current = true;
     onDismiss?.();
   }, [onDismiss]);
+
+  const doUnmount = useCallback(() => {
+    if (Platform.OS === 'ios') {
+      setNativeDismissPending(true);
+    }
+    setMounted(false);
+    if (Platform.OS !== 'ios') notifyDismiss();
+  }, [notifyDismiss]);
 
   const runOpenAnimation = useCallback(() => {
     opacity.value = withTiming(1, { duration: 130, easing: EASE_IN });
@@ -51,6 +62,8 @@ export default function AnimatedFullscreenModal({
   useEffect(() => {
     if (visible) {
       // Set invisible starting position before mount
+      dismissNotifiedRef.current = false;
+      setNativeDismissPending(false);
       opacity.value = 0;
       if (animation === 'slide') translateY.value = 60;
       setMounted(true);
@@ -78,7 +91,7 @@ export default function AnimatedFullscreenModal({
     };
   });
 
-  if (!visible && !mounted) return null;
+  if (!visible && !mounted && !nativeDismissPending) return null;
 
   return (
     <Modal
@@ -89,6 +102,10 @@ export default function AnimatedFullscreenModal({
       presentationStyle="overFullScreen"
       onRequestClose={onRequestClose}
       onShow={runOpenAnimation}
+      onDismiss={() => {
+        setNativeDismissPending(false);
+        notifyDismiss();
+      }}
       {...rest}
     >
       <Animated.View style={[styles.fill, animStyle]}>

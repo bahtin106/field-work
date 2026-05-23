@@ -2,31 +2,39 @@
 import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
-import { format, startOfMonth } from 'date-fns';
+import { addDays, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
 import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { ru as dfnsRu } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
+  ActivityIndicator,
   BackHandler,
   Dimensions,
   FlatList,
   InteractionManager,
   Platform,
   Pressable,
+  SectionList,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { LocaleConfig } from 'react-native-calendars';
 import Animated, {
+  cancelAnimation,
   Extrapolate,
   interpolate,
   runOnJS,
+  scrollTo,
   useAnimatedRef,
+  useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
   useSharedValue,
+  withDecay,
+  withSpring,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -109,10 +117,99 @@ const DAY_KEYS = [
   'day_short_sa',
   'day_short_su',
 ];
+
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
+const MONTH_COLLAPSE_SNAP_THRESHOLD = 0.5;
+const MONTH_COLLAPSE_VELOCITY_THRESHOLD = 560;
+const MONTH_COLLAPSE_SPRING = {
+  damping: 36,
+  stiffness: 420,
+  mass: 0.86,
+  overshootClamping: true,
+  restDisplacementThreshold: 0.35,
+  restSpeedThreshold: 8,
+};
+const MONTH_ORDERS_DECAY = 0.998;
+const MONTH_ORDERS_HEADER_FALLBACK_HEIGHT = 72;
+
 function nowMs() {
   const perf = globalThis?.performance;
   if (perf && typeof perf.now === 'function') return perf.now();
   return Date.now();
+}
+
+function parseCalendarDateKey(value, fallback = new Date()) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  return fallback;
+}
+
+function formatWeekRangeLabel(startDate, endDate) {
+  if (!startDate || !endDate) return '';
+  const sameYear = startDate.getFullYear() === endDate.getFullYear();
+  const sameMonth = sameYear && startDate.getMonth() === endDate.getMonth();
+  if (sameMonth) {
+    return `${format(startDate, 'd', { locale: dfnsRu })}–${format(endDate, 'd MMMM yyyy', { locale: dfnsRu })}`;
+  }
+  if (sameYear) {
+    return `${format(startDate, 'd MMM', { locale: dfnsRu })} – ${format(endDate, 'd MMM yyyy', { locale: dfnsRu })}`;
+  }
+  return `${format(startDate, 'd MMM yyyy', { locale: dfnsRu })} – ${format(endDate, 'd MMM yyyy', { locale: dfnsRu })}`;
+}
+
+function hasExplicitTimeInDatetime(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  const timeMatch = raw.match(/[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/);
+  if (!timeMatch) return false;
+  const hours = Number(timeMatch[1]);
+  const minutes = Number(timeMatch[2]);
+  const seconds = Number(timeMatch[3] || 0);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return false;
+  }
+  return hours !== 0 || minutes !== 0 || seconds !== 0;
+}
+
+function getOrderScheduleSortValue(order) {
+  const rawDepartureTime = String(order?.departure_time || '').trim();
+  const timeMatch = rawDepartureTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (timeMatch) {
+    const hours = Number(timeMatch[1]);
+    const minutes = Number(timeMatch[2]);
+    const seconds = Number(timeMatch[3] || 0);
+    if (
+      Number.isFinite(hours) &&
+      Number.isFinite(minutes) &&
+      Number.isFinite(seconds) &&
+      hours >= 0 &&
+      hours <= 23 &&
+      minutes >= 0 &&
+      minutes <= 59 &&
+      seconds >= 0 &&
+      seconds <= 59
+    ) {
+      return hours * 60 * 60 + minutes * 60 + seconds;
+    }
+  }
+
+  const startRaw = order?.time_window_start;
+  if (!hasExplicitTimeInDatetime(startRaw)) return Number.POSITIVE_INFINITY;
+  if (!startRaw) return Number.POSITIVE_INFINITY;
+  const parsed = new Date(startRaw);
+  if (Number.isNaN(parsed.getTime())) return Number.POSITIVE_INFINITY;
+  const hours = parsed.getHours();
+  const minutes = parsed.getMinutes();
+  const seconds = parsed.getSeconds();
+  if (hours === 0 && minutes === 0 && seconds === 0) return Number.POSITIVE_INFINITY;
+  return hours * 60 * 60 + minutes * 60 + seconds;
 }
 
 function CalendarScreenContent() {
@@ -423,14 +520,13 @@ function CalendarScreenContent() {
   const [measuredWeekRowHeight, setMeasuredWeekRowHeight] = useState(layoutMetrics.weekRowHeight);
 
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const isSnapping = false;
 
   const collapseTranslate = useSharedValue(0);
   const scrollY = useSharedValue(0);
   const visibleMonthIndex = useSharedValue(MONTH_LIST_MIDDLE_INDEX);
   const isCollapsedShared = useSharedValue(false);
   const monthPagerRef = useAnimatedRef();
-  const ordersListRef = useRef(null);
+  const ordersListRef = useAnimatedRef();
   const lastHandledPageIndex = useRef(MONTH_LIST_MIDDLE_INDEX);
   const visibleMonthIndexRef = useRef(MONTH_LIST_MIDDLE_INDEX);
   const monthScrollRafRef = useRef(null);
@@ -438,6 +534,12 @@ function CalendarScreenContent() {
   const [visibleMonthRenderIndex, setVisibleMonthRenderIndex] = useState(MONTH_LIST_MIDDLE_INDEX);
   const settledMonthOffsetX = useSharedValue(layoutMetrics.cardWidth * MONTH_LIST_MIDDLE_INDEX);
   const monthSwipeInteraction = useSharedValue(0);
+  const monthOrdersPanStartCollapse = useSharedValue(0);
+  const monthOrdersPanStartScrollY = useSharedValue(0);
+  const monthOrdersMaxScrollY = useSharedValue(0);
+  const monthOrdersHeaderHeight = useSharedValue(MONTH_ORDERS_HEADER_FALLBACK_HEIGHT);
+  const monthOrdersContentHeightRef = useRef(0);
+  const monthOrdersViewportHeightRef = useRef(0);
   const deferInitialMeasureRef = useRef(false);
   const [monthWindowAnchor, setMonthWindowAnchor] = useState(startOfMonth(new Date()));
   const YEAR_LIST_RADIUS = 120;
@@ -501,6 +603,30 @@ function CalendarScreenContent() {
     );
     return found >= 0 ? found : 0;
   }, [monthWeeks, selectedDate]);
+  const selectedDateObj = useMemo(
+    () => parseCalendarDateKey(selectedDate, currentMonth),
+    [currentMonth, selectedDate],
+  );
+  const activeWeekStart = useMemo(
+    () => startOfWeek(selectedDateObj, { weekStartsOn: 1 }),
+    [selectedDateObj],
+  );
+  const activeWeekEnd = useMemo(
+    () => endOfWeek(selectedDateObj, { weekStartsOn: 1 }),
+    [selectedDateObj],
+  );
+  const activeWeekDates = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => addDays(activeWeekStart, index)),
+    [activeWeekStart],
+  );
+  const activeWeekLabel = useMemo(
+    () => formatWeekRangeLabel(activeWeekStart, activeWeekEnd),
+    [activeWeekEnd, activeWeekStart],
+  );
+  const activeDayLabel = useMemo(
+    () => format(selectedDateObj, 'd MMMM yyyy', { locale: dfnsRu }),
+    [selectedDateObj],
+  );
 
   const collapsedRef = useRef(false);
   const resolvedMonthHeaderHeight = Math.max(
@@ -925,20 +1051,6 @@ function CalendarScreenContent() {
           justifyContent: 'flex-start',
           gap: theme.spacing.xs,
         },
-        collapseToggleRow: {
-          width: '100%',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingTop: theme.spacing.xs * 0.5,
-          paddingBottom: theme.spacing.xs,
-        },
-        collapseToggleButton: {
-          width: '100%',
-          height: 30,
-          borderRadius: 11,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
         scopeSwitch: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -999,6 +1111,272 @@ function CalendarScreenContent() {
           textAlign: 'center',
           marginTop: theme.spacing.lg,
         },
+        weekContent: {
+          flex: 1,
+          width: layoutMetrics.cardWidth,
+          alignSelf: 'center',
+        },
+        weekStrip: {
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          paddingHorizontal: theme.spacing.md,
+          paddingBottom: theme.spacing.sm,
+          gap: theme.spacing.xs,
+        },
+        weekDayButton: {
+          flex: 1,
+          minWidth: 0,
+          minHeight: 58,
+          borderRadius: theme.radii.md,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingVertical: theme.spacing.xs,
+        },
+        weekDayButtonActive: {
+          borderColor: theme.colors.primary,
+          backgroundColor: `${theme.colors.primary}14`,
+        },
+        weekDayName: {
+          fontSize: theme.typography.sizes.xs,
+          fontWeight: theme.typography.weight.medium,
+          color: theme.colors.textSecondary,
+          textAlign: 'center',
+        },
+        weekDayNumber: {
+          marginTop: 2,
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.semibold,
+          color: theme.colors.text,
+          textAlign: 'center',
+        },
+        weekDayNumberActive: {
+          color: theme.colors.primary,
+        },
+        weekDayCount: {
+          marginTop: 2,
+          minWidth: 18,
+          height: 18,
+          borderRadius: 9,
+          paddingHorizontal: 5,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.badgeBg || theme.colors.inputBg,
+        },
+        weekDayCountActive: {
+          backgroundColor: theme.colors.primary,
+        },
+        weekDayCountText: {
+          fontSize: theme.typography.sizes.xs * 0.9,
+          fontWeight: theme.typography.weight.semibold,
+          color: theme.colors.textSecondary,
+          textAlign: 'center',
+        },
+        weekDayCountTextActive: {
+          color: theme.colors.onPrimary,
+        },
+        weekToolbar: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: theme.spacing.md,
+          paddingVertical: theme.spacing.sm,
+          borderTopWidth: 1,
+          borderBottomWidth: 1,
+          borderColor: theme.colors.border,
+          gap: theme.spacing.xs,
+        },
+        weekToolbarTitle: {
+          flexShrink: 1,
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.semibold,
+          color: theme.colors.text,
+        },
+        weekList: {
+          flex: 1,
+          width: '100%',
+        },
+        weekListContent: {
+          paddingHorizontal: theme.spacing.md,
+          paddingBottom: Math.max(theme.spacing.xl, insets.bottom),
+        },
+        weekSectionHeader: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginTop: theme.spacing.md,
+          paddingTop: theme.spacing.xs,
+          paddingBottom: theme.spacing.sm,
+          gap: theme.spacing.sm,
+        },
+        weekSectionHeaderActive: {
+          opacity: 1,
+        },
+        weekSectionDateBadge: {
+          width: 46,
+          height: 46,
+          borderRadius: theme.radii.lg,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.surface,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        weekSectionDateBadgeActive: {
+          borderColor: theme.colors.primary,
+          backgroundColor: theme.colors.primary,
+        },
+        weekSectionDayNumber: {
+          fontSize: theme.typography.sizes.lg,
+          lineHeight: theme.typography.sizes.lg * 1.05,
+          fontWeight: theme.typography.weight.bold,
+          color: theme.colors.text,
+          textAlign: 'center',
+        },
+        weekSectionDayNumberActive: {
+          color: theme.colors.onPrimary,
+        },
+        weekSectionDayNameSmall: {
+          marginTop: 1,
+          fontSize: theme.typography.sizes.xs * 0.82,
+          lineHeight: theme.typography.sizes.xs,
+          fontWeight: theme.typography.weight.semibold,
+          color: theme.colors.textSecondary,
+          textAlign: 'center',
+          textTransform: 'uppercase',
+        },
+        weekSectionDayNameSmallActive: {
+          color: theme.colors.onPrimary,
+        },
+        weekSectionTitleBlock: {
+          flex: 1,
+          minWidth: 0,
+        },
+        weekSectionTitle: {
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.semibold,
+          color: theme.colors.text,
+        },
+        weekSectionTitleActive: {
+          color: theme.colors.text,
+        },
+        weekSectionDate: {
+          marginTop: 2,
+          fontSize: theme.typography.sizes.xs,
+          color: theme.colors.textSecondary,
+        },
+        weekSectionToday: {
+          color: theme.colors.primary,
+          fontWeight: theme.typography.weight.semibold,
+        },
+        weekSectionCount: {
+          minWidth: 34,
+          height: 26,
+          borderRadius: 13,
+          paddingHorizontal: theme.spacing.sm,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.surface,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+        },
+        weekSectionCountActive: {
+          borderColor: `${theme.colors.primary}66`,
+          backgroundColor: `${theme.colors.primary}12`,
+        },
+        weekSectionCountText: {
+          fontSize: theme.typography.sizes.xs,
+          fontWeight: theme.typography.weight.bold,
+          color: theme.colors.text,
+        },
+        weekSectionCountTextActive: {
+          color: theme.colors.primary,
+        },
+        weekOrderRow: {
+          marginLeft: 58,
+        },
+        weekOrderConnector: {
+          position: 'absolute',
+          left: 22,
+          top: 0,
+          bottom: 0,
+          width: 1,
+          backgroundColor: theme.colors.border,
+        },
+        weekEmptyRow: {
+          marginLeft: 58,
+          paddingVertical: theme.spacing.sm,
+          paddingHorizontal: theme.spacing.sm,
+        },
+        weekEmptyText: {
+          fontSize: theme.typography.sizes.sm,
+          color: theme.colors.textSecondary,
+        },
+        dayScheduleContent: {
+          flex: 1,
+          width: layoutMetrics.cardWidth,
+          alignSelf: 'center',
+        },
+        daySummary: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: theme.spacing.xs,
+          marginHorizontal: theme.spacing.md,
+          marginBottom: theme.spacing.xs,
+          minHeight: 32,
+        },
+        dayList: {
+          flex: 1,
+          width: '100%',
+        },
+        dayListContent: {
+          paddingHorizontal: theme.spacing.md,
+          paddingBottom: Math.max(theme.spacing.xl, insets.bottom),
+        },
+        dayOrderRow: {
+          marginLeft: 42,
+        },
+        dayOrderConnector: {
+          position: 'absolute',
+          left: 18,
+          top: 0,
+          bottom: 0,
+          width: 1,
+          backgroundColor: theme.colors.border,
+        },
+        dayOrderDot: {
+          position: 'absolute',
+          left: 13,
+          top: 22,
+          width: 11,
+          height: 11,
+          borderRadius: 6,
+          backgroundColor: theme.colors.primary,
+          borderWidth: 2,
+          borderColor: theme.colors.background,
+        },
+        dayEmptyState: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: theme.spacing.xl,
+          paddingBottom: theme.spacing.xxl,
+        },
+        dayEmptyTitle: {
+          fontSize: theme.typography.sizes.md,
+          fontWeight: theme.typography.weight.semibold,
+          color: theme.colors.text,
+          textAlign: 'center',
+        },
+        dayEmptySubtitle: {
+          marginTop: theme.spacing.xs,
+          fontSize: theme.typography.sizes.sm,
+          color: theme.colors.textSecondary,
+          textAlign: 'center',
+        },
         yearViewContainer: {
           flex: 1,
         },
@@ -1011,13 +1389,12 @@ function CalendarScreenContent() {
           flex: 1,
         },
       }),
-    [theme, layoutMetrics, indicatorSlotBaseHeight],
+    [theme, layoutMetrics, indicatorSlotBaseHeight, insets.bottom],
   );
 
   const stageAtoBProgress = useDerivedValue(() => {
     return Math.min(collapseTranslate.value / stageOneDistanceSafe, 1);
   }, [dynamicMonths.length, layoutMetrics.cardWidth, visibleMonthIndex]);
-  const monthCollapsePhaseSplit = CALENDAR_GESTURE.MONTH_COLLAPSE_PHASE_SPLIT;
   const settledWeeksHeight = useSharedValue(measuredWeekRowHeight * actualWeekRows);
 
   useEffect(() => {
@@ -1058,22 +1435,12 @@ function CalendarScreenContent() {
           return resolvedMonthHeaderHeight + measuredDayNamesHeight + settledWeeksHeight.value;
         }
         const fullWeeksHeight = measuredWeekRowHeight * actualWeekRows;
-        const selectedWeekTop = selectedWeekIndex * measuredWeekRowHeight;
-        const selectedWeekBottom = Math.max(
-          0,
-          fullWeeksHeight - (selectedWeekIndex + 1) * measuredWeekRowHeight,
+        const weeksVisibleHeight = interpolate(
+          progress,
+          [0, 1],
+          [fullWeeksHeight, measuredWeekRowHeight],
+          Extrapolate.CLAMP,
         );
-        const selectedBottomEdge = selectedWeekTop + measuredWeekRowHeight;
-        const phaseAProgress = Math.min(progress / monthCollapsePhaseSplit, 1);
-        const phaseBDenominator = Math.max(1 - monthCollapsePhaseSplit, Number.EPSILON);
-        const phaseBProgress =
-          progress <= monthCollapsePhaseSplit
-            ? 0
-            : Math.min((progress - monthCollapsePhaseSplit) / phaseBDenominator, 1);
-        const weeksVisibleHeight =
-          progress <= monthCollapsePhaseSplit
-            ? fullWeeksHeight - selectedWeekBottom * phaseAProgress
-            : selectedBottomEdge - (selectedBottomEdge - measuredWeekRowHeight) * phaseBProgress;
         const monthHeaderVisibleHeight = resolvedMonthHeaderHeight * (1 - progress);
         return monthHeaderVisibleHeight + measuredDayNamesHeight + weeksVisibleHeight;
       })(),
@@ -1083,9 +1450,7 @@ function CalendarScreenContent() {
       measuredDayNamesHeight,
       resolvedMonthHeaderHeight,
       measuredWeekRowHeight,
-      monthCollapsePhaseSplit,
       settledWeeksHeight,
-      selectedWeekIndex,
     ],
   );
 
@@ -1134,42 +1499,169 @@ function CalendarScreenContent() {
       return { height: settledWeeksHeight.value, overflow: 'hidden' };
     }
     const fullHeight = measuredWeekRowHeight * actualWeekRows;
-    const selectedWeekTop = selectedWeekIndex * measuredWeekRowHeight;
-    const selectedWeekBottom = Math.max(
-      0,
-      fullHeight - (selectedWeekIndex + 1) * measuredWeekRowHeight,
+    const height = interpolate(
+      progress,
+      [0, 1],
+      [fullHeight, measuredWeekRowHeight],
+      Extrapolate.CLAMP,
     );
-    const selectedBottomEdge = selectedWeekTop + measuredWeekRowHeight;
-    const phaseAProgress = Math.min(progress / monthCollapsePhaseSplit, 1);
-    const phaseBDenominator = Math.max(1 - monthCollapsePhaseSplit, Number.EPSILON);
-    const phaseBProgress =
-      progress <= monthCollapsePhaseSplit
-        ? 0
-        : Math.min((progress - monthCollapsePhaseSplit) / phaseBDenominator, 1);
-    const height =
-      progress <= monthCollapsePhaseSplit
-        ? fullHeight - selectedWeekBottom * phaseAProgress
-        : selectedBottomEdge - (selectedBottomEdge - measuredWeekRowHeight) * phaseBProgress;
     return { height, overflow: 'hidden' };
   }, [
     actualWeekRows,
     measuredWeekRowHeight,
-    monthCollapsePhaseSplit,
     settledWeeksHeight,
-    selectedWeekIndex,
   ]);
 
   const weeksTranslateStyle = useAnimatedStyle(() => {
     const progress = stageAtoBProgress.value;
     const selectedWeekTop = selectedWeekIndex * measuredWeekRowHeight;
-    const phaseBDenominator = Math.max(1 - monthCollapsePhaseSplit, Number.EPSILON);
-    const phaseBProgress =
-      progress <= monthCollapsePhaseSplit
-        ? 0
-        : Math.min((progress - monthCollapsePhaseSplit) / phaseBDenominator, 1);
-    const weekOffset = -selectedWeekTop * phaseBProgress;
+    const weekOffset = -selectedWeekTop * progress;
     return { transform: [{ translateY: weekOffset }] };
-  }, [measuredWeekRowHeight, monthCollapsePhaseSplit, selectedWeekIndex]);
+  }, [measuredWeekRowHeight, selectedWeekIndex]);
+
+  const monthOrdersHeaderAnimatedStyle = useAnimatedStyle(() => {
+    const progress = stageAtoBProgress.value;
+    return {
+      height: interpolate(
+        progress,
+        [0, 1],
+        [monthOrdersHeaderHeight.value, 0],
+        Extrapolate.CLAMP,
+      ),
+      opacity: interpolate(progress, [0, 0.85, 1], [1, 0.18, 0], Extrapolate.CLAMP),
+      overflow: 'hidden',
+    };
+  });
+
+  const updateMonthOrdersScrollLimit = useCallback(() => {
+    monthOrdersMaxScrollY.value = Math.max(
+      0,
+      monthOrdersContentHeightRef.current - monthOrdersViewportHeightRef.current,
+    );
+    scrollY.value = Math.min(scrollY.value, monthOrdersMaxScrollY.value);
+  }, [monthOrdersMaxScrollY, scrollY]);
+
+  useAnimatedReaction(
+    () => scrollY.value,
+    (currentScrollY) => {
+      scrollTo(ordersListRef, 0, currentScrollY, false);
+    },
+    [ordersListRef],
+  );
+
+  const snapMonthCalendar = useCallback(
+    (velocityY = 0) => {
+      'worklet';
+      const maxCollapse = stageOneDistanceSafe;
+      if (maxCollapse <= 1) return;
+      const current = clamp(collapseTranslate.value, 0, maxCollapse);
+      if (current <= 0 || current >= maxCollapse) return;
+      const progress = current / maxCollapse;
+      let shouldCollapse = progress >= MONTH_COLLAPSE_SNAP_THRESHOLD;
+      if (velocityY < -MONTH_COLLAPSE_VELOCITY_THRESHOLD) {
+        shouldCollapse = true;
+      } else if (velocityY > MONTH_COLLAPSE_VELOCITY_THRESHOLD) {
+        shouldCollapse = false;
+      }
+      const target = shouldCollapse ? maxCollapse : 0;
+      scrollY.value = 0;
+      scrollTo(ordersListRef, 0, 0, false);
+      collapseTranslate.value = withSpring(
+        target,
+        {
+          ...MONTH_COLLAPSE_SPRING,
+          velocity: -velocityY,
+        },
+      );
+    },
+    [collapseTranslate, ordersListRef, scrollY, stageOneDistanceSafe],
+  );
+
+  const monthOrdersPanGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY([-3, 3])
+        .failOffsetX([-42, 42])
+        .onBegin(() => {
+          cancelAnimation(scrollY);
+          cancelAnimation(collapseTranslate);
+          monthOrdersPanStartCollapse.value = clamp(
+            collapseTranslate.value,
+            0,
+            stageOneDistanceSafe,
+          );
+          monthOrdersPanStartScrollY.value = Math.min(
+            monthOrdersMaxScrollY.value,
+            Math.max(0, scrollY.value),
+          );
+          scrollY.value = monthOrdersPanStartScrollY.value;
+          scrollTo(ordersListRef, 0, scrollY.value, false);
+        })
+        .onUpdate((event) => {
+          const maxCollapse = stageOneDistanceSafe;
+          if (maxCollapse <= 1) return;
+
+          const dragDistance = -event.translationY;
+          const maxScrollY = monthOrdersMaxScrollY.value;
+          let nextCollapse = monthOrdersPanStartCollapse.value;
+          let nextScrollY = monthOrdersPanStartScrollY.value;
+
+          if (dragDistance >= 0) {
+            const collapseRoom = Math.max(0, maxCollapse - monthOrdersPanStartCollapse.value);
+            const collapseDelta = Math.min(collapseRoom, dragDistance);
+            nextCollapse = monthOrdersPanStartCollapse.value + collapseDelta;
+            nextScrollY = Math.min(
+              maxScrollY,
+              monthOrdersPanStartScrollY.value + Math.max(0, dragDistance - collapseRoom),
+            );
+          } else {
+            const scrollDelta = Math.max(-monthOrdersPanStartScrollY.value, dragDistance);
+            nextScrollY = monthOrdersPanStartScrollY.value + scrollDelta;
+            nextCollapse = monthOrdersPanStartCollapse.value + Math.min(0, dragDistance - scrollDelta);
+          }
+
+          collapseTranslate.value = clamp(nextCollapse, 0, maxCollapse);
+          scrollY.value = Math.min(maxScrollY, Math.max(0, nextScrollY));
+        })
+        .onEnd((event) => {
+          const maxCollapse = stageOneDistanceSafe;
+          const currentCollapse = clamp(collapseTranslate.value, 0, maxCollapse);
+          if (
+            event.velocityY > MONTH_COLLAPSE_VELOCITY_THRESHOLD &&
+            scrollY.value <= 1 &&
+            currentCollapse > 0
+          ) {
+            snapMonthCalendar(event.velocityY);
+            return;
+          }
+
+          const canScrollOrders =
+            maxCollapse <= 1 ||
+            currentCollapse >= maxCollapse - 1 ||
+            scrollY.value > 0;
+
+          if (canScrollOrders && monthOrdersMaxScrollY.value > 0) {
+            scrollY.value = withDecay({
+              velocity: -event.velocityY,
+              deceleration: MONTH_ORDERS_DECAY,
+              clamp: [0, monthOrdersMaxScrollY.value],
+            });
+            return;
+          }
+
+          snapMonthCalendar(event.velocityY);
+        }),
+    [
+      collapseTranslate,
+      monthOrdersMaxScrollY,
+      monthOrdersPanStartCollapse,
+      monthOrdersPanStartScrollY,
+      ordersListRef,
+      scrollY,
+      snapMonthCalendar,
+      stageOneDistanceSafe,
+    ],
+  );
 
   const switchMode = useCallback((nextMode, opts = {}) => {
     if (nextMode === 'month') {
@@ -1188,11 +1680,40 @@ function CalendarScreenContent() {
         } catch {}
       });
     }
+    if (nextMode === 'week') {
+      const targetDate = parseCalendarDateKey(selectedDate, currentMonth);
+      setSelectedDate(formatDateKey(targetDate));
+      setCurrentMonth(startOfMonth(targetDate));
+      setCalendarQueryAnchorMonth(startOfMonth(targetDate));
+      if (isCollapsed) {
+        setIsCollapsed(false);
+        isCollapsedShared.value = false;
+        collapseTranslate.value = 0;
+        scrollY.value = 0;
+      }
+    }
+    if (nextMode === 'day') {
+      const targetDate = parseCalendarDateKey(selectedDate, currentMonth);
+      setSelectedDate(formatDateKey(targetDate));
+      setCurrentMonth(startOfMonth(targetDate));
+      setCalendarQueryAnchorMonth(startOfMonth(targetDate));
+      if (isCollapsed) {
+        setIsCollapsed(false);
+        isCollapsedShared.value = false;
+        collapseTranslate.value = 0;
+        scrollY.value = 0;
+      }
+    }
     setViewMode(nextMode);
   }, [
+    collapseTranslate,
     currentMonth,
+    isCollapsed,
+    isCollapsedShared,
     layoutMetrics.cardWidth,
     monthPagerRef,
+    scrollY,
+    selectedDate,
     settledMonthOffsetX,
     visibleMonthIndex,
     MONTH_LIST_MIDDLE_INDEX,
@@ -1234,6 +1755,28 @@ function CalendarScreenContent() {
 
   const goToPreviousMonth = useCallback(() => scrollToMonthByOffset(-1), [scrollToMonthByOffset]);
   const goToNextMonth = useCallback(() => scrollToMonthByOffset(1), [scrollToMonthByOffset]);
+  const goToWeekByOffset = useCallback(
+    (offset) => {
+      const nextDate = addDays(activeWeekStart, offset * 7);
+      setSelectedDate(formatDateKey(nextDate));
+      setCurrentMonth(startOfMonth(nextDate));
+      setCalendarQueryAnchorMonth(startOfMonth(nextDate));
+    },
+    [activeWeekStart],
+  );
+  const goToPreviousWeek = useCallback(() => goToWeekByOffset(-1), [goToWeekByOffset]);
+  const goToNextWeek = useCallback(() => goToWeekByOffset(1), [goToWeekByOffset]);
+  const goToDayByOffset = useCallback(
+    (offset) => {
+      const nextDate = addDays(selectedDateObj, offset);
+      setSelectedDate(formatDateKey(nextDate));
+      setCurrentMonth(startOfMonth(nextDate));
+      setCalendarQueryAnchorMonth(startOfMonth(nextDate));
+    },
+    [selectedDateObj],
+  );
+  const goToPreviousDay = useCallback(() => goToDayByOffset(-1), [goToDayByOffset]);
+  const goToNextDay = useCallback(() => goToDayByOffset(1), [goToDayByOffset]);
   const scrollYearByOffset = useCallback(
     (offset) => {
       const baseIndex = visibleYearIndexRef.current;
@@ -1328,6 +1871,18 @@ function CalendarScreenContent() {
 
     }
 
+    Object.keys(byDate).forEach((date) => {
+      byDate[date].sort((a, b) => {
+        const byScheduleTime = getOrderScheduleSortValue(a) - getOrderScheduleSortValue(b);
+        if (byScheduleTime !== 0) return byScheduleTime;
+        const leftCreated = new Date(a?.created_at || a?.updated_at || 0).getTime();
+        const rightCreated = new Date(b?.created_at || b?.updated_at || 0).getTime();
+        const safeLeftCreated = Number.isFinite(leftCreated) ? leftCreated : 0;
+        const safeRightCreated = Number.isFinite(rightCreated) ? rightCreated : 0;
+        return safeLeftCreated - safeRightCreated;
+      });
+    });
+
     const marksBase = {};
     Object.keys(countByDate).forEach((date) => {
       marksBase[date] = { marked: true, dotColor: theme.colors.primary };
@@ -1348,9 +1903,35 @@ function CalendarScreenContent() {
     () => (effectiveSelectedDate ? (calendarIndex.byDate[effectiveSelectedDate] ?? []) : []),
     [calendarIndex.byDate, effectiveSelectedDate],
   );
+  const weekSections = useMemo(
+    () =>
+      activeWeekDates.map((date) => {
+        const dateKey = formatDateKey(date);
+        const dayOrders = calendarIndex.byDate[dateKey] ?? [];
+        return {
+          date,
+          dateKey,
+          count: dayOrders.length,
+          data: dayOrders.length ? dayOrders : [{ id: `empty-${dateKey}`, dateKey, __empty: true }],
+        };
+      }),
+    [activeWeekDates, calendarIndex.byDate],
+  );
+  const weekTotalCount = useMemo(
+    () => weekSections.reduce((sum, section) => sum + section.count, 0),
+    [weekSections],
+  );
+  const dayListExtraData = useMemo(
+    () => ({ selectedDate: effectiveSelectedDate, count: displayedOrders.length, scope }),
+    [displayedOrders.length, effectiveSelectedDate, scope],
+  );
   const ordersListExtraData = useMemo(
     () => ({ selectedDate: effectiveSelectedDate, count: displayedOrders.length }),
     [displayedOrders.length, effectiveSelectedDate],
+  );
+  const weekListExtraData = useMemo(
+    () => ({ selectedDate, weekTotalCount, scope, filters: executorFilterIds.join('|') }),
+    [executorFilterIds, scope, selectedDate, weekTotalCount],
   );
   const ordersTitleDateLabel = useMemo(
     () => {
@@ -1404,8 +1985,162 @@ function CalendarScreenContent() {
     [companySettings?.currency, departureTimeEnabled, isSoloAdmin, openOrderDetails, orderFieldsByKey, scope],
   );
   const ordersEmptyComponent = useMemo(
-    () => <Text style={styles.noOrders}>Нет заявок</Text>,
-    [styles.noOrders],
+    () => <Text style={styles.noOrders}>{t('calendar_no_orders', 'Нет заявок')}</Text>,
+    [styles.noOrders, t],
+  );
+  const renderWeekOrderItem = useCallback(
+    ({ item }) => {
+      if (item?.__empty) {
+        return (
+          <View style={{ position: 'relative' }}>
+            <View pointerEvents="none" style={styles.weekOrderConnector} />
+            <View style={styles.weekEmptyRow}>
+              <Text style={styles.weekEmptyText}>
+                {t('calendar_week_empty_day', 'Нет заявок на этот день')}
+              </Text>
+            </View>
+          </View>
+        );
+      }
+      return (
+        <View style={{ position: 'relative' }}>
+          <View pointerEvents="none" style={styles.weekOrderConnector} />
+          <View style={styles.weekOrderRow}>
+            <DynamicOrderCard
+              order={item}
+              context="calendar"
+              hideExecutor={isSoloAdmin}
+              onPress={openOrderDetails}
+              departureTimeEnabled={departureTimeEnabled}
+              orderFieldsByKey={orderFieldsByKey}
+              companyCurrency={companySettings?.currency || null}
+            />
+          </View>
+        </View>
+      );
+    },
+    [
+      companySettings?.currency,
+      departureTimeEnabled,
+      isSoloAdmin,
+      openOrderDetails,
+      orderFieldsByKey,
+      styles.weekEmptyRow,
+      styles.weekEmptyText,
+      styles.weekOrderConnector,
+      styles.weekOrderRow,
+      t,
+    ],
+  );
+  const renderWeekSectionHeader = useCallback(
+    ({ section }) => {
+      const isSelected = section.dateKey === selectedDate;
+      const isTodaySection = section.dateKey === todayKey;
+      return (
+        <Pressable
+          onPress={() => setSelectedDate(section.dateKey)}
+          style={[styles.weekSectionHeader, isSelected && styles.weekSectionHeaderActive]}
+          android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+          accessibilityRole="button"
+        >
+          <View style={[styles.weekSectionDateBadge, isSelected && styles.weekSectionDateBadgeActive]}>
+            <Text style={[styles.weekSectionDayNumber, isSelected && styles.weekSectionDayNumberActive]}>
+              {format(section.date, 'd', { locale: dfnsRu })}
+            </Text>
+            <Text
+              style={[
+                styles.weekSectionDayNameSmall,
+                isSelected && styles.weekSectionDayNameSmallActive,
+              ]}
+            >
+              {t(DAY_KEYS[section.date.getDay() === 0 ? 6 : section.date.getDay() - 1])}
+            </Text>
+          </View>
+          <View style={styles.weekSectionTitleBlock}>
+            <Text style={[styles.weekSectionTitle, isSelected && styles.weekSectionTitleActive]}>
+              {format(section.date, 'EEEE', { locale: dfnsRu })}
+            </Text>
+            <Text style={[styles.weekSectionDate, isTodaySection && styles.weekSectionToday]}>
+              {format(section.date, 'd MMMM yyyy', { locale: dfnsRu })}
+            </Text>
+          </View>
+          <View style={[styles.weekSectionCount, isSelected && styles.weekSectionCountActive]}>
+            <Text style={[styles.weekSectionCountText, isSelected && styles.weekSectionCountTextActive]}>
+              {section.count}
+            </Text>
+          </View>
+        </Pressable>
+      );
+    },
+    [
+      selectedDate,
+      setSelectedDate,
+      styles.weekSectionCount,
+      styles.weekSectionCountActive,
+      styles.weekSectionCountText,
+      styles.weekSectionCountTextActive,
+      styles.weekSectionDate,
+      styles.weekSectionDateBadge,
+      styles.weekSectionDateBadgeActive,
+      styles.weekSectionDayNameSmall,
+      styles.weekSectionDayNameSmallActive,
+      styles.weekSectionDayNumber,
+      styles.weekSectionDayNumberActive,
+      styles.weekSectionHeader,
+      styles.weekSectionHeaderActive,
+      styles.weekSectionTitle,
+      styles.weekSectionTitleActive,
+      styles.weekSectionTitleBlock,
+      styles.weekSectionToday,
+      theme.colors.overlayNavBar,
+      theme.colors.ripple,
+      t,
+      todayKey,
+    ],
+  );
+  const weekOrderKeyExtractor = useCallback(
+    (item) => String(item?.id ?? item?.order_id ?? item?.uuid ?? item?.dateKey),
+    [],
+  );
+  const renderDayOrderItem = useCallback(
+    ({ item }) => (
+      <View style={{ position: 'relative' }}>
+        <View pointerEvents="none" style={styles.dayOrderConnector} />
+        <View pointerEvents="none" style={styles.dayOrderDot} />
+        <View style={styles.dayOrderRow}>
+          <DynamicOrderCard
+            order={item}
+            context="calendar"
+            hideExecutor={isSoloAdmin}
+            onPress={openOrderDetails}
+            departureTimeEnabled={departureTimeEnabled}
+            orderFieldsByKey={orderFieldsByKey}
+            companyCurrency={companySettings?.currency || null}
+          />
+        </View>
+      </View>
+    ),
+    [
+      companySettings?.currency,
+      departureTimeEnabled,
+      isSoloAdmin,
+      openOrderDetails,
+      orderFieldsByKey,
+      styles.dayOrderConnector,
+      styles.dayOrderDot,
+      styles.dayOrderRow,
+    ],
+  );
+  const dayEmptyComponent = useMemo(
+    () => (
+      <View style={styles.dayEmptyState}>
+        <Text style={styles.dayEmptyTitle}>{t('calendar_day_empty_title', 'На этот день заявок нет')}</Text>
+        <Text style={styles.dayEmptySubtitle}>
+          {t('calendar_day_empty_subtitle', 'Переключите день стрелками или выберите дату в неделе.')}
+        </Text>
+      </View>
+    ),
+    [styles.dayEmptyState, styles.dayEmptySubtitle, styles.dayEmptyTitle, t],
   );
 
   const markedDates = useMemo(
@@ -1432,16 +2167,6 @@ function CalendarScreenContent() {
     setExecutorFilterIds([]);
     setExecutorModalVisible(false);
   }, []);
-  const onToggleCollapsed = useCallback(() => {
-    const next = !isCollapsed;
-    setIsCollapsed(next);
-    isCollapsedShared.value = next;
-    collapseTranslate.value = next ? stageOneDistanceSafe : 0;
-    if (!next) {
-      scrollY.value = 0;
-    }
-  }, [collapseTranslate, isCollapsed, isCollapsedShared, scrollY, stageOneDistanceSafe]);
-
   useFocusEffect(
     useCallback(
       () => () => {
@@ -1477,17 +2202,14 @@ function CalendarScreenContent() {
         <Animated.View style={styles.tabsWrapper}>
           <View style={styles.tabsContent}>
             {[
-              { label: 'Год', mode: 'year', disabled: false },
-              { label: 'Месяц', mode: 'month', disabled: false },
-              { label: 'Неделя', mode: 'week', disabled: true },
-              { label: 'День', mode: 'day', disabled: true },
-              { label: 'Расписание', mode: 'schedule', disabled: true },
-            ].map((tab, index) => {
+              { label: t('calendar_view_year', 'Год'), mode: 'year', disabled: false },
+              { label: t('calendar_view_month', 'Месяц'), mode: 'month', disabled: false },
+              { label: t('calendar_view_week', 'Неделя'), mode: 'week', disabled: false },
+              { label: t('calendar_view_day', 'День'), mode: 'day', disabled: false },
+              { label: t('calendar_view_schedule', 'Расписание'), mode: 'schedule', disabled: true },
+            ].map((tab) => {
               const { label, mode, disabled } = tab;
-              const isActive =
-                (index === 0 && viewMode === 'year') ||
-                (index === 1 && viewMode === 'month') ||
-                (index > 1 && viewMode === mode);
+              const isActive = viewMode === mode;
               return (
                 <Pressable
                   key={label}
@@ -1496,8 +2218,7 @@ function CalendarScreenContent() {
                       toast.info(t('feature_future'));
                       return;
                     }
-                    if (index === 0) switchMode('year');
-                    else if (index === 1) switchMode('month');
+                    switchMode(mode);
                   }}
                   style={[styles.tabItem, disabled && styles.tabItemDisabled]}
                   android_ripple={{ color: theme.colors.overlayNavBar }}
@@ -1599,105 +2320,282 @@ function CalendarScreenContent() {
                     style={[{ width: layoutMetrics.cardWidth, flex: 1 }, ordersSwipeFadeStyle]}
                     collapsable={false}
                   >
-                    <View style={styles.ordersHeader}>
-                      <Text style={styles.ordersTitle}>
-                        {ordersTitleDateLabel}
-                      </Text>
-                      <View style={styles.ordersHeaderActions}>
-                        {canUseCalendarAllScope ? (
-                          <View style={styles.scopeSwitch}>
-                            {['my', 'all'].map((s) => {
-                              const active = activeScope === s;
-                              return (
-                                <Pressable
-                                  key={s}
-                                  onPress={() => onScopeChange(s)}
-                                  android_ripple={{ color: theme.colors.border }}
-                                  style={({ pressed }) => [
-                                    styles.scopePill,
-                                    active && styles.scopePillActive,
-                                    pressed && { opacity: 0.92 },
-                                  ]}
-                                  accessibilityRole="button"
-                                >
-                                  <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
-                                    {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
-                                  </Text>
-                                </Pressable>
-                              );
-                            })}
-                          </View>
-                        ) : null}
-                        {canUseCalendarAllScope ? (
-                          <Pressable
-                            onPress={() => setExecutorModalVisible(true)}
-                            android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                            style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('common_filter')}
-                          >
-                            <Feather name="sliders" size={18} color={theme.colors.text} />
-                          </Pressable>
-                        ) : null}
-                        {canUseCalendarAllScope && hasEmployeeFilter ? (
-                          <Pressable
-                            onPress={onResetCalendarFilters}
-                            android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                            style={styles.resetFilterButton}
-                            accessibilityRole="button"
-                          >
-                            <Feather name="x" size={16} color={theme.colors.textSecondary} />
-                          </Pressable>
-                        ) : null}
-                      </View>
-                    </View>
-                    <View style={styles.collapseToggleRow}>
-                      <Pressable
-                        onPress={onToggleCollapsed}
-                        style={({ pressed }) => [styles.collapseToggleButton, pressed && { opacity: 0.8 }]}
-                        android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                        hitSlop={8}
-                        accessibilityRole="button"
+                    <Animated.View style={monthOrdersHeaderAnimatedStyle}>
+                      <View
+                        style={styles.ordersHeader}
+                        onLayout={(event) => {
+                          monthOrdersHeaderHeight.value = Math.max(
+                            event.nativeEvent.layout.height,
+                            MONTH_ORDERS_HEADER_FALLBACK_HEIGHT,
+                          );
+                        }}
                       >
-                        <Feather
-                          name={isCollapsed ? 'chevron-down' : 'chevron-up'}
-                          size={16}
-                          color={theme.colors.textSecondary}
+                        <Text style={styles.ordersTitle}>
+                          {ordersTitleDateLabel}
+                        </Text>
+                        <View style={styles.ordersHeaderActions}>
+                          {canUseCalendarAllScope ? (
+                            <View style={styles.scopeSwitch}>
+                              {['my', 'all'].map((s) => {
+                                const active = activeScope === s;
+                                return (
+                                  <Pressable
+                                    key={s}
+                                    onPress={() => onScopeChange(s)}
+                                    android_ripple={{ color: theme.colors.border }}
+                                    style={({ pressed }) => [
+                                      styles.scopePill,
+                                      active && styles.scopePillActive,
+                                      pressed && { opacity: 0.92 },
+                                    ]}
+                                    accessibilityRole="button"
+                                  >
+                                    <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
+                                      {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
+                                    </Text>
+                                  </Pressable>
+                                );
+                              })}
+                            </View>
+                          ) : null}
+                          {canUseCalendarAllScope ? (
+                            <Pressable
+                              onPress={() => setExecutorModalVisible(true)}
+                              android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                              style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
+                              accessibilityRole="button"
+                              accessibilityLabel={t('common_filter')}
+                            >
+                              <Feather name="sliders" size={18} color={theme.colors.text} />
+                            </Pressable>
+                          ) : null}
+                          {canUseCalendarAllScope && hasEmployeeFilter ? (
+                            <Pressable
+                              onPress={onResetCalendarFilters}
+                              android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                              style={styles.resetFilterButton}
+                              accessibilityRole="button"
+                            >
+                              <Feather name="x" size={16} color={theme.colors.textSecondary} />
+                            </Pressable>
+                          ) : null}
+                        </View>
+                      </View>
+                    </Animated.View>
+                    <GestureDetector gesture={monthOrdersPanGesture}>
+                      <View style={{ flex: 1 }}>
+                        <AnimatedFlatList
+                          ref={ordersListRef}
+                          data={displayedOrders}
+                          extraData={ordersListExtraData}
+                          initialNumToRender={2}
+                          maxToRenderPerBatch={4}
+                          updateCellsBatchingPeriod={16}
+                          removeClippedSubviews={Platform.OS === 'android'}
+                          keyExtractor={orderKeyExtractor}
+                          contentContainerStyle={ordersListContentContainerStyle}
+                          style={{ flex: 1 }}
+                          scrollEnabled={false}
+                          bounces={false}
+                          onLayout={(event) => {
+                            monthOrdersViewportHeightRef.current = event.nativeEvent.layout.height;
+                            updateMonthOrdersScrollLimit();
+                          }}
+                          onContentSizeChange={(_width, height) => {
+                            monthOrdersContentHeightRef.current = height;
+                            updateMonthOrdersScrollLimit();
+                          }}
+                          ListEmptyComponent={ordersEmptyComponent}
+                          renderItem={renderOrderItem}
                         />
-                      </Pressable>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <FlatList
-                        ref={ordersListRef}
-                        data={displayedOrders}
-                        extraData={ordersListExtraData}
-                        initialNumToRender={2}
-                        maxToRenderPerBatch={4}
-                        updateCellsBatchingPeriod={16}
-                        removeClippedSubviews={Platform.OS === 'android'}
-                        keyExtractor={orderKeyExtractor}
-                        contentContainerStyle={ordersListContentContainerStyle}
-                        style={{ flex: 1 }}
-                        scrollEnabled={isCollapsed && !isSnapping}
-                        bounces={false}
-                        scrollEventThrottle={16}
-                        onScroll={(event) => {
-                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                        }}
-                        onScrollBeginDrag={() => {
-                          if (!isCollapsed) scrollY.value = 0;
-                        }}
-                        onMomentumScrollEnd={(event) => {
-                          scrollY.value = Math.max(0, event.nativeEvent.contentOffset.y);
-                        }}
-                        ListEmptyComponent={ordersEmptyComponent}
-                        renderItem={renderOrderItem}
-                      />
-                    </View>
+                      </View>
+                    </GestureDetector>
                   </Animated.View>
                 </View>
               </View>
           </>
+        ) : viewMode === 'week' ? (
+          <View style={styles.weekContent}>
+            <CalendarMonthHeader
+              label={activeWeekLabel}
+              onPreviousMonth={goToPreviousWeek}
+              onNextMonth={goToNextWeek}
+              arrowHitSlop={arrowHitSlop}
+              styles={styles}
+              theme={theme}
+            />
+            <View style={styles.weekStrip}>
+              {activeWeekDates.map((date) => {
+                const dateKey = formatDateKey(date);
+                const isActiveDay = dateKey === selectedDate;
+                const count = calendarIndex.countByDate[dateKey] || 0;
+                return (
+                  <Pressable
+                    key={dateKey}
+                    onPress={() => setSelectedDate(dateKey)}
+                    style={[styles.weekDayButton, isActiveDay && styles.weekDayButtonActive]}
+                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isActiveDay }}
+                  >
+                    <Text style={styles.weekDayName}>{t(DAY_KEYS[date.getDay() === 0 ? 6 : date.getDay() - 1])}</Text>
+                    <Text style={[styles.weekDayNumber, isActiveDay && styles.weekDayNumberActive]}>
+                      {format(date, 'd', { locale: dfnsRu })}
+                    </Text>
+                    <View style={[styles.weekDayCount, isActiveDay && styles.weekDayCountActive]}>
+                      <Text
+                        style={[
+                          styles.weekDayCountText,
+                          isActiveDay && styles.weekDayCountTextActive,
+                        ]}
+                      >
+                        {count}
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.weekToolbar}>
+              <Text style={styles.weekToolbarTitle}>
+                {t('calendar_week_schedule_title', 'Расписание недели')}: {weekTotalCount}
+              </Text>
+              <View style={styles.ordersHeaderActions}>
+                {canUseCalendarAllScope ? (
+                  <View style={styles.scopeSwitch}>
+                    {['my', 'all'].map((s) => {
+                      const active = activeScope === s;
+                      return (
+                        <Pressable
+                          key={s}
+                          onPress={() => onScopeChange(s)}
+                          android_ripple={{ color: theme.colors.border }}
+                          style={({ pressed }) => [
+                            styles.scopePill,
+                            active && styles.scopePillActive,
+                            pressed && { opacity: 0.92 },
+                          ]}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
+                            {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
+                {canUseCalendarAllScope ? (
+                  <Pressable
+                    onPress={() => setExecutorModalVisible(true)}
+                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                    style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common_filter')}
+                  >
+                    <Feather name="sliders" size={18} color={theme.colors.text} />
+                  </Pressable>
+                ) : null}
+                {canUseCalendarAllScope && hasEmployeeFilter ? (
+                  <Pressable
+                    onPress={onResetCalendarFilters}
+                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                    style={styles.resetFilterButton}
+                    accessibilityRole="button"
+                  >
+                    <Feather name="x" size={16} color={theme.colors.textSecondary} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+            <SectionList
+              sections={weekSections}
+              extraData={weekListExtraData}
+              keyExtractor={weekOrderKeyExtractor}
+              renderSectionHeader={renderWeekSectionHeader}
+              renderItem={renderWeekOrderItem}
+              stickySectionHeadersEnabled={false}
+              showsVerticalScrollIndicator={false}
+              style={styles.weekList}
+              contentContainerStyle={styles.weekListContent}
+            />
+          </View>
+        ) : viewMode === 'day' ? (
+          <View style={styles.dayScheduleContent}>
+            <CalendarMonthHeader
+              label={activeDayLabel}
+              onPreviousMonth={goToPreviousDay}
+              onNextMonth={goToNextDay}
+              arrowHitSlop={arrowHitSlop}
+              styles={styles}
+              theme={theme}
+            />
+            <View style={styles.daySummary}>
+              <View style={styles.ordersHeaderActions}>
+                {canUseCalendarAllScope ? (
+                  <View style={styles.scopeSwitch}>
+                    {['my', 'all'].map((s) => {
+                      const active = activeScope === s;
+                      return (
+                        <Pressable
+                          key={s}
+                          onPress={() => onScopeChange(s)}
+                          android_ripple={{ color: theme.colors.border }}
+                          style={({ pressed }) => [
+                            styles.scopePill,
+                            active && styles.scopePillActive,
+                            pressed && { opacity: 0.92 },
+                          ]}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
+                            {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
+                {canUseCalendarAllScope ? (
+                  <Pressable
+                    onPress={() => setExecutorModalVisible(true)}
+                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                    style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('common_filter')}
+                  >
+                    <Feather name="sliders" size={18} color={theme.colors.text} />
+                  </Pressable>
+                ) : null}
+                {canUseCalendarAllScope && hasEmployeeFilter ? (
+                  <Pressable
+                    onPress={onResetCalendarFilters}
+                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+                    style={styles.resetFilterButton}
+                    accessibilityRole="button"
+                  >
+                    <Feather name="x" size={16} color={theme.colors.textSecondary} />
+                  </Pressable>
+                ) : null}
+              </View>
+              <Text style={styles.weekToolbarTitle}>
+                {t('calendar_day_orders_count', 'Заявок')}: {displayedOrders.length}
+              </Text>
+            </View>
+            <FlatList
+              data={displayedOrders}
+              extraData={dayListExtraData}
+              keyExtractor={orderKeyExtractor}
+              renderItem={renderDayOrderItem}
+              ListEmptyComponent={dayEmptyComponent}
+              showsVerticalScrollIndicator={false}
+              style={styles.dayList}
+              contentContainerStyle={[
+                styles.dayListContent,
+                displayedOrders.length === 0 && { flexGrow: 1 },
+              ]}
+            />
+          </View>
         ) : (
           <View style={[styles.calendarContent, { flex: 1 }]}>
             <CalendarMonthHeader
@@ -1771,8 +2669,24 @@ function CalendarScreenContent() {
 }
 
 export default function CalendarScreen() {
+  const { theme } = useTheme();
+
   return (
-    <DeferredScreen>
+    <DeferredScreen
+      style={{ backgroundColor: theme.colors.background }}
+      placeholder={
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: theme.colors.background,
+          }}
+        >
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      }
+    >
       <CalendarScreenContent />
     </DeferredScreen>
   );

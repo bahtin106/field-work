@@ -1,7 +1,7 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Image, LogBox, Platform, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Image, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { installDevWarnFilters } from '../src/utils/devWarnFilter';
@@ -65,6 +65,33 @@ ensureForegroundNotificationHandler();
 
 function LastSeenTracker() {
   useAppLastSeen(30_000);
+  return null;
+}
+
+function BlurFocusedInputOnKeyboardHide() {
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+
+    const blurFocusedInput = () => {
+      try {
+        const state = TextInput?.State;
+        const focusedInput = state?.currentlyFocusedInput?.();
+        if (focusedInput && typeof focusedInput.blur === 'function') {
+          focusedInput.blur();
+        }
+      } catch {
+        // Nothing to blur.
+      }
+    };
+
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const subscription = Keyboard.addListener(hideEvent, blurFocusedInput);
+
+    return () => {
+      subscription?.remove?.();
+    };
+  }, []);
+
   return null;
 }
 
@@ -236,8 +263,10 @@ function RootLayoutInner() {
     if (isInitializing) return;
     if (!isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
+    } else if (isAuthenticated && inAuthGroup && !isBlockedScreen) {
+      router.replace('/orders');
     }
-  }, [inAuthGroup, isAuthenticated, isInitializing, router]);
+  }, [inAuthGroup, isAuthenticated, isBlockedScreen, isInitializing, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
@@ -875,57 +904,61 @@ function RootLayoutInner() {
             style={{ flex: 1, backgroundColor: theme.colors.background }}
           >
             {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
-            <Stack
-              initialRouteName={isAuthenticated ? 'orders' : '(auth)'}
-              screenOptions={{
-                headerShown: false,
-                animation: 'none',
-                animationTypeForReplace: 'push',
-                gestureEnabled: true,
-                fullScreenGestureEnabled: true,
-                freezeOnBlur: true,
-                contentStyle: { backgroundColor: theme.colors.background },
-              }}
-            >
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="orders" />
-              <Stack.Screen
-                name="app_settings/AppSettings"
-                options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РїСЂРёР»РѕР¶РµРЅРёСЏ' }}
-              />
-              <Stack.Screen
-                name="company_settings/index"
-                options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РєРѕРјРїР°РЅРёРё' }}
-              />
-              <Stack.Screen
-                name="company_settings/sections/telegram-bot"
-                options={{ title: 'Telegram Bot' }}
-              />
-              <Stack.Screen name="users/index" options={{ title: 'Users' }} />
-              <Stack.Screen name="users/new" options={{ title: 'New User' }} />
-              <Stack.Screen name="users/[id]/index" options={{ title: 'User' }} />
-              <Stack.Screen name="users/[id]/edit" options={{ title: 'Edit User' }} />
-              <Stack.Screen name="clients/index" options={{ title: 'Clients' }} />
-              <Stack.Screen name="clients/new" options={{ title: 'New Client' }} />
-              <Stack.Screen name="clients/[id]/index" options={{ title: 'Client' }} />
-              <Stack.Screen name="clients/[id]/edit" options={{ title: 'Edit Client' }} />
-              <Stack.Screen name="billing/index" options={{ title: 'РџРѕРґРїРёСЃРєР° Рё Р»РёС†РµРЅР·РёРё' }} />
-              <Stack.Screen name="admin/index" />
-              <Stack.Screen name="admin/users/index" />
-              <Stack.Screen name="admin/users/[id]/index" />
-              <Stack.Screen name="admin/users/[id]/edit" />
-              <Stack.Screen name="admin/companies/index" />
-              <Stack.Screen name="admin/companies/details" />
-              <Stack.Screen name="admin/companies/edit" />
-              <Stack.Screen name="admin/feedbacks/index" />
-              <Stack.Screen name="admin/feedbacks/[id]/index" />
-              <Stack.Screen name="admin/storage/index" />
-              <Stack.Screen name="admin/server/index" />
-              <Stack.Screen name="stats" options={{ title: 'Stats' }} />
-            </Stack>
+            <View style={{ flex: 1, minHeight: 0 }}>
+              <Stack
+                initialRouteName={isAuthenticated ? 'orders' : '(auth)'}
+                screenOptions={{
+                  headerShown: false,
+                  animation: 'none',
+                  animationTypeForReplace: 'push',
+                  gestureEnabled: true,
+                  fullScreenGestureEnabled: true,
+                  freezeOnBlur: true,
+                  contentStyle: { backgroundColor: theme.colors.background },
+                }}
+              >
+                <Stack.Screen name="(auth)" />
+                <Stack.Screen name="orders" />
+                <Stack.Screen
+                  name="app_settings/AppSettings"
+                  options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РїСЂРёР»РѕР¶РµРЅРёСЏ' }}
+                />
+                <Stack.Screen
+                  name="company_settings/index"
+                  options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РєРѕРјРїР°РЅРёРё' }}
+                />
+                <Stack.Screen
+                  name="company_settings/sections/telegram-bot"
+                  options={{ title: 'Telegram Bot' }}
+                />
+                <Stack.Screen name="users/index" options={{ title: 'Users' }} />
+                <Stack.Screen name="users/new" options={{ title: 'New User' }} />
+                <Stack.Screen name="users/[id]/index" options={{ title: 'User' }} />
+                <Stack.Screen name="users/[id]/edit" options={{ title: 'Edit User' }} />
+                <Stack.Screen name="clients/index" options={{ title: 'Clients' }} />
+                <Stack.Screen name="clients/new" options={{ title: 'New Client' }} />
+                <Stack.Screen name="clients/[id]/index" options={{ title: 'Client' }} />
+                <Stack.Screen name="clients/[id]/edit" options={{ title: 'Edit Client' }} />
+                <Stack.Screen name="billing/index" options={{ title: 'РџРѕРґРїРёСЃРєР° Рё Р»РёС†РµРЅР·РёРё' }} />
+                <Stack.Screen name="admin/index" />
+                <Stack.Screen name="admin/users/index" />
+                <Stack.Screen name="admin/users/[id]/index" />
+                <Stack.Screen name="admin/users/[id]/edit" />
+                <Stack.Screen name="admin/companies/index" />
+                <Stack.Screen name="admin/companies/details" />
+                <Stack.Screen name="admin/companies/edit" />
+                <Stack.Screen name="admin/feedbacks/index" />
+                <Stack.Screen name="admin/feedbacks/[id]/index" />
+                <Stack.Screen name="admin/promocodes/index" />
+                <Stack.Screen name="admin/storage/index" />
+                <Stack.Screen name="admin/server/index" />
+                <Stack.Screen name="stats" options={{ title: 'Stats' }} />
+              </Stack>
+            </View>
             {isAuthenticated ? <RouteFreshnessBoundary /> : null}
             {isAuthenticated && !isBlockedScreen && <BottomNav />}
             {isAuthenticated && <LastSeenTracker />}
+            <BlurFocusedInputOnKeyboardHide />
           </SafeAreaView>
       </PermissionsProvider>
     </GestureHandlerRootView>

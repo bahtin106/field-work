@@ -2,7 +2,8 @@ import React from 'react';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Feather } from '@expo/vector-icons';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import AdditionalPhoneInputRow from '../../components/clients/AdditionalPhoneInputRow';
 import ClientObjectEditorModal from '../../components/objects/ClientObjectEditorModal';
@@ -11,7 +12,8 @@ import Card from '../../components/ui/Card';
 import PhoneInput from '../../components/ui/PhoneInput';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
-import { SelectModal } from '../../components/ui/modals';
+import AvatarCropModal from '../../components/ui/AvatarCropModal';
+import { BaseModal, SelectModal } from '../../components/ui/modals';
 import { useToast } from '../../components/ui/ToastProvider';
 import TagEditorField from '../../components/tags/TagEditorField';
 import { TAG_TYPE } from '../../components/tags/tagConfig';
@@ -74,6 +76,55 @@ const IMAGE_MEDIA_TYPES = (() => {
   return ['images'];
 })();
 
+function AvatarSheetModal({
+  visible,
+  hasAvatar,
+  onTakePhoto,
+  onPickFromLibrary,
+  onDeletePhoto,
+  onViewPhoto,
+  onClose,
+}) {
+  const { t } = useTranslation();
+  const { theme } = useTheme();
+  const ICON_SM = theme.icons?.sm ?? 18;
+
+  const chevron = (color) => (
+    <Feather name="chevron-right" size={ICON_SM} color={color} />
+  );
+
+  const items = [
+    { id: 'camera', label: t('profile_photo_take'), right: chevron(theme.colors.textSecondary) },
+    { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
+    ...(hasAvatar
+      ? [
+          { id: 'view', label: t('profile_photo_title'), right: chevron(theme.colors.textSecondary) },
+          { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
+        ]
+      : []),
+  ];
+
+  return (
+    <SelectModal
+      visible={visible}
+      title={t('profile_photo_title')}
+      items={items}
+      searchable={false}
+      onSelect={(it) => {
+        try {
+          if (it.id === 'camera') onTakePhoto?.();
+          else if (it.id === 'library') onPickFromLibrary?.();
+          else if (it.id === 'delete') onDeletePhoto?.();
+          else if (it.id === 'view') onViewPhoto?.();
+        } finally {
+          onClose?.();
+        }
+      }}
+      onClose={onClose}
+    />
+  );
+}
+
 export default function NewClientScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
@@ -121,6 +172,10 @@ export default function NewClientScreen() {
   const [tags, setTags] = React.useState([]);
   const [objectModalVisible, setObjectModalVisible] = React.useState(false);
   const [avatarSheetVisible, setAvatarSheetVisible] = React.useState(false);
+  const [cropVisible, setCropVisible] = React.useState(false);
+  const [cropSrc, setCropSrc] = React.useState(null);
+  const [viewAvatarVisible, setViewAvatarVisible] = React.useState(false);
+  const [avatarKey, setAvatarKey] = React.useState(0);
   const [saving, setSaving] = React.useState(false);
   const [duplicateClient, setDuplicateClient] = React.useState(null);
   const [submittedAttempt, setSubmittedAttempt] = React.useState(false);
@@ -166,13 +221,8 @@ export default function NewClientScreen() {
     'additional_phone_3',
   ]);
   const orderedPersonalFieldKeys = React.useMemo(
-    () =>
-      getOrderedEntityFields(clientFieldSettings, {
-        visibleOnly: true,
-        requiredFirst: true,
-        fieldKeys: ['first_name', 'middle_name', 'last_name', 'comment'],
-      }).map((field) => field.fieldKey),
-    [clientFieldSettings],
+    () => ['first_name', 'middle_name', 'last_name', 'comment'].filter((fieldKey) => fieldUi.isVisible(fieldKey)),
+    [fieldUi],
   );
   const orderedContactFieldKeys = React.useMemo(
     () =>
@@ -422,26 +472,30 @@ export default function NewClientScreen() {
     });
   }, [duplicateClient?.id, flowKey, flowReturnTo, router]);
 
-  const pickAvatar = React.useCallback(async (source) => {
+  const pickFromCamera = React.useCallback(async () => {
     try {
-      if (source === 'camera') {
-        const { status } = await ImagePicker.requestCameraPermissionsAsync();
-        if (status !== 'granted') {
-          toast.warning(t('error_camera_denied'));
-          return;
-        }
-        const result = await ImagePicker.launchCameraAsync({
-          allowsEditing: true,
-          aspect: [1, 1],
-          quality: 0.9,
-          mediaTypes: IMAGE_MEDIA_TYPES,
-        });
-        if (!result.canceled && result.assets?.[0]?.uri) {
-          setAvatarUrl(result.assets[0].uri);
-        }
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        toast.warning(t('error_camera_denied'));
         return;
       }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        aspect: [1, 1],
+        quality: 0.9,
+        mediaTypes: IMAGE_MEDIA_TYPES,
+      });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setCropSrc(result.assets[0].uri);
+        setCropVisible(true);
+      }
+    } catch (error) {
+      toast.error(error?.message || t('clients_save_failed'));
+    }
+  }, [t, toast]);
 
+  const pickFromLibrary = React.useCallback(async () => {
+    try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
         toast.warning(t('error_library_denied'));
@@ -449,20 +503,31 @@ export default function NewClientScreen() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        allowsEditing: true,
+        allowsEditing: false,
         aspect: [1, 1],
         quality: 0.9,
         mediaTypes: IMAGE_MEDIA_TYPES,
+        selectionLimit: 1,
       });
       if (!result.canceled && result.assets?.[0]?.uri) {
-        setAvatarUrl(result.assets[0].uri);
+        setCropSrc(result.assets[0].uri);
+        setCropVisible(true);
       }
     } catch (error) {
       toast.error(error?.message || t('clients_save_failed'));
-    } finally {
-      setAvatarSheetVisible(false);
     }
   }, [t, toast]);
+
+  const onCropCancel = React.useCallback(() => {
+    setCropVisible(false);
+    setCropSrc(null);
+  }, []);
+
+  const onCropConfirm = React.useCallback((croppedUri) => {
+    setCropVisible(false);
+    setCropSrc(null);
+    setAvatarUrl(croppedUri);
+  }, []);
 
   const updateAdditionalPhoneBySlotId = React.useCallback((slotId, patch) => {
     const slotIndex = Number(slotId) - 1;
@@ -670,11 +735,24 @@ export default function NewClientScreen() {
         <View style={styles.avatarWrap}>
           <Pressable
             style={styles.avatarBox}
-            onPress={canManageAvatar ? () => setAvatarSheetVisible(true) : undefined}
+            onPress={canManageAvatar
+              ? () => {
+                  setAvatarKey((k) => k + 1);
+                  setAvatarSheetVisible(true);
+                }
+              : undefined}
             disabled={!canManageAvatar}
+            accessibilityRole={canManageAvatar ? 'button' : undefined}
+            accessibilityLabel={canManageAvatar ? t('a11y_change_avatar') : undefined}
+            accessibilityHint={canManageAvatar ? t('a11y_change_avatar_hint') : undefined}
           >
             {canManageAvatar && avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
+              <ExpoImage
+                source={{ uri: avatarUrl }}
+                style={styles.avatarImg}
+                contentFit="cover"
+                cachePolicy="none"
+              />
             ) : (
               <Text style={styles.avatarText}>{clientInitials}</Text>
             )}
@@ -786,37 +864,45 @@ export default function NewClientScreen() {
       </EditScreenTemplate>
 
       {canManageAvatar ? (
-        <SelectModal
+        <AvatarSheetModal
+          key={`avatar-${avatarKey}`}
           visible={avatarSheetVisible}
+          hasAvatar={!!avatarUrl}
+          onTakePhoto={pickFromCamera}
+          onPickFromLibrary={pickFromLibrary}
+          onDeletePhoto={() => setAvatarUrl('')}
+          onViewPhoto={() => setViewAvatarVisible(true)}
           onClose={() => setAvatarSheetVisible(false)}
-          title={t('profile_photo_title')}
-          searchable={false}
-          items={[
-            {
-              id: 'camera',
-              label: t('profile_photo_take'),
-              onPress: () => pickAvatar('camera'),
-            },
-            {
-              id: 'gallery',
-              label: t('profile_photo_choose'),
-              onPress: () => pickAvatar('gallery'),
-            },
-            ...(avatarUrl
-              ? [
-                  {
-                    id: 'remove',
-                    label: t('profile_photo_delete'),
-                    onPress: () => {
-                      setAvatarUrl('');
-                      setAvatarSheetVisible(false);
-                    },
-                  },
-                ]
-              : []),
-          ]}
-          onSelect={(item) => item?.onPress?.()}
         />
+      ) : null}
+
+      <AvatarCropModal
+        visible={cropVisible}
+        uri={cropSrc}
+        onCancel={onCropCancel}
+        onConfirm={onCropConfirm}
+      />
+
+      {canManageAvatar ? (
+        <BaseModal
+          visible={viewAvatarVisible}
+          onClose={() => setViewAvatarVisible(false)}
+          title={t('profile_photo_title')}
+          maxHeightRatio={0.9}
+        >
+          <View style={styles.avatarPreviewWrap}>
+            {avatarUrl ? (
+              <ExpoImage
+                source={{ uri: avatarUrl }}
+                style={styles.avatarPreviewImg}
+                contentFit="contain"
+                cachePolicy="none"
+              />
+            ) : (
+              <Text style={styles.avatarPreviewEmpty}>{t('placeholder_no_photo')}</Text>
+            )}
+          </View>
+        </BaseModal>
       ) : null}
 
       <ClientObjectEditorModal
@@ -925,6 +1011,19 @@ function createStyles(theme) {
     addressSummary: {
       color: theme.colors.textSecondary,
       fontSize: theme.typography.sizes.sm,
+    },
+    avatarPreviewWrap: {
+      alignItems: 'center',
+      padding: theme.spacing.md,
+    },
+    avatarPreviewImg: {
+      width: '100%',
+      height: undefined,
+      aspectRatio: 1,
+      borderRadius: theme.radii.lg,
+    },
+    avatarPreviewEmpty: {
+      color: theme.colors.textSecondary,
     },
   });
 }

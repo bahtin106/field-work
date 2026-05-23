@@ -106,7 +106,21 @@ function normalizeDepartureTimeString(input) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function hasExplicitTimeInDatetime(input) {
+  const raw = String(input ?? '').trim();
+  if (!raw) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  const timeMatch = raw.match(/[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/);
+  if (!timeMatch) return false;
+  const hours = Number(timeMatch[1]);
+  const minutes = Number(timeMatch[2]);
+  const seconds = Number(timeMatch[3] ?? '0');
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) return false;
+  return hours !== 0 || minutes !== 0 || seconds !== 0;
+}
+
 function extractDepartureTimeFromLegacyDatetime(input) {
+  if (!hasExplicitTimeInDatetime(input)) return null;
   if (!input) return null;
   const parsed = new Date(input);
   if (Number.isNaN(parsed?.getTime?.())) return null;
@@ -224,7 +238,37 @@ function shouldFallbackWithoutClientRelation(error) {
 
 function normalizePatchForDirectUpdate(patch) {
   if (!patch || typeof patch !== 'object') return {};
-  return { ...patch };
+  const safePatch = { ...patch };
+  delete safePatch.created_by;
+  delete safePatch.created_by_user_id;
+  delete safePatch.updated_by;
+  delete safePatch.updated_by_user_id;
+  return safePatch;
+}
+
+function isCreatedByUserFkError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  return (
+    String(error?.code || '') === '23503' &&
+    (message.includes('orders_created_by_user_id_fkey') ||
+      details.includes('orders_created_by_user_id_fkey'))
+  );
+}
+
+async function getCurrentProfileId() {
+  const { data: authData, error: authError }: any = await supabase.auth.getUser();
+  if (authError || !authData?.user?.id) return null;
+  const userId = String(authData.user.id || '').trim();
+  if (!isUuid(userId)) return null;
+
+  const { data, error }: any = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error || !data?.id) return null;
+  return String(data.id);
 }
 
 async function getRequestByIdFresh(id) {
@@ -267,7 +311,7 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
 
       return getRequestByIdFresh(id);
     } catch (rpcFailure) {
-      if (!shouldFallbackFromRpcFailure(rpcFailure)) {
+      if (!shouldFallbackFromRpcFailure(rpcFailure) && !isCreatedByUserFkError(rpcFailure)) {
         throw rpcFailure;
       }
     }
@@ -280,7 +324,27 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
     let query = supabase.from('orders').update(safePatch).eq('id', id);
     if (expectedUpdatedAt) query = query.eq('updated_at', expectedUpdatedAt);
     const { data, error } = await query.select('id, updated_at').maybeSingle();
-    if (error) throw error;
+    if (error) {
+      if (isCreatedByUserFkError(error)) {
+        const currentProfileId = await getCurrentProfileId();
+        if (currentProfileId) {
+          let repairQuery = supabase
+            .from('orders')
+            .update({
+              ...safePatch,
+              created_by_user_id: currentProfileId,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', id);
+          if (expectedUpdatedAt) repairQuery = repairQuery.eq('updated_at', expectedUpdatedAt);
+          const repairResult = await repairQuery.select('id, updated_at').maybeSingle();
+          if (!repairResult.error && repairResult.data) {
+            return getRequestByIdFresh(id);
+          }
+        }
+      }
+      throw error;
+    }
 
     if (!data) {
       if (!expectedUpdatedAt) {
@@ -297,7 +361,22 @@ export async function updateRequestWithVersion(id, patch, expectedUpdatedAt = nu
           })
           .eq('id', id)
           .eq('updated_at', retryExpectedUpdatedAt);
-        const retryResult = await retryQuery.select('id, updated_at').maybeSingle();
+        let retryResult = await retryQuery.select('id, updated_at').maybeSingle();
+        if (retryResult.error && isCreatedByUserFkError(retryResult.error)) {
+          const currentProfileId = await getCurrentProfileId();
+          if (currentProfileId) {
+            retryQuery = supabase
+              .from('orders')
+              .update({
+                ...safePatch,
+                created_by_user_id: currentProfileId,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', id)
+              .eq('updated_at', retryExpectedUpdatedAt);
+            retryResult = await retryQuery.select('id, updated_at').maybeSingle();
+          }
+        }
         if (!retryResult.error && retryResult.data) {
           return getRequestByIdFresh(id);
         }
@@ -452,6 +531,15 @@ export async function getRequestById(id: any) {
       error = retryResult.error;
     }
     if (error) throw error;
+    if (!data) {
+      const secureResult: any = await supabase
+        .from('orders_secure_v2')
+        .select('*')
+        .eq('id', key)
+        .maybeSingle();
+      if (secureResult.error) throw secureResult.error;
+      data = secureResult.data;
+    }
     return enrichOrderWithExtraFields(data);
   });
 }

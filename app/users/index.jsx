@@ -41,6 +41,7 @@ import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { queryKeys } from '../../src/shared/query/queryKeys';
+import { useOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
@@ -75,6 +76,7 @@ function UsersIndexContent() {
   const router = useRouter();
   const toast = useToast();
   const queryClient = useQueryClient();
+  const { isOnline } = useOfflineSnapshot();
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState(EMPLOYEE_SORT.NAME_ASC);
@@ -494,13 +496,14 @@ function UsersIndexContent() {
     (ts) => {
       // online if last_seen within past 2 minutes (allow small future skew up to 5 min)
       const d = parsePgTs(ts);
+      if (!isOnline) return false;
       if (!d) return false;
       const diff = Date.now() - d.getTime(); // positive if past
       const onlineWindowMs = Number(theme?.timings?.presenceOnlineWindowMs ?? 120000); // 2 min default
       const futureSkewMs = Number(theme?.timings?.presenceFutureSkewMs ?? 300000); // 5 min default
       return diff <= onlineWindowMs && diff >= -futureSkewMs;
     },
-    [theme?.timings?.presenceOnlineWindowMs, theme?.timings?.presenceFutureSkewMs],
+    [isOnline, theme?.timings?.presenceOnlineWindowMs, theme?.timings?.presenceFutureSkewMs],
   );
 
   /**

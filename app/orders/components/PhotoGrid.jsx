@@ -64,7 +64,8 @@ const PhotoItem = memo(function PhotoItem({
     if (!isPending && onPress) onPress(actualIndex);
   }, [actualIndex, isPending, onPress]);
 
-  const handleRemove = useCallback(() => {
+  const handleRemove = useCallback((event) => {
+    event?.stopPropagation?.();
     if (!isPending && onRemove) onRemove(actualIndex);
   }, [actualIndex, isPending, onRemove]);
 
@@ -169,6 +170,7 @@ function PhotoGrid({
   getIssue,
   onOpenViewer,
   onRemove,
+  canAddPhotos = true,
   selectionMode = false,
   selectedUris = [],
   onEnterSelectionMode,
@@ -258,7 +260,7 @@ function PhotoGrid({
         <Text style={s.emptyTitle}>
           {t('order_photos_empty_title', 'Нет фотографий')}
         </Text>
-        <Text style={s.emptyHint}>
+        <Text style={[s.emptyHint, !canAddPhotos && s.hidden]}>
           {t('order_photos_empty_hint', 'Нажмите кнопку ниже, чтобы добавить')}
         </Text>
       </View>
@@ -329,6 +331,7 @@ function buildStyles(theme) {
     removeBtn: {
       position: 'absolute',
       zIndex: 10,
+      elevation: 10,
       top: sp.xs,
       right: sp.xs,
     },
@@ -343,6 +346,7 @@ function buildStyles(theme) {
     selectionBtn: {
       position: 'absolute',
       zIndex: 10,
+      elevation: 10,
       top: sp.xs,
       right: sp.xs,
     },
@@ -378,6 +382,9 @@ function buildStyles(theme) {
       textAlign: 'center',
       color: cl.textSecondary,
       fontSize: ty.sizes.sm,
+    },
+    hidden: {
+      display: 'none',
     },
   });
 }

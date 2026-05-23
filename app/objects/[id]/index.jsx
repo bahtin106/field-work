@@ -117,6 +117,7 @@ export default function ObjectViewScreen() {
   const canViewObjects = has('canViewObjects');
   const canViewClients = has('canViewClients');
   const canEditObjects = has('canEditObjects');
+  const canViewObjectPhones = has('canViewObjectPhones');
   const { data: objectItem } = useClientObject(objectId, {
     enabled: !!objectId && canViewObjects,
   });
@@ -245,11 +246,12 @@ export default function ObjectViewScreen() {
   const visibleAdditionalPhones = React.useMemo(
     () =>
       additionalPhones.filter((item, index) =>
+        canViewObjectPhones &&
         (objectFieldsByKey.get(`additional_phone_${index + 1}`)?.isEnabled === true ||
           String(item?.phone || '').trim().length > 0) &&
         !!item?.phone,
       ),
-    [additionalPhones, objectFieldsByKey],
+    [additionalPhones, canViewObjectPhones, objectFieldsByKey],
   );
 
   const navigatorAddress = buildAddressForNavigator(visibleAddressDraft);
@@ -305,6 +307,8 @@ export default function ObjectViewScreen() {
 
   const getObjectFieldLabel = React.useCallback(
     (fieldKey, fallbackLabel) => {
+      const objectLabel = String(objectItem?.[`${fieldKey}_label`] || '').trim();
+      if (objectLabel) return objectLabel;
       const field = objectFieldsByKey.get(fieldKey);
       const customLabel = String(field?.customLabel || '').trim();
       if (customLabel) return customLabel;
@@ -313,7 +317,7 @@ export default function ObjectViewScreen() {
       }
       return fallbackLabel || String(fieldKey || '');
     },
-    [objectFieldsByKey, t],
+    [objectFieldsByKey, objectItem, t],
   );
 
   const visibleMediaFields = React.useMemo(

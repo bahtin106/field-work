@@ -45,6 +45,25 @@ function normalizeCompanyName(value: unknown) {
   return text(value).replace(/\s+/g, ' ');
 }
 
+function buildSoloCompanyName(userId: string) {
+  const suffix = text(userId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 8);
+  return suffix ? `${SOLO_DEFAULT_COMPANY_NAME} ${suffix}` : SOLO_DEFAULT_COMPANY_NAME;
+}
+
+async function isProfileEmailOwnedByAuthUser(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  profile: { id?: string | null } | null,
+  email: string,
+) {
+  const profileId = text(profile?.id);
+  if (!profileId) return false;
+
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(profileId);
+  if (error || !data?.user) return false;
+
+  return normalizeEmail(data.user.email) === email;
+}
+
 function clipText(value: unknown, maxLen = 2000) {
   const raw = String(value ?? '');
   return raw.length > maxLen ? raw.slice(0, maxLen) : raw;
@@ -267,7 +286,7 @@ export async function handleRegisterUserRequest(req: Request) {
       }
     }
 
-    const { data: existingUser, error: existingUserError } = await supabaseAdmin
+    let { data: existingUser, error: existingUserError } = await supabaseAdmin
       .from('profiles')
       .select('id')
       .eq('email', email)
@@ -281,6 +300,9 @@ export async function handleRegisterUserRequest(req: Request) {
         extra: { code: existingUserError.code, email },
       });
       return errorResponse(req, allowedOrigins, `email check error: ${existingUserError.message}`, 400, 'EMAIL_CHECK_FAILED');
+    }
+    if (existingUser && !(await isProfileEmailOwnedByAuthUser(supabaseAdmin, existingUser, email))) {
+      existingUser = null;
     }
 
     let existingCompany = null;
@@ -381,7 +403,7 @@ export async function handleRegisterUserRequest(req: Request) {
 
     let companyName = companyNameInput;
     if (accountType === 'solo') {
-      companyName = SOLO_DEFAULT_COMPANY_NAME;
+      companyName = buildSoloCompanyName(userId);
     }
 
     const companyPayloads: Record<string, unknown>[] = [

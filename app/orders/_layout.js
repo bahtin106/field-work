@@ -1,7 +1,10 @@
 // app/orders/_layout.js
 import { Stack } from 'expo-router';
+import { useTheme } from '../../theme/ThemeProvider';
 
 export default function OrdersLayout() {
+  const { theme } = useTheme();
+
   return (
     <Stack
       screenOptions={{
@@ -12,6 +15,7 @@ export default function OrdersLayout() {
         gestureEnabled: true,
         fullScreenGestureEnabled: true,
         freezeOnBlur: true,
+        contentStyle: { backgroundColor: theme.colors.background },
       }}
     >
       <Stack.Screen name="index" options={{ headerShown: false, presentation: 'card' }} />

@@ -22,6 +22,8 @@ app.use(express.json());
 const rateLimitBuckets = new Map();
 const registrationCodeStore = new Map();
 const registrationProofStore = new Map();
+const REG_CODE_TABLE = String(process.env.REGISTRATION_CODE_TABLE || 'registration_email_codes').trim();
+const REG_PROOF_TABLE = String(process.env.REGISTRATION_PROOF_TABLE || 'registration_email_proofs').trim();
 
 const REG_CODE_TTL_MS = 10 * 60 * 1000;
 const REG_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
@@ -77,10 +79,23 @@ function generateProofToken() {
   return crypto.randomBytes(24).toString('hex');
 }
 
+function hashProofToken(token) {
+  return crypto.createHash('sha256').update(String(token || ''), 'utf8').digest('hex');
+}
+
+function getRegistrationCodeKey(email, purpose) {
+  return `${normalizeEmail(email)}:${String(purpose || 'register').trim().toLowerCase()}`;
+}
+
+function dateToMs(value) {
+  const ms = new Date(value || 0).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function cleanupRegistrationStores(now = Date.now()) {
-  for (const [email, entry] of registrationCodeStore.entries()) {
+  for (const [key, entry] of registrationCodeStore.entries()) {
     if (!entry || Number(entry.expiresAt || 0) <= now) {
-      registrationCodeStore.delete(email);
+      registrationCodeStore.delete(key);
     }
   }
   for (const [token, entry] of registrationProofStore.entries()) {
@@ -88,6 +103,16 @@ function cleanupRegistrationStores(now = Date.now()) {
       registrationProofStore.delete(token);
     }
   }
+}
+
+async function cleanupPersistentRegistrationStores(now = Date.now()) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return;
+  const isoNow = new Date(now).toISOString();
+  await Promise.allSettled([
+    admin.from(REG_CODE_TABLE).delete().lte('expires_at', isoNow),
+    admin.from(REG_PROOF_TABLE).delete().or(`expires_at.lte.${isoNow},consumed.eq.true`),
+  ]);
 }
 
 let supabaseAdminClient = null;
@@ -144,6 +169,120 @@ function getSupabaseAdminClient() {
   return supabaseAdminClient;
 }
 
+async function loadPersistentRegistrationCode(email, purpose) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from(REG_CODE_TABLE)
+    .select('email,purpose,code_hash,attempts,expires_at,cooldown_until,verified_at')
+    .eq('email', normalizeEmail(email))
+    .eq('purpose', String(purpose || 'register').trim().toLowerCase())
+    .maybeSingle();
+  if (error) {
+    console.warn('[registration-code-store] load failed:', error.message || error);
+    return null;
+  }
+  if (!data) return null;
+  return {
+    email: normalizeEmail(data.email),
+    purpose: String(data.purpose || purpose || 'register').trim().toLowerCase(),
+    codeHash: String(data.code_hash || ''),
+    attempts: Number(data.attempts || 0),
+    expiresAt: dateToMs(data.expires_at),
+    cooldownUntil: dateToMs(data.cooldown_until),
+    verifiedAt: data.verified_at ? dateToMs(data.verified_at) : null,
+  };
+}
+
+async function savePersistentRegistrationCode(entry) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return false;
+  const { error } = await admin.from(REG_CODE_TABLE).upsert(
+    {
+      email: normalizeEmail(entry.email),
+      purpose: String(entry.purpose || 'register').trim().toLowerCase(),
+      code_hash: String(entry.codeHash || ''),
+      attempts: Number(entry.attempts || 0),
+      expires_at: new Date(Number(entry.expiresAt || 0)).toISOString(),
+      cooldown_until: new Date(Number(entry.cooldownUntil || 0)).toISOString(),
+      verified_at: entry.verifiedAt ? new Date(Number(entry.verifiedAt)).toISOString() : null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'email,purpose' },
+  );
+  if (error) {
+    console.warn('[registration-code-store] save failed:', error.message || error);
+    return false;
+  }
+  return true;
+}
+
+async function deletePersistentRegistrationCode(email, purpose) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return;
+  const { error } = await admin
+    .from(REG_CODE_TABLE)
+    .delete()
+    .eq('email', normalizeEmail(email))
+    .eq('purpose', String(purpose || 'register').trim().toLowerCase());
+  if (error) console.warn('[registration-code-store] delete failed:', error.message || error);
+}
+
+async function savePersistentRegistrationProof(token, entry) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return false;
+  const { error } = await admin.from(REG_PROOF_TABLE).insert({
+    token_hash: hashProofToken(token),
+    email: normalizeEmail(entry.email),
+    purpose: String(entry.purpose || 'register').trim().toLowerCase(),
+    expires_at: new Date(Number(entry.expiresAt || 0)).toISOString(),
+    consumed: false,
+  });
+  if (error) {
+    console.warn('[registration-proof-store] save failed:', error.message || error);
+    return false;
+  }
+  return true;
+}
+
+async function loadPersistentRegistrationProof(token) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return null;
+  const { data, error } = await admin
+    .from(REG_PROOF_TABLE)
+    .select('email,purpose,expires_at,consumed')
+    .eq('token_hash', hashProofToken(token))
+    .maybeSingle();
+  if (error) {
+    console.warn('[registration-proof-store] load failed:', error.message || error);
+    return null;
+  }
+  if (!data) return null;
+  return {
+    email: normalizeEmail(data.email),
+    purpose: String(data.purpose || 'register').trim().toLowerCase(),
+    expiresAt: dateToMs(data.expires_at),
+    consumed: data.consumed === true,
+  };
+}
+
+async function consumePersistentRegistrationProof(token) {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return false;
+  const { data, error } = await admin
+    .from(REG_PROOF_TABLE)
+    .update({ consumed: true, consumed_at: new Date().toISOString() })
+    .eq('token_hash', hashProofToken(token))
+    .eq('consumed', false)
+    .select('token_hash')
+    .maybeSingle();
+  if (error) {
+    console.warn('[registration-proof-store] consume failed:', error.message || error);
+    return false;
+  }
+  return Boolean(data);
+}
+
 async function getAuthenticatedCaller(req) {
   const token = getBearerUserToken(req);
   if (!token) return null;
@@ -159,12 +298,22 @@ async function getAuthenticatedCaller(req) {
   } = await admin.auth.getUser(token);
   if (authError || !user?.id) return null;
 
-  const { data: profile, error: profileError } = await admin
+  let { data: profile, error: profileError } = await admin
     .from('profiles')
     .select('id, user_id, role, company_id')
     .or(`id.eq.${user.id},user_id.eq.${user.id}`)
     .limit(1)
     .maybeSingle();
+  if (profileError && (profileError.code === '42703' || /user_id/i.test(String(profileError.message || '')))) {
+    const fallback = await admin
+      .from('profiles')
+      .select('id, role, company_id')
+      .eq('id', user.id)
+      .limit(1)
+      .maybeSingle();
+    profile = fallback.data;
+    profileError = fallback.error;
+  }
   if (profileError || !profile) return null;
 
   const { data: superAdminRow } = await admin
@@ -181,6 +330,15 @@ async function getAuthenticatedCaller(req) {
     profile,
     isPrivilegedEmailSender: isSuperAdmin || role === 'admin',
   };
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 async function requireSendEmailAuth(req, res, next) {
@@ -559,6 +717,36 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
       return res.status(400).json({ error: 'Invalid email type' });
     }
 
+    if (type === 'password-reset' && tempPassword) {
+      const fullName = `${firstName || ''} ${lastName || ''}`.trim() || '\u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c';
+      const safeFullName = escapeHtml(fullName);
+      const safeTempPassword = escapeHtml(tempPassword);
+      subject = '\u041d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0434\u043b\u044f MonitorApp';
+      html = `
+        <div style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,sans-serif;color:#111827;">
+          <div style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+            <div style="padding:24px 28px;background:#111827;color:#ffffff;">
+              <div style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#cbd5e1;">&#1052;&#1086;&#1085;&#1080;&#1090;&#1086;&#1088;</div>
+              <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">&#1053;&#1086;&#1074;&#1099;&#1081; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100;</h1>
+            </div>
+            <div style="padding:28px;">
+              <p style="margin:0 0 14px;font-size:16px;">&#1055;&#1088;&#1080;&#1074;&#1077;&#1090;, ${safeFullName}.</p>
+              <p style="margin:0 0 18px;line-height:1.55;color:#374151;">&#1040;&#1076;&#1084;&#1080;&#1085;&#1080;&#1089;&#1090;&#1088;&#1072;&#1090;&#1086;&#1088; &#1089;&#1073;&#1088;&#1086;&#1089;&#1080;&#1083; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100; &#1074;&#1072;&#1096;&#1077;&#1081; &#1091;&#1095;&#1077;&#1090;&#1085;&#1086;&#1081; &#1079;&#1072;&#1087;&#1080;&#1089;&#1080;. &#1048;&#1089;&#1087;&#1086;&#1083;&#1100;&#1079;&#1091;&#1081;&#1090;&#1077; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100; &#1085;&#1080;&#1078;&#1077; &#1076;&#1083;&#1103; &#1074;&#1093;&#1086;&#1076;&#1072;.</p>
+              <div style="margin:22px 0;padding:18px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;">
+                <div style="margin-bottom:8px;font-size:13px;font-weight:700;color:#6b7280;text-transform:uppercase;">&#1042;&#1088;&#1077;&#1084;&#1077;&#1085;&#1085;&#1099;&#1081; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100;</div>
+                <div style="font-family:Menlo,Consolas,monospace;font-size:22px;line-height:1.3;font-weight:800;letter-spacing:.04em;color:#111827;">${safeTempPassword}</div>
+              </div>
+              <div style="margin:20px 0 0;padding:14px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;color:#1e3a8a;line-height:1.5;">
+                &#1055;&#1086;&#1089;&#1083;&#1077; &#1074;&#1093;&#1086;&#1076;&#1072; &#1089;&#1084;&#1077;&#1085;&#1080;&#1090;&#1077; &#1087;&#1072;&#1088;&#1086;&#1083;&#1100; &#1074; &#1087;&#1088;&#1086;&#1092;&#1080;&#1083;&#1077;.
+              </div>
+              <p style="margin:24px 0 0;color:#6b7280;font-size:13px;line-height:1.5;">&#1045;&#1089;&#1083;&#1080; &#1074;&#1099; &#1085;&#1077; &#1078;&#1076;&#1072;&#1083;&#1080; &#1101;&#1090;&#1086; &#1087;&#1080;&#1089;&#1100;&#1084;&#1086;, &#1089;&#1074;&#1103;&#1078;&#1080;&#1090;&#1077;&#1089;&#1100; &#1089; &#1074;&#1072;&#1096;&#1080;&#1084; &#1072;&#1076;&#1084;&#1080;&#1085;&#1080;&#1089;&#1090;&#1088;&#1072;&#1090;&#1086;&#1088;&#1086;&#1084;.</p>
+            </div>
+          </div>
+        </div>
+      `;
+      text = `\u041d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0434\u043b\u044f MonitorApp\n\n\u041f\u0440\u0438\u0432\u0435\u0442, ${fullName}.\n\n\u0410\u0434\u043c\u0438\u043d\u0438\u0441\u0442\u0440\u0430\u0442\u043e\u0440 \u0441\u0431\u0440\u043e\u0441\u0438\u043b \u043f\u0430\u0440\u043e\u043b\u044c \u0432\u0430\u0448\u0435\u0439 \u0443\u0447\u0435\u0442\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438.\n\n\u0412\u0440\u0435\u043c\u0435\u043d\u043d\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c: ${tempPassword}\n\n\u041f\u043e\u0441\u043b\u0435 \u0432\u0445\u043e\u0434\u0430 \u0441\u043c\u0435\u043d\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435.`;
+    }
+
     const info = await transporter.sendMail({
       from: process.env.SMTP_FROM || 'MonitorApp <noreply@monitorapp.ru>',
       replyTo: process.env.SMTP_REPLY_TO || 'support@monitorapp.ru',
@@ -587,6 +775,7 @@ app.get('/health', (req, res) => {
 
 app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 * 1000), requireServerToken, async (req, res) => {
   try {
+    await cleanupPersistentRegistrationStores();
     cleanupRegistrationStores();
     const email = normalizeEmail(req.body?.email);
     const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
@@ -598,7 +787,8 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     }
 
     const now = Date.now();
-    const existing = registrationCodeStore.get(email);
+    const codeKey = getRegistrationCodeKey(email, purpose);
+    const existing = (await loadPersistentRegistrationCode(email, purpose)) || registrationCodeStore.get(codeKey);
     if (existing && Number(existing.cooldownUntil || 0) > now) {
       const retryAfter = Math.max(1, Math.ceil((existing.cooldownUntil - now) / 1000));
       return res.status(429).json({ ok: false, code: 'RATE_LIMITED', retry_after_seconds: retryAfter });
@@ -607,7 +797,7 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     const code = generateSixDigitCode();
     const expiresAt = now + REG_CODE_TTL_MS;
     const cooldownUntil = now + REG_CODE_RESEND_COOLDOWN_MS;
-    registrationCodeStore.set(email, {
+    const entry = {
       codeHash: hashCode(code),
       email,
       purpose,
@@ -616,7 +806,9 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       cooldownUntil,
       attempts: 0,
       verifiedAt: null,
-    });
+    };
+    registrationCodeStore.set(codeKey, entry);
+    await savePersistentRegistrationCode(entry);
 
     const isRecoveryPurpose = purpose === 'recovery';
     const subject = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
@@ -685,6 +877,7 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
 
 app.post('/registration/verify-code', rateLimit('registration-verify-code', 50, 60 * 1000), requireServerToken, async (req, res) => {
   try {
+    await cleanupPersistentRegistrationStores();
     cleanupRegistrationStores();
     const email = normalizeEmail(req.body?.email);
     const code = String(req.body?.code || '').trim();
@@ -700,33 +893,43 @@ app.post('/registration/verify-code', rateLimit('registration-verify-code', 50, 
       return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE' });
     }
 
-    const entry = registrationCodeStore.get(email);
+    const codeKey = getRegistrationCodeKey(email, purpose);
+    const entry = (await loadPersistentRegistrationCode(email, purpose)) || registrationCodeStore.get(codeKey);
     if (!entry || Number(entry.expiresAt || 0) <= Date.now()) {
-      registrationCodeStore.delete(email);
+      registrationCodeStore.delete(codeKey);
+      await deletePersistentRegistrationCode(email, purpose);
       return res.status(400).json({ ok: false, code: 'CODE_EXPIRED' });
+    }
+    if (String(entry.purpose || '') !== purpose) {
+      return res.status(400).json({ ok: false, code: 'INVALID_CODE' });
     }
 
     const attempts = Number(entry.attempts || 0) + 1;
     entry.attempts = attempts;
     if (attempts > REG_CODE_MAX_ATTEMPTS) {
-      registrationCodeStore.delete(email);
+      registrationCodeStore.delete(codeKey);
+      await deletePersistentRegistrationCode(email, purpose);
       return res.status(429).json({ ok: false, code: 'TOO_MANY_ATTEMPTS' });
     }
 
     if (!timingSafeStringEqual(hashCode(code), String(entry.codeHash || ''))) {
-      registrationCodeStore.set(email, entry);
+      registrationCodeStore.set(codeKey, entry);
+      await savePersistentRegistrationCode(entry);
       return res.status(400).json({ ok: false, code: 'INVALID_CODE' });
     }
 
     const proofToken = generateProofToken();
-    registrationProofStore.set(proofToken, {
+    const proofEntry = {
       email,
       purpose,
       createdAt: Date.now(),
       expiresAt: Date.now() + REG_PROOF_TTL_MS,
       consumed: false,
-    });
-    registrationCodeStore.delete(email);
+    };
+    registrationProofStore.set(proofToken, proofEntry);
+    await savePersistentRegistrationProof(proofToken, proofEntry);
+    registrationCodeStore.delete(codeKey);
+    await deletePersistentRegistrationCode(email, purpose);
 
     return res.status(200).json({
       ok: true,
@@ -741,6 +944,7 @@ app.post('/registration/verify-code', rateLimit('registration-verify-code', 50, 
 
 app.post('/registration/consume-token', rateLimit('registration-consume-token', 100, 60 * 1000), requireServerToken, async (req, res) => {
   try {
+    await cleanupPersistentRegistrationStores();
     cleanupRegistrationStores();
     const email = normalizeEmail(req.body?.email);
     const token = String(req.body?.registration_token || '').trim();
@@ -753,7 +957,8 @@ app.post('/registration/consume-token', rateLimit('registration-consume-token', 
       return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE' });
     }
 
-    const entry = registrationProofStore.get(token);
+    const persistentEntry = await loadPersistentRegistrationProof(token);
+    const entry = persistentEntry || registrationProofStore.get(token);
     if (!entry) {
       return res.status(400).json({ ok: false, code: 'INVALID_TOKEN' });
     }
@@ -768,6 +973,12 @@ app.post('/registration/consume-token', rateLimit('registration-consume-token', 
       return res.status(400).json({ ok: false, code: 'TOKEN_MISMATCH' });
     }
 
+    if (persistentEntry) {
+      const consumed = await consumePersistentRegistrationProof(token);
+      if (!consumed) {
+        return res.status(400).json({ ok: false, code: 'TOKEN_ALREADY_USED' });
+      }
+    }
     entry.consumed = true;
     registrationProofStore.set(token, entry);
     cleanupRegistrationStores();

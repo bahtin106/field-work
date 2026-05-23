@@ -33,6 +33,7 @@ import {
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import goBackSmart from '../../lib/navigation/goBackSmart';
+import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import {
   getOrderIdsByWorkTypes,
   getStatusDbAliases,
@@ -864,12 +865,14 @@ function MyOrdersContent() {
             o?.description,
             o?.comment,
           ],
-          phones: [o?.customer_phone_visible, o?.customer_phone, o?.phone],
+          phones: shouldShowOrderPhoneForRole(o, companySettings, auth.profile?.role)
+            ? [o?.customer_phone_visible, o?.customer_phone, o?.phone]
+            : [],
         }),
         q,
       );
     });
-  }, [orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo, t]);
+  }, [auth.profile?.role, companySettings, orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo, t]);
 
   const sortOptions = useMemo(
     () => [

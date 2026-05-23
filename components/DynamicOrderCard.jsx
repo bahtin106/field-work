@@ -2,8 +2,11 @@
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { formatCurrency } from '../lib/currency';
+import { shouldShowOrderPhoneForRole } from '../lib/phoneVisibilityRules';
 import { readValueFromOrder } from '../lib/settings';
 import { supabase } from '../lib/supabase';
+import { useCompanySettings } from '../hooks/useCompanySettings';
+import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { resolveRequestTitle } from '../src/features/requests/title';
 import { useTranslation } from '../src/i18n/useTranslation';
 import {
@@ -79,9 +82,47 @@ const PRIMARY_ROW_LABEL_KEYS = {
   time_window_start: 'order_details_departure_date',
 };
 
-function formatDateShort(iso, showTime = true) {
-  if (!iso) return '';
-  const d = new Date(iso);
+function normalizeTimeOnly(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return '';
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    return '';
+  }
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function hasExplicitTimeInDatetime(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return false;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return false;
+  const timeMatch = raw.match(/[T\s](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/);
+  if (!timeMatch) return false;
+  const hh = Number(timeMatch[1]);
+  const mm = Number(timeMatch[2]);
+  const ss = Number(timeMatch[3] || 0);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || !Number.isFinite(ss)) return false;
+  return hh !== 0 || mm !== 0 || ss !== 0;
+}
+
+function parseDisplayDate(value) {
+  const raw = String(value || '').trim();
+  const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    const parsed = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatDateShort(iso, showTime = true, explicitTime = '') {
+  const d = parseDisplayDate(iso);
+  if (!d) return '';
   const parts = new Intl.DateTimeFormat('ru-RU', {
     day: 'numeric',
     month: 'short',
@@ -92,34 +133,26 @@ function formatDateShort(iso, showTime = true) {
   const year = parts.find((p) => p.type === 'year')?.value || String(d.getFullYear());
   const dateStr = `${day} ${month} ${year}`;
   if (showTime) {
-    return `${dateStr}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+    const time = normalizeTimeOnly(explicitTime);
+    if (time) return `${dateStr}, ${time}`;
+    if (hasExplicitTimeInDatetime(iso)) {
+      return `${dateStr}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+    }
   }
   return dateStr;
 }
 
 function hasExplicitDepartureTime(order) {
   if (!order) return false;
-  if (typeof order?.departure_time === 'string' && order.departure_time.trim()) return true;
-  const raw = order?.time_window_start;
-  if (!raw) return false;
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed?.getTime?.())) return false;
-  return parsed.getHours() !== 0 || parsed.getMinutes() !== 0;
+  if (normalizeTimeOnly(order?.departure_time)) return true;
+  return hasExplicitTimeInDatetime(order?.time_window_start);
 }
 
 function parseDepartureTime(order) {
-  const raw = String(order?.departure_time || '').trim();
-  if (raw) {
-    const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (match) {
-      const hh = Number(match[1]);
-      const mm = Number(match[2]);
-      if (Number.isFinite(hh) && Number.isFinite(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-        return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-      }
-    }
-  }
+  const explicit = normalizeTimeOnly(order?.departure_time);
+  if (explicit) return explicit;
   const startRaw = order?.time_window_start;
+  if (!hasExplicitTimeInDatetime(startRaw)) return '';
   if (!startRaw) return '';
   const parsed = new Date(startRaw);
   if (Number.isNaN(parsed?.getTime?.())) return '';
@@ -258,6 +291,9 @@ function DynamicOrderCard({
 }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
+  const { profile } = useAuthContext();
+  const { settings: companySettings } = useCompanySettings();
+  const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, profile?.role);
   const lastPressAtRef = useRef(0);
 
   const getFieldByKey = useCallback(
@@ -310,6 +346,7 @@ function DynamicOrderCard({
       if (direct !== null && direct !== undefined && String(direct).trim().length > 0) return true;
       const key = String(fieldKey || '').trim();
       if (!key) return false;
+      if (key === 'phone' && !canShowOrderPhone) return false;
       if (key === 'customer_name') {
         return [
           order?.customer_name,
@@ -343,16 +380,19 @@ function DynamicOrderCard({
       }
       return String(order?.[key] || '').trim().length > 0;
     },
-    [order],
+    [canShowOrderPhone, order],
   );
   const isCardFieldVisible = useCallback(
     (fieldKey) => {
+      if (String(fieldKey || '') === 'phone' && !canShowOrderPhone) {
+        return false;
+      }
       if (String(fieldKey || '') === 'start_price' && !isOrderFinanceEnabledFromMap(orderFieldsByKey)) {
         return false;
       }
       return isFieldEnabledBySettings(fieldKey) || hasOrderFieldValue(fieldKey);
     },
-    [hasOrderFieldValue, isFieldEnabledBySettings, orderFieldsByKey],
+    [canShowOrderPhone, hasOrderFieldValue, isFieldEnabledBySettings, orderFieldsByKey],
   );
 
   // Primary rows
@@ -362,7 +402,8 @@ function DynamicOrderCard({
         const field = getFieldByKey(key);
         let value = readWithFallback(order, field, key);
         if (key === 'phone') {
-          if (order?.customer_phone_visible) value = order.customer_phone_visible;
+          if (!canShowOrderPhone) value = '';
+          else if (order?.customer_phone_visible) value = order.customer_phone_visible;
           else if (order?.phone_is_visible) value = order.phone;
           else if (order?.customer_phone_masked) value = order.customer_phone_masked;
         }
@@ -383,7 +424,7 @@ function DynamicOrderCard({
         return { key, label, value, visibleBySettings, hasValue };
       })
       .filter((r) => r.key !== 'title' && (r.visibleBySettings || r.hasValue));
-  }, [fields, order, getFieldByKey, hasOrderFieldValue, isCardFieldVisible, t]);
+  }, [canShowOrderPhone, fields, order, getFieldByKey, hasOrderFieldValue, isCardFieldVisible, t]);
 
   // Status pill
   const statusTitle = useMemo(
@@ -627,7 +668,7 @@ function DynamicOrderCard({
     context === 'calendar' && bottomTimeStr
       ? bottomTimeStr
       : showDate
-        ? formatDateShort(bottomDateIso, showDepartureTime)
+        ? formatDateShort(bottomDateIso, showDepartureTime, bottomTimeStr)
         : '';
   const footerRightText = showExecutor ? String(resolvedExecutorName || executorName || '').trim() : '';
   const footerRightTopText = showExecutor ? (priceText || ' ') : ' ';

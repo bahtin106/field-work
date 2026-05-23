@@ -88,6 +88,7 @@ const BaseModalImpl = (
     onClose,
     onRequestClose,
     onShow,
+    onDismiss,
     title = '',
     children,
     footer = null,
@@ -109,7 +110,9 @@ const BaseModalImpl = (
   const modalTokens = theme.components?.modal || {};
 
   const [rnVisible, setRnVisible] = useState(false);
+  const [nativeDismissPending, setNativeDismissPending] = useState(false);
   const [modalKey, _setModalKey] = useState(0);
+  const dismissNotifiedRef = useRef(false);
 
   // Track keyboard height to avoid overlap (applies to all screens using BaseModal)
   const [kbInset, setKbInset] = useState(0);
@@ -237,11 +240,23 @@ const BaseModalImpl = (
     targetCardMaxHeight,
   ]);
 
+  const notifyDismiss = () => {
+    if (dismissNotifiedRef.current) return;
+    dismissNotifiedRef.current = true;
+    try {
+      onDismiss?.();
+    } catch {}
+  };
+
   const doUnmount = () => {
+    if (Platform.OS === 'ios') {
+      setNativeDismissPending(true);
+    }
     setRnVisible(false);
     try {
       onClose?.();
     } catch {}
+    if (Platform.OS !== 'ios') notifyDismiss();
   };
 
   // ── "Material Emerge" animation ──────────────────────────────
@@ -258,6 +273,8 @@ const BaseModalImpl = (
 
   const open = () => {
     // Set invisible starting position, then mount
+    dismissNotifiedRef.current = false;
+    setNativeDismissPending(false);
     op.value = 0;
     cardOp.value = 0;
     ty.value = 64;
@@ -366,7 +383,7 @@ const BaseModalImpl = (
     };
   }, [visible, theme]);
 
-  if (!visible && !rnVisible) return null;
+  if (!visible && !rnVisible && !nativeDismissPending) return null;
 
   return (
     <Modal
@@ -387,6 +404,8 @@ const BaseModalImpl = (
       onDismiss={() => {
         // Safety-net: ensure state is reset even if native dismisses unexpectedly
         setRnVisible(false);
+        setNativeDismissPending(false);
+        notifyDismiss();
       }}
     >
       {/* Backdrop - handles taps outside card */}

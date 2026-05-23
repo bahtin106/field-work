@@ -228,6 +228,23 @@ function formatDateOnlyForStorage(input) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+function scrollRefToY(scrollNode, y, animated = true) {
+  if (!scrollNode) return;
+  const targetY = Math.max(0, Number(y) || 0);
+  if (typeof scrollNode.scrollTo === 'function') {
+    scrollNode.scrollTo({ y: targetY, animated });
+    return;
+  }
+  if (typeof scrollNode.scrollToPosition === 'function') {
+    scrollNode.scrollToPosition(0, targetY, animated);
+    return;
+  }
+  const responder = scrollNode.getScrollResponder?.();
+  if (typeof responder?.scrollResponderScrollTo === 'function') {
+    responder.scrollResponderScrollTo({ y: targetY, animated });
+  }
+}
+
 function CreateOrderContent() {
   const { has, loading } = usePermissions();
   const { theme } = useTheme();
@@ -650,7 +667,7 @@ function CreateOrderContent() {
       scrollHandle,
       () => {},
       (_x, y) => {
-        scrollRef.current.scrollTo({ y, animated: true });
+        scrollRefToY(scrollRef.current, y, true);
       },
     );
   }, []);
@@ -1625,6 +1642,7 @@ function CreateOrderContent() {
     [
       description,
       fieldErrors,
+      form.title,
       form.start_price,
       formStyles.field,
       getField,

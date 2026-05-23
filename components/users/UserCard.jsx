@@ -219,7 +219,9 @@ export const UserCard = React.memo(UserCardContent, (prevProps, nextProps) => {
     prevProps.item?.is_admin_blocked === nextProps.item?.is_admin_blocked &&
     prevProps.item?.license_state === nextProps.item?.license_state &&
     prevProps.departmentName === nextProps.departmentName &&
-    prevProps.showDepartment === nextProps.showDepartment
+    prevProps.showDepartment === nextProps.showDepartment &&
+    prevProps.formatPresence === nextProps.formatPresence &&
+    prevProps.isOnlineNow === nextProps.isOnlineNow
   );
 });
 

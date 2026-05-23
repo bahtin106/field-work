@@ -39,7 +39,7 @@ const cors = {
 };
 
 function isUuid(value: unknown): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     String(value || '').trim(),
   );
 }
@@ -66,6 +66,7 @@ async function getProfileFlexible(admin: any, lookupId: string) {
 
   const selectVariants = [
     'id, user_id, role, company_id, email',
+    'id, role, company_id, email',
     'id, user_id, role, company_id',
     'id, role, company_id',
   ];
@@ -102,7 +103,13 @@ async function getProfileFlexible(admin: any, lookupId: string) {
   return { data: null, error: null };
 }
 
-async function resolveAuthUserId(admin: any, actorId: string, actorProfileId: string, targetProfile: any) {
+async function resolveAuthUserId(
+  admin: any,
+  actorId: string,
+  actorProfileId: string,
+  targetProfile: any,
+  explicitAuthUserId = '',
+) {
   const targetProfileId = String(targetProfile?.id || '').trim();
   const targetProfileUserId = String(targetProfile?.user_id || '').trim();
   const targetProfileEmail = String(targetProfile?.email || '').trim().toLowerCase();
@@ -112,6 +119,23 @@ async function resolveAuthUserId(admin: any, actorId: string, actorProfileId: st
     (targetProfileUserId && actorId && targetProfileUserId === actorId)
   ) {
     return actorId;
+  }
+
+  const explicitCandidate = String(explicitAuthUserId || '').trim();
+  if (isUuid(explicitCandidate)) {
+    const { data, error } = await admin.auth.admin.getUserById(explicitCandidate);
+    const explicitUser = !error ? data?.user : null;
+    const explicitEmail = String(explicitUser?.email || '').trim().toLowerCase();
+    if (
+      explicitUser?.id &&
+      (
+        explicitCandidate === targetProfileUserId ||
+        explicitCandidate === targetProfileId ||
+        (!!targetProfileEmail && explicitEmail === targetProfileEmail)
+      )
+    ) {
+      return String(explicitUser.id);
+    }
   }
 
   const authCandidates = [targetProfileUserId, targetProfileId].filter(
@@ -171,10 +195,10 @@ export async function handleUpdateUserRequest(req: Request) {
     const body = (await req.json()) as ReqBody;
     const rawUserId = String(body?.user_id || '').trim();
     const rawProfileId = String(body?.profile_id || '').trim();
-    let targetLookupId = isUuid(rawUserId)
-      ? rawUserId
-      : isUuid(rawProfileId)
-        ? rawProfileId
+    let targetLookupId = isUuid(rawProfileId)
+      ? rawProfileId
+      : isUuid(rawUserId)
+        ? rawUserId
         : '';
 
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
@@ -247,6 +271,7 @@ export async function handleUpdateUserRequest(req: Request) {
       String(actor.id || '').trim(),
       String(actorProfile?.id || '').trim(),
       targetProfile,
+      rawUserId,
     );
     const targetProfileId = String(targetProfile.id || '').trim();
     if (needsAuthMutation && (!targetAuthUserId || !isUuid(targetAuthUserId))) {

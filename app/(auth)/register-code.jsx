@@ -445,7 +445,6 @@ export default function RegisterCodeScreen() {
       await AsyncStorage.removeItem(REGISTER_PENDING_KEY);
       await AsyncStorage.removeItem(`${REGISTER_CODE_COOLDOWN_PREFIX}${normalizedEmail}`);
       showSuccessToast(t('register_success'));
-      router.replace('/orders');
     } catch (e) {
       logClientError(e, { source: 'register_code_submit' });
       const rawMessage = String(e?.message || t('common_unexpected_error'));
@@ -471,7 +470,7 @@ export default function RegisterCodeScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [clearBanner, email, resending, router, showBanner, showSuccessToast, submitting, t]);
+  }, [clearBanner, email, resending, showBanner, showSuccessToast, submitting, t]);
 
   useEffect(() => {
     if (code.length !== 6) return;

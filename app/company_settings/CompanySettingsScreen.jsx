@@ -3,6 +3,7 @@ import { usePathname, useRouter } from 'expo-router';
 import React from 'react';
 import {
   ActivityIndicator,
+  InteractionManager,
   Keyboard,
   Platform,
   Pressable,
@@ -144,6 +145,7 @@ const FALLBACK_TZ = [
   'Pacific/Chatham',
   'Pacific/Tongatapu',
 ];
+const IOS_MODAL_TRANSITION_MS = 320;
 
 function isZoneSupported(zone) {
   try {
@@ -262,7 +264,30 @@ export default function CompanySettings() {
   const isSoloAdmin = isAdmin && authAccountType === 'solo';
   const lastNavigationAtRef = React.useRef(0);
   const accessRedirectInFlightRef = React.useRef(false);
+  const modalTransitionTimerRef = React.useRef(null);
   const NAV_GUARD_MS = 0;
+
+  React.useEffect(
+    () => () => {
+      if (modalTransitionTimerRef.current) clearTimeout(modalTransitionTimerRef.current);
+    },
+    [],
+  );
+
+  const openModalAfterNativeClose = React.useCallback((openNext) => {
+    if (modalTransitionTimerRef.current) {
+      clearTimeout(modalTransitionTimerRef.current);
+      modalTransitionTimerRef.current = null;
+    }
+    if (Platform.OS !== 'ios') {
+      requestAnimationFrame(() => openNext?.());
+      return;
+    }
+    modalTransitionTimerRef.current = setTimeout(() => {
+      modalTransitionTimerRef.current = null;
+      InteractionManager.runAfterInteractions(() => openNext?.());
+    }, IOS_MODAL_TRANSITION_MS);
+  }, []);
 
   const runSingleNavigation = React.useCallback((navigate) => {
     const now = Date.now();
@@ -403,6 +428,7 @@ export default function CompanySettings() {
   const [workModeConsentOpen, setWorkModeConsentOpen] = React.useState(false);
   const [pendingWorkMode, setPendingWorkMode] = React.useState(null);
   const [switchingWorkMode, setSwitchingWorkMode] = React.useState(false);
+  const [localWorkModeOverride, setLocalWorkModeOverride] = React.useState(null);
   const [workModeConsents, setWorkModeConsents] = React.useState({
     blockMembers: false,
     reassignOrders: false,
@@ -667,9 +693,9 @@ export default function CompanySettings() {
         }
       }
       // open confirm modal where admin can edit rate and choose recalc mode
-      setCurrencyConfirmOpen(true);
+      openModalAfterNativeClose(() => setCurrencyConfirmOpen(true));
     },
-    [currency, fetchRateFromApi, MODAL_RECALC_METHODS],
+    [currency, fetchRateFromApi, MODAL_RECALC_METHODS, openModalAfterNativeClose],
   );
 
   // Auto-fetch rate helper used both by button and when modal opens
@@ -808,7 +834,7 @@ export default function CompanySettings() {
           setWindowAfter(a.val);
         } catch {}
         setPhoneMode('window');
-        setWindowModalOpen(true);
+        openModalAfterNativeClose(() => setWindowModalOpen(true));
         return;
       }
       setPhoneMode(it.id);
@@ -818,21 +844,23 @@ export default function CompanySettings() {
         error: (e) => e?.message || t('toast_error'),
       });
     },
-    [updateSetting, t, toast, windowBefore, windowAfter, decomposeMinutes],
+    [updateSetting, t, toast, windowBefore, windowAfter, decomposeMinutes, openModalAfterNativeClose],
   );
 
-  const phoneModeLabel = React.useMemo(() => {
-    const map = Object.fromEntries(phoneModeOptions.map((o) => [o.id, o.label]));
-    return map[phoneMode] || '';
-  }, [phoneMode, phoneModeOptions]);
   const currentThemeLabel = React.useMemo(
     () => t(`settings_theme_${mode || 'system'}`),
     [mode, t],
   );
   const currentWorkMode = React.useMemo(
-    () => (authAccountType === 'solo' ? 'solo' : 'company'),
-    [authAccountType],
+    () => localWorkModeOverride || (authAccountType === 'solo' ? 'solo' : 'company'),
+    [authAccountType, localWorkModeOverride],
   );
+  React.useEffect(() => {
+    const metadataMode = authAccountType === 'solo' ? 'solo' : 'company';
+    if (localWorkModeOverride && localWorkModeOverride === metadataMode) {
+      setLocalWorkModeOverride(null);
+    }
+  }, [authAccountType, localWorkModeOverride]);
   const workModeItems = React.useMemo(
     () => [
       {
@@ -912,9 +940,9 @@ export default function CompanySettings() {
       }
       setPendingWorkMode(modeId);
       setWorkModeOpen(false);
-      setWorkModeConfirmOpen(true);
+      openModalAfterNativeClose(() => setWorkModeConfirmOpen(true));
     },
-    [currentWorkMode],
+    [currentWorkMode, openModalAfterNativeClose],
   );
   const invokeWorkModeSwitch = React.useCallback(async () => {
     const targetMode = String(pendingWorkMode || '').trim();
@@ -926,6 +954,11 @@ export default function CompanySettings() {
       return;
     }
     setSwitchingWorkMode(true);
+    const loadingToast =
+      t('settings_work_mode_saving', '\u041f\u0440\u0438\u043c\u0435\u043d\u044f\u044e \u0440\u0435\u0436\u0438\u043c \u0440\u0430\u0431\u043e\u0442\u044b...');
+    try {
+      toast.show(loadingToast, 'info');
+    } catch {}
     try {
       const isSwitchingCompanyToSolo = currentWorkMode === 'company' && targetMode === 'solo';
       const { data, error } = await supabase.functions.invoke(FUNCTIONS.SWITCH_ACCOUNT_MODE, {
@@ -941,14 +974,21 @@ export default function CompanySettings() {
         const mapped = resolveWorkModeSwitchError(data?.message, data?.code);
         throw new Error(mapped);
       }
+      const savedMode = String(data?.account_type || targetMode).toLowerCase() === 'solo' ? 'solo' : 'company';
       try {
         await supabase.auth.updateUser({
           data: {
             ...(user?.user_metadata || {}),
-            account_type: targetMode,
+            account_type: savedMode,
           },
         });
-      } catch {}
+      } catch (metadataError) {
+        try {
+          await supabase.auth.refreshSession();
+        } catch {}
+        if (data?.details?.metadata_sync_failed) throw metadataError;
+      }
+      setLocalWorkModeOverride(savedMode);
       toast.show(t('settings_work_mode_saved'), 'success');
       setWorkModeConfirmOpen(false);
       setWorkModeConsentOpen(false);
@@ -980,11 +1020,12 @@ export default function CompanySettings() {
     const targetMode = String(pendingWorkMode || '').trim();
     const requiresConsent = currentWorkMode === 'company' && targetMode === 'solo';
     if (requiresConsent) {
-      setWorkModeConsentOpen(true);
+      setWorkModeConfirmOpen(false);
+      openModalAfterNativeClose(() => setWorkModeConsentOpen(true));
       return;
     }
     invokeWorkModeSwitch();
-  }, [currentWorkMode, invokeWorkModeSwitch, pendingWorkMode]);
+  }, [currentWorkMode, invokeWorkModeSwitch, openModalAfterNativeClose, pendingWorkMode]);
   React.useEffect(() => {
     setCurrentLocale(getLocale());
   }, [t]);
@@ -1235,8 +1276,8 @@ export default function CompanySettings() {
             <View style={s.card}>
               <SelectField
                 label={t('settings_phone_mode')}
-                value={phoneModeLabel}
-                onPress={() => setPhoneModeOpen(true)}
+                showValue={false}
+                onPress={go('/company_settings/sections/phone')}
               />
             </View>
           </View>
@@ -1399,16 +1440,86 @@ export default function CompanySettings() {
         onClose={() => setLangOpen(false)}
       />
 
-      <SelectModal
+      <BaseModal
         visible={workModeOpen}
         title={t('settings_work_mode_modal_title')}
-        items={workModeItems}
-        searchable={false}
-        selectedId={currentWorkMode}
-        onSelect={onSelectWorkMode}
         onClose={() => setWorkModeOpen(false)}
-        multilineItems
-      />
+      >
+        <View style={{ gap: theme.spacing.sm, paddingBottom: theme.spacing.md }}>
+          {workModeItems.map((item) => {
+            const selected = String(item.id) === String(currentWorkMode);
+            return (
+              <Pressable
+                key={item.id}
+                onPress={() => onSelectWorkMode(item)}
+                style={({ pressed }) => [
+                  {
+                    minHeight: theme.components?.listItem?.height ?? 52,
+                    paddingHorizontal: theme.spacing.lg,
+                    paddingVertical: theme.spacing.sm,
+                    borderRadius: theme.radii.md,
+                    borderWidth: selected ? 2 : theme.components.card.borderWidth,
+                    borderColor: selected ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: theme.colors.surface,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: theme.spacing.sm,
+                  },
+                  pressed && Platform.OS === 'ios' ? { backgroundColor: theme.colors.ripple } : null,
+                ]}
+                accessibilityRole="button"
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text
+                    style={{
+                      color: theme.colors.text,
+                      fontSize: theme.typography.sizes.md,
+                      fontWeight: '600',
+                    }}
+                  >
+                    {item.label}
+                  </Text>
+                  {item.subtitle ? (
+                    <Text
+                      style={{
+                        color: theme.colors.textSecondary,
+                        fontSize: theme.typography.sizes.sm,
+                        marginTop: 2,
+                        lineHeight: Math.round((theme.typography.sizes.sm || 14) * 1.35),
+                      }}
+                    >
+                      {item.subtitle}
+                    </Text>
+                  ) : null}
+                </View>
+                <View
+                  style={{
+                    width: theme.components?.radio?.size ?? theme.icons?.md ?? 22,
+                    height: theme.components?.radio?.size ?? theme.icons?.md ?? 22,
+                    borderRadius: (theme.components?.radio?.size ?? theme.icons?.md ?? 22) / 2,
+                    borderWidth: theme.components?.radio?.borderWidth ?? 1.5,
+                    borderColor: selected ? theme.colors.primary : theme.colors.inputBorder,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {selected ? (
+                    <View
+                      style={{
+                        width: theme.components?.radio?.dot ?? 8,
+                        height: theme.components?.radio?.dot ?? 8,
+                        borderRadius: (theme.components?.radio?.dot ?? 8) / 2,
+                        backgroundColor: theme.colors.primary,
+                      }}
+                    />
+                  ) : null}
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      </BaseModal>
 
       <BaseModal
         visible={workModeConfirmOpen}
@@ -1844,7 +1955,7 @@ export default function CompanySettings() {
             <Pressable
               onPress={() => {
                 setWindowModalOpen(false);
-                setTimeout(() => setPhoneModeOpen(true), 200);
+                openModalAfterNativeClose(() => setPhoneModeOpen(true));
               }}
               style={({ pressed }) => [
                 {

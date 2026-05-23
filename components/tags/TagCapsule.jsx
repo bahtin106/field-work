@@ -59,6 +59,10 @@ export default function TagCapsule({
 function createStyles(theme, compact) {
   const py = compact ? Math.max(2, theme.spacing.xs - 1) : theme.spacing.xs;
   const px = compact ? theme.spacing.sm : theme.spacing.md;
+  const isDark = theme.mode === 'dark';
+  const tagBg = theme.colors.tagBg || (isDark ? '#263548' : '#EEF2F6');
+  const tagBorder = theme.colors.tagBorder || (isDark ? '#49637D' : '#D7DEE8');
+  const tagText = theme.colors.tagText || (isDark ? '#EAF2FF' : '#4A5565');
 
   return StyleSheet.create({
     capsule: {
@@ -68,13 +72,13 @@ function createStyles(theme, compact) {
       borderRadius: theme.radii.pill,
       paddingVertical: py,
       paddingHorizontal: px,
-      backgroundColor: theme.colors.tagBg,
+      backgroundColor: tagBg,
       borderWidth: 1,
-      borderColor: theme.colors.tagBorder,
+      borderColor: tagBorder,
       maxWidth: '100%',
     },
     text: {
-      color: theme.colors.tagText,
+      color: tagText,
       fontSize: theme.typography.sizes.sm,
       fontWeight: theme.typography.weight.medium,
       maxWidth: 220,

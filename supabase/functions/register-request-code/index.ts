@@ -46,6 +46,18 @@ function normalizeEmail(value: unknown) {
   return text(value).toLowerCase();
 }
 
+async function isProfileEmailOwnedByAuthUser(
+  supabaseAdmin: ReturnType<typeof createClient>,
+  profile: { id?: string | null } | null,
+  email: string,
+) {
+  const profileId = text(profile?.id);
+  if (!profileId) return false;
+  const { data, error } = await supabaseAdmin.auth.admin.getUserById(profileId);
+  if (error || !data?.user) return false;
+  return normalizeEmail(data.user.email) === email;
+}
+
 function normalizeCompanyName(value: unknown) {
   return text(value).replace(/\s+/g, ' ');
 }
@@ -194,7 +206,7 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
 
     const admin = getSupabaseAdminClient();
 
-    const { data: existingProfile, error: profileErr } = await admin
+    let { data: existingProfile, error: profileErr } = await admin
       .from('profiles')
       .select('id')
       .eq('email', email)
@@ -205,11 +217,10 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
       return json({ ok: false, code: 'EMAIL_CHECK_FAILED', message: 'Email availability check failed' }, 400);
     }
     if (existingProfile) {
-      return json({
-        ok: true,
-        cooldown_seconds: 60,
-        expires_in_seconds: 600,
-      });
+      if (await isProfileEmailOwnedByAuthUser(admin, existingProfile, email)) {
+        return json({ ok: false, code: 'EMAIL_TAKEN', message: 'User with this email already exists' }, 409);
+      }
+      existingProfile = null;
     }
 
     if (accountType === 'company') {

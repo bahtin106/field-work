@@ -40,6 +40,7 @@ export default function ClientsIndexScreen() {
 
   const canViewClients = has('canViewClients');
   const canCreateClients = has('canCreateClients');
+  const canViewClientPhones = has('canViewClientPhones');
 
   const [search, setSearch] = React.useState('');
   const [debouncedSearch, setDebouncedSearch] = React.useState('');
@@ -101,12 +102,12 @@ export default function ClientsIndexScreen() {
             client?.objects?.[0]?.name,
             ...(Array.isArray(client?.tags) ? client.tags.map((tag) => tag?.value) : []),
           ],
-          phones: collectClientPhoneSearchValues(client),
+          phones: canViewClientPhones ? collectClientPhoneSearchValues(client) : [],
         }),
         debouncedSearch,
       );
     });
-  }, [activeTagFilter, allClients, debouncedSearch]);
+  }, [activeTagFilter, allClients, canViewClientPhones, debouncedSearch]);
 
   const sortOptions = React.useMemo(() => clientSortOptions(t), [t]);
 
@@ -178,7 +179,7 @@ export default function ClientsIndexScreen() {
             refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => {
               const fullName = String(item?.fullName || '').trim();
-              const contactMeta = String(item?.phone || item?.email || '').trim();
+              const contactMeta = String((canViewClientPhones ? item?.phone : '') || item?.email || '').trim();
               const objectMeta =
                 String(item?.primaryObjectSummary || '').trim() ||
                 t('clients_objects_count_label').replace('{count}', String(item.objects?.length || 0));
