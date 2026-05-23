@@ -130,6 +130,7 @@ function UserCardContent({
       ty.sizes.md,
       ty.sizes.sm,
       ty.sizes.xs,
+      ty.lineHeights?.normal,
       ty.weight.semibold,
     ],
   );

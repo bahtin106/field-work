@@ -833,7 +833,7 @@ function MyOrdersContent() {
       alive = false;
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [filter, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, queryClient, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta, useWorkTypesFlag]);
+  }, [filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, queryClient, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, setListCacheEntry, updateFeedMeta, useWorkTypesFlag]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -1154,7 +1154,6 @@ function MyOrdersContent() {
       filters,
       filterSummaryData,
       orders.length,
-      ordersFacetCounts,
       sortedFilteredOrders.length,
       totalOrdersCount,
       hasLinkedRelationFilter,

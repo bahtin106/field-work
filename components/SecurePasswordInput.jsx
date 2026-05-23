@@ -1,6 +1,6 @@
 import React, { useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
 import { useTheme } from '../theme/ThemeProvider';
 
@@ -126,7 +126,7 @@ const SecurePasswordInput = React.forwardRef(
             accessibilityRole="button"
             accessibilityLabel={isSecure ? 'Показать пароль' : 'Скрыть пароль'}
           >
-            <Icon
+            <MaterialCommunityIcons
               name={isSecure ? 'eye-off' : 'eye'}
               size={toggleIconSize ?? (theme.components?.icon?.sizeSm ?? 22)}
               color={toggleIconColor ?? theme.colors.textSecondary}
