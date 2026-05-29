@@ -6,6 +6,8 @@ import { AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 const CACHE_PREFIX = 'company_entitlements_cache_v1:';
+const ENTITLEMENTS_STALE_MS = 60 * 1000;
+const ENTITLEMENTS_GC_MS = 14 * 24 * 60 * 60 * 1000;
 
 /**
  * @typedef {Object} CompanyEntitlements
@@ -92,30 +94,38 @@ export function useCompanyEntitlements(companyId) {
       return fresh;
     },
     placeholderData: (prev) => prev ?? cached ?? null,
-    staleTime: 10 * 1000,
-    gcTime: 5 * 60 * 1000,
-    refetchInterval: companyId ? 10 * 1000 : false,
+    staleTime: ENTITLEMENTS_STALE_MS,
+    gcTime: ENTITLEMENTS_GC_MS,
+    refetchInterval: companyId ? ENTITLEMENTS_STALE_MS : false,
     refetchIntervalInBackground: false,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
   });
   const { refetch } = query;
+
+  const refetchIfStale = React.useCallback(() => {
+    if (!companyId) return;
+    const state = queryClient.getQueryState(['companyEntitlements', companyId]);
+    const updatedAt = Number(state?.dataUpdatedAt || 0);
+    if (updatedAt && Date.now() - updatedAt < ENTITLEMENTS_STALE_MS) return;
+    refetch();
+  }, [companyId, queryClient, refetch]);
 
   useFocusEffect(
     React.useCallback(() => {
       if (!companyId) return undefined;
-      refetch();
+      refetchIfStale();
       return undefined;
-    }, [companyId, refetch]),
+    }, [companyId, refetchIfStale]),
   );
 
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active' && companyId) {
-        queryClient.invalidateQueries({ queryKey: ['companyEntitlements', companyId] });
+        refetchIfStale();
       }
     });
     return () => sub.remove();
-  }, [companyId, queryClient]);
+  }, [companyId, refetchIfStale]);
 
   return {
     ...query,

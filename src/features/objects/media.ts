@@ -1,7 +1,7 @@
 ﻿import { encode as encodeBase64 } from 'base64-arraybuffer';
-import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { objectMediaStorage } from '../../../lib/objectMediaStorage';
+import { uploadPreparedImageFile } from '../../shared/media/imagePipeline';
 
 export async function uploadObjectMediaPhoto(
   objectId: string,
@@ -41,14 +41,10 @@ export async function uploadObjectMediaPhoto(
         throw new Error('Не удалось подготовить загрузку');
       }
 
-      const uploadResult = await uploadAsync(uploadUrl, uri, {
-        httpMethod: uploadMethod as any,
+      await uploadPreparedImageFile(uploadUrl, uri, {
+        method: uploadMethod,
         headers: uploadHeaders,
-        uploadType: FileSystemUploadType.BINARY_CONTENT,
       });
-      if (!uploadResult || Number(uploadResult.status || 0) < 200 || Number(uploadResult.status || 0) >= 300) {
-        throw new Error(String(uploadResult?.body || 'Прямая загрузка не удалась'));
-      }
       directUploadCompleted = true;
 
       const committed = await objectMediaStorage('commit_upload', {
@@ -62,7 +58,7 @@ export async function uploadObjectMediaPhoto(
       if (!publicUrl) {
         throw new Error('Медиа загружено, но ссылка не сохранена');
       }
-      return { publicUrl };
+      return { publicUrl, displayUrl: String(committed?.display_url || '').trim() };
     } catch (error) {
       if (directUploadCompleted) throw error;
       console.warn(
@@ -83,7 +79,7 @@ export async function uploadObjectMediaPhoto(
   });
   const publicUrl = String(data?.url || '').trim();
   if (!publicUrl) throw new Error('Медиа загружено, но ссылка не сохранена');
-  return { publicUrl };
+  return { publicUrl, displayUrl: String(data?.display_url || '').trim() };
 }
 
 export async function deleteObjectMediaPhotoByUrl(objectId: string, category: string, url: string) {

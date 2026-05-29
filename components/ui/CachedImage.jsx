@@ -1,10 +1,10 @@
 // components/ui/CachedImage.jsx
-// High-performance image component with disk+memory caching, shimmer placeholder, and error state.
-// Built on expo-image for native-level caching (like Instagram / Telegram).
+// Shared image renderer with disk+memory caching, stable placeholders, and a compact error state.
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { View, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
+import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../../theme';
 
 const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
@@ -26,6 +26,7 @@ const BLURHASH_PLACEHOLDER = 'L6PZfSi_.AyE_3t7t7R**0o#DgR4';
  */
 export default function CachedImage({
   uri,
+  fallbackUri,
   width,
   height,
   style,
@@ -41,25 +42,43 @@ export default function CachedImage({
 }) {
   const { theme } = useTheme();
   const [hasError, setHasError] = useState(false);
+  const [activeUri, setActiveUri] = useState(uri || '');
+  const [isLoading, setIsLoading] = useState(!!uri);
 
   // Reset error state when URI changes so images retry loading
-  useEffect(() => { setHasError(false); }, [uri]);
+  useEffect(() => {
+    setActiveUri(uri || '');
+    setHasError(false);
+    setIsLoading(!!uri);
+  }, [fallbackUri, uri]);
 
   const handleError = useCallback(
     (e) => {
+      const fallback = String(fallbackUri || '').trim();
+      if (fallback && fallback !== activeUri) {
+        setActiveUri(fallback);
+        setHasError(false);
+        setIsLoading(true);
+        return;
+      }
       setHasError(true);
       onError?.(e);
     },
-    [onError],
+    [activeUri, fallbackUri, onError],
   );
 
   const handleLoad = useCallback(
     (e) => {
       setHasError(false);
+      setIsLoading(false);
       onLoad?.(e);
     },
     [onLoad],
   );
+
+  const handleLoadEnd = useCallback(() => {
+    setIsLoading(false);
+  }, []);
 
   const sizeStyle = useMemo(
     () => ({
@@ -69,7 +88,9 @@ export default function CachedImage({
     [width, height],
   );
 
-  if (!uri || hasError) {
+  const sourceUri = activeUri || uri || '';
+
+  if (!sourceUri || hasError) {
     return (
       <View
         style={[
@@ -79,38 +100,47 @@ export default function CachedImage({
           style,
         ]}
       >
-        <Text
-          style={{
-            color: theme.colors.textSecondary,
-            fontSize: Math.min((width || 80) * 0.32, 24),
-            lineHeight: Math.min((width || 80) * 0.32, 24),
-          }}
-        >
-          □
-        </Text>
+        <Feather name="image" size={24} color={theme.colors.textSecondary} />
       </View>
     );
   }
 
   return (
-    <Image
-      source={{ uri }}
-      style={[sizeStyle, style]}
-      contentFit={contentFit}
-      cachePolicy={cachePolicy}
-      recyclingKey={recyclingKey != null ? String(recyclingKey) : undefined}
-      transition={transition}
-      placeholder={placeholder ? { blurhash: placeholder } : undefined}
-      placeholderContentFit="cover"
-      onLoad={handleLoad}
-      onError={handleError}
-      accessibilityLabel={accessibilityLabel}
-      {...rest}
-    />
+    <View style={[sizeStyle, style, styles.imageFrame]}>
+      <Image
+        source={{ uri: sourceUri }}
+        style={StyleSheet.absoluteFill}
+        contentFit={contentFit}
+        cachePolicy={cachePolicy}
+        recyclingKey={recyclingKey != null ? String(recyclingKey) : sourceUri}
+        transition={transition}
+        placeholder={placeholder ? { blurhash: placeholder } : undefined}
+        placeholderContentFit={contentFit}
+        enforceEarlyResizing
+        onLoad={handleLoad}
+        onLoadEnd={handleLoadEnd}
+        onError={handleError}
+        accessibilityLabel={accessibilityLabel}
+        {...rest}
+      />
+      {isLoading ? (
+        <View pointerEvents="none" style={styles.loadingOverlay}>
+          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  imageFrame: {
+    overflow: 'hidden',
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fallback: {
     alignItems: 'center',
     justifyContent: 'center',

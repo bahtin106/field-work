@@ -7,7 +7,7 @@ export function useMyProfile(options = {}) {
     queryKey: queryKeys.profile.me(),
     queryFn: getMyProfile,
     staleTime: 60 * 1000,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
     ...options,
   });
 }

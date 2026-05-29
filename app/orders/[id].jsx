@@ -47,8 +47,9 @@ import { mapStatusToDb } from '../../lib/orderFilters';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 
 import * as ImageManipulator from 'expo-image-manipulator';
-import { FileSystemUploadType, uploadAsync as uploadFileAsync, downloadAsync, cacheDirectory } from 'expo-file-system/legacy';
+import { downloadAsync, cacheDirectory } from 'expo-file-system/legacy';
 import { encode as encodeBase64 } from 'base64-arraybuffer';
+import { prepareImageForUpload, runMediaUploadQueue, uploadPreparedImageFile } from '../../src/shared/media/imagePipeline';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
@@ -114,7 +115,6 @@ import { isValidOptionalMobilePhone, toE164MobilePhoneOrNull } from '../../src/s
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { useTheme } from '../../theme/ThemeProvider';
-import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { useQueryClient } from '@tanstack/react-query';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import OrderPhotosModal from './components/OrderPhotosModal';
@@ -507,6 +507,13 @@ function OrderDetailsContent() {
   const navigation = useNavigation();
   const isNavigatingRef = useRef(false);
   const queryClient = useQueryClient();
+  const initialCachedOrder = useMemo(() => {
+    if (!id) return null;
+    const cached = queryClient.getQueryData(queryKeys.requests.detail(id));
+    return cached && typeof cached === 'object'
+      ? { ...cached, time_window_start: cached.time_window_start ?? null }
+      : null;
+  }, [id, queryClient]);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
     enabled: !!id,
   });
@@ -514,9 +521,8 @@ function OrderDetailsContent() {
   const firstContentTrackedRef = useRef(false);
   const lastRequestSyncRef = useRef('');
 
-  const [order, setOrder] = useState(null);
-  const [orderReady, setOrderReady] = useState(false);
-  const [workTypesReady, setWorkTypesReady] = useState(false);
+  const [order, setOrder] = useState(initialCachedOrder);
+  const [orderReady, setOrderReady] = useState(() => !!initialCachedOrder || !id);
   const [role, setRole] = useState(null);
   const [userId, setUserId] = useState(null);
   const [executorName, setExecutorName] = useState(null);
@@ -543,14 +549,20 @@ function OrderDetailsContent() {
   const [users, setUsers] = useState([]);
   const [toFeed, setToFeed] = useState(false);
   const [urgent, setUrgent] = useState(false);
-  const [companyId, setCompanyId] = useState(null);
+  const [companyId, setCompanyId] = useState(() => initialCachedOrder?.company_id || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
     String(subscriptionGuard.reason || '').startsWith('subscription_');
-  const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
+  const [useWorkTypes, setUseWorkTypesFlag] = useState(() =>
+    !!(
+      initialCachedOrder?.work_type_id ||
+      initialCachedOrder?.work_type_name ||
+      initialCachedOrder?.work_type?.name
+    ),
+  );
   const [workTypes, setWorkTypes] = useState([]);
-  const [workTypeId, setWorkTypeId] = useState(null);
+  const [workTypeId, setWorkTypeId] = useState(() => initialCachedOrder?.work_type_id ?? null);
   const [amount, setAmount] = useState('');
   const canViewFinanceAll = has('canViewFinanceAll');
   const isOrderFinanceEnabled = isOrderFinanceEnabledFromMap(orderFieldsByKey);
@@ -689,6 +701,10 @@ function OrderDetailsContent() {
     const found = workTypes.find((w) => normalizeId(w?.id) === normalized);
     return found?.name || fallbackName;
   }, [normalizeId, order?.work_type, order?.work_type_name, requestData?.work_type, requestData?.work_type_name, workTypeId, workTypes]);
+  const shouldShowWorkTypeRow = useMemo(
+    () => isOrderFieldVisible('work_type_id') && (useWorkTypes || !!workTypeId || !!workTypeName),
+    [isOrderFieldVisible, useWorkTypes, workTypeId, workTypeName],
+  );
   const [cancelVisible, setCancelVisible] = useState(false);
   const [warningVisible, setWarningVisible] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -805,6 +821,10 @@ function OrderDetailsContent() {
     staleTime: 45 * 1000,
     refetchOnMount: false,
   });
+  const requestDataRef = useRef(requestData);
+  useEffect(() => {
+    requestDataRef.current = requestData;
+  }, [requestData]);
   const updateRequestMutation = useUpdateRequestMutation();
   const financeEntriesQuery = useOrderFinanceEntries(id, {
     enabled: !!id && canViewFinanceSection,
@@ -1320,23 +1340,40 @@ function OrderDetailsContent() {
         const cachedOrder = { ...cachedOrderRaw, time_window_start: cachedOrderRaw.time_window_start ?? null };
         hydrateFormFields(cachedOrder);
         setOrder(cachedOrder);
+        setCompanyId((prev) => prev || cachedOrder.company_id || null);
         setWorkTypeId(cachedOrder.work_type_id ?? null);
+        if (cachedOrder.work_type_id || cachedOrder.work_type_name || cachedOrder.work_type?.name) {
+          setUseWorkTypesFlag(true);
+        }
         setOrderReady(true);
       }
 
-      // Fetch fresh data in background
-      let fetchedOrderRaw = null;
-      try {
-        const refetched = await refetchRequestData();
-        fetchedOrderRaw = refetched?.data || null;
-      } catch {
-        // fallback below
-      }
-      if (!fetchedOrderRaw) {
-        fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
-      }
-      if (!fetchedOrderRaw && cachedOrderRaw) {
-        fetchedOrderRaw = cachedOrderRaw;
+      let fetchedOrderRaw = cachedOrderRaw || requestDataRef.current || null;
+      if (fetchedOrderRaw) {
+        refetchRequestData()
+          .then((refetched) => {
+            const fresh = refetched?.data;
+            if (!fresh) return;
+            const nextOrder = { ...fresh, time_window_start: fresh.time_window_start ?? null };
+            queryClient.setQueryData(queryKeys.requests.detail(id), nextOrder);
+            setOrder((prev) => ({ ...(prev || {}), ...nextOrder }));
+            setCompanyId((prev) => prev || nextOrder.company_id || null);
+            setWorkTypeId(nextOrder.work_type_id ?? null);
+            if (nextOrder.work_type_id || nextOrder.work_type_name || nextOrder.work_type?.name) {
+              setUseWorkTypesFlag(true);
+            }
+          })
+          .catch(() => {});
+      } else {
+        try {
+          const refetched = await refetchRequestData();
+          fetchedOrderRaw = refetched?.data || null;
+        } catch {
+          // fallback below
+        }
+        if (!fetchedOrderRaw) {
+          fetchedOrderRaw = await ensureRequestPrefetch(queryClient, id);
+        }
       }
       if (!fetchedOrderRaw) throw new Error('Order not found');
 
@@ -1344,17 +1381,6 @@ function OrderDetailsContent() {
         ...fetchedOrderRaw,
         time_window_start: fetchedOrderRaw.time_window_start ?? null,
       };
-
-      // в”Ђв”Ђ 3. Fill missing fields IN PARALLEL (not sequential!) в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
-      const missingFieldsPromises = [];
-      if (typeof fetchedOrder.work_type_id === 'undefined' || fetchedOrder.work_type_id === null) {
-        missingFieldsPromises.push(
-          supabase.from('orders').select('work_type_id').eq('id', id).single()
-            .then(({ data }) => { if (data) fetchedOrder.work_type_id = data.work_type_id ?? null; })
-            .catch(() => {})
-        );
-      }
-      if (missingFieldsPromises.length) await Promise.all(missingFieldsPromises);
 
       // в”Ђв”Ђ 4. Auto-status "Новый"в†’"В работе" в”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђв”Ђ
       let effectiveOrder = fetchedOrder;
@@ -1375,7 +1401,11 @@ function OrderDetailsContent() {
       // Show order + form immediately, resolve media in background
       hydrateFormFields(effectiveOrder);
       setOrder(effectiveOrder);
+      setCompanyId((prev) => prev || effectiveOrder.company_id || null);
       setWorkTypeId(effectiveOrder.work_type_id ?? null);
+      if (effectiveOrder.work_type_id || effectiveOrder.work_type_name || effectiveOrder.work_type?.name) {
+        setUseWorkTypesFlag(true);
+      }
       setOrderReady(true);
 
       // Media resolution + sync + secondary data вЂ” all in parallel, non-blocking
@@ -1599,16 +1629,15 @@ function OrderDetailsContent() {
           return true;
         }
 
-        const manipulated = await ImageManipulator.manipulateAsync(
-          uri,
-          [{ resize: { width: PHOTO_MAX_WIDTH } }],
-          { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
-        );
+        const preparedImage = await prepareImageForUpload(uri, {
+          maxWidth: PHOTO_MAX_WIDTH,
+          quality: PHOTO_COMPRESS_QUALITY,
+        });
 
         let ab = null;
         const ensureArrayBuffer = async () => {
           if (ab) return ab;
-          const fallbackResp = await fetch(manipulated.uri);
+          const fallbackResp = await fetch(preparedImage.uri);
           ab = await fallbackResp.arrayBuffer();
           return ab;
         };
@@ -1634,14 +1663,10 @@ function OrderDetailsContent() {
                   : {};
               if (!uploadUrl) throw new Error('prepare upload failed');
 
-              const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
-                httpMethod: uploadMethod,
+              await uploadPreparedImageFile(uploadUrl, preparedImage.uri, {
+                method: uploadMethod,
                 headers: uploadHeaders,
-                uploadType: FileSystemUploadType.BINARY_CONTENT,
               });
-              if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
-                throw new Error(String(uploadRes?.body || 'direct upload failed'));
-              }
               directUploadCompleted = true;
 
               data = await orderMediaStorage('commit_upload', {
@@ -1675,6 +1700,7 @@ function OrderDetailsContent() {
         };
 
         let publicUrl = '';
+        let displayUrl = '';
         let providerMediaUrls = null;
         let providerOrderUpdatedAt = null;
         if (effectiveMediaProvider === 'yandex_disk') {
@@ -1699,14 +1725,10 @@ function OrderDetailsContent() {
                   : {};
               if (!uploadUrl) throw new Error('prepare upload failed');
 
-              const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
-                httpMethod: uploadMethod,
+              await uploadPreparedImageFile(uploadUrl, preparedImage.uri, {
+                method: uploadMethod,
                 headers: uploadHeaders,
-                uploadType: FileSystemUploadType.BINARY_CONTENT,
               });
-              if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
-                throw new Error(String(uploadRes?.body || 'direct upload failed'));
-              }
               directUploadCompleted = true;
 
               data = await yandexDiskMedia('commit_upload', {
@@ -1726,11 +1748,16 @@ function OrderDetailsContent() {
               });
             }
             publicUrl = String(data?.url || '');
+            displayUrl = String(data?.display_url || '');
             providerMediaUrls = Array.isArray(data?.media_urls)
               ? data.media_urls.map((value) => String(value || '')).filter(Boolean)
               : null;
             providerOrderUpdatedAt = data?.order_updated_at ? String(data.order_updated_at) : null;
-            orderMediaRef.current.removeFromCache(publicUrl);
+            if (displayUrl) {
+              orderMediaRef.current.setDisplayUrl(publicUrl, displayUrl);
+            } else {
+              orderMediaRef.current.removeFromCache(publicUrl);
+            }
           } catch (e) {
             if (!isYandexProviderFailureMessage(e?.message || e)) throw e;
             setCloudHealth('error');
@@ -1738,12 +1765,14 @@ function OrderDetailsContent() {
             notifyCloudFallback();
             const result = await uploadToBegetStorage();
             publicUrl = result.url;
+            displayUrl = result.url;
             providerMediaUrls = result.mediaUrls;
             providerOrderUpdatedAt = result.orderUpdatedAt;
           }
         } else {
           const result = await uploadToBegetStorage();
           publicUrl = result.url;
+          displayUrl = result.url;
           providerMediaUrls = result.mediaUrls;
           providerOrderUpdatedAt = result.orderUpdatedAt;
         }
@@ -1802,7 +1831,8 @@ function OrderDetailsContent() {
                 category,
                 publicUrl,
                 url: publicUrl,
-                localUri: manipulated.uri,
+                displayUrl,
+                localUri: preparedImage.uri,
                 originalUri: uri,
                 replaceIndex,
                 replaceUrl,
@@ -1850,20 +1880,15 @@ function OrderDetailsContent() {
       if (!uris.length) return;
       const onItemSettled =
         options && typeof options.onItemSettled === 'function' ? options.onItemSettled : null;
-      // Sequential uploads to avoid DB race conditions (each upload reads latest state via orderRef)
-      let ok = 0;
-      for (const uri of uris) {
-        try {
-          const success = await uploadLocalUri(category, uri);
-          if (success) ok++;
-        } catch (e) {
-          console.warn('[compressAndUploadMultiple] single upload failed', e);
-        } finally {
-          try {
-            onItemSettled?.(uri);
-          } catch {}
-        }
-      }
+      const results = await runMediaUploadQueue(
+        uris,
+        async (uri) => uploadLocalUri(category, uri),
+        {
+          concurrency: 3,
+          onItemSettled: (uri) => onItemSettled?.(uri),
+        },
+      );
+      const ok = results.filter((result) => result.status === 'fulfilled' && result.value).length;
       if (ok > 0) {
         showToast(
           ok === 1
@@ -2290,18 +2315,17 @@ function OrderDetailsContent() {
       id: `finance_local_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`,
       uri: nextUri,
     }));
-    setFinanceEntryDraft((prev) => ({
-      ...prev,
-      photo_urls: [...(prev.photo_urls || []), ...nextUris],
-    }));
     setFinanceEntryLocalPending((prev) => [...prev, ...pendingItems]);
 
     const mediaErrors = [];
-    for (const pendingItem of pendingItems) {
-      try {
+    await runMediaUploadQueue(
+      pendingItems,
+      async (pendingItem) => {
         const uploaded = await uploadFinanceEntryLocalUriRef.current?.(financeEntryIdValue, pendingItem.uri);
         const uploadedUrl = String(uploaded?.url || '').trim();
         if (!uploadedUrl) throw new Error(t('order_toast_upload_error'));
+        const uploadedDisplayUrl = String(uploaded?.display_url || '').trim();
+        if (uploadedDisplayUrl) financeEntryMedia.setDisplayUrl(uploadedUrl, uploadedDisplayUrl);
         setFinanceEntryDraft((prev) => {
           const current = [...(prev.photo_urls || [])];
           const localIdx = current.findIndex((value) => String(value || '') === pendingItem.uri);
@@ -2318,18 +2342,24 @@ function OrderDetailsContent() {
         if (!(financeEntryInitialPhotoUrlsRef.current || []).includes(uploadedUrl)) {
           financeEntryInitialPhotoUrlsRef.current = [...(financeEntryInitialPhotoUrlsRef.current || []), uploadedUrl];
         }
-      } catch (error) {
-        mediaErrors.push(error?.message || t('order_toast_upload_error'));
-        setFinanceEntryDraft((prev) => {
-          const current = [...(prev.photo_urls || [])];
-          const localIdx = current.findIndex((value) => String(value || '') === pendingItem.uri);
-          if (localIdx >= 0) current.splice(localIdx, 1);
-          return { ...prev, photo_urls: current };
-        });
-      } finally {
-        setFinanceEntryLocalPending((prev) => prev.filter((item) => item.id !== pendingItem.id));
-      }
-    }
+        return uploadedUrl;
+      },
+      {
+        concurrency: 3,
+        onItemSettled: (pendingItem, _index, result) => {
+          if (result?.status === 'rejected') {
+            mediaErrors.push(result.reason?.message || t('order_toast_upload_error'));
+            setFinanceEntryDraft((prev) => {
+              const current = [...(prev.photo_urls || [])];
+              const localIdx = current.findIndex((value) => String(value || '') === pendingItem.uri);
+              if (localIdx >= 0) current.splice(localIdx, 1);
+              return { ...prev, photo_urls: current };
+            });
+          }
+          setFinanceEntryLocalPending((prev) => prev.filter((item) => item.id !== pendingItem.id));
+        },
+      },
+    );
 
     if (mediaErrors.length > 0) {
       showWarning(
@@ -2339,7 +2369,7 @@ function OrderDetailsContent() {
         ),
       );
     }
-  }, [financeEntryDraft.id, showWarning, t]);
+  }, [financeEntryDraft.id, financeEntryMedia, showWarning, t]);
 
   const handleFinanceEntryPhotoUploadUri = useCallback(async (_category, uri) => {
     if (!uri) return;
@@ -2446,11 +2476,17 @@ function OrderDetailsContent() {
   const openFinanceEntryViewer = useCallback((photos, index) => {
     if (!Array.isArray(photos) || !photos.length) return;
     const pairs = photos
-      .map((raw) => ({ raw, display: financeEntryMedia.getDisplayUrl(raw) || raw }))
+      .map((raw, originalIndex) => ({
+        raw,
+        originalIndex,
+        display: financeEntryMedia.getDisplayUrl(raw) || raw,
+      }))
       .filter((pair) => pair.display);
+    if (!pairs.length) return;
+    const nextIndex = pairs.findIndex((pair) => pair.originalIndex === index);
     financeViewerRawPhotosRef.current = pairs.map((pair) => pair.raw);
     setFinanceViewerPhotos(pairs.map((pair) => pair.display));
-    setFinanceViewerIndex(Math.min(index, pairs.length - 1));
+    setFinanceViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setFinanceViewerCategoryLabel(
       String(financeEntryDraft.title || '').trim() || t('order_finance_entry_modal_title', 'Финансовая статья'),
     );
@@ -2584,16 +2620,15 @@ function OrderDetailsContent() {
     async (financeEntryIdValue, uri) => {
       if (!financeEntryIdValue || !uri) return null;
 
-      const manipulated = await ImageManipulator.manipulateAsync(
-        uri,
-        [{ resize: { width: PHOTO_MAX_WIDTH } }],
-        { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
-      );
+      const preparedImage = await prepareImageForUpload(uri, {
+        maxWidth: PHOTO_MAX_WIDTH,
+        quality: PHOTO_COMPRESS_QUALITY,
+      });
 
       let arrayBuffer = null;
       const ensureArrayBuffer = async () => {
         if (arrayBuffer) return arrayBuffer;
-        const response = await fetch(manipulated.uri);
+        const response = await fetch(preparedImage.uri);
         arrayBuffer = await response.arrayBuffer();
         return arrayBuffer;
       };
@@ -2619,14 +2654,10 @@ function OrderDetailsContent() {
                 : {};
             if (!uploadUrl) throw new Error('prepare upload failed');
 
-            const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
-              httpMethod: uploadMethod,
+            await uploadPreparedImageFile(uploadUrl, preparedImage.uri, {
+              method: uploadMethod,
               headers: uploadHeaders,
-              uploadType: FileSystemUploadType.BINARY_CONTENT,
             });
-            if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
-              throw new Error(String(uploadRes?.body || 'direct upload failed'));
-            }
             directUploadCompleted = true;
 
             data = await financeEntryYandexMedia('commit_upload', {
@@ -2670,14 +2701,10 @@ function OrderDetailsContent() {
             : {};
         if (!uploadUrl) throw new Error('prepare upload failed');
 
-        const uploadRes = await uploadFileAsync(uploadUrl, manipulated.uri, {
-          httpMethod: uploadMethod,
+        await uploadPreparedImageFile(uploadUrl, preparedImage.uri, {
+          method: uploadMethod,
           headers: uploadHeaders,
-          uploadType: FileSystemUploadType.BINARY_CONTENT,
         });
-        if (!uploadRes || Number(uploadRes.status || 0) < 200 || Number(uploadRes.status || 0) >= 300) {
-          throw new Error(String(uploadRes?.body || 'direct upload failed'));
-        }
         directUploadCompleted = true;
 
         data = await financeEntryMediaStorage('commit_upload', {
@@ -3615,13 +3642,15 @@ function OrderDetailsContent() {
     (photos, index, category, label) => {
       if (!Array.isArray(photos) || !photos.length) return;
       const pairs = photos
-        .map((raw) => ({ raw, display: orderMedia.getDisplayUrl(raw) }))
+        .map((raw, originalIndex) => ({ raw, originalIndex, display: orderMedia.getDisplayUrl(raw) }))
         .filter((p) => p.display);
+      if (!pairs.length) return;
+      const nextIndex = pairs.findIndex((p) => p.originalIndex === index);
       viewerRawPhotosRef.current = pairs.map((p) => p.raw);
       viewerCategoryRef.current = category || null;
       setViewerCategoryLabel(label || '');
       setViewerPhotos(pairs.map((p) => p.display));
-      setViewerIndex(Math.min(index, pairs.length - 1));
+      setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
       setViewerVisible(true);
     },
     [orderMedia],
@@ -3933,13 +3962,18 @@ function OrderDetailsContent() {
   }, [id, fetchData]);
 
   useEffect(() => {
+    if (!initialCachedOrder || editMode) return;
+    setOrder((prev) => prev || initialCachedOrder);
+    setOrderReady(true);
+  }, [editMode, initialCachedOrder]);
+
+  useEffect(() => {
     let alive = true;
-    setWorkTypesReady(false);
     (async () => {
       try {
-        const cid = await getMyCompanyId();
+        const cid = companyId || (await getMyCompanyId());
         if (!alive) return;
-        setCompanyId(cid);
+        if (cid) setCompanyId((prev) => prev || cid);
         if (cid) {
           const { useWorkTypes: flag, types } = await fetchWorkTypes(cid, {
             includeDisabled: true,
@@ -3950,16 +3984,14 @@ function OrderDetailsContent() {
         }
       } catch (e) {
         console.warn('workTypes bootstrap', e?.message || e);
-      } finally {
-        if (alive) setWorkTypesReady(true);
       }
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [companyId]);
 
-  const loading = !orderReady || !workTypesReady;
+  const loading = !orderReady;
 
   useEffect(() => {
     if (!loading) {
@@ -4480,14 +4512,14 @@ function OrderDetailsContent() {
               ) : null}
               {!isSoloAdmin && isOrderFieldVisible('assigned_to') ? <View style={base.sep} /> : null}
 
-              {useWorkTypes && isOrderFieldVisible('work_type_id') ? (
+              {shouldShowWorkTypeRow ? (
                 <LabelValueRow
                   label={t('order_details_work_type')}
                   value={workTypeName || t('order_details_work_type_not_selected')}
                   hideWhenEmpty={false}
                 />
               ) : null}
-              {useWorkTypes && isOrderFieldVisible('work_type_id') ? <View style={base.sep} /> : null}
+              {shouldShowWorkTypeRow ? <View style={base.sep} /> : null}
 
               {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? (
                 <Pressable
@@ -5067,6 +5099,7 @@ function OrderDetailsContent() {
               photos={order?.[orderPhotosModal.category] || []}
               pending={localPendingMap[orderPhotosModal.category] || []}
               getDisplayUrl={orderMedia.getDisplayUrl}
+              getThumbnailUrl={orderMedia.getThumbnailUrl}
               getIssue={orderMedia.getIssue}
               onUploadUri={handleUploadUri}
               onUploadMultiple={handleUploadMultiple}
@@ -5691,6 +5724,7 @@ function OrderDetailsContent() {
         photos={financeEntryDraft.photo_urls || []}
         pending={financeEntryLocalPending}
         getDisplayUrl={financeEntryMedia.getDisplayUrl}
+        getThumbnailUrl={financeEntryMedia.getThumbnailUrl}
         getIssue={financeEntryMedia.getIssue}
         onUploadUri={handleFinanceEntryPhotoUploadUri}
         onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
@@ -5735,11 +5769,7 @@ function OrderDetailsContent() {
 }
 
 export default function OrderDetails() {
-  return (
-    <DeferredScreen>
-      <OrderDetailsContent />
-    </DeferredScreen>
-  );
+  return <OrderDetailsContent />;
 }
 
 function createStyles(theme) {

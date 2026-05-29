@@ -240,7 +240,7 @@ export default function ClientViewScreen() {
                 source={{ uri: client?.avatarDisplayUrl || client?.avatarUrl }}
                 style={styles.avatarImg}
                 contentFit="cover"
-                cachePolicy="none"
+                cachePolicy="memory-disk"
               />
             ) : (
               <Text style={styles.avatarText}>{getInitials(client)}</Text>

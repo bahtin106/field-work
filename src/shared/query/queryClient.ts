@@ -12,7 +12,7 @@ const QUERY_CACHE_MAX_ENTRIES = 350;
 const INACTIVE_QUERY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const CACHE_MAINTENANCE_INTERVAL_MS = 3 * 60 * 1000;
 const PERSIST_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
-const HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 350 * 1024;
+const HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 900 * 1024;
 const HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 220 * 1024;
 const DEFAULT_QUERY_STALE_MS = 60 * 1000;
 const DEFAULT_QUERY_GC_MS = PERSIST_MAX_AGE_MS;
@@ -227,6 +227,9 @@ function isDurableOfflineQuery(queryKey: any): boolean {
   if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar' || key1 === 'detail')) {
     return true;
   }
+  if (key0 === 'orders' && (key1 === 'my' || key1 === 'all') && Array.isArray(queryKey) && queryKey[2] === 'recent') {
+    return true;
+  }
   if (key0 === 'employees' && (key1 === 'list' || key1 === 'detail' || key1 === 'departments')) {
     return true;
   }
@@ -352,6 +355,15 @@ export const persistOptions = {
         return false;
       }
       if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) {
+        if (q.state.status !== 'success') return false;
+        try {
+          const serialized = JSON.stringify(q.state.data);
+          return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
+        } catch {
+          return false;
+        }
+      }
+      if (key0 === 'orders' && (key1 === 'my' || key1 === 'all') && Array.isArray(q.queryKey) && q.queryKey[2] === 'recent') {
         if (q.state.status !== 'success') return false;
         try {
           const serialized = JSON.stringify(q.state.data);

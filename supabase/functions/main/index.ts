@@ -15,7 +15,7 @@ import { handleFinanceEntryYandexMediaRequest } from '../finance-entry-yandex-me
 import { handleObjectMediaStorageRequest } from '../object-media-storage/index.ts';
 import { handleMediaCleanupRequest } from '../media-cleanup/index.ts';
 import { handleBackfillMediaSizesRequest } from '../backfill-media-sizes/index.ts';
-import { handleTelegramBotRequest } from '../telegram-bot/index.ts';
+import { handleMediaThumbnailRequest } from '../media-thumbnail/index.ts';
 import { handleSwitchAccountModeRequest } from '../switch-account-mode/index.ts';
 import { handleRequestPasswordReset } from '../request-password-reset/index.ts';
 import { handlePublicSupportRequest } from '../public-support-request/index.ts';
@@ -58,7 +58,12 @@ Deno.serve(async (req) => {
   if (fn === 'object-media-storage') return handleObjectMediaStorageRequest(req);
   if (fn === 'media-cleanup') return handleMediaCleanupRequest(req);
   if (fn === 'backfill-media-sizes') return handleBackfillMediaSizesRequest(req);
-  if (fn === 'telegram-bot') return handleTelegramBotRequest(req);
+  if (fn === 'media-thumbnail') return handleMediaThumbnailRequest(req);
+  if (fn === 'telegram-bot') {
+    const modulePath = '../telegram-bot/index.ts';
+    const { handleTelegramBotRequest } = await import(modulePath);
+    return handleTelegramBotRequest(req);
+  }
   if (fn === 'switch-account-mode') return handleSwitchAccountModeRequest(req);
   if (fn === 'request-password-reset') return handleRequestPasswordReset(req);
   if (fn === 'public-support-request') return handlePublicSupportRequest(req);

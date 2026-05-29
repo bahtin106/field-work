@@ -174,6 +174,11 @@ export function normalizeClientObject(row) {
   CLIENT_OBJECT_MEDIA_LABEL_FIELDS.forEach((field) => {
     normalized[field] = String(row?.[field] || '').trim();
   });
+  normalized.mediaSections = Array.isArray(row?.media_sections)
+    ? row.media_sections
+        .map((field) => String(field || '').trim())
+        .filter((field) => CLIENT_OBJECT_MEDIA_FIELDS.includes(field))
+    : null;
   normalized.geo_lat = normalizeCoordinateValue(row?.geo_lat);
   normalized.geo_lng = normalizeCoordinateValue(row?.geo_lng);
   normalized.location_mode = normalizeClientObjectLocationMode(row?.location_mode, {

@@ -2,18 +2,21 @@
 // Centralised hook for resolving, caching and managing order photos.
 // Handles both beget_s3 and yandex_disk providers.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { cacheDirectory, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 import { orderMediaStorage } from '../lib/orderMediaStorage';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
+import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../src/shared/media/assets';
+import { prefetchMediaUrls } from '../src/shared/media/imagePipeline';
 
 const MEDIA_CATEGORIES = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
 
 /** Weak per-order cache so resolved URLs survive hook re-mounts within same session. */
 const _globalResolvedCache = new Map();  // key → display URL
 const _globalIssuesCache   = new Map();  // key → issue object
+const _globalThumbCache = new Map();
 const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
 const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v1';
 const ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES = 220;
@@ -92,12 +95,20 @@ function pruneLocalCacheMap(mapObj, maxEntries = ORDER_MEDIA_LOCAL_CACHE_MAX_ENT
 export function useOrderMedia({ order, mediaProvider, t }) {
   // Seed local state from global cache for instant display on re-mount
   const [resolvedUrls, setResolvedUrls] = useState(() => Object.fromEntries(_globalResolvedCache));
+  const [thumbUrls, setThumbUrls] = useState(() => Object.fromEntries(_globalThumbCache));
   const [issues, setIssues] = useState(() => Object.fromEntries(_globalIssuesCache));
   const probeInFlight = useRef(new Set());
   const probedUrlsRef = useRef(new Set()); // tracks URLs already probed this session
   const isMounted = useRef(true);
   const resolvedRef = useRef(resolvedUrls); // always-current snapshot (no stale closures)
   const localCacheRef = useRef({});
+  const mediaSignature = useMemo(
+    () =>
+      MEDIA_CATEGORIES.map((category) =>
+        Array.isArray(order?.[category]) ? order[category].map((value) => String(value || '')).join(',') : '',
+      ).join('|'),
+    [order],
+  );
 
   useEffect(() => {
     isMounted.current = true;
@@ -172,9 +183,17 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           '',
       ).trim();
       if (!getOfflineSnapshot().isOnline && local) return local;
-      return resolvedUrls[sourceUrl] || local || sourceUrl;
+      return resolvedUrls[sourceUrl] || local || thumbUrls[sourceUrl] || sourceUrl;
     },
-    [resolvedUrls],
+    [resolvedUrls, thumbUrls],
+  );
+
+  const getThumbnailUrl = useCallback(
+    (sourceUrl) => {
+      if (!sourceUrl) return '';
+      return thumbUrls[sourceUrl] || getDisplayUrl(sourceUrl);
+    },
+    [getDisplayUrl, thumbUrls],
   );
 
   const getIssue = useCallback(
@@ -228,6 +247,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
           if (Object.keys(resolved).length) {
             for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
             setResolvedUrls((p) => ({ ...p, ...resolved }));
+            prefetchMediaUrls(Object.values(resolved)).catch(() => {});
           }
           if (Object.keys(issuesMap).length) {
             for (const [k, v] of Object.entries(issuesMap)) setIssueCacheEntry(k, v);
@@ -329,6 +349,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         setResolvedUrls(nextResolved);
         setIssues(nextIssues);
       }
+      prefetchMediaUrls(Object.values(nextResolved)).catch(() => {});
       if (getOfflineSnapshot().isOnline) {
         const cachedPairs = Object.entries(nextResolved);
         if (cachedPairs.length) {
@@ -347,6 +368,35 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   }, [mediaProvider]);
 
   // ─── Proactive URL resolution for Yandex (no dependency on resolvedUrls!) ──
+  useEffect(() => {
+    if (!order?.id) return;
+    let cancelled = false;
+    listMediaAssets({ entityType: 'order', entityId: order.id, categories: MEDIA_CATEGORIES })
+      .then((assets) => {
+        if (cancelled || !isMounted.current) return;
+        const displayMap = buildMediaAssetDisplayMap(assets);
+        const thumbMap = buildMediaAssetThumbMap(assets);
+        if (Object.keys(displayMap).length) {
+          for (const [key, value] of Object.entries(displayMap)) setResolvedCacheEntry(key, value);
+          setResolvedUrls((prev) => ({ ...displayMap, ...prev }));
+          prefetchMediaUrls(Object.values(displayMap)).catch(() => {});
+        }
+        if (Object.keys(thumbMap).length) {
+          for (const [key, value] of Object.entries(thumbMap)) {
+            if (_globalThumbCache.has(key)) _globalThumbCache.delete(key);
+            _globalThumbCache.set(key, value);
+            pruneMapCache(_globalThumbCache);
+          }
+          setThumbUrls((prev) => ({ ...thumbMap, ...prev }));
+          prefetchMediaUrls(Object.values(thumbMap)).catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [mediaSignature, order?.id]);
+
   useEffect(() => {
     if (!order?.id) return;
     const tasks = [];
@@ -380,15 +430,18 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   // ─── Clear caches on provider/order switch ──────────────────────
   const clearCaches = useCallback(() => {
     setResolvedUrls({});
+    setThumbUrls({});
     setIssues({});
     probedUrlsRef.current.clear();
     _globalResolvedCache.clear();
+    _globalThumbCache.clear();
     _globalIssuesCache.clear();
   }, []);
 
   // ─── Remove URL from resolved/issues caches ─────────────────────
   const removeFromCache = useCallback((url) => {
     _globalResolvedCache.delete(url);
+    _globalThumbCache.delete(url);
     _globalIssuesCache.delete(url);
     probedUrlsRef.current.delete(url);
     setResolvedUrls((prev) => {
@@ -398,6 +451,12 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       return next;
     });
     setIssues((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
+      const next = { ...prev };
+      delete next[url];
+      return next;
+    });
+    setThumbUrls((prev) => {
       if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
       const next = { ...prev };
       delete next[url];
@@ -427,6 +486,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     resolvedUrls,
     issues,
     getDisplayUrl,
+    getThumbnailUrl,
     getIssue,
     resolveOrder,
     syncPhotos,

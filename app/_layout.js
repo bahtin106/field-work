@@ -298,14 +298,7 @@ function RootLayoutInner() {
       .select(columns)
       .eq('id', uid)
       .maybeSingle();
-    if (byId) return byId;
-
-    const { data: byUserId } = await supabase
-      .from('profiles')
-      .select(columns)
-      .eq('user_id', uid)
-      .maybeSingle();
-    return byUserId || null;
+    return byId || null;
   }, []);
 
   const enforceAccess = useCallback(async () => {
@@ -441,27 +434,9 @@ function RootLayoutInner() {
       )
       .subscribe();
 
-    const channelByUserId = supabase
-      .channel(`self-access-user-id-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'profiles',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          if (!hasAccessRelevantProfileChange(payload)) return;
-          enforceAccess();
-        },
-      )
-      .subscribe();
-
     return () => {
       try {
         supabase.removeChannel(channelById);
-        supabase.removeChannel(channelByUserId);
       } catch {}
     };
   }, [enforceAccess, hasAccessRelevantProfileChange, isAuthenticated, isInitializing, user?.id]);

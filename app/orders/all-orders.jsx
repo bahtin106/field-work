@@ -5,7 +5,6 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import {
   ActivityIndicator,
   FlatList,
-  InteractionManager,
   Platform,
   Pressable,
   StyleSheet,
@@ -57,7 +56,6 @@ import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
-import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
@@ -578,13 +576,29 @@ function AllOrdersContent() {
   }, [departmentFilter, executorFilter, orderFilters.clientIds, relationClientId, relationLabel, relationObjectIds, searchQuery, statusFilter]);
 
   const openOrderDetails = useCallback(
-    (orderIdRaw) => {
+    (orderIdRaw, orderSeed = null) => {
       const orderId = String(orderIdRaw || '').trim();
       if (!orderId) return;
       const now = Date.now();
       const prev = detailNavLockRef.current;
       if (prev.id === orderId && now - prev.ts < 1200) return;
       detailNavLockRef.current = { id: orderId, ts: now };
+      if (orderSeed && typeof orderSeed === 'object') {
+        const seedWorkTypeId = String(orderSeed?.work_type_id || '').trim();
+        const seedWorkTypeName = seedWorkTypeId
+          ? workTypes.find((item) => String(item?.id || '') === seedWorkTypeId)?.name
+          : '';
+        queryClient.setQueryData(queryKeys.requests.detail(orderId), (prevOrder) => ({
+          ...(prevOrder || {}),
+          ...orderSeed,
+          ...(seedWorkTypeName ? { work_type_name: seedWorkTypeName } : {}),
+          id: orderId,
+        }));
+      }
+      const registry = getPrefetchRegistry();
+      registry
+        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
@@ -592,14 +606,8 @@ function AllOrdersContent() {
           returnParams: JSON.stringify(returnParamsRef.current),
         },
       });
-      InteractionManager.runAfterInteractions(() => {
-        const registry = getPrefetchRegistry();
-        registry
-          .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
-          .catch(() => {});
-      });
     },
-    [queryClient, router],
+    [queryClient, router, workTypes],
   );
 
   const renderItem = useCallback(
@@ -879,11 +887,7 @@ function AllOrdersContent() {
 }
 
 export default function AllOrdersScreen() {
-  return (
-    <DeferredScreen>
-      <AllOrdersContent />
-    </DeferredScreen>
-  );
+  return <AllOrdersContent />;
 }
 
 function createStyles(theme) {

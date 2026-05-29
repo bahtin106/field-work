@@ -1,6 +1,5 @@
 ﻿import { AntDesign, Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
-import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 import React from 'react';
@@ -69,23 +68,14 @@ import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 import OrderPhotosModal from '../../orders/components/OrderPhotosModal';
 import FullscreenImageViewer from '../../orders/components/FullscreenImageViewer';
+import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../../src/shared/media/assets';
+import { getImagePickerMediaTypesImages, prepareImageForUpload, runMediaUploadQueue } from '../../../src/shared/media/imagePipeline';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
 const OBJECT_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'];
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
 const PHOTO_MIME_TYPE = 'image/jpeg';
-
-const getImagePickerMediaTypesImages = () => {
-  try {
-    if (ImagePicker.MediaType && ImagePicker.MediaType.Images) return ImagePicker.MediaType.Images;
-    if (ImagePicker.MediaType && ImagePicker.MediaType.images) return ImagePicker.MediaType.images;
-    if (ImagePicker.MediaType && ImagePicker.MediaType.image) return ImagePicker.MediaType.image;
-  } catch {
-    return ['images'];
-  }
-  return ['images'];
-};
 
 function withAlpha(color, alpha) {
   if (typeof color === 'string') {
@@ -176,7 +166,10 @@ function ObjectMediaEditRow({
         {editing ? (
           <TextInput
             value={value}
-            onChangeText={setValue}
+            onChangeText={(nextValue) => {
+              setValue(nextValue);
+              onChangeLabel(nextValue);
+            }}
             onSubmitEditing={commit}
             returnKeyType="done"
             style={{
@@ -394,6 +387,7 @@ export default function EditObjectScreen() {
   const [objectPhotosModal, setObjectPhotosModal] = React.useState({ visible: false, category: null });
   const [localPendingMap, setLocalPendingMap] = React.useState({});
   const [resolvedObjectMediaUrls, setResolvedObjectMediaUrls] = React.useState({});
+  const [objectMediaThumbUrls, setObjectMediaThumbUrls] = React.useState({});
   const [viewerVisible, setViewerVisible] = React.useState(false);
   const [viewerPhotos, setViewerPhotos] = React.useState([]);
   const [viewerIndex, setViewerIndex] = React.useState(0);
@@ -401,6 +395,7 @@ export default function EditObjectScreen() {
   const [removeMediaSection, setRemoveMediaSection] = React.useState(null);
   const allowLeaveRef = React.useRef(false);
   const objectMediaRef = React.useRef({});
+  const initialObjectMediaSectionsRef = React.useRef([]);
   const viewerRawPhotosRef = React.useRef([]);
   const viewerCategoryRef = React.useRef(null);
   const formStyles = useEditFormStyles();
@@ -574,16 +569,21 @@ export default function EditObjectScreen() {
       nextMedia[fieldKey] = Array.isArray(objectItem?.[fieldKey]) ? objectItem[fieldKey] : [];
     });
     objectMediaRef.current = nextMedia;
-    const nextMediaSections = OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey, index) => {
-      const hasPhotos = nextMedia[fieldKey].length > 0;
-      const hasLabel = String(objectItem?.[`${fieldKey}_label`] || '').trim().length > 0;
-      const isEnabled = enabledMediaFieldKeys.includes(fieldKey);
-      return hasPhotos || hasLabel || (index === 0 && isEnabled);
-    });
+    const explicitMediaSections = Array.isArray(objectItem?.mediaSections) ? objectItem.mediaSections : null;
+    const nextMediaSections = explicitMediaSections
+      ? OBJECT_MEDIA_FIELD_KEYS.filter(
+          (fieldKey) => explicitMediaSections.includes(fieldKey) || nextMedia[fieldKey].length > 0,
+        )
+      : OBJECT_MEDIA_FIELD_KEYS.filter((fieldKey) => {
+          const hasPhotos = nextMedia[fieldKey].length > 0;
+          const isEnabled = enabledMediaFieldKeys.includes(fieldKey);
+          return isEnabled || hasPhotos;
+        });
     setDraft(next);
     setAdditionalPhones(nextAdditionalPhones);
     setVisibleAdditionalPhoneSlots(nextVisibleSlots);
     setObjectMediaSections(nextMediaSections);
+    initialObjectMediaSectionsRef.current = nextMediaSections;
     setTags(nextTags);
     setLocationMode(
       normalizeLocationMode(objectItem?.location_mode, {
@@ -617,6 +617,7 @@ export default function EditObjectScreen() {
     let cancelled = false;
     if (!objectId) {
       setResolvedObjectMediaUrls({});
+      setObjectMediaThumbUrls({});
       return () => {
         cancelled = true;
       };
@@ -624,6 +625,15 @@ export default function EditObjectScreen() {
 
     const run = async () => {
       const nextResolved = {};
+      try {
+        const assets = await listMediaAssets({
+          entityType: 'object',
+          entityId: objectId,
+          categories: OBJECT_MEDIA_FIELD_KEYS,
+        });
+        Object.assign(nextResolved, buildMediaAssetDisplayMap(assets));
+        if (!cancelled) setObjectMediaThumbUrls(buildMediaAssetThumbMap(assets));
+      } catch {}
       for (const category of OBJECT_MEDIA_FIELD_KEYS) {
         const urls = Array.isArray(objectMediaRef.current?.[category])
           ? objectMediaRef.current[category].map((value) => String(value || '').trim()).filter(Boolean)
@@ -875,6 +885,23 @@ export default function EditObjectScreen() {
     setSaving(true);
     try {
       const cleanPatch = sanitizeClientObjectPayload(draft, { nameRequired: false });
+      const visibleMediaSet = new Set(objectMediaSections);
+      const mediaSectionsChanged =
+        JSON.stringify([...objectMediaSections].sort()) !==
+        JSON.stringify([...(initialObjectMediaSectionsRef.current || [])].sort());
+      const mediaSectionPatch = {};
+      const removedMediaUrlsByField = {};
+      if (mediaSectionsChanged) {
+        OBJECT_MEDIA_FIELD_KEYS.forEach((fieldKey) => {
+          if (visibleMediaSet.has(fieldKey)) return;
+          mediaSectionPatch[fieldKey] = [];
+          mediaSectionPatch[`${fieldKey}_label`] = null;
+          removedMediaUrlsByField[fieldKey] = Array.isArray(objectMediaRef.current?.[fieldKey])
+            ? objectMediaRef.current[fieldKey].map((value) => String(value || '').trim()).filter(Boolean)
+            : [];
+        });
+        mediaSectionPatch.media_sections = objectMediaSections;
+      }
       const currentPhotoUrl = String(draft.photoUrl || '').trim();
       let persistedPhotoUrl = String(objectItem?.photoUrl || '').trim() || null;
 
@@ -902,9 +929,19 @@ export default function EditObjectScreen() {
             hiddenSource: getObjectAdditionalPhones(objectItem),
             preserveHidden: true,
           }),
+          ...mediaSectionPatch,
           photo_url: persistedPhotoUrl,
         },
       });
+
+      for (const [fieldKey, urls] of Object.entries(removedMediaUrlsByField)) {
+        objectMediaRef.current = { ...objectMediaRef.current, [fieldKey]: [] };
+        for (const url of urls) {
+          try {
+            await deleteObjectMediaPhotoByUrl(objectId, fieldKey, url);
+          } catch {}
+        }
+      }
 
       if (settings?.enable_object_tags) {
         await setObjectTagsMutation.mutateAsync({
@@ -920,7 +957,7 @@ export default function EditObjectScreen() {
     } finally {
       setSaving(false);
     }
-  }, [additionalPhones, canEditObjects, draft, goBack, hasMapPoint, locationMode, mapLat, mapLng, objectFieldsByKey, objectId, objectItem, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
+  }, [additionalPhones, canEditObjects, draft, goBack, hasMapPoint, locationMode, mapLat, mapLng, objectFieldsByKey, objectId, objectItem, objectMediaSections, requiredAdditionalPhoneSlots, saving, setObjectTagsMutation, settings?.enable_object_tags, t, tags, toast, updateMutation, visibleAdditionalInfoFields, visibleAdditionalPhoneSlots, visibleAddressFields]);
 
   const hiddenEnabledAdditionalPhoneSlots = React.useMemo(
     () => addableAdditionalPhoneSlots.filter((slotId) => !visibleAdditionalPhoneSlots.includes(slotId)),
@@ -964,9 +1001,17 @@ export default function EditObjectScreen() {
     (url) => {
       const source = String(url || '').trim();
       if (!source) return '';
-      return resolvedObjectMediaUrls[source] || source;
+      return resolvedObjectMediaUrls[source] || objectMediaThumbUrls[source] || source;
     },
-    [resolvedObjectMediaUrls],
+    [objectMediaThumbUrls, resolvedObjectMediaUrls],
+  );
+  const getObjectMediaThumbnailUrl = React.useCallback(
+    (url) => {
+      const source = String(url || '').trim();
+      if (!source) return '';
+      return objectMediaThumbUrls[source] || getObjectMediaDisplayUrl(source);
+    },
+    [getObjectMediaDisplayUrl, objectMediaThumbUrls],
   );
   const changeMediaLabel = React.useCallback((fieldKey, label) => {
     setDraft((prev) => ({ ...prev, [`${fieldKey}_label`]: String(label || '').trim() }));
@@ -986,17 +1031,31 @@ export default function EditObjectScreen() {
     setObjectMediaSections((prev) => prev.filter((value) => value !== fieldKey));
     setDraft((prev) => ({ ...prev, [`${fieldKey}_label`]: '' }));
   }, []);
-  const uploadLocalMediaUri = React.useCallback(
+  const uploadObjectMediaFile = React.useCallback(
     async (category, uri) => {
       if (!objectId || !canEditObjects) return false;
-      const manipulated = await ImageManipulator.manipulateAsync(
-        uri,
-        [{ resize: { width: PHOTO_MAX_WIDTH } }],
-        { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
-      );
-      const { publicUrl } = await uploadObjectMediaPhoto(objectId, category, manipulated.uri, PHOTO_MIME_TYPE);
+      const prepared = await prepareImageForUpload(uri, {
+        maxWidth: PHOTO_MAX_WIDTH,
+        quality: PHOTO_COMPRESS_QUALITY,
+      });
+      const { publicUrl, displayUrl } = await uploadObjectMediaPhoto(objectId, category, prepared.uri, PHOTO_MIME_TYPE);
+      const sourceUrl = String(publicUrl || '').trim();
+      const resolvedUrl = String(displayUrl || '').trim();
+      if (sourceUrl && resolvedUrl) {
+        setResolvedObjectMediaUrls((prev) => ({ ...prev, [sourceUrl]: resolvedUrl }));
+      }
+      return sourceUrl;
+    },
+    [canEditObjects, objectId],
+  );
+
+  const commitObjectMediaUrls = React.useCallback(
+    async (category, urls = []) => {
+      const uploadedUrls = (Array.isArray(urls) ? urls : []).map((value) => String(value || '').trim()).filter(Boolean);
+      if (!objectId || !canEditObjects || !uploadedUrls.length) return false;
       const current = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
-      const next = [publicUrl, ...current.filter((value) => String(value || '') !== publicUrl)];
+      const uploadedSet = new Set(uploadedUrls);
+      const next = [...uploadedUrls, ...current.filter((value) => !uploadedSet.has(String(value || '')))];
       const updated = await updateMutation.mutateAsync({
         id: objectId,
         patch: { [category]: next },
@@ -1009,6 +1068,15 @@ export default function EditObjectScreen() {
       return true;
     },
     [canEditObjects, objectId, updateMutation],
+  );
+
+  const uploadLocalMediaUri = React.useCallback(
+    async (category, uri) => {
+      const publicUrl = await uploadObjectMediaFile(category, uri);
+      if (!publicUrl) return false;
+      return commitObjectMediaUrls(category, [publicUrl]);
+    },
+    [commitObjectMediaUrls, uploadObjectMediaFile],
   );
   const handleUploadUri = React.useCallback(
     async (category, uri) => {
@@ -1044,17 +1112,31 @@ export default function EditObjectScreen() {
         [category]: [...(prev?.[category] || []), ...ids],
       }));
       let uploadedCount = 0;
-      for (const item of ids) {
-        try {
-          await uploadLocalMediaUri(category, item.uri);
-          uploadedCount += 1;
-        } catch {
-        } finally {
-          setLocalPendingMap((prev) => ({
-            ...prev,
-            [category]: (prev?.[category] || []).filter((pending) => pending.id !== item.id),
-          }));
-        }
+      let uploadedUrls = [];
+      try {
+        const results = await runMediaUploadQueue(
+          ids,
+          async (item) => {
+            const publicUrl = await uploadObjectMediaFile(category, item.uri);
+            if (!publicUrl) throw new Error(t('order_toast_upload_error'));
+            return publicUrl;
+          },
+          { concurrency: 3 },
+        );
+        uploadedUrls = results
+          .filter((result) => result.status === 'fulfilled' && result.value)
+          .map((result) => String(result.value));
+        if (uploadedUrls.length) await commitObjectMediaUrls(category, uploadedUrls);
+        uploadedCount = uploadedUrls.length;
+      } catch (error) {
+        await Promise.allSettled(uploadedUrls.map((url) => deleteObjectMediaPhotoByUrl(objectId, category, url)));
+        console.warn('[object-media] batch commit failed', error);
+      } finally {
+        const pendingIds = new Set(ids.map((item) => item.id));
+        setLocalPendingMap((prev) => ({
+          ...prev,
+          [category]: (prev?.[category] || []).filter((pending) => !pendingIds.has(pending.id)),
+        }));
       }
       if (uploadedCount > 0) {
         toast.success(
@@ -1066,7 +1148,7 @@ export default function EditObjectScreen() {
         toast.error(t('order_toast_upload_error'));
       }
     },
-    [t, toast, uploadLocalMediaUri],
+    [commitObjectMediaUrls, objectId, t, toast, uploadObjectMediaFile],
   );
   const removePhoto = React.useCallback(
     async (category, index) => {
@@ -1115,14 +1197,20 @@ export default function EditObjectScreen() {
   );
   const openViewer = React.useCallback((photos, index, category, label) => {
     if (!Array.isArray(photos) || !photos.length) return;
-    const preparedRaw = photos.map((raw) => String(raw || '').trim()).filter(Boolean);
-    const preparedDisplay = preparedRaw.map((raw) => String(getObjectMediaDisplayUrl(raw) || '').trim()).filter(Boolean);
-    if (!preparedRaw.length || !preparedDisplay.length) return;
-    viewerRawPhotosRef.current = preparedRaw;
+    const pairs = photos
+      .map((raw, originalIndex) => ({
+        raw: String(raw || '').trim(),
+        originalIndex,
+        display: String(getObjectMediaDisplayUrl(raw) || '').trim(),
+      }))
+      .filter((item) => item.raw && item.display);
+    if (!pairs.length) return;
+    const nextIndex = pairs.findIndex((item) => item.originalIndex === index);
+    viewerRawPhotosRef.current = pairs.map((item) => item.raw);
     viewerCategoryRef.current = category || null;
     setViewerCategoryLabel(label || '');
-    setViewerPhotos(preparedDisplay);
-    setViewerIndex(Math.min(index, preparedDisplay.length - 1));
+    setViewerPhotos(pairs.map((item) => item.display));
+    setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setViewerVisible(true);
   }, [getObjectMediaDisplayUrl]);
   const handleViewerDelete = React.useCallback(
@@ -1492,6 +1580,7 @@ export default function EditObjectScreen() {
               patch: {
                 [fieldKey]: [],
                 [`${fieldKey}_label`]: null,
+                media_sections: objectMediaSections.filter((value) => value !== fieldKey),
               },
             });
             objectMediaRef.current = { ...objectMediaRef.current, [fieldKey]: [] };
@@ -1516,6 +1605,7 @@ export default function EditObjectScreen() {
           : []}
         pending={localPendingMap?.[objectPhotosModal.category] || []}
         getDisplayUrl={getObjectMediaDisplayUrl}
+        getThumbnailUrl={getObjectMediaThumbnailUrl}
         getIssue={() => ''}
         onUploadUri={handleUploadUri}
         onUploadMultiple={handleUploadMultiple}

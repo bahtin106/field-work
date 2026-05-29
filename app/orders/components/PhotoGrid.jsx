@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import CachedImage from '../../../components/ui/CachedImage';
+import { prefetchMediaUrls } from '../../../src/shared/media/imagePipeline';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
@@ -47,6 +48,7 @@ const UploadOverlay = memo(function UploadOverlay({ borderRadius, iconSize, icon
 const PhotoItem = memo(function PhotoItem({
   uri,
   displayUri,
+  fallbackUri,
   issueMessage,
   isPending,
   actualIndex,
@@ -103,6 +105,7 @@ const PhotoItem = memo(function PhotoItem({
           ) : (
             <CachedImage
               uri={src}
+              fallbackUri={fallbackUri && fallbackUri !== src ? fallbackUri : undefined}
               width="100%"
               height="100%"
               style={{ borderRadius: theme.radii.sm }}
@@ -167,6 +170,7 @@ function PhotoGrid({
   photos = [],
   pending = [],
   getDisplayUrl,
+  getThumbnailUrl,
   getIssue,
   onOpenViewer,
   onRemove,
@@ -194,17 +198,27 @@ function PhotoGrid({
     }
     for (let i = 0; i < (photos || []).length; i += 1) {
       const url = photos[i];
+      const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
+      const displayUri = getDisplayUrl ? getDisplayUrl(url) : '';
       mapped.push({
         key: `photo_${String(url)}_${i}`,
         uri: url,
-        displayUri: getDisplayUrl ? getDisplayUrl(url) : url,
+        displayUri: thumbUri || displayUri || url,
+        fallbackUri: displayUri && displayUri !== thumbUri ? displayUri : url,
         issueMessage: getIssue ? getIssue(url) : '',
         isPending: false,
         actualIndex: i,
       });
     }
     return mapped;
-  }, [getDisplayUrl, getIssue, pending, photos]);
+  }, [getDisplayUrl, getIssue, getThumbnailUrl, pending, photos]);
+
+  useEffect(() => {
+    const displayUrls = data
+      .filter((item) => !item.isPending && !item.issueMessage)
+      .map((item) => item.displayUri || item.uri);
+    prefetchMediaUrls(displayUrls).catch(() => {});
+  }, [data]);
 
   const handleOpenViewer = useCallback(
     (actualIndex) => {
@@ -234,6 +248,7 @@ function PhotoGrid({
       <PhotoItem
         uri={item.uri}
         displayUri={item.displayUri}
+        fallbackUri={item.fallbackUri}
         issueMessage={item.issueMessage}
         isPending={item.isPending}
         actualIndex={item.actualIndex}
@@ -279,6 +294,7 @@ function PhotoGrid({
       maxToRenderPerBatch={12}
       windowSize={5}
       removeClippedSubviews
+      updateCellsBatchingPeriod={40}
     />
   );
 }

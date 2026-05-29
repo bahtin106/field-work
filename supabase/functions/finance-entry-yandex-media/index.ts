@@ -546,6 +546,11 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
   return atomic;
 }
 
+function isYandexPublicPageUrl(value: string) {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw.includes('yadi.sk/') || raw.includes('disk.yandex.');
+}
+
 async function uploadToYandex(accessToken: string, path: string, bytes: Uint8Array, mime: string) {
   const linkRes = await fetch(
     `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(path)}&overwrite=false`,
@@ -748,13 +753,9 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
       const sourceUrl = internalUrlFromPath(filePath);
       let displayUrl = '';
       try {
-        displayUrl = await publishAndGetPublicUrl(accessToken, filePath);
+        displayUrl = await getPathDownloadUrl(accessToken, filePath);
       } catch (_e) {
-        try {
-          displayUrl = await getPathDownloadUrl(accessToken, filePath);
-        } catch (_e2) {
-          displayUrl = sourceUrl;
-        }
+        displayUrl = sourceUrl;
       }
 
       const { error: mapErr } = await admin.from('finance_entry_media_external_map').upsert(
@@ -841,18 +842,11 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
         await uploadToYandex(accessToken, filePath, bytes, mime);
       }
       const sourceUrl = internalUrlFromPath(filePath);
-      // Prefer persistent public URL when possible (cached/display_url), fall back to download link
       let displayUrl = '';
       try {
-        // Try to obtain a stable public URL for faster client delivery
-        displayUrl = await publishAndGetPublicUrl(accessToken, filePath);
-      } catch (e) {
-        // Fallback to download href if publishing fails
-        try {
-          displayUrl = await getPathDownloadUrl(accessToken, filePath);
-        } catch (_e) {
-          displayUrl = internalUrlFromPath(filePath);
-        }
+        displayUrl = await getPathDownloadUrl(accessToken, filePath);
+      } catch (_e) {
+        displayUrl = sourceUrl;
       }
 
       const { error: mapErr } = await admin.from('finance_entry_media_external_map').upsert(
@@ -953,20 +947,12 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
           resolved[sourceUrl] = toYandexDisplayCandidate(sourceUrl);
           continue;
         }
-        // If we already have a cached display URL, use it immediately
-        if (row.display_url) {
+        if (row.display_url && !isYandexPublicPageUrl(String(row.display_url))) {
           resolved[sourceUrl] = String(row.display_url);
           continue;
         }
         try {
-          // Try to publish/get a persistent public URL and cache it
-          let pubUrl = '';
-          try {
-            pubUrl = await publishAndGetPublicUrl(accessToken, String(row.external_path));
-          } catch (_e) {
-            // Fallback to download link
-            pubUrl = await getPathDownloadUrl(accessToken, String(row.external_path));
-          }
+          const pubUrl = await getPathDownloadUrl(accessToken, String(row.external_path));
           resolved[sourceUrl] = pubUrl;
           // Best-effort persist to mapping for future requests
           if (row && (row as any).id != null) {

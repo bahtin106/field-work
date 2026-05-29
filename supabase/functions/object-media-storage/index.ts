@@ -342,6 +342,21 @@ async function publishAndGetPublicUrl(accessToken: string, path: string) {
   return String(meta.public_url);
 }
 
+async function getPathDownloadUrl(accessToken: string, path: string) {
+  const dlRes = await fetch(
+    `https://cloud-api.yandex.net/v1/disk/resources/download?path=${encodeURIComponent(path)}`,
+    { headers: { Authorization: `OAuth ${accessToken}` } },
+  );
+  if (!dlRes.ok) {
+    const text = await dlRes.text();
+    const mapped = mapYandexApiError(dlRes.status, text);
+    throw new Error(mapped || `Get download link failed: ${text}`);
+  }
+  const dl = (await dlRes.json()) as { href?: string };
+  if (!dl?.href) throw new Error('Download href missing');
+  return String(dl.href);
+}
+
 async function deleteYandexResourceSafe(accessToken: string, path: string) {
   const normalized = String(path || '').trim();
   if (!normalized) return;
@@ -555,6 +570,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
         const yandex = await getValidAccessToken(admin, ctx.companyId);
         if (!yandex.accessToken) return json(400, { success: false, message: 'Yandex Disk not connected' });
         const publicUrl = await publishAndGetPublicUrl(yandex.accessToken, externalPath);
+        const displayUrl = await getPathDownloadUrl(yandex.accessToken, externalPath).catch(() => publicUrl);
         try {
           const { error: mapErr } = await admin.from('object_media_external_map').upsert(
             {
@@ -564,7 +580,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
               provider: 'yandex_disk',
               source_url: publicUrl,
               external_path: externalPath,
-              display_url: publicUrl,
+              display_url: displayUrl,
               display_url_updated_at: new Date().toISOString(),
               created_by: ctx.userId,
             },
@@ -575,7 +591,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           await deleteYandexResourceSafe(yandex.accessToken, externalPath).catch(() => null);
           throw error;
         }
-        return json(200, { success: true, provider: 'yandex_disk', url: publicUrl });
+        return json(200, { success: true, provider: 'yandex_disk', url: publicUrl, display_url: displayUrl });
       }
 
       const objectKey = String(body.object_key || '').trim();
@@ -642,6 +658,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           throw new Error(`Upload failed: ${text}`);
         }
         const publicUrl = await publishAndGetPublicUrl(yandex.accessToken, yandexPath);
+        const displayUrl = await getPathDownloadUrl(yandex.accessToken, yandexPath).catch(() => publicUrl);
         try {
           const { error: mapErr } = await admin.from('object_media_external_map').upsert(
             {
@@ -651,7 +668,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
               provider: 'yandex_disk',
               source_url: publicUrl,
               external_path: yandexPath,
-              display_url: publicUrl,
+              display_url: displayUrl,
               display_url_updated_at: new Date().toISOString(),
               created_by: ctx.userId,
               file_size_bytes: bytes.length,
@@ -663,7 +680,7 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           await deleteYandexResourceSafe(yandex.accessToken, yandexPath).catch(() => null);
           throw error;
         }
-        return json(200, { success: true, provider: 'yandex_disk', url: publicUrl });
+        return json(200, { success: true, provider: 'yandex_disk', url: publicUrl, display_url: displayUrl });
       }
 
       const objectKey = buildObjectMediaKey(ctx, category, mime);

@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { financeEntryMediaStorage, financeEntryYandexMedia } from '../lib/financeEntryMedia';
+import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../src/shared/media/assets';
+import { prefetchMediaUrls } from '../src/shared/media/imagePipeline';
 
 function isLikelyYandexLink(url) {
   const raw = String(url || '').toLowerCase();
@@ -8,8 +10,13 @@ function isLikelyYandexLink(url) {
 
 export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider, t, enabled = true }) {
   const [resolvedUrls, setResolvedUrls] = useState({});
+  const [thumbUrls, setThumbUrls] = useState({});
   const [issues, setIssues] = useState({});
   const isMounted = useRef(true);
+  const photoSignature = useMemo(
+    () => (Array.isArray(photoUrls) ? photoUrls.map((value) => String(value || '')).join('|') : ''),
+    [photoUrls],
+  );
 
   useEffect(() => {
     isMounted.current = true;
@@ -21,9 +28,17 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
   const getDisplayUrl = useCallback(
     (sourceUrl) => {
       if (!sourceUrl) return '';
-      return resolvedUrls[sourceUrl] || sourceUrl;
+      return resolvedUrls[sourceUrl] || thumbUrls[sourceUrl] || sourceUrl;
     },
-    [resolvedUrls],
+    [resolvedUrls, thumbUrls],
+  );
+
+  const getThumbnailUrl = useCallback(
+    (sourceUrl) => {
+      if (!sourceUrl) return '';
+      return thumbUrls[sourceUrl] || getDisplayUrl(sourceUrl);
+    },
+    [getDisplayUrl, thumbUrls],
   );
 
   const getIssue = useCallback(
@@ -90,6 +105,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
         setResolvedUrls(nextResolved);
         setIssues(nextIssues);
       }
+      prefetchMediaUrls(Object.values(nextResolved).length ? Object.values(nextResolved) : targets).catch(() => {});
       return data || { resolved_urls: nextResolved, issues: nextIssues, photo_urls: targets };
     },
     [enabled, financeEntryId],
@@ -97,9 +113,37 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
 
   useEffect(() => {
     if (!enabled || !financeEntryId) return;
+    let cancelled = false;
+    listMediaAssets({
+      entityType: 'finance_entry',
+      entityId: financeEntryId,
+      categories: ['finance_entry_photo'],
+    })
+      .then((assets) => {
+        if (cancelled || !isMounted.current) return;
+        const displayMap = buildMediaAssetDisplayMap(assets);
+        const thumbMap = buildMediaAssetThumbMap(assets);
+        if (Object.keys(displayMap).length) {
+          setResolvedUrls((prev) => ({ ...displayMap, ...prev }));
+          prefetchMediaUrls(Object.values(displayMap)).catch(() => {});
+        }
+        if (Object.keys(thumbMap).length) {
+          setThumbUrls((prev) => ({ ...thumbMap, ...prev }));
+          prefetchMediaUrls(Object.values(thumbMap)).catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, financeEntryId, photoSignature]);
+
+  useEffect(() => {
+    if (!enabled || !financeEntryId) return;
     const urls = (photoUrls || []).map((value) => String(value || '').trim()).filter(Boolean);
     if (!urls.some((url) => isLikelyYandexLink(url) || /^https?:\/\//i.test(String(url || '')))) {
       setResolvedUrls({});
+      setThumbUrls({});
       setIssues({});
       return;
     }
@@ -114,6 +158,12 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
       return next;
     });
     setIssues((prev) => {
+      if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
+      const next = { ...prev };
+      delete next[url];
+      return next;
+    });
+    setThumbUrls((prev) => {
       if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
       const next = { ...prev };
       delete next[url];
@@ -139,6 +189,7 @@ export function useFinanceEntryMedia({ financeEntryId, photoUrls, mediaProvider,
 
   return {
     getDisplayUrl,
+    getThumbnailUrl,
     getIssue,
     inspectUrls,
     removeFromCache,

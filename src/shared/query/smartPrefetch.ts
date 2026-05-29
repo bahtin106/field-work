@@ -1,12 +1,13 @@
 import { InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { QueryClient } from '@tanstack/react-query';
+import { fetchWorkTypes } from '../../../lib/workTypes';
 import { getMyCompanyId } from '../../features/profile/api';
 import { getOfflineSnapshot } from '../offline/offlineStatus';
 import { queryKeys } from './queryKeys';
-import { listRequests, listRequestExecutors } from '../../features/requests/api';
+import { getRequestById, listRequests, listRequestExecutors } from '../../features/requests/api';
 
-const SMART_PREFETCH_PAGE_SIZE = 20;
+const SMART_PREFETCH_PAGE_SIZE = 80;
 const SMART_PREFETCH_PROFILE_KEY = 'app.smartPrefetch.profile.v1';
 
 type SmartPrefetchProfile = 'lite' | 'balanced' | 'aggressive';
@@ -91,6 +92,12 @@ async function prefetchRequestList(queryClient: QueryClient, scope: 'my' | 'all'
     pages: [page],
     pageParams: [1],
   });
+  if (scope === 'my') {
+    queryClient.setQueryData(['orders', 'my', 'recent'], page);
+  } else {
+    queryClient.setQueryData(['orders', 'all', 'recent'], page);
+  }
+  return page;
 }
 
 export async function runSmartPrefetch(queryClient: QueryClient) {
@@ -100,7 +107,18 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
   inFlight = true;
   lastRunAt = Date.now();
   try {
-    await prefetchRequestList(queryClient, 'my');
+    const myRows = await prefetchRequestList(queryClient, 'my');
+    await Promise.allSettled(
+      myRows.slice(0, 8).map((row: any) =>
+        row?.id
+          ? queryClient.prefetchQuery({
+              queryKey: queryKeys.requests.detail(row.id),
+              queryFn: () => getRequestById(row.id),
+              staleTime: 45 * 1000,
+            })
+          : Promise.resolve(null),
+      ),
+    );
     if (cfg.includeAllRequests) {
       await new Promise((resolve) => setTimeout(resolve, cfg.allRequestsDelayMs));
       await prefetchRequestList(queryClient, 'all');
@@ -113,11 +131,14 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
         staleTime: 5 * 60 * 1000,
       });
       if (companyId) {
-        await queryClient.prefetchQuery({
-          queryKey: queryKeys.requests.executors(companyId),
-          queryFn: () => listRequestExecutors({ companyId }),
-          staleTime: 60 * 1000,
-        });
+        await Promise.allSettled([
+          queryClient.prefetchQuery({
+            queryKey: queryKeys.requests.executors(companyId),
+            queryFn: () => listRequestExecutors({ companyId }),
+            staleTime: 60 * 1000,
+          }),
+          fetchWorkTypes(companyId, { includeDisabled: true }),
+        ]);
       }
     }
     return true;

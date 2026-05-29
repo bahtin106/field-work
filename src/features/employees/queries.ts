@@ -57,7 +57,7 @@ export function useEmployee(id: any, options: any = {}) {
     },
     enabled: !!id,
     staleTime: 120 * 1000,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
     retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });

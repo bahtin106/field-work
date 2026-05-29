@@ -3,13 +3,11 @@ import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { addDays, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
-import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 import { ru as dfnsRu } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
-  ActivityIndicator,
   BackHandler,
   Dimensions,
   FlatList,
@@ -2669,25 +2667,5 @@ function CalendarScreenContent() {
 }
 
 export default function CalendarScreen() {
-  const { theme } = useTheme();
-
-  return (
-    <DeferredScreen
-      style={{ backgroundColor: theme.colors.background }}
-      placeholder={
-        <View
-          style={{
-            flex: 1,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: theme.colors.background,
-          }}
-        >
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
-      }
-    >
-      <CalendarScreenContent />
-    </DeferredScreen>
-  );
+  return <CalendarScreenContent />;
 }

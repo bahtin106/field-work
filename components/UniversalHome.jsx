@@ -13,6 +13,7 @@ import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
 import { useTranslation } from '../src/i18n/useTranslation';
+import { runSmartPrefetch } from '../src/shared/query/smartPrefetch';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
@@ -28,6 +29,12 @@ import Card from './ui/Card';
 import { useToast } from './ui/ToastProvider';
 
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
+const HOME_PROFILE_STALE_MS = 2 * 60 * 1000;
+const HOME_COMPANY_STALE_MS = 10 * 60 * 1000;
+const HOME_DEPARTMENT_STALE_MS = 10 * 60 * 1000;
+const HOME_SESSION_STALE_MS = 5 * 60 * 1000;
+const HOME_DURABLE_GC_MS = 14 * 24 * 60 * 60 * 1000;
+
 const HOME_ROUTES = {
   appSettings: '/app_settings/AppSettings',
   appEvents: '/app_settings/sections/events',
@@ -82,15 +89,6 @@ async function fetchProfile(uid) {
             resolvedUrls[String(profile?.avatar_url || '').trim()] || profile?.avatar_url || null,
         };
   };
-
-  try {
-    const { data: byUserId } = await supabase
-      .from('profiles')
-      .select('id, full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
-      .eq('user_id', uid)
-      .maybeSingle();
-    if (byUserId) return await resolveProfileAvatar(byUserId);
-  } catch {}
 
   const { data: byId } = await supabase
     .from('profiles')
@@ -163,7 +161,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { t } = useTranslation();
   const router = useRouter();
   const { signOut } = useAuthContext();
-  const { isSuperAdmin, isLoading: superAdminLoading } = useSuperAdminAccess();
+  const { isSuperAdmin } = useSuperAdminAccess();
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const toast = useToast();
   const qc = useQueryClient();
@@ -200,7 +198,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   const [supportRequestOpen, setSupportRequestOpen] = useState(false);
   const [supportRequestNonce, setSupportRequestNonce] = useState(0);
-  const { data: unreadSupportCount = 0, isFetched: unreadSupportFetched } = useQuery({
+  const { data: unreadSupportCount = 0 } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
     queryFn: countUnreadSupportRequests,
     enabled: isSuperAdmin,
@@ -225,8 +223,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { data: session } = useQuery({
     queryKey: ['session'],
     queryFn: fetchSession,
-    staleTime: 0,
-    refetchOnMount: 'stale',
+    staleTime: HOME_SESSION_STALE_MS,
+    refetchOnMount: true,
     enabled: !user && !providedProfile,
   });
   const uid =
@@ -241,9 +239,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
     initialData: providedProfile || undefined,
-    staleTime: 0,
-    gcTime: 10 * 60 * 1000,
-    refetchOnMount: 'always',
+    staleTime: HOME_PROFILE_STALE_MS,
+    gcTime: HOME_DURABLE_GC_MS,
+    refetchOnMount: true,
     refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
@@ -265,8 +263,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       return p || null;
     },
     enabled: !!uid,
-    staleTime: 60 * 1000,
-    refetchOnMount: 'always',
+    staleTime: HOME_PROFILE_STALE_MS,
+    refetchOnMount: true,
     refetchOnReconnect: true,
   });
 
@@ -280,7 +278,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const {
     settings: companySettings,
     useDepartments,
-    isLoading: companySettingsLoading,
   } = useCompanySettings(companyId || null);
   const subscriptionGuard = useSubscriptionGuard(companyId);
   const isReadOnlyBySubscription =
@@ -507,8 +504,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       return data || null;
     },
     enabled: !!companyId,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: HOME_COMPANY_STALE_MS,
+    refetchOnMount: true,
     refetchOnReconnect: true,
   });
 
@@ -524,8 +521,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       return data || null;
     },
     enabled: useDepartments && !!departmentIdToUse,
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: HOME_DEPARTMENT_STALE_MS,
+    refetchOnMount: true,
     refetchOnReconnect: true,
   });
 
@@ -627,28 +624,24 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     companyReady &&
     departmentReady;
 
-  const unreadSupportReady = !isSuperAdmin || unreadSupportFetched;
-  const companySettingsReady = !companyId || !isAdmin || !companySettingsLoading;
-  const subscriptionReady = !companyId || !subscriptionGuard.isLoading;
-  const cloudStatusReady = !shouldCheckCloudHealth || cloudStatusFetched || cloudStatusError;
-  const superAdminReady = !superAdminLoading;
-  const homeShellReady =
-    homeCriticalReady &&
-    unreadSupportReady &&
-    companySettingsReady &&
-    subscriptionReady &&
-    cloudStatusReady &&
-    superAdminReady;
-  const [homeShellReadyLatched, setHomeShellReadyLatched] = useState(false);
+  const [homeCriticalReadyLatched, setHomeCriticalReadyLatched] = useState(false);
   useEffect(() => {
-    if (homeShellReady) setHomeShellReadyLatched(true);
-  }, [homeShellReady]);
-  const shouldShowHomeLoader = !homeShellReadyLatched && !homeShellReady;
+    if (homeCriticalReady) setHomeCriticalReadyLatched(true);
+  }, [homeCriticalReady]);
+  const shouldShowHomeLoader = !homeCriticalReadyLatched && !homeCriticalReady;
 
   useEffect(() => {
-    if (!homeShellReady) return;
+    if (!homeCriticalReady) return;
     onInitialReady?.();
-  }, [homeShellReady, onInitialReady]);
+  }, [homeCriticalReady, onInitialReady]);
+
+  useEffect(() => {
+    if (!homeCriticalReady || !uid) return;
+    const timer = setTimeout(() => {
+      runSmartPrefetch(qc).catch(() => {});
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [homeCriticalReady, qc, uid]);
 
   if (shouldShowHomeLoader) {
     return (
@@ -689,7 +682,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         >
           {avatarUrl ? (
             <View style={styles.avatarWrap}>
-              <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarImg} contentFit="cover" cachePolicy="none" />
+              <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarImg} contentFit="cover" cachePolicy="memory-disk" />
             </View>
           ) : (
             <View style={styles.avatarFallback}>

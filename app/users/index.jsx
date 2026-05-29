@@ -22,7 +22,6 @@ import {
 } from '../../components/ui/PullToRefreshFeedback';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useTheme } from '../../theme/ThemeProvider';
-import DeferredScreen from '../../src/shared/perf/DeferredScreen';
 // Unified filter system: import our reusable components
 import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
@@ -688,6 +687,11 @@ function UsersIndexContent() {
               data={sortedFiltered}
               keyExtractor={keyExtractor}
               renderItem={renderItem}
+              initialNumToRender={10}
+              maxToRenderPerBatch={8}
+              updateCellsBatchingPeriod={34}
+              windowSize={9}
+              removeClippedSubviews={Platform.OS === 'android'}
               onViewableItemsChanged={onViewableItemsChanged}
               viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
               refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -733,10 +737,6 @@ function UsersIndexContent() {
 }
 
 export default function UsersIndex() {
-  return (
-    <DeferredScreen>
-      <UsersIndexContent />
-    </DeferredScreen>
-  );
+  return <UsersIndexContent />;
 }
 

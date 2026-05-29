@@ -11,6 +11,7 @@ import { getMyCompanyId } from '../profile/api';
 const objectByIdInFlight = new Map<string, Promise<any>>();
 const OBJECT_MEDIA_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'] as const;
 const OBJECT_MEDIA_LABEL_KEYS = ['media_file_1_label', 'media_file_2_label', 'media_file_3_label'] as const;
+const OBJECT_MEDIA_KEY_SET = new Set<string>(OBJECT_MEDIA_KEYS);
 
 function normalizeObjectLocationMode(value: unknown) {
   return String(value || '').trim().toLowerCase() === 'map' ? 'map' : 'address';
@@ -40,6 +41,18 @@ function isMissingObjectMediaLabelColumnError(error: any) {
   return String(error?.code || '') === '42703' && OBJECT_MEDIA_LABEL_KEYS.some((key) => source.includes(key));
 }
 
+function isMissingObjectMediaSectionsColumnError(error: any) {
+  const source = [
+    error?.message,
+    error?.details,
+    error?.hint,
+  ].map((value) => String(value || '').toLowerCase()).join(' ');
+  return (
+    (String(error?.code || '') === '42703' || String(error?.code || '') === 'PGRST204') &&
+    source.includes('media_sections')
+  );
+}
+
 function omitObjectMediaLabelColumns<T extends Record<string, any>>(payload: T) {
   const next = { ...payload };
   OBJECT_MEDIA_LABEL_KEYS.forEach((key) => {
@@ -52,6 +65,17 @@ function normalizeMediaUrls(value: unknown) {
   if (!Array.isArray(value)) return [] as string[];
   const next = value.map((item) => String(item || '').trim()).filter(Boolean);
   return Array.from(new Set(next));
+}
+
+function normalizeMediaSections(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  return Array.from(
+    new Set(
+      value
+        .map((item) => String(item || '').trim())
+        .filter((item) => OBJECT_MEDIA_KEY_SET.has(item)),
+    ),
+  );
 }
 
 async function resolveScopedCompanyId(explicitCompanyId: string | null = null) {
@@ -312,6 +336,9 @@ export async function createClientObject(payload: Record<string, any>) {
         insertPayload[key] = trimToNull(payload[key]);
       }
     });
+    if (Object.prototype.hasOwnProperty.call(payload, 'media_sections')) {
+      insertPayload.media_sections = normalizeMediaSections(payload.media_sections);
+    }
     let query = supabase
       .from('client_objects')
       .insert(insertPayload)
@@ -332,6 +359,16 @@ export async function createClientObject(payload: Record<string, any>) {
       query = supabase
         .from('client_objects')
         .insert(omitObjectMediaLabelColumns(insertPayload))
+        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .single();
+      ({ data, error } = await query);
+    }
+    if (error && isMissingObjectMediaSectionsColumnError(error)) {
+      const fallbackPayload = { ...insertPayload };
+      delete fallbackPayload.media_sections;
+      query = supabase
+        .from('client_objects')
+        .insert(fallbackPayload)
         .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
         .single();
       ({ data, error } = await query);
@@ -377,6 +414,9 @@ export async function updateClientObject(objectId: string, patch: Record<string,
         nextPatch[key] = trimToNull(patch[key]);
       }
     });
+    if (Object.prototype.hasOwnProperty.call(patch, 'media_sections')) {
+      nextPatch.media_sections = normalizeMediaSections(patch.media_sections);
+    }
 
     let query: any = supabase
       .from('client_objects')
@@ -402,6 +442,18 @@ export async function updateClientObject(objectId: string, patch: Record<string,
       query = supabase
         .from('client_objects')
         .update(omitObjectMediaLabelColumns(nextPatch))
+        .eq('id', objectId)
+        .eq('company_id', scopedCompanyId)
+        .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')
+        .single();
+      ({ data, error } = await query);
+    }
+    if (error && isMissingObjectMediaSectionsColumnError(error)) {
+      const fallbackPatch = { ...nextPatch };
+      delete fallbackPatch.media_sections;
+      query = supabase
+        .from('client_objects')
+        .update(fallbackPatch)
         .eq('id', objectId)
         .eq('company_id', scopedCompanyId)
         .select('*, object_tag_links(tag:company_tags(id, value, tag_type))')

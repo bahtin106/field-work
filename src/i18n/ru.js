@@ -1113,6 +1113,8 @@
   "common_cancel": "Отмена",
   "order_photos_delete_single_title": "Удалить фото?",
   "order_photos_delete_single_message": "Фото будет удалено без возможности восстановления.",
+  "order_photos_delete_many_title": "Удалить выбранные фото?",
+  "order_photos_delete_many_message": "Будет удалено {count} фото без возможности восстановления.",
   "order_photos_delete_single_confirm": "Удалить",
   "order_photos_delete_single_cancel": "Отмена",
   "viewer_share": "Поделиться",

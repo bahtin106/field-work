@@ -1,5 +1,4 @@
 import { useQueryClient } from '@tanstack/react-query';
-import * as ImagePicker from 'expo-image-picker';
 import React from 'react';
 import { Dimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -16,16 +15,8 @@ import {
   SUPPORT_UNREAD_QUERY_KEY,
 } from '../../../src/features/supportRequests/api';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { pickGalleryImages } from '../../../src/shared/media/imagePipeline';
 import { useTheme } from '../../../theme/ThemeProvider';
-
-const getImagePickerMediaTypesImages = () => {
-  try {
-    if (ImagePicker.MediaType && ImagePicker.MediaType.Images) return ImagePicker.MediaType.Images;
-    if (ImagePicker.MediaType && ImagePicker.MediaType.images) return ImagePicker.MediaType.images;
-    if (ImagePicker.MediaType && ImagePicker.MediaType.image) return ImagePicker.MediaType.image;
-  } catch {}
-  return ['images'];
-};
 
 export default function SupportRequestModal({ visible, onClose, profile }) {
   const { theme } = useTheme();
@@ -99,24 +90,11 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
       return;
     }
     try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (perm?.status !== 'granted') {
-        setFeedback({ type: 'error', message: t('error_library_denied') });
-        return;
-      }
-
-      const mediaTypesOpt = getImagePickerMediaTypesImages();
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: mediaTypesOpt,
-        quality: typeof theme.media?.quality === 'number' ? theme.media.quality : 0.85,
-        allowsEditing: false,
-        allowsMultipleSelection: true,
-        orderedSelection: true,
+      const incoming = await pickGalleryImages({
+        quality: 1,
         selectionLimit: remaining,
+        seenIds: selectedPhotoIdsRef.current,
       });
-
-      if (result?.canceled) return;
-      const incoming = Array.isArray(result?.assets) ? result.assets : [];
       if (!incoming.length) return;
 
       setPhotos((prev) => {
@@ -125,10 +103,9 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
         for (const asset of incoming) {
           const uri = String(asset?.uri || '').trim();
           if (!uri) continue;
-          const id = String(asset?.assetId || uri);
-          if (seen.has(id) || selectedPhotoIdsRef.current.has(id)) continue;
+          const id = String(asset?.id || asset?.assetId || uri);
+          if (seen.has(id)) continue;
           seen.add(id);
-          selectedPhotoIdsRef.current.add(id);
           next.push({ id, uri });
           if (next.length >= SUPPORT_PHOTO_MAX_COUNT) break;
         }
@@ -141,9 +118,14 @@ export default function SupportRequestModal({ visible, onClose, profile }) {
       });
       setFeedback(null);
     } catch (error) {
-      setFeedback({ type: 'error', message: String(error?.message || t('toast_generic_error')) });
+      setFeedback({
+        type: 'error',
+        message: error?.code === 'media_library_permission_denied'
+          ? t('error_library_denied')
+          : String(error?.message || t('toast_generic_error')),
+      });
     }
-  }, [photos.length, t, theme.media?.quality, toast]);
+  }, [photos.length, t, toast]);
 
   const requestRemovePhoto = React.useCallback((index) => {
     if (!Number.isInteger(index) || index < 0) return;

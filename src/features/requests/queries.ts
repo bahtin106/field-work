@@ -18,7 +18,7 @@ import {
   updateRequest,
 } from './api';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 60;
 
 function mergePages(data: any) {
   const pages = data?.pages || [];
@@ -59,6 +59,7 @@ function useRequestInfiniteQuery(queryKey: any, params: any, options: any = {}) 
     initialPageParam: 1,
     getNextPageParam: (lastPage, allPages) => {
       if (!Array.isArray(lastPage) || lastPage.length < PAGE_SIZE) return undefined;
+      if (lastPage.some((row: any) => row?.__hasMore === false)) return undefined;
       return allPages.length + 1;
     },
     staleTime: 20 * 1000,

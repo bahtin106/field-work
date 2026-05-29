@@ -86,7 +86,7 @@ export default function UserView() {
   } = useEmployee(userId, {
     enabled: !!userId,
     staleTime: 2 * 60 * 1000,
-    refetchOnMount: 'always',
+    refetchOnMount: true,
   });
   const { data: employeeFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.EMPLOYEE, {
     enabled: !!userId,
@@ -389,7 +389,7 @@ export default function UserView() {
                 source={{ uri: avatarUrl }}
                 style={s.avatarImg}
                 contentFit="cover"
-                cachePolicy="none"
+                cachePolicy="memory-disk"
               />
             ) : (
               <Text style={s.avatarTextXl}>{initials || '•'}</Text>

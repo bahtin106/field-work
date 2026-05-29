@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image as RNImage,
+  Modal,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -9,38 +10,41 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import Animated, {
-  FadeIn,
-  FadeOut,
-} from 'react-native-reanimated';
-import ImageZoom from 'react-native-image-pan-zoom';
 import { Feather } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
 import { File, Paths } from 'expo-file-system';
+import { Image as ExpoImage } from 'expo-image';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
+import { Gallery } from 'react-native-zoom-toolkit';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../../theme';
 import { withAlpha } from '../../../theme/colors';
 import { useTranslation } from '../../../src/i18n/useTranslation';
-import Button from '../../../components/ui/Button';
-import { BaseModal, AnimatedFullscreenModal } from '../../../components/ui/modals';
+import { BaseModal } from '../../../components/ui/modals';
 import ModalActionsRow from '../../../components/ui/modals/ModalActionsRow';
 import ToastProvider, { useToast } from '../../../components/ui/ToastProvider';
 
 const VIEWER_BG = '#000000';
 const VIEWER_FG = '#FFFFFF';
 const VIEWER_OVERLAY_ALPHA = 0.55;
-const ANIM_FADE_IN = 200;
-const ANIM_FADE_OUT = 150;
 const ICON_BTN_SIZE = 40;
-const MAX_SCALE = 4;
-const DOUBLE_TAP_SCALE = 2.5;
-const ZOOM_EPSILON = 1.01;
-const PAGE_SWIPE_THRESHOLD = 48;
 
 const haptic = (style = 'Light') =>
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {});
+
+const normalizeImages = (images) =>
+  (Array.isArray(images) ? images : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+
+const clampIndex = (index, count) => {
+  if (!count) return 0;
+  const numeric = Number(index);
+  const safe = Number.isFinite(numeric) ? Math.trunc(numeric) : 0;
+  return Math.max(0, Math.min(safe, count - 1));
+};
 
 const measureImage = (uri) =>
   new Promise((resolve) => {
@@ -56,222 +60,94 @@ const measureImage = (uri) =>
     );
   });
 
-const getContainSize = (sourceWidth, sourceHeight, maxWidth, maxHeight) => {
-  if (!sourceWidth || !sourceHeight || !maxWidth || !maxHeight) {
-    return { width: maxWidth || 1, height: maxHeight || 1 };
-  }
-
-  const ratio = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight);
-  return {
-    width: Math.max(1, Math.round(sourceWidth * ratio)),
-    height: Math.max(1, Math.round(sourceHeight * ratio)),
-  };
-};
-
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-const getPanLimit = (imageSize, cropSize, scale) => {
-  const scaledSize = imageSize * scale;
-  if (scaledSize <= cropSize) return 0;
-  return (scaledSize - cropSize) / 2 / scale;
-};
-
-const ZoomablePage = memo(function ZoomablePage({
-  height,
-  index,
-  isActive,
-  onTap,
-  onSwipePage,
-  rotation,
+const GalleryPhoto = memo(function GalleryPhoto({
   uri,
-  width,
+  viewportWidth,
+  viewportHeight,
 }) {
-  const [naturalSize, setNaturalSize] = useState(null);
-  const pageSwipeLockedRef = useRef(false);
-  const pendingPageSwipeRef = useRef(null);
-  const pageSwipeTimerRef = useRef(null);
-
-  useEffect(() => {
-    let alive = true;
-    setNaturalSize(null);
-    measureImage(uri).then((result) => {
-      if (!alive || !result?.width || !result?.height) return;
-      setNaturalSize(result);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [uri]);
-
-  const normalizedRotation = ((rotation % 360) + 360) % 360;
-  const isSideways = normalizedRotation === 90 || normalizedRotation === 270;
-
-  const fitted = useMemo(() => {
-    const sourceWidth = naturalSize?.width || width;
-    const sourceHeight = naturalSize?.height || height;
-    const effectiveWidth = isSideways ? sourceHeight : sourceWidth;
-    const effectiveHeight = isSideways ? sourceWidth : sourceHeight;
-    return getContainSize(effectiveWidth, effectiveHeight, width, height);
-  }, [height, isSideways, naturalSize?.height, naturalSize?.width, width]);
-
-  const renderWidth = isSideways ? fitted.height : fitted.width;
-  const renderHeight = isSideways ? fitted.width : fitted.height;
-
-  const zoomRef = useRef(null);
-  const currentScaleRef = useRef(1);
-  const [centerOn, setCenterOn] = useState(null);
-
-  useEffect(() => {
-    if (isActive) return;
-    currentScaleRef.current = 1;
-    setCenterOn({ x: 0, y: 0, scale: 1, duration: 0 });
-    zoomRef.current?.reset?.();
-  }, [isActive]);
-
-  useEffect(() => {
-    if (!isActive) return;
-    currentScaleRef.current = 1;
-    setCenterOn({ x: 0, y: 0, scale: 1, duration: 0 });
-    zoomRef.current?.reset?.();
-  }, [isActive, rotation]);
-
-  useEffect(
-    () => () => {
-      if (pageSwipeTimerRef.current) clearTimeout(pageSwipeTimerRef.current);
-      pendingPageSwipeRef.current = null;
-    },
-    [],
-  );
-
-  const handleOuterRange = useCallback(
-    (offset) => {
-      if (!isActive || pageSwipeLockedRef.current || Math.abs(offset || 0) < PAGE_SWIPE_THRESHOLD) return;
-      pageSwipeLockedRef.current = true;
-      pendingPageSwipeRef.current = index + (offset > 0 ? -1 : 1);
-      pageSwipeTimerRef.current = setTimeout(() => {
-        pageSwipeLockedRef.current = false;
-      }, 320);
-    },
-    [index, isActive],
-  );
-
-  const handleMove = useCallback((position) => {
-    currentScaleRef.current = Number(position?.scale || 1);
-  }, []);
-
-  const handleRelease = useCallback(
-    (_vx, scale) => {
-      currentScaleRef.current = Number(scale || 1);
-      const nextPage = pendingPageSwipeRef.current;
-      pendingPageSwipeRef.current = null;
-      if (nextPage == null) return;
-
-      requestAnimationFrame(() => {
-        onSwipePage(nextPage);
-      });
-    },
-    [onSwipePage],
-  );
-
-  const handleDoubleTap = useCallback(
-    ({ locationX, locationY }) => {
-      if (currentScaleRef.current > ZOOM_EPSILON) {
-        currentScaleRef.current = 1;
-        setCenterOn({ x: 0, y: 0, scale: 1, duration: 140 });
-        return;
-      }
-
-      const nextScale = DOUBLE_TAP_SCALE;
-      const rawX = ((width / 2 - Number(locationX || width / 2)) * (nextScale - 1)) / nextScale;
-      const rawY = ((height / 2 - Number(locationY || height / 2)) * (nextScale - 1)) / nextScale;
-      const xLimit = getPanLimit(renderWidth, width, nextScale);
-      const yLimit = getPanLimit(renderHeight, height, nextScale);
-      const x = clamp(rawX, -xLimit, xLimit);
-      const y = clamp(rawY, -yLimit, yLimit);
-
-      currentScaleRef.current = nextScale;
-      setCenterOn({ x, y, scale: nextScale, duration: 140 });
-    },
-    [height, renderHeight, renderWidth, width],
-  );
-
   return (
-    <View style={{ width, height, alignItems: 'center', justifyContent: 'center' }}>
-      <ImageZoom
-        key={`${uri}_${normalizedRotation}`}
-        ref={zoomRef}
-        cropWidth={width}
-        cropHeight={height}
-        imageWidth={renderWidth}
-        imageHeight={renderHeight}
-        minScale={1}
-        maxScale={MAX_SCALE}
-        enableDoubleClickZoom={false}
-        doubleClickInterval={220}
-        maxOverflow={0}
-        panToMove={isActive}
-        pinchToZoom={isActive}
-        enableCenterFocus
-        useNativeDriver
-        centerOn={centerOn}
-        onClick={onTap}
-        onDoubleClick={handleDoubleTap}
-        onMove={handleMove}
-        responderRelease={handleRelease}
-        horizontalOuterRangeOffset={handleOuterRange}
-        onStartShouldSetPanResponder={() => isActive}
-        onMoveShouldSetPanResponder={() => isActive}
-      >
-        <RNImage
-          source={{ uri }}
-          resizeMode="contain"
-          style={{
-            width: renderWidth,
-            height: renderHeight,
-            transform: [{ rotate: `${normalizedRotation}deg` }],
-          }}
-        />
-      </ImageZoom>
+    <View style={[styles.galleryPhotoFrame, { width: viewportWidth, height: viewportHeight }]}>
+      <ExpoImage
+        source={{ uri }}
+        contentFit="contain"
+        cachePolicy="memory-disk"
+        transition={0}
+        recyclingKey={uri}
+        style={styles.galleryPhoto}
+      />
     </View>
   );
 });
 
-const ViewerContent = memo(function ViewerContent({
+const styles = StyleSheet.create({
+  rootFill: {
+    flex: 1,
+  },
+  galleryPhotoFrame: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: VIEWER_BG,
+  },
+  galleryPhoto: {
+    width: '100%',
+    height: '100%',
+  },
+});
+
+const ImageViewingGallery = memo(function ImageViewingGallery({
+  visible,
   images,
-  initialIndex,
+  initialIndex = 0,
   onClose,
   onDelete,
   onRotateSave,
   categoryLabel,
   capturePreviewMode = false,
+  onDismiss,
 }) {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const toast = useToast();
+  const insets = useSafeAreaInsets();
   const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
+  const galleryRef = useRef(null);
   const rotationsRef = useRef({});
   const rotationsFlushedRef = useRef(false);
   const closeInFlightRef = useRef(false);
+  const dismissTimerRef = useRef(null);
+  const dismissNotifiedRef = useRef(false);
+
+  const initialImages = normalizeImages(images);
+  const imageSignature = initialImages.join('\u001f');
+  const initialSafeIndex = clampIndex(initialIndex, initialImages.length);
+  const syncedSignatureRef = useRef(imageSignature);
+  const visibleRef = useRef(visible);
+
+  const [localImages, setLocalImages] = useState(initialImages);
+  const [currentIndex, setCurrentIndex] = useState(initialSafeIndex);
+  const [viewerIndex, setViewerIndex] = useState(initialSafeIndex);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rotations, setRotations] = useState({});
+  const [toolbarVisible, setToolbarVisible] = useState(true);
 
   const overlayBg = useMemo(() => withAlpha(VIEWER_BG, VIEWER_OVERLAY_ALPHA), []);
+  const currentUri = localImages[currentIndex] || '';
+  const galleryKey = `${imageSignature}:${viewerIndex}`;
 
   const ds = useMemo(() => {
     const { spacing, radii, typography, colors } = theme;
     return StyleSheet.create({
-      root: { flex: 1, backgroundColor: VIEWER_BG },
-      gallery: { flex: 1, backgroundColor: VIEWER_BG },
       header: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
+        paddingTop: (insets.top || 0) + spacing.md,
+        paddingHorizontal: spacing.lg,
+        paddingBottom: spacing.sm,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: spacing.lg,
-        paddingBottom: spacing.sm,
-        zIndex: 10,
       },
       iconBtn: {
         width: ICON_BTN_SIZE,
@@ -291,16 +167,12 @@ const ViewerContent = memo(function ViewerContent({
         fontSize: typography.sizes.sm,
       },
       footer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
+        paddingHorizontal: spacing.md,
+        paddingTop: spacing.md,
+        paddingBottom: (insets.bottom || 0) + spacing.lg,
         flexDirection: 'row',
         justifyContent: 'space-evenly',
         alignItems: 'center',
-        paddingHorizontal: spacing.md,
-        paddingTop: spacing.md,
-        zIndex: 10,
       },
       footerSingle: {
         justifyContent: 'center',
@@ -311,9 +183,6 @@ const ViewerContent = memo(function ViewerContent({
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.sm + spacing.xs / 2,
         borderRadius: radii.xl,
-        minWidth: spacing.xxxl * 2 + spacing.xs,
-      },
-      captureDeleteBtn: {
         minWidth: spacing.xxxl * 2 + spacing.xs,
       },
       footerLabel: {
@@ -344,59 +213,134 @@ const ViewerContent = memo(function ViewerContent({
         paddingHorizontal: spacing.xl,
         paddingVertical: spacing.sm + spacing.xs / 2,
       },
-      infoLabel: { fontSize: typography.sizes.sm, color: colors.textSecondary },
+      infoLabel: {
+        fontSize: typography.sizes.sm,
+        color: colors.textSecondary,
+      },
       infoValue: {
         fontSize: typography.sizes.sm,
         fontWeight: typography.weight.semibold,
         color: colors.text,
       },
+      modalRoot: {
+        flex: 1,
+        backgroundColor: VIEWER_BG,
+      },
+      gallery: {
+        flex: 1,
+        backgroundColor: VIEWER_BG,
+      },
+      overlayHeader: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        zIndex: 20,
+      },
+      overlayFooter: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 20,
+      },
     });
-  }, [theme]);
-
-  const [localImages, setLocalImages] = useState([]);
-  const [localIndex, setLocalIndex] = useState(0);
-  const [toolbarVisible, setToolbarVisible] = useState(true);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [rotations, setRotations] = useState({});
+  }, [insets.bottom, insets.top, theme]);
 
   useEffect(() => {
-    if (!images?.length) {
-      setLocalImages([]);
-      setLocalIndex(0);
-      setToolbarVisible(true);
-      setMenuOpen(false);
-      setInfoOpen(false);
-      setConfirmDelete(false);
-      setDeleting(false);
-      setBusy(false);
-      setRotations({});
-      rotationsRef.current = {};
-      rotationsFlushedRef.current = false;
-      return;
+    const previousVisible = visibleRef.current;
+    const becameVisible = visible && !previousVisible;
+    const imagesChanged = syncedSignatureRef.current !== imageSignature;
+
+    visibleRef.current = visible;
+    if (!becameVisible && !imagesChanged) return;
+
+    const nextImages = initialImages;
+    const currentUriBeforeSync = localImages[currentIndex] || '';
+    const preservedIndex = imagesChanged && currentUriBeforeSync
+      ? nextImages.indexOf(currentUriBeforeSync)
+      : -1;
+    const nextIndex = preservedIndex >= 0
+      ? preservedIndex
+      : clampIndex(initialIndex, nextImages.length);
+
+    syncedSignatureRef.current = imageSignature;
+    if (becameVisible) {
+      if (dismissTimerRef.current) {
+        clearTimeout(dismissTimerRef.current);
+        dismissTimerRef.current = null;
+      }
+      dismissNotifiedRef.current = false;
     }
-    closeInFlightRef.current = false;
-    setLocalImages([...images]);
-    setLocalIndex(Math.max(0, Math.min(initialIndex, images.length - 1)));
-    setToolbarVisible(true);
+    setLocalImages(nextImages);
+    setCurrentIndex(nextIndex);
+    setViewerIndex(nextIndex);
     setMenuOpen(false);
     setInfoOpen(false);
     setConfirmDelete(false);
     setDeleting(false);
     setBusy(false);
-    setRotations({});
-    rotationsRef.current = {};
-    rotationsFlushedRef.current = false;
-  }, [images, initialIndex]);
+    setToolbarVisible(true);
+    if (becameVisible) {
+      setRotations({});
+      rotationsRef.current = {};
+      rotationsFlushedRef.current = false;
+    }
+    closeInFlightRef.current = false;
+  }, [currentIndex, imageSignature, initialImages, initialIndex, localImages, visible]);
 
   useEffect(() => {
     rotationsRef.current = rotations;
   }, [rotations]);
 
-  const imageCount = localImages.length;
+  useEffect(() => {
+    localImages.forEach((uri) => {
+      ExpoImage.prefetch(uri, 'memory-disk').catch(() => {});
+    });
+  }, [localImages]);
+
+  const flushRotations = useCallback(() => {
+    if (rotationsFlushedRef.current) return;
+    const nonZero = Object.fromEntries(
+      Object.entries(rotationsRef.current).filter(([, deg]) => deg !== 0),
+    );
+    if (Object.keys(nonZero).length > 0 && onRotateSave) {
+      rotationsFlushedRef.current = true;
+      onRotateSave(nonZero);
+    }
+  }, [onRotateSave]);
+
+  const scheduleDismiss = useCallback(() => {
+    if (!onDismiss || dismissNotifiedRef.current || dismissTimerRef.current) return;
+    dismissTimerRef.current = setTimeout(() => {
+      dismissTimerRef.current = null;
+      if (dismissNotifiedRef.current) return;
+      dismissNotifiedRef.current = true;
+      onDismiss();
+    }, 220);
+  }, [onDismiss]);
+
+  const requestClose = useCallback(() => {
+    if (closeInFlightRef.current) return;
+    closeInFlightRef.current = true;
+    flushRotations();
+    setMenuOpen(false);
+    setInfoOpen(false);
+    setConfirmDelete(false);
+    onClose?.();
+    scheduleDismiss();
+  }, [flushRotations, onClose, scheduleDismiss]);
+
+  useEffect(
+    () => () => {
+      flushRotations();
+      scheduleDismiss();
+    },
+    // This cleanup is intentionally unmount-only. Running it on callback identity
+    // changes would notify parent modals while the viewer is still open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const downloadToCache = useCallback(async (uri) => {
     const ext = (uri.match(/\.(jpe?g|png|gif|webp)/i) || ['.jpg'])[0];
@@ -413,63 +357,8 @@ const ViewerContent = memo(function ViewerContent({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }, []);
 
-  const flushRotations = useCallback(() => {
-    if (rotationsFlushedRef.current) return;
-    const nonZero = Object.fromEntries(
-      Object.entries(rotationsRef.current).filter(([, deg]) => deg !== 0),
-    );
-    if (Object.keys(nonZero).length > 0 && onRotateSave) {
-      rotationsFlushedRef.current = true;
-      onRotateSave(nonZero);
-    }
-  }, [onRotateSave]);
-
-  const handleClose = useCallback(() => {
-    if (closeInFlightRef.current) return;
-    closeInFlightRef.current = true;
-    flushRotations();
-    onClose?.();
-  }, [flushRotations, onClose]);
-
-  useEffect(() => () => {
-    flushRotations();
-  }, [flushRotations]);
-
-  const handleTap = useCallback(() => {
-    if (menuOpen || infoOpen) {
-      setMenuOpen(false);
-      setInfoOpen(false);
-      return;
-    }
-    setToolbarVisible((visible) => !visible);
-  }, [infoOpen, menuOpen]);
-
-  const handleSwipePage = useCallback(
-    (nextIndex) => {
-      const clampedIndex = Math.max(0, Math.min(localImages.length - 1, nextIndex));
-      if (clampedIndex === localIndex) return;
-      setLocalIndex(clampedIndex);
-    },
-    [localImages.length, localIndex],
-  );
-
-  const currentUri = localImages[localIndex];
-
-  const handleRotate = useCallback(() => {
-    if (!currentUri) return;
-    haptic();
-    setRotations((prev) => {
-      const next = {
-        ...prev,
-        [localIndex]: ((prev[localIndex] || 0) + 90) % 360,
-      };
-      rotationsRef.current = next;
-      return next;
-    });
-  }, [currentUri, localIndex]);
-
   const handleShare = useCallback(async () => {
-    if (busy || !currentUri) return;
+    if (busy || capturePreviewMode || !currentUri) return;
     haptic();
     setBusy(true);
     try {
@@ -481,10 +370,10 @@ const ViewerContent = memo(function ViewerContent({
     } finally {
       setBusy(false);
     }
-  }, [busy, currentUri, downloadToCache]);
+  }, [busy, capturePreviewMode, currentUri, downloadToCache]);
 
   const handleSave = useCallback(async () => {
-    if (busy || !currentUri) return;
+    if (busy || capturePreviewMode || !currentUri) return;
     haptic();
     setMenuOpen(false);
     setBusy(true);
@@ -504,9 +393,40 @@ const ViewerContent = memo(function ViewerContent({
     } finally {
       setBusy(false);
     }
-  }, [busy, currentUri, downloadToCache, t, toast]);
+  }, [busy, capturePreviewMode, currentUri, downloadToCache, t, toast]);
+
+  const handleRotate = useCallback(async () => {
+    if (busy || capturePreviewMode || !currentUri) return;
+    haptic();
+    setBusy(true);
+    try {
+      const source = currentUri.startsWith('file:') ? currentUri : await downloadToCache(currentUri);
+      const rotated = await ImageManipulator.manipulateAsync(source, [{ rotate: 90 }], {
+        compress: 1,
+        format: ImageManipulator.SaveFormat.JPEG,
+      });
+      const rotatedUri = String(rotated?.uri || '').trim();
+      if (!rotatedUri) return;
+
+      setLocalImages((prev) => prev.map((value, index) => (index === currentIndex ? rotatedUri : value)));
+      setViewerIndex(currentIndex);
+      setRotations((prev) => {
+        const next = {
+          ...prev,
+          [currentIndex]: ((prev[currentIndex] || 0) + 90) % 360,
+        };
+        rotationsRef.current = next;
+        return next;
+      });
+    } catch (error) {
+      console.warn('[Viewer] rotate:', error);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, capturePreviewMode, currentIndex, currentUri, downloadToCache]);
 
   const handleShowInfo = useCallback(async () => {
+    if (capturePreviewMode) return;
     haptic();
     setMenuOpen(false);
     if (!currentUri) return;
@@ -528,17 +448,17 @@ const ViewerContent = memo(function ViewerContent({
       resolution: dims ? `${dims.width} x ${dims.height}` : null,
       size: formatBytes(fileSize),
     });
-  }, [currentUri, downloadToCache, formatBytes]);
+  }, [capturePreviewMode, currentUri, downloadToCache, formatBytes]);
 
   const handleDeleteConfirm = useCallback(async () => {
     if (deleting) return;
     setDeleting(true);
-    const idx = localIndex;
+    const idx = clampIndex(currentIndex, localImages.length);
     try {
       await Promise.resolve(onDelete?.(idx));
     } catch {
       setDeleting(false);
-      toast.error(t('order_toast_delete_error', 'Ошибка удаления'));
+      toast.error(t('order_toast_delete_error', 'Delete failed'));
       return;
     }
 
@@ -546,46 +466,39 @@ const ViewerContent = memo(function ViewerContent({
     if (!remaining.length) {
       setDeleting(false);
       setConfirmDelete(false);
-      handleClose();
+      requestClose();
       return;
     }
 
     const nextRotations = {};
-    Object.keys(rotations).forEach((key) => {
+    Object.keys(rotationsRef.current).forEach((key) => {
       const numericKey = Number(key);
-      if (numericKey < idx) nextRotations[numericKey] = rotations[numericKey];
-      else if (numericKey > idx) nextRotations[numericKey - 1] = rotations[numericKey];
+      if (!Number.isFinite(numericKey)) return;
+      if (numericKey < idx) nextRotations[numericKey] = rotationsRef.current[numericKey];
+      else if (numericKey > idx) nextRotations[numericKey - 1] = rotationsRef.current[numericKey];
     });
-
+    rotationsRef.current = nextRotations;
     setRotations(nextRotations);
+
+    const nextIndex = Math.min(idx, remaining.length - 1);
     setLocalImages(remaining);
-    setLocalIndex(Math.min(idx, remaining.length - 1));
+    setCurrentIndex(nextIndex);
+    setViewerIndex(nextIndex);
     setConfirmDelete(false);
     setDeleting(false);
-  }, [deleting, handleClose, localImages, localIndex, onDelete, rotations, t, toast]);
+  }, [currentIndex, deleting, localImages, onDelete, requestClose, t, toast]);
 
   const handleDeletePress = useCallback(() => {
+    if (!onDelete) return;
+    haptic('Medium');
+    setMenuOpen(false);
+    setInfoOpen(false);
     if (capturePreviewMode) {
       handleDeleteConfirm();
       return;
     }
-    haptic('Medium');
-    setMenuOpen(false);
-    setInfoOpen(false);
     setConfirmDelete(true);
-  }, [capturePreviewMode, handleDeleteConfirm]);
-
-  const handleDeleteCancel = useCallback(() => {
-    setDeleting(false);
-    setConfirmDelete(false);
-  }, []);
-  const toggleMenu = useCallback(() => {
-    haptic();
-    setInfoOpen(false);
-    setMenuOpen((visible) => !visible);
-  }, []);
-  const closeMenu = useCallback(() => setMenuOpen(false), []);
-  const closeInfo = useCallback(() => setInfoOpen(false), []);
+  }, [capturePreviewMode, handleDeleteConfirm, onDelete]);
 
   const infoRows = useMemo(() => {
     if (!infoOpen) return [];
@@ -601,216 +514,231 @@ const ViewerContent = memo(function ViewerContent({
     ].filter(Boolean);
   }, [infoOpen, t]);
 
-  const renderPage = useCallback(
-    ({ item, index }) => (
-      <ZoomablePage
-        height={viewportHeight}
-        index={index}
-        isActive={index === localIndex}
-        onTap={handleTap}
-        onSwipePage={handleSwipePage}
-        rotation={rotations[index] || 0}
-        uri={item}
-        width={viewportWidth}
+  const handleIndexChange = useCallback((nextIndex) => {
+    setCurrentIndex(clampIndex(nextIndex, localImages.length));
+  }, [localImages.length]);
+
+  const handleGalleryTap = useCallback(() => {
+    if (menuOpen || infoOpen || confirmDelete) {
+      setMenuOpen(false);
+      setInfoOpen(false);
+      setConfirmDelete(false);
+      return;
+    }
+    setToolbarVisible((value) => !value);
+  }, [confirmDelete, infoOpen, menuOpen]);
+
+  const renderGalleryItem = useCallback(
+    (uri) => (
+      <GalleryPhoto
+        uri={uri}
+        viewportWidth={viewportWidth}
+        viewportHeight={viewportHeight}
       />
     ),
-    [handleSwipePage, handleTap, localIndex, rotations, viewportHeight, viewportWidth],
+    [viewportHeight, viewportWidth],
   );
 
-  if (!imageCount) {
-    if (!capturePreviewMode) return null;
-    return (
-      <View style={ds.root}>
-        <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
-        <Animated.View
-          pointerEvents="box-none"
-          style={[ds.header, { paddingTop: (insets.top || 0) + theme.spacing.md }]}
-        >
-          <Pressable
-            onPress={handleClose}
-            hitSlop={theme.spacing.md}
-            style={[ds.iconBtn, { backgroundColor: overlayBg }]}
-          >
-            <Feather name="chevron-left" size={theme.icons.md} color={VIEWER_FG} />
-          </Pressable>
-          <View style={[ds.counterPill, { backgroundColor: overlayBg }]}>
-            <Text style={ds.counterText}>0 / 0</Text>
-          </View>
-        </Animated.View>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: VIEWER_FG, opacity: 0.7 }}>
-            {t('order_photos_empty_title', 'Нет фотографий')}
-          </Text>
-        </View>
-      </View>
-    );
-  }
+  const galleryKeyExtractor = useCallback((uri, index) => `${index}:${uri}`, []);
 
-  const counterLabel = categoryLabel
-    ? `${categoryLabel} · ${localIndex + 1}/${imageCount}`
-    : `${localIndex + 1} / ${imageCount}`;
+  const counter = localImages.length ? `${currentIndex + 1} / ${localImages.length}` : '0 / 0';
+  const counterLabel = categoryLabel ? `${categoryLabel} · ${counter}` : counter;
+
+  if (!visible || !localImages.length) return null;
 
   return (
-    <View style={ds.root}>
-      <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
-
-      <View style={ds.gallery}>
-        {renderPage({ item: localImages[localIndex], index: localIndex })}
-      </View>
-
-      {toolbarVisible ? (
-        <Animated.View
-          entering={FadeIn.duration(ANIM_FADE_IN)}
-          exiting={FadeOut.duration(ANIM_FADE_OUT)}
-          pointerEvents="box-none"
-          style={[ds.header, { paddingTop: (insets.top || 0) + theme.spacing.md }]}
-        >
-          <Pressable
-            onPress={handleClose}
-            hitSlop={theme.spacing.md}
-            style={[ds.iconBtn, { backgroundColor: overlayBg }]}
-          >
-            <Feather name="chevron-left" size={theme.icons.md} color={VIEWER_FG} />
-          </Pressable>
-          <View style={[ds.counterPill, { backgroundColor: overlayBg }]}>
-            <Text style={ds.counterText}>{counterLabel}</Text>
-          </View>
-        </Animated.View>
-      ) : null}
-
-      {toolbarVisible ? (
-        <Animated.View
-          entering={FadeIn.duration(ANIM_FADE_IN)}
-          exiting={FadeOut.duration(ANIM_FADE_OUT)}
-          pointerEvents="box-none"
-          style={[
-            ds.footer,
-            capturePreviewMode && ds.footerSingle,
-            { paddingBottom: (insets.bottom || 0) + theme.spacing.lg },
-          ]}
-        >
-          {capturePreviewMode ? (
-            <Button
-              variant="destructive"
-              size="md"
-              title={t('camera_delete_photo', 'Удалить фото')}
-              onPress={handleDeletePress}
-              style={ds.captureDeleteBtn}
-            />
-          ) : (
-            <>
-              <Pressable
-                onPress={handleShare}
-                disabled={busy}
-                hitSlop={theme.spacing.sm}
-                style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-              >
-                <Feather name="share" size={theme.icons.sm} color={VIEWER_FG} />
-                <Text style={ds.footerLabel}>{t('viewer_share', 'Share')}</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={(event) => {
-                  event?.stopPropagation?.();
-                  handleRotate();
-                }}
-                hitSlop={theme.spacing.sm}
-                style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-              >
-                <Feather name="rotate-cw" size={theme.icons.sm} color={VIEWER_FG} />
-                <Text style={ds.footerLabel}>{t('viewer_rotate', 'Rotate')}</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={toggleMenu}
-                hitSlop={theme.spacing.sm}
-                style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-              >
-                <Feather name="more-horizontal" size={theme.icons.sm} color={VIEWER_FG} />
-                <Text style={ds.footerLabel}>{t('viewer_more', 'More')}</Text>
-              </Pressable>
-
-              {onDelete ? (
-                <Pressable
-                  onPress={handleDeletePress}
-                  hitSlop={theme.spacing.sm}
-                  style={[ds.footerBtn, { backgroundColor: overlayBg }]}
-                >
-                  <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
-                  <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
-                    {t('viewer_delete', 'Delete')}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </>
-          )}
-        </Animated.View>
-      ) : null}
-
-      <BaseModal
-        visible={menuOpen}
-        onClose={closeMenu}
-        title={t('viewer_more', 'More')}
-        maxHeightRatio={0.35}
+    <>
+      <Modal
+        visible={visible}
+        transparent={false}
+        animationType="fade"
+        presentationStyle="fullScreen"
+        statusBarTranslucent
+        hardwareAccelerated
+        onRequestClose={requestClose}
       >
-        <Pressable
-          onPress={handleSave}
-          style={({ pressed }) => [ds.menuRow, ds.menuRowBorder, pressed && { opacity: 0.6 }]}
-        >
-          <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
-          <Text style={ds.menuRowLabel}>{t('viewer_save_to_device', 'Save to device')}</Text>
-        </Pressable>
-        <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
-          <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
-          <Text style={ds.menuRowLabel}>{t('viewer_info_title', 'Photo info')}</Text>
-        </Pressable>
-      </BaseModal>
+        <GestureHandlerRootView style={styles.rootFill}>
+          <StatusBar translucent barStyle="light-content" backgroundColor="transparent" />
+          <View style={ds.modalRoot}>
+            <View style={ds.gallery}>
+              <Gallery
+                key={galleryKey}
+                ref={galleryRef}
+                data={localImages}
+                initialIndex={clampIndex(viewerIndex, localImages.length)}
+                renderItem={renderGalleryItem}
+                keyExtractor={galleryKeyExtractor}
+                onIndexChange={handleIndexChange}
+                onTap={handleGalleryTap}
+                maxScale={5}
+                windowSize={5}
+                tapOnEdgeToItem
+                allowPinchPanning
+                allowOverflow={false}
+                scaleMode="bounce"
+                pinchMode="clamp"
+              />
+            </View>
 
-      <BaseModal
-        visible={!!infoOpen}
-        onClose={closeInfo}
-        title={t('viewer_info_title', 'Photo info')}
-        maxHeightRatio={0.3}
-      >
-        {infoRows.map((row, index) => (
-          <View key={index} style={ds.infoRow}>
-            <Text style={ds.infoLabel}>{row.label}</Text>
-            <Text style={ds.infoValue}>{row.value}</Text>
+            {toolbarVisible ? (
+              <View pointerEvents="box-none" style={ds.overlayHeader}>
+                <View style={ds.header}>
+                  <Pressable
+                    onPress={requestClose}
+                    hitSlop={theme.spacing.md}
+                    style={[ds.iconBtn, { backgroundColor: overlayBg }]}
+                  >
+                    <Feather name="chevron-left" size={theme.icons.md} color={VIEWER_FG} />
+                  </Pressable>
+                  <View style={[ds.counterPill, { backgroundColor: overlayBg }]}>
+                    <Text style={ds.counterText}>{counterLabel}</Text>
+                  </View>
+                </View>
+              </View>
+            ) : null}
+
+            {toolbarVisible ? (
+              <View pointerEvents="box-none" style={ds.overlayFooter}>
+                <View style={[ds.footer, capturePreviewMode && ds.footerSingle]}>
+                  {capturePreviewMode ? (
+                    onDelete ? (
+                      <Pressable
+                        onPress={handleDeletePress}
+                        disabled={deleting}
+                        hitSlop={theme.spacing.sm}
+                        style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+                      >
+                        <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
+                        <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
+                          {t('camera_delete_photo', 'Delete photo')}
+                        </Text>
+                      </Pressable>
+                    ) : null
+                  ) : (
+                    <>
+                      <Pressable
+                        onPress={handleShare}
+                        disabled={busy}
+                        hitSlop={theme.spacing.sm}
+                        style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+                      >
+                        <Feather name="share" size={theme.icons.sm} color={VIEWER_FG} />
+                        <Text style={ds.footerLabel}>{t('viewer_share', 'Share')}</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleRotate}
+                        disabled={busy}
+                        hitSlop={theme.spacing.sm}
+                        style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+                      >
+                        <Feather name="rotate-cw" size={theme.icons.sm} color={VIEWER_FG} />
+                        <Text style={ds.footerLabel}>{t('viewer_rotate', 'Rotate')}</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => {
+                          haptic();
+                          setInfoOpen(false);
+                          setMenuOpen((visibleState) => !visibleState);
+                        }}
+                        hitSlop={theme.spacing.sm}
+                        style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+                      >
+                        <Feather name="more-horizontal" size={theme.icons.sm} color={VIEWER_FG} />
+                        <Text style={ds.footerLabel}>{t('viewer_more', 'More')}</Text>
+                      </Pressable>
+                      {onDelete ? (
+                        <Pressable
+                          onPress={handleDeletePress}
+                          hitSlop={theme.spacing.sm}
+                          style={[ds.footerBtn, { backgroundColor: overlayBg }]}
+                        >
+                          <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
+                          <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
+                            {t('viewer_delete', 'Delete')}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </>
+                  )}
+                </View>
+              </View>
+            ) : null}
           </View>
-        ))}
-      </BaseModal>
+        </GestureHandlerRootView>
+      </Modal>
 
       {!capturePreviewMode ? (
-        <BaseModal
-          visible={confirmDelete}
-          onClose={handleDeleteCancel}
-          title={t('order_photos_delete_single_title')}
-          maxHeightRatio={0.42}
-          footer={
-            <ModalActionsRow
-              actions={[
-                {
-                  key: 'cancel',
-                  title: t('order_photos_delete_single_cancel'),
-                  variant: 'secondary',
-                  disabled: deleting,
-                  onPress: handleDeleteCancel,
-                },
-                {
-                  key: 'confirm',
-                  title: t('order_photos_delete_single_confirm'),
-                  variant: 'destructive',
-                  loading: deleting,
-                  onPress: handleDeleteConfirm,
-                },
-              ]}
-            />
-          }
-        >
-          <Text style={ds.infoLabel}>{t('order_photos_delete_single_message')}</Text>
-        </BaseModal>
+        <>
+          <BaseModal
+            visible={menuOpen}
+            onClose={() => setMenuOpen(false)}
+            title={t('viewer_more', 'More')}
+            maxHeightRatio={0.35}
+          >
+            <Pressable
+              onPress={handleSave}
+              style={({ pressed }) => [ds.menuRow, ds.menuRowBorder, pressed && { opacity: 0.6 }]}
+            >
+              <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
+              <Text style={ds.menuRowLabel}>{t('viewer_save_to_device', 'Save to device')}</Text>
+            </Pressable>
+            <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
+              <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
+              <Text style={ds.menuRowLabel}>{t('viewer_info_title', 'Photo info')}</Text>
+            </Pressable>
+          </BaseModal>
+
+          <BaseModal
+            visible={!!infoOpen}
+            onClose={() => setInfoOpen(false)}
+            title={t('viewer_info_title', 'Photo info')}
+            maxHeightRatio={0.3}
+          >
+            {infoRows.map((row, index) => (
+              <View key={index} style={ds.infoRow}>
+                <Text style={ds.infoLabel}>{row.label}</Text>
+                <Text style={ds.infoValue}>{row.value}</Text>
+              </View>
+            ))}
+          </BaseModal>
+
+          <BaseModal
+            visible={confirmDelete}
+            onClose={() => {
+              setDeleting(false);
+              setConfirmDelete(false);
+            }}
+            title={t('order_photos_delete_single_title')}
+            maxHeightRatio={0.42}
+            footer={
+              <ModalActionsRow
+                actions={[
+                  {
+                    key: 'cancel',
+                    title: t('order_photos_delete_single_cancel'),
+                    variant: 'secondary',
+                    disabled: deleting,
+                    onPress: () => {
+                      setDeleting(false);
+                      setConfirmDelete(false);
+                    },
+                  },
+                  {
+                    key: 'confirm',
+                    title: t('order_photos_delete_single_confirm'),
+                    variant: 'destructive',
+                    loading: deleting,
+                    onPress: handleDeleteConfirm,
+                  },
+                ]}
+              />
+            }
+          >
+            <Text style={ds.infoLabel}>{t('order_photos_delete_single_message')}</Text>
+          </BaseModal>
+        </>
       ) : null}
-    </View>
+    </>
   );
 });
 
@@ -825,24 +753,22 @@ function FullscreenImageViewer({
   capturePreviewMode = false,
   onDismiss,
 }) {
-  if (!capturePreviewMode && !images?.length) return null;
+  if (!visible || !images?.length) return null;
 
   return (
-    <AnimatedFullscreenModal visible={visible} animation="fade" onRequestClose={onClose} onDismiss={onDismiss}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <ToastProvider>
-          <ViewerContent
-            images={images}
-            initialIndex={initialIndex}
-            onClose={onClose}
-            onDelete={onDelete}
-            onRotateSave={onRotateSave}
-            categoryLabel={categoryLabel}
-            capturePreviewMode={capturePreviewMode}
-          />
-        </ToastProvider>
-      </GestureHandlerRootView>
-    </AnimatedFullscreenModal>
+    <ToastProvider>
+      <ImageViewingGallery
+        visible={visible}
+        images={images}
+        initialIndex={initialIndex}
+        onClose={onClose}
+        onDelete={onDelete}
+        onRotateSave={onRotateSave}
+        categoryLabel={categoryLabel}
+        capturePreviewMode={capturePreviewMode}
+        onDismiss={onDismiss}
+      />
+    </ToastProvider>
   );
 }
 

@@ -5,6 +5,7 @@ import { AppState } from 'react-native';
 import { supabase } from '../lib/supabase';
 
 const STORAGE_USAGE_STALE_MS = 60 * 1000;
+const STORAGE_USAGE_GC_MS = 14 * 24 * 60 * 60 * 1000;
 
 async function fetchCompanyStorageUsage(companyId, forceRefresh = false) {
   if (!companyId) return null;
@@ -26,7 +27,7 @@ export function useCompanyStorageUsage(companyId) {
     queryFn: () => fetchCompanyStorageUsage(companyId, false),
     placeholderData: (prev) => prev ?? null,
     staleTime: STORAGE_USAGE_STALE_MS,
-    gcTime: 5 * 60 * 1000,
+    gcTime: STORAGE_USAGE_GC_MS,
     refetchInterval: companyId ? STORAGE_USAGE_STALE_MS : false,
     refetchIntervalInBackground: false,
     refetchOnMount: 'stale',
