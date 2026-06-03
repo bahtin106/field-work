@@ -187,7 +187,7 @@ export function useManagedRefresh(refreshAction, options = {}) {
   const { t } = useTranslation();
   const toast = useToast();
   const timeoutMs = options.timeoutMs ?? theme.timings?.requestTimeoutMs ?? 12000;
-  const slowWarningMs = options.slowWarningMs ?? 4000;
+  const slowWarningMs = options.slowWarningMs ?? 8000;
   const slowMessage = options.slowMessage ?? t('refresh_slow', 'Refreshing is taking longer than usual');
   const timeoutMessage =
     options.timeoutMessage ?? t('refresh_timeout', 'Could not refresh the data. Check your connection and try again');
@@ -221,7 +221,9 @@ export function useManagedRefresh(refreshAction, options = {}) {
     }
 
     slowTimerRef.current = setTimeout(() => {
-      toast.info(slowMessage);
+      if (getOfflineSnapshot().isOnline) {
+        toast.info(slowMessage);
+      }
     }, slowWarningMs);
 
     let timeoutId = null;

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { InteractionManager, ActivityIndicator, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
 
 const styles = StyleSheet.create({
   container: {
@@ -10,20 +10,22 @@ const styles = StyleSheet.create({
 });
 
 /**
- * Delays mounting of children until after navigation interactions complete.
- * This makes screen transitions instant by rendering a lightweight placeholder
- * first, then mounting the heavy content after the native transition finishes.
+ * Mounts heavy children after the first committed frame.
+ * Stack transitions are disabled in this app, so waiting for InteractionManager
+ * only adds visible latency before the target screen becomes useful.
  */
 export default function DeferredScreen({ children, style, placeholder = null }) {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
-      requestAnimationFrame(() => {
-        setIsReady(true);
-      });
+    const rafId = requestAnimationFrame(() => {
+      setIsReady(true);
     });
-    return () => task.cancel();
+    return () => {
+      try {
+        cancelAnimationFrame(rafId);
+      } catch {}
+    };
   }, []);
 
   if (!isReady) {

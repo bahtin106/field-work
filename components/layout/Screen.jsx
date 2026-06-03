@@ -62,7 +62,7 @@ export default function Screen({
 
   // Используем стабильные edges для предотвращения изменений отступов при навигации
   const edges = React.useMemo(() => {
-    return isAuthScreen ? ['top', 'left', 'right', 'bottom'] : ['left', 'right'];
+    return isAuthScreen ? ['left', 'right', 'bottom'] : ['left', 'right'];
   }, [isAuthScreen]);
 
   return (

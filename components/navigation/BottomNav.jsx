@@ -1,7 +1,7 @@
 // components/navigation/BottomNav.jsx
 import { router, usePathname } from 'expo-router';
 import React, { memo, useEffect, useMemo, useRef } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import appReadyState from '../../lib/appReadyState';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
@@ -159,6 +159,9 @@ function BottomNavInner() {
     const labelSize = theme?.typography?.sizes?.sm ?? 13;
     return { itemHeight, ph, indicatorH, indicatorW, indicatorRadius, bottomOffset, labelSize };
   }, [theme]);
+  const bottomInset = Platform.OS === 'ios' ? Math.max(insets.bottom, 0) : 0;
+  const bottomPadding = Math.max(bottomInset, theme.spacing.sm);
+  const toastGap = theme.spacing.xl;
 
   // Показываем бар синхронно с главной страницей
   // Ждём: 1) готовность данных (роль, пермишены) 2) глобальное состояние 'ready'
@@ -199,20 +202,20 @@ function BottomNavInner() {
       style={[
         styles.container,
         {
-          paddingBottom: Math.max(insets.bottom, theme.spacing.sm),
+          paddingBottom: bottomPadding,
           backgroundColor: colors.bg,
           borderTopColor: colors.border,
         },
       ]}
+      onLayout={(e) => {
+        const h = e.nativeEvent.layout.height;
+        if (setAnchorOffset) setAnchorOffset(h + toastGap);
+      }}
     >
       {/* гарантированный ремоунт при смене canAll */}
       <View
         key={`variant-${Number(!!showAllTab)}`}
         style={[styles.bar, { height: metrics.itemHeight, paddingHorizontal: metrics.ph }]}
-        onLayout={(e) => {
-          const h = e.nativeEvent.layout.height;
-          if (setAnchorOffset) setAnchorOffset(h + theme.spacing.xl);
-        }}
       >
         <TabButton
           key="tab-home"

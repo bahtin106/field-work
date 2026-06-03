@@ -106,6 +106,34 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     };
   }
 
+  const clientEditMatch = path.match(/^\/clients\/([^/]+)\/edit$/);
+  if (clientEditMatch?.[1]) {
+    const clientId = String(clientEditMatch[1]).trim();
+    if (!UUID_RE.test(clientId)) return null;
+    return {
+      intervalKey: `clients-edit:${clientId}`,
+      minIntervalMs: 30_000,
+      queryKeys: [
+        queryKeys.clients.detail(clientId),
+        queryKeys.clients.orderCount(clientId),
+        queryKeys.objects.byClient(clientId),
+      ],
+      scopes: ['clients.detail'],
+    };
+  }
+
+  const clientObjectNewMatch = path.match(/^\/clients\/([^/]+)\/objects\/new$/);
+  if (clientObjectNewMatch?.[1]) {
+    const clientId = String(clientObjectNewMatch[1]).trim();
+    if (!UUID_RE.test(clientId)) return null;
+    return {
+      intervalKey: `clients-object-new:${clientId}`,
+      minIntervalMs: 45_000,
+      queryKeys: [queryKeys.clients.detail(clientId), queryKeys.objects.byClient(clientId)],
+      scopes: ['clients.detail'],
+    };
+  }
+
   if (path === '/objects') {
     return {
       intervalKey: 'objects-list',
@@ -127,6 +155,18 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     };
   }
 
+  const objectEditMatch = path.match(/^\/objects\/([^/]+)\/edit$/);
+  if (objectEditMatch?.[1]) {
+    const objectId = String(objectEditMatch[1]).trim();
+    if (!UUID_RE.test(objectId)) return null;
+    return {
+      intervalKey: `objects-edit:${objectId}`,
+      minIntervalMs: 30_000,
+      queryKeys: [queryKeys.objects.detail(objectId)],
+      scopes: ['objects.detail'],
+    };
+  }
+
   if (path === '/users') {
     return {
       intervalKey: 'users-list',
@@ -142,6 +182,18 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     if (!UUID_RE.test(userId)) return null;
     return {
       intervalKey: `users-detail:${userId}`,
+      minIntervalMs: 30_000,
+      queryKeys: [queryKeys.employees.detail(userId)],
+      scopes: ['users.detail'],
+    };
+  }
+
+  const userEditMatch = path.match(/^\/users\/([^/]+)\/edit$/);
+  if (userEditMatch?.[1]) {
+    const userId = String(userEditMatch[1]).trim();
+    if (!UUID_RE.test(userId)) return null;
+    return {
+      intervalKey: `users-edit:${userId}`,
       minIntervalMs: 30_000,
       queryKeys: [queryKeys.employees.detail(userId)],
       scopes: ['users.detail'],
@@ -244,7 +296,7 @@ export function RouteFreshnessBoundary() {
     lastRunRef.current.set(plan.intervalKey, now);
 
     const invalidateTasks = (plan.queryKeys || []).map((queryKey) =>
-      queryClient.invalidateQueries({ queryKey, refetchType: 'none' }),
+      queryClient.invalidateQueries({ queryKey, refetchType: 'active' }),
     );
 
     Promise.allSettled([

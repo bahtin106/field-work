@@ -14,7 +14,7 @@ export default function OrdersLayout() {
         animationTypeForReplace: 'push',
         gestureEnabled: true,
         fullScreenGestureEnabled: true,
-        freezeOnBlur: true,
+        freezeOnBlur: false,
         contentStyle: { backgroundColor: theme.colors.background },
       }}
     >

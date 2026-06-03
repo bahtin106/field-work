@@ -1,5 +1,11 @@
-import CompanySettingsScreen from './CompanySettingsScreen';
+import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
 
 export default function CompanySettingsRoute() {
-  return <CompanySettingsScreen />;
+  return (
+    <LazyRouteScreen
+      load={() => import('../../screens/company_settings/CompanySettingsScreen')}
+      titleKey="company_settings_title"
+      titleFallback="Настройки компании"
+    />
+  );
 }

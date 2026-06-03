@@ -7,10 +7,12 @@ export default {
   btn_apply: 'Apply',
   btn_continue: 'Continue',
   common_refresh: 'Refresh',
-  refresh_slow: 'Refreshing is taking longer than usual. Check your connection.',
+  refresh_slow: 'Refreshing is taking longer than usual.',
   refresh_timeout: 'Could not refresh the data. Check your connection and try again.',
   refresh_failed: 'Could not refresh the data',
   refresh_offline: 'No internet connection. Showing saved data.',
+  offline_changes_queued: 'Changes were saved offline and will sync when connection is restored.',
+  offline_profile_edit_online_required: 'Changing email, password, avatar, or administrative data requires an internet connection.',
   routes: {
     'app_settings/sections/events': 'Notification events',
     'company_settings/sections/tags': 'Tags',

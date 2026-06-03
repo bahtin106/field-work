@@ -5,6 +5,7 @@ import { useSyncExternalStore } from 'react';
 import { getRequestById, updateRequest } from '../../features/requests/api';
 import { getClientById, updateClient } from '../../features/clients/api';
 import { getClientObjectById, updateClientObject } from '../../features/objects/api';
+import { getEmployeeById, updateEmployeeProfile } from '../../features/employees/api';
 import { queryKeys } from '../query/queryKeys';
 
 const OUTBOX_KEY = 'offline.outbox.v1';
@@ -12,7 +13,7 @@ const MAX_ATTEMPTS = 8;
 
 export type OfflineOutboxItem = {
   id: string;
-  entity: 'request' | 'client' | 'object';
+  entity: 'request' | 'client' | 'object' | 'employee';
   operation: 'update';
   entityId: string;
   patch: Record<string, any>;
@@ -38,6 +39,17 @@ let cachedOfflineSnapshot: {
 } | null = null;
 const listeners = new Set<Listener>();
 
+function isPoorConnectionState(state: NetInfoState | null, isConnected: boolean, isInternetReachable: boolean) {
+  if (!isConnected || !isInternetReachable) return false;
+
+  const connectionType = String(state?.type || '').toLowerCase();
+  const cellularGeneration = String((state?.details as any)?.cellularGeneration || '').toLowerCase();
+
+  // NetInfo's `isConnectionExpensive` means metered/battery-expensive, not slow.
+  // Treat only a confirmed 2G cellular connection as poor to avoid noisy false positives.
+  return connectionType === 'cellular' && cellularGeneration === '2g';
+}
+
 function emit() {
   cachedOfflineSnapshot = null;
   for (const listener of Array.from(listeners)) {
@@ -59,9 +71,7 @@ export function getOfflineSnapshot() {
   const isConnected = lastNetState?.isConnected === true;
   const reachable = lastNetState?.isInternetReachable;
   const isInternetReachable = reachable === true || (reachable == null && isConnected);
-  const isExpensive = !!lastNetState?.details?.isConnectionExpensive;
-  const cellularGeneration = String((lastNetState?.details as any)?.cellularGeneration || '');
-  const isPoorConnection = isConnected && isInternetReachable && (isExpensive || cellularGeneration === '2g');
+  const isPoorConnection = isPoorConnectionState(lastNetState, isConnected, isInternetReachable);
 
   cachedOfflineSnapshot = {
     isNetworkKnown,
@@ -209,13 +219,25 @@ export async function enqueueObjectUpdate({
   return enqueueEntityUpdate({ entity: 'object', id, patch, base });
 }
 
+export async function enqueueEmployeeUpdate({
+  id,
+  patch,
+  base = null,
+}: {
+  id: string;
+  patch: Record<string, any>;
+  base?: Record<string, any> | null;
+}) {
+  return enqueueEntityUpdate({ entity: 'employee', id, patch, base });
+}
+
 async function enqueueEntityUpdate({
   entity,
   id,
   patch,
   base = null,
 }: {
-  entity: 'client' | 'object';
+  entity: 'client' | 'object' | 'employee';
   id: string;
   patch: Record<string, any>;
   base?: Record<string, any> | null;
@@ -314,13 +336,83 @@ function applyOptimisticRequest(queryClient: QueryClient, item: OfflineOutboxIte
   }
 }
 
+function mergeRowIntoArray(value: any, id: string, patchOrRow: any) {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const next = value.map((row) => {
+    if (String(row?.id || '') !== id) return row;
+    changed = true;
+    return {
+      ...(row || {}),
+      ...(patchOrRow || {}),
+      id: patchOrRow?.id || row?.id || id,
+    };
+  });
+  return changed ? next : value;
+}
+
+function updateListQueries(queryClient: QueryClient, queryKey: unknown[], id: string, patchOrRow: any) {
+  const lists = queryClient.getQueriesData({ queryKey }) || [];
+  lists.forEach(([key, value]) => {
+    const next = mergeRowIntoArray(value, id, patchOrRow);
+    if (next !== value) {
+      queryClient.setQueryData(key, next);
+    }
+  });
+}
+
+function updateObjectInsideClientCaches(queryClient: QueryClient, objectId: string, patchOrRow: any) {
+  const updateClient = (client: any) => {
+    if (!client || typeof client !== 'object' || !Array.isArray(client.objects)) return client;
+    let changed = false;
+    const nextObjects = client.objects.map((objectItem: any) => {
+      if (String(objectItem?.id || '') !== objectId) return objectItem;
+      changed = true;
+      return {
+        ...(objectItem || {}),
+        ...(patchOrRow || {}),
+        id: patchOrRow?.id || objectItem?.id || objectId,
+      };
+    });
+    if (!changed) return client;
+    return {
+      ...client,
+      objects: nextObjects,
+    };
+  };
+
+  const clientLists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  clientLists.forEach(([key, value]) => {
+    if (!Array.isArray(value)) return;
+    let changed = false;
+    const nextList = value.map((client) => {
+      const nextClient = updateClient(client);
+      if (nextClient !== client) changed = true;
+      return nextClient;
+    });
+    if (changed) queryClient.setQueryData(key, nextList);
+  });
+
+  const clientDetails = queryClient.getQueriesData({ queryKey: ['clients', 'detail'] }) || [];
+  clientDetails.forEach(([key, value]) => {
+    const nextClient = updateClient(value);
+    if (nextClient !== value) queryClient.setQueryData(key, nextClient);
+  });
+}
+
 function setEntityQueryData(queryClient: QueryClient, item: OfflineOutboxItem, data: any) {
   if (item.entity === 'request' && data?.id) {
     queryClient.setQueryData(queryKeys.requests.detail(data.id), data);
   } else if (item.entity === 'client' && data?.id) {
     queryClient.setQueryData(queryKeys.clients.detail(data.id), data);
+    updateListQueries(queryClient, ['clients', 'list'], String(data.id), data);
   } else if (item.entity === 'object' && data?.id) {
     queryClient.setQueryData(queryKeys.objects.detail(data.id), data);
+    updateListQueries(queryClient, ['objects'], String(data.id), data);
+    updateObjectInsideClientCaches(queryClient, String(data.id), data);
+  } else if (item.entity === 'employee' && data?.id) {
+    queryClient.setQueryData(queryKeys.employees.detail(data.id), data);
+    updateListQueries(queryClient, ['employees', 'list'], String(data.id), data);
   }
 }
 
@@ -328,6 +420,7 @@ async function fetchLatestForItem(item: OfflineOutboxItem) {
   if (item.entity === 'request') return getRequestById(item.entityId);
   if (item.entity === 'client') return getClientById(item.entityId);
   if (item.entity === 'object') return getClientObjectById(item.entityId);
+  if (item.entity === 'employee') return getEmployeeById(item.entityId);
   return null;
 }
 
@@ -340,6 +433,9 @@ async function updateItemOnline(item: OfflineOutboxItem, latest: any) {
   }
   if (item.entity === 'object') {
     return updateClientObject(item.entityId, item.patch);
+  }
+  if (item.entity === 'employee') {
+    return updateEmployeeProfile(item.entityId, item.patch);
   }
   return null;
 }
@@ -399,6 +495,9 @@ export async function syncOfflineOutbox(queryClient: QueryClient) {
             queryClient.invalidateQueries({ queryKey: ['objects'] });
             queryClient.invalidateQueries({ queryKey: ['clients'] });
             queryClient.invalidateQueries({ queryKey: ['requests'] });
+          } else if (item.entity === 'employee') {
+            queryClient.invalidateQueries({ queryKey: ['employees'] });
+            queryClient.invalidateQueries({ queryKey: ['requests'] });
           }
           changed = true;
         }
@@ -446,11 +545,15 @@ export async function restoreOfflineOptimisticState(queryClient: QueryClient) {
         ? queryClient.getQueryData(queryKeys.clients.detail(item.entityId))
         : item.entity === 'object'
           ? queryClient.getQueryData(queryKeys.objects.detail(item.entityId))
+          : item.entity === 'employee'
+            ? queryClient.getQueryData(queryKeys.employees.detail(item.entityId))
           : null;
-    if (current && typeof current === 'object') {
+    const snapshot = current && typeof current === 'object' ? current : item.base;
+    if (snapshot && typeof snapshot === 'object') {
       setEntityQueryData(queryClient, item, {
-        ...(current as Record<string, any>),
+        ...(snapshot as Record<string, any>),
         ...(item.patch || {}),
+        id: item.entityId,
         __offlinePending: true,
       });
     }

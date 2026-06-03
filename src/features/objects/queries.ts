@@ -41,7 +41,7 @@ export function useClientObjects(clientId: any, options: any = {}) {
 
 export function useCompanyObjects(companyId: any, options: any = {}) {
   const queryClient = useQueryClient();
-  const result = useQuery({
+  return useQuery({
     queryKey: queryKeys.objects.byCompany(companyId),
     queryFn: async () => {
       try {
@@ -57,18 +57,6 @@ export function useCompanyObjects(companyId: any, options: any = {}) {
     retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
-
-  // Debug instrumentation to help diagnose flicker when client permissions change
-  useEffect(() => {
-    try {
-      const len = Array.isArray(result.data) ? result.data.length : 0;
-      console.debug('[useCompanyObjects] companyId=', companyId, 'enabled=', !!companyId, 'status=', result.status, 'isFetching=', result.isFetching, 'data.length=', len);
-    } catch (e) {
-      console.debug('[useCompanyObjects] debug failed', e);
-    }
-  }, [companyId, result.status, result.isFetching, result.data]);
-
-  return result;
 }
 
 export function useClientObject(objectId: any, options: any = {}) {
@@ -145,23 +133,19 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
         },
         (payload: any) => {
           try {
-            console.debug('[useClientObjectsRealtimeSync] payload event=', payload?.event, 'table=', payload?.table, 'new.id=', payload?.new?.id, 'old.id=', payload?.old?.id);
             const objectId = payload?.new?.id || payload?.old?.id;
             const clientId = payload?.new?.client_id || payload?.old?.client_id;
             if (objectId) {
-              console.debug('[useClientObjectsRealtimeSync] invalidating object detail', objectId);
               queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(objectId) });
             }
             if (clientId) {
-              console.debug('[useClientObjectsRealtimeSync] invalidating objects.byClient and clients.detail for client', clientId);
               queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
               queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
             }
-            console.debug('[useClientObjectsRealtimeSync] invalidating top-level clients/requests queries');
             queryClient.invalidateQueries({ queryKey: ['clients'] });
             queryClient.invalidateQueries({ queryKey: ['requests'] });
           } catch (e) {
-            console.debug('[useClientObjectsRealtimeSync] realtime handler failed', e);
+            // Realtime is best-effort; cached screens still refresh through focus/reconnect.
           }
         },
       )
@@ -203,6 +187,126 @@ export function useClientObjectsRealtimeSync({ enabled = true, companyId = null 
   }, [companyId, enabled, queryClient]);
 }
 
+function updateObjectInClientCaches(queryClient: any, objectId: string, patchOrUpdater: any) {
+  const resolveObject = (prev: any) => {
+    const patch = typeof patchOrUpdater === 'function' ? patchOrUpdater(prev) : patchOrUpdater;
+    if (!patch || typeof patch !== 'object') return prev;
+    return {
+      ...(prev || {}),
+      ...patch,
+      id: patch.id || prev?.id || objectId,
+    };
+  };
+
+  const clientLists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  clientLists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    let changed = false;
+    const nextList = value.map((client: any) => {
+      if (!Array.isArray(client?.objects)) return client;
+      let clientChanged = false;
+      const nextObjects = client.objects.map((objectItem: any) => {
+        if (String(objectItem?.id || '') !== objectId) return objectItem;
+        clientChanged = true;
+        return resolveObject(objectItem);
+      });
+      if (!clientChanged) return client;
+      changed = true;
+      const sortedObjects = [...nextObjects].sort((left, right) => {
+        if (!!left?.is_primary !== !!right?.is_primary) return left?.is_primary ? -1 : 1;
+        return String(left?.name || '').localeCompare(String(right?.name || ''), 'ru');
+      });
+      const primaryObject = sortedObjects.find((item: any) => item?.is_primary) || sortedObjects[0] || null;
+      return {
+        ...client,
+        objects: sortedObjects,
+        primaryObject,
+        primaryObjectSummary: primaryObject?.summary || client.primaryObjectSummary || null,
+      };
+    });
+    if (changed) queryClient.setQueryData(key, nextList);
+  });
+
+  const clientDetails = queryClient.getQueriesData({ queryKey: ['clients', 'detail'] }) || [];
+  clientDetails.forEach(([key, value]: any) => {
+    if (!value || typeof value !== 'object' || !Array.isArray(value.objects)) return;
+    let changed = false;
+    const nextObjects = value.objects.map((objectItem: any) => {
+      if (String(objectItem?.id || '') !== objectId) return objectItem;
+      changed = true;
+      return resolveObject(objectItem);
+    });
+    if (changed) {
+      queryClient.setQueryData(key, {
+        ...value,
+        objects: nextObjects,
+      });
+    }
+  });
+}
+
+export function updateObjectQueryCaches(queryClient: any, objectId: any, patchOrUpdater: any) {
+  const id = String(objectId || '').trim();
+  if (!id || !queryClient) return null;
+
+  const resolveNext = (prev: any) => {
+    const patch = typeof patchOrUpdater === 'function' ? patchOrUpdater(prev) : patchOrUpdater;
+    if (!patch || typeof patch !== 'object') return prev;
+    return {
+      ...(prev || {}),
+      ...patch,
+      id: patch.id || prev?.id || id,
+    };
+  };
+
+  let nextDetail: any = null;
+  queryClient.setQueryData(queryKeys.objects.detail(id), (prev: any) => {
+    nextDetail = resolveNext(prev);
+    return nextDetail;
+  });
+
+  const lists = queryClient.getQueriesData({ queryKey: ['objects'] }) || [];
+  lists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    let changed = false;
+    const nextList = value.map((row: any) => {
+      if (String(row?.id || '') !== id) return row;
+      changed = true;
+      return resolveNext(row);
+    });
+    if (changed) queryClient.setQueryData(key, nextList);
+  });
+
+  updateObjectInClientCaches(queryClient, id, patchOrUpdater);
+  return nextDetail;
+}
+
+export function removeObjectFromQueryCaches(queryClient: any, objectId: any, clientId: any = null) {
+  const id = String(objectId || '').trim();
+  if (!id || !queryClient) return;
+
+  queryClient.removeQueries({ queryKey: queryKeys.objects.detail(id) });
+
+  const lists = queryClient.getQueriesData({ queryKey: ['objects'] }) || [];
+  lists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    const nextList = value.filter((row: any) => String(row?.id || '') !== id);
+    if (nextList.length !== value.length) queryClient.setQueryData(key, nextList);
+  });
+
+  const normalizedClientId = String(clientId || '').trim();
+  if (normalizedClientId) {
+    const detailKey = queryKeys.clients.detail(normalizedClientId);
+    queryClient.setQueryData(detailKey, (client: any) => {
+      if (!client || typeof client !== 'object' || !Array.isArray(client.objects)) return client;
+      return {
+        ...client,
+        objects: client.objects.filter((row: any) => String(row?.id || '') !== id),
+      };
+    });
+  }
+}
+
 export function useCreateClientObjectMutation() {
   const queryClient = useQueryClient();
 
@@ -215,7 +319,7 @@ export function useCreateClientObjectMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(clientId) });
       }
       if (created?.id) {
-        queryClient.invalidateQueries({ queryKey: queryKeys.objects.detail(created.id) });
+        updateObjectQueryCaches(queryClient, created.id, created);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
@@ -256,25 +360,38 @@ export function useUpdateClientObjectMutation() {
     onMutate: async ({ id, patch }: any) => {
       const detailKey = queryKeys.objects.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
+      await queryClient.cancelQueries({ queryKey: ['objects'] });
+      await queryClient.cancelQueries({ queryKey: ['clients'] });
       const previous = queryClient.getQueryData(detailKey);
-      if (previous && typeof previous === 'object') {
-        queryClient.setQueryData(detailKey, {
-          ...(previous as Record<string, any>),
-          ...(patch || {}),
-          __offlinePending: !onlineManager.isOnline(),
-        });
-      }
-      return { previous, detailKey };
+      const previousObjectLists = queryClient.getQueriesData({ queryKey: ['objects'] });
+      const previousClientLists = queryClient.getQueriesData({ queryKey: ['clients'] });
+      updateObjectQueryCaches(queryClient, id, (prev: any) => ({
+        ...(prev || {}),
+        ...(patch || {}),
+        id,
+        __offlinePending: !onlineManager.isOnline(),
+      }));
+      return { previous, previousObjectLists, previousClientLists, detailKey };
     },
     onError: (_error, _variables, context: any) => {
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
+      if (Array.isArray(context?.previousObjectLists)) {
+        context.previousObjectLists.forEach(([key, value]: any) => {
+          queryClient.setQueryData(key, value);
+        });
+      }
+      if (Array.isArray(context?.previousClientLists)) {
+        context.previousClientLists.forEach(([key, value]: any) => {
+          queryClient.setQueryData(key, value);
+        });
+      }
     },
     onSuccess: (updated: any) => {
       const clientId = String(updated?.client_id || '');
       if (updated?.id) {
-        queryClient.setQueryData(queryKeys.objects.detail(updated.id), updated);
+        updateObjectQueryCaches(queryClient, updated.id, updated);
       }
       if (clientId) {
         queryClient.invalidateQueries({ queryKey: queryKeys.objects.byClient(clientId) });
@@ -300,7 +417,7 @@ export function useDeleteClientObjectMutation() {
         queryClient.invalidateQueries({ queryKey: queryKeys.clients.detail(variables.clientId) });
       }
       if (variables?.id) {
-        queryClient.removeQueries({ queryKey: queryKeys.objects.detail(variables.id) });
+        removeObjectFromQueryCaches(queryClient, variables.id, variables.clientId);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       queryClient.invalidateQueries({ queryKey: ['requests'] });

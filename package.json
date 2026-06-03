@@ -14,8 +14,8 @@
     "billing:reminders:legacy": "node scripts/subscription-reminders-tick.js",
     "billing:email-worker:tick": "node scripts/subscription-email-worker.js",
     "yandex:reconcile:tick": "node scripts/yandex-media-reconcile-tick.js",
-    "lint": "eslint App.js index.js useAppLastSeen.js app components hooks lib providers src theme",
-    "lint:fix": "eslint App.js index.js useAppLastSeen.js app components hooks lib providers src theme --fix",
+    "lint": "eslint App.js index.js useAppLastSeen.js app components hooks lib providers screens src theme",
+    "lint:fix": "eslint App.js index.js useAppLastSeen.js app components hooks lib providers screens src theme --fix",
     "typecheck": "tsc --noEmit",
     "doctor": "npx expo-doctor"
   },

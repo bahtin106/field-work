@@ -172,7 +172,7 @@ export default function DateTimeModal({
 
     const y = years.indexOf(baseDate.getFullYear());
     let yearIdx = y >= 0 ? y : 0;
-    const year = years[yearIdx] || currentYear;
+    const initialWithYear = allowOmitYear ? omitYearDefault : true;
 
     // Если год опущен (omitYearDefault === false) и baseDate был подставлен как currentYear
     // — переключаем дефолтный индекс года на более вероятный (currentYear - 30),
@@ -184,11 +184,12 @@ export default function DateTimeModal({
     }
 
     setDYearIdx(yearIdx);
-    setWithYear(allowOmitYear ? omitYearDefault : true);
+    setWithYear(initialWithYear);
 
-    const month = clampMonthForYear(baseDate.getMonth(), year);
-    const day = clampDayForYearMonth(baseDate.getDate(), month, year);
-    const initDays = getDayRange(year, month);
+    const yearForBounds = initialWithYear ? years[yearIdx] || currentYear : null;
+    const month = clampMonthForYear(baseDate.getMonth(), yearForBounds);
+    const day = clampDayForYearMonth(baseDate.getDate(), month, yearForBounds);
+    const initDays = getDayRange(yearForBounds, month);
     const initDayIdx = Math.max(0, initDays.indexOf(day));
 
     setDMonthIdx(month);
@@ -371,7 +372,7 @@ export default function DateTimeModal({
                     setDMonthIdx(newMonth);
                     setDDayIdx((d) => {
                       const prevDay = days[d] ?? days[0] ?? 1;
-                      const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : baseDate.getFullYear();
+                      const year = withYear ? years[dYearIdx] || baseDate.getFullYear() : null;
                       const clampedDay = clampDayForYearMonth(prevDay, newMonth, year);
                       const nextDays = getDayRange(year, newMonth);
                       const nextIdx = nextDays.indexOf(clampedDay);

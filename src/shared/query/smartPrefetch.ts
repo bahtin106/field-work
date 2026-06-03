@@ -2,6 +2,7 @@ import { InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { QueryClient } from '@tanstack/react-query';
 import { fetchWorkTypes } from '../../../lib/workTypes';
+import { supabase } from '../../../lib/supabase';
 import { getMyCompanyId } from '../../features/profile/api';
 import { getOfflineSnapshot } from '../offline/offlineStatus';
 import { queryKeys } from './queryKeys';
@@ -48,6 +49,7 @@ const PROFILE_CONFIG: Record<
 let lastRunAt = 0;
 let inFlight = false;
 let resolvedProfile: SmartPrefetchProfile | null = null;
+let activeRunGeneration = 0;
 
 function isSmartPrefetchProfile(value: string): value is SmartPrefetchProfile {
   return value === 'lite' || value === 'balanced' || value === 'aggressive';
@@ -83,21 +85,61 @@ function canRun(cooldownMs: number) {
   return true;
 }
 
-async function prefetchRequestList(queryClient: QueryClient, scope: 'my' | 'all') {
+async function getCurrentAuthScopeKey(queryClient: QueryClient) {
+  const { data } = await supabase.auth.getUser();
+  const userId = String(data?.user?.id || '').trim();
+  if (!userId) return '';
+
+  let companyId = '';
+  try {
+    const cachedCompanyId = queryClient.getQueryData(queryKeys.profile.companyId());
+    companyId = String(cachedCompanyId || '').trim();
+  } catch {}
+  if (!companyId) {
+    try {
+      companyId = String((await getMyCompanyId()) || '').trim();
+    } catch {}
+  }
+  return `${userId}:${companyId || 'no-company'}`;
+}
+
+function assertPrefetchScopeActive(runGeneration: number, expectedScopeKey: string, currentScopeKey: string) {
+  if (runGeneration !== activeRunGeneration || !expectedScopeKey || expectedScopeKey !== currentScopeKey) {
+    throw new Error('smart-prefetch-scope-changed');
+  }
+}
+
+function buildOrdersRecentQueryKey(scope: 'my' | 'all', authScopeKey: string) {
+  return ['orders', scope, 'recent', String(authScopeKey || 'anonymous')];
+}
+
+async function prefetchRequestList(
+  queryClient: QueryClient,
+  scope: 'my' | 'all',
+  authScopeKey: string,
+  runGeneration: number,
+) {
   const params = { scope, page: 1, pageSize: SMART_PREFETCH_PAGE_SIZE };
   const key = scope === 'my' ? queryKeys.requests.my({}) : queryKeys.requests.all({});
   const rows = await listRequests(params);
+  assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
   const page = Array.isArray(rows) ? rows : [];
   queryClient.setQueryData(key, {
     pages: [page],
     pageParams: [1],
   });
   if (scope === 'my') {
-    queryClient.setQueryData(['orders', 'my', 'recent'], page);
+    queryClient.setQueryData(buildOrdersRecentQueryKey('my', authScopeKey), page);
   } else {
-    queryClient.setQueryData(['orders', 'all', 'recent'], page);
+    queryClient.setQueryData(buildOrdersRecentQueryKey('all', authScopeKey), page);
   }
   return page;
+}
+
+export function resetSmartPrefetchRuntime() {
+  activeRunGeneration += 1;
+  lastRunAt = 0;
+  inFlight = false;
 }
 
 export async function runSmartPrefetch(queryClient: QueryClient) {
@@ -107,13 +149,22 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
   inFlight = true;
   lastRunAt = Date.now();
   try {
-    const myRows = await prefetchRequestList(queryClient, 'my');
+    const runGeneration = activeRunGeneration;
+    const authScopeKey = await getCurrentAuthScopeKey(queryClient);
+    if (!authScopeKey) return false;
+
+    const myRows = await prefetchRequestList(queryClient, 'my', authScopeKey, runGeneration);
     await Promise.allSettled(
       myRows.slice(0, 8).map((row: any) =>
         row?.id
           ? queryClient.prefetchQuery({
               queryKey: queryKeys.requests.detail(row.id),
-              queryFn: () => getRequestById(row.id),
+              queryFn: async () => {
+                assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
+                const detail = await getRequestById(row.id);
+                assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
+                return detail;
+              },
               staleTime: 45 * 1000,
             })
           : Promise.resolve(null),
@@ -121,15 +172,18 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
     );
     if (cfg.includeAllRequests) {
       await new Promise((resolve) => setTimeout(resolve, cfg.allRequestsDelayMs));
-      await prefetchRequestList(queryClient, 'all');
+      assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
+      await prefetchRequestList(queryClient, 'all', authScopeKey, runGeneration);
     }
     if (cfg.includeExecutors) {
       await new Promise((resolve) => setTimeout(resolve, cfg.executorsDelayMs));
+      assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
       const companyId = await queryClient.fetchQuery({
         queryKey: queryKeys.profile.companyId(),
         queryFn: getMyCompanyId,
         staleTime: 5 * 60 * 1000,
       });
+      assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
       if (companyId) {
         await Promise.allSettled([
           queryClient.prefetchQuery({

@@ -1,6 +1,6 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -17,7 +17,6 @@ LogBox.ignoreLogs([
 
 import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
-import appReadyState from '../lib/appReadyState';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
@@ -158,7 +157,6 @@ function RootLayoutInner() {
   const segments = useSegments();
   const pathname = usePathname();
   const splashHiddenRef = useRef(false);
-  const [appBootReady, setAppBootReady] = useState(() => appReadyState.isReady());
   const segmentsRef = useRef(segments);
   const accessCheckInFlightRef = useRef(false);
   const lastAccessCheckAtRef = useRef(0);
@@ -170,6 +168,7 @@ function RootLayoutInner() {
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const isBlockedScreen = inAuthGroup && authScreen === 'blocked';
+  const rootSafeEdges = ['top', 'left', 'right'];
 
   const isSamePath = useCallback((targetPath) => {
     const current = String(pathname || '').trim().replace(/\/+$/, '') || '/';
@@ -197,13 +196,6 @@ function RootLayoutInner() {
   useEffect(() => {
     segmentsRef.current = segments;
   }, [segments]);
-
-  useEffect(() => {
-    const unsubscribe = appReadyState.subscribe((state) => {
-      setAppBootReady(state === 'ready');
-    });
-    return unsubscribe;
-  }, []);
 
   useEffect(() => {
     try {
@@ -251,8 +243,7 @@ function RootLayoutInner() {
     applyAndroidSystemBars(theme).catch(() => {});
   }, [inAuthGroup, theme]);
 
-  const shouldHoldNativeSplash =
-    isInitializing || (isAuthenticated && !isBlockedScreen && !appBootReady);
+  const shouldHoldNativeSplash = isInitializing;
 
   useEffect(() => {
     if (shouldHoldNativeSplash) return;
@@ -854,7 +845,7 @@ function RootLayoutInner() {
   if (isInitializing) {
     return (
       <SafeAreaView
-        edges={['top', 'left', 'right']}
+        edges={rootSafeEdges}
         style={{ flex: 1, backgroundColor: theme.colors.background }}
       >
         <_BrandedLoadingScreen
@@ -875,7 +866,7 @@ function RootLayoutInner() {
     >
       <PermissionsProvider>
           <SafeAreaView
-            edges={['top', 'left', 'right']}
+            edges={rootSafeEdges}
             style={{ flex: 1, backgroundColor: theme.colors.background }}
           >
             {isAuthenticated && !isBlockedScreen ? <OfflineStatusBanner /> : null}
@@ -888,7 +879,7 @@ function RootLayoutInner() {
                   animationTypeForReplace: 'push',
                   gestureEnabled: true,
                   fullScreenGestureEnabled: true,
-                  freezeOnBlur: true,
+                  freezeOnBlur: false,
                   contentStyle: { backgroundColor: theme.colors.background },
                 }}
               >

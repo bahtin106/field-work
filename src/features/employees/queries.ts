@@ -1,8 +1,13 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
 import { getEmployeeById, listDepartments, listEmployees, updateEmployeeProfile } from './api';
+import {
+  enqueueEmployeeUpdate,
+  getOfflineSnapshot,
+  syncOfflineOutbox,
+} from '../../shared/offline/offlineStatus';
 
 function isOfflineLikeError(error: any) {
   const message = String(error?.message || error || '').toLowerCase();
@@ -57,18 +62,28 @@ export function useEmployee(id: any, options: any = {}) {
     },
     enabled: !!id,
     staleTime: 120 * 1000,
-    refetchOnMount: true,
+    refetchOnMount: false,
     retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
 export function useDepartmentsQuery({ companyId, onlyEnabled = true, enabled = true }: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.employees.departments(companyId, onlyEnabled),
-    queryFn: () => listDepartments({ companyId, onlyEnabled }),
+    queryFn: async () => {
+      try {
+        return await listDepartments({ companyId, onlyEnabled });
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = queryClient.getQueryData(queryKeys.employees.departments(companyId, onlyEnabled));
+        return Array.isArray(cached) ? cached : [];
+      }
+    },
     enabled: enabled && !!companyId,
     staleTime: 10 * 60 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
   });
 }
 
@@ -106,10 +121,59 @@ export function useUpdateEmployeeMutation() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, patch }: any) => updateEmployeeProfile(id, patch),
+    mutationFn: async ({ id, patch }: any) => {
+      const base = queryClient.getQueryData(queryKeys.employees.detail(id)) as Record<string, any> | null;
+      const online = onlineManager.isOnline() && getOfflineSnapshot().isOnline;
+      if (!online) {
+        const queued = await enqueueEmployeeUpdate({ id, patch, base });
+        return {
+          ...(base || {}),
+          ...(patch || {}),
+          id,
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+      try {
+        return await updateEmployeeProfile(id, patch);
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const queued = await enqueueEmployeeUpdate({ id, patch, base });
+        return {
+          ...(base || {}),
+          ...(patch || {}),
+          id,
+          __offlinePending: true,
+          __offlineOutboxId: queued.id,
+        };
+      }
+    },
+    onMutate: async ({ id, patch }: any) => {
+      const detailKey = queryKeys.employees.detail(id);
+      await queryClient.cancelQueries({ queryKey: detailKey });
+      await queryClient.cancelQueries({ queryKey: ['employees', 'list'] });
+      const previous = queryClient.getQueryData(detailKey);
+      const previousLists = queryClient.getQueriesData({ queryKey: ['employees', 'list'] });
+      updateEmployeeQueryCaches(queryClient, id, {
+        ...(patch || {}),
+        __offlinePending: !onlineManager.isOnline(),
+      });
+      return { previous, previousLists, detailKey };
+    },
+    onError: (_error, _variables, context: any) => {
+      if (context?.previous) queryClient.setQueryData(context.detailKey, context.previous);
+      if (Array.isArray(context?.previousLists)) {
+        context.previousLists.forEach(([key, value]: any) => {
+          queryClient.setQueryData(key, value);
+        });
+      }
+    },
     onSuccess: (updated) => {
       if (updated?.id) updateEmployeeQueryCaches(queryClient, updated.id, updated);
       queryClient.invalidateQueries({ queryKey: ['employees'] });
+      if (updated?.__offlinePending) {
+        syncOfflineOutbox(queryClient).catch(() => {});
+      }
     },
   });
 }
@@ -121,10 +185,31 @@ export function updateEmployeeQueryCaches(queryClient: any, employeeId: any, pat
   const resolveNext = (prev: any) => {
     const patch = typeof patchOrUpdater === 'function' ? patchOrUpdater(prev) : patchOrUpdater;
     if (!patch || typeof patch !== 'object') return prev;
-    return {
+    const merged = {
       ...(prev || {}),
       ...patch,
       id: patch.id || prev?.id || id,
+    };
+    const firstName = patch.firstName ?? patch.first_name ?? merged.firstName ?? merged.first_name ?? '';
+    const middleName = patch.middleName ?? patch.middle_name ?? merged.middleName ?? merged.middle_name ?? '';
+    const lastName = patch.lastName ?? patch.last_name ?? merged.lastName ?? merged.last_name ?? '';
+    const computedFullName = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+    const explicitFullName = patch.fullName ?? patch.full_name;
+    const fullName = explicitFullName ?? (computedFullName || merged.fullName || merged.full_name || null);
+    return {
+      ...merged,
+      first_name: patch.first_name ?? merged.first_name ?? firstName,
+      middle_name: patch.middle_name ?? merged.middle_name ?? middleName,
+      last_name: patch.last_name ?? merged.last_name ?? lastName,
+      full_name: fullName,
+      firstName,
+      middleName,
+      lastName,
+      fullName,
+      display_name: fullName || merged.email || '',
+      displayName: fullName || merged.email || '',
+      avatarDisplayUrl: patch.avatar_display_url ?? patch.avatar_url ?? merged.avatarDisplayUrl,
+      avatarUrl: patch.avatarUrl ?? patch.avatar_url ?? merged.avatarUrl,
     };
   };
 

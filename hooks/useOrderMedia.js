@@ -21,6 +21,15 @@ const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
 const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v1';
 const ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES = 220;
 
+export async function clearOrderMediaCaches() {
+  _globalResolvedCache.clear();
+  _globalThumbCache.clear();
+  _globalIssuesCache.clear();
+  try {
+    await AsyncStorage.removeItem(ORDER_MEDIA_LOCAL_CACHE_KEY);
+  } catch {}
+}
+
 function pruneMapCache(map, maxEntries = GLOBAL_MEDIA_CACHE_MAX_ENTRIES) {
   while (map.size > maxEntries) {
     const oldestKey = map.keys().next()?.value;

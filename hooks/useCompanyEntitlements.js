@@ -98,7 +98,7 @@ export function useCompanyEntitlements(companyId) {
     gcTime: ENTITLEMENTS_GC_MS,
     refetchInterval: companyId ? ENTITLEMENTS_STALE_MS : false,
     refetchIntervalInBackground: false,
-    refetchOnMount: true,
+    refetchOnMount: false,
   });
   const { refetch } = query;
 

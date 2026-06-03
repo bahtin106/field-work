@@ -1,6 +1,6 @@
 // components/ui/IconButton.jsx
 import React, { useEffect, useRef } from 'react';
-import { Pressable, Animated, StyleSheet, Platform, Easing, Keyboard } from 'react-native';
+import { Pressable, Animated, StyleSheet, Platform, Easing } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../theme';
@@ -112,9 +112,6 @@ export default function IconButton({
 
   const handlePress = async () => {
     try {
-      try {
-        Keyboard.dismiss();
-      } catch {}
       const res = onPress ? await onPress() : undefined;
       const ok = res === true || res === undefined;
       if (ok) {

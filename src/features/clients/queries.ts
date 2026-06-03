@@ -66,21 +66,50 @@ export function useClient(id: any, options: any = {}) {
 }
 
 export function useClientOrderCount(id: any, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: queryKeys.clients.orderCount(id),
-    queryFn: () => getClientOrderCount(String(id || '')),
+    queryFn: async () => {
+      try {
+        return await getClientOrderCount(String(id || ''));
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = queryClient.getQueryData(queryKeys.clients.orderCount(id));
+        return Number(cached || 0);
+      }
+    },
     enabled: !!id,
     staleTime: 30 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
 
 export function useClientDeleteBlockers(id: any, options: any = {}) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ['clients', 'delete-blockers', String(id || '')],
-    queryFn: () => getClientDeleteBlockers(String(id || '')),
+    queryFn: async () => {
+      try {
+        return await getClientDeleteBlockers(String(id || ''));
+      } catch (error) {
+        if (!isOfflineLikeError(error)) throw error;
+        const cached = queryClient.getQueryData(['clients', 'delete-blockers', String(id || '')]);
+        return cached || {
+          clientId: String(id || ''),
+          blockingOrdersCount: 0,
+          blockingObjectsCount: 0,
+          blockingObjectIds: [],
+          myOrdersCount: 0,
+          feedOrdersCount: 0,
+          otherOrdersCount: 0,
+          isPartial: true,
+        };
+      }
+    },
     enabled: !!id,
     staleTime: 15 * 1000,
+    retry: (count, error) => !isOfflineLikeError(error) && count < 1,
     ...options,
   });
 }
@@ -168,6 +197,58 @@ export function useClientsRealtimeSync({ enabled = true, companyId = null }: any
   }, [companyId, enabled, queryClient]);
 }
 
+export function updateClientQueryCaches(queryClient: any, clientId: any, patchOrUpdater: any) {
+  const id = String(clientId || '').trim();
+  if (!id || !queryClient) return null;
+
+  const resolveNext = (prev: any) => {
+    const patch = typeof patchOrUpdater === 'function' ? patchOrUpdater(prev) : patchOrUpdater;
+    if (!patch || typeof patch !== 'object') return prev;
+    return {
+      ...(prev || {}),
+      ...patch,
+      id: patch.id || prev?.id || id,
+    };
+  };
+
+  let nextDetail: any = null;
+  queryClient.setQueryData(queryKeys.clients.detail(id), (prev: any) => {
+    nextDetail = resolveNext(prev);
+    return nextDetail;
+  });
+
+  const lists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  lists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    let changed = false;
+    const nextList = value.map((row: any) => {
+      if (String(row?.id || '') !== id) return row;
+      changed = true;
+      return resolveNext(row);
+    });
+    if (changed) queryClient.setQueryData(key, nextList);
+  });
+
+  return nextDetail;
+}
+
+export function removeClientFromQueryCaches(queryClient: any, clientId: any) {
+  const id = String(clientId || '').trim();
+  if (!id || !queryClient) return;
+
+  queryClient.removeQueries({ queryKey: queryKeys.clients.detail(id) });
+  queryClient.removeQueries({ queryKey: queryKeys.clients.orderCount(id) });
+  queryClient.removeQueries({ queryKey: ['clients', 'delete-blockers', id] });
+  queryClient.removeQueries({ queryKey: queryKeys.objects.byClient(id) });
+
+  const lists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  lists.forEach(([key, value]: any) => {
+    if (!Array.isArray(value)) return;
+    const nextList = value.filter((row: any) => String(row?.id || '') !== id);
+    if (nextList.length !== value.length) queryClient.setQueryData(key, nextList);
+  });
+}
+
 export function useCreateClientMutation() {
   const queryClient = useQueryClient();
 
@@ -175,7 +256,7 @@ export function useCreateClientMutation() {
     mutationFn: (payload: Record<string, any>) => createClient(payload),
     onSuccess: (created: any) => {
       if (created?.id) {
-        queryClient.setQueryData(queryKeys.clients.detail(created.id), created);
+        updateClientQueryCaches(queryClient, created.id, created);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },
@@ -216,24 +297,30 @@ export function useUpdateClientMutation() {
     onMutate: async ({ id, patch }) => {
       const detailKey = queryKeys.clients.detail(id);
       await queryClient.cancelQueries({ queryKey: detailKey });
+      await queryClient.cancelQueries({ queryKey: ['clients', 'list'] });
       const previous = queryClient.getQueryData(detailKey);
-      if (previous && typeof previous === 'object') {
-        queryClient.setQueryData(detailKey, {
-          ...(previous as Record<string, any>),
-          ...(patch || {}),
-          __offlinePending: !onlineManager.isOnline(),
-        });
-      }
-      return { previous, detailKey };
+      const previousLists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] });
+      updateClientQueryCaches(queryClient, id, (prev: any) => ({
+        ...(prev || {}),
+        ...(patch || {}),
+        id,
+        __offlinePending: !onlineManager.isOnline(),
+      }));
+      return { previous, previousLists, detailKey };
     },
     onError: (_error, _variables, context: any) => {
       if (context?.previous) {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
+      if (Array.isArray(context?.previousLists)) {
+        context.previousLists.forEach(([key, value]: any) => {
+          queryClient.setQueryData(key, value);
+        });
+      }
     },
     onSuccess: (updated: any) => {
       if (updated?.id) {
-        queryClient.setQueryData(queryKeys.clients.detail(updated.id), updated);
+        updateClientQueryCaches(queryClient, updated.id, updated);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       if (updated?.__offlinePending) {
@@ -250,10 +337,7 @@ export function useDeleteClientMutation() {
     mutationFn: (id: string) => deleteClient(String(id || '')),
     onSuccess: (_result, deletedId: string) => {
       if (deletedId) {
-        queryClient.removeQueries({ queryKey: queryKeys.clients.detail(deletedId) });
-        queryClient.removeQueries({ queryKey: queryKeys.clients.orderCount(deletedId) });
-        queryClient.removeQueries({ queryKey: ['clients', 'delete-blockers', String(deletedId)] });
-        queryClient.removeQueries({ queryKey: queryKeys.objects.byClient(deletedId) });
+        removeClientFromQueryCaches(queryClient, deletedId);
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] });
     },

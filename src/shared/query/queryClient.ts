@@ -342,12 +342,13 @@ export function configureQueryEnvironment() {
 
 export const persistOptions = {
   persister,
-  buster: 'offline-v1-2026-05-02',
+  buster: 'offline-v2-auth-scoped-2026-06-03',
   maxAge: PERSIST_MAX_AGE_MS,
   dehydrateOptions: {
     shouldDehydrateQuery: (q) => {
       const key0 = Array.isArray(q.queryKey) ? q.queryKey[0] : null;
       const key1 = Array.isArray(q.queryKey) ? q.queryKey[1] : null;
+      if (q.state.status !== 'success') return false;
       if (key0 === 'session' || key0 === 'userRole' || key0 === 'perm-canViewAll') {
         return false;
       }
@@ -355,7 +356,6 @@ export const persistOptions = {
         return false;
       }
       if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) {
-        if (q.state.status !== 'success') return false;
         try {
           const serialized = JSON.stringify(q.state.data);
           return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
@@ -364,7 +364,6 @@ export const persistOptions = {
         }
       }
       if (key0 === 'orders' && (key1 === 'my' || key1 === 'all') && Array.isArray(q.queryKey) && q.queryKey[2] === 'recent') {
-        if (q.state.status !== 'success') return false;
         try {
           const serialized = JSON.stringify(q.state.data);
           return serialized.length <= HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
@@ -377,7 +376,6 @@ export const persistOptions = {
         (key0 === 'objects' && (key1 === 'by-company' || key1 === 'by-client')) ||
         (key0 === 'employees' && key1 === 'list')
       ) {
-        if (q.state.status !== 'success') return false;
         try {
           const serialized = JSON.stringify(q.state.data);
           return serialized.length <= HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES;
@@ -385,7 +383,7 @@ export const persistOptions = {
           return false;
         }
       }
-      return q.state.status === 'success';
+      return isDurableOfflineQuery(q.queryKey);
     },
   },
 };

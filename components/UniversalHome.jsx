@@ -2,7 +2,7 @@
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
@@ -13,7 +13,8 @@ import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
 import { useTranslation } from '../src/i18n/useTranslation';
-import { runSmartPrefetch } from '../src/shared/query/smartPrefetch';
+import { queryKeys } from '../src/shared/query/queryKeys';
+import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
@@ -43,15 +44,23 @@ const HOME_ROUTES = {
   admin: '/admin',
   billing: '/billing',
   createOrder: '/orders/create-order',
+  calendar: '/orders/calendar',
 };
 
 let homeCriticalWarmupStarted = false;
 let homeAdminWarmupStarted = false;
+let homeCalendarWarmupStarted = false;
 function warmHomeCriticalRoutes() {
   if (homeCriticalWarmupStarted) return;
   homeCriticalWarmupStarted = true;
   import('../app/app_settings/AppSettings').catch(() => {});
-  import('../app/company_settings/CompanySettingsScreen').catch(() => {});
+  import('../app/company_settings/index').catch(() => {});
+}
+
+function warmHomeCalendarRoute() {
+  if (homeCalendarWarmupStarted) return;
+  homeCalendarWarmupStarted = true;
+  import('../screens/orders/CalendarScreen').catch(() => {});
 }
 
 function warmHomeAdminRoute() {
@@ -114,6 +123,63 @@ function mergeProfileSnapshot(prev, snapshot) {
   };
 }
 
+function buildSelfEmployeeDetailSeed({
+  previous,
+  profile,
+  uid,
+  email,
+  isAdmin,
+  isSuperAdmin,
+  companyName,
+  departmentName,
+}) {
+  if (!profile || typeof profile !== 'object') return previous || null;
+
+  const firstName = profile.first_name ?? profile.firstName ?? previous?.firstName ?? '';
+  const middleName = profile.middle_name ?? profile.middleName ?? previous?.middleName ?? '';
+  const lastName = profile.last_name ?? profile.lastName ?? previous?.lastName ?? '';
+  const computedFullName = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+  const fullName = (profile.full_name ?? profile.fullName ?? previous?.fullName ?? computedFullName) || null;
+  const avatarUrl = profile.avatar_url ?? profile.avatarUrl ?? previous?.avatarUrl ?? null;
+  const avatarDisplayUrl = profile.avatar_display_url ?? profile.avatarDisplayUrl ?? previous?.avatarDisplayUrl ?? avatarUrl;
+  const companyId = profile.company_id ?? profile.companyId ?? previous?.companyId ?? null;
+  const departmentId = profile.department_id ?? profile.departmentId ?? previous?.departmentId ?? null;
+  const displayName = fullName || profile.email || email || previous?.displayName || '';
+
+  return {
+    ...(previous || {}),
+    ...profile,
+    id: profile.id || previous?.id || uid,
+    user_id: profile.user_id ?? previous?.user_id ?? uid,
+    first_name: firstName,
+    middle_name: middleName,
+    last_name: lastName,
+    full_name: fullName,
+    avatar_url: avatarUrl,
+    avatar_display_url: avatarDisplayUrl,
+    company_id: companyId,
+    department_id: departmentId,
+    display_name: displayName,
+    email: email || profile.email || previous?.email || '',
+    firstName,
+    middleName,
+    lastName,
+    fullName,
+    avatarUrl,
+    avatarDisplayUrl,
+    displayName,
+    companyId,
+    departmentId,
+    companyName: companyName ?? previous?.companyName ?? null,
+    departmentName: departmentName ?? previous?.departmentName ?? null,
+    role: profile.role || previous?.role || 'worker',
+    myUid: uid || previous?.myUid || null,
+    meIsAdmin: isAdmin === true ? true : previous?.meIsAdmin ?? false,
+    meIsSuperAdmin: isSuperAdmin === true ? true : previous?.meIsSuperAdmin ?? false,
+    __homeSeed: true,
+  };
+}
+
 function HomeWarningCard({
   styles,
   theme,
@@ -165,7 +231,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { has, loading: permsLoading, role: roleFromPerms } = usePermissions();
   const toast = useToast();
   const qc = useQueryClient();
-  warmHomeCriticalRoutes();
+  const initialFocusRefreshSkippedRef = useRef(false);
   const navigateTo = useCallback(
     (href) => {
       if (!href) return;
@@ -224,7 +290,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     queryKey: ['session'],
     queryFn: fetchSession,
     staleTime: HOME_SESSION_STALE_MS,
-    refetchOnMount: true,
+    refetchOnMount: false,
     enabled: !user && !providedProfile,
   });
   const uid =
@@ -241,7 +307,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     initialData: providedProfile || undefined,
     staleTime: HOME_PROFILE_STALE_MS,
     gcTime: HOME_DURABLE_GC_MS,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
@@ -262,9 +328,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       if (pErr) throw pErr;
       return p || null;
     },
-    enabled: !!uid,
+    enabled: !!uid && !currentProfile?.company_id,
     staleTime: HOME_PROFILE_STALE_MS,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnReconnect: true,
   });
 
@@ -299,11 +365,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const canCreateOrders = !permsLoading && has?.('canCreateOrders') === true;
 
 
-  const openSelfProfileEdit = useCallback(() => {
-    const selfProfileId = String(currentProfile?.id || uid || '').trim();
-    if (!isUuid(selfProfileId)) return;
-    router.push({ pathname: '/users/[id]', params: { id: selfProfileId } });
-  }, [currentProfile?.id, router, uid]);
   const openAppSettings = useCallback(
     () => navigateTo(HOME_ROUTES.appSettings),
     [navigateTo],
@@ -351,7 +412,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     enabled: shouldCheckCloudHealth,
     staleTime: 60 * 1000,
     gcTime: 5 * 60 * 1000,
-    refetchOnMount: true,
+    refetchOnMount: false,
     placeholderData: (prev) => prev,
   });
   const cloudHealthCode = String(
@@ -456,17 +517,22 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   );
 
   useEffect(() => {
-    warmHomeCriticalRoutes();
-    if (isSuperAdmin) warmHomeAdminRoute();
-    if (typeof router?.prefetch !== 'function') return;
-    const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings];
-    if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
-    routesToPrefetch.forEach((route) => {
-      try {
-        router.prefetch(route);
-      } catch {}
-    });
-  }, [isSuperAdmin, router]);
+    if (!uid || !currentProfile?.id) return undefined;
+    const timer = setTimeout(() => {
+      warmHomeCriticalRoutes();
+      warmHomeCalendarRoute();
+      if (isSuperAdmin) warmHomeAdminRoute();
+      if (typeof router?.prefetch !== 'function') return;
+      const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings, HOME_ROUTES.calendar];
+      if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
+      routesToPrefetch.forEach((route) => {
+        try {
+          router.prefetch(route);
+        } catch {}
+      });
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [currentProfile?.id, isSuperAdmin, router, uid]);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
@@ -496,7 +562,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [currentProfile?.id, qc, uid]);
 
   // Fetch company name if companyId is available
-  const { data: companyRow, isFetched: companyFetched } = useQuery({
+  const { data: companyRow } = useQuery({
     queryKey: ['company', companyId],
     queryFn: async () => {
       if (!companyId) return null;
@@ -505,7 +571,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     },
     enabled: !!companyId,
     staleTime: HOME_COMPANY_STALE_MS,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnReconnect: true,
   });
 
@@ -513,7 +579,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   // Fetch department name if department id available
   const departmentIdToUse = deptIdFromProfile;
-  const { data: departmentRow, isFetched: departmentFetched } = useQuery({
+  const { data: departmentRow } = useQuery({
     queryKey: ['department', departmentIdToUse],
     queryFn: async () => {
       if (!departmentIdToUse) return null;
@@ -522,11 +588,50 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     },
     enabled: useDepartments && !!departmentIdToUse,
     staleTime: HOME_DEPARTMENT_STALE_MS,
-    refetchOnMount: true,
+    refetchOnMount: false,
     refetchOnReconnect: true,
   });
 
   const departmentName = departmentRow?.name || null;
+
+  const seedSelfProfileEmployeeDetail = useCallback(() => {
+    const selfProfileId = String(currentProfile?.id || uid || '').trim();
+    if (!isUuid(selfProfileId)) return null;
+    if (!currentProfile || typeof currentProfile !== 'object') return selfProfileId;
+    qc.setQueryData(queryKeys.employees.detail(selfProfileId), (previous) =>
+      buildSelfEmployeeDetailSeed({
+        previous,
+        profile: currentProfile,
+        uid,
+        email: user?.email || session?.user?.email || '',
+        isAdmin,
+        isSuperAdmin,
+        companyName,
+        departmentName,
+      }),
+    );
+    return selfProfileId;
+  }, [
+    companyName,
+    currentProfile,
+    departmentName,
+    isAdmin,
+    isSuperAdmin,
+    qc,
+    session?.user?.email,
+    uid,
+    user?.email,
+  ]);
+
+  useEffect(() => {
+    seedSelfProfileEmployeeDetail();
+  }, [seedSelfProfileEmployeeDetail]);
+
+  const openSelfProfileEdit = useCallback(() => {
+    const selfProfileId = seedSelfProfileEmployeeDetail();
+    if (!selfProfileId) return;
+    router.push({ pathname: '/users/[id]', params: { id: selfProfileId } });
+  }, [router, seedSelfProfileEmployeeDetail]);
 
   useEffect(() => {
     if (!companyId) return undefined;
@@ -575,6 +680,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   useFocusEffect(
     useCallback(() => {
       if (!uid) return undefined;
+      if (!initialFocusRefreshSkippedRef.current) {
+        initialFocusRefreshSkippedRef.current = true;
+        return undefined;
+      }
       qc.invalidateQueries({ queryKey: ['profile', uid] });
       if (companyId) {
         qc.invalidateQueries({ queryKey: ['company', companyId] });
@@ -614,15 +723,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const badgeOverflowLabel = `${badgeOverflowThreshold}+`;
 
   const hasProfileSeed = !!currentProfile?.id;
-  const companyReady = !companyId || companyFetched;
-  const departmentReady = !useDepartments || !departmentIdToUse || departmentFetched;
   const homeCriticalReady =
     !!uid &&
     hasProfileSeed &&
-    (profileFetched || !profileLoading) &&
-    !permsLoading &&
-    companyReady &&
-    departmentReady;
+    (profileFetched || !profileLoading);
 
   const [homeCriticalReadyLatched, setHomeCriticalReadyLatched] = useState(false);
   useEffect(() => {
@@ -637,10 +741,16 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   useEffect(() => {
     if (!homeCriticalReady || !uid) return;
+    let cancelPrefetch = null;
     const timer = setTimeout(() => {
-      runSmartPrefetch(qc).catch(() => {});
-    }, 80);
-    return () => clearTimeout(timer);
+      cancelPrefetch = scheduleSmartPrefetch(qc);
+    }, 1800);
+    return () => {
+      clearTimeout(timer);
+      try {
+        cancelPrefetch?.();
+      } catch {}
+    };
   }, [homeCriticalReady, qc, uid]);
 
   if (shouldShowHomeLoader) {

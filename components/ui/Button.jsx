@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  Keyboard,
   Platform,
   StyleSheet,
   Text,
@@ -115,9 +114,6 @@ export default function Button({
 
   const s = styles(theme, palette, sizes, disabled || loading);
   const handlePress = () => {
-    try {
-      Keyboard.dismiss();
-    } catch {}
     onPress?.();
   };
 

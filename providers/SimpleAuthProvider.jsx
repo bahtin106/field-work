@@ -1,11 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { useIsRestoring } from '@tanstack/react-query';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
 import { supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
-import { inspectProfileMedia } from '../src/features/profileMedia/api';
 import { queryClient } from '../src/shared/query/queryClient';
 import { queryKeys } from '../src/shared/query/queryKeys';
 
@@ -94,6 +92,31 @@ const isNetworkRequestError = (error) => {
   );
 };
 
+const getCachedProfileSnapshot = () => {
+  try {
+    const cached = queryClient.getQueryData(queryKeys.profile.me());
+    return cached && typeof cached === 'object' ? cached : null;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeScopeId = (value) => String(value || '').trim();
+
+const hasProfileScopeChanged = (previousProfile, nextProfile, nextUserId) => {
+  if (!previousProfile || !nextProfile) return false;
+
+  const previousUserId = normalizeScopeId(previousProfile.id);
+  const resolvedNextUserId = normalizeScopeId(nextProfile.id || nextUserId);
+  if (previousUserId && resolvedNextUserId && previousUserId !== resolvedNextUserId) {
+    return true;
+  }
+
+  const previousCompanyId = normalizeScopeId(previousProfile.company_id);
+  const nextCompanyId = normalizeScopeId(nextProfile.company_id);
+  return Boolean(previousCompanyId || nextCompanyId) && previousCompanyId !== nextCompanyId;
+};
+
 const tryBootstrapMyProfileFromAuth = async () => {
   try {
     const { error } = await supabase.rpc('bootstrap_my_profile_from_auth');
@@ -114,7 +137,6 @@ const isSessionExpiredLikeError = (error) => {
 };
 
 export function SimpleAuthProvider({ children }) {
-  const isRestoringQueryCache = useIsRestoring();
   const [state, setState] = useState({
     isInitializing: true,
     isAuthenticated: false,
@@ -152,8 +174,12 @@ export function SimpleAuthProvider({ children }) {
     return null;
   }, []);
 
-  const rememberProfileSnapshot = useCallback((profile) => {
+  const rememberProfileSnapshot = useCallback((profile, expectedUserId = null) => {
     if (!profile?.id) return;
+    const expectedScopeUserId = normalizeScopeId(expectedUserId || currentUserIdRef.current);
+    if (expectedScopeUserId && normalizeScopeId(profile.id) !== expectedScopeUserId) {
+      return;
+    }
     queryClient.setQueryData(queryKeys.profile.me(), profile);
     if (profile.company_id) {
       queryClient.setQueryData(queryKeys.profile.companyId(), profile.company_id);
@@ -216,30 +242,13 @@ export function SimpleAuthProvider({ children }) {
               throw new Error('profile-not-found-after-bootstrap');
             }
             const profile = normalizeProfileData(retriedProfile, user, 'bootstrap-rpc');
-            rememberProfileSnapshot(profile);
+            rememberProfileSnapshot(profile, userId);
             return profile;
           }
 
           debugLog('Profile loaded:', data.role);
-          let safeData = data;
-          try {
-            const avatarUrl = String(data?.avatar_url || '').trim();
-            const { cleanedUrls, resolvedUrls } = await inspectProfileMedia([avatarUrl].filter(Boolean));
-            safeData = cleanedUrls.includes(avatarUrl)
-              ? { ...data, avatar_url: null, avatar_display_url: null }
-              : {
-                  ...data,
-                  avatar_display_url: resolvedUrls[avatarUrl] || data?.avatar_url || null,
-                };
-          } catch (profileMediaError) {
-            if (isSessionExpiredLikeError(profileMediaError)) {
-              debugLog('Profile media inspect skipped: session missing');
-            } else {
-              log.warn('Profile media inspect skipped:', profileMediaError);
-            }
-          }
-          const profile = normalizeProfileData(safeData, user, 'supabase');
-          rememberProfileSnapshot(profile);
+          const profile = normalizeProfileData(data, user, 'supabase');
+          rememberProfileSnapshot(profile, userId);
           return profile;
         } catch (error) {
           const isTimeout = error?.message === 'profile-load-timeout' || isAbortLikeError(error);
@@ -257,6 +266,10 @@ export function SimpleAuthProvider({ children }) {
             if (cachedProfile) return cachedProfile;
             log.warn('Profile network error:', error);
             throw new Error('profile-load-network-error');
+          } else if (isSessionExpiredLikeError(error)) {
+            const cachedProfile = getCachedProfileForUser(userId);
+            if (cachedProfile) return cachedProfile;
+            throw new Error('profile-load-session-expired');
           } else {
             log.error('Profile error:', error);
             throw error;
@@ -291,7 +304,7 @@ export function SimpleAuthProvider({ children }) {
           if (recoveryJobId !== recoveryJobIdRef.current) return;
           if (currentUserIdRef.current !== userId) return;
           if (!profile) return;
-          rememberProfileSnapshot(profile);
+          rememberProfileSnapshot(profile, userId);
 
           setState((prev) => {
             if (prev.user?.id !== userId) return prev;
@@ -347,6 +360,8 @@ export function SimpleAuthProvider({ children }) {
       const user = session?.user ?? null;
       const nextUserId = user?.id ?? null;
       const hadUser = !!currentUserIdRef.current;
+      const cachedProfileBeforeAuth = getCachedProfileSnapshot();
+      let cacheClearedForAuthScope = false;
 
       if (event === 'SIGNED_IN') {
         logoutInProgressRef.current = false;
@@ -366,11 +381,17 @@ export function SimpleAuthProvider({ children }) {
       }
 
       const userChanged = currentUserIdRef.current !== nextUserId;
-      if (userChanged) {
+      const cachedUserChanged =
+        !!nextUserId &&
+        !!cachedProfileBeforeAuth?.id &&
+        normalizeScopeId(cachedProfileBeforeAuth.id) !== normalizeScopeId(nextUserId);
+      if (userChanged || cachedUserChanged) {
         clearProfileRecovery();
+        profileLoadInFlightRef.current.clear();
         currentUserIdRef.current = nextUserId;
-        if (hadUser) {
-          await cleanupSessionRuntime('user-changed');
+        if (hadUser || cachedUserChanged) {
+          await cleanupSessionRuntime(cachedUserChanged ? 'cached-user-changed' : 'user-changed');
+          cacheClearedForAuthScope = true;
         }
       }
 
@@ -403,6 +424,12 @@ export function SimpleAuthProvider({ children }) {
       try {
         const profile = await loadProfile(user);
         if (requestId !== authRequestIdRef.current) return;
+
+        if (!cacheClearedForAuthScope && hasProfileScopeChanged(cachedProfileBeforeAuth, profile, nextUserId)) {
+          await cleanupSessionRuntime('profile-scope-changed');
+          rememberProfileSnapshot(profile, nextUserId);
+          cacheClearedForAuthScope = true;
+        }
 
         debugLog('Setting profile state:', {
           hasProfile: !!profile,
@@ -450,12 +477,18 @@ export function SimpleAuthProvider({ children }) {
         scheduleProfileRecovery(user);
       }
     },
-    [clearProfileRecovery, debugLog, getCachedProfileForUser, loadProfile, scheduleProfileRecovery, setSignedOutState],
+    [
+      clearProfileRecovery,
+      debugLog,
+      getCachedProfileForUser,
+      loadProfile,
+      rememberProfileSnapshot,
+      scheduleProfileRecovery,
+      setSignedOutState,
+    ],
   );
 
   useEffect(() => {
-    if (isRestoringQueryCache) return undefined;
-
     let mounted = true;
 
     const loadInitialSession = async () => {
@@ -540,7 +573,6 @@ export function SimpleAuthProvider({ children }) {
   }, [
     clearProfileRecovery,
     handleAuthChange,
-    isRestoringQueryCache,
     recoverFromInvalidRefreshToken,
     setSignedOutState,
   ]);

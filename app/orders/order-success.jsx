@@ -45,7 +45,7 @@ export default function OrderSuccessScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <View style={styles.messageBox}>
         <Text style={styles.successText}>Заявка успешно создана</Text>
         <Button title="На главную" onPress={goHome} />
