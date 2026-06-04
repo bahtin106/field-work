@@ -7,12 +7,14 @@ import Button from '../../components/ui/Button';
 import { useTheme } from '../../theme';
 import { supabase } from '../../lib/supabase';
 import { useToast } from '../../components/ui/ToastProvider';
+import { useTranslation } from '../../src/i18n/useTranslation';
 
 export default function VerifyEmailScreen() {
   const { theme } = useTheme();
   const router = useRouter();
   const params = useSearchParams();
   const { success: toastSuccess, error: toastError } = useToast();
+  const { t } = useTranslation();
 
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('processing'); // processing | success | error
@@ -80,7 +82,7 @@ export default function VerifyEmailScreen() {
           }
           // Если это просто открыли экран без параметров
           setStatus('error');
-          setErrorMessage('Некорректная ссылка подтверждения');
+          setErrorMessage(t('auth_verify_email_invalid_link'));
           setLoading(false);
           return;
         }
@@ -92,7 +94,7 @@ export default function VerifyEmailScreen() {
         if (sessionData?.session) {
           // Сессия установлена - email подтверждён!
           setStatus('success');
-          toastSuccess('Email подтвержден! Теперь создайте пароль.');
+          toastSuccess(t('auth_verify_email_success_toast'));
 
           // Переводим на экран установки пароля
           setTimeout(() => {
@@ -106,21 +108,21 @@ export default function VerifyEmailScreen() {
       } catch (e) {
         console.error('Verification error:', e);
         setStatus('error');
-        setErrorMessage(e?.message || 'Ошибка при подтверждении email');
-        toastError(e?.message || 'Ошибка при подтверждении');
+        setErrorMessage(e?.message || t('auth_verify_email_generic_error'));
+        toastError(e?.message || t('auth_verify_email_generic_error_toast'));
         setLoading(false);
       }
     };
 
     handleEmailConfirmation();
-  }, [params, router, toastSuccess, toastError]);
+  }, [params, router, toastSuccess, toastError, t]);
 
   if (loading) {
     return (
       <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <View style={styles.content}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.message}>Подтверждение email...</Text>
+          <Text style={styles.message}>{t('auth_verify_email_pending')}</Text>
         </View>
       </SafeAreaView>
     );
@@ -130,10 +132,10 @@ export default function VerifyEmailScreen() {
     return (
       <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <Text style={styles.title}>Ошибка подтверждения</Text>
+          <Text style={styles.title}>{t('auth_verify_email_error_title')}</Text>
           <Text style={styles.error}>{errorMessage}</Text>
           <View style={styles.buttonContainer}>
-            <Button title="Вернуться" onPress={() => router.replace('/(auth)/login')} />
+            <Button title={t('auth_verify_email_back_to_login')} onPress={() => router.replace('/(auth)/login')} />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -143,11 +145,11 @@ export default function VerifyEmailScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>Email подтвержден!</Text>
+        <Text style={styles.title}>{t('auth_verify_email_success_title')}</Text>
         <Text style={styles.message}>
-          Спасибо за подтверждение вашего адреса электронной почты.
+          {t('auth_verify_email_success_message')}
         </Text>
-        <Text style={styles.message}>Перенаправляем вас...</Text>
+        <Text style={styles.message}>{t('auth_verify_email_redirecting')}</Text>
       </ScrollView>
     </SafeAreaView>
   );

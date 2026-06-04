@@ -27,7 +27,7 @@ export default function AdditionalPhoneInputRow({
   const fieldIdRef = React.useRef(Symbol('additional-phone-title-field'));
   const mountOrderRef = React.useRef(Date.now() + Math.random());
   const [isEditing, setIsEditing] = React.useState(false);
-  const fallbackLabel = String(t('order_field_secondary_phone') || 'Доп. телефон');
+  const fallbackLabel = String(t('additional_phone_label'));
   const resolvedLabel =
     String(designationValue || '').trim().slice(0, CLIENT_ADDITIONAL_PHONE_LABEL_MAX_LENGTH) || fallbackLabel;
   const [draftLabel, setDraftLabel] = React.useState(resolvedLabel);

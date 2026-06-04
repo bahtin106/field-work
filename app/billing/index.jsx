@@ -5,7 +5,6 @@ export default function BillingRoute() {
     <LazyRouteScreen
       load={() => import('../../screens/billing/BillingScreen')}
       titleKey="routes.billing/index"
-      titleFallback="Подписка и лицензии"
     />
   );
 }

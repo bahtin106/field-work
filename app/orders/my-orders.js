@@ -5,7 +5,6 @@ export default function MyOrdersRoute() {
     <LazyRouteScreen
       load={() => import('../../screens/orders/MyOrdersScreen')}
       titleKey="routes.orders/my-orders"
-      titleFallback="Мои заявки"
     />
   );
 }

@@ -303,9 +303,9 @@ export default function FiltersPanel({
     }
     if (isObjectsMode) {
       const objectCategories = [];
-      objectCategories.push({ key: 'objects_cities', label: t('common_city', 'Город') });
-      objectCategories.push({ key: 'objects_streets', label: t('common_street', 'Улица') });
-      objectCategories.push({ key: 'objects_clients', label: t('common_client', 'Клиент') });
+      objectCategories.push({ key: 'objects_cities', label: t('common_city') });
+      objectCategories.push({ key: 'objects_streets', label: t('common_street') });
+      objectCategories.push({ key: 'objects_clients', label: t('common_client') });
       return showSearchCategory ? [searchCategory, ...objectCategories] : objectCategories;
     }
     if (isOrdersMode) {
@@ -319,8 +319,8 @@ export default function FiltersPanel({
       const cats = [];
       if (ordersStatusOptions.length) cats.push({ key: 'orders_statuses', label: t('orders_filter_status') });
       if (ordersWorkTypes.length) cats.push({ key: 'orders_workTypes', label: t('order_field_work_type') });
-      if (ordersClients.length) cats.push({ key: 'orders_clients', label: t('common_client', 'Клиент') });
-      if (ordersExecutors.length) cats.push({ key: 'orders_executors', label: t('orders_filter_executor', 'Исполнитель') });
+      if (ordersClients.length) cats.push({ key: 'orders_clients', label: t('common_client') });
+      if (ordersExecutors.length) cats.push({ key: 'orders_executors', label: t('orders_filter_executor') });
       if (showDate) cats.push({ key: 'orders_departure_date', label: t('order_field_departure_date') });
       if (showTime) cats.push({ key: 'orders_departure_time', label: t('order_field_departure_time') });
       if (showAmount) cats.push({ key: 'orders_amount', label: t('order_details_amount') });
@@ -835,7 +835,7 @@ export default function FiltersPanel({
     if (previewCountValue == null) return null;
     return Number.isFinite(Number(previewCountValue)) ? Number(previewCountValue) : null;
   }, [draft, previewCountResolver, previewCountValue]);
-  const previewCaption = previewCountLabel || t('common_found', 'Найдено');
+  const previewCaption = previewCountLabel || t('common_found');
   const resolvedPreviewStatus = useMemo(() => {
     if (typeof previewStatusResolver !== 'function') return null;
     try {

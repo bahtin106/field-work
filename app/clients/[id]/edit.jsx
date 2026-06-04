@@ -5,7 +5,6 @@ export default function ClientEditRoute() {
     <LazyRouteScreen
       load={() => import('../../../screens/clients/[id]/ClientEditScreen')}
       titleKey="routes.clients/[id]/edit"
-      titleFallback="Редактирование"
     />
   );
 }

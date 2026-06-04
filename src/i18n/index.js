@@ -83,6 +83,9 @@ export async function setLocale(next) {
 // --- resolver ---
 function resolve(obj, path) {
   try {
+    if (obj && Object.prototype.hasOwnProperty.call(obj, path)) {
+      return obj[path];
+    }
     return String(path)
       .split('.')
       .reduce((acc, k) => (acc != null ? acc[k] : undefined), obj);

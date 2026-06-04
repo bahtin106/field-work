@@ -195,7 +195,7 @@ function AvatarSheetModal({
     { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
     ...(hasAvatar
       ? [
-          { id: 'view', label: 'Просмотреть фото', right: chevron(theme.colors.textSecondary) },
+          { id: 'view', label: t('photo_view_action'), right: chevron(theme.colors.textSecondary) },
           { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
         ]
       : []),
@@ -1293,7 +1293,7 @@ export default function NewUserScreen() {
                   cachePolicy="none"
                 />
               ) : (
-                <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'Нет фото'}</Text>
+                <Text style={{ color: theme.colors.textSecondary }}>{t('photo_empty')}</Text>
               )}
             </View>
           </BaseModal>

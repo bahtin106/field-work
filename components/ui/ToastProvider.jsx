@@ -5,21 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FullWindowOverlay } from 'react-native-screens';
 import { useTheme } from '../../theme';
 import { logClientError } from '../../lib/errorLogsClient';
-// --- i18n labels (safe runtime require) ---
-let __labels = null;
-try {
-  __labels = require('../../i18n/labels');
-} catch {}
-const i18nT = (key, fallback) => {
-  const mod = __labels || {};
-  if (typeof mod.t === 'function') return mod.t(key, fallback);
-  if (typeof mod.getLabel === 'function') return mod.getLabel(key, fallback);
-  const dict = mod.labels || mod.default || mod || {};
-  const val = String(key)
-    .split('.')
-    .reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), dict);
-  return val == null || val === '' ? (fallback ?? key) : String(val);
-};
+import { t as i18nT } from '../../src/i18n';
 
 import Animated, {
   Easing,

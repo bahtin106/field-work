@@ -359,7 +359,7 @@ export default function RegisterScreen() {
     floatingLabelGapScale: registerUi.floatingLabelGapScale ?? 2,
   };
 
-  const [firstName] = useState('Пользователь');
+  const [firstName] = useState(() => t('register_default_first_name'));
   const [lastName] = useState('Monitor');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -710,7 +710,7 @@ export default function RegisterScreen() {
             throw new Error(t('register_code_verify_required'));
           }
           if (/EMAIL_SERVICE_URL|SERVER_MISCONFIGURED/i.test(details.message || '')) {
-            throw new Error('Сервис отправки писем временно недоступен. Попробуйте позже');
+            throw new Error(t('register_error_email_service_unavailable'));
           }
           if (details.message) {
             throw new Error(details.message);
@@ -907,7 +907,7 @@ export default function RegisterScreen() {
                     { color: passwordChecks.minLength ? theme.colors.success : theme.colors.textSecondary },
                   ]}
                 >
-                  Минимум 8 символов
+                  {t('register_password_rule_min_length')}
                 </Text>
                 <Text
                   style={[
@@ -915,7 +915,7 @@ export default function RegisterScreen() {
                     { color: passwordChecks.hasUpper ? theme.colors.success : theme.colors.textSecondary },
                   ]}
                 >
-                  Хотя бы одна заглавная буква
+                  {t('register_password_rule_uppercase')}
                 </Text>
                 <Text
                   style={[
@@ -923,7 +923,7 @@ export default function RegisterScreen() {
                     { color: passwordChecks.hasLower ? theme.colors.success : theme.colors.textSecondary },
                   ]}
                 >
-                  Хотя бы одна строчная буква
+                  {t('register_password_rule_lowercase')}
                 </Text>
                 <Text
                   style={[
@@ -931,7 +931,7 @@ export default function RegisterScreen() {
                     { color: passwordChecks.hasDigit ? theme.colors.success : theme.colors.textSecondary },
                   ]}
                 >
-                  Хотя бы одна цифра
+                  {t('register_password_rule_digit')}
                 </Text>
               </View>
             </Card>
@@ -941,21 +941,21 @@ export default function RegisterScreen() {
             <View style={styles.consentRow}>
               <View style={styles.consentTextWrap}>
                 <Text style={styles.consentText}>
-                  Нажимая кнопку, вы соглашаетесь с{' '}
+                  {t('register_consent_submit_prefix')}{' '}
                   <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.offer)}>
-                    офертой
+                    {t('register_consent_offer_short')}
                   </Text>
                   ,{' '}
                   <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.privacy)}>
-                    политикой конфиденциальности
+                    {t('register_consent_privacy_short')}
                   </Text>
                   ,{' '}
                   <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.personalData)}>
-                    обработкой персональных данных
+                    {t('register_consent_personal_data_short')}
                   </Text>{' '}
-                  и{' '}
+                  {t('register_consent_and')}{' '}
                   <Text style={styles.consentLink} onPress={() => openLegalLink(LEGAL_LINKS.cookies)}>
-                    cookies
+                    {t('register_consent_cookies_link')}
                   </Text>
                   .
                 </Text>

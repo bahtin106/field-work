@@ -302,7 +302,7 @@ function DynamicOrderCard({
       if (!field) return null;
       return {
         field_key: String(key || ''),
-        label: field.customLabel || t(field.labelKey, field.fallbackLabel || String(key || '')),
+        label: field.customLabel || t(field.labelKey),
         type: mapInputKindToLegacyType(field.inputKind),
         required: field.isRequired === true,
         storage_target: 'builtin',
@@ -414,7 +414,7 @@ function DynamicOrderCard({
               ? t(key === 'address' ? 'order_details_address' : PRIMARY_ROW_LABEL_KEYS[key])
               : (field?.label ?? key);
         if (key === 'address' && value === '__MAP_POINT__') {
-          value = t('order_address_point_on_map', 'точка на карте');
+          value = t('order_address_point_on_map');
         }
         if (key === 'address' && !value) {
           value = t('order_details_address_not_specified');
@@ -618,7 +618,7 @@ function DynamicOrderCard({
     readWithFallback(order, getFieldByKey('title'), 'title') || order,
     {
       fallbackDate: order?.time_window_start || order?.created_at,
-      prefix: t('order_auto_title_prefix', 'Заявка от'),
+      prefix: t('order_auto_title_prefix'),
     },
   );
 
@@ -786,7 +786,7 @@ function DynamicOrderCard({
                   textAlignVertical: 'center',
                 }}
               >
-                {t('order_urgent_short', 'с')}
+                {t('order_urgent_short')}
               </Text>
             </View>
           )}

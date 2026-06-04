@@ -20,7 +20,7 @@ export default function NotificationsSettingsPlaceholderScreen() {
       <ScrollView contentContainerStyle={styles(theme).content}>
         <Card style={styles(theme).card}>
           <Text style={styles(theme).title}>{t('settings_management_notifications')}</Text>
-          <Text style={styles(theme).text}>This section is a placeholder and will be expanded.</Text>
+          <Text style={styles(theme).text}>{t('company_notifications_placeholder')}</Text>
         </Card>
       </ScrollView>
     </Screen>

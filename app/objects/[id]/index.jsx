@@ -334,7 +334,7 @@ export default function ObjectViewScreen() {
       const customLabel = String(field?.customLabel || '').trim();
       if (customLabel) return customLabel;
       if (field?.labelKey) {
-        return t(field.labelKey, field?.fallbackLabel || fallbackLabel || String(fieldKey || ''));
+        return t(field.labelKey);
       }
       return fallbackLabel || String(fieldKey || '');
     },
@@ -471,7 +471,7 @@ export default function ObjectViewScreen() {
         if (uploadedCount === 1) {
           toast.success(t('order_toast_photo_uploaded'));
         } else {
-          toast.success(t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(uploadedCount)));
+          toast.success(t('order_toast_photos_uploaded').replace('{count}', String(uploadedCount)));
         }
       } else {
         toast.error(t('order_toast_upload_error'));
@@ -712,8 +712,8 @@ export default function ObjectViewScreen() {
           ) : (
             <ExpandableTextRow
               label={t('order_details_address')}
-              value={fullAddress || t('order_details_address_not_specified', 'Без адреса')}
-              collapsedValue={shortAddress || fullAddress || t('order_details_address_not_specified', 'Без адреса')}
+              value={fullAddress || t('order_details_address_not_specified')}
+              collapsedValue={shortAddress || fullAddress || t('order_details_address_not_specified')}
               expandedKeyValueItems={addressItems}
               expandedLabelBold
               onValuePress={() => {
@@ -785,7 +785,7 @@ export default function ObjectViewScreen() {
         {visibleMediaFields.length > 0 ? (
           <>
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
-              {t('order_details_photos_section', 'Фото')}
+              {t('order_details_photos_section')}
             </SectionHeader>
             <Card paddedXOnly>
               {visibleMediaFields
@@ -793,7 +793,7 @@ export default function ObjectViewScreen() {
                   key: fieldKey,
                   label: getObjectFieldLabel(
                     fieldKey,
-                    t(`object_media_field_${OBJECT_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`, `Медиа объекта ${OBJECT_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`),
+                    t(`object_media_field_${OBJECT_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`),
                   ),
                 }))
                 .map((row, idx) => {
@@ -811,7 +811,7 @@ export default function ObjectViewScreen() {
                         <Text style={base.label}>{row.label}</Text>
                         <View style={base.rightWrap}>
                           <Text style={base.value}>
-                            {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+                            {t('order_photos_count').replace('{count}', String(count))}
                           </Text>
                           <Feather
                             name="chevron-right"
@@ -878,9 +878,9 @@ export default function ObjectViewScreen() {
         onRemoveMany={removePhotosBatch}
         onOpenViewer={(photos, idx) => {
           const catLabels = {
-            media_file_1: getObjectFieldLabel('media_file_1', t('object_media_field_1', 'Медиа объекта 1')),
-            media_file_2: getObjectFieldLabel('media_file_2', t('object_media_field_2', 'Медиа объекта 2')),
-            media_file_3: getObjectFieldLabel('media_file_3', t('object_media_field_3', 'Медиа объекта 3')),
+            media_file_1: getObjectFieldLabel('media_file_1', t('object_media_field_1')),
+            media_file_2: getObjectFieldLabel('media_file_2', t('object_media_field_2')),
+            media_file_3: getObjectFieldLabel('media_file_3', t('object_media_field_3')),
           };
           openViewer(photos, idx, objectPhotosModal.category, catLabels[objectPhotosModal.category] || '');
         }}

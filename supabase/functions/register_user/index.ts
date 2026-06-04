@@ -299,7 +299,7 @@ export async function handleRegisterUserRequest(req: Request) {
         message: existingUserError.message,
         extra: { code: existingUserError.code, email },
       });
-      return errorResponse(req, allowedOrigins, `email check error: ${existingUserError.message}`, 400, 'EMAIL_CHECK_FAILED');
+      return errorResponse(req, allowedOrigins, 'Email availability check failed', 400, 'EMAIL_CHECK_FAILED');
     }
     if (existingUser && !(await isProfileEmailOwnedByAuthUser(supabaseAdmin, existingUser, email))) {
       existingUser = null;
@@ -319,7 +319,7 @@ export async function handleRegisterUserRequest(req: Request) {
           message: error.message,
           extra: { code: error.code, companyNameInput },
         });
-        return errorResponse(req, allowedOrigins, `company check error: ${error.message}`, 400, 'COMPANY_CHECK_FAILED');
+        return errorResponse(req, allowedOrigins, 'Company availability check failed', 400, 'COMPANY_CHECK_FAILED');
       }
       existingCompany = data;
     }
@@ -392,12 +392,12 @@ export async function handleRegisterUserRequest(req: Request) {
       if (/already|exists/i.test(createMessage)) {
         return errorResponse(req, allowedOrigins, 'User with this email already exists', 400, 'EMAIL_TAKEN');
       }
-      return errorResponse(req, allowedOrigins, `Auth create error: ${createMessage}`, 400, 'AUTH_CREATE_FAILED');
+      return errorResponse(req, allowedOrigins, 'User creation failed', 400, 'AUTH_CREATE_FAILED');
     }
 
     const userId = created?.user?.id;
     if (!userId) {
-      return errorResponse(req, allowedOrigins, 'Auth create error: User not created', 400, 'AUTH_CREATE_FAILED');
+      return errorResponse(req, allowedOrigins, 'User creation failed', 400, 'AUTH_CREATE_FAILED');
     }
     createdUserId = userId;
 
@@ -455,7 +455,7 @@ export async function handleRegisterUserRequest(req: Request) {
       if (String(companyErr?.code || '') === '23505') {
         return errorResponse(req, allowedOrigins, 'Company with this name already exists', 400, 'COMPANY_NAME_TAKEN');
       }
-      return errorResponse(req, allowedOrigins, `Company error: ${companyErr.message}`, 400, 'COMPANY_CREATE_FAILED');
+      return errorResponse(req, allowedOrigins, 'Company creation failed', 400, 'COMPANY_CREATE_FAILED');
     }
 
     const companyId = newCompany?.id || null;
@@ -474,7 +474,7 @@ export async function handleRegisterUserRequest(req: Request) {
       });
       await supabaseAdmin.from('companies').delete().eq('id', companyId);
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      return errorResponse(req, allowedOrigins, `Subscription error: ${ensureSubErr.message}`, 400, 'SUBSCRIPTION_INIT_FAILED');
+      return errorResponse(req, allowedOrigins, 'Subscription initialization failed', 400, 'SUBSCRIPTION_INIT_FAILED');
     }
 
     try {
@@ -545,7 +545,7 @@ export async function handleRegisterUserRequest(req: Request) {
         await supabaseAdmin.from('companies').delete().eq('id', companyId);
       }
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      return errorResponse(req, allowedOrigins, `Profile error: ${profileErr.message}`, 400, 'PROFILE_WRITE_FAILED');
+      return errorResponse(req, allowedOrigins, 'Profile save failed', 400, 'PROFILE_WRITE_FAILED');
     }
 
     if (accountType === 'solo' && companyId) {
@@ -595,7 +595,7 @@ export async function handleRegisterUserRequest(req: Request) {
         await supabaseAdmin.from('companies').delete().eq('id', companyId);
       }
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      return errorResponse(req, allowedOrigins, `Consent error: ${consentErr.message}`, 400, 'CONSENT_WRITE_FAILED');
+      return errorResponse(req, allowedOrigins, 'Consent save failed', 400, 'CONSENT_WRITE_FAILED');
     }
 
     return jsonResponse(req, allowedOrigins, {
@@ -630,7 +630,7 @@ export async function handleRegisterUserRequest(req: Request) {
     return errorResponse(
       req,
       allowedOrigins,
-      `Internal error: ${e instanceof Error ? e.message : String(e)}`,
+      'Internal error',
       500,
       'INTERNAL_ERROR',
     );

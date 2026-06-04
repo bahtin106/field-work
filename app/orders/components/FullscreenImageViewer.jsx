@@ -380,16 +380,16 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync(true);
       if (status !== 'granted') {
-        toast.error(t('viewer_permission_denied', 'Permission denied'));
+        toast.error(t('viewer_permission_denied'));
         return;
       }
       const localUri = await downloadToCache(currentUri);
       await MediaLibrary.saveToLibraryAsync(localUri);
       haptic('Medium');
-      toast.success(t('viewer_saved', 'Saved'));
+      toast.success(t('viewer_saved'));
     } catch (error) {
       console.warn('[Viewer] save:', error);
-      toast.error(t('viewer_save_error', 'Save failed'));
+      toast.error(t('viewer_save_error'));
     } finally {
       setBusy(false);
     }
@@ -458,7 +458,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       await Promise.resolve(onDelete?.(idx));
     } catch {
       setDeleting(false);
-      toast.error(t('order_toast_delete_error', 'Delete failed'));
+      toast.error(t('order_toast_delete_error'));
       return;
     }
 
@@ -504,11 +504,11 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     if (!infoOpen) return [];
     return [
       infoOpen.resolution && {
-        label: t('viewer_info_resolution', 'Resolution'),
+        label: t('viewer_info_resolution'),
         value: infoOpen.resolution,
       },
       infoOpen.size && {
-        label: t('viewer_info_size', 'Size'),
+        label: t('viewer_info_size'),
         value: infoOpen.size,
       },
     ].filter(Boolean);
@@ -610,7 +610,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                       >
                         <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
                         <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
-                          {t('camera_delete_photo', 'Delete photo')}
+                          {t('camera_delete_photo')}
                         </Text>
                       </Pressable>
                     ) : null
@@ -623,7 +623,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                         style={[ds.footerBtn, { backgroundColor: overlayBg }]}
                       >
                         <Feather name="share" size={theme.icons.sm} color={VIEWER_FG} />
-                        <Text style={ds.footerLabel}>{t('viewer_share', 'Share')}</Text>
+                        <Text style={ds.footerLabel}>{t('viewer_share')}</Text>
                       </Pressable>
                       <Pressable
                         onPress={handleRotate}
@@ -632,7 +632,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                         style={[ds.footerBtn, { backgroundColor: overlayBg }]}
                       >
                         <Feather name="rotate-cw" size={theme.icons.sm} color={VIEWER_FG} />
-                        <Text style={ds.footerLabel}>{t('viewer_rotate', 'Rotate')}</Text>
+                        <Text style={ds.footerLabel}>{t('viewer_rotate')}</Text>
                       </Pressable>
                       <Pressable
                         onPress={() => {
@@ -644,7 +644,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                         style={[ds.footerBtn, { backgroundColor: overlayBg }]}
                       >
                         <Feather name="more-horizontal" size={theme.icons.sm} color={VIEWER_FG} />
-                        <Text style={ds.footerLabel}>{t('viewer_more', 'More')}</Text>
+                        <Text style={ds.footerLabel}>{t('viewer_more')}</Text>
                       </Pressable>
                       {onDelete ? (
                         <Pressable
@@ -654,7 +654,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                         >
                           <Feather name="trash-2" size={theme.icons.sm} color={theme.colors.danger} />
                           <Text style={[ds.footerLabel, { color: theme.colors.danger }]}>
-                            {t('viewer_delete', 'Delete')}
+                            {t('viewer_delete')}
                           </Text>
                         </Pressable>
                       ) : null}
@@ -672,7 +672,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
           <BaseModal
             visible={menuOpen}
             onClose={() => setMenuOpen(false)}
-            title={t('viewer_more', 'More')}
+            title={t('viewer_more')}
             maxHeightRatio={0.35}
           >
             <Pressable
@@ -680,18 +680,18 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
               style={({ pressed }) => [ds.menuRow, ds.menuRowBorder, pressed && { opacity: 0.6 }]}
             >
               <Feather name="download" size={theme.icons.md} color={theme.colors.text} />
-              <Text style={ds.menuRowLabel}>{t('viewer_save_to_device', 'Save to device')}</Text>
+              <Text style={ds.menuRowLabel}>{t('viewer_save_to_device')}</Text>
             </Pressable>
             <Pressable onPress={handleShowInfo} style={({ pressed }) => [ds.menuRow, pressed && { opacity: 0.6 }]}>
               <Feather name="info" size={theme.icons.md} color={theme.colors.text} />
-              <Text style={ds.menuRowLabel}>{t('viewer_info_title', 'Photo info')}</Text>
+              <Text style={ds.menuRowLabel}>{t('viewer_info_title')}</Text>
             </Pressable>
           </BaseModal>
 
           <BaseModal
             visible={!!infoOpen}
             onClose={() => setInfoOpen(false)}
-            title={t('viewer_info_title', 'Photo info')}
+            title={t('viewer_info_title')}
             maxHeightRatio={0.3}
           >
             {infoRows.map((row, index) => (

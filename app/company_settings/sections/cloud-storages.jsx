@@ -17,8 +17,6 @@ import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 
-const DEFAULT_FOLDER = '/\u041c\u043e\u043d\u0438\u0442\u043e\u0440';
-
 function toYandexIntegrationMessage(rawError, t) {
   const fallback = t('toast_error');
   const message = String(rawError?.message || rawError || '').trim();
@@ -79,6 +77,7 @@ function formatStorageAmount(bytes, t) {
 export default function YandexDiskIntegrationScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
+  const defaultFolder = t('company_integrations_yandex_default_folder');
   const toast = useToast();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -91,8 +90,8 @@ export default function YandexDiskIntegrationScreen() {
 
   const [loading, setLoading] = React.useState(false);
   const [status, setStatus] = React.useState(null);
-  const [folderPath, setFolderPath] = React.useState(DEFAULT_FOLDER);
-  const [folderDraft, setFolderDraft] = React.useState(DEFAULT_FOLDER);
+  const [folderPath, setFolderPath] = React.useState(defaultFolder);
+  const [folderDraft, setFolderDraft] = React.useState(defaultFolder);
   const [provider, setProvider] = React.useState('beget_s3');
   const [profileProvider, setProfileProvider] = React.useState('beget_s3');
   const [providerModalVisible, setProviderModalVisible] = React.useState(false);
@@ -116,7 +115,7 @@ export default function YandexDiskIntegrationScreen() {
       const nextFolder =
         payload?.account?.folder_path ||
         payload?.folder_path ||
-        DEFAULT_FOLDER;
+        defaultFolder;
       setFolderPath(nextFolder);
       setFolderDraft(nextFolder);
       setProvider(payload?.media_provider || payload?.provider || 'beget_s3');
@@ -127,7 +126,7 @@ export default function YandexDiskIntegrationScreen() {
     } finally {
       setLoading(false);
     }
-  }, [canAccess, queryClient]);
+  }, [canAccess, defaultFolder, queryClient]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -204,7 +203,7 @@ export default function YandexDiskIntegrationScreen() {
   const saveFolder = React.useCallback(async () => {
     setLoading(true);
     try {
-      const normalized = String(folderDraft || '').trim() || DEFAULT_FOLDER;
+      const normalized = String(folderDraft || '').trim() || defaultFolder;
       const data = await yandexDiskIntegration('set_folder', { folder_path: normalized });
       setFolderPath(data?.folder_path || normalized);
       setFolderDraft(data?.folder_path || normalized);
@@ -215,7 +214,7 @@ export default function YandexDiskIntegrationScreen() {
     } finally {
       setLoading(false);
     }
-  }, [folderDraft, t, toast]);
+  }, [defaultFolder, folderDraft, t, toast]);
 
   const chooseProvider = React.useCallback(
     async (target, nextProvider) => {
@@ -405,7 +404,7 @@ export default function YandexDiskIntegrationScreen() {
               <View style={[styles.separator, { marginHorizontal: separatorInset }]} />
               <SelectField
                 label={t('company_integrations_yandex_folder')}
-                value={folderPath || DEFAULT_FOLDER}
+                value={folderPath || defaultFolder}
                 onPress={() => setFolderModalVisible(true)}
                 disabled={loading}
                 style={{ paddingHorizontal: separatorInset }}
@@ -497,7 +496,7 @@ export default function YandexDiskIntegrationScreen() {
       <BaseModal
         visible={folderModalVisible}
         onClose={() => {
-          setFolderDraft(folderPath || DEFAULT_FOLDER);
+          setFolderDraft(folderPath || defaultFolder);
           setFolderModalVisible(false);
         }}
         title={t('company_integrations_yandex_folder')}
@@ -508,7 +507,7 @@ export default function YandexDiskIntegrationScreen() {
                 title={t('btn_cancel')}
                 variant="secondary"
                 onPress={() => {
-                  setFolderDraft(folderPath || DEFAULT_FOLDER);
+                  setFolderDraft(folderPath || defaultFolder);
                   setFolderModalVisible(false);
                 }}
               />
@@ -528,7 +527,7 @@ export default function YandexDiskIntegrationScreen() {
           label={t('company_integrations_yandex_folder')}
           value={folderDraft}
           onChangeText={setFolderDraft}
-          placeholder={DEFAULT_FOLDER}
+          placeholder={defaultFolder}
           editable={!loading}
           returnKeyType="done"
           onSubmitEditing={saveFolder}

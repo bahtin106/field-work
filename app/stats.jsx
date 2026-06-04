@@ -3,13 +3,13 @@ import { Ionicons } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
   TextInput as RNTextInput,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -26,20 +26,21 @@ import AnimatedFullscreenModal from '../components/ui/modals/AnimatedFullscreenM
 import { useCompanySettings } from '../hooks/useCompanySettings';
 import { usePermissions } from '../lib/permissions';
 import { formatCurrencyWithOptions } from '../lib/currency';
+import { getStatusDbAliases } from '../lib/orderFilters';
 import { supabase } from '../lib/supabase';
+import { useTranslation } from '../src/i18n/useTranslation';
 import { useScreenRefreshRegistration } from '../src/shared/query/screenRefreshRegistry';
 import { useTheme } from '../theme/ThemeProvider';
 import DeferredScreen from '../src/shared/perf/DeferredScreen';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 // ------- Periods -------
 const PERIODS = [
-  { key: '7d', label: '7д', days: 7 },
-  { key: '30d', label: '30д', days: 30 },
-  { key: '90d', label: '90д', days: 90 },
-  { key: 'ytd', label: 'Год', days: null },
-  { key: 'all', label: 'Все', days: null },
+  { key: '7d', labelKey: 'stats_period_7d', days: 7 },
+  { key: '30d', labelKey: 'stats_period_30d', days: 30 },
+  { key: '90d', labelKey: 'stats_period_90d', days: 90 },
+  { key: 'ytd', labelKey: 'stats_period_year', days: null },
+  { key: 'custom', labelKey: 'stats_period_custom', days: null },
+  { key: 'all', labelKey: 'stats_period_all', days: null },
 ];
 
 // ------- Date helpers -------
@@ -60,8 +61,8 @@ const endOfDay = (d) => {
   return x;
 };
 const iso = (d) => d.toISOString();
-const fmt = (d) =>
-  d ? d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+const fmt = (d, locale) =>
+  d ? d.toLocaleDateString(locale || undefined, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const toISODate = (d) => {
   const y = d.getFullYear();
   const m = `0${d.getMonth() + 1}`.slice(-2);
@@ -75,11 +76,13 @@ const fromISODate = (s) => {
 
 // currency-aware formatter will be created inside component (needs hooks)
 
-const formatNumber = (n) => new Intl.NumberFormat('ru-RU').format(n);
+const formatNumber = (n, locale) => new Intl.NumberFormat(locale || undefined).format(n);
 
 function StatsScreenContent() {
   const { theme, mode } = useTheme();
+  const { t, locale } = useTranslation();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
 
   // company settings hook must be used inside component body
   const { settings: companySettings } = useCompanySettings();
@@ -87,7 +90,7 @@ function StatsScreenContent() {
   // currency-aware formatter (uses company currency when available)
   const fRUB = (n) => {
     const cur = companySettings?.currency || 'RUB';
-    return formatCurrencyWithOptions(Math.round(Number(n || 0)), cur, 'ru-RU', {
+    return formatCurrencyWithOptions(Math.round(Number(n || 0)), cur, locale || undefined, {
       maximumFractionDigits: 0,
     });
   };
@@ -95,21 +98,48 @@ function StatsScreenContent() {
   const TOK = React.useMemo(
     () => ({
       isDark: mode === 'dark' || theme.mode === 'dark',
-      PRIMARY: theme.colors.accent,
-      PRIMARY_LIGHT: theme.colors.accent + '20',
-      BG: theme.colors.bg,
-      SURFACE: theme.colors.card,
+      PRIMARY: theme.colors.primary,
+      PRIMARY_LIGHT: theme.colors.primary + '20',
+      BG: theme.colors.background,
+      SURFACE: theme.colors.surface,
       CARD_BORDER: theme.colors.border,
       TEXT: theme.colors.text,
-      SUBTEXT: theme.text?.muted?.color || '#6B7280',
+      SUBTEXT: theme.colors.textSecondary,
       OUTLINE: theme.colors.border,
-      SUCCESS: '#10B981',
-      WARNING: '#F59E0B',
-      ERROR: '#EF4444',
-      INFO: '#3B82F6',
+      SUCCESS: theme.colors.success,
+      WARNING: theme.colors.warning,
+      ERROR: theme.colors.danger,
+      INFO: theme.colors.info || theme.colors.primary,
     }),
     [theme, mode],
   );
+  const ui = React.useMemo(() => {
+    const screenPadding = theme.spacing.lg;
+    const cardGap = theme.spacing.md;
+    const gridWidth = Math.max(0, screenWidth - screenPadding * 2 - cardGap);
+    return {
+      screenPadding,
+      sectionGap: theme.spacing.lg,
+      cardGap,
+      cardWidth: Math.floor(gridWidth / 2),
+      cardRadius: theme.radii.xl,
+      controlRadius: theme.radii.lg,
+      controlRadiusSm: theme.radii.sm,
+      controlPaddingX: theme.spacing.md,
+      controlPaddingY: theme.spacing.sm,
+      cardPadding: theme.spacing.lg,
+      smallGap: theme.spacing.xs,
+      mediumGap: theme.spacing.md,
+      bottomInset: theme.components?.scrollView?.paddingBottom ?? theme.spacing.xl,
+      headerTitleSize: theme.typography.sizes.xxl,
+      sectionTitleSize: theme.typography.sizes.lg,
+      statValueSize: theme.typography.sizes.xl,
+      metricValueSize: theme.typography.sizes.lg,
+      bodySize: theme.typography.sizes.md,
+      smallTextSize: theme.typography.sizes.sm,
+      tinyTextSize: theme.typography.sizes.xs,
+    };
+  }, [screenWidth, theme]);
 
   const [loading, setLoading] = useState(true);
 
@@ -138,87 +168,91 @@ function StatsScreenContent() {
     () =>
       StyleSheet.create({
         container: { flex: 1, backgroundColor: TOK.BG },
-        scrollContent: { paddingBottom: 28 },
+        scrollContent: { paddingBottom: ui.bottomInset },
 
         // Header
         header: {
-          paddingHorizontal: 20,
-          paddingTop: 12,
-          paddingBottom: 16,
+          paddingHorizontal: ui.screenPadding,
+          paddingTop: theme.spacing.md,
+          paddingBottom: ui.sectionGap,
         },
         headerTitle: {
-          fontSize: 28,
+          fontSize: ui.headerTitleSize,
           fontWeight: '700',
           color: TOK.TEXT,
-          marginBottom: 4,
+          marginBottom: ui.smallGap,
         },
         headerSubtitle: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           color: TOK.SUBTEXT,
         },
 
         // Quick Stats
         quickStats: {
-          paddingHorizontal: 20,
-          marginBottom: 16,
+          paddingHorizontal: ui.screenPadding,
+          marginBottom: ui.sectionGap,
         },
         statsGrid: {
           flexDirection: 'row',
           flexWrap: 'wrap',
-          gap: 12,
+          gap: ui.cardGap,
         },
         statCard: {
-          width: (SCREEN_WIDTH - 52) / 2,
+          width: ui.cardWidth,
           backgroundColor: TOK.SURFACE,
-          borderRadius: 16,
-          padding: 16,
+          borderRadius: ui.cardRadius,
+          padding: ui.cardPadding,
           borderWidth: 1,
           borderColor: TOK.CARD_BORDER,
         },
         statValue: {
-          fontSize: 24,
+          fontSize: ui.statValueSize,
           fontWeight: '700',
           color: TOK.TEXT,
-          marginBottom: 4,
+          marginBottom: ui.smallGap,
         },
         statLabel: {
-          fontSize: 14,
+          fontSize: ui.smallTextSize,
           color: TOK.SUBTEXT,
         },
         statTrend: {
-          fontSize: 12,
-          marginTop: 4,
+          fontSize: ui.tinyTextSize,
+          marginTop: ui.smallGap,
         },
 
         // Filters
         filters: {
-          paddingHorizontal: 20,
-          marginBottom: 20,
+          paddingHorizontal: ui.screenPadding,
+          marginBottom: ui.sectionGap,
         },
         filterRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
           alignItems: 'center',
-          marginBottom: 12,
+          marginBottom: ui.mediumGap,
         },
         periodSelector: {
           flexDirection: 'row',
+          flexWrap: 'wrap',
+          gap: ui.smallGap,
           backgroundColor: TOK.SURFACE,
-          borderRadius: 12,
-          padding: 4,
+          borderRadius: ui.controlRadius,
+          padding: ui.smallGap,
           borderWidth: 1,
           borderColor: TOK.OUTLINE,
+          flexShrink: 1,
+          maxWidth: '100%',
         },
         periodButton: {
-          paddingHorizontal: 16,
-          paddingVertical: 8,
-          borderRadius: 8,
+          paddingHorizontal: ui.controlPaddingX,
+          paddingVertical: ui.controlPaddingY,
+          borderRadius: ui.controlRadiusSm,
         },
         periodButtonActive: {
           backgroundColor: TOK.PRIMARY,
         },
         periodText: {
-          fontSize: 14,
+          fontSize: ui.smallTextSize,
           fontWeight: '600',
           color: TOK.SUBTEXT,
         },
@@ -229,33 +263,33 @@ function StatsScreenContent() {
           flexDirection: 'row',
           alignItems: 'center',
           backgroundColor: TOK.SURFACE,
-          padding: 12,
-          borderRadius: 12,
+          padding: ui.mediumGap,
+          borderRadius: ui.controlRadius,
           borderWidth: 1,
           borderColor: TOK.OUTLINE,
         },
         userText: {
           flex: 1,
-          fontSize: 16,
+          fontSize: ui.bodySize,
           color: TOK.TEXT,
-          marginLeft: 8,
+          marginLeft: theme.spacing.sm,
         },
 
         // Charts & Details
         section: {
-          marginBottom: 20,
-          paddingHorizontal: 20,
+          marginBottom: ui.sectionGap,
+          paddingHorizontal: ui.screenPadding,
         },
         sectionTitle: {
-          fontSize: 20,
+          fontSize: ui.sectionTitleSize,
           fontWeight: '700',
           color: TOK.TEXT,
-          marginBottom: 16,
+          marginBottom: ui.sectionGap,
         },
         chartCard: {
           backgroundColor: TOK.SURFACE,
-          borderRadius: 16,
-          padding: 20,
+          borderRadius: ui.cardRadius,
+          padding: ui.cardPadding,
           borderWidth: 1,
           borderColor: TOK.CARD_BORDER,
         },
@@ -265,7 +299,7 @@ function StatsScreenContent() {
           flexDirection: 'row',
           justifyContent: 'space-between',
           alignItems: 'center',
-          paddingVertical: 12,
+          paddingVertical: ui.mediumGap,
           borderBottomWidth: 1,
           borderBottomColor: TOK.OUTLINE + '30',
         },
@@ -277,11 +311,11 @@ function StatsScreenContent() {
         statusDot: {
           width: 8,
           height: 8,
-          borderRadius: 4,
-          marginRight: 12,
+          borderRadius: theme.radii.xs,
+          marginRight: ui.mediumGap,
         },
         statusName: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           color: TOK.TEXT,
           flex: 1,
         },
@@ -289,38 +323,38 @@ function StatsScreenContent() {
           alignItems: 'flex-end',
         },
         statusCount: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           fontWeight: '600',
           color: TOK.TEXT,
         },
         statusAmount: {
-          fontSize: 14,
+          fontSize: ui.smallTextSize,
           color: TOK.SUBTEXT,
-          marginTop: 2,
+          marginTop: Math.max(1, Math.floor(ui.smallGap / 2)),
         },
 
         // Performance Metrics
         metricGrid: {
           flexDirection: 'row',
           flexWrap: 'wrap',
-          gap: 12,
+          gap: ui.cardGap,
         },
         metricCard: {
-          width: (SCREEN_WIDTH - 52) / 2,
+          width: ui.cardWidth,
           backgroundColor: TOK.SURFACE,
-          borderRadius: 12,
-          padding: 16,
+          borderRadius: ui.controlRadius,
+          padding: ui.cardPadding,
           borderWidth: 1,
           borderColor: TOK.CARD_BORDER,
         },
         metricValue: {
-          fontSize: 18,
+          fontSize: ui.metricValueSize,
           fontWeight: '700',
           color: TOK.TEXT,
-          marginBottom: 4,
+          marginBottom: ui.smallGap,
         },
         metricLabel: {
-          fontSize: 13,
+          fontSize: ui.smallTextSize,
           color: TOK.SUBTEXT,
         },
 
@@ -334,55 +368,55 @@ function StatsScreenContent() {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
-          paddingHorizontal: 20,
-          paddingVertical: 16,
+          paddingHorizontal: ui.screenPadding,
+          paddingVertical: ui.sectionGap,
           borderBottomWidth: 1,
           borderBottomColor: TOK.OUTLINE,
         },
         modalTitle: {
-          fontSize: 20,
+          fontSize: ui.sectionTitleSize,
           fontWeight: '700',
           color: TOK.TEXT,
         },
         closeButton: {
-          padding: 8,
+          padding: theme.spacing.sm,
         },
         searchInput: {
-          margin: 20,
-          borderRadius: 12,
-          paddingHorizontal: 16,
-          paddingVertical: 12,
+          margin: ui.screenPadding,
+          borderRadius: ui.controlRadius,
+          paddingHorizontal: ui.cardPadding,
+          paddingVertical: ui.mediumGap,
           borderWidth: 1,
           backgroundColor: TOK.SURFACE,
           borderColor: TOK.OUTLINE,
           color: TOK.TEXT,
-          fontSize: 16,
+          fontSize: ui.bodySize,
         },
         userItem: {
           flexDirection: 'row',
           alignItems: 'center',
-          paddingHorizontal: 20,
-          paddingVertical: 16,
+          paddingHorizontal: ui.screenPadding,
+          paddingVertical: ui.sectionGap,
           borderBottomWidth: 1,
           borderBottomColor: TOK.OUTLINE + '30',
         },
         userInfo: {
           flex: 1,
-          marginLeft: 12,
+          marginLeft: ui.mediumGap,
         },
         userName: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           color: TOK.TEXT,
-          marginBottom: 2,
+          marginBottom: Math.max(1, Math.floor(ui.smallGap / 2)),
         },
         userRole: {
-          fontSize: 14,
+          fontSize: ui.smallTextSize,
           color: TOK.SUBTEXT,
         },
         selectedIndicator: {
           width: 24,
           height: 24,
-          borderRadius: 12,
+          borderRadius: theme.radii.pill,
           borderWidth: 2,
           borderColor: TOK.PRIMARY,
           justifyContent: 'center',
@@ -391,38 +425,38 @@ function StatsScreenContent() {
         selectedDot: {
           width: 12,
           height: 12,
-          borderRadius: 6,
+          borderRadius: theme.radii.pill,
           backgroundColor: TOK.PRIMARY,
         },
 
         // Calendar
         calendarContainer: {
-          margin: 20,
-          borderRadius: 16,
+          margin: ui.screenPadding,
+          borderRadius: ui.cardRadius,
           overflow: 'hidden',
           borderWidth: 1,
           borderColor: TOK.OUTLINE,
         },
         rangeDisplay: {
-          padding: 20,
+          padding: ui.cardPadding,
           backgroundColor: TOK.SURFACE,
           borderBottomWidth: 1,
           borderBottomColor: TOK.OUTLINE,
         },
         rangeText: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           color: TOK.TEXT,
           textAlign: 'center',
         },
         modalActions: {
           flexDirection: 'row',
-          padding: 20,
-          gap: 12,
+          padding: ui.screenPadding,
+          gap: ui.cardGap,
         },
         actionButton: {
           flex: 1,
-          paddingVertical: 16,
-          borderRadius: 12,
+          paddingVertical: ui.sectionGap,
+          borderRadius: ui.controlRadius,
           alignItems: 'center',
         },
         primaryAction: {
@@ -434,7 +468,7 @@ function StatsScreenContent() {
           borderColor: TOK.OUTLINE,
         },
         actionText: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           fontWeight: '600',
         },
         primaryActionText: {
@@ -450,16 +484,16 @@ function StatsScreenContent() {
         // Empty State
         emptyState: {
           alignItems: 'center',
-          padding: 40,
+          padding: theme.spacing.xxxl || theme.spacing.xxl,
         },
         emptyText: {
-          fontSize: 16,
+          fontSize: ui.bodySize,
           color: TOK.SUBTEXT,
           textAlign: 'center',
-          marginTop: 12,
+          marginTop: ui.mediumGap,
         },
       }),
-    [TOK, insets.top],
+    [TOK, insets.top, theme, ui],
   );
 
   // Load profile
@@ -496,8 +530,8 @@ function StatsScreenContent() {
       .order('full_name', { ascending: true });
     if (error) throw error;
     const rows = data || [];
-    setUsers([{ id: 'ALL', full_name: 'Все сотрудники', role: 'all' }, ...rows]);
-  }, [canViewFinanceStatsAll, isManager, me?.company_id]);
+    setUsers([{ id: 'ALL', full_name: t('stats_all_employees'), role: 'all' }, ...rows]);
+  }, [canViewFinanceStatsAll, isManager, me?.company_id, t]);
 
   // Period range calculation
   const periodRange = useMemo(() => {
@@ -569,9 +603,12 @@ function StatsScreenContent() {
 
       // Calculate statistics
       const totalOrders = orders?.length || 0;
-      const completedOrders = orders?.filter((o) => o.status === 'Завершённая').length || 0;
-      const inProgressOrders = orders?.filter((o) => o.status === 'В работе').length || 0;
-      const newOrders = orders?.filter((o) => o.status === 'Новый' || o.status === 'Новая').length || 0;
+      const completedStatusAliases = getStatusDbAliases('done');
+      const inProgressStatusAliases = getStatusDbAliases('in_progress');
+      const newStatusAliases = getStatusDbAliases('new');
+      const completedOrders = orders?.filter((o) => completedStatusAliases.includes(String(o.status || '').trim())).length || 0;
+      const inProgressOrders = orders?.filter((o) => inProgressStatusAliases.includes(String(o.status || '').trim())).length || 0;
+      const newOrders = orders?.filter((o) => newStatusAliases.includes(String(o.status || '').trim())).length || 0;
 
       const getGross = (o) => Number(o.finance_gross_total ?? o.start_price ?? 0) || 0;
       const getExtraIncome = (o) => Number(o.finance_income_total ?? 0) || 0;
@@ -585,15 +622,16 @@ function StatsScreenContent() {
 
       // Status breakdown
       const statusRows = [
-        { status: 'Завершённая', color: TOK.SUCCESS },
-        { status: 'В работе', color: TOK.WARNING },
-        { status: 'Новый', color: TOK.INFO },
+        { key: 'done', aliases: completedStatusAliases, labelKey: 'stats_status_completed', color: TOK.SUCCESS },
+        { key: 'in_progress', aliases: inProgressStatusAliases, labelKey: 'stats_status_in_progress', color: TOK.WARNING },
+        { key: 'new', aliases: newStatusAliases, labelKey: 'stats_status_new', color: TOK.INFO },
       ];
       const statusBreakdown = statusRows
         .map((item) => {
-          const filtered = (orders || []).filter((o) => String(o.status || '').trim() === item.status);
+          const filtered = (orders || []).filter((o) => item.aliases.includes(String(o.status || '').trim()));
           return {
-            status: item.status,
+            status: item.key,
+            label: t(item.labelKey),
             count: filtered.length,
             color: item.color,
             amount: filtered.reduce((sum, o) => sum + getNet(o), 0),
@@ -616,7 +654,7 @@ function StatsScreenContent() {
           const key = String(entry?.recipient_user_id || 'no_recipient');
           const prev = grouped.get(key) || {
             key,
-            name: entry?.recipient?.full_name || 'Без получателя',
+            name: entry?.recipient?.full_name || t('stats_no_recipient'),
             amount: 0,
           };
           prev.amount += Number(entry?.calculated_amount || 0) || 0;
@@ -658,7 +696,7 @@ function StatsScreenContent() {
     } catch (error) {
       console.error('Error loading stats:', error);
     }
-  }, [selectedUserId, periodRange, period, TOK]);
+  }, [selectedUserId, periodRange, period, TOK, t]);
 
   // Initial load
   useEffect(() => {
@@ -705,7 +743,7 @@ function StatsScreenContent() {
   const closeUserPicker = () => setUserPickerOpen(false);
   const selectUser = (user) => {
     setSelectedUserId(user.id);
-    setSelectedUser(user.id === 'ALL' ? { full_name: 'Все сотрудники', role: 'all' } : user);
+    setSelectedUser(user.id === 'ALL' ? { full_name: t('stats_all_employees'), role: 'all' } : user);
     closeUserPicker();
   };
 
@@ -779,8 +817,8 @@ function StatsScreenContent() {
   }, [users, usersSearch]);
 
   const displayName = isManager
-    ? selectedUser?.full_name || 'Выберите сотрудника'
-    : me?.full_name || 'Моя статистика';
+    ? selectedUser?.full_name || t('stats_select_employee')
+    : me?.full_name || t('stats_my_stats');
 
   if (loading) {
     return (
@@ -792,7 +830,7 @@ function StatsScreenContent() {
 
   return (
     <View style={styles.container}>
-      <AppHeader options={{ title: 'Статистика' }} back />
+      <AppHeader options={{ title: t('stats_title') }} back />
 
       <View style={{ flex: 1 }}>
         {refreshIndicator}
@@ -803,7 +841,7 @@ function StatsScreenContent() {
         >
           {/* Header */}
           <View style={styles.header}>
-          <Text style={styles.headerTitle}>Статистика</Text>
+          <Text style={styles.headerTitle}>{t('stats_title')}</Text>
           <Text style={styles.headerSubtitle}>{displayName}</Text>
         </View>
 
@@ -811,22 +849,22 @@ function StatsScreenContent() {
         <View style={styles.quickStats}>
           <View style={styles.statsGrid}>
             <View style={styles.statCard}>
-              <Text style={styles.statValue}>{formatNumber(stats.totalOrders)}</Text>
-              <Text style={styles.statLabel}>Всего заявок</Text>
+              <Text style={styles.statValue}>{formatNumber(stats.totalOrders, locale)}</Text>
+              <Text style={styles.statLabel}>{t('stats_total_orders')}</Text>
             </View>
             <View style={styles.statCard}>
-              <Text style={styles.statValue}>{formatNumber(stats.completedOrders)}</Text>
-              <Text style={styles.statLabel}>Завершено</Text>
+              <Text style={styles.statValue}>{formatNumber(stats.completedOrders, locale)}</Text>
+              <Text style={styles.statLabel}>{t('stats_completed')}</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={[styles.statValue, { color: TOK.SUCCESS }]}>
                 {fRUB(stats.netProfit)}
               </Text>
-              <Text style={styles.statLabel}>Чистая прибыль</Text>
+              <Text style={styles.statLabel}>{t('stats_net_profit')}</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{stats.performance.avgOrdersPerDay.toFixed(1)}</Text>
-              <Text style={styles.statLabel}>В день</Text>
+              <Text style={styles.statLabel}>{t('stats_per_day')}</Text>
             </View>
           </View>
         </View>
@@ -839,10 +877,16 @@ function StatsScreenContent() {
                 <TouchableOpacity
                   key={p.key}
                   style={[styles.periodButton, period === p.key && styles.periodButtonActive]}
-                  onPress={() => setPeriod(p.key)}
+                  onPress={() => {
+                    if (p.key === 'custom') {
+                      openCustomPeriod();
+                      return;
+                    }
+                    setPeriod(p.key);
+                  }}
                 >
                   <Text style={[styles.periodText, period === p.key && styles.periodTextActive]}>
-                    {p.label}
+                    {t(p.labelKey)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -859,7 +903,7 @@ function StatsScreenContent() {
             <TouchableOpacity style={styles.userSelector} onPress={openUserPicker}>
               <Ionicons name="people" size={20} color={TOK.SUBTEXT} />
               <Text style={styles.userText} numberOfLines={1}>
-                {selectedUser?.full_name || 'Выберите сотрудника'}
+                {selectedUser?.full_name || t('stats_select_employee')}
               </Text>
               <Ionicons name="chevron-down" size={16} color={TOK.SUBTEXT} />
             </TouchableOpacity>
@@ -869,16 +913,16 @@ function StatsScreenContent() {
         {/* Status Breakdown */}
         {stats.statusBreakdown.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>По статусам</Text>
+            <Text style={styles.sectionTitle}>{t('stats_by_status')}</Text>
             <View style={styles.chartCard}>
               {stats.statusBreakdown.map((item) => (
                 <View key={item.status} style={styles.statusItem}>
                   <View style={styles.statusLeft}>
                     <View style={[styles.statusDot, { backgroundColor: item.color }]} />
-                    <Text style={styles.statusName}>{item.status}</Text>
+                    <Text style={styles.statusName}>{item.label}</Text>
                   </View>
                   <View style={styles.statusStats}>
-                    <Text style={styles.statusCount}>{formatNumber(item.count)}</Text>
+                    <Text style={styles.statusCount}>{formatNumber(item.count, locale)}</Text>
                     {item.amount > 0 && (
                       <Text style={styles.statusAmount}>{fRUB(item.amount)}</Text>
                     )}
@@ -891,43 +935,43 @@ function StatsScreenContent() {
 
         {/* Performance Metrics */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Эффективность</Text>
+          <Text style={styles.sectionTitle}>{t('stats_efficiency')}</Text>
           <View style={styles.metricGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>
                 {(stats.performance.completionRate * 100).toFixed(0)}%
               </Text>
-              <Text style={styles.metricLabel}>Выполнено</Text>
+              <Text style={styles.metricLabel}>{t('stats_completion_rate')}</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricValue}>{fRUB(stats.performance.avgRevenuePerOrder)}</Text>
-              <Text style={styles.metricLabel}>Средний чек</Text>
+              <Text style={styles.metricLabel}>{t('stats_avg_check')}</Text>
             </View>
             <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>{formatNumber(stats.inProgressOrders)}</Text>
-              <Text style={styles.metricLabel}>В работе</Text>
+              <Text style={styles.metricValue}>{formatNumber(stats.inProgressOrders, locale)}</Text>
+              <Text style={styles.metricLabel}>{t('stats_in_progress')}</Text>
             </View>
             <View style={styles.metricCard}>
-              <Text style={styles.metricValue}>{formatNumber(stats.newOrders)}</Text>
-              <Text style={styles.metricLabel}>Новые</Text>
+              <Text style={styles.metricValue}>{formatNumber(stats.newOrders, locale)}</Text>
+              <Text style={styles.metricLabel}>{t('stats_new')}</Text>
             </View>
           </View>
         </View>
 
         {/* Financial Summary */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Финансы</Text>
+          <Text style={styles.sectionTitle}>{t('stats_finance')}</Text>
           <View style={styles.chartCard}>
             <View style={styles.statusItem}>
-              <Text style={styles.statusName}>Общий доход</Text>
+              <Text style={styles.statusName}>{t('stats_total_revenue')}</Text>
               <Text style={styles.statusCount}>{fRUB(stats.totalRevenue)}</Text>
             </View>
             <View style={styles.statusItem}>
-              <Text style={styles.statusName}>Расходы</Text>
+              <Text style={styles.statusName}>{t('stats_expenses')}</Text>
               <Text style={styles.statusCount}>{fRUB(stats.totalCosts)}</Text>
             </View>
             <View style={[styles.statusItem, { borderBottomWidth: 0 }]}>
-              <Text style={[styles.statusName, { fontWeight: '700' }]}>Чистая прибыль</Text>
+              <Text style={[styles.statusName, { fontWeight: '700' }]}>{t('stats_net_profit')}</Text>
               <Text style={[styles.statusCount, { color: TOK.SUCCESS }]}>
                 {fRUB(stats.netProfit)}
               </Text>
@@ -937,7 +981,7 @@ function StatsScreenContent() {
 
         {stats.expenseByRecipient.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Расходы по получателям</Text>
+            <Text style={styles.sectionTitle}>{t('stats_expenses_by_recipient')}</Text>
             <View style={styles.chartCard}>
               {stats.expenseByRecipient.map((item, index) => (
                 <View
@@ -965,7 +1009,7 @@ function StatsScreenContent() {
       >
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Выбор сотрудника</Text>
+            <Text style={styles.modalTitle}>{t('stats_employee_picker')}</Text>
             <TouchableOpacity style={styles.closeButton} onPress={closeUserPicker}>
               <Ionicons name="close" size={24} color={TOK.TEXT} />
             </TouchableOpacity>
@@ -973,7 +1017,7 @@ function StatsScreenContent() {
 
           <RNTextInput
             style={styles.searchInput}
-            placeholder="Поиск по имени..."
+            placeholder={t('stats_search_by_name')}
             placeholderTextColor={TOK.SUBTEXT}
             value={usersSearch}
             onChangeText={setUsersSearch}
@@ -1001,7 +1045,7 @@ function StatsScreenContent() {
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Ionicons name="search" size={48} color={TOK.SUBTEXT} />
-                <Text style={styles.emptyText}>Сотрудники не найдены</Text>
+                <Text style={styles.emptyText}>{t('stats_employees_not_found')}</Text>
               </View>
             }
           />
@@ -1012,7 +1056,7 @@ function StatsScreenContent() {
       <AnimatedFullscreenModal visible={customModalOpen} animation="slide" onRequestClose={closeCustomPeriod}>
         <SafeAreaView style={styles.modal}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Выбор периода</Text>
+            <Text style={styles.modalTitle}>{t('stats_period_picker')}</Text>
             <TouchableOpacity style={styles.closeButton} onPress={closeCustomPeriod}>
               <Ionicons name="close" size={24} color={TOK.TEXT} />
             </TouchableOpacity>
@@ -1021,8 +1065,8 @@ function StatsScreenContent() {
           <View style={styles.rangeDisplay}>
             <Text style={styles.rangeText}>
               {rangeStart && rangeEnd
-                ? `${fmt(fromISODate(rangeStart))} — ${fmt(fromISODate(rangeEnd))}`
-                : 'Выберите диапазон дат'}
+                ? `${fmt(fromISODate(rangeStart), locale)} — ${fmt(fromISODate(rangeEnd), locale)}`
+                : t('stats_select_date_range')}
             </Text>
           </View>
 
@@ -1053,7 +1097,7 @@ function StatsScreenContent() {
               style={[styles.actionButton, styles.secondaryAction]}
               onPress={closeCustomPeriod}
             >
-              <Text style={[styles.actionText, styles.secondaryActionText]}>Отмена</Text>
+              <Text style={[styles.actionText, styles.secondaryActionText]}>{t('btn_cancel')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
@@ -1064,7 +1108,7 @@ function StatsScreenContent() {
               onPress={applyCustomPeriod}
               disabled={!(rangeStart && rangeEnd)}
             >
-              <Text style={[styles.actionText, styles.primaryActionText]}>Применить</Text>
+              <Text style={[styles.actionText, styles.primaryActionText]}>{t('btn_apply')}</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>

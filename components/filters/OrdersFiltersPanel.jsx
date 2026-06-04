@@ -487,7 +487,7 @@ export default function OrdersFiltersPanel({
 
           {executorOptions.length > 0 ? (
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>{t('orders_filter_executor', 'Исполнитель')}</Text>
+              <Text style={styles.sectionTitle}>{t('orders_filter_executor')}</Text>
               <TextField
                 value={executorSearch}
                 onChangeText={setExecutorSearch}

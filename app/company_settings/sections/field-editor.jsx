@@ -42,22 +42,18 @@ const ENTITY_ROWS = [
   {
     id: ENTITY_FIELD_TYPES.ORDER,
     titleKey: 'field_settings_tab_order',
-    fallbackTitle: 'Заявки',
   },
   {
     id: ENTITY_FIELD_TYPES.OBJECT,
     titleKey: 'field_settings_tab_object',
-    fallbackTitle: 'Объекты',
   },
   {
     id: ENTITY_FIELD_TYPES.EMPLOYEE,
     titleKey: 'field_settings_tab_employee',
-    fallbackTitle: 'Сотрудники',
   },
   {
     id: ENTITY_FIELD_TYPES.CLIENT,
     titleKey: 'field_settings_tab_client',
-    fallbackTitle: 'Клиенты',
   },
 ];
 
@@ -132,7 +128,7 @@ function buildEntitySaveState() {
 function getEntityMeta(entityType, t) {
   const row = ENTITY_ROWS.find((item) => item.id === entityType);
   return {
-    title: row ? t(row.titleKey, row.fallbackTitle) : String(entityType || ''),
+    title: row ? t(row.titleKey) : String(entityType || ''),
   };
 }
 
@@ -256,7 +252,7 @@ export default function FieldEditorScreen() {
   const globalSaveLockRef = React.useRef(false);
 
   React.useLayoutEffect(() => {
-    nav?.setParams?.({ headerTitle: t('settings_management_form_builder', 'Редактор полей') });
+    nav?.setParams?.({ headerTitle: t('settings_management_form_builder') });
   }, [nav, t]);
 
   React.useEffect(() => {
@@ -335,7 +331,6 @@ export default function FieldEditorScreen() {
             phase: 'error',
             errorMessage: t(
               'field_settings_min_enabled_one',
-              'Нельзя отключить все поля. Оставьте включенным хотя бы одно поле.',
             ),
           },
         }));
@@ -343,7 +338,6 @@ export default function FieldEditorScreen() {
           toast.warning(
             t(
               'field_settings_min_enabled_one',
-              'Нельзя отключить все поля. Оставьте включенным хотя бы одно поле.',
             ),
           );
           lastErrorToastRef.current[entityType] = true;
@@ -430,7 +424,7 @@ export default function FieldEditorScreen() {
           },
         }));
         toast.success(
-          t('field_settings_saved', 'Настройки полей «{entity}» сохранены').replace(
+          t('field_settings_saved').replace(
             '{entity}',
             getEntityMeta(entityType, t).title,
           ),
@@ -454,7 +448,7 @@ export default function FieldEditorScreen() {
             ...prev[entityType],
             phase: isTransient ? 'queued' : 'error',
             errorMessage: String(
-              error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
+              error?.message || t('field_settings_save_failed'),
             ),
           },
         }));
@@ -468,9 +462,8 @@ export default function FieldEditorScreen() {
               isConflict
                 ? t(
                     'field_settings_conflict',
-                    'Настройки уже изменил другой администратор. Экран обновлен до последней версии.',
                   )
-                : error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
+                : error?.message || t('field_settings_save_failed'),
             ),
           );
           lastErrorToastRef.current[entityType] = true;
@@ -493,7 +486,7 @@ export default function FieldEditorScreen() {
               ...prev[entityType],
               phase: 'error',
               errorMessage: String(
-                error?.message || t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
+                error?.message || t('field_settings_save_failed'),
               ),
             },
           }));
@@ -502,7 +495,7 @@ export default function FieldEditorScreen() {
             toast.error(
               String(
                 error?.message ||
-                  t('field_settings_save_failed', 'Не удалось сохранить настройки полей'),
+                  t('field_settings_save_failed'),
               ),
             );
             lastErrorToastRef.current[entityType] = true;
@@ -580,7 +573,6 @@ export default function FieldEditorScreen() {
           toast.warning(
             t(
               'field_settings_min_enabled_one',
-              'Нельзя отключить все поля. Оставьте включенным хотя бы одно поле.',
             ),
           );
           return;
@@ -663,10 +655,10 @@ export default function FieldEditorScreen() {
   const getEntityStatusLabel = React.useCallback((entityType) => {
     const state = saveStateMap[entityType];
     if (!state) return null;
-    if (state.phase === 'saving') return t('toast_saving', 'Сохраняем…');
-    if (state.phase === 'queued') return t('field_settings_saving_pending', 'Подготовка сохранения…');
-    if (state.phase === 'error') return t('field_settings_unsaved', 'Не сохранено');
-    if (state.phase === 'saved') return t('field_settings_saved_short', 'Сохранено');
+    if (state.phase === 'saving') return t('toast_saving');
+    if (state.phase === 'queued') return t('field_settings_saving_pending');
+    if (state.phase === 'error') return t('field_settings_unsaved');
+    if (state.phase === 'saved') return t('field_settings_saved_short');
     return null;
   }, [saveStateMap, t]);
 
@@ -720,7 +712,7 @@ export default function FieldEditorScreen() {
         field.isEnabled === false ||
         field.lockedRequired === true;
 
-      const defaultLabel = sanitizeEditorLabel(t(field.labelKey, field.fallbackLabel || field.fieldKey));
+      const defaultLabel = sanitizeEditorLabel(t(field.labelKey));
       const customLabel = String(field.customLabel || field.custom_label || '').trim();
       const translatedLabel = customLabel || defaultLabel;
       const allowCustomLabelEdit = canEditFieldLabel(entityType, field);
@@ -753,8 +745,8 @@ export default function FieldEditorScreen() {
                     accessibilityRole="button"
                     accessibilityLabel={
                       isLabelEditing
-                        ? t('btn_save', 'Save')
-                        : t('common_edit', 'Изменить')
+                        ? t('btn_save')
+                        : t('common_edit')
                     }
                   >
                     <Feather
@@ -782,7 +774,7 @@ export default function FieldEditorScreen() {
                       labelInputRef.current?.blur?.();
                     }}
                     style={s.fieldTitleInput}
-                    accessibilityLabel={t('field_settings_edit_label_input', 'Пользовательское название')}
+                    accessibilityLabel={t('field_settings_edit_label_input')}
                   />
                 ) : (
                   <Text style={[base.label, s.fieldTitle, field.isEnabled === false ? s.fieldTitleDisabled : null]}>
@@ -856,7 +848,7 @@ export default function FieldEditorScreen() {
           ) : (
             <View style={s.emptyWrap}>
               <Text style={s.muted}>
-                {t('field_settings_empty_search', 'Поля для редактирования не найдены.')}
+                {t('field_settings_empty_search')}
               </Text>
             </View>
           )}
@@ -871,7 +863,7 @@ export default function FieldEditorScreen() {
       <Screen background="background">
         <View style={s.center}>
           <Text style={s.muted}>
-            {t('field_settings_admin_only', 'Редактор полей доступен только администратору компании.')}
+            {t('field_settings_admin_only')}
           </Text>
         </View>
       </Screen>
@@ -901,8 +893,8 @@ export default function FieldEditorScreen() {
                   <Text style={s.fieldHeaderSpacer} />
                 </View>
                 <View style={s.fieldControls}>
-                  <Text style={s.fieldColumnTitle}>{t('field_settings_toggle_enabled', 'Показ')}</Text>
-                  <Text style={s.fieldColumnTitle}>{t('field_settings_toggle_required', 'Обязательно')}</Text>
+                  <Text style={s.fieldColumnTitle}>{t('field_settings_toggle_enabled')}</Text>
+                  <Text style={s.fieldColumnTitle}>{t('field_settings_toggle_required')}</Text>
                 </View>
               </View>
               <View style={base.sep} />
@@ -937,7 +929,7 @@ export default function FieldEditorScreen() {
                         isExpanded ? s.entityToggleLabelExpanded : null,
                       ]}
                     >
-                      {t(row.titleKey, row.fallbackTitle)}
+                      {t(row.titleKey)}
                     </Text>
                     {statusLabel ? (
                       <Text
@@ -968,7 +960,7 @@ export default function FieldEditorScreen() {
       </KeyboardAwareScrollView>
       <View style={s.footerBar}>
         <Button
-          title={isSavingAny ? t('btn_saving', 'Saving...') : t('btn_save', 'Save')}
+          title={isSavingAny ? t('btn_saving') : t('btn_save')}
           onPress={() => {
             void handleSaveAll();
           }}

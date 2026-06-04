@@ -49,6 +49,7 @@ import {
 } from '../../src/features/fieldSettings/catalog';
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import { ensureRequestPrefetch } from '../../src/features/requests/queries';
+import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import {
   applyOrderRelationFilters,
   hasRelationFilters,
@@ -65,7 +66,7 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const LIST_CACHE_MAX_ENTRIES = 24;
-const DEFAULT_MY_ORDERS_PAGE_SIZE = 80;
+const DEFAULT_MY_ORDERS_PAGE_SIZE = 30;
 const MY_ORDERS_LIST_CACHE_STORAGE_PREFIX = 'orders.my.listCache.v3';
 const MY_ORDERS_CACHE_PERSIST_DEBOUNCE_MS = 350;
 const MY_ORDERS_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -171,12 +172,6 @@ function MyOrdersContent() {
         container: {
           padding: 16,
           paddingBottom: 40,
-        },
-        centered: {
-          flex: 1,
-          justifyContent: 'center',
-          alignItems: 'center',
-          paddingHorizontal: theme.spacing.lg,
         },
         emptyWrap: {
           paddingVertical: Number(theme.spacing.xl ?? 24) * 1.5,
@@ -447,10 +442,10 @@ function MyOrdersContent() {
         .filter(Boolean);
       if (labels.length) {
         fullParts.push(
-          summarizeFilterPart({ label: t('common_client', 'Клиент'), values: labels, countWhenMany: false }),
+          summarizeFilterPart({ label: t('common_client'), values: labels, countWhenMany: false }),
         );
         compactParts.push(
-          summarizeFilterPart({ label: t('common_client', 'Клиент'), values: labels, countWhenMany: true }),
+          summarizeFilterPart({ label: t('common_client'), values: labels, countWhenMany: true }),
         );
       }
     }
@@ -580,6 +575,10 @@ function MyOrdersContent() {
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
       return prefetchData;
     }
+    const cachedDefault = listCacheMy[defaultListCacheKey];
+    if (Array.isArray(cachedDefault) && cachedDefault.length > 0) {
+      return cachedDefault;
+    }
     return [];
   });
   const [filter, setFilter] = useState('all');
@@ -588,14 +587,12 @@ function MyOrdersContent() {
     if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
       return false;
     }
-    const key = 'feed';
-    const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
-    return listCacheMy[cacheKey] ? false : true;
+    return !Array.isArray(listCacheMy[defaultListCacheKey]);
   });
   const [loadError, setLoadError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
-  const hydratedRef = useRef(false);
+  const hydratedRef = useRef(Array.isArray(orders) && orders.length > 0);
   const ordersCountRef = useRef(Array.isArray(orders) ? orders.length : 0);
   useEffect(() => {
     ordersCountRef.current = Array.isArray(orders) ? orders.length : 0;
@@ -719,6 +716,17 @@ function MyOrdersContent() {
     return startFpsProbe('MyOrders', 3500);
   }, []);
 
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      preloadOrderDetailsScreen().catch(() => {});
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, []);
+
   const feedState = !feedHasAny
     ? 'none'
     : feedFingerprint && feedFingerprint === feedSeenFingerprint
@@ -802,6 +810,7 @@ function MyOrdersContent() {
   // Prefetch feed metadata from the first page when the screen is focused
   useEffect(() => {
     if (!isFocused) return;
+    if (loading && orders.length === 0) return;
     const prefetchFeed = async () => {
       const cached = listCacheMy.feed;
       if (Array.isArray(cached) && cached.length) {
@@ -809,8 +818,11 @@ function MyOrdersContent() {
         return;
       }
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData?.session?.user?.id;
+      let uid = String(auth.user?.id || auth.profile?.id || '').trim();
+      if (!uid) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        uid = String(sessionData?.session?.user?.id || '').trim();
+      }
       if (!uid) return;
 
       const feedStatusAliases = getStatusDbAliases('feed');
@@ -832,8 +844,15 @@ function MyOrdersContent() {
       }
     };
 
-    prefetchFeed();
-  }, [isFocused, setListCacheEntry, updateFeedMeta, listCacheMy, FEED_PREVIEW_SIZE]);
+    const task = InteractionManager.runAfterInteractions(() => {
+      prefetchFeed().catch(() => {});
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, [auth.profile?.id, auth.user?.id, isFocused, loading, orders.length, setListCacheEntry, updateFeedMeta, listCacheMy, FEED_PREVIEW_SIZE]);
 
   // Mark feed as seen after opening the feed tab
   useEffect(() => {
@@ -894,9 +913,12 @@ function MyOrdersContent() {
         setLoading(true);
       }
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!alive) return;
-      const uid = sessionData?.session?.user?.id;
+      let uid = String(auth.user?.id || auth.profile?.id || '').trim();
+      if (!uid) {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (!alive) return;
+        uid = String(sessionData?.session?.user?.id || '').trim();
+      }
       if (!uid) {
         setOrders([]);
         setTotalOrdersCount(0);
@@ -979,12 +1001,12 @@ function MyOrdersContent() {
         });
       };
 
-      const { data, error, count } = await buildOrdersQuery({ count: 'exact' })
+      const { data, error } = await buildOrdersQuery()
         .order('time_window_start', { ascending: false })
         .range(0, PAGE_SIZE - 1);
       if (!alive) return;
       if (error || !Array.isArray(data)) {
-        setLoadError(t('refresh_failed', 'Не удалось обновить данные'));
+        setLoadError(t('refresh_failed'));
         setLoadingMore(false);
         setLoading(false);
         resolveRefreshWaiters();
@@ -992,12 +1014,12 @@ function MyOrdersContent() {
       }
 
       let aggregated = data.map((o) => ({ ...o, time_window_start: o.time_window_start ?? null }));
-      const total = Number.isFinite(count) ? Number(count) : aggregated.length;
+      let total = aggregated.length >= PAGE_SIZE ? aggregated.length + 1 : aggregated.length;
       let nextPageInFlight = false;
 
       setOrders(aggregated);
       setTotalOrdersCount(total);
-      setHasMoreOrders(total > aggregated.length);
+      setHasMoreOrders(aggregated.length >= PAGE_SIZE);
       setListCacheEntry(cacheKey, aggregated);
       seenFilterRef.current.add(cacheKey);
       if (key === 'feed') updateFeedMeta(aggregated);
@@ -1017,15 +1039,18 @@ function MyOrdersContent() {
             .range(from, to);
           if (!alive) return;
           if (chunkError || !Array.isArray(chunkData) || chunkData.length === 0) {
+            total = aggregated.length;
+            setTotalOrdersCount(total);
             setHasMoreOrders(false);
             return;
           }
           const chunk = chunkData.map((o) => ({ ...o, time_window_start: o.time_window_start ?? null }));
           aggregated = [...aggregated, ...chunk];
+          total = chunk.length >= PAGE_SIZE ? Math.max(total, aggregated.length + 1) : aggregated.length;
           setOrders(aggregated);
           setListCacheEntry(cacheKey, aggregated);
-          setTotalOrdersCount(Math.max(total, aggregated.length));
-          setHasMoreOrders(total > aggregated.length);
+          setTotalOrdersCount(total);
+          setHasMoreOrders(chunk.length >= PAGE_SIZE);
           if (key === 'feed') updateFeedMeta(aggregated);
           if (key === 'all') queryClient.setQueryData(recentOrdersQueryKey, aggregated.slice(0, PAGE_SIZE));
         } finally {
@@ -1035,8 +1060,8 @@ function MyOrdersContent() {
       };
 
       setListCacheEntry(cacheKey, aggregated);
-      setTotalOrdersCount(Math.max(total, aggregated.length));
-      setHasMoreOrders(total > aggregated.length);
+      setTotalOrdersCount(total);
+      setHasMoreOrders(aggregated.length >= PAGE_SIZE);
       if (key === 'feed') updateFeedMeta(aggregated);
       if (key === 'all') queryClient.setQueryData(recentOrdersQueryKey, aggregated.slice(0, PAGE_SIZE));
       setLoadError('');
@@ -1062,7 +1087,7 @@ function MyOrdersContent() {
       fetchNextOrdersPageRef.current = null;
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, PAGE_SIZE, queryClient, recentOrdersQueryKey, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, resolveRefreshWaiters, setListCacheEntry, t, updateFeedMeta, useWorkTypesFlag]);
+  }, [auth.profile?.id, auth.user?.id, filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, PAGE_SIZE, queryClient, recentOrdersQueryKey, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, resolveRefreshWaiters, setListCacheEntry, t, updateFeedMeta, useWorkTypesFlag]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -1083,7 +1108,7 @@ function MyOrdersContent() {
           texts: [
             resolveRequestTitle(o, {
               fallbackDate: o?.time_window_start || o?.created_at,
-              prefix: t('order_auto_title_prefix', 'Заявка от'),
+              prefix: t('order_auto_title_prefix'),
             }),
             o?.fio,
             o?.region,
@@ -1105,10 +1130,10 @@ function MyOrdersContent() {
 
   const sortOptions = useMemo(
     () => [
-      { id: 'date_desc', label: t('orders_sort_date_desc', 'Сначала новые') },
-      { id: 'date_asc', label: t('orders_sort_date_asc', 'Сначала старые') },
-      { id: 'amount_desc', label: t('orders_sort_amount_desc', 'Сумма: по убыванию') },
-      { id: 'amount_asc', label: t('orders_sort_amount_asc', 'Сумма: по возрастанию') },
+      { id: 'date_desc', label: t('orders_sort_date_desc') },
+      { id: 'date_asc', label: t('orders_sort_date_asc') },
+      { id: 'amount_desc', label: t('orders_sort_amount_desc') },
+      { id: 'amount_asc', label: t('orders_sort_amount_asc') },
     ],
     [t],
   );
@@ -1225,16 +1250,18 @@ function MyOrdersContent() {
           id: orderId,
         }));
       }
-      const registry = getPrefetchRegistry();
-      registry
-        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
-        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
           returnTo: '/orders/my-orders',
           returnParams: JSON.stringify(returnParamsRef.current),
         },
+      });
+      InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        registry
+          .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+          .catch(() => {});
       });
     },
     [queryClient, router, workTypeOptions],
@@ -1407,7 +1434,7 @@ function MyOrdersContent() {
             const resetValues = filters.reset();
             await filters.apply(resetValues);
           }}
-          metaText={`${t('common_shown', 'Показано')} ${sortedFilteredOrders.length} ${t('common_of', 'из')} ${Math.max(totalOrdersCount, orders.length)}`}
+          metaText={`${t('common_shown')} ${sortedFilteredOrders.length} ${t('common_of')} ${Math.max(totalOrdersCount, orders.length)}`}
         />
       </View>
     ),
@@ -1447,29 +1474,29 @@ function MyOrdersContent() {
       if (loadError) {
         return (
           <View style={styles.emptyWrap}>
-            <Text style={styles.emptyTitle}>{t('refresh_failed', 'Не удалось обновить данные')}</Text>
+            <Text style={styles.emptyTitle}>{t('refresh_failed')}</Text>
             <Text style={styles.emptyText}>{loadError}</Text>
             <Pressable
               onPress={retryLoad}
               style={({ pressed }) => [styles.retryButton, pressed && { opacity: 0.88 }]}
               accessibilityRole="button"
             >
-              <Text style={styles.retryText}>{t('btn_retry', 'Повторить')}</Text>
+              <Text style={styles.retryText}>{t('btn_retry')}</Text>
             </Pressable>
           </View>
         );
       }
 
       const title = hasSearchQuery
-        ? t('orders_empty_search_title', 'Ничего не найдено')
+        ? t('orders_empty_search_title')
         : hasActiveFilters || hasActiveTabFilter
-          ? t('orders_empty_filtered_title', 'Заявок по этим условиям нет')
-          : t('orders_empty_title', 'Заявок пока нет');
+          ? t('orders_empty_filtered_title')
+          : t('orders_empty_title');
       const subtitle = hasSearchQuery
-        ? t('orders_empty_search_subtitle', 'Проверьте текст поиска или очистите строку.')
+        ? t('orders_empty_search_subtitle')
         : hasActiveFilters || hasActiveTabFilter
-          ? t('orders_empty_filtered_subtitle', 'Измените фильтры или выберите другой статус.')
-          : t('orders_empty', 'Заявок пока нет');
+          ? t('orders_empty_filtered_subtitle')
+          : t('orders_empty');
 
       return (
         <View style={styles.emptyWrap}>
@@ -1530,24 +1557,6 @@ function MyOrdersContent() {
       () => refreshCurrentList(),
       true,
   );
-
-  if (loading && orders.length === 0) {
-    return (
-      <Screen scroll={false} headerOptions={{ headerShown: false }}>
-        <AppHeader
-          back
-          onBackPress={handleBackPress}
-          options={{
-            headerTitleAlign: 'left',
-            title: t('routes.orders/my-orders'),
-          }}
-        />
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-        </View>
-      </Screen>
-    );
-  }
 
   return (
     <Screen scroll={false} headerOptions={{ headerShown: false }}>

@@ -263,10 +263,11 @@ export async function handleRegisterRequestCode(req: Request): Promise<Response>
       expires_in_seconds: Number(sendPayload?.expires_in_seconds || 600),
     });
   } catch (error) {
+    console.error('[register-request-code]', String((error as Error)?.message || error || 'Internal error'));
     return json({
       ok: false,
       code: 'INTERNAL_ERROR',
-      message: String((error as Error)?.message || 'Internal error'),
+      message: 'Internal error',
     }, 500);
   }
 }

@@ -1,3 +1,5 @@
+import { t as T } from '../../i18n';
+
 function pad2(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return '00';
@@ -15,7 +17,8 @@ function normalizeRawTitle(value) {
 }
 
 export function buildAutoRequestTitle(dateInput = null, options = {}) {
-  const prefix = String(options?.prefix || 'Request').trim() || 'Request';
+  const defaultPrefix = T('order_auto_title_prefix');
+  const prefix = String(options?.prefix || defaultPrefix).trim() || defaultPrefix;
   const date = toValidDate(dateInput) || new Date();
   const stamp = `${pad2(date.getDate())}.${pad2(date.getMonth() + 1)}.${date.getFullYear()} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
   return `${prefix} ${stamp}`.trim();

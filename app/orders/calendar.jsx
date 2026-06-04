@@ -5,7 +5,6 @@ export default function CalendarRoute() {
     <LazyRouteScreen
       load={() => import('../../screens/orders/CalendarScreen')}
       titleKey="routes.orders/calendar"
-      titleFallback="Календарь"
     />
   );
 }

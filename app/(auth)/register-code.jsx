@@ -330,7 +330,7 @@ export default function RegisterCodeScreen() {
             throw new Error(t('register_code_verify_required'));
           }
           if (/EMAIL_SERVICE_URL|SERVER_MISCONFIGURED/i.test(details.message || '')) {
-            throw new Error('Сервис отправки писем временно недоступен. Попробуйте позже');
+            throw new Error(t('register_error_email_service_unavailable'));
           }
           if (details.message) {
             throw new Error(details.message);

@@ -1,4 +1,5 @@
 ﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -407,14 +408,18 @@ async function createYandexFolder(accessToken: string, path: string) {
   }
 }
 
-async function ensureFolderTree(accessToken: string, fullPath: string) {
-  const normalized = normalizeFolderPath(fullPath);
-  const parts = normalized.split('/').filter(Boolean);
-  let current = '';
-  for (const part of parts) {
-    current = `${current}/${part}`;
-    await createYandexFolder(accessToken, current);
-  }
+async function ensureFolderTree(
+  accessToken: string,
+  fullPath: string,
+  options: { force?: boolean } = {},
+) {
+  await ensureYandexFolderTreeCached({
+    accessToken,
+    fullPath,
+    normalizeFolderPath,
+    createFolder: (path) => createYandexFolder(accessToken, path),
+    force: options.force === true,
+  });
 }
 
 function parentPath(path: string) {
@@ -673,7 +678,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
           linkRes.status === 404 ||
           String(text || '').toLowerCase().includes('diskpathdoesntexistserror');
         if (isMissing) {
-          await ensureFolderTree(accessToken, folder);
+          await ensureFolderTree(accessToken, folder, { force: true });
           linkRes = await fetch(
             `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
             { headers: { Authorization: `OAuth ${accessToken}` } },
@@ -789,7 +794,7 @@ export async function handleYandexDiskMediaRequest(req: Request) {
       } catch (e) {
         if (!isYandexPathMissingError(e)) throw e;
         // Folder may be removed externally or by old structure cleanup; recreate and retry once.
-        await ensureFolderTree(accessToken, folder);
+        await ensureFolderTree(accessToken, folder, { force: true });
         await uploadToYandex(accessToken, filePath, bytes, mime);
       }
       const sourceUrl = internalUrlFromPath(filePath);

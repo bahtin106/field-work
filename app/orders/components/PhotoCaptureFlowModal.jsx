@@ -280,19 +280,19 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
   if (!permission || !permission.granted) {
     const canAskAgain = permission?.canAskAgain !== false;
     return (
-      <BaseModal visible={visible} onClose={onClose} title={t('order_photos_no_camera_title', 'Нет доступа к камере')}>
+      <BaseModal visible={visible} onClose={onClose} title={t('order_photos_no_camera_title')}>
         <View style={s.permContent}>
           <Feather name="camera-off" size={theme.icons.lg * 2} color={theme.colors.textSecondary} />
           <Text style={s.permHint}>
-            {t('order_photos_no_camera_hint', 'Разрешите доступ к камере в настройках устройства')}
+            {t('order_photos_no_camera_hint')}
           </Text>
           <Button
             variant="primary"
             size="md"
             title={
               canAskAgain
-                ? t('order_photos_camera_grant', 'Разрешить доступ')
-                : t('order_photos_camera_settings', 'Открыть настройки')
+                ? t('order_photos_camera_grant')
+                : t('order_photos_camera_settings')
             }
             onPress={() => {
               requestPermission()
@@ -308,7 +308,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
           <Button
             variant="secondary"
             size="md"
-            title={t('order_photos_close', 'Закрыть')}
+            title={t('order_photos_close')}
             onPress={onClose}
           />
         </View>
@@ -355,7 +355,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
               ) : (
                 <View style={s.emptyStrip}>
                   <Text style={s.emptyStripText}>
-                    {t('camera_no_photos_yet', 'Сделайте фото')}
+                    {t('camera_no_photos_yet')}
                   </Text>
                 </View>
               )}
@@ -366,7 +366,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
                 <Pressable
                   onPress={handleDiscard}
                   style={s.controlBtn}
-                  accessibilityLabel={t('order_photos_close', 'Закрыть')}
+                  accessibilityLabel={t('order_photos_close')}
                 >
                   <Feather name="x" size={theme.icons.lg} color={theme.colors.onPrimary} />
                 </Pressable>
@@ -375,7 +375,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
                 <Pressable
                   onPress={toggleCameraFacing}
                   style={s.controlBtn}
-                  accessibilityLabel={t('camera_switch', 'Сменить камеру')}
+                  accessibilityLabel={t('camera_switch')}
                 >
                   <Feather name="refresh-ccw" size={theme.icons.md} color={theme.colors.onPrimary} />
                 </Pressable>
@@ -396,7 +396,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
                     torch && s.controlBtnActive,
                     cameraFacing !== 'back' && s.controlBtnDisabled,
                   ]}
-                  accessibilityLabel={t('camera_flash', 'Вспышка')}
+                  accessibilityLabel={t('camera_flash')}
                 >
                   <Feather
                     name={torch ? 'zap' : 'zap-off'}
@@ -410,7 +410,7 @@ export default function PhotoCaptureFlowModal({ visible, onClose, onSave }) {
                   onPress={handleConfirm}
                   disabled={photos.length === 0}
                   style={[s.controlBtn, s.confirmBtn, photos.length === 0 && s.controlBtnDisabled]}
-                  accessibilityLabel={t('camera_confirm', 'Подтвердить')}
+                  accessibilityLabel={t('camera_confirm')}
                 >
                   <Feather name="check" size={theme.icons.lg} color={theme.colors.onPrimary} />
                 </Pressable>

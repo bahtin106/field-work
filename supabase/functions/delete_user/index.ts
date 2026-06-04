@@ -16,6 +16,19 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function toPublicDeleteError(error: unknown): string {
+  const message = String((error as Error)?.message || 'Unknown error');
+  if (
+    /^(user_id is required|Missing auth token|Auth failed|Profile not found|Access denied|Cannot delete yourself|User not found|Successor is required for delete|Successor not found|Successor is blocked)$/i.test(
+      message,
+    )
+  ) {
+    return message;
+  }
+  console.error('[delete_user]', message);
+  return 'Delete user failed';
+}
+
 export async function handleDeleteUserRequest(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') {
@@ -121,7 +134,7 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
       status: 200,
     });
   } catch (e: any) {
-    return new Response(JSON.stringify({ ok: false, message: e?.message ?? 'Unknown error' }), {
+    return new Response(JSON.stringify({ ok: false, message: toPublicDeleteError(e) }), {
       headers: { 'Content-Type': 'application/json', ...cors },
       status: 200,
     });

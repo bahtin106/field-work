@@ -7,23 +7,9 @@ import appReadyState from '../../lib/appReadyState';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useTheme } from '../../theme/ThemeProvider';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useUserPermissions } from '../hooks/useUserPermissions';
 import { useToast } from '../ui/ToastProvider';
-// --- i18n labels (safe runtime require) ---
-let __labels = null;
-try {
-  __labels = require('../../i18n/labels');
-} catch {}
-const t = (key, fallback) => {
-  const mod = __labels || {};
-  if (typeof mod.t === 'function') return mod.t(key, fallback);
-  if (typeof mod.getLabel === 'function') return mod.getLabel(key, fallback);
-  const dict = mod.labels || mod.default || mod || {};
-  const val = String(key)
-    .split('.')
-    .reduce((acc, k) => (acc && acc[k] != null ? acc[k] : undefined), dict);
-  return val == null || val === '' ? (fallback ?? key) : String(val);
-};
 
 // -------- helpers --------
 
@@ -78,6 +64,7 @@ function BottomNavInner() {
   const pathname = usePathname() || '';
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const { user } = useAuthContext();
   const { setAnchorOffset } = useToast();
   const { role, canAll, roleLoading, canAllLoading } = useUserPermissions();
@@ -173,8 +160,8 @@ function BottomNavInner() {
     // Показываем строго когда главная страница тоже готова
     if (dataReady && appReady) {
       // Небольшая задержка для плавности (синхронно с анимацией главной)
-      const t = setTimeout(() => setNavVisible(true), 0);
-      return () => clearTimeout(t);
+      const timer = setTimeout(() => setNavVisible(true), 0);
+      return () => clearTimeout(timer);
     }
   }, [navVisible, roleLoading, canAllLoading, role, appReady]);
 
@@ -219,7 +206,7 @@ function BottomNavInner() {
       >
         <TabButton
           key="tab-home"
-          label={t('bottomNav.home', 'Главная')}
+          label={t('bottomNav.home')}
           active={activeKey === 'home'}
           onPress={() => {
             if (activeKey !== 'home') navigateTab(PATHS.home, { dismiss: true });
@@ -232,7 +219,7 @@ function BottomNavInner() {
           <>
             <TabButton
               key="tab-orders"
-              label={t('bottomNav.my', 'Мои')}
+              label={t('bottomNav.my')}
               active={activeKey === 'orders'}
               onPress={() => {
                 if (activeKey !== 'orders') navigateTab(PATHS.orders);
@@ -242,7 +229,7 @@ function BottomNavInner() {
             />
             <TabButton
               key="tab-all"
-              label={t('bottomNav.all', 'Все')}
+              label={t('bottomNav.all')}
               active={activeKey === 'all'}
               onPress={() => {
                 if (activeKey !== 'all') navigateTab(PATHS.all);
@@ -254,7 +241,7 @@ function BottomNavInner() {
         ) : (
           <TabButton
             key="tab-orders-only"
-            label={t('bottomNav.myOrders', 'Мои заявки')}
+            label={t('bottomNav.myOrders')}
             active={activeKey === 'orders'}
             onPress={() => {
               if (activeKey !== 'orders') navigateTab(PATHS.orders);
@@ -266,7 +253,7 @@ function BottomNavInner() {
 
         <TabButton
           key="tab-calendar"
-          label={t('bottomNav.calendar', 'Календарь')}
+          label={t('bottomNav.calendar')}
           active={activeKey === 'calendar'}
           onPress={() => {
             if (activeKey !== 'calendar') navigateTab(PATHS.calendar);

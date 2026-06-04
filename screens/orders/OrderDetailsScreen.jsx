@@ -4,7 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ru } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, usePathname, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -45,11 +45,6 @@ import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
 import { mapStatusToDb } from '../../lib/orderFilters';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
-
-import * as ImageManipulator from 'expo-image-manipulator';
-import { downloadAsync, cacheDirectory } from 'expo-file-system/legacy';
-import { encode as encodeBase64 } from 'base64-arraybuffer';
-import { prepareImageForUpload, runMediaUploadQueue, uploadPreparedImageFile } from '../../src/shared/media/imagePipeline';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
@@ -117,11 +112,71 @@ import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetr
 import { useTheme } from '../../theme/ThemeProvider';
 import { useQueryClient } from '@tanstack/react-query';
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
-import OrderPhotosModal from '../../app/orders/components/OrderPhotosModal';
-import FullscreenImageViewer from '../../app/orders/components/FullscreenImageViewer';
 import { useToast } from '../../components/ui/ToastProvider';
 import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
 import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
+
+const OrderPhotosModal = lazy(() => import('../../app/orders/components/OrderPhotosModal'));
+const FullscreenImageViewer = lazy(() => import('../../app/orders/components/FullscreenImageViewer'));
+
+let imageManipulatorPromise = null;
+let legacyFileSystemPromise = null;
+let base64ArrayBufferPromise = null;
+let imagePipelinePromise = null;
+
+async function loadImageManipulator() {
+  if (!imageManipulatorPromise) {
+    imageManipulatorPromise = import('expo-image-manipulator');
+  }
+  const mod = await imageManipulatorPromise;
+  return mod?.default?.manipulateAsync ? mod.default : mod;
+}
+
+async function loadLegacyFileSystem() {
+  if (!legacyFileSystemPromise) {
+    legacyFileSystemPromise = import('expo-file-system/legacy');
+  }
+  const mod = await legacyFileSystemPromise;
+  return mod?.default?.downloadAsync ? mod.default : mod;
+}
+
+async function loadBase64ArrayBuffer() {
+  if (!base64ArrayBufferPromise) {
+    base64ArrayBufferPromise = import('base64-arraybuffer');
+  }
+  const mod = await base64ArrayBufferPromise;
+  return mod?.default?.encode ? mod.default : mod;
+}
+
+async function loadImagePipeline() {
+  if (!imagePipelinePromise) {
+    imagePipelinePromise = import('../../src/shared/media/imagePipeline');
+  }
+  return imagePipelinePromise;
+}
+
+async function encodeBase64(arrayBuffer) {
+  const mod = await loadBase64ArrayBuffer();
+  if (typeof mod?.encode !== 'function') {
+    throw new Error('base64 encoder is unavailable');
+  }
+  return mod.encode(arrayBuffer);
+}
+
+async function prepareImageForUpload(...args) {
+  const mod = await loadImagePipeline();
+  return mod.prepareImageForUpload(...args);
+}
+
+async function runMediaUploadQueue(...args) {
+  const mod = await loadImagePipeline();
+  return mod.runMediaUploadQueue(...args);
+}
+
+async function uploadPreparedImageFile(...args) {
+  const mod = await loadImagePipeline();
+  return mod.uploadPreparedImageFile(...args);
+}
 
 const PHOTO_MAX_WIDTH = 1280;
 const PHOTO_COMPRESS_QUALITY = 0.8;
@@ -153,11 +208,12 @@ async function resolveRotateSourceUri(sourceUri, filePrefix) {
   if (!source) throw new Error('rotate source uri is empty');
   if (LOCAL_MEDIA_URI_RE.test(source)) return source;
 
-  const targetDir = cacheDirectory || '';
+  const fileSystem = await loadLegacyFileSystem();
+  const targetDir = fileSystem.cacheDirectory || '';
   if (!targetDir) throw new Error('rotate cache directory is unavailable');
 
   const localPath = `${targetDir}${filePrefix}_${Date.now()}.jpg`;
-  const downloaded = await downloadAsync(source, localPath);
+  const downloaded = await fileSystem.downloadAsync(source, localPath);
   const localUri = downloaded?.uri;
   if (!localUri) throw new Error('rotate source download returned empty uri');
   return localUri;
@@ -447,7 +503,7 @@ function FinanceSummaryIconButton({ icon, onPress, accessibilityLabel, styles })
 function OrderDetailsContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
-  const titlePrefix = useMemo(() => t('order_auto_title_prefix', 'Заявка от'), [t]);
+  const titlePrefix = useMemo(() => t('order_auto_title_prefix'), [t]);
   const toast = useToast();
   const { has, loading: permsLoading } = usePermissions();
   const { settings: companySettings } = useCompanySettings();
@@ -681,7 +737,7 @@ function OrderDetailsContent() {
       const customLabel = String(field?.customLabel || field?.custom_label || '').trim();
       if (customLabel) return customLabel;
       if (field?.labelKey) {
-        return t(field.labelKey, field?.fallbackLabel || fallbackLabel || String(fieldKey || ''));
+        return t(field.labelKey);
       }
       return fallbackLabel || String(fieldKey || '');
     },
@@ -907,7 +963,7 @@ function OrderDetailsContent() {
     );
   }, []);
   const formatFinancePhotoCount = useCallback(
-    (count) => t('order_photos_count', '{count} фото').replace('{count}', String(Number(count) || 0)),
+    (count) => t('order_photos_count').replace('{count}', String(Number(count) || 0)),
     [t],
   );
 
@@ -1090,12 +1146,12 @@ function OrderDetailsContent() {
       }
 
       return missing.length
-        ? { ok: false, msg: `Заполните обязательные поля: ${missing.join(', ')}` }
+        ? { ok: false, msg: `${t('field_settings_required_fill')}: ${missing.join(', ')}` }
         : { ok: true };
     } catch {
       return { ok: true };
     }
-  }, [schemaEdit, getValueForField, toFeed]);
+  }, [schemaEdit, getValueForField, toFeed, t]);
 
   const parseMoney = useCallback((s) => {
     const v = String(s ?? '')
@@ -1205,7 +1261,7 @@ function OrderDetailsContent() {
         showSuccessToast(t('toast_copied'));
         return true;
       } catch {
-        showToast(t('toast_copy_phone_fail', 'Не удалось скопировать'));
+        showToast(t('toast_copy_phone_fail'));
         return false;
       }
     },
@@ -1408,7 +1464,7 @@ function OrderDetailsContent() {
       }
       setOrderReady(true);
 
-      // Media resolution + sync + secondary data вЂ” all in parallel, non-blocking
+
       const media = orderMediaRef.current;
       const bgTasks = [];
 
@@ -1419,7 +1475,7 @@ function OrderDetailsContent() {
         }).catch(() => {})
       );
 
-      // 5b. Storage photo sync вЂ” only remove photos missing from storage, never add orphans
+
       bgTasks.push(
         media.syncPhotos(effectiveOrder.id).then((fresh) => {
           if (!fresh) return;
@@ -1473,7 +1529,7 @@ function OrderDetailsContent() {
           .catch(() => {})
       );
 
-      // Fire all background tasks in parallel вЂ” screen is already visible
+
       await Promise.allSettled(bgTasks);
 
       initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
@@ -1625,7 +1681,7 @@ function OrderDetailsContent() {
             createdAt: new Date().toISOString(),
           });
           await writeOrderPhotoUploadQueue(queueItems);
-          if (!silent) showToast('Фото сохранено офлайн. Загрузим автоматически при появлении интернета.');
+          if (!silent) showToast(t('order_photo_saved_offline'));
           return true;
         }
 
@@ -1682,7 +1738,7 @@ function OrderDetailsContent() {
               data = await orderMediaStorage('upload', {
                 order_id: orderId,
                 category,
-                file_base64: encodeBase64(fallbackBuffer),
+                file_base64: await encodeBase64(fallbackBuffer),
                 mime: PHOTO_MIME_TYPE,
               });
             }
@@ -1743,7 +1799,7 @@ function OrderDetailsContent() {
               data = await yandexDiskMedia('upload', {
                 order_id: orderId,
                 category,
-                file_base64: encodeBase64(fallbackBuffer),
+                file_base64: await encodeBase64(fallbackBuffer),
                 mime: PHOTO_MIME_TYPE,
               });
             }
@@ -1893,7 +1949,7 @@ function OrderDetailsContent() {
         showToast(
           ok === 1
             ? t('order_toast_photo_uploaded')
-            : t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(ok)),
+            : t('order_toast_photos_uploaded').replace('{count}', String(ok)),
         );
       }
     },
@@ -1919,42 +1975,42 @@ function OrderDetailsContent() {
   const financeKindLabel = useCallback(
     (kind) =>
       kind === 'income'
-        ? t('finance_kind_income', 'Доп. работы')
+        ? t('finance_kind_income')
         : kind === 'discount'
-          ? t('finance_kind_discount', 'Скидка')
-          : t('finance_kind_expense', 'Расход'),
+          ? t('finance_kind_discount')
+          : t('finance_kind_expense'),
     [t],
   );
   const financeDeleteTitle = useCallback(
     (kind) =>
       kind === 'income'
-        ? t('order_finance_delete_income_title', 'Удалить доп. работы?')
+        ? t('order_finance_delete_income_title')
         : kind === 'discount'
-          ? t('order_finance_delete_discount_title', 'Удалить скидку?')
-          : t('order_finance_delete_expense_title', 'Удалить расход?'),
+          ? t('order_finance_delete_discount_title')
+          : t('order_finance_delete_expense_title'),
     [t],
   );
 
   const financeCalcModeLabel = useCallback(
     (mode) =>
       mode === 'percent'
-        ? t('finance_calc_percent', 'Процент')
-        : t('finance_calc_fixed', 'Фиксированная сумма'),
+        ? t('finance_calc_percent')
+        : t('finance_calc_fixed'),
     [t],
   );
 
   const financePercentBaseLabel = useCallback(
     (baseValue) => {
       if (baseValue === 'base_price') {
-        return t('finance_rule_subtract_from_base', 'Из изначальной суммы');
+        return t('finance_rule_subtract_from_base');
       }
       if (baseValue === 'gross_before_discount') {
-        return t('finance_rule_subtract_from_before_discount', 'Из суммы без скидок');
+        return t('finance_rule_subtract_from_before_discount');
       }
       if (baseValue === 'income_total') {
-        return t('finance_rule_subtract_from_income_total', 'Из суммы доп. работ');
+        return t('finance_rule_subtract_from_income_total');
       }
-      return t('finance_rule_subtract_from_gross', 'Из общей суммы');
+      return t('finance_rule_subtract_from_gross');
     },
     [t],
   );
@@ -1977,9 +2033,9 @@ function OrderDetailsContent() {
 
   const getDefaultFinanceEntryTitle = useCallback(
     (kind) => {
-      if (kind === 'discount') return t('order_finance_default_title_discount', 'Новая скидка');
-      if (kind === 'income') return t('order_finance_default_title_income', 'Новые доп. работы');
-      return t('order_finance_default_title_expense', 'Новый расход');
+      if (kind === 'discount') return t('order_finance_default_title_discount');
+      if (kind === 'income') return t('order_finance_default_title_income');
+      return t('order_finance_default_title_expense');
     },
     [t],
   );
@@ -1987,13 +2043,13 @@ function OrderDetailsContent() {
   const getFinanceEntryModalTitle = useCallback(
     (kind, isEdit = false) => {
       if (isEdit) {
-        if (kind === 'discount') return t('order_finance_modal_edit_discount', 'Редактировать скидку');
-        if (kind === 'income') return t('order_finance_modal_edit_income', 'Редактировать доп. работы');
-        return t('order_finance_modal_edit_expense', 'Редактировать расход');
+        if (kind === 'discount') return t('order_finance_modal_edit_discount');
+        if (kind === 'income') return t('order_finance_modal_edit_income');
+        return t('order_finance_modal_edit_expense');
       }
-      if (kind === 'discount') return t('order_finance_modal_add_discount', 'Добавить скидку');
-      if (kind === 'income') return t('order_finance_modal_add_income', 'Добавить доп. работы');
-      return t('order_finance_modal_add_expense', 'Добавить расход');
+      if (kind === 'discount') return t('order_finance_modal_add_discount');
+      if (kind === 'income') return t('order_finance_modal_add_income');
+      return t('order_finance_modal_add_expense');
     },
     [t],
   );
@@ -2002,17 +2058,17 @@ function OrderDetailsContent() {
     () => [
       {
         id: 'expense',
-        label: t('finance_kind_expense', 'Расход'),
+        label: t('finance_kind_expense'),
         right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
       },
       {
         id: 'income',
-        label: t('finance_kind_income', 'Доп. работы'),
+        label: t('finance_kind_income'),
         right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
       },
       {
         id: 'discount',
-        label: t('finance_kind_discount', 'Скидка'),
+        label: t('finance_kind_discount'),
         right: <Feather name="chevron-right" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />,
       },
     ],
@@ -2023,11 +2079,11 @@ function OrderDetailsContent() {
     () => [
       {
         id: 'fixed',
-        label: t('finance_calc_fixed', 'Фиксированная сумма'),
+        label: t('finance_calc_fixed'),
       },
       {
         id: 'percent',
-        label: t('finance_calc_percent', 'Процент'),
+        label: t('finance_calc_percent'),
       },
     ],
     [t],
@@ -2045,8 +2101,8 @@ function OrderDetailsContent() {
   const financeExpensePayerLabel = useCallback(
     (payer) =>
       payer === 'executor'
-        ? t('finance_expense_payer_executor', 'Исполнитель')
-        : t('finance_expense_payer_company', 'Компания'),
+        ? t('finance_expense_payer_executor')
+        : t('finance_expense_payer_company'),
     [t],
   );
 
@@ -2070,8 +2126,8 @@ function OrderDetailsContent() {
     const payer = isSoloAdmin ? 'company' : String(selectedFinanceEntry?.expense_payer || 'company');
     const recipient =
       payer === 'executor'
-        ? t('finance_recipient_executor_dative', 'исполнителю')
-        : t('finance_recipient_company_dative', 'компании');
+        ? t('finance_recipient_executor_dative')
+        : t('finance_recipient_company_dative');
     const baseLabel = String(financePercentBaseLabel(selectedFinanceEntry?.percent_base) || '').trim();
     const basePhrase = baseLabel ? `${baseLabel.charAt(0).toLowerCase()}${baseLabel.slice(1)}` : '';
 
@@ -2080,7 +2136,6 @@ function OrderDetailsContent() {
         const percentValue = Number(selectedFinanceEntry?.input_percent || 0);
         return t(
           'order_finance_entry_sentence_percent_plain',
-          'Отчисление {recipient} в размере {percent}% {base}',
         )
           .replace('{recipient}', recipient)
           .replace('{percent}', String(percentValue))
@@ -2090,7 +2145,6 @@ function OrderDetailsContent() {
       const amountValue = formatMoney(selectedFinanceEntry?.calculated_amount, currencyCode);
       return t(
         'order_finance_entry_sentence_fixed_plain',
-        'Отчисление {recipient} в размере {amount} {base}',
       )
         .replace('{recipient}', recipient)
         .replace('{amount}', amountValue)
@@ -2100,7 +2154,6 @@ function OrderDetailsContent() {
     const amountValue = formatMoney(selectedFinanceEntry?.calculated_amount, currencyCode);
     return t(
       'order_finance_entry_sentence_common',
-      '{amount} {base}',
     )
       .replace('{amount}', amountValue)
       .replace('{base}', basePhrase);
@@ -2129,16 +2182,16 @@ function OrderDetailsContent() {
   const paymentStatusLabel = useCallback(
     (value) =>
       normalizePaymentStatus(value) === 'paid'
-        ? t('order_payment_status_paid', 'Оплачено')
-        : t('order_payment_status_unpaid', 'Не оплачено'),
+        ? t('order_payment_status_paid')
+        : t('order_payment_status_unpaid'),
     [normalizePaymentStatus, t],
   );
 
   const paymentMethodLabel = useCallback(
     (value) =>
       normalizePaymentMethod(value) === 'cashless'
-        ? t('order_payment_method_cashless', 'Безнал')
-        : t('order_payment_method_cash', 'Наличные'),
+        ? t('order_payment_method_cashless')
+        : t('order_payment_method_cash'),
     [normalizePaymentMethod, t],
   );
 
@@ -2365,7 +2418,6 @@ function OrderDetailsContent() {
       showWarning(
         t(
           'finance_entry_media_partial_save',
-          'Статья сохранена, но часть фотографий не удалось обработать.',
         ),
       );
     }
@@ -2488,7 +2540,7 @@ function OrderDetailsContent() {
     setFinanceViewerPhotos(pairs.map((pair) => pair.display));
     setFinanceViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setFinanceViewerCategoryLabel(
-      String(financeEntryDraft.title || '').trim() || t('order_finance_entry_modal_title', 'Финансовая статья'),
+      String(financeEntryDraft.title || '').trim() || t('order_finance_entry_modal_title'),
     );
     setFinanceViewerVisible(true);
   }, [financeEntryDraft.title, financeEntryMedia, t]);
@@ -2530,10 +2582,11 @@ function OrderDetailsContent() {
 
         try {
           const localUri = await resolveRotateSourceUri(previousDisplayUrl, `finance_rotate_${job.index}`);
-          const manipulated = await ImageManipulator.manipulateAsync(
+          const imageManipulator = await loadImageManipulator();
+          const manipulated = await imageManipulator.manipulateAsync(
             localUri,
             [{ rotate: degrees }],
-            { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+            { compress: PHOTO_COMPRESS_QUALITY, format: imageManipulator.SaveFormat.JPEG },
           );
           const rotatedUri = manipulated?.uri;
           if (!rotatedUri) throw new Error('rotate manipulation returned empty uri');
@@ -2669,7 +2722,7 @@ function OrderDetailsContent() {
             const fallbackBuffer = await ensureArrayBuffer();
             data = await financeEntryYandexMedia('upload', {
               finance_entry_id: financeEntryIdValue,
-              file_base64: encodeBase64(fallbackBuffer),
+              file_base64: await encodeBase64(fallbackBuffer),
               mime: PHOTO_MIME_TYPE,
             });
           }
@@ -2717,7 +2770,7 @@ function OrderDetailsContent() {
         const fallbackBuffer = await ensureArrayBuffer();
         data = await financeEntryMediaStorage('upload', {
           finance_entry_id: financeEntryIdValue,
-          file_base64: encodeBase64(fallbackBuffer),
+          file_base64: await encodeBase64(fallbackBuffer),
           mime: PHOTO_MIME_TYPE,
         });
       }
@@ -2784,18 +2837,18 @@ function OrderDetailsContent() {
     const nextErrors = {};
     setFinanceEntrySubmitAttempt(true);
     if (!title) {
-      nextErrors.title = { message: t('finance_rule_name_required', 'Укажите название правила') };
+      nextErrors.title = { message: t('finance_rule_name_required') };
     }
     if (financeEntryDraft.calc_mode === 'percent') {
       if (rawPercent && !isValidFinanceNumericInput(rawPercent)) {
-        nextErrors.input_percent = { message: t('order_validation_amount_format', 'Введите корректную сумму') };
+        nextErrors.input_percent = { message: t('order_validation_amount_format') };
       } else if (!rawPercent || parsedPercent === 0) {
-        nextErrors.input_percent = { message: t('field_settings_required_fill', 'Заполните обязательные поля') };
+        nextErrors.input_percent = { message: t('field_settings_required_fill') };
       }
     } else if (rawAmount && !isValidFinanceNumericInput(rawAmount)) {
-      nextErrors.input_amount = { message: t('order_validation_amount_format', 'Введите корректную сумму') };
+      nextErrors.input_amount = { message: t('order_validation_amount_format') };
     } else if (!rawAmount || parsedAmount === 0) {
-      nextErrors.input_amount = { message: t('field_settings_required_fill', 'Заполните обязательные поля') };
+      nextErrors.input_amount = { message: t('field_settings_required_fill') };
     }
     if (Object.keys(nextErrors).length > 0) {
       setFinanceEntryFieldErrors(nextErrors);
@@ -2862,7 +2915,6 @@ function OrderDetailsContent() {
         showWarning(
           t(
             'finance_entry_media_partial_save',
-            'Статья сохранена, но часть фотографий не удалось обработать.',
           ),
         );
       } else {
@@ -2901,7 +2953,7 @@ function OrderDetailsContent() {
       if (entry?.is_system && !allowSystemDelete) return;
       try {
         await deleteFinanceEntryMutation.mutateAsync(entry.id);
-        showToast(t('finance_rule_deleted', 'Запись удалена'));
+        showToast(t('finance_rule_deleted'));
       } catch (error) {
         logClientError(error, {
           source: 'finance_entry_delete',
@@ -2972,7 +3024,7 @@ function OrderDetailsContent() {
             });
           }
           await writeOrderPhotoUploadQueue(remaining);
-          showToast('Фото удалено офлайн. Синхронизируем автоматически.');
+          showToast(t('order_photo_deleted_offline'));
         } catch {
           showToast(t('order_toast_delete_error'));
         }
@@ -3069,7 +3121,7 @@ function OrderDetailsContent() {
             });
           }
           await writeOrderPhotoUploadQueue(nextQueue);
-          showToast('Фото удалены офлайн. Синхронизируем автоматически.');
+          showToast(t('order_photos_deleted_offline'));
         } catch {
           showToast(t('order_toast_delete_error'));
         }
@@ -3132,7 +3184,7 @@ function OrderDetailsContent() {
         showToast(
           failedUrls.length === selected.length
             ? t('order_toast_delete_error')
-            : t('order_toast_delete_partial_error', 'Часть фото удалить не удалось'),
+            : t('order_toast_delete_partial_error'),
         );
       }
     },
@@ -3154,40 +3206,40 @@ function OrderDetailsContent() {
       orderFieldsByKey.get('media_file_1')?.isRequired === true &&
       (!Array.isArray(order.media_file_1) || order.media_file_1.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('media_file_1', t('order_media_field_1', 'Медиа 1')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_1', t('order_media_field_1')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_2') &&
       orderFieldsByKey.get('media_file_2')?.isRequired === true &&
       (!Array.isArray(order.media_file_2) || order.media_file_2.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('media_file_2', t('order_media_field_2', 'Медиа 2')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_2', t('order_media_field_2')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_3') &&
       orderFieldsByKey.get('media_file_3')?.isRequired === true &&
       (!Array.isArray(order.media_file_3) || order.media_file_3.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('media_file_3', t('order_media_field_3', 'Медиа 3')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_3', t('order_media_field_3')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_4') &&
       orderFieldsByKey.get('media_file_4')?.isRequired === true &&
       (!Array.isArray(order.media_file_4) || order.media_file_4.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('media_file_4', t('order_media_field_4', 'Медиа 4')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_4', t('order_media_field_4')).toLowerCase());
     }
     if (
       isOrderFieldVisible('media_file_5') &&
       orderFieldsByKey.get('media_file_5')?.isRequired === true &&
       (!Array.isArray(order.media_file_5) || order.media_file_5.length === 0)
     ) {
-      missing.push(getOrderFieldLabel('media_file_5', t('order_media_field_5', 'Медиа 5')).toLowerCase());
+      missing.push(getOrderFieldLabel('media_file_5', t('order_media_field_5')).toLowerCase());
     }
 
     if (missing.length > 0) {
       showToast(
-        t('order_toast_add_photos', `Добавьте: ${missing.join(', ')}`).replace(
+        t('order_toast_add_photos').replace(
           '{items}',
           missing.join(', '),
         ),
@@ -3206,7 +3258,7 @@ function OrderDetailsContent() {
     if (error) {
       if (error?.code === 'CONFLICT' && error?.latest) {
         setOrder(error.latest);
-        showToast('Заявка уже обновилась на другом устройстве.');
+        showToast(t('order_stale_updated'));
         return;
       }
       showToast(t('order_toast_finish_error'));
@@ -3229,7 +3281,7 @@ function OrderDetailsContent() {
       if (!order?.id) return;
       const { data, error } = await supabase.rpc('accept_order', { p_order_id: order.id });
       if (error) {
-        showToast('Не удалось принять заявку');
+        showToast(t('order_accept_failed'));
         return;
       }
       const asBool = (v) => v === true || v === 'true' || v === 1 || v === '1' || v === 't';
@@ -3302,15 +3354,15 @@ function OrderDetailsContent() {
         );
         setAssigneeId(userId);
         setToFeed(false);
-        showToast('Заявка принята');
+        showToast(t('order_accept_success'));
       } else {
         const assignedToOther =
           !!latestOrder?.assigned_to &&
           (!userId || String(latestOrder.assigned_to) !== String(userId));
         if (assignedToOther) {
-          showToast('Упс, заявку уже принял кто-то другой');
+          showToast(t('order_accept_taken'));
         } else {
-          showToast('Не удалось принять заявку');
+          showToast(t('order_accept_failed'));
         }
       }
     } catch {
@@ -3404,7 +3456,7 @@ function OrderDetailsContent() {
           setOrder(error.latest);
           initialFormSnapshotRef.current = makeSnapshotFromOrder(error.latest);
         }
-        showToast('Заявка уже изменена на другом устройстве. Данные обновлены.');
+        showToast(t('order_changed_remote_refreshed'));
         return;
       }
       showToast(error.message || t('order_save_error'));
@@ -3718,10 +3770,11 @@ function OrderDetailsContent() {
 
           try {
             const localUri = await resolveRotateSourceUri(previousDisplayUrl, `rotate_src_${job.index}`);
-            const manipulated = await ImageManipulator.manipulateAsync(
+            const imageManipulator = await loadImageManipulator();
+            const manipulated = await imageManipulator.manipulateAsync(
               localUri,
               [{ rotate: degrees }],
-              { compress: PHOTO_COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG },
+              { compress: PHOTO_COMPRESS_QUALITY, format: imageManipulator.SaveFormat.JPEG },
             );
             const rotatedUri = manipulated?.uri;
             if (!rotatedUri) throw new Error('rotate manipulation returned empty uri');
@@ -4249,9 +4302,9 @@ function OrderDetailsContent() {
       try {
         const canOpen = await Linking.canOpenURL(url);
         if (canOpen) await Linking.openURL(url);
-        else showToast(t('errors_callsUnavailable', 'Звонки недоступны'));
+        else showToast(t('errors_callsUnavailable'));
       } catch {
-        showToast(t('errors_callsUnavailable', 'Звонки недоступны'));
+        showToast(t('errors_callsUnavailable'));
       }
     }
   }, [orderPhoneRawValue, showToast, t]);
@@ -4411,7 +4464,6 @@ function OrderDetailsContent() {
                     showToast(
                       t(
                         'subscription_edit_unavailable_toast',
-                        'Изменение недоступно. Оплатите подписку',
                       ),
                     );
                     return;
@@ -4451,7 +4503,6 @@ function OrderDetailsContent() {
                   <Text style={{ color: theme.colors.warning, fontWeight: '600' }}>
                     {t(
                       'subscription_read_only_notice',
-                      'Режим чтения: изменение недоступно до продления подписки',
                     )}
                   </Text>
                 </Card>
@@ -4652,7 +4703,7 @@ function OrderDetailsContent() {
                       <Pressable
                         style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
                         accessibilityRole="button"
-                        accessibilityLabel={t('a11y_copy_phone', 'Скопировать телефон')}
+                        accessibilityLabel={t('a11y_copy_phone')}
                         onPress={copyOrderPhone}
                       >
                         <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
@@ -4681,7 +4732,7 @@ function OrderDetailsContent() {
                       <Pressable
                         style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
                         accessibilityRole="button"
-                        accessibilityLabel={t('common_copy', 'Скопировать')}
+                        accessibilityLabel={t('common_copy')}
                         onPress={copyOrderCoordinates}
                       >
                         <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
@@ -4730,7 +4781,7 @@ function OrderDetailsContent() {
                 <Card paddedXOnly>
                     <>
                       <FinanceAccordionRow
-                        label={t('order_finance_customer_section', 'Общая сумма')}
+                        label={t('order_finance_customer_section')}
                         summaryValue={formatMoney(customerFinanceTotal, currency)}
                         summaryTone={isOrderPaid ? 'success' : 'warning'}
                         summaryIcon={
@@ -4780,7 +4831,7 @@ function OrderDetailsContent() {
                                   }}
                                 >
                                     <LabelValueRow
-                                      label={t('order_details_payment_status', 'Статус оплаты')}
+                                      label={t('order_details_payment_status')}
                                       valueComponent={
                                         <Text
                                           style={[
@@ -4822,7 +4873,7 @@ function OrderDetailsContent() {
                                   }}
                                 >
                                     <LabelValueRow
-                                      label={t('order_details_payment_method', 'Способ оплаты')}
+                                      label={t('order_details_payment_method')}
                                       value={paymentMethodLabel(normalizedPaymentMethod)}
                                       hideWhenEmpty={false}
                                       rightActions={
@@ -4851,7 +4902,7 @@ function OrderDetailsContent() {
                                 }}
                               >
                                 <LabelValueRow
-                                  label={t('order_finance_initial_cost', 'Изначальная стоимость')}
+                                  label={t('order_finance_initial_cost')}
                                   value={formatMoney(order.start_price, currency)}
                                     hideWhenEmpty={false}
                                     rightActions={
@@ -4877,7 +4928,7 @@ function OrderDetailsContent() {
                                   onPress={() => openFinanceEntryView(entry)}
                                 >
                                   <LabelValueRow
-                                    label={entry.title || t('finance_rule_name', 'Название')}
+                                    label={entry.title || t('finance_rule_name')}
                                     labelContainerStyle={styles.financeEntryLabelWrap}
                                     rightWrapStyle={styles.financeEntryRightWrap}
                                     valueComponent={
@@ -4908,7 +4959,7 @@ function OrderDetailsContent() {
                                   onPress={() => openFinanceEntryView(entry)}
                                 >
                                   <LabelValueRow
-                                    label={entry.title || t('finance_rule_name', 'Название')}
+                                    label={entry.title || t('finance_rule_name')}
                                     labelContainerStyle={styles.financeEntryLabelWrap}
                                     rightWrapStyle={styles.financeEntryRightWrap}
                                     valueComponent={
@@ -4935,7 +4986,7 @@ function OrderDetailsContent() {
 
                       {showExecutorFinanceSection ? (
                         <FinanceAccordionRow
-                          label={t('order_finance_executor_section', 'Исполнителю')}
+                          label={t('order_finance_executor_section')}
                           summaryValue={formatMoney(executorFinanceTotal, currency)}
                           summaryTone="default"
                           hideSummaryWhenCollapsed={true}
@@ -4952,7 +5003,7 @@ function OrderDetailsContent() {
                           ) : (
                             <>
                               <LabelValueRow
-                                label={t('order_finance_customer_section', 'Общая сумма')}
+                                label={t('order_finance_customer_section')}
                                 value={formatMoney(customerFinanceTotal, currency)}
                                 hideWhenEmpty={false}
                               />
@@ -4967,7 +5018,7 @@ function OrderDetailsContent() {
                                         onPress={() => openFinanceEntryView(entry)}
                                       >
                                         <LabelValueRow
-                                          label={entry.title || t('finance_rule_name', 'Название')}
+                                          label={entry.title || t('finance_rule_name')}
                                           labelContainerStyle={styles.financeEntryLabelWrap}
                                           rightWrapStyle={styles.financeEntryRightWrap}
                                           valueComponent={
@@ -5000,7 +5051,7 @@ function OrderDetailsContent() {
                                         onPress={() => openFinanceEntryView(entry)}
                                       >
                                         <LabelValueRow
-                                          label={entry.title || t('finance_rule_name', 'Название')}
+                                          label={entry.title || t('finance_rule_name')}
                                           labelContainerStyle={styles.financeEntryLabelWrap}
                                           rightWrapStyle={styles.financeEntryRightWrap}
                                           valueComponent={
@@ -5035,7 +5086,7 @@ function OrderDetailsContent() {
                             onPress={() => setFinanceKindModalVisible(true)}
                           >
                             <Text style={base.label}>
-                              {t('order_finance_add_entry_action', 'Добавить расход/доп. работы/скидку')}
+                              {t('order_finance_add_entry_action')}
                             </Text>
                             <View style={base.rightWrap}>
                               <Feather
@@ -5056,7 +5107,7 @@ function OrderDetailsContent() {
             {!isFree && visibleMediaFields.length > 0 && (
               <>
                 <SectionHeader topSpacing="xs" bottomSpacing="xs">
-                  {t('order_details_photos_section', 'Фото')}
+                  {t('order_details_photos_section')}
                 </SectionHeader>
                 {cloudFallbackActive && isAdminUser ? (
                   <Text style={styles.cloudWarningText}>
@@ -5067,7 +5118,7 @@ function OrderDetailsContent() {
                   {visibleMediaFields
                     .map((fieldKey) => ({
                       key: fieldKey,
-                      label: getOrderFieldLabel(fieldKey, t(`order_media_field_${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`, `Медиа ${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`)),
+                      label: getOrderFieldLabel(fieldKey, t(`order_media_field_${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`)),
                     }))
                     .map((row, idx) => {
                     const count = (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length;
@@ -5081,7 +5132,7 @@ function OrderDetailsContent() {
                           <Text style={base.label}>{row.label}</Text>
                           <View style={base.rightWrap}>
                             <Text style={base.value}>
-                              {t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+                              {t('order_photos_count').replace('{count}', String(count))}
                             </Text>
                             <Feather
                               name="chevron-right"
@@ -5098,46 +5149,50 @@ function OrderDetailsContent() {
               </>
             )}
 
-            <OrderPhotosModal
-              visible={orderPhotosModal.visible}
-              suspended={orderPhotosModalSuspended}
-              onDismiss={handleOrderPhotosModalDismiss}
-              onClose={() => {
-                setPendingOrderPhotoViewer(null);
-                setOrderPhotosModalSuspended(false);
-                setOrderPhotosModal({ visible: false, category: null });
-              }}
-              category={orderPhotosModal.category}
-              photos={order?.[orderPhotosModal.category] || []}
-              pending={localPendingMap[orderPhotosModal.category] || []}
-              getDisplayUrl={orderMedia.getDisplayUrl}
-              getThumbnailUrl={orderMedia.getThumbnailUrl}
-              getIssue={orderMedia.getIssue}
-              onUploadUri={handleUploadUri}
-              onUploadMultiple={handleUploadMultiple}
-              onRemove={removePhoto}
-              onRemoveMany={removePhotosBatch}
-              canAddFromCamera={canAddOrderPhotosFromCamera}
-              canAddFromGallery={canAddOrderPhotosFromGallery}
-              canRemovePhotos={canAddOrderPhotos}
-              onOpenViewer={(photos, idx) => {
-                const catLabels = {
-                  media_file_1: getOrderFieldLabel('media_file_1', t('order_media_field_1', 'Медиа 1')),
-                  media_file_2: getOrderFieldLabel('media_file_2', t('order_media_field_2', 'Медиа 2')),
-                  media_file_3: getOrderFieldLabel('media_file_3', t('order_media_field_3', 'Медиа 3')),
-                  media_file_4: getOrderFieldLabel('media_file_4', t('order_media_field_4', 'Медиа 4')),
-                  media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5', 'Медиа 5')),
-                };
-                const category = orderPhotosModal.category;
-                const label = catLabels[category] || '';
-                if (Platform.OS === 'ios') {
-                  setPendingOrderPhotoViewer({ photos, index: idx, category, label });
-                  setOrderPhotosModalSuspended(true);
-                  return;
-                }
-                openViewer(photos, idx, category, label);
-              }}
-            />
+            {orderPhotosModal.visible ? (
+              <Suspense fallback={null}>
+                <OrderPhotosModal
+                  visible={orderPhotosModal.visible}
+                  suspended={orderPhotosModalSuspended}
+                  onDismiss={handleOrderPhotosModalDismiss}
+                  onClose={() => {
+                    setPendingOrderPhotoViewer(null);
+                    setOrderPhotosModalSuspended(false);
+                    setOrderPhotosModal({ visible: false, category: null });
+                  }}
+                  category={orderPhotosModal.category}
+                  photos={order?.[orderPhotosModal.category] || []}
+                  pending={localPendingMap[orderPhotosModal.category] || []}
+                  getDisplayUrl={orderMedia.getDisplayUrl}
+                  getThumbnailUrl={orderMedia.getThumbnailUrl}
+                  getIssue={orderMedia.getIssue}
+                  onUploadUri={handleUploadUri}
+                  onUploadMultiple={handleUploadMultiple}
+                  onRemove={removePhoto}
+                  onRemoveMany={removePhotosBatch}
+                  canAddFromCamera={canAddOrderPhotosFromCamera}
+                  canAddFromGallery={canAddOrderPhotosFromGallery}
+                  canRemovePhotos={canAddOrderPhotos}
+                  onOpenViewer={(photos, idx) => {
+                    const catLabels = {
+                      media_file_1: getOrderFieldLabel('media_file_1', t('order_media_field_1')),
+                      media_file_2: getOrderFieldLabel('media_file_2', t('order_media_field_2')),
+                      media_file_3: getOrderFieldLabel('media_file_3', t('order_media_field_3')),
+                      media_file_4: getOrderFieldLabel('media_file_4', t('order_media_field_4')),
+                      media_file_5: getOrderFieldLabel('media_file_5', t('order_media_field_5')),
+                    };
+                    const category = orderPhotosModal.category;
+                    const label = catLabels[category] || '';
+                    if (Platform.OS === 'ios') {
+                      setPendingOrderPhotoViewer({ photos, index: idx, category, label });
+                      setOrderPhotosModalSuspended(true);
+                      return;
+                    }
+                    openViewer(photos, idx, category, label);
+                  }}
+                />
+              </Suspense>
+            ) : null}
 
             {canAcceptOrder && (
               <Pressable
@@ -5197,16 +5252,20 @@ function OrderDetailsContent() {
         }
       />
 
-      <FullscreenImageViewer
-        visible={viewerVisible}
-        images={viewerPhotos}
-        initialIndex={viewerIndex}
-        onClose={closeViewer}
-        onDismiss={handleViewerDismiss}
-        onDelete={handleViewerDelete}
-        onRotateSave={handleViewerRotateSave}
-        categoryLabel={viewerCategoryLabel}
-      />
+      {viewerVisible ? (
+        <Suspense fallback={null}>
+          <FullscreenImageViewer
+            visible={viewerVisible}
+            images={viewerPhotos}
+            initialIndex={viewerIndex}
+            onClose={closeViewer}
+            onDismiss={handleViewerDismiss}
+            onDelete={handleViewerDelete}
+            onRotateSave={handleViewerRotateSave}
+            categoryLabel={viewerCategoryLabel}
+          />
+        </Suspense>
+      ) : null}
 
       <ConfirmModal
         visible={cancelVisible}
@@ -5294,7 +5353,7 @@ function OrderDetailsContent() {
 
       <SelectModal
         visible={paymentStatusModalVisible}
-        title={t('order_details_payment_status', 'Статус оплаты')}
+        title={t('order_details_payment_status')}
         searchable={false}
         items={paymentStatusItems}
         selectedId={normalizedPaymentStatus}
@@ -5308,7 +5367,7 @@ function OrderDetailsContent() {
 
       <SelectModal
         visible={paymentMethodModalVisible}
-        title={t('order_details_payment_method', 'Способ оплаты')}
+        title={t('order_details_payment_method')}
         searchable={false}
         items={paymentMethodItems}
         selectedId={normalizedPaymentMethod}
@@ -5322,7 +5381,7 @@ function OrderDetailsContent() {
 
       <SelectModal
         visible={financeKindModalVisible}
-        title={t('common_add', 'Добавить')}
+        title={t('common_add')}
         searchable={false}
         items={financeKindSelectItems}
         onSelect={(item) => {
@@ -5334,7 +5393,7 @@ function OrderDetailsContent() {
 
       <SelectModal
         visible={financeCalcModeModalVisible}
-        title={t('finance_rule_calc_mode', 'Формат расчёта')}
+        title={t('finance_rule_calc_mode')}
         searchable={false}
         items={financeCalcModeItems}
         selectedId={financeEntryDraft.calc_mode}
@@ -5347,7 +5406,7 @@ function OrderDetailsContent() {
 
       <SelectModal
         visible={financePercentBaseModalVisible}
-        title={t('finance_rule_percent_base', 'Основа процента')}
+        title={t('finance_rule_percent_base')}
         searchable={false}
         items={financePercentBaseItems}
         itemTitleNumberOfLines={2}
@@ -5366,7 +5425,7 @@ function OrderDetailsContent() {
       {!isSoloAdmin ? (
         <SelectModal
           visible={financeExpensePayerModalVisible}
-          title={t('finance_expense_payer', 'Кто оплатил')}
+          title={t('finance_expense_payer')}
           searchable={false}
           items={financeExpensePayerItems}
           selectedId={financeEntryDraft.expense_payer}
@@ -5384,12 +5443,12 @@ function OrderDetailsContent() {
       <BaseModal
         visible={financeEntryViewModalVisible}
         onClose={() => setFinanceEntryViewModalVisible(false)}
-        title={String(selectedFinanceEntry?.title || '').trim() || t('order_finance_entry_modal_title', 'Финансовая статья')}
+        title={String(selectedFinanceEntry?.title || '').trim() || t('order_finance_entry_modal_title')}
         maxHeightRatio={0.7}
       >
         {selectedFinanceEntry?.is_system === true ? (
           <LabelValueRow
-            label={t('finance_rule_rule', 'Правило')}
+            label={t('finance_rule_rule')}
             valueComponent={<Text style={[base.value, styles.financeEntryNarrativeValue]}>{financeEntryNarrative}</Text>}
             hideWhenEmpty={false}
             middleSpacerStyle={styles.financeModalCompactSpacer}
@@ -5398,7 +5457,7 @@ function OrderDetailsContent() {
         ) : (
           <>
             <LabelValueRow
-              label={t('finance_rule_kind', 'Тип')}
+              label={t('finance_rule_kind')}
               value={financeKindLabel(selectedFinanceEntry?.kind)}
               middleSpacerStyle={styles.financeModalCompactSpacer}
               rightWrapStyle={styles.financeModalRightWrap}
@@ -5406,7 +5465,7 @@ function OrderDetailsContent() {
             <View style={base.sep} />
             {selectedFinanceEntry?.calc_mode === 'percent' ? (
               <LabelValueRow
-                label={t('finance_rule_percent_value', 'Процент')}
+                label={t('finance_rule_percent_value')}
                 value={`${Number(selectedFinanceEntry?.input_percent || 0)}% (${financePercentBaseLabel(selectedFinanceEntry?.percent_base)})`}
                 maxValueLines={2}
                 middleSpacerStyle={styles.financeModalTightSpacer}
@@ -5414,7 +5473,7 @@ function OrderDetailsContent() {
               />
             ) : (
               <LabelValueRow
-                label={t('finance_amount_label', 'Сумма')}
+                label={t('finance_amount_label')}
                 value={formatMoney(selectedFinanceEntry?.calculated_amount, order?.currency || companySettings?.currency)}
                 middleSpacerStyle={styles.financeModalCompactSpacer}
                 rightWrapStyle={styles.financeModalRightWrap}
@@ -5424,7 +5483,7 @@ function OrderDetailsContent() {
               <>
                 <View style={base.sep} />
                 <LabelValueRow
-                  label={t('finance_expense_payer', 'Кто оплатил')}
+                  label={t('finance_expense_payer')}
                   value={financeExpensePayerLabel(isSoloAdmin ? 'company' : selectedFinanceEntry?.expense_payer)}
                   middleSpacerStyle={styles.financeModalCompactSpacer}
                   rightWrapStyle={styles.financeModalRightWrap}
@@ -5452,7 +5511,7 @@ function OrderDetailsContent() {
                 {financeEntryViewCommentExpanded ? (
                   <View style={styles.financeEntryCommentBlock}>
                     <View style={styles.financeEntryCommentHeader}>
-                      <Text style={base.label}>{t('order_finance_note', 'Комментарий')}</Text>
+                      <Text style={base.label}>{t('order_finance_note')}</Text>
                       {financeEntryViewCommentExpandable ? (
                         <Feather
                           name="chevron-up"
@@ -5474,7 +5533,7 @@ function OrderDetailsContent() {
                   </View>
                 ) : (
                   <LabelValueRow
-                    label={t('order_finance_note', 'Комментарий')}
+                    label={t('order_finance_note')}
                     middleSpacerStyle={styles.financeModalCompactSpacer}
                     rightWrapStyle={styles.financeCommentCollapsedRightWrap}
                     valueComponent={
@@ -5530,7 +5589,7 @@ function OrderDetailsContent() {
               onPress={openFinanceEntryPhotosFromView}
             >
               <LabelValueRow
-                label={t('order_details_photos_section', 'Фото')}
+                label={t('order_details_photos_section')}
                 value={formatFinancePhotoCount(financeEntryViewPhotoCount)}
                 hideWhenEmpty={false}
                 rightActions={
@@ -5569,9 +5628,8 @@ function OrderDetailsContent() {
         message={selectedFinanceEntry?.is_system === true
           ? t(
             'order_finance_delete_system_rule_current_order_message',
-            'Это правило удалится только из текущей заявки. При редактировании правила в настройках компании оно вернется снова.',
           )
-          : t('order_finance_delete_message', 'Это значение будет удалено без возможности восстановления')}
+          : t('order_finance_delete_message')}
         confirmLabel={t('btn_delete')}
         confirmVariant="destructive"
         loading={deleteFinanceEntryMutation.isPending}
@@ -5615,13 +5673,13 @@ function OrderDetailsContent() {
           keyboardDismissMode="none"
         >
           <TextField
-            label={`${t('finance_rule_name', 'Название')}${t('common_required_suffix', ' *')}`}
+            label={`${t('finance_rule_name')}${t('common_required_suffix')}`}
             value={financeEntryDraft.title}
             onChangeText={(value) => {
               clearFinanceEntryFieldError('title');
               setFinanceEntryDraft((prev) => ({ ...prev, title: value }));
             }}
-            placeholder={t('finance_rule_name', 'Название')}
+            placeholder={t('finance_rule_name')}
             multiline
             autoGrow
             minLines={2}
@@ -5632,7 +5690,7 @@ function OrderDetailsContent() {
           />
           <FieldErrorText message={financeEntryFieldErrors?.title?.message} />
           <TextField
-            label={t('finance_rule_calc_mode', 'Формат расчёта')}
+            label={t('finance_rule_calc_mode')}
             value={financeCalcModeLabel(financeEntryDraft.calc_mode)}
             pressable
             onPress={() => setFinanceCalcModeModalVisible(true)}
@@ -5641,7 +5699,7 @@ function OrderDetailsContent() {
             <>
               <TextField
                 ref={financePercentInputRef}
-                label={`${t('finance_rule_percent_value', 'Процент')}${t('common_required_suffix', ' *')}`}
+                label={`${t('finance_rule_percent_value')}${t('common_required_suffix')}`}
                 value={String(financeEntryDraft.input_percent || '')}
                 onChangeText={(value) => {
                   clearFinanceEntryFieldError('input_percent');
@@ -5657,7 +5715,7 @@ function OrderDetailsContent() {
               />
               <FieldErrorText message={financeEntryFieldErrors?.input_percent?.message} />
               <TextField
-                label={t('finance_rule_percent_base', 'Основа процента')}
+                label={t('finance_rule_percent_base')}
                 value={financePercentBaseLabel(financeEntryDraft.percent_base)}
                 multiline
                 numberOfLines={2}
@@ -5669,7 +5727,7 @@ function OrderDetailsContent() {
             <>
               <TextField
                 ref={financeAmountInputRef}
-                label={`${t('finance_amount_label', 'Сумма')}${t('common_required_suffix', ' *')}`}
+                label={`${t('finance_amount_label')}${t('common_required_suffix')}`}
                 value={String(financeEntryDraft.input_amount || '')}
                 onChangeText={(value) => {
                   clearFinanceEntryFieldError('input_amount');
@@ -5688,7 +5746,7 @@ function OrderDetailsContent() {
           )}
           {financeEntryDraft.kind === 'expense' && !isSoloAdmin ? (
             <TextField
-              label={t('finance_expense_payer', 'Кто оплатил')}
+              label={t('finance_expense_payer')}
               value={financeExpensePayerLabel(financeEntryDraft.expense_payer)}
               pressable
               onPress={() => setFinanceExpensePayerModalVisible(true)}
@@ -5696,7 +5754,7 @@ function OrderDetailsContent() {
           ) : null}
           <TextField
             ref={financeCommentInputRef}
-            label={t('finance_rule_note_template', 'Комментарий')}
+            label={t('finance_rule_note_template')}
             value={financeEntryDraft.note}
             multiline
             autoGrow
@@ -5708,7 +5766,7 @@ function OrderDetailsContent() {
             rightSlot={
               financeEntryDraft.note ? (
                 <ClearButton
-                  accessibilityLabel={t('common_clear', 'Очистить')}
+                  accessibilityLabel={t('common_clear')}
                   onPress={() => setFinanceEntryDraft((prev) => ({ ...prev, note: '' }))}
                   style={styles.financeCommentClearButton}
                 />
@@ -5720,7 +5778,7 @@ function OrderDetailsContent() {
           />
           {canViewOrderPhotos ? (
             <TextField
-              label={t('order_details_photos_section', 'Фото')}
+              label={t('order_details_photos_section')}
               value={formatFinancePhotoCount((financeEntryDraft.photo_urls || []).length)}
               pressable
               onPress={openFinanceEntryPhotosModal}
@@ -5729,34 +5787,42 @@ function OrderDetailsContent() {
         </ScrollView>
       </BaseModal>
 
-      <OrderPhotosModal
-        visible={financeEntryPhotosModalVisible}
-        onClose={closeFinanceEntryPhotosModal}
-        category="finance_entry_photo"
-        photos={financeEntryDraft.photo_urls || []}
-        pending={financeEntryLocalPending}
-        getDisplayUrl={financeEntryMedia.getDisplayUrl}
-        getThumbnailUrl={financeEntryMedia.getThumbnailUrl}
-        getIssue={financeEntryMedia.getIssue}
-        onUploadUri={handleFinanceEntryPhotoUploadUri}
-        onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
-        onRemove={handleFinanceEntryPhotoRemove}
-        onRemoveMany={handleFinanceEntryPhotoRemoveMany}
-        canAddFromCamera={canAddOrderPhotosFromCamera}
-        canAddFromGallery={canAddOrderPhotosFromGallery}
-        canRemovePhotos={canAddOrderPhotos && canEditFinanceEntries}
-        onOpenViewer={openFinanceEntryViewer}
-      />
+      {financeEntryPhotosModalVisible ? (
+        <Suspense fallback={null}>
+          <OrderPhotosModal
+            visible={financeEntryPhotosModalVisible}
+            onClose={closeFinanceEntryPhotosModal}
+            category="finance_entry_photo"
+            photos={financeEntryDraft.photo_urls || []}
+            pending={financeEntryLocalPending}
+            getDisplayUrl={financeEntryMedia.getDisplayUrl}
+            getThumbnailUrl={financeEntryMedia.getThumbnailUrl}
+            getIssue={financeEntryMedia.getIssue}
+            onUploadUri={handleFinanceEntryPhotoUploadUri}
+            onUploadMultiple={handleFinanceEntryPhotoUploadMultiple}
+            onRemove={handleFinanceEntryPhotoRemove}
+            onRemoveMany={handleFinanceEntryPhotoRemoveMany}
+            canAddFromCamera={canAddOrderPhotosFromCamera}
+            canAddFromGallery={canAddOrderPhotosFromGallery}
+            canRemovePhotos={canAddOrderPhotos && canEditFinanceEntries}
+            onOpenViewer={openFinanceEntryViewer}
+          />
+        </Suspense>
+      ) : null}
 
-      <FullscreenImageViewer
-        visible={financeViewerVisible}
-        images={financeViewerPhotos}
-        initialIndex={financeViewerIndex}
-        onClose={closeFinanceEntryViewer}
-        onDelete={handleFinanceViewerDelete}
-        onRotateSave={handleFinanceViewerRotateSave}
-        categoryLabel={financeViewerCategoryLabel}
-      />
+      {financeViewerVisible ? (
+        <Suspense fallback={null}>
+          <FullscreenImageViewer
+            visible={financeViewerVisible}
+            images={financeViewerPhotos}
+            initialIndex={financeViewerIndex}
+            onClose={closeFinanceEntryViewer}
+            onDelete={handleFinanceViewerDelete}
+            onRotateSave={handleFinanceViewerRotateSave}
+            categoryLabel={financeViewerCategoryLabel}
+          />
+        </Suspense>
+      ) : null}
 
       <AlertModal
         visible={warningVisible}
@@ -5807,7 +5873,7 @@ function createStyles(theme) {
     },
     backText: { color: theme.colors.primary, fontSize: typo.sizes?.md || 16 },
 
-    // Р—РђРњР•РќРђ РєРЅРѕРїРєРё РЅР° СЃСЃС‹Р»РєСѓ
+
     editLink: {
       paddingHorizontal: sp.md || 12,
       paddingVertical: sp.xs || 6,
@@ -5817,7 +5883,7 @@ function createStyles(theme) {
       fontWeight: typo.weight?.semibold || '600',
     },
 
-    // headerCard Р±РѕР»СЊС€Рµ РЅРµ РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ, РјРѕР¶РЅРѕ РѕСЃС‚Р°РІРёС‚СЊ РёР»Рё СѓРґР°Р»РёС‚СЊ РїРѕ Р¶РµР»Р°РЅРёСЋ
+
     // headerCard: { ...existing code... },
 
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: sp.sm || 8 },

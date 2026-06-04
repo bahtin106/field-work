@@ -132,7 +132,7 @@ export default function MultiSelectModal({
       actions={[
         {
           key: 'cancel',
-          title: T('btn_cancel', 'Отмена'),
+          title: T('btn_cancel'),
           variant: 'secondary',
           onPress: () => {
             onClose?.();
@@ -140,7 +140,7 @@ export default function MultiSelectModal({
         },
         {
           key: 'confirm',
-          title: T('btn_done', 'Готово'),
+          title: T('btn_done'),
           variant: 'primary',
           onPress: () => {
             onChange?.(selected);

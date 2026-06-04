@@ -383,22 +383,21 @@ export default function ClientObjectEditorModal({
         {searchSuggestionsVisible ? (
           <>
             <SectionHeader topSpacing="xs" bottomSpacing="xs">
-              {t('order_object_search_title', 'Похожие объекты')}
+              {t('order_object_search_title')}
             </SectionHeader>
             <Text style={styles.suggestionHint}>
               {t(
                 'order_object_search_hint',
-                'Если адрес уже есть в базе, лучше выбрать существующий объект, а не создавать дубль.',
               )}
             </Text>
             {searchSuggestionsLoading ? (
               <Text style={styles.suggestionStateText}>
-                {t('order_object_search_loading', 'Ищем похожие объекты...')}
+                {t('order_object_search_loading')}
               </Text>
             ) : null}
             {!searchSuggestionsLoading && searchSuggestionsEmpty ? (
               <Text style={styles.suggestionStateText}>
-                {t('order_object_search_empty', 'Совпадений пока не найдено')}
+                {t('order_object_search_empty')}
               </Text>
             ) : null}
             {!searchSuggestionsLoading

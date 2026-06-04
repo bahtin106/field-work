@@ -19,10 +19,10 @@ export function objectSortOptions(t) {
   return [
     { id: OBJECT_SORT.NAME_ASC, label: t('sort_name_asc') },
     { id: OBJECT_SORT.NAME_DESC, label: t('sort_name_desc') },
-    { id: OBJECT_SORT.CITY_ASC, label: t('sort_city_asc', 'Город А-Я') },
-    { id: OBJECT_SORT.CITY_DESC, label: t('sort_city_desc', 'Город Я-А') },
-    { id: OBJECT_SORT.CLIENT_ASC, label: t('sort_client_asc', 'Клиент А-Я') },
-    { id: OBJECT_SORT.CLIENT_DESC, label: t('sort_client_desc', 'Клиент Я-А') },
+    { id: OBJECT_SORT.CITY_ASC, label: t('sort_city_asc') },
+    { id: OBJECT_SORT.CITY_DESC, label: t('sort_city_desc') },
+    { id: OBJECT_SORT.CLIENT_ASC, label: t('sort_client_asc') },
+    { id: OBJECT_SORT.CLIENT_DESC, label: t('sort_client_desc') },
   ];
 }
 

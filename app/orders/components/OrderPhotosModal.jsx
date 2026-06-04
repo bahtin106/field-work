@@ -260,7 +260,7 @@ export default function OrderPhotosModal({
       return (
         <View style={s.footerWrap}>
           <Text style={s.footerLabel}>
-            {t('order_photos_selected_hint', 'Выбрано {count}')
+            {t('order_photos_selected_hint')
               .replace('{count}', String(selectedCount))}
           </Text>
           <View style={s.footerRow}>
@@ -274,13 +274,13 @@ export default function OrderPhotosModal({
                 pressed && !deleteDisabled && s.actionBtnPressed,
               ]}
               accessibilityRole="button"
-              accessibilityLabel={t('order_photos_delete_selected', 'Удалить')}
+              accessibilityLabel={t('order_photos_delete_selected')}
             >
               <View style={s.actionBtnIcon}>
                 <Feather name="trash-2" size={theme.icons?.sm ?? 18} color={theme.colors.onPrimary} />
               </View>
               <Text style={s.actionBtnText}>
-                {t('order_photos_delete_selected', 'Удалить')}
+                {t('order_photos_delete_selected')}
               </Text>
             </Pressable>
             <Pressable
@@ -314,13 +314,13 @@ export default function OrderPhotosModal({
               pressed && s.actionBtnPressed,
             ]}
             accessibilityRole="button"
-            accessibilityLabel={t('order_photo_source_camera', 'Камера')}
+            accessibilityLabel={t('order_photo_source_camera')}
           >
             <View style={s.actionBtnIcon}>
               <Feather name="camera" size={theme.icons?.sm ?? 18} color={theme.colors.primary} />
             </View>
             <Text style={s.actionBtnTextSecondary} numberOfLines={1}>
-              {t('order_photo_source_camera', 'Камера')}
+              {t('order_photo_source_camera')}
             </Text>
           </Pressable>
           <Pressable
@@ -331,13 +331,13 @@ export default function OrderPhotosModal({
               pressed && s.actionBtnPressed,
             ]}
             accessibilityRole="button"
-            accessibilityLabel={t('order_photo_source_gallery', 'Галерея')}
+            accessibilityLabel={t('order_photo_source_gallery')}
           >
             <View style={s.actionBtnIcon}>
               <Feather name="image" size={theme.icons?.sm ?? 18} color={theme.colors.primary} />
             </View>
             <Text style={s.actionBtnTextSecondary} numberOfLines={1}>
-              {t('order_photo_source_gallery', 'Галерея')}
+              {t('order_photo_source_gallery')}
             </Text>
           </Pressable>
         </View>
@@ -364,14 +364,14 @@ export default function OrderPhotosModal({
         visible={visible && !suspended && confirmRemoveIndex == null}
         onClose={suspended || confirmRemoveIndex != null ? undefined : onClose}
         onDismiss={handleBaseDismiss}
-        title={t('order_photos_title', 'Фотографии')}
+        title={t('order_photos_title')}
         maxHeightRatio={0.85}
         footer={footer}
       >
         <Text style={s.subtitle}>
           {selectionMode
-            ? t('order_photos_selected_hint', 'Выбрано {count}').replace('{count}', String(selectedCount))
-            : t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+            ? t('order_photos_selected_hint').replace('{count}', String(selectedCount))
+            : t('order_photos_count').replace('{count}', String(count))}
         </Text>
         {unavailableCount > 0 ? (
           <Text style={s.warningText}>
@@ -415,10 +415,9 @@ export default function OrderPhotosModal({
       <ConfirmModal
         visible={removeManyConfirmVisible}
         onClose={closeRemoveManyConfirm}
-        title={t('order_photos_delete_many_title', 'Удалить выбранные фото?')}
+        title={t('order_photos_delete_many_title')}
         message={t(
           'order_photos_delete_many_message',
-          'Будет удалено {count} фото без возможности восстановления.',
         ).replace('{count}', String(pendingRemoveManyUris.length))}
         confirmLabel={t('order_photos_delete_single_confirm')}
         cancelLabel={t('order_photos_delete_single_cancel')}

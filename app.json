@@ -20,10 +20,13 @@
       "package": "com.monitorapp.monitor",
       "googleServicesFile": "./android/app/google-services.json",
       "permissions": [
-        "CAMERA",
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES"
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -84,6 +87,10 @@
     "updates": {
       "url": "https://u.expo.dev/3c645715-1637-4502-979c-d4690c6cf1e2"
     },
-    "ios": {}
+    "ios": {
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
+    }
   }
 }

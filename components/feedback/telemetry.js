@@ -1,6 +1,13 @@
 // components/feedback/telemetry.js
 // Надёжная телеметрия: client → createClient → REST, максимум диагностики в консоль.
 
+const DEFAULT_DEBUG = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
+const SENSITIVE_KEY_RE =
+  /password|passwd|pwd|token|access_token|refresh_token|authorization|cookie|secret|service_role|apikey|api_key|jwt/i;
+const JWT_RE = /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g;
+const BEARER_RE = /Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi;
+const REDACTED = '[REDACTED]';
+
 let _cfg = {
   supabaseUrl: null,
   supabaseAnonKey: null,
@@ -10,7 +17,7 @@ let _cfg = {
   appVersion: null,
   environment: 'production',
   userId: null,
-  debug: true, // ВКЛ подробный лог
+  debug: DEFAULT_DEBUG,
 };
 
 let _supabase = null;
@@ -27,20 +34,37 @@ function redact(s, keep = 6) {
   if (s.length <= keep) return '***';
   return s.slice(0, keep) + '…redacted';
 }
+function redactSensitiveText(value) {
+  return String(value || '')
+    .replace(BEARER_RE, `Bearer ${REDACTED}`)
+    .replace(JWT_RE, REDACTED);
+}
+function sanitizeValue(value, key = '', depth = 0) {
+  if (SENSITIVE_KEY_RE.test(String(key || ''))) return REDACTED;
+  if (typeof value === 'string') return redactSensitiveText(value);
+  if (value == null || typeof value !== 'object') return value;
+  if (depth > 6) return '[MaxDepth]';
+  if (Array.isArray(value)) return value.map((item) => sanitizeValue(item, '', depth + 1));
+  const out = {};
+  Object.entries(value).forEach(([nextKey, nextValue]) => {
+    out[nextKey] = sanitizeValue(nextValue, nextKey, depth + 1);
+  });
+  return out;
+}
 function dlog(...a) {
   if (_cfg.debug)
     try {
-      console.info('[telemetry]', ...a);
+      console.info('[telemetry]', ...a.map((item) => sanitizeValue(item)));
     } catch {}
 }
 function dwarn(...a) {
   try {
-    console.warn('[telemetry]', ...a);
+    console.warn('[telemetry]', ...a.map((item) => sanitizeValue(item)));
   } catch {}
 }
 function derr(...a) {
   try {
-    console.error('[telemetry]', ...a);
+    console.error('[telemetry]', ...a.map((item) => sanitizeValue(item)));
   } catch {}
 }
 
@@ -121,9 +145,13 @@ export function setUser(userId) {
 function normalizeError(err) {
   if (!err) return { name: 'Error', message: 'Unknown error', stack: null };
   if (err instanceof Error)
-    return { name: err.name, message: err.message, stack: err.stack || null };
+    return {
+      name: err.name,
+      message: redactSensitiveText(err.message),
+      stack: err.stack ? redactSensitiveText(err.stack) : null,
+    };
   try {
-    const str = typeof err === 'string' ? err : JSON.stringify(err);
+    const str = typeof err === 'string' ? err : JSON.stringify(sanitizeValue(err));
     return { name: 'NonError', message: str, stack: null };
   } catch {
     return { name: 'NonError', message: 'Unserializable error', stack: null };

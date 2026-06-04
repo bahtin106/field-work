@@ -2,6 +2,7 @@
 import { Feather } from '@expo/vector-icons';
 import React from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
 /**
@@ -15,12 +16,13 @@ import { useTheme } from '../../theme';
  */
 export default function ClearButton({
   onPress,
-  accessibilityLabel = 'Очистить',
+  accessibilityLabel,
   size,
   iconSize,
   style,
 }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
 
   // Уменьшаем размер круга на 30% (85% * 85% ≈ 72%)
@@ -73,7 +75,7 @@ export default function ClearButton({
         }}
         style={styles.button}
         accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
+        accessibilityLabel={accessibilityLabel || t('common_clear')}
         accessibilityState={{ disabled: false }}
         hitSlop={{
           top: theme.spacing.sm,

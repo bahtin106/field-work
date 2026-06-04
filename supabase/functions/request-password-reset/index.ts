@@ -126,7 +126,7 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
         return json({ ok: false, code: 'INVALID_PASSWORD', message: 'Пароль должен быть не короче 8 символов' });
       }
       if (!profile?.id) {
-        return json({ ok: false, code: 'USER_NOT_FOUND', message: 'Сотрудник с таким e-mail не найден' });
+        return json({ ok: false, code: 'INVALID_CODE', message: 'Неверный код подтверждения' });
       }
 
       const emailServiceUrl = getEmailServiceUrl();
@@ -237,7 +237,12 @@ export async function handleRequestPasswordReset(req: Request): Promise<Response
       if (requestLogId != null) {
         await admin.from('password_reset_requests').update({ status: 'user_not_found' }).eq('id', requestLogId);
       }
-      return json({ ok: false, code: 'USER_NOT_FOUND', message: 'Сотрудник с таким e-mail не найден' });
+      return json({
+        ok: true,
+        cooldown_seconds: PASSWORD_RESET_COOLDOWN_SECONDS,
+        expires_in_seconds: 900,
+        message: 'Код отправлен на email',
+      });
     }
 
     const emailServiceUrl = getEmailServiceUrl();

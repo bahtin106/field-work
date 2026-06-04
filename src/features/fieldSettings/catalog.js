@@ -23,7 +23,6 @@ function createFieldConfig(entityType, fieldKey, config) {
     entityType,
     fieldKey,
     labelKey: config.labelKey,
-    fallbackLabel: config.fallbackLabel,
     sectionKey: config.sectionKey,
     inputKind: config.inputKind,
     supportsRequired: config.supportsRequired !== false,
@@ -38,7 +37,6 @@ function createFieldConfig(entityType, fieldKey, config) {
 const ORDER_FIELDS = [
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'title', {
     labelKey: 'order_field_title',
-    fallbackLabel: 'Название заявки',
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'text',
     defaultRequired: true,
@@ -48,7 +46,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'comment', {
     labelKey: 'order_field_description',
-    fallbackLabel: 'Описание',
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'multiline',
     lockedEnabled: true,
@@ -56,14 +53,12 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'work_type_id', {
     labelKey: 'order_field_work_type',
-    fallbackLabel: 'Тип работ',
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'select',
     sortOrder: 30,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'urgent', {
     labelKey: 'create_order_label_urgent',
-    fallbackLabel: 'Срочная',
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'boolean',
     supportsRequired: false,
@@ -71,7 +66,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'client_id', {
     labelKey: 'order_details_customer',
-    fallbackLabel: 'Заказчик',
     sectionKey: FIELD_SETTINGS_SECTIONS.RELATIONS,
     inputKind: 'relation',
     supportsRequired: false,
@@ -82,7 +76,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'object_id', {
     labelKey: 'routes_objects_object',
-    fallbackLabel: 'Объект',
     sectionKey: FIELD_SETTINGS_SECTIONS.RELATIONS,
     inputKind: 'relation',
     supportsRequired: false,
@@ -93,7 +86,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'phone', {
     labelKey: 'order_details_phone',
-    fallbackLabel: 'Телефон',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     defaultRequired: true,
@@ -103,7 +95,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'time_window_start', {
     labelKey: 'create_order_label_date',
-    fallbackLabel: 'Дата выезда',
     sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
     inputKind: 'datetime',
     defaultRequired: true,
@@ -111,14 +102,12 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'departure_time', {
     labelKey: 'order_field_departure_time',
-    fallbackLabel: 'Время выезда',
     sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
     inputKind: 'time',
     sortOrder: 101,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'assigned_to', {
     labelKey: 'create_order_label_executor',
-    fallbackLabel: 'Исполнитель',
     sectionKey: FIELD_SETTINGS_SECTIONS.SCHEDULING,
     inputKind: 'relation',
     supportsRequired: false,
@@ -129,7 +118,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'finance', {
     labelKey: 'order_field_finance',
-    fallbackLabel: 'Финансы',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'boolean',
     supportsRequired: false,
@@ -139,7 +127,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'finance_entries', {
     labelKey: 'order_field_finance_entries',
-    fallbackLabel: 'Расход, доход, скидка',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'boolean',
     supportsRequired: false,
@@ -149,7 +136,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'start_price', {
     labelKey: 'order_field_initial_amount',
-    fallbackLabel: 'Изначальная сумма',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'number',
     supportsRequired: false,
@@ -158,7 +144,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'payment_status', {
     labelKey: 'order_field_payment_status',
-    fallbackLabel: 'Статус оплаты',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'select',
     supportsRequired: false,
@@ -167,7 +152,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'payment_method', {
     labelKey: 'order_field_payment_method',
-    fallbackLabel: 'Способ оплаты',
     sectionKey: FIELD_SETTINGS_SECTIONS.FINANCE,
     inputKind: 'select',
     supportsRequired: false,
@@ -176,7 +160,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_1', {
     labelKey: 'order_media_field_1',
-    fallbackLabel: 'Медиа 1',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     defaultEnabled: true,
@@ -184,7 +167,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_2', {
     labelKey: 'order_media_field_2',
-    fallbackLabel: 'Медиа 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     defaultEnabled: false,
@@ -192,7 +174,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_3', {
     labelKey: 'order_media_field_3',
-    fallbackLabel: 'Медиа 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     defaultEnabled: false,
@@ -200,7 +181,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_4', {
     labelKey: 'order_media_field_4',
-    fallbackLabel: 'Медиа 4',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     defaultEnabled: false,
@@ -208,7 +188,6 @@ const ORDER_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.ORDER, 'media_file_5', {
     labelKey: 'order_media_field_5',
-    fallbackLabel: 'Медиа 5',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     defaultEnabled: false,
@@ -219,7 +198,6 @@ const ORDER_FIELDS = [
 const OBJECT_FIELDS = [
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'name', {
     labelKey: 'objects_field_name',
-    fallbackLabel: 'Название объекта',
     sectionKey: FIELD_SETTINGS_SECTIONS.GENERAL,
     inputKind: 'text',
     defaultRequired: true,
@@ -229,28 +207,24 @@ const OBJECT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'country', {
     labelKey: 'order_field_country',
-    fallbackLabel: 'Страна',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 20,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'region', {
     labelKey: 'order_field_region',
-    fallbackLabel: 'Область',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 30,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'district', {
     labelKey: 'order_field_district',
-    fallbackLabel: 'Район',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 40,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'city', {
     labelKey: 'order_field_city',
-    fallbackLabel: 'Город',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     defaultRequired: false,
@@ -260,7 +234,6 @@ const OBJECT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'street', {
     labelKey: 'order_field_street',
-    fallbackLabel: 'Улица',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     defaultRequired: false,
@@ -270,7 +243,6 @@ const OBJECT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'house', {
     labelKey: 'order_field_house',
-    fallbackLabel: 'Дом',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     defaultRequired: false,
@@ -280,63 +252,54 @@ const OBJECT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'postal_code', {
     labelKey: 'order_field_postal_code',
-    fallbackLabel: 'Индекс',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 80,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'floor', {
     labelKey: 'order_field_floor',
-    fallbackLabel: 'Этаж',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 90,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'entrance', {
     labelKey: 'order_field_entrance',
-    fallbackLabel: 'Подъезд',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 100,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'apartment', {
     labelKey: 'order_field_apartment',
-    fallbackLabel: 'Квартира/офис',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDRESS,
     inputKind: 'text',
     sortOrder: 110,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'comment', {
     labelKey: 'order_field_comment',
-    fallbackLabel: 'Комментарий',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
     inputKind: 'multiline',
     sortOrder: 120,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_1', {
     labelKey: 'order_field_secondary_phone',
-    fallbackLabel: 'Доп. телефон',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 130,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_2', {
     labelKey: 'client_field_additional_phone_2',
-    fallbackLabel: 'Доп. телефон 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 140,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'additional_phone_3', {
     labelKey: 'client_field_additional_phone_3',
-    fallbackLabel: 'Доп. телефон 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 150,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_1', {
     labelKey: 'object_media_field_1',
-    fallbackLabel: 'Медиа объекта 1',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
@@ -344,7 +307,6 @@ const OBJECT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_2', {
     labelKey: 'object_media_field_2',
-    fallbackLabel: 'Медиа объекта 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
@@ -352,7 +314,6 @@ const OBJECT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.OBJECT, 'media_file_3', {
     labelKey: 'object_media_field_3',
-    fallbackLabel: 'Медиа объекта 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
@@ -363,7 +324,6 @@ const OBJECT_FIELDS = [
 const CLIENT_FIELDS = [
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'avatar_url', {
     labelKey: 'profile_photo_title',
-    fallbackLabel: 'Фото профиля',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
@@ -371,7 +331,6 @@ const CLIENT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'first_name', {
     labelKey: 'label_first_name',
-    fallbackLabel: 'Имя',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'text',
     supportsRequired: false,
@@ -382,7 +341,6 @@ const CLIENT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'last_name', {
     labelKey: 'label_last_name',
-    fallbackLabel: 'Фамилия',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'text',
     supportsRequired: false,
@@ -392,7 +350,6 @@ const CLIENT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'middle_name', {
     labelKey: 'label_middle_name',
-    fallbackLabel: 'Отчество',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'text',
     supportsRequired: false,
@@ -402,21 +359,18 @@ const CLIENT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'comment', {
     labelKey: 'clients_comment_label',
-    fallbackLabel: 'Комментарий',
     sectionKey: FIELD_SETTINGS_SECTIONS.ADDITIONAL,
     inputKind: 'multiline',
     sortOrder: 50,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'email', {
     labelKey: 'view_label_email',
-    fallbackLabel: 'Эл. почта',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'email',
     sortOrder: 60,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'phone', {
     labelKey: 'view_label_phone',
-    fallbackLabel: 'Телефон',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     defaultRequired: true,
@@ -426,21 +380,18 @@ const CLIENT_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'additional_phone_1', {
     labelKey: 'order_field_secondary_phone',
-    fallbackLabel: 'Доп. телефон',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 80,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'additional_phone_2', {
     labelKey: 'client_field_additional_phone_2',
-    fallbackLabel: 'Доп. телефон 2',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 90,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.CLIENT, 'additional_phone_3', {
     labelKey: 'client_field_additional_phone_3',
-    fallbackLabel: 'Доп. телефон 3',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 100,
@@ -450,7 +401,6 @@ const CLIENT_FIELDS = [
 const EMPLOYEE_FIELDS = [
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'avatar_url', {
     labelKey: 'profile_photo_title',
-    fallbackLabel: 'Фото профиля',
     sectionKey: FIELD_SETTINGS_SECTIONS.MEDIA,
     inputKind: 'media',
     supportsRequired: false,
@@ -458,7 +408,6 @@ const EMPLOYEE_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'first_name', {
     labelKey: 'label_first_name',
-    fallbackLabel: 'Имя',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'text',
     supportsRequired: false,
@@ -469,7 +418,6 @@ const EMPLOYEE_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'last_name', {
     labelKey: 'label_last_name',
-    fallbackLabel: 'Фамилия',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'text',
     supportsRequired: false,
@@ -480,7 +428,6 @@ const EMPLOYEE_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'middle_name', {
     labelKey: 'label_middle_name',
-    fallbackLabel: 'Отчество',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'text',
     supportsRequired: false,
@@ -491,7 +438,6 @@ const EMPLOYEE_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'email', {
     labelKey: 'view_label_email',
-    fallbackLabel: 'Эл. почта',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'email',
     defaultRequired: true,
@@ -501,28 +447,24 @@ const EMPLOYEE_FIELDS = [
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'phone', {
     labelKey: 'view_label_phone',
-    fallbackLabel: 'Телефон',
     sectionKey: FIELD_SETTINGS_SECTIONS.CONTACT,
     inputKind: 'phone',
     sortOrder: 60,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'birthdate', {
     labelKey: 'label_birthdate',
-    fallbackLabel: 'Дата рождения',
     sectionKey: FIELD_SETTINGS_SECTIONS.PERSONAL,
     inputKind: 'date',
     sortOrder: 70,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'department_id', {
     labelKey: 'label_department',
-    fallbackLabel: 'Отдел',
     sectionKey: FIELD_SETTINGS_SECTIONS.COMPANY,
     inputKind: 'select',
     sortOrder: 80,
   }),
   createFieldConfig(ENTITY_FIELD_TYPES.EMPLOYEE, 'role', {
     labelKey: 'label_role',
-    fallbackLabel: 'Роль',
     sectionKey: FIELD_SETTINGS_SECTIONS.COMPANY,
     inputKind: 'select',
     supportsRequired: false,
@@ -677,7 +619,7 @@ export function toLegacySchemaFields(settings) {
     .map((field) => ({
       field_key: field.fieldKey,
       label_key: field.labelKey,
-      label: field.customLabel || field.fallbackLabel,
+      label: field.customLabel || null,
       custom_label: field.customLabel || null,
       type: field.inputKind,
       position: field.sortOrder,

@@ -11,19 +11,19 @@ export default function FieldErrorText({ message, style }) {
   const lower = raw.toLowerCase();
   const hiddenValidationMessages = new Set(
     [
-      T('err_required_field', 'Obyazatelnoe pole'),
-      T('err_email_invalid_format', 'Nekorrektnyi email'),
-      T('err_phone', 'Telefon dolzhen byt v formate +7'),
-      T('clients_required_any_name', 'Zapolnite hotya by odno pole imeni'),
-      T('clients_required_phone', 'Ukazhite osnovnoi telefon klienta'),
-      T('field_settings_required_fill', 'Zapolnite obyazatelnye polya'),
-      T('order_validation_title_required', 'Ukazhite nazvanie zayavki'),
-      T('order_validation_date_required', 'Ukazhite datu vyezda'),
-      T('order_validation_executor_required', 'Vyberite ispolnitelya ili otpravte v lentu'),
-      T('order_validation_work_type_required', 'Vyberite tip rabot'),
-      T('order_validation_client_required', 'Vyberite klienta'),
-      T('objects_select_required_for_order', 'Vyberite obyekt'),
-      T('order_validation_phone_format', 'Vvedite korrektnyi nomer telefona'),
+      T('err_required_field'),
+      T('err_email_invalid_format'),
+      T('err_phone'),
+      T('clients_required_any_name'),
+      T('clients_required_phone'),
+      T('field_settings_required_fill'),
+      T('order_validation_title_required'),
+      T('order_validation_date_required'),
+      T('order_validation_executor_required'),
+      T('order_validation_work_type_required'),
+      T('order_validation_client_required'),
+      T('objects_select_required_for_order'),
+      T('order_validation_phone_format'),
     ]
       .map((value) => String(value || '').trim())
       .filter(Boolean),
@@ -31,7 +31,6 @@ export default function FieldErrorText({ message, style }) {
 
   if (
     hiddenValidationMessages.has(raw) ||
-    lower === 'обязательное поле' ||
     lower === 'required field'
   ) {
     return null;

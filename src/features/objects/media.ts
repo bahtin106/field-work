@@ -2,6 +2,7 @@
 import { Platform } from 'react-native';
 import { objectMediaStorage } from '../../../lib/objectMediaStorage';
 import { uploadPreparedImageFile } from '../../shared/media/imagePipeline';
+import { t as T } from '../../i18n';
 
 export async function uploadObjectMediaPhoto(
   objectId: string,
@@ -38,7 +39,7 @@ export async function uploadObjectMediaPhoto(
           : {};
 
       if (!uploadUrl) {
-        throw new Error('Не удалось подготовить загрузку');
+        throw new Error(T('object_media_prepare_upload_failed'));
       }
 
       await uploadPreparedImageFile(uploadUrl, uri, {
@@ -56,7 +57,7 @@ export async function uploadObjectMediaPhoto(
       });
       const publicUrl = String(committed?.url || '').trim();
       if (!publicUrl) {
-        throw new Error('Медиа загружено, но ссылка не сохранена');
+        throw new Error(T('object_media_link_save_failed'));
       }
       return { publicUrl, displayUrl: String(committed?.display_url || '').trim() };
     } catch (error) {
@@ -69,7 +70,7 @@ export async function uploadObjectMediaPhoto(
   }
 
   const response = await fetch(uri);
-  if (!response.ok) throw new Error('Не удалось прочитать файл');
+  if (!response.ok) throw new Error(T('object_media_read_file_failed'));
   const fileBody = await response.arrayBuffer();
   const data = await objectMediaStorage('upload', {
     object_id,
@@ -78,7 +79,7 @@ export async function uploadObjectMediaPhoto(
     mime: normalizedMime,
   });
   const publicUrl = String(data?.url || '').trim();
-  if (!publicUrl) throw new Error('Медиа загружено, но ссылка не сохранена');
+  if (!publicUrl) throw new Error(T('object_media_link_save_failed'));
   return { publicUrl, displayUrl: String(data?.display_url || '').trim() };
 }
 

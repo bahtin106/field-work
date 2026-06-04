@@ -170,7 +170,7 @@ export default function TelegramBotSettingsScreen() {
     (item) => {
       if (!item) return t('common_select');
       return item?.is_blocked
-        ? `${item.label} (${t('status_blocked', 'Заблокирован')})`
+        ? `${item.label} (${t('status_blocked')})`
         : item.label;
     },
     [t],
@@ -377,7 +377,7 @@ export default function TelegramBotSettingsScreen() {
     ...assignees.map((item) => ({
       id: item.id,
       label: formatAssigneeLabel(item),
-      subtitle: item?.is_blocked ? t('status_blocked', 'Заблокирован') : undefined,
+      subtitle: item?.is_blocked ? t('status_blocked') : undefined,
       onPress: () => handleAssigneeSelect(item.id),
     })),
   ]), [assignees, formatAssigneeLabel, handleAssigneeSelect, t]);

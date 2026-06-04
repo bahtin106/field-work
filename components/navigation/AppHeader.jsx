@@ -6,6 +6,7 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-nativ
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { useTheme } from '../../theme';
 import { withAlpha } from '../../theme/colors';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useCapsuleFeedback } from '../ui/useCapsuleFeedback';
 import { useRouteTitle } from './useRouteTitle';
 
@@ -114,6 +115,7 @@ const createStyles = (theme, metrics) =>
 
 export default function AppHeader({ options = {}, back, route, onBackPress: onBackPressProp }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const nav = useNavigation();
   const routeParams = route?.params || EMPTY_ROUTE_PARAMS;
   const pathname = usePathname?.() || '';
@@ -376,7 +378,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             style={[s.textControl, { flexDirection: 'row', alignItems: 'center' }]}
             accessibilityRole="button"
             accessibilityLabel={String(
-              route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? 'Закрыть'),
+              route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? t('app_header_close')),
             )}
           >
             <View
@@ -392,7 +394,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
               <Feather name="x" size={headerMetrics.iconSize} color={theme.colors.text} />
             </View>
             <Text style={[s.title, { marginLeft: headerMetrics.closeTitleGap, color: theme.colors.text }]}>
-              {String(route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? 'Закрыть'))}
+              {String(route?.params?.headerLeftLabel || (globalThis?.S?.('close') ?? t('app_header_close')))}
             </Text>
           </Pressable>
         ) : (
@@ -410,7 +412,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
                 accessibilityLabel={String(
                   backLabel ||
                     route?.params?.headerBackTitle ||
-                    (globalThis?.S?.('cancel') ?? 'Отмена'),
+                    (globalThis?.S?.('cancel') ?? t('app_header_cancel')),
                 )}
               >
                 <Animated.View style={[leftCapsuleAnim]}>
@@ -419,7 +421,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
                       route?.params?.headerBackTitle ??
                         backLabel ??
                         globalThis?.S?.('cancel') ??
-                        'Отмена',
+                        t('app_header_cancel'),
                     )}
                   </Text>
                 </Animated.View>
@@ -435,7 +437,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
                   onPress={onBack}
                   style={[s.backTouchable, { flexDirection: 'row', alignItems: 'center' }]}
                   accessibilityRole="button"
-                  accessibilityLabel={String(backLabel || (globalThis?.S?.('back') ?? 'Назад'))}
+                  accessibilityLabel={String(backLabel || (globalThis?.S?.('back') ?? t('app_header_back')))}
                 >
                   <Animated.View style={[s.backCircle, { backgroundColor: bg }]}>
                     <Feather name="chevron-left" size={headerMetrics.iconSize} color={theme.colors.text} />

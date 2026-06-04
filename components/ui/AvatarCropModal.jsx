@@ -42,12 +42,7 @@ export default function AvatarCropModal({ visible, uri, onCancel, onConfirm }) {
   const cropSize = useMemo(() => Math.max(220, Math.min(win.width - 32, 420)), [win.width]);
 
   const cropHint = useMemo(() => {
-    const translated = t('profile_photo_crop_hint');
-    const base =
-      translated && translated !== 'profile_photo_crop_hint'
-        ? translated
-        : 'Перемещайте и масштабируйте фото, затем нажмите «Применить».';
-    return base.replace(/Готово/g, 'Применить');
+    return t('profile_photo_crop_hint');
   }, [t]);
 
   const prepareFallback = useCallback(
@@ -189,12 +184,12 @@ export default function AvatarCropModal({ visible, uri, onCancel, onConfirm }) {
           <View style={styles.editorHeader}>
             <Pressable onPress={onCancel} style={styles.headerBtn}>
               <Text style={[styles.headerBtnText, { color: theme.colors.textSecondary }]}>
-                {t('btn_cancel') || 'Отмена'}
+                {t('btn_cancel')}
               </Text>
             </Pressable>
             <Pressable onPress={applyFallbackCrop} style={styles.headerBtn} disabled={applyingFallback}>
               <Text style={[styles.headerBtnText, { color: theme.colors.primary }]}>
-                {applyingFallback ? t('btn_applying') || '...' : t('btn_apply') || 'Применить'}
+                {applyingFallback ? t('btn_applying') : t('btn_apply')}
               </Text>
             </Pressable>
           </View>
@@ -269,7 +264,7 @@ export default function AvatarCropModal({ visible, uri, onCancel, onConfirm }) {
         >
           <ActivityIndicator size="small" color={theme.colors.primary} animating />
           <Text style={[styles.loaderTitle, { color: theme.colors.text }]}>
-            {t('profile_photo_preparing') || 'Подготавливаем редактор...'}
+            {t('profile_photo_preparing')}
           </Text>
         </View>
       </View>

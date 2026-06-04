@@ -25,10 +25,10 @@ export function clientSortOptions(t) {
   return [
     { id: CLIENT_SORT.NAME_ASC, label: t('sort_name_asc') },
     { id: CLIENT_SORT.NAME_DESC, label: t('sort_name_desc') },
-    { id: CLIENT_SORT.CREATED_NEW_OLD, label: t('sort_created_new_old', 'Сначала новые') },
-    { id: CLIENT_SORT.CREATED_OLD_NEW, label: t('sort_created_old_new', 'Сначала старые') },
-    { id: CLIENT_SORT.OBJECTS_MANY_FEW, label: t('sort_objects_many_few', 'Больше объектов') },
-    { id: CLIENT_SORT.OBJECTS_FEW_MANY, label: t('sort_objects_few_many', 'Меньше объектов') },
+    { id: CLIENT_SORT.CREATED_NEW_OLD, label: t('sort_created_new_old') },
+    { id: CLIENT_SORT.CREATED_OLD_NEW, label: t('sort_created_old_new') },
+    { id: CLIENT_SORT.OBJECTS_MANY_FEW, label: t('sort_objects_many_few') },
+    { id: CLIENT_SORT.OBJECTS_FEW_MANY, label: t('sort_objects_few_many') },
   ];
 }
 

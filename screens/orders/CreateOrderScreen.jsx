@@ -394,14 +394,14 @@ function CreateOrderContent() {
   );
   if (!autoTitleRef.current) {
     autoTitleRef.current = buildAutoRequestTitle(new Date(), {
-      prefix: t('order_auto_title_prefix', 'Заявка от'),
+      prefix: t('order_auto_title_prefix'),
     });
   }
   const resolveTitleForSave = useCallback(
     (value, fallbackDate = null) =>
       resolveRequestTitle(value, {
         fallbackDate,
-        prefix: t('order_auto_title_prefix', 'Заявка от'),
+        prefix: t('order_auto_title_prefix'),
       }),
     [t],
   );
@@ -490,7 +490,7 @@ function CreateOrderContent() {
 
   const DRAFT_KEY = 'draft_create_order';
 
-  // � � � Ћ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� � С‘� ЎвЂљ� Ў� Љ � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
+  // Persist unfinished order form locally.
   const saveDraft = useCallback(async () => {
     try {
       const draft = {
@@ -535,7 +535,7 @@ function CreateOrderContent() {
     toFeed,
   ]);
 
-  // � � вЂ”� � В°� � С–� Ў� ‚� ЎС“� � В·� � С‘� ЎвЂљ� Ў� Љ � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
+  // Restore a saved local draft if it exists.
   const loadDraft = useCallback(async () => {
     try {
       const json = await AsyncStorage.getItem(DRAFT_KEY);
@@ -548,7 +548,7 @@ function CreateOrderContent() {
     }
   }, []);
 
-  // � � � €� � Т‘� � В°� � В»� � С‘� ЎвЂљ� Ў� Љ � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
+  // Remove the local draft after successful submit or explicit discard.
   const deleteDraft = useCallback(async () => {
     try {
       await AsyncStorage.removeItem(DRAFT_KEY);
@@ -557,7 +557,7 @@ function CreateOrderContent() {
     }
   }, []);
 
-  // � � вЂ™� � С•� Ў� ѓ� Ў� ѓ� ЎвЂљ� � В°� � � …� � С•� � � � � � С‘� ЎвЂљ� Ў� Љ � � Т‘� � В°� � � …� � � …� ЎвЂ№� � Вµ � � С‘� � В· � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”� � В°
+  // Restore form state from a saved local draft.
   const restoreDraft = useCallback((draft) => {
     if (!draft) return;
     const draftForm = draft.form || {};
@@ -613,7 +613,7 @@ function CreateOrderContent() {
     [t],
   );
 
-  // � � Сџ� Ў� ‚� � С•� � � � � � Вµ� Ў� ‚� Ў� Џ� � Вµ� � С � � Вµ� Ў� ѓ� ЎвЂљ� Ў� Љ � � В»� � С‘ � � � …� � Вµ� � С—� ЎС“� Ў� ѓ� ЎвЂљ� ЎвЂ№� � Вµ � � Т‘� � В°� � � …� � � …� ЎвЂ№� � Вµ � � � �  � ЎвЂћ� � С•� Ў� ‚� � С� � Вµ
+  // Detect meaningful edits before prompting about unsaved changes.
   const hasChanges = useCallback(() => {
     const hasAssignmentChanges = isSoloAdmin ? false : (!!assigneeId || !!toFeed);
     return (
@@ -655,17 +655,17 @@ function CreateOrderContent() {
   ]);
 
   const handleCancelPress = useCallback(() => {
-    // � � Сџ� � С•� � С”� � В°� � В·� ЎвЂ№� � � � � � В°� � Вµ� � С � � С� � С•� � Т‘� � В°� � В»� � С”� ЎС“ � ЎвЂљ� � С•� � В»� Ў� Љ� � С”� � С• � � Вµ� Ў� ѓ� � В»� � С‘ � � Вµ� Ў� ѓ� ЎвЂљ� Ў� Љ � � С‘� � В·� � С� � Вµ� � � …� � Вµ� � � …� � С‘� Ў� Џ
+    // Show discard confirmation only when there are meaningful edits.
     if (hasChanges()) {
       setCancelVisible(true);
     } else {
-      intentionalExitRef.current = true; // � � � ‡� � � � � � � …� ЎвЂ№� � в„– � � � � � ЎвЂ№� ЎвЂ¦� � С•� � Т‘ - � � � …� � Вµ � Ў� ѓ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
+      intentionalExitRef.current = true;
       router.back();
     }
   }, [hasChanges]);
 
   const confirmCancel = useCallback(() => {
-    intentionalExitRef.current = true; // � � � ‡� � � � � � � …� ЎвЂ№� � в„– � � � � � ЎвЂ№� ЎвЂ¦� � С•� � Т‘ - � � � …� � Вµ � Ў� ѓ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
+    intentionalExitRef.current = true;
     setCancelVisible(false);
     router.back();
   }, []);
@@ -880,7 +880,7 @@ function CreateOrderContent() {
     if (!subscriptionGuard.canEdit) {
       showBanner({
         type: 'warning',
-        message: t('subscription_create_unavailable_toast', 'Создание заявки недоступно'),
+        message: t('subscription_create_unavailable_toast'),
       });
       return;
     }
@@ -909,7 +909,7 @@ function CreateOrderContent() {
       nextErrors.time_window_start = { message: t('order_validation_date_required') };
     }
     if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
-      nextErrors.departure_time = { message: t('order_validation_departure_time_required', 'Укажите время выезда') };
+      nextErrors.departure_time = { message: t('order_validation_departure_time_required') };
     }
     if (isDepartureRange && (!departureEndDate || departureEndDate < departureDate)) {
       nextErrors.time_window_start = { message: t('order_validation_date_range_invalid') };
@@ -1101,8 +1101,8 @@ function CreateOrderContent() {
       }
       return;
     } else {
-      intentionalExitRef.current = true; // � � � €� Ў� ѓ� � С—� � Вµ� Ўв‚¬� � � …� � С•� � Вµ � Ў� ѓ� � С•� � В·� � Т‘� � В°� � � …� � С‘� � Вµ - � � � …� � Вµ � Ў� ѓ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
-      await deleteDraft(); // � � � €� � Т‘� � В°� � В»� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С” � � С—� � С•� Ў� ѓ� � В»� � Вµ � ЎС“� Ў� ѓ� � С—� � Вµ� Ўв‚¬� � � …� � С•� � С–� � С• � Ў� ѓ� � С•� � В·� � Т‘� � В°� � � …� � С‘� Ў� Џ
+      intentionalExitRef.current = true;
+      await deleteDraft();
       router.replace('/orders/order-success');
     }
   }, [
@@ -1156,7 +1156,7 @@ function CreateOrderContent() {
         if (hasChanges()) {
           setCancelVisible(true);
         } else {
-          intentionalExitRef.current = true; // � � � ‡� � � � � � � …� ЎвЂ№� � в„– � � � � � ЎвЂ№� ЎвЂ¦� � С•� � Т‘ - � � � …� � Вµ � Ў� ѓ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С”
+          intentionalExitRef.current = true;
           router.back();
         }
         return true;
@@ -1192,7 +1192,7 @@ function CreateOrderContent() {
     };
     loadUsers();
 
-    // � � Сџ� Ў� ‚� � С•� � � � � � Вµ� Ў� ‚� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С” � � С—� Ў� ‚� � С‘ � � С� � С•� � � …� ЎвЂљ� � С‘� Ў� ‚� � С•� � � � � � В°� � � …� � С‘� � С‘
+    // Prompt to restore a local draft after initial screen setup.
     (async () => {
       const draft = await loadDraft();
       if (draft && mounted) {
@@ -1206,12 +1206,12 @@ function CreateOrderContent() {
     };
   }, [loadDraft, orderFieldSettings]);
 
-  // AppState listener - � Ў� ѓ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С” � � С—� Ў� ‚� � С‘ � Ў� ѓ� � � � � � С•� Ў� ‚� � В°� ЎвЂЎ� � С‘� � � � � � В°� � � …� � С‘� � С‘/� � В·� � В°� � С”� Ў� ‚� ЎвЂ№� ЎвЂљ� � С‘� � С‘ � � С—� Ў� ‚� � С‘� � В»� � С•� � В¶� � Вµ� � � …� � С‘� Ў� Џ
+  // Persist a local draft when the app leaves the foreground unexpectedly.
   useEffect(() => {
     const handleAppStateChange = (nextAppState) => {
-      // � � вЂў� Ў� ѓ� � В»� � С‘ � � С—� Ў� ‚� � С‘� � В»� � С•� � В¶� � Вµ� � � …� � С‘� � Вµ � ЎС“� ЎвЂ¦� � С•� � Т‘� � С‘� ЎвЂљ � � � �  background � � С‘� � В»� � С‘ inactive � � С‘ � Ў� Њ� ЎвЂљ� � С• � � Сњ� � вЂў � Ў� Џ� � � � � � � …� ЎвЂ№� � в„– � � � � � ЎвЂ№� ЎвЂ¦� � С•� � Т‘
+      // Background and inactive states can interrupt editing without route changes.
       if ((nextAppState === 'background' || nextAppState === 'inactive') && !intentionalExitRef.current) {
-        // � � � Ћ� � С•� ЎвЂ¦� Ў� ‚� � В°� � � …� Ў� Џ� � Вµ� � С � ЎвЂЎ� � Вµ� Ў� ‚� � � …� � С•� � � � � � С‘� � С” � ЎвЂљ� � С•� � В»� Ў� Љ� � С”� � С• � � Вµ� Ў� ѓ� � В»� � С‘ � � Вµ� Ў� ѓ� ЎвЂљ� Ў� Љ � � С‘� � В·� � С� � Вµ� � � …� � Вµ� � � …� � С‘� Ў� Џ
+        // Save only when the form has meaningful edits.
         if (hasChanges()) {
           saveDraft();
         }
@@ -2894,13 +2894,12 @@ function CreateOrderContent() {
 
       <ConfirmModal
         visible={objectEditPermissionModalVisible}
-        title={t('order_object_edit_requires_new_object_title', 'Нельзя изменить текущий объект')}
+        title={t('order_object_edit_requires_new_object_title')}
         message={t(
           'order_object_edit_requires_new_object_message',
-          'У вас нет прав на редактирование выбранного объекта. Можно оставить его без изменений или создать новый объект на основе текущих данных.',
         )}
-        confirmLabel={t('order_object_edit_requires_new_object_confirm', 'Создать новый')}
-        cancelLabel={t('order_object_edit_requires_new_object_cancel', 'Оставить')}
+        confirmLabel={t('order_object_edit_requires_new_object_confirm')}
+        cancelLabel={t('order_object_edit_requires_new_object_cancel')}
         onConfirm={startNewObjectCreationFromPrompt}
         onClose={keepCurrentObjectWithoutChanges}
       />
@@ -2914,7 +2913,6 @@ function CreateOrderContent() {
               {suggestedMatchingObject?.clientName
                 ? t(
                     'order_object_match_message_with_client',
-                    'У клиента {client} найден похожий адрес.',
                   ).replace('{client}', String(suggestedMatchingObject.clientName || '').trim())
                 : t('order_object_match_message')}
             </Text>

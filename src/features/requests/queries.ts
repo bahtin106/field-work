@@ -18,7 +18,7 @@ import {
   updateRequest,
 } from './api';
 
-const PAGE_SIZE = 60;
+const PAGE_SIZE = 30;
 
 function mergePages(data: any) {
   const pages = data?.pages || [];
@@ -148,6 +148,7 @@ export function useCalendarRequests({
     queryFn: () => listCalendarRequests({ userId, role, scope, startDate, endDate }),
     enabled: enabled && !!userId,
     staleTime: 5 * 60 * 1000,
+    placeholderData: (previousData) => previousData ?? [],
     refetchOnMount: false,
     refetchInterval: isScreenActive ? refetchIntervalMs : false,
     refetchIntervalInBackground: false,

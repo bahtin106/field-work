@@ -11,6 +11,7 @@ import { useTheme } from '../../../theme';
 import CachedImage from '../../../components/ui/CachedImage';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import Card from '../../../components/ui/Card';
+import { useTranslation } from '../../../src/i18n/useTranslation';
 
 // ─── Pending upload tile with pulse animation ─────────────────
 const PendingPhotoTile = memo(function PendingPhotoTile({ uri, thumbSize, borderRadius, theme }) {
@@ -151,6 +152,7 @@ function OrderPhotoRow({
   onPhotoPress,
 }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const thumbSize = theme.components?.media?.thumbSize || 116;
   const borderRadius = theme.radii?.lg || 12;
   const s = useMemo(() => makeStyles(theme, thumbSize, borderRadius), [theme, thumbSize, borderRadius]);
@@ -182,7 +184,7 @@ function OrderPhotoRow({
               hitSlop={theme.components?.interactive?.hitSlop}
               style={({ pressed }) => [s.addTile, pressed && s.addTilePressed]}
               accessibilityRole={canAdd ? 'button' : 'text'}
-              accessibilityLabel="Добавить фото"
+              accessibilityLabel={t('order_photo_add_a11y')}
             >
               <Feather
                 name="plus"

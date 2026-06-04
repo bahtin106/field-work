@@ -8,6 +8,7 @@ import {
   headBegetObject,
   putBegetObject,
 } from '../_shared/beget-s3.ts';
+import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -309,14 +310,18 @@ async function createYandexFolder(accessToken: string, path: string) {
   throw new Error(mapped || `Cannot create folder: ${text}`);
 }
 
-async function ensureFolderTree(accessToken: string, fullPath: string) {
-  const normalized = normalizeFolderPath(fullPath);
-  const parts = normalized.split('/').filter(Boolean);
-  let current = '';
-  for (const part of parts) {
-    current = `${current}/${part}`;
-    await createYandexFolder(accessToken, current);
-  }
+async function ensureFolderTree(
+  accessToken: string,
+  fullPath: string,
+  options: { force?: boolean } = {},
+) {
+  await ensureYandexFolderTreeCached({
+    accessToken,
+    fullPath,
+    normalizeFolderPath,
+    createFolder: (path) => createYandexFolder(accessToken, path),
+    force: options.force === true,
+  });
 }
 
 async function publishAndGetPublicUrl(accessToken: string, path: string) {
@@ -526,10 +531,26 @@ export async function handleObjectMediaStorageRequest(req: Request) {
         const yandexPath = buildObjectYandexPath(yandex.folderPath, ctx, category, mime);
         const folderPath = yandexPath.replace(/\/[^/]+$/, '');
         await ensureFolderTree(yandex.accessToken, folderPath);
-        const uploadLinkRes = await fetch(
+        let uploadLinkRes = await fetch(
           `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(yandexPath)}&overwrite=false`,
           { headers: { Authorization: `OAuth ${yandex.accessToken}` } },
         );
+        if (!uploadLinkRes.ok) {
+          const text = await uploadLinkRes.text();
+          const isMissing =
+            uploadLinkRes.status === 404 ||
+            String(text || '').toLowerCase().includes('diskpathdoesntexistserror');
+          if (isMissing) {
+            await ensureFolderTree(yandex.accessToken, folderPath, { force: true });
+            uploadLinkRes = await fetch(
+              `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(yandexPath)}&overwrite=false`,
+              { headers: { Authorization: `OAuth ${yandex.accessToken}` } },
+            );
+          } else {
+            const mapped = mapYandexApiError(uploadLinkRes.status, text);
+            throw new Error(mapped || `Upload link failed: ${text}`);
+          }
+        }
         if (!uploadLinkRes.ok) {
           const text = await uploadLinkRes.text();
           const mapped = mapYandexApiError(uploadLinkRes.status, text);
@@ -637,10 +658,26 @@ export async function handleObjectMediaStorageRequest(req: Request) {
         const folderPath = yandexPath.replace(/\/[^/]+$/, '');
         await ensureFolderTree(yandex.accessToken, folderPath);
 
-        const linkRes = await fetch(
+        let linkRes = await fetch(
           `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(yandexPath)}&overwrite=false`,
           { headers: { Authorization: `OAuth ${yandex.accessToken}` } },
         );
+        if (!linkRes.ok) {
+          const text = await linkRes.text();
+          const isMissing =
+            linkRes.status === 404 ||
+            String(text || '').toLowerCase().includes('diskpathdoesntexistserror');
+          if (isMissing) {
+            await ensureFolderTree(yandex.accessToken, folderPath, { force: true });
+            linkRes = await fetch(
+              `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(yandexPath)}&overwrite=false`,
+              { headers: { Authorization: `OAuth ${yandex.accessToken}` } },
+            );
+          } else {
+            const mapped = mapYandexApiError(linkRes.status, text);
+            throw new Error(mapped || `Upload link failed: ${text}`);
+          }
+        }
         if (!linkRes.ok) {
           const text = await linkRes.text();
           const mapped = mapYandexApiError(linkRes.status, text);

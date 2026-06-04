@@ -5,7 +5,6 @@ export default function CompanySettingsRoute() {
     <LazyRouteScreen
       load={() => import('../../screens/company_settings/CompanySettingsScreen')}
       titleKey="company_settings_title"
-      titleFallback="Настройки компании"
     />
   );
 }

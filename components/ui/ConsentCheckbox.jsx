@@ -1,21 +1,24 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Checkbox from './Checkbox.jsx';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
 
 export default function ConsentCheckbox({ checked, onChange, onShowPolicy }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const styles = getStyles(theme);
 
   return (
     <View style={styles.row}>
       <Checkbox value={checked} onValueChange={onChange} />
       <Text style={styles.text}>
-        Я соглашаюсь с
+        {t('consent_prefix')}
         <Text style={styles.link} onPress={onShowPolicy}>
           {' '}
-          Политикой конфиденциальности
+          {t('consent_privacy_link')}
         </Text>
-        и разрешаю обработку моих персональных данных
+        {' '}
+        {t('consent_suffix')}
       </Text>
     </View>
   );

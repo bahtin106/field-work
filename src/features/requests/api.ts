@@ -147,7 +147,6 @@ function normalizeOrder(row) {
     ...row,
     title: resolveRequestTitle(row, {
       fallbackDate: row.time_window_start ?? row.created_at ?? row.updated_at ?? null,
-      prefix: 'Заявка от',
     }),
     address_mode: addressMode,
     address_short: buildOrderAddressShort(address) || null,

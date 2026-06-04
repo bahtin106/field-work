@@ -53,6 +53,19 @@ function getBearerToken(req: Request): string {
   return String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
 }
 
+function toPublicUpdateUserError(error: unknown): string {
+  const message = String((error as Error)?.message || 'Unknown error');
+  if (
+    /^(Unauthorized|Forbidden|Invalid user_id|Target profile lookup failed|Target auth user lookup failed|Method not allowed)$/i.test(
+      message,
+    )
+  ) {
+    return message;
+  }
+  console.error('[UPDATE_USER]', message);
+  return 'Update user failed';
+}
+
 async function getProfileFlexible(admin: any, lookupId: string) {
   const id = String(lookupId || '').trim();
   if (!id) return { data: null, error: null };
@@ -424,7 +437,7 @@ export async function handleUpdateUserRequest(req: Request) {
     });
   } catch (e: any) {
     console.error(`[UPDATE_USER] Error:`, e?.message);
-    return new Response(JSON.stringify({ ok: false, message: e?.message ?? 'Unknown error' }), {
+    return new Response(JSON.stringify({ ok: false, message: toPublicUpdateUserError(e) }), {
       headers: { 'Content-Type': 'application/json', ...cors },
       status: 200, // Всегда 200, чтобы клиент не падал с generic ошибкой
     });

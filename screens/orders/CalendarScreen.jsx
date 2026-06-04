@@ -3,13 +3,13 @@ import { Feather } from '@expo/vector-icons';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { addDays, endOfMonth, endOfWeek, format, startOfMonth, startOfWeek } from 'date-fns';
-import { ru as dfnsRu } from 'date-fns/locale';
+import { enUS as dfnsEnUS, ru as dfnsRu } from 'date-fns/locale';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import {
+  ActivityIndicator,
   BackHandler,
-  Dimensions,
   FlatList,
   InteractionManager,
   Platform,
@@ -17,6 +17,7 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Animated, {
@@ -62,11 +63,13 @@ import {
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
 import { CALENDAR_GESTURE, CALENDAR_LAYOUT } from '../../constants/layout';
 
@@ -81,6 +84,106 @@ const DAY_KEYS = [
 ];
 
 const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
+const CALENDAR_VIEW_MODE = Object.freeze({
+  YEAR: 'year',
+  MONTH: 'month',
+  WEEK: 'week',
+  DAY: 'day',
+  SCHEDULE: 'schedule',
+});
+const CALENDAR_VIEW_TABS = Object.freeze([
+  { labelKey: 'calendar_view_year', mode: CALENDAR_VIEW_MODE.YEAR, disabled: false },
+  { labelKey: 'calendar_view_month', mode: CALENDAR_VIEW_MODE.MONTH, disabled: false },
+  { labelKey: 'calendar_view_week', mode: CALENDAR_VIEW_MODE.WEEK, disabled: false },
+  { labelKey: 'calendar_view_day', mode: CALENDAR_VIEW_MODE.DAY, disabled: false },
+  { labelKey: 'calendar_view_schedule', mode: CALENDAR_VIEW_MODE.SCHEDULE, disabled: true },
+]);
+const CALENDAR_SCOPE = Object.freeze({
+  MY: 'my',
+  ALL: 'all',
+});
+const CALENDAR_SCOPE_OPTIONS = Object.freeze([CALENDAR_SCOPE.MY, CALENDAR_SCOPE.ALL]);
+const DATE_FNS_LOCALES = Object.freeze({
+  en: dfnsEnUS,
+  ru: dfnsRu,
+});
+const CALENDAR_WEEK_STARTS_ON = 1;
+const CALENDAR_DAYS_IN_WEEK = 7;
+const CALENDAR_MONTH_KEY_LENGTH = 7;
+const CALENDAR_EMPTY_MONTH_KEY = 'none';
+const CALENDAR_NAV_LOCK_MS = 1200;
+const CALENDAR_YEAR_WINDOW_RADIUS = 120;
+const CALENDAR_TIME = Object.freeze({
+  DAY_START_MONTH: 0,
+  DATE_PART_MONTH_OFFSET: 1,
+  MAX_HOUR: 23,
+  MAX_MINUTE: 59,
+  MAX_SECOND: 59,
+  DAY_END_HOUR: 23,
+  DAY_END_MINUTE: 59,
+  DAY_END_SECOND: 59,
+  DAY_END_MS: 999,
+  MONTHS_IN_YEAR: 12,
+  SECONDS_PER_MINUTE: 60,
+  SECONDS_PER_HOUR: 3600,
+});
+const CALENDAR_RENDER = Object.freeze({
+  MONTH_INITIAL_ITEMS: 2,
+  MONTH_BATCH_ITEMS: 4,
+  YEAR_INITIAL_ITEMS: 1,
+  YEAR_WINDOW_SIZE: 2,
+  YEAR_BATCH_ITEMS: 1,
+  CELL_BATCH_PERIOD_MS: 16,
+});
+const CALENDAR_UI = Object.freeze({
+  MIN_DAY_CELL_SIZE: 28,
+  MAX_DAY_CELL_SIZE: 48,
+  WEEK_ROW_EXTRA_SPACING_RATIO: 1.6,
+  MONTH_HEADER_LINE_RATIO: 1.5,
+  DAY_NAMES_HEIGHT_RATIO: 1.2,
+  DAY_NAME_LINE_RATIO: 1.3,
+  WEEKDAY_LINE_HEIGHT_RATIO: 0.6,
+  DAY_NUMBER_LINE_HEIGHT_RATIO: 1.15,
+  WEEK_SECTION_DAY_NUMBER_LINE_RATIO: 1.05,
+  WEEK_SECTION_DAY_NAME_FONT_RATIO: 0.82,
+  EVENT_SLOT_SPACING_RATIO: 0.2,
+  EVENT_COUNT_FONT_RATIO: 0.9,
+  HALF_SPACING_RATIO: 0.5,
+  TAB_INDICATOR_HEIGHT: 2,
+  BORDER_WIDTH: 1,
+  SCOPE_SWITCH_PADDING: 2,
+  SCOPE_SWITCH_HEIGHT: 28,
+  SCOPE_PILL_MIN_WIDTH: 49,
+  SCOPE_PILL_HEIGHT: 24,
+  SCOPE_PILL_PADDING_X: 9,
+  COMPACT_ICON_BUTTON_SIZE: 28,
+  WEEK_DAY_BUTTON_MIN_HEIGHT: 58,
+  WEEK_DAY_COUNT_SIZE: 18,
+  WEEK_DAY_COUNT_MIN_WIDTH: 18,
+  WEEK_DATE_BADGE_SIZE: 46,
+  WEEK_SECTION_COUNT_MIN_WIDTH: 34,
+  WEEK_SECTION_COUNT_HEIGHT: 26,
+  WEEK_TIMELINE_OFFSET_X: 22,
+  WEEK_ORDER_OFFSET_X: 58,
+  DAY_TIMELINE_OFFSET_X: 18,
+  DAY_ORDER_OFFSET_X: 42,
+  DAY_DOT_OFFSET_X: 13,
+  DAY_DOT_OFFSET_Y: 22,
+  DAY_DOT_SIZE: 11,
+  ACTIVE_BG_ALPHA: 0.08,
+  ACTIVE_BORDER_ALPHA: 0.4,
+  SUBTLE_BG_ALPHA: 0.07,
+  PRESSED_OPACITY: 0.92,
+  YEAR_SCROLL_SETTLE_VELOCITY_X: 0.05,
+  COLLAPSE_PROGRESS_EPSILON: 0.001,
+  COLLAPSED_EVENT_SLOT_RATIO: 0.5,
+  EVENT_COUNT_COLLAPSED_SCALE: 0.24,
+  EVENT_DOT_FADE_START_PROGRESS: 0.03,
+  EVENT_DOT_VISIBLE_PROGRESS: 0.65,
+  MONTH_HEADER_FADE_PROGRESS: 0.85,
+  MONTH_HEADER_FADE_OPACITY: 0.18,
+  SNAP_DISTANCE_EPSILON: 0.5,
+});
 const MONTH_COLLAPSE_SNAP_THRESHOLD = 0.5;
 const MONTH_COLLAPSE_VELOCITY_THRESHOLD = 560;
 const MONTH_COLLAPSE_MIN_DURATION = 180;
@@ -98,7 +201,11 @@ function parseCalendarDateKey(value, fallback = new Date()) {
   const raw = String(value || '').trim();
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (match) {
-    const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    const parsed = new Date(
+      Number(match[1]),
+      Number(match[2]) - CALENDAR_TIME.DATE_PART_MONTH_OFFSET,
+      Number(match[3]),
+    );
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
   const parsed = new Date(raw);
@@ -106,17 +213,22 @@ function parseCalendarDateKey(value, fallback = new Date()) {
   return fallback;
 }
 
-function formatWeekRangeLabel(startDate, endDate) {
+function resolveDateFnsLocale(locale) {
+  const key = String(locale || '').trim().toLowerCase().split(/[-_]/)[0];
+  return DATE_FNS_LOCALES[key] || dfnsRu;
+}
+
+function formatWeekRangeLabel(startDate, endDate, dateLocale) {
   if (!startDate || !endDate) return '';
   const sameYear = startDate.getFullYear() === endDate.getFullYear();
   const sameMonth = sameYear && startDate.getMonth() === endDate.getMonth();
   if (sameMonth) {
-    return `${format(startDate, 'd', { locale: dfnsRu })}–${format(endDate, 'd MMMM yyyy', { locale: dfnsRu })}`;
+    return `${format(startDate, 'd', { locale: dateLocale })}–${format(endDate, 'd MMMM yyyy', { locale: dateLocale })}`;
   }
   if (sameYear) {
-    return `${format(startDate, 'd MMM', { locale: dfnsRu })} – ${format(endDate, 'd MMM yyyy', { locale: dfnsRu })}`;
+    return `${format(startDate, 'd MMM', { locale: dateLocale })} – ${format(endDate, 'd MMM yyyy', { locale: dateLocale })}`;
   }
-  return `${format(startDate, 'd MMM yyyy', { locale: dfnsRu })} – ${format(endDate, 'd MMM yyyy', { locale: dfnsRu })}`;
+  return `${format(startDate, 'd MMM yyyy', { locale: dateLocale })} – ${format(endDate, 'd MMM yyyy', { locale: dateLocale })}`;
 }
 
 function hasExplicitTimeInDatetime(input) {
@@ -146,13 +258,13 @@ function getOrderScheduleSortValue(order) {
       Number.isFinite(minutes) &&
       Number.isFinite(seconds) &&
       hours >= 0 &&
-      hours <= 23 &&
+      hours <= CALENDAR_TIME.MAX_HOUR &&
       minutes >= 0 &&
-      minutes <= 59 &&
+      minutes <= CALENDAR_TIME.MAX_MINUTE &&
       seconds >= 0 &&
-      seconds <= 59
+      seconds <= CALENDAR_TIME.MAX_SECOND
     ) {
-      return hours * 60 * 60 + minutes * 60 + seconds;
+      return hours * CALENDAR_TIME.SECONDS_PER_HOUR + minutes * CALENDAR_TIME.SECONDS_PER_MINUTE + seconds;
     }
   }
 
@@ -165,13 +277,13 @@ function getOrderScheduleSortValue(order) {
   const minutes = parsed.getMinutes();
   const seconds = parsed.getSeconds();
   if (hours === 0 && minutes === 0 && seconds === 0) return Number.POSITIVE_INFINITY;
-  return hours * 60 * 60 + minutes * 60 + seconds;
+  return hours * CALENDAR_TIME.SECONDS_PER_HOUR + minutes * CALENDAR_TIME.SECONDS_PER_MINUTE + seconds;
 }
 
 function CalendarScreenContent() {
   const { profile, user, isAuthenticated, isInitializing } = useAuth();
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const toast = useToast();
   const router = useRouter();
   const navigation = useNavigation();
@@ -179,6 +291,12 @@ function CalendarScreenContent() {
   const isFocused = useIsFocused();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  const { width: screenWidth } = useWindowDimensions();
+  const dateLocale = useMemo(() => resolveDateFnsLocale(locale), [locale]);
+  const localeTag = useMemo(
+    () => String(locale || '').replace('_', '-') || undefined,
+    [locale],
+  );
   const returnTo = useMemo(() => {
     try {
       return Reflect.has(params, 'returnTo') ? String(params.returnTo) : '';
@@ -211,16 +329,24 @@ function CalendarScreenContent() {
   }, [params]);
   const openedFromOrder = useMemo(() => returnTo.startsWith('/orders/'), [returnTo]);
 
-  const screenWidth = Dimensions.get('window').width;
   const layoutMetrics = useMemo(() => {
     const horizontalMargin = theme.spacing.md;
     const innerPadding = theme.spacing.sm;
     const cardWidth = Math.max(0, screenWidth - horizontalMargin * 2);
-    const rawCellSize = Math.max(28, Math.min((cardWidth - innerPadding * 2) / 7, 48));
+    const rawCellSize = Math.max(
+      CALENDAR_UI.MIN_DAY_CELL_SIZE,
+      Math.min(
+        (cardWidth - innerPadding * 2) / CALENDAR_DAYS_IN_WEEK,
+        CALENDAR_UI.MAX_DAY_CELL_SIZE,
+      ),
+    );
     const dayCellSize = rawCellSize;
-    const weekRowHeight = dayCellSize + theme.spacing.xs * 1.6;
-    const monthHeaderHeight = theme.spacing.md * 2 + theme.typography.sizes.lg * 1.5;
-    const dayNamesHeight = theme.spacing.sm * 1.2 + theme.typography.sizes.xs * 1.3;
+    const weekRowHeight = dayCellSize + theme.spacing.xs * CALENDAR_UI.WEEK_ROW_EXTRA_SPACING_RATIO;
+    const monthHeaderHeight =
+      theme.spacing.md * 2 + theme.typography.sizes.lg * CALENDAR_UI.MONTH_HEADER_LINE_RATIO;
+    const dayNamesHeight =
+      theme.spacing.sm * CALENDAR_UI.DAY_NAMES_HEIGHT_RATIO +
+      theme.typography.sizes.xs * CALENDAR_UI.DAY_NAME_LINE_RATIO;
     const topSectionsHeight = monthHeaderHeight + dayNamesHeight;
     return {
       cardWidth,
@@ -236,8 +362,8 @@ function CalendarScreenContent() {
   const todayKey = useMemo(() => format(new Date(), 'yyyy-MM-dd'), []);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(todayKey);
-  const [viewMode, setViewMode] = useState('month');
-  const [scope, setScope] = useState('my');
+  const [viewMode, setViewMode] = useState(CALENDAR_VIEW_MODE.MONTH);
+  const [scope, setScope] = useState(CALENDAR_SCOPE.MY);
   const [executorFilterIds, setExecutorFilterIds] = useState([]);
   const [executorModalVisible, setExecutorModalVisible] = useState(false);
   const [calendarQueryAnchorMonth, setCalendarQueryAnchorMonth] = useState(startOfMonth(new Date()));
@@ -268,20 +394,44 @@ function CalendarScreenContent() {
     markScreenMount('Calendar');
   }, []);
 
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      preloadOrderDetailsScreen().catch(() => {});
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, []);
+
   const calendarQueryRange = useMemo(() => {
-    const base = viewMode === 'year' ? calendarQueryAnchorMonth : currentMonth;
-    if (viewMode !== 'year') {
-      const start = startOfWeek(startOfMonth(base), { weekStartsOn: 1 });
-      const end = endOfWeek(endOfMonth(base), { weekStartsOn: 1 });
-      end.setHours(23, 59, 59, 999);
+    const base = viewMode === CALENDAR_VIEW_MODE.YEAR ? calendarQueryAnchorMonth : currentMonth;
+    if (viewMode !== CALENDAR_VIEW_MODE.YEAR) {
+      const start = startOfWeek(startOfMonth(base), { weekStartsOn: CALENDAR_WEEK_STARTS_ON });
+      const end = endOfWeek(endOfMonth(base), { weekStartsOn: CALENDAR_WEEK_STARTS_ON });
+      end.setHours(
+        CALENDAR_TIME.DAY_END_HOUR,
+        CALENDAR_TIME.DAY_END_MINUTE,
+        CALENDAR_TIME.DAY_END_SECOND,
+        CALENDAR_TIME.DAY_END_MS,
+      );
       return {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
       };
     }
 
-    const start = new Date(base.getFullYear(), 0, 1);
-    const end = new Date(base.getFullYear(), 11, 31, 23, 59, 59, 999);
+    const start = new Date(base.getFullYear(), CALENDAR_TIME.DAY_START_MONTH, 1);
+    const end = new Date(
+      base.getFullYear(),
+      CALENDAR_TIME.MONTHS_IN_YEAR - 1,
+      31,
+      CALENDAR_TIME.DAY_END_HOUR,
+      CALENDAR_TIME.DAY_END_MINUTE,
+      CALENDAR_TIME.DAY_END_SECOND,
+      CALENDAR_TIME.DAY_END_MS,
+    );
     return {
       startDate: start.toISOString(),
       endDate: end.toISOString(),
@@ -297,10 +447,12 @@ function CalendarScreenContent() {
   const {
     data: orders = [],
     isLoading: isCalendarLoading,
+    isFetching: isCalendarFetching,
+    isPlaceholderData: isCalendarPlaceholderData,
   } = useCalendarRequests({
     userId: profile?.id,
     role: profile?.role,
-    scope: canUseCalendarAllScope ? (hasEmployeeFilter ? 'all' : scope) : 'my',
+    scope: canUseCalendarAllScope ? (hasEmployeeFilter ? CALENDAR_SCOPE.ALL : scope) : CALENDAR_SCOPE.MY,
     startDate: calendarQueryRange.startDate,
     endDate: calendarQueryRange.endDate,
     refetchIntervalMs: false,
@@ -339,8 +491,8 @@ function CalendarScreenContent() {
           };
         })
         .filter(Boolean)
-        .sort((a, b) => String(a.label).localeCompare(String(b.label), 'ru')),
-    [executors],
+        .sort((a, b) => String(a.label).localeCompare(String(b.label), localeTag)),
+    [executors, localeTag],
   );
   const executorFilterSet = useMemo(
     () => new Set((executorFilterIds || []).map((id) => String(id))),
@@ -375,7 +527,7 @@ function CalendarScreenContent() {
           ? selection.map((id) => String(id)).filter(Boolean)
           : [];
         setExecutorFilterIds(next);
-        if (next.length > 0) setScope('all');
+        if (next.length > 0) setScope(CALENDAR_SCOPE.ALL);
       },
       onReset: () => setExecutorFilterIds([]),
     }),
@@ -400,7 +552,7 @@ function CalendarScreenContent() {
 
   useEffect(() => {
     if (firstContentMarkedRef.current) return;
-    if (isCalendarLoading) return;
+    if (isCalendarLoading || isCalendarPlaceholderData) return;
     firstContentMarkedRef.current = true;
     markFirstContent('Calendar');
     if (!perfFirstContentLoggedRef.current) {
@@ -408,11 +560,11 @@ function CalendarScreenContent() {
       const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
       if (__DEV__) console.debug?.(`[perf] calendar.first-content.now: ${Math.round(elapsedMs)}ms`);
     }
-  }, [isCalendarLoading]);
+  }, [isCalendarLoading, isCalendarPlaceholderData]);
 
   useEffect(() => {
     if (canUseCalendarAllScope) return;
-    if (scope !== 'my') setScope('my');
+    if (scope !== CALENDAR_SCOPE.MY) setScope(CALENDAR_SCOPE.MY);
     if (executorFilterIds.length) setExecutorFilterIds([]);
     if (executorModalVisible) setExecutorModalVisible(false);
   }, [canUseCalendarAllScope, executorFilterIds, executorModalVisible, scope]);
@@ -420,7 +572,7 @@ function CalendarScreenContent() {
   useFocusEffect(
     useCallback(() => {
       if (!canUseCalendarAllScope || openedFromOrder) return undefined;
-      setScope('my');
+      setScope(CALENDAR_SCOPE.MY);
       setExecutorFilterIds([]);
       return undefined;
     }, [canUseCalendarAllScope, openedFromOrder]),
@@ -451,10 +603,10 @@ function CalendarScreenContent() {
     if (!initialSelectedUserId) {
       if (canUseCalendarAllScope) {
         setExecutorFilterIds([]);
-        setScope('all');
+        setScope(CALENDAR_SCOPE.ALL);
       } else {
         setExecutorFilterIds([]);
-        setScope('my');
+        setScope(CALENDAR_SCOPE.MY);
       }
       navigationPresetRef.current = presetKey;
       return;
@@ -462,17 +614,17 @@ function CalendarScreenContent() {
 
     if (myProfileId && initialSelectedUserId === myProfileId) {
       setExecutorFilterIds([]);
-      setScope('my');
+      setScope(CALENDAR_SCOPE.MY);
       navigationPresetRef.current = presetKey;
       return;
     }
 
     if (canUseCalendarAllScope) {
       setExecutorFilterIds([initialSelectedUserId]);
-      setScope('all');
+      setScope(CALENDAR_SCOPE.ALL);
     } else {
       setExecutorFilterIds([]);
-      setScope('my');
+      setScope(CALENDAR_SCOPE.MY);
     }
     navigationPresetRef.current = presetKey;
   }, [canUseCalendarAllScope, initialSelectedDate, initialSelectedUserId, openedFromOrder, profile?.id]);
@@ -506,10 +658,8 @@ function CalendarScreenContent() {
   const monthOrdersHeaderHeight = useSharedValue(MONTH_ORDERS_HEADER_FALLBACK_HEIGHT);
   const monthOrdersContentHeightRef = useRef(0);
   const monthOrdersViewportHeightRef = useRef(0);
-  const deferInitialMeasureRef = useRef(false);
   const [monthWindowAnchor, setMonthWindowAnchor] = useState(startOfMonth(new Date()));
-  const YEAR_LIST_RADIUS = 120;
-  const YEAR_LIST_MIDDLE_INDEX = YEAR_LIST_RADIUS;
+  const YEAR_LIST_MIDDLE_INDEX = CALENDAR_YEAR_WINDOW_RADIUS;
   const initialYearRef = useRef(currentMonth.getFullYear());
   const yearFlatListRef = useRef(null);
   const lastHandledYearPageIndex = useRef(YEAR_LIST_MIDDLE_INDEX);
@@ -531,7 +681,7 @@ function CalendarScreenContent() {
   const dynamicYears = useMemo(() => {
     const years = [];
     const baseYear = initialYearRef.current;
-    for (let i = -YEAR_LIST_RADIUS; i <= YEAR_LIST_RADIUS; i++) {
+    for (let i = -CALENDAR_YEAR_WINDOW_RADIUS; i <= CALENDAR_YEAR_WINDOW_RADIUS; i++) {
       years.push(baseYear + i);
     }
     return years;
@@ -574,24 +724,24 @@ function CalendarScreenContent() {
     [currentMonth, selectedDate],
   );
   const activeWeekStart = useMemo(
-    () => startOfWeek(selectedDateObj, { weekStartsOn: 1 }),
+    () => startOfWeek(selectedDateObj, { weekStartsOn: CALENDAR_WEEK_STARTS_ON }),
     [selectedDateObj],
   );
   const activeWeekEnd = useMemo(
-    () => endOfWeek(selectedDateObj, { weekStartsOn: 1 }),
+    () => endOfWeek(selectedDateObj, { weekStartsOn: CALENDAR_WEEK_STARTS_ON }),
     [selectedDateObj],
   );
   const activeWeekDates = useMemo(
-    () => Array.from({ length: 7 }, (_, index) => addDays(activeWeekStart, index)),
+    () => Array.from({ length: CALENDAR_DAYS_IN_WEEK }, (_, index) => addDays(activeWeekStart, index)),
     [activeWeekStart],
   );
   const activeWeekLabel = useMemo(
-    () => formatWeekRangeLabel(activeWeekStart, activeWeekEnd),
-    [activeWeekEnd, activeWeekStart],
+    () => formatWeekRangeLabel(activeWeekStart, activeWeekEnd, dateLocale),
+    [activeWeekEnd, activeWeekStart, dateLocale],
   );
   const activeDayLabel = useMemo(
-    () => format(selectedDateObj, 'd MMMM yyyy', { locale: dfnsRu }),
-    [selectedDateObj],
+    () => format(selectedDateObj, 'd MMMM yyyy', { locale: dateLocale }),
+    [dateLocale, selectedDateObj],
   );
 
   const collapsedRef = useRef(false);
@@ -683,7 +833,7 @@ function CalendarScreenContent() {
   }, []);
 
   useEffect(() => {
-    if (viewMode !== 'year') {
+    if (viewMode !== CALENDAR_VIEW_MODE.YEAR) {
       perfYearMountStartedRef.current = false;
       perfYearFirstContentLoggedRef.current = false;
       return;
@@ -740,7 +890,7 @@ function CalendarScreenContent() {
   );
 
   useEffect(() => {
-    if (viewMode === 'month') {
+    if (viewMode === CALENDAR_VIEW_MODE.MONTH) {
       collapseTranslate.value = 0;
     }
   }, [viewMode, collapseTranslate]);
@@ -781,59 +931,41 @@ function CalendarScreenContent() {
     return { top: gap, bottom: gap, left: gap, right: gap };
   }, [theme.spacing.md]);
 
-  const onMonthHeaderLayout = useCallback(
-    (event) => {
-      if (deferInitialMeasureRef.current) return;
-      const nextHeight = event?.nativeEvent?.layout?.height;
-      const minStableHeight = layoutMetrics.monthHeaderHeight * CALENDAR_LAYOUT.HEADER_LAYOUT_MIN_RATIO;
-      if (!Number.isFinite(nextHeight) || nextHeight <= minStableHeight) return;
-      setMeasuredMonthHeaderHeight((prev) =>
-        Math.abs(prev - nextHeight) <= CALENDAR_LAYOUT.MEASURE_DELTA_EPSILON ? prev : nextHeight,
-      );
-    },
-    [layoutMetrics.monthHeaderHeight, setMeasuredMonthHeaderHeight],
-  );
+  useEffect(() => {
+    if (perfGridLoggedRef.current || viewMode !== CALENDAR_VIEW_MODE.MONTH || !monthWeeks.length) return;
+    perfGridLoggedRef.current = true;
+    const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
+    if (__DEV__) console.debug?.(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
+  }, [monthWeeks.length, viewMode]);
 
-  const onWeekdayRowLayout = useCallback(
-    (event) => {
-      if (deferInitialMeasureRef.current) return;
-      const nextHeight = event?.nativeEvent?.layout?.height;
-      if (!Number.isFinite(nextHeight) || nextHeight <= 0) return;
-      setMeasuredDayNamesHeight((prev) =>
-        Math.abs(prev - nextHeight) <= CALENDAR_LAYOUT.MEASURE_DELTA_EPSILON ? prev : nextHeight,
-      );
-    },
-    [setMeasuredDayNamesHeight],
-  );
-
-  const onWeekRowLayout = useCallback(
-    (event) => {
-      if (deferInitialMeasureRef.current) return;
-      const nextHeight = event?.nativeEvent?.layout?.height;
-      if (!Number.isFinite(nextHeight) || nextHeight <= 0) return;
-      setMeasuredWeekRowHeight((prev) =>
-        Math.abs(prev - nextHeight) <= CALENDAR_LAYOUT.MEASURE_DELTA_EPSILON ? prev : nextHeight,
-      );
-      if (!perfGridLoggedRef.current) {
-        perfGridLoggedRef.current = true;
-        const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
-        if (__DEV__) console.debug?.(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
-      }
-    },
-    [setMeasuredWeekRowHeight],
-  );
-
-  const indicatorSlotBaseHeight = theme.typography.sizes.xs + theme.spacing.xs * 0.2;
+  const indicatorSlotBaseHeight =
+    theme.typography.sizes.xs + theme.spacing.xs * CALENDAR_UI.EVENT_SLOT_SPACING_RATIO;
   const styles = useMemo(
     () =>
       StyleSheet.create({
         container: { flex: 1 },
+        calendarLoadingOverlay: {
+          position: 'absolute',
+          top: theme.spacing.sm,
+          right: theme.spacing.md,
+          zIndex: 10,
+        },
+        calendarLoadingPill: {
+          width: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
+          height: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
+          borderRadius: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE / 2,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
         tabsWrapper: {
           paddingHorizontal: theme.spacing.md,
           paddingTop: theme.spacing.xs,
-          paddingBottom: theme.spacing.sm * 0.5,
-          marginTop: -theme.spacing.sm * 0.5,
-          marginBottom: theme.spacing.sm * 0.5,
+          paddingBottom: theme.spacing.sm * CALENDAR_UI.HALF_SPACING_RATIO,
+          marginTop: -theme.spacing.sm * CALENDAR_UI.HALF_SPACING_RATIO,
+          marginBottom: theme.spacing.sm * CALENDAR_UI.HALF_SPACING_RATIO,
           backgroundColor: theme.colors.background,
           flexDirection: 'row',
           alignItems: 'center',
@@ -852,12 +984,12 @@ function CalendarScreenContent() {
           alignItems: 'center',
         },
         tabItemDisabled: {
-          opacity: theme.components?.listItem?.disabledOpacity ?? 0.6,
+          opacity: theme.components?.listItem?.disabledOpacity,
         },
         tabIndicator: {
-          height: 2,
+          height: CALENDAR_UI.TAB_INDICATOR_HEIGHT,
           marginTop: theme.spacing.xs,
-          borderRadius: 1,
+          borderRadius: CALENDAR_UI.TAB_INDICATOR_HEIGHT / 2,
           alignSelf: 'stretch',
         },
         viewPanelText: {
@@ -884,9 +1016,9 @@ function CalendarScreenContent() {
           alignItems: 'center',
           justifyContent: 'flex-start',
           width: layoutMetrics.cardWidth,
+          height: layoutMetrics.monthHeaderHeight,
           alignSelf: 'center',
           paddingHorizontal: theme.spacing.md,
-          paddingVertical: theme.spacing.md,
         },
         monthHeaderSide: {
           width: layoutMetrics.dayCellSize + theme.spacing.md,
@@ -914,9 +1046,10 @@ function CalendarScreenContent() {
           flexDirection: 'row',
           justifyContent: 'space-between',
           width: layoutMetrics.cardWidth,
+          height: layoutMetrics.dayNamesHeight,
           alignSelf: 'center',
           paddingHorizontal: layoutMetrics.innerPadding,
-          paddingVertical: theme.spacing.xs,
+          alignItems: 'center',
         },
         weekdayLabel: {
           width: layoutMetrics.dayCellSize,
@@ -924,7 +1057,7 @@ function CalendarScreenContent() {
           fontSize: theme.typography.sizes.xs,
           fontWeight: theme.typography.weight.medium,
           color: theme.colors.textSecondary,
-          lineHeight: layoutMetrics.dayCellSize * 0.6,
+          lineHeight: layoutMetrics.dayCellSize * CALENDAR_UI.WEEKDAY_LINE_HEIGHT_RATIO,
         },
         weekRow: {
           flexDirection: 'row',
@@ -959,7 +1092,7 @@ function CalendarScreenContent() {
           fontFamily: theme.typography.fontFamily,
           fontWeight: theme.typography.weight.regular,
           fontSize: theme.typography.sizes.md,
-          lineHeight: theme.typography.sizes.md * 1.15,
+          lineHeight: theme.typography.sizes.md * CALENDAR_UI.DAY_NUMBER_LINE_HEIGHT_RATIO,
           color: theme.colors.text,
           textAlign: 'center',
         },
@@ -975,19 +1108,19 @@ function CalendarScreenContent() {
           color: theme.colors.textSecondary,
         },
         dayIndicatorSlot: {
-          marginTop: Math.max(1, theme.spacing.xs * 0.15),
+          marginTop: Math.max(CALENDAR_UI.BORDER_WIDTH, theme.spacing.xs * 0.15),
           minHeight: indicatorSlotBaseHeight,
           alignItems: 'center',
           justifyContent: 'center',
         },
         eventCount: {
-          fontSize: theme.typography.sizes.xs * 0.9,
+          fontSize: theme.typography.sizes.xs * CALENDAR_UI.EVENT_COUNT_FONT_RATIO,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.primary,
           textAlign: 'center',
         },
         eventDot: {
-          marginTop: theme.spacing.xs * 0.5,
+          marginTop: theme.spacing.xs * CALENDAR_UI.HALF_SPACING_RATIO,
           width: theme.spacing.xs,
           height: theme.spacing.xs,
           borderRadius: theme.spacing.xs / 2,
@@ -999,7 +1132,7 @@ function CalendarScreenContent() {
           justifyContent: 'space-between',
           paddingHorizontal: theme.spacing.md,
           paddingVertical: theme.spacing.sm,
-          borderBottomWidth: 1,
+          borderBottomWidth: CALENDAR_UI.BORDER_WIDTH,
           borderBottomColor: theme.colors.border,
           gap: theme.spacing.xs,
         },
@@ -1020,18 +1153,18 @@ function CalendarScreenContent() {
         scopeSwitch: {
           flexDirection: 'row',
           alignItems: 'center',
-          borderWidth: 1,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
-          borderRadius: 999,
-          padding: 2,
-          height: 28,
+          borderRadius: theme.radii.pill,
+          padding: CALENDAR_UI.SCOPE_SWITCH_PADDING,
+          height: CALENDAR_UI.SCOPE_SWITCH_HEIGHT,
           backgroundColor: theme.colors.surface,
         },
         scopePill: {
-          minWidth: 49,
-          height: 24,
-          paddingHorizontal: 9,
-          borderRadius: 999,
+          minWidth: CALENDAR_UI.SCOPE_PILL_MIN_WIDTH,
+          height: CALENDAR_UI.SCOPE_PILL_HEIGHT,
+          paddingHorizontal: CALENDAR_UI.SCOPE_PILL_PADDING_X,
+          borderRadius: theme.radii.pill,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: 'transparent',
@@ -1040,18 +1173,18 @@ function CalendarScreenContent() {
           backgroundColor: theme.colors.primary,
         },
         scopeText: {
-          fontSize: 12,
+          fontSize: theme.typography.sizes.xs,
           color: theme.colors.textSecondary || theme.colors.text,
         },
         scopeTextActive: {
-          color: theme.colors.onPrimary || '#fff',
-          fontWeight: '600',
+          color: theme.colors.onPrimary,
+          fontWeight: theme.typography.weight.semibold,
         },
         filterButton: {
-          width: 28,
-          height: 28,
-          borderRadius: 14,
-          borderWidth: 1,
+          width: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
+          height: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
+          borderRadius: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE / 2,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
           alignItems: 'center',
           justifyContent: 'center',
@@ -1059,13 +1192,13 @@ function CalendarScreenContent() {
         },
         filterButtonActive: {
           borderColor: theme.colors.primary,
-          backgroundColor: `${theme.colors.primary}14`,
+          backgroundColor: withAlpha(theme.colors.primary, CALENDAR_UI.ACTIVE_BG_ALPHA),
         },
         resetFilterButton: {
-          width: 28,
-          height: 28,
-          borderRadius: 14,
-          borderWidth: 1,
+          width: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
+          height: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE,
+          borderRadius: CALENDAR_UI.COMPACT_ICON_BUTTON_SIZE / 2,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
           backgroundColor: theme.colors.surface,
           alignItems: 'center',
@@ -1076,6 +1209,9 @@ function CalendarScreenContent() {
           color: theme.colors.textSecondary,
           textAlign: 'center',
           marginTop: theme.spacing.lg,
+        },
+        ordersLoadingPlaceholder: {
+          minHeight: layoutMetrics.weekRowHeight * 2,
         },
         weekContent: {
           flex: 1,
@@ -1092,9 +1228,9 @@ function CalendarScreenContent() {
         weekDayButton: {
           flex: 1,
           minWidth: 0,
-          minHeight: 58,
+          minHeight: CALENDAR_UI.WEEK_DAY_BUTTON_MIN_HEIGHT,
           borderRadius: theme.radii.md,
-          borderWidth: 1,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
           backgroundColor: theme.colors.surface,
           alignItems: 'center',
@@ -1103,7 +1239,7 @@ function CalendarScreenContent() {
         },
         weekDayButtonActive: {
           borderColor: theme.colors.primary,
-          backgroundColor: `${theme.colors.primary}14`,
+          backgroundColor: withAlpha(theme.colors.primary, CALENDAR_UI.ACTIVE_BG_ALPHA),
         },
         weekDayName: {
           fontSize: theme.typography.sizes.xs,
@@ -1112,7 +1248,7 @@ function CalendarScreenContent() {
           textAlign: 'center',
         },
         weekDayNumber: {
-          marginTop: 2,
+          marginTop: CALENDAR_UI.SCOPE_SWITCH_PADDING,
           fontSize: theme.typography.sizes.md,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.text,
@@ -1122,11 +1258,11 @@ function CalendarScreenContent() {
           color: theme.colors.primary,
         },
         weekDayCount: {
-          marginTop: 2,
-          minWidth: 18,
-          height: 18,
-          borderRadius: 9,
-          paddingHorizontal: 5,
+          marginTop: CALENDAR_UI.SCOPE_SWITCH_PADDING,
+          minWidth: CALENDAR_UI.WEEK_DAY_COUNT_MIN_WIDTH,
+          height: CALENDAR_UI.WEEK_DAY_COUNT_SIZE,
+          borderRadius: CALENDAR_UI.WEEK_DAY_COUNT_SIZE / 2,
+          paddingHorizontal: theme.spacing.xs,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: theme.colors.badgeBg || theme.colors.inputBg,
@@ -1135,7 +1271,7 @@ function CalendarScreenContent() {
           backgroundColor: theme.colors.primary,
         },
         weekDayCountText: {
-          fontSize: theme.typography.sizes.xs * 0.9,
+          fontSize: theme.typography.sizes.xs * CALENDAR_UI.EVENT_COUNT_FONT_RATIO,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.textSecondary,
           textAlign: 'center',
@@ -1149,8 +1285,8 @@ function CalendarScreenContent() {
           justifyContent: 'space-between',
           paddingHorizontal: theme.spacing.md,
           paddingVertical: theme.spacing.sm,
-          borderTopWidth: 1,
-          borderBottomWidth: 1,
+          borderTopWidth: CALENDAR_UI.BORDER_WIDTH,
+          borderBottomWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
           gap: theme.spacing.xs,
         },
@@ -1181,13 +1317,13 @@ function CalendarScreenContent() {
           opacity: 1,
         },
         weekSectionDateBadge: {
-          width: 46,
-          height: 46,
+          width: CALENDAR_UI.WEEK_DATE_BADGE_SIZE,
+          height: CALENDAR_UI.WEEK_DATE_BADGE_SIZE,
           borderRadius: theme.radii.lg,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: theme.colors.surface,
-          borderWidth: 1,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
         },
         weekSectionDateBadgeActive: {
@@ -1196,7 +1332,7 @@ function CalendarScreenContent() {
         },
         weekSectionDayNumber: {
           fontSize: theme.typography.sizes.lg,
-          lineHeight: theme.typography.sizes.lg * 1.05,
+          lineHeight: theme.typography.sizes.lg * CALENDAR_UI.WEEK_SECTION_DAY_NUMBER_LINE_RATIO,
           fontWeight: theme.typography.weight.bold,
           color: theme.colors.text,
           textAlign: 'center',
@@ -1205,8 +1341,8 @@ function CalendarScreenContent() {
           color: theme.colors.onPrimary,
         },
         weekSectionDayNameSmall: {
-          marginTop: 1,
-          fontSize: theme.typography.sizes.xs * 0.82,
+          marginTop: CALENDAR_UI.BORDER_WIDTH,
+          fontSize: theme.typography.sizes.xs * CALENDAR_UI.WEEK_SECTION_DAY_NAME_FONT_RATIO,
           lineHeight: theme.typography.sizes.xs,
           fontWeight: theme.typography.weight.semibold,
           color: theme.colors.textSecondary,
@@ -1229,7 +1365,7 @@ function CalendarScreenContent() {
           color: theme.colors.text,
         },
         weekSectionDate: {
-          marginTop: 2,
+          marginTop: CALENDAR_UI.SCOPE_SWITCH_PADDING,
           fontSize: theme.typography.sizes.xs,
           color: theme.colors.textSecondary,
         },
@@ -1238,19 +1374,19 @@ function CalendarScreenContent() {
           fontWeight: theme.typography.weight.semibold,
         },
         weekSectionCount: {
-          minWidth: 34,
-          height: 26,
-          borderRadius: 13,
+          minWidth: CALENDAR_UI.WEEK_SECTION_COUNT_MIN_WIDTH,
+          height: CALENDAR_UI.WEEK_SECTION_COUNT_HEIGHT,
+          borderRadius: CALENDAR_UI.WEEK_SECTION_COUNT_HEIGHT / 2,
           paddingHorizontal: theme.spacing.sm,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: theme.colors.surface,
-          borderWidth: 1,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH,
           borderColor: theme.colors.border,
         },
         weekSectionCountActive: {
-          borderColor: `${theme.colors.primary}66`,
-          backgroundColor: `${theme.colors.primary}12`,
+          borderColor: withAlpha(theme.colors.primary, CALENDAR_UI.ACTIVE_BORDER_ALPHA),
+          backgroundColor: withAlpha(theme.colors.primary, CALENDAR_UI.SUBTLE_BG_ALPHA),
         },
         weekSectionCountText: {
           fontSize: theme.typography.sizes.xs,
@@ -1261,24 +1397,30 @@ function CalendarScreenContent() {
           color: theme.colors.primary,
         },
         weekOrderRow: {
-          marginLeft: 58,
+          marginLeft: CALENDAR_UI.WEEK_ORDER_OFFSET_X,
         },
         weekOrderConnector: {
           position: 'absolute',
-          left: 22,
+          left: CALENDAR_UI.WEEK_TIMELINE_OFFSET_X,
           top: 0,
           bottom: 0,
-          width: 1,
+          width: CALENDAR_UI.BORDER_WIDTH,
           backgroundColor: theme.colors.border,
         },
         weekEmptyRow: {
-          marginLeft: 58,
+          marginLeft: CALENDAR_UI.WEEK_ORDER_OFFSET_X,
           paddingVertical: theme.spacing.sm,
           paddingHorizontal: theme.spacing.sm,
         },
         weekEmptyText: {
           fontSize: theme.typography.sizes.sm,
           color: theme.colors.textSecondary,
+        },
+        weekLoadingLine: {
+          width: '42%',
+          height: theme.spacing.sm,
+          borderRadius: theme.radii.pill,
+          backgroundColor: withAlpha(theme.colors.textSecondary, CALENDAR_UI.SUBTLE_BG_ALPHA),
         },
         dayScheduleContent: {
           flex: 1,
@@ -1292,7 +1434,7 @@ function CalendarScreenContent() {
           gap: theme.spacing.xs,
           marginHorizontal: theme.spacing.md,
           marginBottom: theme.spacing.xs,
-          minHeight: 32,
+          minHeight: CALENDAR_UI.SCOPE_SWITCH_HEIGHT,
         },
         dayList: {
           flex: 1,
@@ -1303,25 +1445,25 @@ function CalendarScreenContent() {
           paddingBottom: Math.max(theme.spacing.xl, insets.bottom),
         },
         dayOrderRow: {
-          marginLeft: 42,
+          marginLeft: CALENDAR_UI.DAY_ORDER_OFFSET_X,
         },
         dayOrderConnector: {
           position: 'absolute',
-          left: 18,
+          left: CALENDAR_UI.DAY_TIMELINE_OFFSET_X,
           top: 0,
           bottom: 0,
-          width: 1,
+          width: CALENDAR_UI.BORDER_WIDTH,
           backgroundColor: theme.colors.border,
         },
         dayOrderDot: {
           position: 'absolute',
-          left: 13,
-          top: 22,
-          width: 11,
-          height: 11,
-          borderRadius: 6,
+          left: CALENDAR_UI.DAY_DOT_OFFSET_X,
+          top: CALENDAR_UI.DAY_DOT_OFFSET_Y,
+          width: CALENDAR_UI.DAY_DOT_SIZE,
+          height: CALENDAR_UI.DAY_DOT_SIZE,
+          borderRadius: CALENDAR_UI.DAY_DOT_SIZE / 2,
           backgroundColor: theme.colors.primary,
-          borderWidth: 2,
+          borderWidth: CALENDAR_UI.BORDER_WIDTH * 2,
           borderColor: theme.colors.background,
         },
         dayEmptyState: {
@@ -1397,7 +1539,7 @@ function CalendarScreenContent() {
     () => ({
       height: (() => {
         const progress = stageAtoBProgress.value;
-        if (progress <= 0.001) {
+        if (progress <= CALENDAR_UI.COLLAPSE_PROGRESS_EPSILON) {
           return resolvedMonthHeaderHeight + measuredDayNamesHeight + settledWeeksHeight.value;
         }
         const fullWeeksHeight = measuredWeekRowHeight * actualWeekRows;
@@ -1421,7 +1563,7 @@ function CalendarScreenContent() {
   );
 
   const indicatorSlotAnimatedStyle = useAnimatedStyle(() => {
-    const collapsedHeight = indicatorSlotBaseHeight * 0.5;
+    const collapsedHeight = indicatorSlotBaseHeight * CALENDAR_UI.COLLAPSED_EVENT_SLOT_RATIO;
     const height = interpolate(
       stageAtoBProgress.value,
       [0, 1],
@@ -1434,14 +1576,28 @@ function CalendarScreenContent() {
     const progress = stageAtoBProgress.value;
     return {
       opacity: interpolate(progress, [0, 1], [1, 0], Extrapolate.CLAMP),
-      transform: [{ scale: interpolate(progress, [0, 1], [1, 0.24], Extrapolate.CLAMP) }],
+      transform: [{ scale: interpolate(progress, [0, 1], [1, CALENDAR_UI.EVENT_COUNT_COLLAPSED_SCALE], Extrapolate.CLAMP) }],
     };
   });
   const eventDotAnimatedStyle = useAnimatedStyle(() => {
     const progress = stageAtoBProgress.value;
     return {
-      opacity: interpolate(progress, [0, 0.03, 0.65], [0, 0, 1], Extrapolate.CLAMP),
-      transform: [{ scale: interpolate(progress, [0, 0.65], [0.24, 1], Extrapolate.CLAMP) }],
+      opacity: interpolate(
+        progress,
+        [0, CALENDAR_UI.EVENT_DOT_FADE_START_PROGRESS, CALENDAR_UI.EVENT_DOT_VISIBLE_PROGRESS],
+        [0, 0, 1],
+        Extrapolate.CLAMP,
+      ),
+      transform: [
+        {
+          scale: interpolate(
+            progress,
+            [0, CALENDAR_UI.EVENT_DOT_VISIBLE_PROGRESS],
+            [CALENDAR_UI.EVENT_COUNT_COLLAPSED_SCALE, 1],
+            Extrapolate.CLAMP,
+          ),
+        },
+      ],
     };
   });
 
@@ -1461,7 +1617,7 @@ function CalendarScreenContent() {
 
   const weeksClipStyle = useAnimatedStyle(() => {
     const progress = stageAtoBProgress.value;
-    if (progress <= 0.001) {
+    if (progress <= CALENDAR_UI.COLLAPSE_PROGRESS_EPSILON) {
       return { height: settledWeeksHeight.value, overflow: 'hidden' };
     }
     const fullHeight = measuredWeekRowHeight * actualWeekRows;
@@ -1494,7 +1650,12 @@ function CalendarScreenContent() {
         [monthOrdersHeaderHeight.value, 0],
         Extrapolate.CLAMP,
       ),
-      opacity: interpolate(progress, [0, 0.85, 1], [1, 0.18, 0], Extrapolate.CLAMP),
+      opacity: interpolate(
+        progress,
+        [0, CALENDAR_UI.MONTH_HEADER_FADE_PROGRESS, 1],
+        [1, CALENDAR_UI.MONTH_HEADER_FADE_OPACITY, 0],
+        Extrapolate.CLAMP,
+      ),
       overflow: 'hidden',
     };
   });
@@ -1530,7 +1691,7 @@ function CalendarScreenContent() {
       }
       const target = shouldCollapse ? maxCollapse : 0;
       const distance = Math.abs(target - current);
-      if (distance <= 0.5) {
+      if (distance <= CALENDAR_UI.SNAP_DISTANCE_EPSILON) {
         collapseTranslate.value = target;
         return;
       }
@@ -1637,7 +1798,7 @@ function CalendarScreenContent() {
   );
 
   const switchMode = useCallback((nextMode, opts = {}) => {
-    if (nextMode === 'month') {
+    if (nextMode === CALENDAR_VIEW_MODE.MONTH) {
       const targetMonth = startOfMonth(opts.newMonth ?? currentMonth);
       setMonthWindowAnchor(targetMonth);
       setCurrentMonth(targetMonth);
@@ -1653,7 +1814,7 @@ function CalendarScreenContent() {
         } catch {}
       });
     }
-    if (nextMode === 'week') {
+    if (nextMode === CALENDAR_VIEW_MODE.WEEK) {
       const targetDate = parseCalendarDateKey(selectedDate, currentMonth);
       setSelectedDate(formatDateKey(targetDate));
       setCurrentMonth(startOfMonth(targetDate));
@@ -1665,7 +1826,7 @@ function CalendarScreenContent() {
         scrollY.value = 0;
       }
     }
-    if (nextMode === 'day') {
+    if (nextMode === CALENDAR_VIEW_MODE.DAY) {
       const targetDate = parseCalendarDateKey(selectedDate, currentMonth);
       setSelectedDate(formatDateKey(targetDate));
       setCurrentMonth(startOfMonth(targetDate));
@@ -1865,7 +2026,9 @@ function CalendarScreenContent() {
   }, [filteredOrders, theme.colors.primary]);
 
   const committedMonthKey = format(currentMonth, 'yyyy-MM');
-  const selectedMonthKey = selectedDate ? selectedDate.slice(0, 7) : 'none';
+  const selectedMonthKey = selectedDate
+    ? selectedDate.slice(0, CALENDAR_MONTH_KEY_LENGTH)
+    : CALENDAR_EMPTY_MONTH_KEY;
   const targetMonthKey = committedMonthKey;
   const effectiveSelectedDate = useMemo(
     () => (selectedMonthKey === targetMonthKey ? selectedDate : `${targetMonthKey}-01`),
@@ -1876,6 +2039,8 @@ function CalendarScreenContent() {
     () => (effectiveSelectedDate ? (calendarIndex.byDate[effectiveSelectedDate] ?? []) : []),
     [calendarIndex.byDate, effectiveSelectedDate],
   );
+  const shouldShowCalendarEmptyStates = !isCalendarLoading && !isCalendarPlaceholderData;
+  const showCalendarLoadingOverlay = isCalendarFetching && (isCalendarLoading || isCalendarPlaceholderData);
   const weekSections = useMemo(
     () =>
       activeWeekDates.map((date) => {
@@ -1885,10 +2050,19 @@ function CalendarScreenContent() {
           date,
           dateKey,
           count: dayOrders.length,
-          data: dayOrders.length ? dayOrders : [{ id: `empty-${dateKey}`, dateKey, __empty: true }],
+          data: dayOrders.length
+            ? dayOrders
+            : [
+                {
+                  id: `${shouldShowCalendarEmptyStates ? 'empty' : 'loading'}-${dateKey}`,
+                  dateKey,
+                  __empty: shouldShowCalendarEmptyStates,
+                  __loading: !shouldShowCalendarEmptyStates,
+                },
+              ],
         };
       }),
-    [activeWeekDates, calendarIndex.byDate],
+    [activeWeekDates, calendarIndex.byDate, shouldShowCalendarEmptyStates],
   );
   const weekTotalCount = useMemo(
     () => weekSections.reduce((sum, section) => sum + section.count, 0),
@@ -1911,9 +2085,9 @@ function CalendarScreenContent() {
       if (!effectiveSelectedDate) return '';
       const parsedDate = new Date(effectiveSelectedDate);
       if (Number.isNaN(parsedDate.getTime())) return '';
-      return format(parsedDate, 'd MMMM', { locale: dfnsRu });
+      return format(parsedDate, 'd MMMM', { locale: dateLocale });
     },
-    [effectiveSelectedDate],
+    [dateLocale, effectiveSelectedDate],
   );
   const ordersListContentContainerStyle = useMemo(
     () => ({
@@ -1931,7 +2105,7 @@ function CalendarScreenContent() {
       if (!orderId) return;
       const now = Date.now();
       const prev = detailNavLockRef.current;
-      if (prev.id === orderId && now - prev.ts < 1200) return;
+      if (prev.id === orderId && now - prev.ts < CALENDAR_NAV_LOCK_MS) return;
       detailNavLockRef.current = { id: orderId, ts: now };
       router.push(`/orders/${orderId}`);
       InteractionManager.runAfterInteractions(() => {
@@ -1947,7 +2121,7 @@ function CalendarScreenContent() {
     ({ item }) => (
       <DynamicOrderCard
         order={item}
-        context={scope === 'my' ? 'my_orders' : 'all_orders'}
+        context={scope === CALENDAR_SCOPE.MY ? 'my_orders' : 'all_orders'}
         hideExecutor={isSoloAdmin}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
@@ -1958,19 +2132,28 @@ function CalendarScreenContent() {
     [companySettings?.currency, departureTimeEnabled, isSoloAdmin, openOrderDetails, orderFieldsByKey, scope],
   );
   const ordersEmptyComponent = useMemo(
-    () => <Text style={styles.noOrders}>{t('calendar_no_orders', 'Нет заявок')}</Text>,
-    [styles.noOrders, t],
+    () =>
+      shouldShowCalendarEmptyStates ? (
+        <Text style={styles.noOrders}>{t('calendar_no_orders')}</Text>
+      ) : (
+        <View style={styles.ordersLoadingPlaceholder} />
+      ),
+    [shouldShowCalendarEmptyStates, styles.noOrders, styles.ordersLoadingPlaceholder, t],
   );
   const renderWeekOrderItem = useCallback(
     ({ item }) => {
-      if (item?.__empty) {
+      if (item?.__empty || item?.__loading) {
         return (
           <View style={{ position: 'relative' }}>
             <View pointerEvents="none" style={styles.weekOrderConnector} />
             <View style={styles.weekEmptyRow}>
-              <Text style={styles.weekEmptyText}>
-                {t('calendar_week_empty_day', 'Нет заявок на этот день')}
-              </Text>
+              {item?.__loading ? (
+                <View style={styles.weekLoadingLine} />
+              ) : (
+                <Text style={styles.weekEmptyText}>
+                  {t('calendar_week_empty_day')}
+                </Text>
+              )}
             </View>
           </View>
         );
@@ -2000,6 +2183,7 @@ function CalendarScreenContent() {
       orderFieldsByKey,
       styles.weekEmptyRow,
       styles.weekEmptyText,
+      styles.weekLoadingLine,
       styles.weekOrderConnector,
       styles.weekOrderRow,
       t,
@@ -2018,7 +2202,7 @@ function CalendarScreenContent() {
         >
           <View style={[styles.weekSectionDateBadge, isSelected && styles.weekSectionDateBadgeActive]}>
             <Text style={[styles.weekSectionDayNumber, isSelected && styles.weekSectionDayNumberActive]}>
-              {format(section.date, 'd', { locale: dfnsRu })}
+              {format(section.date, 'd', { locale: dateLocale })}
             </Text>
             <Text
               style={[
@@ -2031,10 +2215,10 @@ function CalendarScreenContent() {
           </View>
           <View style={styles.weekSectionTitleBlock}>
             <Text style={[styles.weekSectionTitle, isSelected && styles.weekSectionTitleActive]}>
-              {format(section.date, 'EEEE', { locale: dfnsRu })}
+              {format(section.date, 'EEEE', { locale: dateLocale })}
             </Text>
             <Text style={[styles.weekSectionDate, isTodaySection && styles.weekSectionToday]}>
-              {format(section.date, 'd MMMM yyyy', { locale: dfnsRu })}
+              {format(section.date, 'd MMMM yyyy', { locale: dateLocale })}
             </Text>
           </View>
           <View style={[styles.weekSectionCount, isSelected && styles.weekSectionCountActive]}>
@@ -2046,6 +2230,7 @@ function CalendarScreenContent() {
       );
     },
     [
+      dateLocale,
       selectedDate,
       setSelectedDate,
       styles.weekSectionCount,
@@ -2105,15 +2290,24 @@ function CalendarScreenContent() {
     ],
   );
   const dayEmptyComponent = useMemo(
-    () => (
-      <View style={styles.dayEmptyState}>
-        <Text style={styles.dayEmptyTitle}>{t('calendar_day_empty_title', 'На этот день заявок нет')}</Text>
-        <Text style={styles.dayEmptySubtitle}>
-          {t('calendar_day_empty_subtitle', 'Переключите день стрелками или выберите дату в неделе.')}
-        </Text>
-      </View>
-    ),
-    [styles.dayEmptyState, styles.dayEmptySubtitle, styles.dayEmptyTitle, t],
+    () =>
+      shouldShowCalendarEmptyStates ? (
+        <View style={styles.dayEmptyState}>
+          <Text style={styles.dayEmptyTitle}>{t('calendar_day_empty_title')}</Text>
+          <Text style={styles.dayEmptySubtitle}>
+            {t('calendar_day_empty_subtitle')}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.dayEmptyState} />
+      ),
+    [
+      shouldShowCalendarEmptyStates,
+      styles.dayEmptyState,
+      styles.dayEmptySubtitle,
+      styles.dayEmptyTitle,
+      t,
+    ],
   );
 
   const markedDates = useMemo(
@@ -2129,7 +2323,7 @@ function CalendarScreenContent() {
   );
 
   const onScopeChange = useCallback((nextScope) => {
-    const safeNext = nextScope === 'all' ? 'all' : 'my';
+    const safeNext = nextScope === CALENDAR_SCOPE.ALL ? CALENDAR_SCOPE.ALL : CALENDAR_SCOPE.MY;
     setExecutorFilterIds([]);
     setScope(safeNext);
   }, []);
@@ -2140,6 +2334,88 @@ function CalendarScreenContent() {
     setExecutorFilterIds([]);
     setExecutorModalVisible(false);
   }, []);
+  const scopeOptions = useMemo(
+    () =>
+      CALENDAR_SCOPE_OPTIONS.map((value) => ({
+        value,
+        label: value === CALENDAR_SCOPE.MY ? t('home_scope_my') : t('home_scope_all'),
+      })),
+    [t],
+  );
+  const renderCalendarActions = useCallback(() => {
+    if (!canUseCalendarAllScope) return null;
+    const filterIconSize = theme.icons.sm;
+    const clearIconSize = Math.round(filterIconSize * CALENDAR_UI.EVENT_COUNT_FONT_RATIO);
+    return (
+      <View style={styles.ordersHeaderActions}>
+        <View style={styles.scopeSwitch}>
+          {scopeOptions.map((item) => {
+            const active = activeScope === item.value;
+            return (
+              <Pressable
+                key={item.value}
+                onPress={() => onScopeChange(item.value)}
+                android_ripple={{ color: theme.colors.border }}
+                style={({ pressed }) => [
+                  styles.scopePill,
+                  active && styles.scopePillActive,
+                  pressed && { opacity: CALENDAR_UI.PRESSED_OPACITY },
+                ]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+              >
+                <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Pressable
+          onPress={() => setExecutorModalVisible(true)}
+          android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+          style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
+          accessibilityRole="button"
+          accessibilityLabel={t('common_filter')}
+        >
+          <Feather name="sliders" size={filterIconSize} color={theme.colors.text} />
+        </Pressable>
+        {hasEmployeeFilter ? (
+          <Pressable
+            onPress={onResetCalendarFilters}
+            android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
+            style={styles.resetFilterButton}
+            accessibilityRole="button"
+          >
+            <Feather name="x" size={clearIconSize} color={theme.colors.textSecondary} />
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  }, [
+    activeScope,
+    canUseCalendarAllScope,
+    hasEmployeeFilter,
+    onResetCalendarFilters,
+    onScopeChange,
+    scopeOptions,
+    styles.filterButton,
+    styles.filterButtonActive,
+    styles.ordersHeaderActions,
+    styles.resetFilterButton,
+    styles.scopePill,
+    styles.scopePillActive,
+    styles.scopeSwitch,
+    styles.scopeText,
+    styles.scopeTextActive,
+    t,
+    theme.colors.border,
+    theme.colors.overlayNavBar,
+    theme.colors.ripple,
+    theme.colors.text,
+    theme.colors.textSecondary,
+    theme.icons.sm,
+  ]);
   useFocusEffect(
     useCallback(
       () => () => {
@@ -2172,20 +2448,22 @@ function CalendarScreenContent() {
         }}
       />
       <View style={styles.container}>
+        {showCalendarLoadingOverlay ? (
+          <View pointerEvents="none" style={styles.calendarLoadingOverlay}>
+            <View style={styles.calendarLoadingPill}>
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+            </View>
+          </View>
+        ) : null}
         <Animated.View style={styles.tabsWrapper}>
           <View style={styles.tabsContent}>
-            {[
-              { label: t('calendar_view_year', 'Год'), mode: 'year', disabled: false },
-              { label: t('calendar_view_month', 'Месяц'), mode: 'month', disabled: false },
-              { label: t('calendar_view_week', 'Неделя'), mode: 'week', disabled: false },
-              { label: t('calendar_view_day', 'День'), mode: 'day', disabled: false },
-              { label: t('calendar_view_schedule', 'Расписание'), mode: 'schedule', disabled: true },
-            ].map((tab) => {
-              const { label, mode, disabled } = tab;
+            {CALENDAR_VIEW_TABS.map((tab) => {
+              const { labelKey, mode, disabled } = tab;
+              const label = t(labelKey);
               const isActive = viewMode === mode;
               return (
                 <Pressable
-                  key={label}
+                  key={mode}
                   onPress={() => {
                     if (disabled) {
                       toast.info(t('feature_future'));
@@ -2222,21 +2500,21 @@ function CalendarScreenContent() {
             })}
           </View>
         </Animated.View>
-        {viewMode === 'month' ? (
+        {viewMode === CALENDAR_VIEW_MODE.MONTH ? (
           <>
             <Animated.View style={[calendarContentStyle]}>
                 <View style={[styles.calendarContent]}>
                   <CalendarMonthHeader
                     monthDate={currentMonth}
+                    dateLocale={dateLocale}
                     onPreviousMonth={goToPreviousMonth}
                     onNextMonth={goToNextMonth}
                     arrowHitSlop={arrowHitSlop}
                     headerAnimatedStyle={headerAnimatedStyle}
-                    onHeaderLayout={onMonthHeaderLayout}
                     styles={styles}
                     theme={theme}
                   />
-                  <View style={[styles.weekdayRow]} onLayout={onWeekdayRowLayout}>
+                  <View style={[styles.weekdayRow]}>
                     {DAY_KEYS.map((key) => (
                       <Text key={key} style={styles.weekdayLabel}>
                         {t(key)}
@@ -2257,7 +2535,7 @@ function CalendarScreenContent() {
                       <Animated.View style={[{ flexDirection: 'column' }, weeksTranslateStyle]}>
                         {monthWeeks.map((week, weekIdx) => (
                           <CalendarWeekRow
-                            key={`w-${currentMonth.getTime()}-${weekIdx}-${selectedDate}`}
+                            key={`w-${currentMonth.getTime()}-${weekIdx}`}
                             week={week}
                             monthDate={currentMonth}
                             weekIdx={weekIdx}
@@ -2272,7 +2550,6 @@ function CalendarScreenContent() {
                             indicatorSlotAnimatedStyle={indicatorSlotAnimatedStyle}
                             eventCountAnimatedStyle={eventCountAnimatedStyle}
                             eventDotAnimatedStyle={eventDotAnimatedStyle}
-                            onRowLayout={weekIdx === 0 ? onWeekRowLayout : undefined}
                           />
                         ))}
                       </Animated.View>
@@ -2306,53 +2583,7 @@ function CalendarScreenContent() {
                         <Text style={styles.ordersTitle}>
                           {ordersTitleDateLabel}
                         </Text>
-                        <View style={styles.ordersHeaderActions}>
-                          {canUseCalendarAllScope ? (
-                            <View style={styles.scopeSwitch}>
-                              {['my', 'all'].map((s) => {
-                                const active = activeScope === s;
-                                return (
-                                  <Pressable
-                                    key={s}
-                                    onPress={() => onScopeChange(s)}
-                                    android_ripple={{ color: theme.colors.border }}
-                                    style={({ pressed }) => [
-                                      styles.scopePill,
-                                      active && styles.scopePillActive,
-                                      pressed && { opacity: 0.92 },
-                                    ]}
-                                    accessibilityRole="button"
-                                  >
-                                    <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
-                                      {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
-                                    </Text>
-                                  </Pressable>
-                                );
-                              })}
-                            </View>
-                          ) : null}
-                          {canUseCalendarAllScope ? (
-                            <Pressable
-                              onPress={() => setExecutorModalVisible(true)}
-                              android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                              style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
-                              accessibilityRole="button"
-                              accessibilityLabel={t('common_filter')}
-                            >
-                              <Feather name="sliders" size={18} color={theme.colors.text} />
-                            </Pressable>
-                          ) : null}
-                          {canUseCalendarAllScope && hasEmployeeFilter ? (
-                            <Pressable
-                              onPress={onResetCalendarFilters}
-                              android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                              style={styles.resetFilterButton}
-                              accessibilityRole="button"
-                            >
-                              <Feather name="x" size={16} color={theme.colors.textSecondary} />
-                            </Pressable>
-                          ) : null}
-                        </View>
+                        {renderCalendarActions()}
                       </View>
                     </Animated.View>
                     <GestureDetector gesture={monthOrdersPanGesture}>
@@ -2361,9 +2592,9 @@ function CalendarScreenContent() {
                           ref={ordersListRef}
                           data={displayedOrders}
                           extraData={ordersListExtraData}
-                          initialNumToRender={2}
-                          maxToRenderPerBatch={4}
-                          updateCellsBatchingPeriod={16}
+                          initialNumToRender={CALENDAR_RENDER.MONTH_INITIAL_ITEMS}
+                          maxToRenderPerBatch={CALENDAR_RENDER.MONTH_BATCH_ITEMS}
+                          updateCellsBatchingPeriod={CALENDAR_RENDER.CELL_BATCH_PERIOD_MS}
                           removeClippedSubviews={Platform.OS === 'android'}
                           keyExtractor={orderKeyExtractor}
                           contentContainerStyle={ordersListContentContainerStyle}
@@ -2387,10 +2618,11 @@ function CalendarScreenContent() {
                 </View>
               </View>
           </>
-        ) : viewMode === 'week' ? (
+        ) : viewMode === CALENDAR_VIEW_MODE.WEEK ? (
           <View style={styles.weekContent}>
             <CalendarMonthHeader
               label={activeWeekLabel}
+              dateLocale={dateLocale}
               onPreviousMonth={goToPreviousWeek}
               onNextMonth={goToNextWeek}
               arrowHitSlop={arrowHitSlop}
@@ -2413,7 +2645,7 @@ function CalendarScreenContent() {
                   >
                     <Text style={styles.weekDayName}>{t(DAY_KEYS[date.getDay() === 0 ? 6 : date.getDay() - 1])}</Text>
                     <Text style={[styles.weekDayNumber, isActiveDay && styles.weekDayNumberActive]}>
-                      {format(date, 'd', { locale: dfnsRu })}
+                      {format(date, 'd', { locale: dateLocale })}
                     </Text>
                     <View style={[styles.weekDayCount, isActiveDay && styles.weekDayCountActive]}>
                       <Text
@@ -2431,55 +2663,9 @@ function CalendarScreenContent() {
             </View>
             <View style={styles.weekToolbar}>
               <Text style={styles.weekToolbarTitle}>
-                {t('calendar_week_schedule_title', 'Расписание недели')}: {weekTotalCount}
+                {t('calendar_week_schedule_title')}: {weekTotalCount}
               </Text>
-              <View style={styles.ordersHeaderActions}>
-                {canUseCalendarAllScope ? (
-                  <View style={styles.scopeSwitch}>
-                    {['my', 'all'].map((s) => {
-                      const active = activeScope === s;
-                      return (
-                        <Pressable
-                          key={s}
-                          onPress={() => onScopeChange(s)}
-                          android_ripple={{ color: theme.colors.border }}
-                          style={({ pressed }) => [
-                            styles.scopePill,
-                            active && styles.scopePillActive,
-                            pressed && { opacity: 0.92 },
-                          ]}
-                          accessibilityRole="button"
-                        >
-                          <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
-                            {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                ) : null}
-                {canUseCalendarAllScope ? (
-                  <Pressable
-                    onPress={() => setExecutorModalVisible(true)}
-                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                    style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common_filter')}
-                  >
-                    <Feather name="sliders" size={18} color={theme.colors.text} />
-                  </Pressable>
-                ) : null}
-                {canUseCalendarAllScope && hasEmployeeFilter ? (
-                  <Pressable
-                    onPress={onResetCalendarFilters}
-                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                    style={styles.resetFilterButton}
-                    accessibilityRole="button"
-                  >
-                    <Feather name="x" size={16} color={theme.colors.textSecondary} />
-                  </Pressable>
-                ) : null}
-              </View>
+              {renderCalendarActions()}
             </View>
             <SectionList
               sections={weekSections}
@@ -2493,10 +2679,11 @@ function CalendarScreenContent() {
               contentContainerStyle={styles.weekListContent}
             />
           </View>
-        ) : viewMode === 'day' ? (
+        ) : viewMode === CALENDAR_VIEW_MODE.DAY ? (
           <View style={styles.dayScheduleContent}>
             <CalendarMonthHeader
               label={activeDayLabel}
+              dateLocale={dateLocale}
               onPreviousMonth={goToPreviousDay}
               onNextMonth={goToNextDay}
               arrowHitSlop={arrowHitSlop}
@@ -2504,55 +2691,9 @@ function CalendarScreenContent() {
               theme={theme}
             />
             <View style={styles.daySummary}>
-              <View style={styles.ordersHeaderActions}>
-                {canUseCalendarAllScope ? (
-                  <View style={styles.scopeSwitch}>
-                    {['my', 'all'].map((s) => {
-                      const active = activeScope === s;
-                      return (
-                        <Pressable
-                          key={s}
-                          onPress={() => onScopeChange(s)}
-                          android_ripple={{ color: theme.colors.border }}
-                          style={({ pressed }) => [
-                            styles.scopePill,
-                            active && styles.scopePillActive,
-                            pressed && { opacity: 0.92 },
-                          ]}
-                          accessibilityRole="button"
-                        >
-                          <Text style={[styles.scopeText, active && styles.scopeTextActive]}>
-                            {s === 'my' ? t('home_scope_my') : t('home_scope_all')}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                ) : null}
-                {canUseCalendarAllScope ? (
-                  <Pressable
-                    onPress={() => setExecutorModalVisible(true)}
-                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                    style={[styles.filterButton, hasEmployeeFilter && styles.filterButtonActive]}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('common_filter')}
-                  >
-                    <Feather name="sliders" size={18} color={theme.colors.text} />
-                  </Pressable>
-                ) : null}
-                {canUseCalendarAllScope && hasEmployeeFilter ? (
-                  <Pressable
-                    onPress={onResetCalendarFilters}
-                    android_ripple={{ color: theme.colors.ripple || theme.colors.overlayNavBar }}
-                    style={styles.resetFilterButton}
-                    accessibilityRole="button"
-                  >
-                    <Feather name="x" size={16} color={theme.colors.textSecondary} />
-                  </Pressable>
-                ) : null}
-              </View>
+              {renderCalendarActions()}
               <Text style={styles.weekToolbarTitle}>
-                {t('calendar_day_orders_count', 'Заявок')}: {displayedOrders.length}
+                {t('calendar_day_orders_count')}: {displayedOrders.length}
               </Text>
             </View>
             <FlatList
@@ -2573,6 +2714,7 @@ function CalendarScreenContent() {
           <View style={[styles.calendarContent, { flex: 1 }]}>
             <CalendarMonthHeader
               label={String(activeVisibleYear)}
+              dateLocale={dateLocale}
               onPreviousMonth={goToPreviousYear}
               onNextMonth={goToNextYear}
               arrowHitSlop={arrowHitSlop}
@@ -2592,18 +2734,18 @@ function CalendarScreenContent() {
               data={dynamicYears}
               horizontal
               pagingEnabled
-              initialNumToRender={1}
+              initialNumToRender={CALENDAR_RENDER.YEAR_INITIAL_ITEMS}
               showsHorizontalScrollIndicator={false}
               keyExtractor={(item, index) => `year-${item}-${index}`}
               getItemLayout={getItemLayout}
               initialScrollIndex={YEAR_LIST_MIDDLE_INDEX}
-              windowSize={2}
-              maxToRenderPerBatch={1}
-              updateCellsBatchingPeriod={16}
+              windowSize={CALENDAR_RENDER.YEAR_WINDOW_SIZE}
+              maxToRenderPerBatch={CALENDAR_RENDER.YEAR_BATCH_ITEMS}
+              updateCellsBatchingPeriod={CALENDAR_RENDER.CELL_BATCH_PERIOD_MS}
               removeClippedSubviews={true}
               onScrollEndDrag={(event) => {
                 const vx = Math.abs(Number(event?.nativeEvent?.velocity?.x) || 0);
-                if (vx > 0.05) return;
+                if (vx > CALENDAR_UI.YEAR_SCROLL_SETTLE_VELOCITY_X) return;
                 const offsetX = Number(event?.nativeEvent?.contentOffset?.x) || 0;
                 const nextIndex = resolveYearPageIndex(offsetX);
                 commitVisibleYearIndex(nextIndex);
@@ -2619,7 +2761,7 @@ function CalendarScreenContent() {
                     style={styles.yearViewContainer}
                     year={yearValue}
                     currentMonthIndex={currentMonth.getMonth()}
-                    onMonthPress={(newMonth) => switchMode('month', { newMonth })}
+                    onMonthPress={(newMonth) => switchMode(CALENDAR_VIEW_MODE.MONTH, { newMonth })}
                     markedDates={markedDates}
                   />
                 </View>

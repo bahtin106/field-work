@@ -130,7 +130,7 @@ const PhotoItem = memo(function PhotoItem({
           hitSlop={PHOTO_ACTION_HIT_SLOP}
           accessibilityRole="checkbox"
           accessibilityState={{ checked: isSelected }}
-          accessibilityLabel={isSelected ? 'Снять выделение' : 'Выбрать фото'}
+          accessibilityLabel={isSelected ? t('photos_unselect') : t('photos_select')}
           style={s.selectionBtn}
         >
           <View style={[s.selectionBtnBg, isSelected && s.selectionBtnBgActive]}>
@@ -150,7 +150,7 @@ const PhotoItem = memo(function PhotoItem({
           onPress={handleRemove}
           hitSlop={PHOTO_ACTION_HIT_SLOP}
           accessibilityRole="button"
-          accessibilityLabel={t('order_photos_delete_single_confirm', 'Удалить')}
+          accessibilityLabel={t('order_photos_delete_single_confirm')}
           style={s.removeBtn}
         >
           <View style={s.removeBtnBg}>
@@ -273,10 +273,10 @@ function PhotoGrid({
       <View style={s.emptyState}>
         <Feather name="image" size={theme.icons.lg * 2} color={theme.colors.border} />
         <Text style={s.emptyTitle}>
-          {t('order_photos_empty_title', 'Нет фотографий')}
+          {t('order_photos_empty_title')}
         </Text>
         <Text style={[s.emptyHint, !canAddPhotos && s.hidden]}>
-          {t('order_photos_empty_hint', 'Нажмите кнопку ниже, чтобы добавить')}
+          {t('order_photos_empty_hint')}
         </Text>
       </View>
     );

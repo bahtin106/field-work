@@ -59,9 +59,9 @@ export function buildAssigneeSelectItems({
     const label = resolveName(user, t('common_noName'));
     const roleLabel = resolveRoleLabel(t, user?.role);
     const departmentLabel = resolveDepartmentLabel(user, departmentsById);
-    const blockedLabel = isBlockedUser(user) ? String(t('status_blocked', 'Заблокирован')).trim() : '';
+    const blockedLabel = isBlockedUser(user) ? String(t('status_blocked')).trim() : '';
     const subtitleParts = [roleLabel, departmentLabel, blockedLabel].filter(Boolean);
-    const subtitle = subtitleParts.length ? subtitleParts.join(' • ') : undefined;
+    const subtitle = subtitleParts.length ? subtitleParts.join(' - ') : undefined;
 
     result.push({
       id,

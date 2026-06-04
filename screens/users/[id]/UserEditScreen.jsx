@@ -341,7 +341,7 @@ function AvatarSheetModal({
     { id: 'library', label: t('profile_photo_choose'), right: chevron(theme.colors.textSecondary) },
           ...(hasAvatar
       ? [
-          { id: 'view', label: 'Просмотреть фото', right: chevron(theme.colors.textSecondary) },
+          { id: 'view', label: t('photo_view_action'), right: chevron(theme.colors.textSecondary) },
           { id: 'delete', label: t('profile_photo_delete'), right: chevron(theme.colors.textSecondary) },
         ]
       : []),
@@ -849,7 +849,7 @@ export default function EditUser() {
     try {
       setErr('');
       // РЈСЃС‚Р°РЅР°РІР»РёРІР°РµРј РїСѓСЃС‚СѓСЋ СЃС‚СЂРѕРєСѓ РґР»СЏ СЏРІРЅРѕРіРѕ СѓРєР°Р·Р°РЅРёСЏ РЅР° СѓРґР°Р»РµРЅРёРµ
-      // null РѕР·РЅР°С‡Р°РµС‚ "нет изменений", '' РѕР·РЅР°С‡Р°РµС‚ "удалить"
+      // null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", '' РѕР·РЅР°С‡Р°РµС‚ "СѓРґР°Р»РёС‚СЊ"
       setPendingAvatarUrl('');
       setAvatarUrl(null);
       // avatar change will be captured by isDirty and confirmed on exit
@@ -1161,7 +1161,6 @@ export default function EditUser() {
           throw new Error(
             t(
               'offline_profile_edit_online_required',
-              'Для изменения e-mail, пароля, аватара или административных данных нужно подключение к интернету.',
             ),
           );
         }
@@ -1227,7 +1226,7 @@ export default function EditUser() {
           }));
         }
         allowLeaveRef.current = true;
-        showSuccessToast(t('offline_changes_queued', 'Изменения сохранены офлайн и синхронизируются при подключении.'));
+        showSuccessToast(t('offline_changes_queued'));
         if (navigation && typeof navigation.goBack === 'function') {
           navigation.goBack();
         } else if (router && typeof router.back === 'function') {
@@ -1236,7 +1235,7 @@ export default function EditUser() {
         return;
       }
 
-      // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "нет изменений", Р° РЅРµ "удалить"
+      // pendingAvatarUrl === null РѕР·РЅР°С‡Р°РµС‚ "РЅРµС‚ РёР·РјРµРЅРµРЅРёР№", Р° РЅРµ "СѓРґР°Р»РёС‚СЊ"
       if (pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl) {
         if (pendingAvatarUrl === '') {
           await cleanupProfileMediaEntity('employee', String(userId));
@@ -1244,7 +1243,7 @@ export default function EditUser() {
         } else if (!String(pendingAvatarUrl).startsWith('http')) {
           savedAvatarUrl = await uploadProfileMedia('employee', String(userId), pendingAvatarUrl);
           if (!savedAvatarUrl) {
-            throw new Error('Не удалось сохранить аватар');
+            throw new Error(t('avatar_save_error'));
           }
         } else {
           savedAvatarUrl = pendingAvatarUrl;
@@ -1453,11 +1452,10 @@ export default function EditUser() {
         showInfoToast(
           t(
             'toast_email_change_next_steps',
-            'Письма отправлены на текущий и новый e-mail. Подтвердите смену через ссылку в письме на новом адресе.',
           ),
         );
       }
-      // После успешного сохранения возвращаемся на предыдущую страницу
+      // РџРѕСЃР»Рµ СѓСЃРїРµС€РЅРѕРіРѕ СЃРѕС…СЂР°РЅРµРЅРёСЏ РІРѕР·РІСЂР°С‰Р°РµРјСЃСЏ РЅР° РїСЂРµРґС‹РґСѓС‰СѓСЋ СЃС‚СЂР°РЅРёС†Сѓ
       if (navigation && typeof navigation.goBack === 'function') {
         navigation.goBack();
       } else if (router && typeof router.back === 'function') {
@@ -1477,7 +1475,7 @@ export default function EditUser() {
   };
 
   const handleSave = async () => {
-    Keyboard.dismiss(); // пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ пїЅпїЅпїЅ пїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅпїЅ
+    Keyboard.dismiss();
     setErr('');
     clearBanner();
     setFieldErrors({});
@@ -1568,23 +1566,23 @@ export default function EditUser() {
       normalizedNextEmail.toLowerCase() !== normalizedCurrentEmail.toLowerCase();
     if (hasPasswordChange) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
-        setFieldErrors({ newPassword: { message: t('error_password_too_short') || `Минимум ${MIN_PASSWORD_LENGTH}` } });
+        setFieldErrors({ newPassword: { message: t('error_password_too_short') } });
         return;
       }
       if (!newPasswordChecks.hasUpper) {
-        setFieldErrors({ newPassword: { message: 'Хотя бы одна заглавная буква' } });
+        setFieldErrors({ newPassword: { message: t('register_password_rule_uppercase') } });
         return;
       }
       if (!newPasswordChecks.hasLower) {
-        setFieldErrors({ newPassword: { message: 'Хотя бы одна строчная буква' } });
+        setFieldErrors({ newPassword: { message: t('register_password_rule_lowercase') } });
         return;
       }
       if (!newPasswordChecks.hasDigit) {
-        setFieldErrors({ newPassword: { message: 'Хотя бы одна цифра' } });
+        setFieldErrors({ newPassword: { message: t('register_password_rule_digit') } });
         return;
       }
       if (confirmPassword !== newPassword) {
-        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') || 'Пароли не совпадают' } });
+        setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') } });
         return;
       }
     }
@@ -1822,7 +1820,7 @@ export default function EditUser() {
 
       const tempPassword = generateTempPassword();
 
-      // 1. Обновляем пароль через edge function update_user
+      // 1. РћР±РЅРѕРІР»СЏРµРј РїР°СЂРѕР»СЊ С‡РµСЂРµР· edge function update_user
       await withTimeout(
         updateUserPasswordViaFunction({
           userId: edgeTargetAuthUserId || null,
@@ -1859,7 +1857,7 @@ export default function EditUser() {
       if (!emailResponse.ok) {
         const emailError = await emailResponse.text();
         console.warn('[Edit] [Password Reset] Email send failed:', emailError);
-        throw new Error('Пароль обновлен, но письмо не отправлено. Проверьте email-сервис и повторите сброс.');
+        throw new Error(t('user_password_email_partial'));
       } else {
         showSuccessToast(t('toast_reset_password_sent'));
       }
@@ -1897,7 +1895,7 @@ export default function EditUser() {
       });
 
       if (error) {
-        throw new Error(error.message || 'Ошибка проверки заявок');
+        throw new Error(error.message || t('users_orders_check_error'));
       }
 
       const { activeOrdersCount, availableEmployees } = data || {};
@@ -1910,7 +1908,7 @@ export default function EditUser() {
       setSuccessorError('');
       setSuspendVisible(true);
     } catch (e) {
-      console.error('Ошибка при проверке заявок:', e);
+      console.error(t('users_orders_check_log'), e);
       setErr(e?.message || t('err_check_orders_failed'));
       showError(e?.message || t('err_check_orders_failed'));
     }
@@ -1931,8 +1929,8 @@ export default function EditUser() {
       const employees = Array.isArray(data) ? data : [];
       setPickerItems(employees);
     } catch (e) {
-      console.error('Ошибка загрузки сотрудников:', e);
-      showError('Не удалось загрузить список сотрудников');
+      console.error(t('users_load_log'), e);
+      showError(t('users_load_error'));
     }
   };
   const onAskUnsuspend = async () => {
@@ -2065,7 +2063,7 @@ export default function EditUser() {
       );
 
       if (error) {
-        throw new Error(error.message || 'Ошибка проверки заявок');
+        throw new Error(error.message || t('users_orders_check_error'));
       }
 
       const { activeOrdersCount, totalOrdersCount, availableEmployees } = data || {};
@@ -2079,7 +2077,7 @@ export default function EditUser() {
       toast.hide();
       setDeleteVisible(true);
     } catch (e) {
-      console.error('Ошибка при проверке заявок:', e);
+      console.error(t('users_orders_check_log'), e);
       const message = e?.message === 'check-orders-timeout'
         ? t('err_check_orders_failed')
         : e?.message || t('err_check_orders_failed');
@@ -2127,7 +2125,7 @@ export default function EditUser() {
       setDeleteVisible(false);
       router.replace('/users');
     } catch (e) {
-      console.error('Ошибка деактивации:', e);
+      console.error(t('user_deactivate_log'), e);
       setErr(e?.message || t('dlg_generic_warning'));
       showError(e?.message || t('err_deactivate_failed'));
     } finally {
@@ -2435,7 +2433,7 @@ export default function EditUser() {
                       cachePolicy="none"
                     />
                   ) : (
-                    <Text style={styles.avatarText}>{initials || '•'}</Text>
+                    <Text style={styles.avatarText}>{initials || 'вЂў'}</Text>
                   )}
                   {canManageAvatar ? (
                     <View style={styles.avatarCamBadge}>
@@ -2602,7 +2600,7 @@ export default function EditUser() {
                         color: newPasswordChecks.minLength ? theme.colors.success : theme.colors.textSecondary,
                       }}
                     >
-                      Минимум 8 символов
+                      {t('register_password_rule_min_length')}
                     </Text>
                     <Text
                       style={{
@@ -2610,7 +2608,7 @@ export default function EditUser() {
                         color: newPasswordChecks.hasUpper ? theme.colors.success : theme.colors.textSecondary,
                       }}
                     >
-                      Хотя бы одна заглавная буква
+                      {t('register_password_rule_uppercase')}
                     </Text>
                     <Text
                       style={{
@@ -2618,7 +2616,7 @@ export default function EditUser() {
                         color: newPasswordChecks.hasLower ? theme.colors.success : theme.colors.textSecondary,
                       }}
                     >
-                      Хотя бы одна строчная буква
+                      {t('register_password_rule_lowercase')}
                     </Text>
                     <Text
                       style={{
@@ -2626,7 +2624,7 @@ export default function EditUser() {
                         color: newPasswordChecks.hasDigit ? theme.colors.success : theme.colors.textSecondary,
                       }}
                     >
-                      Хотя бы одна цифра
+                      {t('register_password_rule_digit')}
                     </Text>
                   </View>
 
@@ -2731,21 +2729,19 @@ export default function EditUser() {
               }}
               title={
                 confirmSensitiveReason === 'email'
-                  ? t('dlg_confirm_email_title', 'Изменить e-mail?')
+                  ? t('dlg_confirm_email_title')
                   : confirmSensitiveReason === 'password_and_email'
-                    ? t('dlg_confirm_pwd_email_title', 'Изменить пароль и e-mail?')
+                    ? t('dlg_confirm_pwd_email_title')
                     : t('dlg_confirm_pwd_title')
               }
               message={
                 confirmSensitiveReason === 'email'
                   ? t(
                       'dlg_confirm_email_msg',
-                      'Вы изменяете e-mail. На текущий и новый адрес будут отправлены письма. После сохранения подтвердите смену через письмо на новом e-mail. Сохранить изменения?',
                     )
                   : confirmSensitiveReason === 'password_and_email'
                     ? t(
                         'dlg_confirm_pwd_email_msg',
-                        'Вы изменяете пароль и e-mail. На текущий и новый адрес будут отправлены письма. После сохранения подтвердите смену через письмо на новом e-mail. Сохранить изменения?',
                       )
                     : t('dlg_confirm_pwd_msg')
               }
@@ -2910,7 +2906,7 @@ export default function EditUser() {
                       cachePolicy="none"
                     />
                   ) : (
-                    <Text style={{ color: theme.colors.textSecondary }}>{t('placeholder_no_photo') || 'Нет фото'}</Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>{t('photo_empty')}</Text>
                   )}
                 </View>
               </BaseModal>
@@ -2987,10 +2983,10 @@ export default function EditUser() {
                       d = makeLocalNoon(tmp.getFullYear(), tmp.getMonth(), tmp.getDate());
                   }
                   if (d && !isNaN(d)) {
-                    // Если пользователь указал, что год опущен (withYear=false),
-                    // не перезаписываем год на 1900 в локальном состоянии, если
-                    // ранее был выбран реальный год — сохраним его, чтобы при
-                    // повторном включении года пользователь увидел ожидаемое значение.
+                    // Р•СЃР»Рё РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ СѓРєР°Р·Р°Р», С‡С‚Рѕ РіРѕРґ РѕРїСѓС‰РµРЅ (withYear=false),
+                    // РЅРµ РїРµСЂРµР·Р°РїРёСЃС‹РІР°РµРј РіРѕРґ РЅР° 1900 РІ Р»РѕРєР°Р»СЊРЅРѕРј СЃРѕСЃС‚РѕСЏРЅРёРё, РµСЃР»Рё
+                    // СЂР°РЅРµРµ Р±С‹Р» РІС‹Р±СЂР°РЅ СЂРµР°Р»СЊРЅС‹Р№ РіРѕРґ вЂ” СЃРѕС…СЂР°РЅРёРј РµРіРѕ, С‡С‚РѕР±С‹ РїСЂРё
+                    // РїРѕРІС‚РѕСЂРЅРѕРј РІРєР»СЋС‡РµРЅРёРё РіРѕРґР° РїРѕР»СЊР·РѕРІР°С‚РµР»СЊ СѓРІРёРґРµР» РѕР¶РёРґР°РµРјРѕРµ Р·РЅР°С‡РµРЅРёРµ.
                     try {
                       if (extra && typeof extra.withYear === 'boolean' && extra.withYear === false) {
                         if (birthdate instanceof Date && !isNaN(birthdate) && birthdate.getFullYear() !== 1900) {
@@ -2998,7 +2994,7 @@ export default function EditUser() {
                           const preserved = new Date(birthdate.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
                           setBirthdate(preserved);
                         } else {
-                          // no previous real year — keep provided date (may use sentinel)
+                          // no previous real year вЂ” keep provided date (may use sentinel)
                           setBirthdate(d);
                         }
                       } else {
@@ -3008,7 +3004,7 @@ export default function EditUser() {
                       setBirthdate(d);
                     }
                   }
-                  // После выбора даты очищаем возможную ошибку валидации для этого поля
+                  // РџРѕСЃР»Рµ РІС‹Р±РѕСЂР° РґР°С‚С‹ РѕС‡РёС‰Р°РµРј РІРѕР·РјРѕР¶РЅСѓСЋ РѕС€РёР±РєСѓ РІР°Р»РёРґР°С†РёРё РґР»СЏ СЌС‚РѕРіРѕ РїРѕР»СЏ
                   try {
                     clearFieldError('birthdate');
                   } catch {}
@@ -3462,7 +3458,7 @@ function DeleteEmployeeModal({
             </Text>
           </View>
           <UIButton
-            title={t('placeholder_pick_employee') || 'Выбрать другого'}
+            title={t('user_choose_another')}
             variant="outline"
             onPress={openSuccessorPicker}
             size="sm"

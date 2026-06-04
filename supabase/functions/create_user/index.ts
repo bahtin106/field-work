@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
     }
 
     // 4) Создаём пользователя в Auth
-    console.log('Creating user with email:', email);
+    console.log('Creating user by admin request');
 
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email,
@@ -92,7 +92,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      return new Response(`Auth create error: ${createErr?.message ?? 'unknown'}`, {
+      return new Response('Auth create error', {
         status: 400,
         headers: cors,
       });
@@ -167,13 +167,12 @@ Deno.serve(async (req) => {
 
     if (profileErr) {
       console.error('Profile create/update failed:', {
-        error: profileErr,
         message: profileErr.message,
         code: profileErr.code,
       });
       // откат, чтобы не оставлять "голого" юзера без профиля
       await supabaseAdmin.auth.admin.deleteUser(userId);
-      return new Response(`Profile error: ${profileErr.message}`, {
+      return new Response('Profile error', {
         status: 400,
         headers: cors,
       });
@@ -184,7 +183,8 @@ Deno.serve(async (req) => {
       headers: { 'Content-Type': 'application/json', ...cors },
     });
   } catch (e) {
-    return new Response(`Internal error: ${e instanceof Error ? e.message : String(e)}`, {
+    console.error('create_user internal error:', e instanceof Error ? e.message : String(e));
+    return new Response('Internal error', {
       status: 500,
       headers: cors,
     });

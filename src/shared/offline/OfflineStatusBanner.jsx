@@ -1,10 +1,12 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { withAlpha } from '../../../theme/colors';
+import { useTranslation } from '../../i18n/useTranslation';
 import { useOfflineSync } from './useOfflineSync';
 
 export default function OfflineStatusBanner({ enabled = true }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const { isNetworkKnown, isOnline, isPoorConnection, isSyncing, outbox } = useOfflineSync({ enabled });
 
   const pending = Number(outbox?.pending || 0);
@@ -27,12 +29,12 @@ export default function OfflineStatusBanner({ enabled = true }) {
       : theme.colors.primary;
 
   const parts = [];
-  if (!isOnline) parts.push('Нет интернета. Показываем сохраненные данные.');
-  else if (isPoorConnection) parts.push('Слабое соединение. Данные могут обновляться медленнее.');
-  else if (isSyncing) parts.push('Синхронизируем офлайн-правки.');
-  if (pending > 0) parts.push(`В очереди: ${pending}.`);
-  if (conflicts > 0) parts.push(`Конфликты версий: ${conflicts}.`);
-  if (failed > 0) parts.push(`Ошибки синхронизации: ${failed}.`);
+  if (!isOnline) parts.push(t('offline_banner_no_connection'));
+  else if (isPoorConnection) parts.push(t('offline_banner_poor_connection'));
+  else if (isSyncing) parts.push(t('offline_banner_syncing'));
+  if (pending > 0) parts.push(t('offline_banner_pending').replace('{count}', String(pending)));
+  if (conflicts > 0) parts.push(t('offline_banner_conflicts').replace('{count}', String(conflicts)));
+  if (failed > 0) parts.push(t('offline_banner_failed').replace('{count}', String(failed)));
 
   return (
     <View

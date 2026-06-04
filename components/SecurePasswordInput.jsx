@@ -2,6 +2,7 @@ import React, { useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { getFieldValidationState } from '../src/shared/forms/fieldValidation';
+import { useTranslation } from '../src/i18n/useTranslation';
 import { useTheme } from '../theme/ThemeProvider';
 
 const SecurePasswordInput = React.forwardRef(
@@ -9,7 +10,7 @@ const SecurePasswordInput = React.forwardRef(
     {
       value = '',
       onChangeText,
-      placeholder = 'Пароль',
+      placeholder,
       editable = true,
       onSubmitEditing,
       returnKeyType = 'done',
@@ -29,6 +30,7 @@ const SecurePasswordInput = React.forwardRef(
     ref,
   ) => {
     const { theme } = useTheme();
+    const { t } = useTranslation();
     const [isSecure, setIsSecure] = useState(true);
     const [touched, setTouched] = useState(false);
     const inputRef = useRef(null);
@@ -44,8 +46,9 @@ const SecurePasswordInput = React.forwardRef(
       ...inputRef.current,
     }));
 
+    const effectivePlaceholder = placeholder || t('set_password_label');
     const validationState = getFieldValidationState({
-      label: placeholder,
+      label: effectivePlaceholder,
       value,
       error,
       required,
@@ -90,7 +93,7 @@ const SecurePasswordInput = React.forwardRef(
           style={[styles.input, inputStyle]}
           value={displayValue}
           onChangeText={handleChangeText}
-          placeholder={placeholder}
+          placeholder={effectivePlaceholder}
           placeholderTextColor={theme.colors.inputPlaceholder}
           editable={editable}
           secureTextEntry={useInstantMasking ? false : isSecure}
@@ -113,8 +116,8 @@ const SecurePasswordInput = React.forwardRef(
             onBlur?.(e);
           }}
           testID={testID}
-          accessibilityLabel={placeholder}
-          accessibilityHint="Защищенное поле ввода пароля"
+          accessibilityLabel={effectivePlaceholder}
+          accessibilityHint={t('password_accessibility_hint')}
         />
 
         {showVisibilityToggle ? (
@@ -124,7 +127,7 @@ const SecurePasswordInput = React.forwardRef(
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             accessible
             accessibilityRole="button"
-            accessibilityLabel={isSecure ? 'Показать пароль' : 'Скрыть пароль'}
+            accessibilityLabel={isSecure ? t('a11y_show_password') : t('a11y_hide_password')}
           >
             <MaterialCommunityIcons
               name={isSecure ? 'eye-off' : 'eye'}

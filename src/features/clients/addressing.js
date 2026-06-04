@@ -1,4 +1,10 @@
-export const CLIENT_PRIMARY_ADDRESS_LABEL = 'Основной адрес';
+import { t as T } from '../../i18n';
+
+export const CLIENT_PRIMARY_ADDRESS_LABEL_KEY = 'clients_address_primary';
+
+export function getClientPrimaryAddressLabel(t = T) {
+  return t(CLIENT_PRIMARY_ADDRESS_LABEL_KEY);
+}
 
 export const CLIENT_ADDRESS_FIELDS = [
   'country',
@@ -18,7 +24,7 @@ export const CLIENT_ADDRESS_FIELDS = [
 
 export function createEmptyClientAddressDraft(overrides = {}) {
   return {
-    label: CLIENT_PRIMARY_ADDRESS_LABEL,
+    label: getClientPrimaryAddressLabel(),
     country: '',
     region: '',
     district: '',
@@ -43,7 +49,7 @@ export function normalizeClientAddress(row) {
     id: row.id ? String(row.id) : null,
     client_id: row.client_id ? String(row.client_id) : null,
     company_id: row.company_id ? String(row.company_id) : null,
-    label: String(row.label || '').trim() || CLIENT_PRIMARY_ADDRESS_LABEL,
+    label: String(row.label || '').trim() || getClientPrimaryAddressLabel(),
     is_primary: !!row.is_primary,
   };
   CLIENT_ADDRESS_FIELDS.forEach((field) => {
@@ -60,7 +66,9 @@ export function buildClientAddressSummary(address) {
     address.city,
     address.street,
     address.house,
-    address.apartment ? `кв. ${String(address.apartment).trim()}` : '',
+    address.apartment
+      ? `${T('address_part_apartment_prefix')} ${String(address.apartment).trim()}`
+      : '',
     address.entrance,
   ]
     .map((value) => String(value || '').trim())
@@ -71,7 +79,7 @@ export function buildClientAddressSummary(address) {
 export function sanitizeClientAddressPayload(draft, { labelRequired = true } = {}) {
   const next = {};
   const cleanLabel = String(draft?.label || '').trim();
-  next.label = cleanLabel || (labelRequired ? CLIENT_PRIMARY_ADDRESS_LABEL : '');
+  next.label = cleanLabel || (labelRequired ? getClientPrimaryAddressLabel() : '');
   CLIENT_ADDRESS_FIELDS.forEach((field) => {
     next[field] = String(draft?.[field] || '').trim() || null;
   });

@@ -5,7 +5,6 @@ export default function UserNewRoute() {
     <LazyRouteScreen
       load={() => import('../../screens/users/UserNewScreen')}
       titleKey="routes.users/new"
-      titleFallback="Новый сотрудник"
     />
   );
 }

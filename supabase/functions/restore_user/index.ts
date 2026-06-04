@@ -8,6 +8,14 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+function normalizeEmail(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: cors });
@@ -20,9 +28,10 @@ Deno.serve(async (req) => {
   try {
     const { email, password, firstName, lastName } = await req.json();
 
-    if (!email || !password) {
+    const normalizedEmail = normalizeEmail(email);
+    if (!isValidEmail(normalizedEmail) || !password || String(password).length < 8) {
       return new Response(
-        JSON.stringify({ error: 'email and password required' }),
+        JSON.stringify({ error: 'valid email and password are required' }),
         { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } }
       );
     }
@@ -57,7 +66,6 @@ Deno.serve(async (req) => {
       return new Response('Forbidden', { status: 403, headers: cors });
     }
 
-    const normalizedEmail = String(email || '').trim().toLowerCase();
     const { data: restoredProfile, error: restoredProfileError } = await supabaseAdmin
       .from('profiles')
       .select('*')
@@ -70,16 +78,16 @@ Deno.serve(async (req) => {
       return new Response('User not found', { status: 404, headers: cors });
     }
 
-    console.log(`[restore_user] Attempting to restore user: ${normalizedEmail}`);
+    console.log('[restore_user] Attempting to restore user');
 
     // 1. Проверяем, существует ли уже
     const { data: existing } = await supabaseAdmin.auth.admin.listUsers();
     const userExists = existing?.users?.some((u) => String(u.email || '').toLowerCase() === normalizedEmail);
 
     if (userExists) {
-      console.log(`[restore_user] User already exists: ${email}`);
+      console.log('[restore_user] User already exists');
       return new Response(
-        JSON.stringify({ error: 'User already exists', email: normalizedEmail }),
+        JSON.stringify({ error: 'User already exists' }),
         { status: 409, headers: { ...cors, 'Content-Type': 'application/json' } }
       );
     }
@@ -96,9 +104,9 @@ Deno.serve(async (req) => {
     });
 
     if (createError) {
-      console.error(`[restore_user] Create error:`, createError);
+      console.error('[restore_user] Create error:', createError?.message || createError);
       return new Response(
-        JSON.stringify({ error: createError.message }),
+        JSON.stringify({ error: 'User restore failed' }),
         { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } }
       );
     }
@@ -122,15 +130,15 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: `User ${normalizedEmail} restored successfully`,
+        message: 'User restored successfully',
         userId: newUser?.user?.id,
       }),
       { status: 200, headers: { ...cors, 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('[restore_user] Unexpected error:', error);
+    console.error('[restore_user] Unexpected error:', error instanceof Error ? error.message : error);
     return new Response(
-      JSON.stringify({ error: String(error) }),
+      JSON.stringify({ error: 'Internal error' }),
       { status: 500, headers: { ...cors, 'Content-Type': 'application/json' } }
     );
   }

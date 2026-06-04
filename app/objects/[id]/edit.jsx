@@ -5,7 +5,6 @@ export default function ObjectEditRoute() {
     <LazyRouteScreen
       load={() => import('../../../screens/objects/[id]/ObjectEditScreen')}
       titleKey="routes.objects/[id]/edit"
-      titleFallback="Редактирование"
     />
   );
 }

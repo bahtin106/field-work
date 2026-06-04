@@ -141,9 +141,9 @@ export default function SetPasswordScreen() {
           errors.push(t('err_password_invalid_chars'));
         }
       }
-      if (!passwordChecks.hasUpper) errors.push('Хотя бы одна заглавная буква');
-      if (!passwordChecks.hasLower) errors.push('Хотя бы одна строчная буква');
-      if (!passwordChecks.hasDigit) errors.push('Хотя бы одна цифра');
+      if (!passwordChecks.hasUpper) errors.push(t('register_password_rule_uppercase'));
+      if (!passwordChecks.hasLower) errors.push(t('register_password_rule_lowercase'));
+      if (!passwordChecks.hasDigit) errors.push(t('register_password_rule_digit'));
     }
 
     if (password.length > 0 && confirmPassword.length > 0 && !passwordsMatch) {
@@ -184,7 +184,7 @@ export default function SetPasswordScreen() {
       // Обновляем пароль для текущего пользователя
       await updatePassword(password.trim());
 
-      toastSuccess('Пароль успешно установлен!');
+      toastSuccess(t('set_password_success'));
       setTimeout(() => {
         router.replace('/');
       }, theme.timings?.postRegisterNavDelayMs ?? 500);
@@ -232,9 +232,9 @@ export default function SetPasswordScreen() {
           }}
           scrollEventThrottle={16}
         >
-          <Text style={styles.title}>Создайте пароль</Text>
+          <Text style={styles.title}>{t('set_password_title')}</Text>
           <Text style={styles.subtitle}>
-            Выберите надёжный пароль для входа в приложение
+            {t('set_password_subtitle')}
           </Text>
 
           {error ? (
@@ -247,7 +247,7 @@ export default function SetPasswordScreen() {
 
           {invalidCharWarning ? (
             <ValidationAlert
-              messages={['Недопустимые символы в пароле']}
+              messages={[t('set_password_invalid_chars')]}
               variant="warning"
             />
           ) : null}
@@ -256,10 +256,10 @@ export default function SetPasswordScreen() {
             <View style={{ position: 'relative' }}>
               <TextField
                 ref={pwdRef}
-                label="Пароль"
+                label={t('set_password_label')}
                 value={password}
                 onChangeText={setPassword}
-                placeholder="Введите пароль"
+                placeholder={t('set_password_placeholder')}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -315,7 +315,7 @@ export default function SetPasswordScreen() {
                   { color: passwordChecks.minLength ? theme.colors.success : theme.colors.textSecondary },
                 ]}
               >
-                Минимум 8 символов
+                {t('register_password_rule_min_length')}
               </Text>
               <Text
                 style={[
@@ -323,7 +323,7 @@ export default function SetPasswordScreen() {
                   { color: passwordChecks.hasUpper ? theme.colors.success : theme.colors.textSecondary },
                 ]}
               >
-                Хотя бы одна заглавная буква
+                {t('register_password_rule_uppercase')}
               </Text>
               <Text
                 style={[
@@ -331,7 +331,7 @@ export default function SetPasswordScreen() {
                   { color: passwordChecks.hasLower ? theme.colors.success : theme.colors.textSecondary },
                 ]}
               >
-                Хотя бы одна строчная буква
+                {t('register_password_rule_lowercase')}
               </Text>
               <Text
                 style={[
@@ -339,16 +339,16 @@ export default function SetPasswordScreen() {
                   { color: passwordChecks.hasDigit ? theme.colors.success : theme.colors.textSecondary },
                 ]}
               >
-                Хотя бы одна цифра
+                {t('register_password_rule_digit')}
               </Text>
             </View>
 
             <TextField
               ref={confirmPwdRef}
-              label="Подтвердите пароль"
+              label={t('set_password_confirm_label')}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
-              placeholder="Повторите пароль"
+              placeholder={t('set_password_confirm_placeholder')}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
@@ -366,7 +366,7 @@ export default function SetPasswordScreen() {
 
           <View style={styles.buttonContainer}>
             <Button
-              title="Установить пароль"
+              title={t('set_password_submit')}
               onPress={handleSetPassword}
               disabled={submitting || !passwordValid || !passwordsMatch}
               loading={submitting}

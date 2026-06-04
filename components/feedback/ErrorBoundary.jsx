@@ -1,5 +1,6 @@
 // src/ErrorBoundary.jsx
 import React from 'react';
+import { t } from '../../src/i18n';
 import { logError } from './telemetry';
 export default class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -16,9 +17,9 @@ export default class ErrorBoundary extends React.Component {
     if (this.state.hasError) {
       return (
         <div style={{ padding: 16 }}>
-          <h2>Что-то пошло не так</h2>
-          <p>Мы уже получили отчёт об ошибке. Попробуйте обновить страницу.</p>
-          <button onClick={() => location.reload()}>Обновить</button>
+          <h2>{t('error_boundary_title')}</h2>
+          <p>{t('error_boundary_message')}</p>
+          <button onClick={() => location.reload()}>{t('error_boundary_reload')}</button>
         </div>
       );
     }

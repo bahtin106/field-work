@@ -188,12 +188,12 @@ export function useManagedRefresh(refreshAction, options = {}) {
   const toast = useToast();
   const timeoutMs = options.timeoutMs ?? theme.timings?.requestTimeoutMs ?? 12000;
   const slowWarningMs = options.slowWarningMs ?? 8000;
-  const slowMessage = options.slowMessage ?? t('refresh_slow', 'Refreshing is taking longer than usual');
+  const slowMessage = options.slowMessage ?? t('refresh_slow');
   const timeoutMessage =
-    options.timeoutMessage ?? t('refresh_timeout', 'Could not refresh the data. Check your connection and try again');
-  const failedMessage = options.failedMessage ?? t('refresh_failed', 'Could not refresh the data');
+    options.timeoutMessage ?? t('refresh_timeout');
+  const failedMessage = options.failedMessage ?? t('refresh_failed');
   const offlineMessage =
-    options.offlineMessage ?? t('refresh_offline', 'No internet connection. Showing saved data.');
+    options.offlineMessage ?? t('refresh_offline');
 
   const [refreshing, setRefreshing] = React.useState(false);
   const [didSucceed, setDidSucceed] = React.useState(true);
@@ -252,7 +252,7 @@ export function useManagedRefresh(refreshAction, options = {}) {
       if (error?.code === 'REFRESH_TIMEOUT') {
         toast.error(timeoutMessage);
       } else if (isNetworkLikeError(error)) {
-        toast.error(t('errors_network', 'No connection to the server'));
+        toast.error(t('errors_network'));
       } else {
         toast.error(getErrorMessage(error) || failedMessage);
       }

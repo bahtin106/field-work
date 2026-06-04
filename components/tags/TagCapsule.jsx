@@ -1,6 +1,7 @@
 ﻿import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 export default function TagCapsule({
@@ -13,6 +14,7 @@ export default function TagCapsule({
   compact = false,
 }) {
   const { theme } = useTheme();
+  const { t } = useTranslation();
   const styles = React.useMemo(() => createStyles(theme, compact), [theme, compact]);
   const content = (
     <View style={styles.capsule}>
@@ -34,7 +36,7 @@ export default function TagCapsule({
           style={styles.deleteBadge}
           hitSlop={{ top: 14, right: 14, bottom: 14, left: 14 }}
           accessibilityRole="button"
-          accessibilityLabel="Удалить тег"
+          accessibilityLabel={t('tag_delete_a11y')}
         >
           <Feather name="x" size={12} color={deleteBadgeColor || theme.colors.danger} />
         </Pressable>

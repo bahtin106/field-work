@@ -151,7 +151,7 @@ export function collectClientPhoneSearchValues(client) {
 }
 
 export function buildAdditionalPhoneDisplayLabel(t, label) {
-  const base = String(t?.('order_field_secondary_phone') || 'Доп. телефон');
+  const base = String(t?.('order_field_secondary_phone') || '');
   const resolved = trimToNull(label);
   return resolved || base;
 }

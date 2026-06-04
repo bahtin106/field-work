@@ -35,7 +35,6 @@ import {
 import {
   CLIENT_OBJECT_ADDITIONAL_INFO_FIELDS,
   CLIENT_OBJECT_ADDRESS_FIELDS,
-  CLIENT_OBJECT_DEFAULT_NAME,
   CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS,
   createEmptyClientObjectDraft,
   sanitizeClientObjectPayload,
@@ -66,8 +65,8 @@ import { hasMobilePhoneValue, isValidOptionalMobilePhone } from '../../../src/sh
 import { useTheme } from '../../../theme/ThemeProvider';
 import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
-import OrderPhotosModal from '../../orders/components/OrderPhotosModal';
-import FullscreenImageViewer from '../../orders/components/FullscreenImageViewer';
+import OrderPhotosModal from '../../../app/orders/components/OrderPhotosModal';
+import FullscreenImageViewer from '../../../app/orders/components/FullscreenImageViewer';
 import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../../src/shared/media/assets';
 import { getImagePickerMediaTypesImages, prepareImageForUpload, runMediaUploadQueue } from '../../../src/shared/media/imagePipeline';
 
@@ -488,7 +487,7 @@ export default function EditObjectScreen() {
       const customLabel = String(field?.customLabel || '').trim();
       if (customLabel) return customLabel;
       if (field?.labelKey) {
-        return t(field.labelKey, field?.fallbackLabel || fallbackLabel || String(fieldKey || ''));
+        return t(field.labelKey);
       }
       return fallbackLabel || String(fieldKey || '');
     },
@@ -556,7 +555,7 @@ export default function EditObjectScreen() {
       valueVisibleSlotIds: getVisibleAdditionalObjectPhoneSlotIds(nextAdditionalPhones),
     });
     const next = createEmptyClientObjectDraft({
-      name: objectItem.name || CLIENT_OBJECT_DEFAULT_NAME,
+      name: objectItem.name || t('objects_new'),
       photoUrl: objectItem.photoUrl || '',
       ...Object.fromEntries(CLIENT_OBJECT_ADDRESS_FIELDS.map((field) => [field, objectItem[field] || ''])),
       ...Object.fromEntries(OBJECT_MEDIA_FIELD_KEYS.map((field) => [`${field}_label`, objectItem?.[`${field}_label`] || ''])),
@@ -600,7 +599,7 @@ export default function EditObjectScreen() {
         objectMediaSections: nextMediaSections,
       }),
     );
-  }, [enabledAdditionalPhoneSlots, enabledMediaFieldKeys, objectItem, requiredAdditionalPhoneSlots]);
+  }, [enabledAdditionalPhoneSlots, enabledMediaFieldKeys, objectItem, requiredAdditionalPhoneSlots, t]);
 
   React.useEffect(() => {
     setVisibleAdditionalPhoneSlots((prev) =>
@@ -989,10 +988,7 @@ export default function EditObjectScreen() {
       if (index < 0) return String(fieldKey || '');
       return getObjectFieldLabel(
         fieldKey,
-        t(
-          `object_media_field_${index + 1}`,
-          `Медиа объекта ${index + 1}`,
-        ),
+        t(`object_media_field_${index + 1}`),
       );
     },
     [getObjectFieldLabel, t],
@@ -1142,7 +1138,7 @@ export default function EditObjectScreen() {
         toast.success(
           uploadedCount === 1
             ? t('order_toast_photo_uploaded')
-            : t('order_toast_photos_uploaded', 'Загружено {count} фото').replace('{count}', String(uploadedCount)),
+            : t('order_toast_photos_uploaded').replace('{count}', String(uploadedCount)),
         );
       } else {
         toast.error(t('order_toast_upload_error'));
@@ -1345,7 +1341,7 @@ export default function EditObjectScreen() {
                 >
                   {isMapLocationMode
                     ? (hasMapPoint ? `${mapLat}, ${mapLng}` : t('objects_location_empty'))
-                    : (visibleAddressSummary || t('order_details_address_not_specified', 'Без адреса'))}
+                    : (visibleAddressSummary || t('order_details_address_not_specified'))}
                 </Text>
               </View>
               {!isMapLocationMode ? (
@@ -1451,7 +1447,7 @@ export default function EditObjectScreen() {
 
         {objectMediaSections.length || canAddMediaSection ? (
           <>
-            <SectionHeader>{t('order_details_photos_section', 'Фото')}</SectionHeader>
+            <SectionHeader>{t('order_details_photos_section')}</SectionHeader>
             <Card paddedXOnly>
               {objectMediaSections.map((fieldKey, index) => {
                 const photos = Array.isArray(objectMediaRef.current?.[fieldKey]) ? objectMediaRef.current[fieldKey] : [];
@@ -1465,7 +1461,7 @@ export default function EditObjectScreen() {
                     <ObjectMediaEditRow
                       label={label}
                       fallbackLabel={fallbackLabel}
-                      count={t('order_photos_count', '{count} фото').replace('{count}', String(count))}
+                      count={t('order_photos_count').replace('{count}', String(count))}
                       onChangeLabel={(nextLabel) => changeMediaLabel(fieldKey, nextLabel)}
                       onOpen={() => setObjectPhotosModal({ visible: true, category: fieldKey })}
                       onRemove={() => removeMediaSectionNow(fieldKey)}
@@ -1477,7 +1473,7 @@ export default function EditObjectScreen() {
               {canAddMediaSection ? (
                 <View style={styles.additionalPhoneAddRow}>
                   <Text style={styles.additionalPhoneAddText}>
-                    {t('objects_media_add_section', 'Добавить раздел медиа')}
+                    {t('objects_media_add_section')}
                   </Text>
                   <Pressable
                     onPress={addMediaSection}
@@ -1564,8 +1560,8 @@ export default function EditObjectScreen() {
       <ConfirmModal
         visible={!!removeMediaSection}
         onClose={() => setRemoveMediaSection(null)}
-        title={t('objects_media_delete_section_title', 'Удалить раздел медиа?')}
-        message={t('objects_media_delete_section_message', 'Все фото из этого раздела будут удалены.')}
+        title={t('objects_media_delete_section_title')}
+        message={t('objects_media_delete_section_message')}
         confirmLabel={t('btn_delete')}
         cancelLabel={t('btn_cancel')}
         confirmVariant="destructive"

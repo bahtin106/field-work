@@ -1,4 +1,10 @@
-export const CLIENT_OBJECT_DEFAULT_NAME = 'Новый объект';
+import { t as T } from '../../i18n';
+
+export const CLIENT_OBJECT_DEFAULT_NAME_KEY = 'objects_new';
+
+export function getClientObjectDefaultName(t = T) {
+  return t(CLIENT_OBJECT_DEFAULT_NAME_KEY);
+}
 
 export const CLIENT_OBJECT_PRIMARY_ADDRESS_FIELDS = [
   'country',
@@ -59,7 +65,7 @@ export function hasClientObjectMapPoint(objectLike) {
 
 export function createEmptyClientObjectDraft(overrides = {}) {
   return {
-    name: CLIENT_OBJECT_DEFAULT_NAME,
+    name: getClientObjectDefaultName(),
     photoUrl: '',
     country: '',
     region: '',
@@ -94,7 +100,9 @@ export function buildClientObjectAddressSummary(objectLike) {
     objectLike.city,
     objectLike.street,
     objectLike.house,
-    objectLike.apartment ? `кв./оф. ${String(objectLike.apartment).trim()}` : '',
+    objectLike.apartment
+      ? `${T('address_part_apartment_office_prefix')} ${String(objectLike.apartment).trim()}`
+      : '',
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
@@ -109,11 +117,13 @@ export function buildClientObjectFullAddress(objectLike) {
     objectLike.region,
     objectLike.district,
     objectLike.city,
-    objectLike.street ? `ул. ${String(objectLike.street).trim()}` : '',
-    objectLike.house ? `д. ${String(objectLike.house).trim()}` : '',
-    objectLike.apartment ? `кв./оф. ${String(objectLike.apartment).trim()}` : '',
-    objectLike.entrance ? `подъезд ${String(objectLike.entrance).trim()}` : '',
-    objectLike.floor ? `этаж ${String(objectLike.floor).trim()}` : '',
+    objectLike.street ? `${T('address_part_street_prefix')} ${String(objectLike.street).trim()}` : '',
+    objectLike.house ? `${T('address_part_house_prefix')} ${String(objectLike.house).trim()}` : '',
+    objectLike.apartment
+      ? `${T('address_part_apartment_office_prefix')} ${String(objectLike.apartment).trim()}`
+      : '',
+    objectLike.entrance ? `${T('address_part_entrance_prefix')} ${String(objectLike.entrance).trim()}` : '',
+    objectLike.floor ? `${T('address_part_floor_prefix')} ${String(objectLike.floor).trim()}` : '',
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean);
@@ -151,7 +161,7 @@ export function normalizeClientObject(row) {
     id: row.id ? String(row.id) : null,
     client_id: row.client_id ? String(row.client_id) : null,
     company_id: row.company_id ? String(row.company_id) : null,
-    name: String(row.name || '').trim() || CLIENT_OBJECT_DEFAULT_NAME,
+    name: String(row.name || '').trim() || getClientObjectDefaultName(),
     photoUrl: String(row.photo_url || row.photoUrl || '').trim() || '',
     photoDisplayUrl:
       String(row.photo_display_url || row.photoDisplayUrl || row.photo_url || row.photoUrl || '').trim() || '',
@@ -191,7 +201,7 @@ export function normalizeClientObject(row) {
 export function sanitizeClientObjectPayload(draft, { nameRequired = true } = {}) {
   const next = {};
   const cleanName = String(draft?.name || '').trim();
-  next.name = cleanName || (nameRequired ? CLIENT_OBJECT_DEFAULT_NAME : '');
+  next.name = cleanName || (nameRequired ? getClientObjectDefaultName() : '');
   CLIENT_OBJECT_ADDRESS_FIELDS.forEach((field) => {
     next[field] = String(draft?.[field] || '').trim() || null;
   });

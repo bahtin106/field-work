@@ -401,7 +401,7 @@ function EditOrderContent() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const [touched, setTouched] = useState({});
-  const titlePrefix = useMemo(() => T('order_auto_title_prefix', 'Заявка от'), []);
+  const titlePrefix = useMemo(() => T('order_auto_title_prefix'), []);
   const scrollRef = useRef(null);
   const scrollYRef = useRef(0);
   const insets = useSafeAreaInsets();
@@ -2156,14 +2156,14 @@ function EditOrderContent() {
       nextErrors.title = { message: T('order_validation_title_required') };
     }
     if (isFieldRequired('comment') && !String(description || '').trim()) {
-      nextErrors.comment = { message: T('field_settings_required_fill', 'Заполните обязательные поля') };
+      nextErrors.comment = { message: T('field_settings_required_fill') };
     }
     if (isFieldRequired('time_window_start') && !normalizeDateOrNull(departureDate)) {
       nextErrors.time_window_start = { message: T('order_validation_date_required') };
     }
     if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
       nextErrors.departure_time = {
-        message: T('order_validation_departure_time_required', 'Укажите время выезда'),
+        message: T('order_validation_departure_time_required'),
       };
     }
     if (isFieldRequired('assigned_to') && !effectiveToFeed && !effectiveAssigneeId) {
@@ -2233,9 +2233,9 @@ function EditOrderContent() {
       if (isFieldRequired('departure_time') && !hasDepartureTimeValue(departureTime)) {
         setFieldErrors((prev) => ({
           ...prev,
-          departure_time: { message: T('order_validation_departure_time_required', 'Укажите время выезда') },
+          departure_time: { message: T('order_validation_departure_time_required') },
         }));
-        showToast(T('order_validation_departure_time_required', 'Укажите время выезда'), 'error');
+        showToast(T('order_validation_departure_time_required'), 'error');
         return;
       }
       const normalizedDepartureEndDate = normalizeDateOrNull(departureEndDate);
@@ -2386,10 +2386,7 @@ function EditOrderContent() {
         console.warn('order save failed', err?.message || err);
       }
       if (err?.code === 'CONFLICT') {
-        showToast(
-          'Заявка уже была изменена на другом устройстве. Откройте актуальную версию и проверьте поля.',
-          'warning',
-        );
+        showToast(T('order_edit_remote_changed'), 'warning');
         await refetchOrder();
       } else {
         const message = String(err?.message || '').trim();
@@ -2597,7 +2594,7 @@ function EditOrderContent() {
                       const startLabel = format(displayDepartureDate, 'd MMMM yyyy', { locale: ru });
                       if (!isDepartureRange || !displayDepartureEndDate) return startLabel;
                       const endLabel = format(displayDepartureEndDate, 'd MMMM yyyy', { locale: ru });
-                      return `${startLabel} — ${endLabel}`;
+                      return `${startLabel} вЂ” ${endLabel}`;
                     })()
                   : T('order_placeholder_departure_date')
               }
@@ -2801,7 +2798,7 @@ function EditOrderContent() {
           } catch {}
         }}
       >
-      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data', 'Общие данные')}</SectionHeader>
+      <SectionHeader topSpacing="xs" bottomSpacing="xs">{T('order_details_general_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedGeneralFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditGeneralField(fieldKey)}</View>
@@ -2827,7 +2824,7 @@ function EditOrderContent() {
           </Card>
           ) : null}
 
-          <SectionHeader>{T('order_edit_section_object_data', 'Данные объекта')}</SectionHeader>
+          <SectionHeader>{T('order_edit_section_object_data')}</SectionHeader>
           <Card padded={false} style={styles.card}>
             {orderedCustomerFieldKeys.map((fieldKey) => (
               <View key={fieldKey}>{renderEditCustomerField(fieldKey)}</View>

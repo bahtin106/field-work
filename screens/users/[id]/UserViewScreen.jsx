@@ -116,8 +116,8 @@ export default function UserView() {
   const isBlocked = !!userData?.isBlocked || isSuspended || isLicenseBlockedRaw;
   const blockedReasonLabel = isBlocked
     ? (isLicenseBlocked
-      ? t('billing_member_status_no_seat', 'billing_member_status_no_seat')
-      : t('billing_member_status_admin_blocked', 'billing_member_status_admin_blocked'))
+      ? t('billing_member_status_no_seat')
+      : t('billing_member_status_admin_blocked'))
     : '';
   const lastSeenAt = userData?.last_seen_at || null;
   const companyName = userData?.companyName || null;
@@ -145,14 +145,14 @@ export default function UserView() {
   const err = loadError?.message || '';
   const ROLE_LABELS = React.useMemo(
     () => ({
-      admin: t('role_admin', 'role_admin'),
-      dispatcher: t('role_dispatcher', 'role_dispatcher'),
-      worker: t('role_worker', 'role_worker'),
+      admin: t('role_admin'),
+      dispatcher: t('role_dispatcher'),
+      worker: t('role_worker'),
     }),
     [t],
   );
 
-  const roleLabel = ROLE_LABELS[role] || t('role_worker', 'role_worker');
+  const roleLabel = ROLE_LABELS[role] || t('role_worker');
 
   // Header button (Edit): admin can edit anyone; worker/dispatcher can edit ONLY self
   const meIsAdmin = !!userData?.meIsAdmin;
@@ -167,7 +167,7 @@ export default function UserView() {
   const handleEditPress = React.useCallback(() => {
     if (isReadOnlyBySubscription) {
       toast.warning(
-        t('subscription_edit_unavailable_toast', 'Изменение недоступно. Продлите подписку'),
+        t('subscription_edit_unavailable_toast'),
       );
       return;
     }
@@ -195,7 +195,7 @@ export default function UserView() {
         } catch {}
       }
       try {
-        toast.error(t('toast_copy_email_fail', 'toast_copy_email_fail'));
+        toast.error(t('toast_copy_email_fail'));
       } catch {}
       return false;
     }
@@ -221,7 +221,7 @@ export default function UserView() {
         } catch {}
       }
       try {
-        toast.error(t('toast_copy_phone_fail', 'toast_copy_phone_fail'));
+        toast.error(t('toast_copy_phone_fail'));
       } catch {}
       return false;
     }
@@ -359,7 +359,7 @@ export default function UserView() {
         options={{
           headerTitleAlign: 'left',
           title: t('profile_title'),
-          rightTextLabel: canEdit ? t('btn_edit', 'btn_edit') : undefined,
+          rightTextLabel: canEdit ? t('btn_edit') : undefined,
           onRightPress: canEdit ? handleEditPress : undefined,
         }}
       />
@@ -381,7 +381,6 @@ export default function UserView() {
               <Text style={{ color: theme.colors.warning, fontWeight: '600' }}>
                 {t(
                   'subscription_read_only_notice',
-                  'Режим чтения: изменение недоступно до продления подписки',
                 )}
               </Text>
             </Card>
@@ -404,13 +403,13 @@ export default function UserView() {
         </View>
 
         {canShowPersonalSection ? (
-          <SectionHeader>{t('section_personal', 'section_personal')}</SectionHeader>
+          <SectionHeader>{t('section_personal')}</SectionHeader>
         ) : null}
         {canShowPersonalSection ? (
         <Card paddedXOnly>
           {fieldUi.isVisible('first_name') || fieldUi.isVisible('middle_name') || fieldUi.isVisible('last_name') ? (
           <LabelValueRow
-            label={t('view_label_name', 'view_label_name')}
+            label={t('view_label_name')}
             value={
               firstName || middleName || lastName
                 ? `${firstName || ''} ${middleName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim()
@@ -424,7 +423,7 @@ export default function UserView() {
 
           {fieldUi.isVisible('birthdate') ? (
           <LabelValueRow
-            label={t('label_birthdate', 'label_birthdate')}
+            label={t('label_birthdate')}
             value={(() => {
               if (!birthdate) return '';
               let dateObj = birthdate;
@@ -455,14 +454,14 @@ export default function UserView() {
         ) : null}
 
         {canShowContactSection ? (
-          <SectionHeader>{t('clients_contacts_section', 'clients_contacts_section')}</SectionHeader>
+          <SectionHeader>{t('clients_contacts_section')}</SectionHeader>
         ) : null}
         {canShowContactSection ? (
         <Card paddedXOnly>
           {fieldUi.isVisible('email') ? (
             <>
               <LabelValueRow
-                label={t('view_label_email', 'view_label_email')}
+                label={t('view_label_email')}
                 valueComponent={
                   email ? (
                     <Pressable
@@ -477,9 +476,9 @@ export default function UserView() {
                           try {
                             const ok = await Linking.canOpenURL(url);
                             if (ok) await Linking.openURL(url);
-                            else toast.error(t('errors_openMail', 'errors_openMail'));
+                            else toast.error(t('errors_openMail'));
                           } catch {
-                            toast.error(t('errors_openMail', 'errors_openMail'));
+                            toast.error(t('errors_openMail'));
                           }
                         }
                       }}
@@ -493,7 +492,7 @@ export default function UserView() {
                     <IconButton
                       onPress={onCopyEmail}
                       style={s.copyIconHidden}
-                      accessibilityLabel={t('a11y_copy_email', 'a11y_copy_email')}
+                      accessibilityLabel={t('a11y_copy_email')}
                     >
                       <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                     </IconButton>
@@ -505,7 +504,7 @@ export default function UserView() {
           ) : null}
           {fieldUi.isVisible('phone') ? (
             <LabelValueRow
-              label={t('view_label_phone', 'view_label_phone')}
+              label={t('view_label_phone')}
               valueComponent={
                 phone ? (
                   <Pressable
@@ -520,9 +519,9 @@ export default function UserView() {
                         try {
                           const ok = await Linking.canOpenURL(url);
                           if (ok) await Linking.openURL(url);
-                          else toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                          else toast.error(t('errors_callsUnavailable'));
                         } catch {
-                          toast.error(t('errors_callsUnavailable', 'errors_callsUnavailable'));
+                          toast.error(t('errors_callsUnavailable'));
                         }
                       }
                     }}
@@ -536,7 +535,7 @@ export default function UserView() {
                   <IconButton
                     onPress={onCopyPhone}
                     style={s.copyIconHidden}
-                    accessibilityLabel={t('a11y_copy_phone', 'a11y_copy_phone')}
+                    accessibilityLabel={t('a11y_copy_phone')}
                   >
                     <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} />
                   </IconButton>
@@ -547,7 +546,7 @@ export default function UserView() {
         </Card>
         ) : null}
 
-        {canShowCompanySection && !isSoloAdmin ? <SectionHeader>{t('section_company_role', 'section_company_role')}</SectionHeader> : null}
+        {canShowCompanySection && !isSoloAdmin ? <SectionHeader>{t('section_company_role')}</SectionHeader> : null}
         {canShowCompanySection && !isSoloAdmin ? (
         <Card paddedXOnly>
           {hasCompanyValue && (
@@ -559,23 +558,23 @@ export default function UserView() {
           {useDepartments && fieldUi.isVisible('department_id') ? (
             <>
               <LabelValueRow
-                label={t('label_department', 'label_department')}
-                value={departmentName || t('placeholder_department', 'placeholder_department')}
+                label={t('label_department')}
+                value={departmentName || t('placeholder_department')}
               />
               <ListSeparator />
             </>
           ) : null}
             {fieldUi.isVisible('role') ? (
-            <LabelValueRow label={t('label_role', 'label_role')} value={roleLabel} />
+            <LabelValueRow label={t('label_role')} value={roleLabel} />
             ) : null}
             {fieldUi.isVisible('role') ? <ListSeparator /> : null}
             <LabelValueRow
-              label={t('label_status', 'label_status')}
+              label={t('label_status')}
               valueComponent={
                 <Text style={[base.value, { color: statusColor }]}>
                   {isBlocked
-                    ? t('status_blocked', t('status_suspended', 'status_suspended'))
-                    : t('status_active', 'status_active')}
+                    ? t('status_blocked', t('status_suspended'))
+                    : t('status_active')}
                 </Text>
               }
               hideWhenEmpty={false}
@@ -583,7 +582,7 @@ export default function UserView() {
             {isBlocked && blockedReasonLabel ? (
               <>
                 <ListSeparator />
-                <LabelValueRow label={t('label_block_reason', 'label_block_reason')} value={blockedReasonLabel} />
+                <LabelValueRow label={t('label_block_reason')} value={blockedReasonLabel} />
               </>
             ) : null}
             <ListSeparator />

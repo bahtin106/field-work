@@ -5,7 +5,6 @@ export default function CreateOrderRoute() {
     <LazyRouteScreen
       load={() => import('../../screens/orders/CreateOrderScreen')}
       titleKey="routes.orders/create-order"
-      titleFallback="Новая заявка"
     />
   );
 }

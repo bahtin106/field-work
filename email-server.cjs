@@ -59,6 +59,21 @@ function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(value));
+}
+
+function isSafeHttpUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function maskEmailForLog(value) {
   const email = normalizeEmail(value);
   const [name, domain] = email.split('@');
@@ -617,7 +632,7 @@ function buildSubscriptionReminderEmail(payload = {}) {
 
 transporter.verify((error) => {
   if (error) {
-    console.error('[SMTP] Connection failed:', error);
+    console.error('[SMTP] Connection failed:', error?.message || error);
   } else {
     console.log('[SMTP] Connection successful!');
   }
@@ -625,26 +640,33 @@ transporter.verify((error) => {
 
 app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmailAuth, async (req, res) => {
   try {
-    const { type, email, firstName, lastName, resetLink, tempPassword } = req.body;
-    if (!type || !email) {
+    const { type, firstName, lastName, resetLink, tempPassword } = req.body;
+    const email = normalizeEmail(req.body?.email);
+    if (!type || !isValidEmail(email)) {
       return res.status(400).json({ error: 'Missing required fields: type, email' });
     }
     if (req.emailAuth?.kind === 'user' && type !== 'password-reset') {
       return res.status(403).json({ error: 'Forbidden' });
     }
+    if (resetLink && !isSafeHttpUrl(resetLink)) {
+      return res.status(400).json({ error: 'Invalid resetLink' });
+    }
 
     let subject, html, text;
     if (type === 'invite') {
       const fullName = `${firstName || ''} ${lastName || ''}`.trim() || 'Сотрудник';
+      const safeFullName = escapeHtml(fullName);
+      const safeTempPassword = escapeHtml(tempPassword || '');
+      const safeResetLink = escapeHtml(resetLink || '');
       subject = 'Приглашение присоединиться к системе MonitorApp';
       if (tempPassword) {
         html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2>Добро пожаловать в MonitorApp!</h2>
-            <p>Привет, ${fullName}!</p>
+            <p>Привет, ${safeFullName}!</p>
             <p>Вы были приглашены в систему управления заказами MonitorApp.</p>
             <p style="margin-top: 16px;">Ваш пароль для входа:</p>
-            <div style="font-family: monospace; font-size: 16px; font-weight: 700; padding: 12px; background: #f3f4f6; border-radius: 8px;">${tempPassword}</div>
+            <div style="font-family: monospace; font-size: 16px; font-weight: 700; padding: 12px; background: #f3f4f6; border-radius: 8px;">${safeTempPassword}</div>
             <p style="margin-top: 16px;">После входа рекомендуем сменить пароль.</p>
             <p style="margin-top: 30px; color: #666; font-size: 12px;">
               Если вы не регистрировались в этой системе, пожалуйста, проигнорируйте это письмо.
@@ -656,10 +678,10 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
         html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2>Добро пожаловать в MonitorApp!</h2>
-            <p>Привет, ${fullName}!</p>
+            <p>Привет, ${safeFullName}!</p>
             <p>Вы были приглашены в систему управления заказами MonitorApp.</p>
             <p style="margin-top: 30px;">
-              <a href="${resetLink}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">
+              <a href="${safeResetLink}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">
                 Установить пароль
               </a>
             </p>
@@ -674,15 +696,18 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
       }
     } else if (type === 'password-reset') {
       const fullName = `${firstName || ''} ${lastName || ''}`.trim() || 'Пользователь';
+      const safeFullName = escapeHtml(fullName);
+      const safeTempPassword = escapeHtml(tempPassword || '');
+      const safeResetLink = escapeHtml(resetLink || '');
       subject = 'Восстановление пароля в MonitorApp';
       if (tempPassword) {
         html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2>Сброс пароля</h2>
-            <p>Привет, ${fullName}!</p>
+            <p>Привет, ${safeFullName}!</p>
             <p>Администратор сбросил пароль вашей учетной записи.</p>
             <p style="margin-top: 16px;">Ваш новый пароль:</p>
-            <div style="font-family: monospace; font-size: 16px; font-weight: 700; padding: 12px; background: #f3f4f6; border-radius: 8px;">${tempPassword}</div>
+            <div style="font-family: monospace; font-size: 16px; font-weight: 700; padding: 12px; background: #f3f4f6; border-radius: 8px;">${safeTempPassword}</div>
             <p style="margin-top: 16px;">После входа рекомендуем сменить пароль.</p>
           </div>
         `;
@@ -691,10 +716,10 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
         html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
             <h2>Восстановление пароля</h2>
-            <p>Привет, ${fullName}!</p>
+            <p>Привет, ${safeFullName}!</p>
             <p>Вы запросили восстановление пароля для вашей учетной записи.</p>
             <p style="margin-top: 30px;">
-              <a href="${resetLink}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">
+              <a href="${safeResetLink}" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">
                 Установить новый пароль
               </a>
             </p>
@@ -761,11 +786,11 @@ app.post('/send-email', rateLimit('send-email', 30, 60 * 1000), requireSendEmail
       }
     });
 
-    console.log(`[${new Date().toISOString()}] Email sent to ${email}:`, info.messageId);
+    console.log(`[${new Date().toISOString()}] Email sent to ${maskEmailForLog(email)}:`, info.messageId);
     return res.status(200).json({ success: true, messageId: info.messageId, message: 'Email sent successfully' });
   } catch (error) {
-    console.error('[/send-email] Error:', error);
-    return res.status(500).json({ error: error.message || 'Failed to send email' });
+    console.error('[/send-email] Error:', error?.message || error);
+    return res.status(500).json({ error: 'Failed to send email' });
   }
 });
 
@@ -995,11 +1020,18 @@ app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), re
     const { password, newPassword, changed_by } = req.body;
     const finalPassword = password || newPassword;
 
-    if (!userId || !finalPassword) {
+    if (!isUuid(userId) || !finalPassword || String(finalPassword).length < 8) {
       return res.status(400).json({
         ok: false,
-        error: 'Missing userId or password',
-        message: 'user_id and password are required',
+        error: 'Invalid input',
+        message: 'valid user_id and password are required',
+      });
+    }
+    if (changed_by && !isUuid(changed_by)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid input',
+        message: 'valid changed_by is required',
       });
     }
 
@@ -1011,7 +1043,7 @@ app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), re
       return res.status(500).json({
         ok: false,
         error: 'Missing Supabase configuration',
-        message: 'Supabase URL or Service Key not configured on server',
+        message: 'Failed to update password',
       });
     }
 
@@ -1033,17 +1065,16 @@ app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), re
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Admin API call failed:`, errorText);
+      await response.text().catch(() => '');
+      console.error(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Admin API call failed with status ${response.status}`);
       return res.status(response.status).json({
         ok: false,
         error: 'Admin API call failed',
-        message: errorText,
-        details: errorText
+        message: 'Failed to update password',
       });
     }
 
-    const result = await response.json();
+    await response.json().catch(() => null);
     console.log(`[${new Date().toISOString()}] [UPDATE_PASSWORD] Password updated successfully for user: ${userId}`);
 
     const forwardedFor = req.headers['x-forwarded-for'];
@@ -1070,16 +1101,14 @@ app.post('/api/update-password', rateLimit('update-password', 10, 60 * 1000), re
     return res.status(200).json({
       ok: true,
       success: true,
-      message: 'Password updated successfully',
-      result
+      message: 'Password updated successfully'
     });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] [/api/update-password] Error:`, error.message);
     return res.status(500).json({
       ok: false,
       error: 'Failed to update password',
-      message: error.message,
-      details: error.message
+      message: 'Failed to update password'
     });
   }
 });
@@ -1089,8 +1118,8 @@ app.post('/update-password', rateLimit('legacy-update-password', 10, 60 * 1000),
   try {
     const { userId, newPassword } = req.body;
     
-    if (!userId || !newPassword) {
-      return res.status(400).json({ error: 'Missing userId or newPassword' });
+    if (!isUuid(userId) || !newPassword || String(newPassword).length < 8) {
+      return res.status(400).json({ error: 'valid userId and newPassword are required' });
     }
 
     const url = resolveSupabaseBaseUrl(process.env.SUPABASE_URL);
@@ -1118,27 +1147,26 @@ app.post('/update-password', rateLimit('legacy-update-password', 10, 60 * 1000),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[${new Date().toISOString()}] Admin API call failed:`, errorText);
+      await response.text().catch(() => '');
+      console.error(`[${new Date().toISOString()}] Admin API call failed with status ${response.status}`);
       return res.status(response.status).json({ 
         error: 'Admin API call failed', 
-        details: errorText 
+        message: 'Failed to update password'
       });
     }
 
-    const result = await response.json();
+    await response.json().catch(() => null);
     console.log(`[${new Date().toISOString()}] Password updated successfully for user: ${userId}`);
     
     return res.status(200).json({ 
       success: true, 
-      message: 'Password updated successfully',
-      result
+      message: 'Password updated successfully'
     });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] [/update-password] Error:`, error.message);
     return res.status(500).json({ 
-      error: 'Failed to update password', 
-      details: error.message 
+      error: 'Failed to update password',
+      message: 'Failed to update password'
     });
   }
 });

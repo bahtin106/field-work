@@ -20,7 +20,7 @@ export function useRouteTitle(options = {}, route, pathnameRaw = '') {
 
     if (directRaw !== undefined) {
       const v = String(directRaw ?? '');
-      const noName = String(T?.('placeholder_no_name', 'Без имени'));
+      const noName = String(T?.('placeholder_no_name') || T?.('common_unnamed'));
       if (!v || v === noName) return '';
       if (!isTechnicalLabel(v)) return v;
       // Ignore technical placeholder labels and continue with route-based title resolution.
@@ -30,7 +30,7 @@ export function useRouteTitle(options = {}, route, pathnameRaw = '') {
     const pathname = pathnameRaw || '';
 
     if (typeof pathname === 'string' && pathname.includes('/edit')) {
-      return globalThis?.S?.('edit_title') ?? 'Редактирование';
+      return globalThis?.S?.('edit_title') ?? T('route_editing');
     }
 
     if (pathname.startsWith('/users/')) return '';

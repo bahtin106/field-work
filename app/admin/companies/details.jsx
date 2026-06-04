@@ -421,7 +421,7 @@ export default function AdminCompanyDetailsScreen() {
         queryClient.invalidateQueries({ queryKey: metaKey }),
         queryClient.invalidateQueries({ queryKey: accessKey }),
       ]);
-      toast.success('Компания удалена безвозвратно');
+      toast.success(t('admin_company_delete_success_permanent'));
       try {
         nav.goBack();
       } catch {}
@@ -709,7 +709,7 @@ export default function AdminCompanyDetailsScreen() {
             </Card>
             <View style={{ marginTop: theme.spacing.md }}>
               <UIButton
-                title="Удалить компанию"
+                title={t('admin_company_delete_action')}
                 variant="destructive"
                 onPress={() => setDeleteConfirmVisible(true)}
                 disabled={deleteCompanyMutation.isPending}
@@ -895,9 +895,9 @@ export default function AdminCompanyDetailsScreen() {
 
       <ConfirmModal
         visible={deleteConfirmVisible}
-        title="Удалить компанию безвозвратно?"
-        message="Будут безвозвратно удалены компания, все пользователи, заявки, клиенты и все остальные данные, связанные с этой компанией. Это действие нельзя отменить."
-        confirmLabel="Удалить навсегда"
+        title={t('admin_company_delete_permanent_title')}
+        message={t('admin_company_delete_permanent_message')}
+        confirmLabel={t('admin_company_delete_permanent_confirm')}
         confirmVariant="destructive"
         loading={deleteCompanyMutation.isPending}
         onClose={() => setDeleteConfirmVisible(false)}

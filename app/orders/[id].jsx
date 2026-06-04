@@ -1,11 +1,11 @@
 import LazyRouteScreen from '../../components/layout/LazyRouteScreen';
+import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 
 export default function OrderDetailsRoute() {
   return (
     <LazyRouteScreen
-      load={() => import('../../screens/orders/OrderDetailsScreen')}
+      load={preloadOrderDetailsScreen}
       titleKey="routes.orders/[id]"
-      titleFallback="Заявка"
     />
   );
 }

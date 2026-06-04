@@ -18,7 +18,7 @@ export async function __telemetryRestInsert({ url, anonKey, table, row }) {
     body = await res.json();
   } catch {}
   if (!ok) {
-    const msg = `[telemetry] REST insert failed: status=${res.status} body=${JSON.stringify(body)}`;
+    const msg = `[telemetry] REST insert failed: status=${res.status}`;
     globalThis?.console?.error?.(msg);
     throw new Error(msg);
   }

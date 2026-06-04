@@ -8,6 +8,7 @@ import {
   listBegetKeys,
   putBegetObject,
 } from '../_shared/beget-s3.ts';
+import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -333,6 +334,11 @@ function mapYandexApiError(status: number, payload: string) {
   return '';
 }
 
+function isYandexPathMissingResponse(status: number, payload: string) {
+  const text = String(payload || '').toLowerCase();
+  return status === 404 || text.includes('diskpathdoesntexistserror');
+}
+
 async function removeStoragePrefixFiles({
   admin,
   bucket,
@@ -411,21 +417,44 @@ async function createYandexFolder(accessToken: string, path: string) {
   throw new Error(mapped || `Cannot access folder ${path}: ${text}`);
 }
 
-async function ensureFolderTree(accessToken: string, fullPath: string) {
-  const normalized = normalizeFolderPath(fullPath);
-  const parts = normalized.split('/').filter(Boolean);
-  let current = '';
-  for (const part of parts) {
-    current = `${current}/${part}`;
-    await createYandexFolder(accessToken, current);
-  }
+async function ensureFolderTree(
+  accessToken: string,
+  fullPath: string,
+  options: { force?: boolean } = {},
+) {
+  await ensureYandexFolderTreeCached({
+    accessToken,
+    fullPath,
+    normalizeFolderPath,
+    createFolder: (path) => createYandexFolder(accessToken, path),
+    force: options.force === true,
+  });
 }
 
-async function uploadToYandex(accessToken: string, path: string, bytes: Uint8Array, mime: string) {
-  const linkRes = await fetch(
+async function uploadToYandex(
+  accessToken: string,
+  path: string,
+  bytes: Uint8Array,
+  mime: string,
+  options: { ensureFolder?: () => Promise<void> } = {},
+) {
+  let linkRes = await fetch(
     `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(path)}&overwrite=false`,
     { headers: { Authorization: `OAuth ${accessToken}` } },
   );
+  if (!linkRes.ok) {
+    const text = await linkRes.text();
+    if (options.ensureFolder && isYandexPathMissingResponse(linkRes.status, text)) {
+      await options.ensureFolder();
+      linkRes = await fetch(
+        `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(path)}&overwrite=false`,
+        { headers: { Authorization: `OAuth ${accessToken}` } },
+      );
+    } else {
+      const mapped = mapYandexApiError(linkRes.status, text);
+      throw new Error(mapped || `Upload link failed: ${text}`);
+    }
+  }
   if (!linkRes.ok) {
     const text = await linkRes.text();
     const mapped = mapYandexApiError(linkRes.status, text);
@@ -963,10 +992,23 @@ async function prepareYandexDirectUpload(args: {
 
   const ext = getFileExtensionByMime(args.mime);
   const filePath = `${folder}/profile_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
-  const linkRes = await fetch(
+  let linkRes = await fetch(
     `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
     { headers: { Authorization: `OAuth ${args.accessToken}` } },
   );
+  if (!linkRes.ok) {
+    const text = await linkRes.text();
+    if (isYandexPathMissingResponse(linkRes.status, text)) {
+      await ensureFolderTree(args.accessToken, folder, { force: true });
+      linkRes = await fetch(
+        `https://cloud-api.yandex.net/v1/disk/resources/upload?path=${encodeURIComponent(filePath)}&overwrite=false`,
+        { headers: { Authorization: `OAuth ${args.accessToken}` } },
+      );
+    } else {
+      const mapped = mapYandexApiError(linkRes.status, text);
+      throw new Error(mapped || `Upload link failed: ${text}`);
+    }
+  }
   if (!linkRes.ok) {
     const text = await linkRes.text();
     const mapped = mapYandexApiError(linkRes.status, text);
@@ -1461,7 +1503,9 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
       const ext = getFileExtensionByMime(mime);
       const filePath = `${folder}/profile_${Date.now()}_${toBase64UrlSafeName()}.${ext}`;
-      await uploadToYandex(accessToken, filePath, bytes, mime);
+      await uploadToYandex(accessToken, filePath, bytes, mime, {
+        ensureFolder: () => ensureFolderTree(accessToken, folder, { force: true }),
+      });
       const publicUrl = await publishAndGetPublicUrl(accessToken, filePath);
 
       try {

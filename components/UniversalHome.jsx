@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
@@ -27,6 +27,7 @@ import {
 } from '../src/features/supportRequests/api';
 import Button from './ui/Button';
 import Card from './ui/Card';
+import { preloadLazyRouteScreen } from './layout/LazyRouteScreen';
 import { useToast } from './ui/ToastProvider';
 
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
@@ -50,17 +51,32 @@ const HOME_ROUTES = {
 let homeCriticalWarmupStarted = false;
 let homeAdminWarmupStarted = false;
 let homeCalendarWarmupStarted = false;
+let homePrimaryWarmupStarted = false;
+
+function warmLazyRoute(cacheKey, load) {
+  preloadLazyRouteScreen(cacheKey, load).catch(() => {});
+}
+
+function warmHomePrimaryRoutes() {
+  if (homePrimaryWarmupStarted) return;
+  homePrimaryWarmupStarted = true;
+  warmLazyRoute('routes.orders/my-orders', () => import('../screens/orders/MyOrdersScreen'));
+  warmLazyRoute('routes.orders/calendar', () => import('../screens/orders/CalendarScreen'));
+  warmLazyRoute('routes.orders/create-order', () => import('../screens/orders/CreateOrderScreen'));
+}
+
 function warmHomeCriticalRoutes() {
   if (homeCriticalWarmupStarted) return;
   homeCriticalWarmupStarted = true;
-  import('../app/app_settings/AppSettings').catch(() => {});
-  import('../app/company_settings/index').catch(() => {});
+  warmLazyRoute('routes.app_settings/AppSettings', () => import('../screens/app_settings/AppSettingsScreen'));
+  warmLazyRoute('company_settings_title', () => import('../screens/company_settings/CompanySettingsScreen'));
+  warmLazyRoute('routes.billing/index', () => import('../screens/billing/BillingScreen'));
 }
 
 function warmHomeCalendarRoute() {
   if (homeCalendarWarmupStarted) return;
   homeCalendarWarmupStarted = true;
-  import('../screens/orders/CalendarScreen').catch(() => {});
+  warmLazyRoute('routes.orders/calendar', () => import('../screens/orders/CalendarScreen'));
 }
 
 function warmHomeAdminRoute() {
@@ -518,20 +534,29 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   useEffect(() => {
     if (!uid || !currentProfile?.id) return undefined;
-    const timer = setTimeout(() => {
-      warmHomeCriticalRoutes();
-      warmHomeCalendarRoute();
-      if (isSuperAdmin) warmHomeAdminRoute();
-      if (typeof router?.prefetch !== 'function') return;
-      const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings, HOME_ROUTES.calendar];
-      if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
-      routesToPrefetch.forEach((route) => {
-        try {
-          router.prefetch(route);
-        } catch {}
-      });
-    }, 2500);
-    return () => clearTimeout(timer);
+    const task = InteractionManager.runAfterInteractions(() => {
+      const timer = setTimeout(() => {
+        warmHomePrimaryRoutes();
+        warmHomeCriticalRoutes();
+        warmHomeCalendarRoute();
+        if (isSuperAdmin) warmHomeAdminRoute();
+        if (typeof router?.prefetch !== 'function') return;
+        const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings, HOME_ROUTES.calendar];
+        if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
+        routesToPrefetch.forEach((route) => {
+          try {
+            router.prefetch(route);
+          } catch {}
+        });
+      }, 800);
+      task.cancelTimer = () => clearTimeout(timer);
+    });
+    return () => {
+      try {
+        task.cancelTimer?.();
+        task.cancel?.();
+      } catch {}
+    };
   }, [currentProfile?.id, isSuperAdmin, router, uid]);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -763,7 +788,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
               color={theme.colors.primary}
             />
             <Text style={styles.loadingText}>
-              {t('toast_loading_info', 'Загружаю информацию…')}
+              {t('toast_loading_info')}
             </Text>
           </View>
         </Card>
@@ -871,13 +896,6 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
               key={item.key}
               onPress={item.onPress}
               unstable_pressDelay={0}
-              onPressIn={() => {
-                const route = item.route;
-                if (!route || typeof router?.prefetch !== 'function') return;
-                try {
-                  router.prefetch(route);
-                } catch {}
-              }}
               android_ripple={{ color: theme.colors.ripple, borderless: false }}
               style={({ pressed }) => [
                 styles.menuRow,

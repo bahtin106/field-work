@@ -13,19 +13,20 @@ function capitalizeLabel(value) {
 export function CalendarMonthHeader({
   monthDate,
   label,
+  dateLocale = dfnsRu,
   onPreviousMonth,
   onNextMonth,
   arrowHitSlop,
   headerAnimatedStyle,
-  onHeaderLayout,
   styles,
   theme,
 }) {
-  const monthLabel = label ?? capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dfnsRu }));
+  const monthLabel = label ?? capitalizeLabel(format(monthDate, 'LLLL yyyy', { locale: dateLocale }));
+  const arrowIconSize = theme.icons?.md ?? theme.typography.sizes.md + theme.spacing.xs;
 
   return (
     <Animated.View style={[headerAnimatedStyle]}>
-      <View style={[styles.monthHeaderRow]} onLayout={onHeaderLayout}>
+      <View style={[styles.monthHeaderRow]}>
         <View style={styles.monthHeaderSide}>
           <Pressable
             onPress={onPreviousMonth}
@@ -33,7 +34,7 @@ export function CalendarMonthHeader({
             android_ripple={{ color: theme.colors.overlay }}
             style={styles.calendarArrow}
           >
-            <Feather name="chevron-left" size={20} color={theme.colors.text} />
+            <Feather name="chevron-left" size={arrowIconSize} color={theme.colors.text} />
           </Pressable>
         </View>
         <View style={styles.monthHeaderCenter}>
@@ -48,7 +49,7 @@ export function CalendarMonthHeader({
             android_ripple={{ color: theme.colors.overlay }}
             style={styles.calendarArrow}
           >
-            <Feather name="chevron-right" size={20} color={theme.colors.text} />
+            <Feather name="chevron-right" size={arrowIconSize} color={theme.colors.text} />
           </Pressable>
         </View>
       </View>

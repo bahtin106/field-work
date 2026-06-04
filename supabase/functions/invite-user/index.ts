@@ -50,20 +50,10 @@ function emailServiceHeaders(): Record<string, string> {
 }
 
 function generateTempPassword(): string {
-  const words = [
-    'blue', 'green', 'river', 'stone', 'apple', 'cloud', 'ocean', 'field', 'light', 'power',
-    'north', 'south', 'eagle', 'tiger', 'wolf', 'spark', 'sunny', 'magic', 'pilot', 'amber',
-  ];
-  const rng = new Uint32Array(8);
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const rng = new Uint8Array(18);
   crypto.getRandomValues(rng);
-
-  const word = words[rng[0] % words.length];
-  const digitsNeeded = Math.max(2, 8 - word.length);
-  const digits: string[] = [];
-  for (let i = 0; i < digitsNeeded; i += 1) {
-    digits.push(String(rng[i + 1] % 10));
-  }
-  return `${word}${digits.join('')}`;
+  return Array.from(rng, (value) => alphabet[value % alphabet.length]).join('');
 }
 
 async function cleanupOrphanIdentitiesByEmail(email: string): Promise<number> {
@@ -146,7 +136,8 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
       if (existingAuthErr || !existingAuth?.user) {
         const { error: staleDeleteErr } = await sb.from('profiles').delete().eq('id', existingProfile.id);
         if (staleDeleteErr) {
-          return err(`Failed to cleanup stale profile: ${staleDeleteErr.message}`, 400);
+          console.warn('[invite-user] stale profile cleanup failed', staleDeleteErr.message);
+          return err('Failed to cleanup stale profile', 400);
         }
       } else {
         return err('User with this email already exists', 400);
@@ -188,7 +179,8 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
       if (/already.*(exists|registered)|duplicate|email.*(exists|taken|already)/i.test(msg)) {
         return err('User with this email already exists', 400);
       }
-      return err(msg, 400);
+      console.warn('[invite-user] auth create failed', msg);
+      return err('Create user failed', 400);
     }
 
     const invitedUserId = created?.user?.id;
@@ -218,7 +210,8 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
     const { error: upsertErr } = await sb.from('profiles').upsert(upsertPayload, { onConflict: 'id' });
     if (upsertErr) {
       await sb.auth.admin.deleteUser(invitedUserId).catch(() => null);
-      return err(`Profile save failed: ${upsertErr.message}`, 400);
+      console.warn('[invite-user] profile save failed', upsertErr.message);
+      return err('Profile save failed', 400);
     }
 
     const emailRes = await fetch(`${EMAIL_SERVICE_URL}/send-email`, {
@@ -237,9 +230,10 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
 
     if (!emailRes.ok) {
       const details = await emailRes.text().catch(() => '');
+      console.warn('[invite-user] email send failed', details || emailRes.status);
       await sb.from('profiles').delete().eq('id', invitedUserId).catch(() => null);
       await sb.auth.admin.deleteUser(invitedUserId).catch(() => null);
-      return err(`Email send failed${details ? `: ${details}` : ''}`, 502);
+      return err('Email send failed', 502);
     }
 
     return Response.json(
@@ -247,6 +241,7 @@ export async function handleInviteUserRequest(req: Request): Promise<Response> {
       { headers: corsHeaders },
     );
   } catch (e: any) {
-    return err(e?.message || 'internal error', 500);
+    console.error('[invite-user]', e?.message || e || 'internal error');
+    return err('internal error', 500);
   }
 }

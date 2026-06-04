@@ -1,5 +1,7 @@
 import { buildAddressForNavigator } from '../../../components/ui/map';
 
+import { t as T } from '../../i18n';
+
 export const ORDER_ADDRESS_MODE = Object.freeze({
   OBJECT: 'object',
   CUSTOM: 'custom',
@@ -110,11 +112,11 @@ export function buildOrderAddressDisplay(address) {
     normalized.region,
     normalized.district,
     normalized.city,
-    normalized.street ? `ул. ${String(normalized.street).trim()}` : '',
-    normalized.house ? `д. ${String(normalized.house).trim()}` : '',
-    normalized.apartment ? `кв. ${String(normalized.apartment).trim()}` : '',
-    normalized.entrance ? `подъезд ${String(normalized.entrance).trim()}` : '',
-    normalized.floor ? `этаж ${String(normalized.floor).trim()}` : '',
+    normalized.street ? `${T('address_part_street_prefix')} ${String(normalized.street).trim()}` : '',
+    normalized.house ? `${T('address_part_house_prefix')} ${String(normalized.house).trim()}` : '',
+    normalized.apartment ? `${T('address_part_apartment_prefix')} ${String(normalized.apartment).trim()}` : '',
+    normalized.entrance ? `${T('address_part_entrance_prefix')} ${String(normalized.entrance).trim()}` : '',
+    normalized.floor ? `${T('address_part_floor_prefix')} ${String(normalized.floor).trim()}` : '',
   ]
     .map((value) => String(value || '').trim())
     .filter(Boolean);

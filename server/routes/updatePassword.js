@@ -15,6 +15,21 @@ function timingSafeStringEqual(left, right) {
   return leftBuf.length === rightBuf.length && crypto.timingSafeEqual(leftBuf, rightBuf);
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || '').trim(),
+  );
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  const email = normalizeEmail(value);
+  return !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function requireUpdatePasswordToken(req, res, next) {
   const expected = String(process.env.EMAIL_SERVER_API_TOKEN || '').trim();
   if (!expected) {
@@ -48,38 +63,49 @@ function requireUpdatePasswordToken(req, res, next) {
 router.post('/update-password', requireUpdatePasswordToken, async (req, res) => {
   try {
     const { user_id, password, changed_by, email } = req.body;
+    const normalizedEmail = normalizeEmail(email);
 
     // Валидация
-    if (!user_id) {
+    if (!isUuid(user_id)) {
       console.warn('[UPDATE_PASSWORD] Missing user_id');
-      return res.status(400).json({ ok: false, message: 'user_id is required' });
+      return res.status(400).json({ ok: false, message: 'valid user_id is required' });
     }
 
-    if (!password || password.length < 6) {
+    if (changed_by && !isUuid(changed_by)) {
+      console.warn('[UPDATE_PASSWORD] Invalid changed_by for user:', user_id);
+      return res.status(400).json({ ok: false, message: 'valid changed_by is required' });
+    }
+
+    if (!password || String(password).length < 8) {
       console.warn('[UPDATE_PASSWORD] Invalid password length for user:', user_id);
-      return res.status(400).json({ ok: false, message: 'password must be at least 6 characters' });
+      return res.status(400).json({ ok: false, message: 'password must be at least 8 characters' });
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      console.warn('[UPDATE_PASSWORD] Invalid email for user:', user_id);
+      return res.status(400).json({ ok: false, message: 'valid email is required' });
     }
 
     console.log('[UPDATE_PASSWORD] Updating password for user:', user_id, {
       changing_by: changed_by || 'self',
-      also_changing_email: !!email,
+      also_changing_email: !!normalizedEmail,
       timestamp: new Date().toISOString(),
     });
 
     // Подготавливаем объект для обновления
     const updateData = { password };
-    if (email && email.trim()) {
-      updateData.email = email.trim();
+    if (normalizedEmail) {
+      updateData.email = normalizedEmail;
     }
 
     // Обновляем в auth.users через Supabase Admin API
-    const { data, error } = await supabaseAdmin.auth.admin.updateUserById(user_id, updateData);
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(user_id, updateData);
 
     if (error) {
       console.error('[UPDATE_PASSWORD] Error updating password:', error.message);
       return res.status(400).json({ 
         ok: false, 
-        message: `Failed to update password: ${error.message}` 
+        message: 'Failed to update password'
       });
     }
 
@@ -113,7 +139,7 @@ router.post('/update-password', requireUpdatePasswordToken, async (req, res) => 
           action: 'password_changed',
           user_id,
           changed_by: changed_by || user_id,
-          details: email ? `also changed email to ${email}` : null,
+          details: normalizedEmail ? 'also changed email' : null,
           created_at: new Date().toISOString(),
         })
         .catch(err => {
@@ -130,7 +156,7 @@ router.post('/update-password', requireUpdatePasswordToken, async (req, res) => 
     console.error('[UPDATE_PASSWORD] Unexpected error:', err.message);
     res.status(500).json({ 
       ok: false, 
-      message: `Server error: ${err.message}` 
+      message: 'Server error'
     });
   }
 });

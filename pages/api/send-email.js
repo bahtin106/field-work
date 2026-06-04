@@ -16,6 +16,14 @@ function isAuthorized(req) {
   return supplied && timingSafeStringEqual(supplied, expected);
 }
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ''));
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -26,9 +34,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { type, email, firstName, lastName, resetLink } = req.body;
+    const { type, firstName, lastName, resetLink } = req.body;
+    const email = normalizeEmail(req.body?.email);
 
-    if (!type || !email) {
+    if (!type || !isValidEmail(email)) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -44,7 +53,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json(result);
   } catch (error) {
-    console.error('[/api/send-email] Error:', error);
-    return res.status(500).json({ error: error.message || 'Failed to send email' });
+    console.error('[/api/send-email] Error:', error?.message || error);
+    return res.status(500).json({ error: 'Failed to send email' });
   }
 }

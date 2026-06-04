@@ -850,7 +850,7 @@ function RootLayoutInner() {
       >
         <_BrandedLoadingScreen
           theme={theme}
-          label={t('toast_loading_info', 'Loading...')}
+          label={t('toast_loading_info')}
         />
       </SafeAreaView>
     );
@@ -887,25 +887,25 @@ function RootLayoutInner() {
                 <Stack.Screen name="orders" />
                 <Stack.Screen
                   name="app_settings/AppSettings"
-                  options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РїСЂРёР»РѕР¶РµРЅРёСЏ' }}
+                  options={{ title: t('routes.app_settings/AppSettings') }}
                 />
                 <Stack.Screen
                   name="company_settings/index"
-                  options={{ title: 'РќР°СЃС‚СЂРѕР№РєРё РєРѕРјРїР°РЅРёРё' }}
+                  options={{ title: t('routes.company_settings/index') }}
                 />
                 <Stack.Screen
                   name="company_settings/sections/telegram-bot"
-                  options={{ title: 'Telegram Bot' }}
+                  options={{ title: t('routes.company_settings/sections/telegram-bot') }}
                 />
-                <Stack.Screen name="users/index" options={{ title: 'Users' }} />
-                <Stack.Screen name="users/new" options={{ title: 'New User' }} />
-                <Stack.Screen name="users/[id]/index" options={{ title: 'User' }} />
-                <Stack.Screen name="users/[id]/edit" options={{ title: 'Edit User' }} />
-                <Stack.Screen name="clients/index" options={{ title: 'Clients' }} />
-                <Stack.Screen name="clients/new" options={{ title: 'New Client' }} />
-                <Stack.Screen name="clients/[id]/index" options={{ title: 'Client' }} />
-                <Stack.Screen name="clients/[id]/edit" options={{ title: 'Edit Client' }} />
-                <Stack.Screen name="billing/index" options={{ title: 'РџРѕРґРїРёСЃРєР° Рё Р»РёС†РµРЅР·РёРё' }} />
+                <Stack.Screen name="users/index" options={{ title: t('routes.users/index') }} />
+                <Stack.Screen name="users/new" options={{ title: t('routes.users/new') }} />
+                <Stack.Screen name="users/[id]/index" options={{ title: t('routes.users/[id]/index') }} />
+                <Stack.Screen name="users/[id]/edit" options={{ title: t('routes.users/[id]/edit') }} />
+                <Stack.Screen name="clients/index" options={{ title: t('routes.clients/index') }} />
+                <Stack.Screen name="clients/new" options={{ title: t('routes.clients/new') }} />
+                <Stack.Screen name="clients/[id]/index" options={{ title: t('routes.clients/[id]/index') }} />
+                <Stack.Screen name="clients/[id]/edit" options={{ title: t('routes.clients/[id]/edit') }} />
+                <Stack.Screen name="billing/index" options={{ title: t('routes.billing/index') }} />
                 <Stack.Screen name="admin/index" />
                 <Stack.Screen name="admin/users/index" />
                 <Stack.Screen name="admin/users/[id]/index" />
@@ -918,7 +918,7 @@ function RootLayoutInner() {
                 <Stack.Screen name="admin/promocodes/index" />
                 <Stack.Screen name="admin/storage/index" />
                 <Stack.Screen name="admin/server/index" />
-                <Stack.Screen name="stats" options={{ title: 'Stats' }} />
+                <Stack.Screen name="stats" options={{ title: t('routes.stats') }} />
               </Stack>
             </View>
             {isAuthenticated ? <RouteFreshnessBoundary /> : null}

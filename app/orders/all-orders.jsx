@@ -5,8 +5,10 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import {
   ActivityIndicator,
   FlatList,
+  InteractionManager,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -34,6 +36,7 @@ import {
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
@@ -58,9 +61,69 @@ import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
+const EMPTY_ARRAY = [];
 const PERM_CACHE = (globalThis.PERM_CACHE ||= { canViewAll: { value: null, ts: 0 } });
 const PERM_TTL_MS = 10 * 60 * 1000;
-const EMPTY_ARRAY = [];
+const ALL_ORDERS_PERMISSION_KEY = 'canViewAllOrders';
+const ALL_ORDERS_ROUTE = '/orders/all-orders';
+const ORDERS_HOME_ROUTE = '/orders';
+const ALL_ORDERS_SCREEN_KEY = 'AllRequests';
+const ALL_ORDERS_RENDER_WARN_THRESHOLD = 30;
+const ALL_ORDERS_FPS_PROBE_MS = 3500;
+const ALL_ORDERS_NAV_LOCK_MS = 1200;
+const ALL_ORDERS_DETAIL_PREFETCH_LIMIT = 6;
+const ALL_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
+const ALL_ORDERS_SORT_FALLBACK = 0;
+const ALL_ORDERS_PRESSED_OPACITY = 0.9;
+const MINUTES_PER_HOUR = 60;
+const TIME_BOUNDARY = Object.freeze({
+  hourMin: 0,
+  hourMax: 23,
+  minuteMin: 0,
+  minuteMax: 59,
+});
+const DATE_DISPLAY_OPTIONS = Object.freeze({
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+});
+const TIME_DISPLAY_OPTIONS = Object.freeze({
+  hour: '2-digit',
+  minute: '2-digit',
+});
+const RANGE_SEPARATOR = ' - ';
+const ROUTE_FILTER_PARAM_KEYS = Object.freeze([
+  'executor',
+  'work_type',
+  'client_ids',
+  'departure_date_from',
+  'departure_date_to',
+  'departure_time_from',
+  'departure_time_to',
+  'sum_min',
+  'sum_max',
+]);
+const ALL_ORDERS_LIST = Object.freeze({
+  initialNumToRender: 8,
+  maxToRenderPerBatch: 6,
+  updateCellsBatchingPeriod: 34,
+  windowSize: 9,
+  itemVisiblePercentThreshold: 50,
+  onEndReachedThreshold: 0.5,
+});
+const ALL_ORDER_STATUS_TABS = Object.freeze(['feed', 'all', 'new', 'progress', 'done']);
+const ALL_ORDERS_SORT_KEYS = Object.freeze({
+  dateDesc: 'date_desc',
+  dateAsc: 'date_asc',
+  amountDesc: 'amount_desc',
+  amountAsc: 'amount_asc',
+});
+const ALL_ORDERS_DEFAULT_SORT = ALL_ORDERS_SORT_KEYS.dateDesc;
+const LEGACY_STATUS_FILTER_MAP = Object.freeze({
+  completed: 'done',
+  in_progress: 'progress',
+});
+const EMPTY_DEPARTMENT_ROUTE_VALUES = new Set(['0', 'null', 'undefined']);
 const ORDER_FILTER_DEFAULTS = {
   workTypes: [],
   statuses: [],
@@ -92,7 +155,7 @@ async function checkCanViewAll() {
       .select('value')
       .eq('company_id', me.company_id)
       .eq('role', me.role)
-      .eq('key', 'canViewAllOrders')
+      .eq('key', ALL_ORDERS_PERMISSION_KEY)
       .maybeSingle();
     if (permError) return null;
 
@@ -108,8 +171,134 @@ async function checkCanViewAll() {
   }
 }
 
+function createOrderFilterDefaults() {
+  return {
+    ...ORDER_FILTER_DEFAULTS,
+    workTypes: [],
+    statuses: [],
+    clientIds: [],
+  };
+}
+
+function readRouteParam(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return String(raw || '').trim();
+}
+
+function readRouteListParam(value) {
+  return readRouteParam(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeStatusFilterParam(value) {
+  const raw = readRouteParam(value);
+  return LEGACY_STATUS_FILTER_MAP[raw] || raw || 'all';
+}
+
+function parseDateFilterValue(value) {
+  const raw = readRouteParam(value);
+  if (!raw) return null;
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const parsed = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const localizedMatch = raw.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
+  if (localizedMatch) {
+    const parsed = new Date(
+      Number(localizedMatch[3]),
+      Number(localizedMatch[2]) - 1,
+      Number(localizedMatch[1]),
+    );
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseTimeToMinutes(value) {
+  const raw = readRouteParam(value);
+  if (!raw) return null;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < TIME_BOUNDARY.hourMin || hours > TIME_BOUNDARY.hourMax) return null;
+  if (minutes < TIME_BOUNDARY.minuteMin || minutes > TIME_BOUNDARY.minuteMax) return null;
+  return hours * MINUTES_PER_HOUR + minutes;
+}
+
+function formatDateFilterLabel(value, locale) {
+  const parsed = parseDateFilterValue(value);
+  if (!parsed) return null;
+  try {
+    return new Intl.DateTimeFormat(locale || undefined, DATE_DISPLAY_OPTIONS).format(parsed);
+  } catch {
+    return parsed.toLocaleDateString(locale || undefined, DATE_DISPLAY_OPTIONS);
+  }
+}
+
+function formatTimeFilterLabel(value, locale) {
+  const minutes = parseTimeToMinutes(value);
+  if (minutes == null) return null;
+  const date = new Date();
+  date.setHours(Math.floor(minutes / MINUTES_PER_HOUR), minutes % MINUTES_PER_HOUR, 0, 0);
+  try {
+    return new Intl.DateTimeFormat(locale || undefined, TIME_DISPLAY_OPTIONS).format(date);
+  } catch {
+    return date.toLocaleTimeString(locale || undefined, TIME_DISPLAY_OPTIONS);
+  }
+}
+
+function formatRangeFilterLabel(min, max, t) {
+  const minValue = readRouteParam(min);
+  const maxValue = readRouteParam(max);
+  if (minValue && maxValue) return `${minValue}${RANGE_SEPARATOR}${maxValue}`;
+  if (minValue) return `${t('common_from')} ${minValue}`;
+  if (maxValue) return `${t('common_to')} ${maxValue}`;
+  return null;
+}
+
+function buildRouteFilterParams(values = {}) {
+  return {
+    executor: values.executorId || undefined,
+    work_type:
+      Array.isArray(values.workTypes) && values.workTypes.length
+        ? values.workTypes.join(',')
+        : undefined,
+    client_ids:
+      Array.isArray(values.clientIds) && values.clientIds.length
+        ? values.clientIds.join(',')
+        : undefined,
+    departure_date_from: values.departureDateFrom || undefined,
+    departure_date_to: values.departureDateTo || undefined,
+    departure_time_from: values.departureTimeFrom || undefined,
+    departure_time_to: values.departureTimeTo || undefined,
+    sum_min: values.sumMin || undefined,
+    sum_max: values.sumMax || undefined,
+  };
+}
+
+function buildClearedRouteFilterParams() {
+  return ROUTE_FILTER_PARAM_KEYS.reduce((acc, key) => {
+    acc[key] = undefined;
+    return acc;
+  }, {});
+}
+
+function readCachedRequestItems(value) {
+  const pages = Array.isArray(value?.pages) ? value.pages : [];
+  return pages.flatMap((page) => (Array.isArray(page) ? page : []));
+}
+
 function AllOrdersContent() {
-  trackRender('AllRequests', 30);
+  trackRender(ALL_ORDERS_SCREEN_KEY, ALL_ORDERS_RENDER_WARN_THRESHOLD);
 
   const [allowed, setAllowed] = useState(() => {
     const rec = PERM_CACHE.canViewAll;
@@ -132,11 +321,11 @@ function AllOrdersContent() {
   }, []);
 
   const { theme } = useTheme();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const { has, loading: permLoading } = usePermissions();
   const queryClient = useQueryClient();
   const offlineMode = !getOfflineSnapshot().isOnline;
-  const permissionByRole = !permLoading ? has('canViewAllOrders') : null;
+  const permissionByRole = !permLoading ? has(ALL_ORDERS_PERMISSION_KEY) : null;
   const isExplicitlyDeniedOnline =
     !offlineMode && allowed === false && permissionByRole === false;
   const effectiveAllowed = offlineMode
@@ -148,17 +337,28 @@ function AllOrdersContent() {
         : null;
 
   useEffect(() => {
-    markScreenMount('AllRequests');
+    markScreenMount(ALL_ORDERS_SCREEN_KEY);
   }, []);
 
-  useEffect(() => startFpsProbe('AllRequests', 3500), []);
+  useEffect(() => startFpsProbe(ALL_ORDERS_SCREEN_KEY, ALL_ORDERS_FPS_PROBE_MS), []);
+
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      preloadOrderDetailsScreen().catch(() => {});
+    });
+    return () => {
+      try {
+        task.cancel?.();
+      } catch {}
+    };
+  }, []);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const router = useRouter();
   const navigation = useNavigation();
   const handleBackPress = useCallback(() => {
-    goBackSmart(navigation, router, null, '/orders');
+    goBackSmart(navigation, router, null, ORDERS_HOME_ROUTE);
   }, [navigation, router]);
 
   const {
@@ -168,21 +368,24 @@ function AllOrdersContent() {
     search,
     work_type,
     client_ids,
+    departure_date_from,
+    departure_date_to,
+    departure_time_from,
+    departure_time_to,
+    sum_min,
+    sum_max,
     relation_client_id,
     relation_object_ids,
     relation_label,
   } = useLocalSearchParams();
 
   const relationClientId = useMemo(
-    () =>
-      Array.isArray(relation_client_id)
-        ? String(relation_client_id[0] || '')
-        : String(relation_client_id || ''),
+    () => readRouteParam(relation_client_id),
     [relation_client_id],
   );
   const relationObjectIds = useMemo(() => parseRelationIdsParam(relation_object_ids), [relation_object_ids]);
   const relationLabel = useMemo(
-    () => (Array.isArray(relation_label) ? String(relation_label[0] || '') : String(relation_label || '')),
+    () => readRouteParam(relation_label),
     [relation_label],
   );
   const hasLinkedRelationFilter = useMemo(
@@ -195,13 +398,7 @@ function AllOrdersContent() {
   );
 
   const [statusFilter, setStatusFilter] = useState(
-    filter === 'completed'
-      ? 'done'
-      : filter === 'in_progress'
-        ? 'in_progress'
-        : filter === 'new'
-          ? 'new'
-          : filter || 'all',
+    normalizeStatusFilterParam(filter),
   );
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -209,39 +406,51 @@ function AllOrdersContent() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
-  const [sortKey, setSortKey] = useState('date_desc');
-  const [departmentFilter] = useState(department ? Number(department) : null);
+  const [sortKey, setSortKey] = useState(ALL_ORDERS_DEFAULT_SORT);
+  const [departmentFilter] = useState(() => {
+    const normalizedDepartment = readRouteParam(department);
+    if (EMPTY_DEPARTMENT_ROUTE_VALUES.has(normalizedDepartment)) return null;
+    return normalizedDepartment || null;
+  });
   const [orderFilters, setOrderFilters] = useState(() => ({
-    ...ORDER_FILTER_DEFAULTS,
-    workTypes: work_type
-      ? String(work_type)
-          .split(',')
-          .map((value) => String(value).trim())
-          .filter(Boolean)
-      : [],
-    clientIds: client_ids
-      ? String(client_ids)
-          .split(',')
-          .map((value) => String(value).trim())
-          .filter(Boolean)
-      : [],
-    executorId: executor ? String(executor) : null,
+    ...createOrderFilterDefaults(),
+    workTypes: readRouteListParam(work_type),
+    clientIds: readRouteListParam(client_ids),
+    executorId: readRouteParam(executor) || null,
+    departureDateFrom: readRouteParam(departure_date_from) || null,
+    departureDateTo: readRouteParam(departure_date_to) || null,
+    departureTimeFrom: readRouteParam(departure_time_from) || null,
+    departureTimeTo: readRouteParam(departure_time_to) || null,
+    sumMin: readRouteParam(sum_min),
+    sumMax: readRouteParam(sum_max),
   }));
-  const [searchQuery, setSearchQuery] = useState(String(search || '').trim());
+  const [searchQuery, setSearchQuery] = useState(readRouteParam(search));
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const detailNavLockRef = useRef({ id: '', ts: 0 });
   const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
 
   const executorFilter = orderFilters.executorId;
   const workTypeFilter = orderFilters.workTypes;
+  const hasWorkTypeFilter = Array.isArray(workTypeFilter) && workTypeFilter.length > 0;
+  const filterDataEnabled =
+    effectiveAllowed === true &&
+    (filtersVisible ||
+      orders.length > 0 ||
+      !loading ||
+      Boolean(executorFilter) ||
+      hasWorkTypeFilter ||
+      (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length > 0));
   const setOrderFilterValue = useCallback((key, value) => {
     setOrderFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
 
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
+  const [workTypesResolved, setWorkTypesResolved] = useState(false);
   useEffect(() => {
+    if (!filterDataEnabled) return undefined;
     let alive = true;
+    setWorkTypesResolved(false);
     (async () => {
       try {
         const cid = await getMyCompanyId();
@@ -249,22 +458,25 @@ function AllOrdersContent() {
         if (!cid) {
           setUseWorkTypesFlag(false);
           setWorkTypes([]);
+          setWorkTypesResolved(true);
           return;
         }
         const { useWorkTypes: flag, types } = await fetchWorkTypes(cid);
         if (!alive) return;
         setUseWorkTypesFlag(!!flag);
         setWorkTypes(types || []);
+        setWorkTypesResolved(true);
       } catch {
         if (!alive) return;
         setUseWorkTypesFlag(false);
         setWorkTypes([]);
+        setWorkTypesResolved(true);
       }
     })();
     return () => {
       alive = false;
     };
-  }, []);
+  }, [filterDataEnabled]);
 
   const { data: companyId } = useMyCompanyIdQuery();
   const { settings: companySettings } = useCompanySettings(companyId);
@@ -282,7 +494,7 @@ function AllOrdersContent() {
   const departureTimeEnabled = orderFieldsByKey.get('departure_time')?.isEnabled !== false;
   const { data: companyClients = [] } = useClients(
     { companyId, search: '' },
-    { enabled: !!companyId },
+    { enabled: !!companyId && filterDataEnabled },
   );
   const clientOptions = useMemo(
     () =>
@@ -314,7 +526,21 @@ function AllOrdersContent() {
     if (relationClientId) next.relationClientId = relationClientId;
     if (relationObjectIds.length) next.relationObjectIds = relationObjectIds;
     return next;
-  }, [departmentFilter, executorFilter, orderFilters.clientIds, relationClientId, relationObjectIds, statusFilter, useWorkTypes, workTypeFilter]);
+  }, [
+    departmentFilter,
+    executorFilter,
+    orderFilters.clientIds,
+    relationClientId,
+    relationObjectIds,
+    statusFilter,
+    useWorkTypes,
+    workTypeFilter,
+  ]);
+  const allRequestsQueryKey = useMemo(
+    () => queryKeys.requests.all(allRequestsParams),
+    [allRequestsParams],
+  );
+  const requestsEnabled = effectiveAllowed !== false && (!hasWorkTypeFilter || workTypesResolved);
 
   const {
     items: requestItems = [],
@@ -323,22 +549,32 @@ function AllOrdersContent() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useAllRequests(allRequestsParams, { enabled: effectiveAllowed !== false });
+    isError: requestsError,
+  } = useAllRequests(allRequestsParams, { enabled: requestsEnabled });
 
-  const { data: executorsData } = useRequestExecutors({ enabled: effectiveAllowed === true });
+  const { data: executorsData } = useRequestExecutors({ enabled: filterDataEnabled });
   const executors = useMemo(() => executorsData ?? EMPTY_ARRAY, [executorsData]);
 
   useRequestRealtimeSync({ enabled: effectiveAllowed === true, companyId });
+  const listLoading = loading || !requestsEnabled;
 
   useEffect(() => {
     if (departmentFilter == null || !executorFilter) return;
     const selectedExecutor = executors.find((item) => String(item.id) === String(executorFilter));
-    if (selectedExecutor && Number(selectedExecutor.department_id) !== Number(departmentFilter)) {
+    if (selectedExecutor && String(selectedExecutor.department_id || '') !== String(departmentFilter)) {
       setOrderFilterValue('executorId', null);
     }
   }, [departmentFilter, executorFilter, executors, setOrderFilterValue]);
 
   const lastItemsSignatureRef = useRef('');
+  useEffect(() => {
+    if (orders.length > 0 || effectiveAllowed === false) return;
+    const cachedItems = readCachedRequestItems(queryClient.getQueryData(allRequestsQueryKey));
+    if (!cachedItems.length) return;
+    setOrders(cachedItems);
+    setLoading(false);
+  }, [allRequestsQueryKey, effectiveAllowed, orders.length, queryClient]);
+
   useEffect(() => {
     const signature = Array.isArray(requestItems)
       ? requestItems.map((item) => `${item?.id || ''}:${item?.updated_at || ''}`).join('|')
@@ -356,7 +592,7 @@ function AllOrdersContent() {
   useEffect(() => {
     if (firstContentMarkedRef.current || requestsLoading) return;
     firstContentMarkedRef.current = true;
-    markFirstContent('AllRequests');
+    markFirstContent(ALL_ORDERS_SCREEN_KEY);
   }, [requestsLoading]);
 
   const refreshAll = useCallback(async () => {
@@ -374,12 +610,12 @@ function AllOrdersContent() {
     (key) => {
       switch (key) {
         case 'feed':
-          return t('orders_feed_tab', 'Лента');
+          return t('order_status_in_feed');
         case 'all':
-          return t('common_all', 'Все');
+          return t('common_all');
         case 'new':
           return t('order_status_new');
-        case 'in_progress':
+        case 'progress':
           return t('order_status_in_progress');
         case 'done':
           return t('order_status_completed');
@@ -393,7 +629,7 @@ function AllOrdersContent() {
   const executorOptions = useMemo(() => {
     let list = executors;
     if (departmentFilter != null) {
-      list = list.filter((item) => Number(item.department_id) === Number(departmentFilter));
+      list = list.filter((item) => String(item.department_id || '') === String(departmentFilter));
     }
     return list
       .map((item) => {
@@ -408,7 +644,7 @@ function AllOrdersContent() {
           id,
           value: id,
           label,
-          meta: item?.role ? t(`role_${item.role}`, item.role) : '',
+          meta: item?.role ? t(`role_${item.role}`) : '',
         };
       })
       .filter(Boolean);
@@ -443,8 +679,8 @@ function AllOrdersContent() {
     if (executorFilter) {
       const executorLabel = executorOptions.find((item) => item.id === executorFilter)?.label;
       if (executorLabel) {
-        fullParts.push(`${t('orders_filter_executor', 'Исполнитель')}: ${executorLabel}`);
-        compactParts.push(`${t('orders_filter_executor', 'Исполнитель')}: ${executorLabel}`);
+        fullParts.push(`${t('orders_filter_executor')}: ${executorLabel}`);
+        compactParts.push(`${t('orders_filter_executor')}: ${executorLabel}`);
       }
     }
 
@@ -455,14 +691,14 @@ function AllOrdersContent() {
       if (labels.length) {
         fullParts.push(
           summarizeFilterPart({
-            label: t('common_client', 'Клиент'),
+            label: t('common_client'),
             values: labels,
             countWhenMany: false,
           }),
         );
         compactParts.push(
           summarizeFilterPart({
-            label: t('common_client', 'Клиент'),
+            label: t('common_client'),
             values: labels,
             countWhenMany: true,
           }),
@@ -470,11 +706,50 @@ function AllOrdersContent() {
       }
     }
 
+    if (orderFilters.departureDateFrom || orderFilters.departureDateTo) {
+      const fromLabel = formatDateFilterLabel(orderFilters.departureDateFrom, locale) || t('common_dash');
+      const toLabel = formatDateFilterLabel(orderFilters.departureDateTo, locale) || t('common_dash');
+      const part = `${t('order_field_departure_date')}: ${fromLabel}${RANGE_SEPARATOR}${toLabel}`;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
+    if (orderFilters.departureTimeFrom || orderFilters.departureTimeTo) {
+      const fromLabel = formatTimeFilterLabel(orderFilters.departureTimeFrom, locale) || t('common_dash');
+      const toLabel = formatTimeFilterLabel(orderFilters.departureTimeTo, locale) || t('common_dash');
+      const part = `${t('order_field_departure_time')}: ${fromLabel}${RANGE_SEPARATOR}${toLabel}`;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
+    const amountRange = formatRangeFilterLabel(orderFilters.sumMin, orderFilters.sumMax, t);
+    if (amountRange) {
+      const part = `${t('order_details_amount')}: ${amountRange}`;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
     return {
       full: joinFilterSummary(fullParts, t('common_bullet')),
       compact: joinFilterSummary(compactParts, t('common_bullet')),
     };
-  }, [clientOptions, executorFilter, executorOptions, orderFilters.clientIds, t, useWorkTypes, workTypeFilter, workTypes]);
+  }, [
+    clientOptions,
+    executorFilter,
+    executorOptions,
+    locale,
+    orderFilters.clientIds,
+    orderFilters.departureDateFrom,
+    orderFilters.departureDateTo,
+    orderFilters.departureTimeFrom,
+    orderFilters.departureTimeTo,
+    orderFilters.sumMax,
+    orderFilters.sumMin,
+    t,
+    useWorkTypes,
+    workTypeFilter,
+    workTypes,
+  ]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -485,7 +760,7 @@ function AllOrdersContent() {
           texts: [
             resolveRequestTitle(order, {
               fallbackDate: order?.time_window_start || order?.created_at,
-              prefix: t('order_auto_title_prefix', 'Заявка от'),
+              prefix: t('order_auto_title_prefix'),
             }),
             order?.fio,
             order?.region,
@@ -511,10 +786,10 @@ function AllOrdersContent() {
 
   const sortOptions = useMemo(
     () => [
-      { id: 'date_desc', label: t('orders_sort_date_desc', 'Сначала новые') },
-      { id: 'date_asc', label: t('orders_sort_date_asc', 'Сначала старые') },
-      { id: 'amount_desc', label: t('orders_sort_amount_desc', 'Сумма: по убыванию') },
-      { id: 'amount_asc', label: t('orders_sort_amount_asc', 'Сумма: по возрастанию') },
+      { id: ALL_ORDERS_SORT_KEYS.dateDesc, label: t('orders_sort_date_desc') },
+      { id: ALL_ORDERS_SORT_KEYS.dateAsc, label: t('orders_sort_date_asc') },
+      { id: ALL_ORDERS_SORT_KEYS.amountDesc, label: t('orders_sort_amount_desc') },
+      { id: ALL_ORDERS_SORT_KEYS.amountAsc, label: t('orders_sort_amount_asc') },
     ],
     [t],
   );
@@ -522,22 +797,22 @@ function AllOrdersContent() {
   const sortedFilteredOrders = useMemo(() => {
     const parseOrderDate = (item) => {
       const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
-      return Number.isFinite(ts) ? ts : 0;
+      return Number.isFinite(ts) ? ts : ALL_ORDERS_SORT_FALLBACK;
     };
     const parseAmount = (item) => {
-      const value = Number(item?.start_price ?? item?.sum ?? 0);
-      return Number.isFinite(value) ? value : 0;
+      const value = Number(item?.start_price ?? item?.sum ?? ALL_ORDERS_SORT_FALLBACK);
+      return Number.isFinite(value) ? value : ALL_ORDERS_SORT_FALLBACK;
     };
     const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];
     arr.sort((a, b) => {
       switch (sortKey) {
-        case 'date_asc':
+        case ALL_ORDERS_SORT_KEYS.dateAsc:
           return parseOrderDate(a) - parseOrderDate(b);
-        case 'amount_desc':
+        case ALL_ORDERS_SORT_KEYS.amountDesc:
           return parseAmount(b) - parseAmount(a);
-        case 'amount_asc':
+        case ALL_ORDERS_SORT_KEYS.amountAsc:
           return parseAmount(a) - parseAmount(b);
-        case 'date_desc':
+        case ALL_ORDERS_SORT_KEYS.dateDesc:
         default:
           return parseOrderDate(b) - parseOrderDate(a);
       }
@@ -546,16 +821,17 @@ function AllOrdersContent() {
   }, [filteredOrders, sortKey]);
 
   const loadMore = useCallback(async () => {
-    if (isFetchingNextPage || !hasNextPage || loading) return;
+    if (isFetchingNextPage || !hasNextPage || listLoading) return;
     await fetchNextPage();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage, loading]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, listLoading]);
 
   const returnParamsRef = useRef({
     filter: statusFilter,
     executor: executorFilter,
-    department: departmentFilter,
     search: searchQuery,
+    ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
     client_ids: Array.isArray(orderFilters.clientIds) ? orderFilters.clientIds.join(',') : '',
+    ...buildRouteFilterParams(orderFilters),
     relation_client_id: relationClientId,
     relation_object_ids: relationObjectIds.join(','),
     relation_label: relationLabel,
@@ -564,16 +840,23 @@ function AllOrdersContent() {
     returnParamsRef.current = {
       filter: statusFilter,
       executor: executorFilter,
-      department: departmentFilter,
       search: searchQuery,
-      ...(Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length
-        ? { client_ids: orderFilters.clientIds.join(',') }
-        : {}),
+      ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
+      ...buildRouteFilterParams(orderFilters),
       ...(relationClientId ? { relation_client_id: relationClientId } : {}),
       ...(relationObjectIds.length ? { relation_object_ids: relationObjectIds.join(',') } : {}),
       ...(relationLabel ? { relation_label: relationLabel } : {}),
     };
-  }, [departmentFilter, executorFilter, orderFilters.clientIds, relationClientId, relationLabel, relationObjectIds, searchQuery, statusFilter]);
+  }, [
+    departmentFilter,
+    executorFilter,
+    orderFilters,
+    relationClientId,
+    relationLabel,
+    relationObjectIds,
+    searchQuery,
+    statusFilter,
+  ]);
 
   const openOrderDetails = useCallback(
     (orderIdRaw, orderSeed = null) => {
@@ -581,7 +864,7 @@ function AllOrdersContent() {
       if (!orderId) return;
       const now = Date.now();
       const prev = detailNavLockRef.current;
-      if (prev.id === orderId && now - prev.ts < 1200) return;
+      if (prev.id === orderId && now - prev.ts < ALL_ORDERS_NAV_LOCK_MS) return;
       detailNavLockRef.current = { id: orderId, ts: now };
       if (orderSeed && typeof orderSeed === 'object') {
         const seedWorkTypeId = String(orderSeed?.work_type_id || '').trim();
@@ -595,16 +878,18 @@ function AllOrdersContent() {
           id: orderId,
         }));
       }
-      const registry = getPrefetchRegistry();
-      registry
-        .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
-        .catch(() => {});
       router.push({
         pathname: `/orders/${orderId}`,
         params: {
-          returnTo: '/orders/all-orders',
+          returnTo: ALL_ORDERS_ROUTE,
           returnParams: JSON.stringify(returnParamsRef.current),
         },
+      });
+      InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        registry
+          .run(`request-detail:${orderId}`, () => ensureRequestPrefetch(queryClient, orderId))
+          .catch(() => {});
       });
     },
     [queryClient, router, workTypes],
@@ -627,11 +912,11 @@ function AllOrdersContent() {
   const renderFooter = useCallback(() => {
     if (!loadingMore) return null;
     return (
-      <View style={{ paddingVertical: 20 }}>
+      <View style={styles.paginationFooter}>
         <ActivityIndicator size="small" color={theme.colors.primary} />
       </View>
     );
-  }, [loadingMore, theme.colors.primary]);
+  }, [loadingMore, styles.paginationFooter, theme.colors.primary]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
   const onViewableItemsChanged = useMemo(
@@ -639,12 +924,15 @@ function AllOrdersContent() {
       const ids = viewableItems
         .map((item) => item?.item?.id)
         .filter(Boolean)
-        .slice(0, 6)
+        .slice(0, ALL_ORDERS_DETAIL_PREFETCH_LIMIT)
         .map(String);
       if (!ids.length) return;
       const key = ids.join('|');
       const now = Date.now();
-      if (viewabilityPrefetchRef.current.key === key && now - viewabilityPrefetchRef.current.ts < 2500) {
+      if (
+        viewabilityPrefetchRef.current.key === key &&
+        now - viewabilityPrefetchRef.current.ts < ALL_ORDERS_VIEWABILITY_PREFETCH_TTL_MS
+      ) {
         return;
       }
       viewabilityPrefetchRef.current = { key, ts: now };
@@ -670,24 +958,38 @@ function AllOrdersContent() {
   const listHeader = useMemo(
     () => (
       <View style={styles.listHeader}>
-        <Text style={styles.header}>Все заявки</Text>
-
-        <View style={styles.filterContainer}>
-          {['feed', 'all', 'new', 'in_progress', 'done'].map((key) => (
-            <Pressable
-              key={key}
-              onPress={() => {
-                setStatusFilter(key);
-                setHasMore(true);
-                router.setParams({ filter: key });
-              }}
-              style={[styles.chip, statusFilter === key && styles.chipActive]}
-            >
-              <Text style={[styles.chipText, statusFilter === key && styles.chipTextActive]}>
-                {getStatusLabel(key)}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={styles.filterBar}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScrollContent}
+          >
+            {ALL_ORDER_STATUS_TABS.map((key) => {
+              const active = statusFilter === key;
+              return (
+                <Pressable
+                  key={key}
+                  onPress={() => {
+                    setStatusFilter(key);
+                    router.setParams({ filter: key });
+                  }}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    active && styles.chipActive,
+                    pressed && { opacity: ALL_ORDERS_PRESSED_OPACITY },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <View style={styles.chipContent}>
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                      {getStatusLabel(key)}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         </View>
 
         <SearchFiltersBar
@@ -697,7 +999,7 @@ function AllOrdersContent() {
           placeholder={t('common_search')}
           onOpenFilters={() => setFiltersVisible(true)}
           onOpenSort={() => setSortVisible(true)}
-          style={{ marginHorizontal: -16 }}
+          style={styles.searchBar}
           filterSummary={
             hasLinkedRelationFilter
               ? [
@@ -723,10 +1025,10 @@ function AllOrdersContent() {
               : filterSummaryData.compact
           }
           onResetFilters={() => {
-            setOrderFilters({ ...ORDER_FILTER_DEFAULTS });
-            router.setParams({ executor: undefined, work_type: undefined, client_ids: undefined });
+            setOrderFilters(createOrderFilterDefaults());
+            router.setParams(buildClearedRouteFilterParams());
           }}
-          metaText={`${t('common_total')}: ${sortedFilteredOrders.length}`}
+          metaText={`${t('common_shown')} ${sortedFilteredOrders.length} ${t('common_of')} ${orders.length}`}
         />
       </View>
     ),
@@ -739,19 +1041,100 @@ function AllOrdersContent() {
       router,
       searchQuery,
       statusFilter,
+      orders.length,
       sortedFilteredOrders.length,
       styles.chip,
       styles.chipActive,
+      styles.chipContent,
       styles.chipText,
       styles.chipTextActive,
-      styles.filterContainer,
-      styles.header,
+      styles.filterBar,
+      styles.filterScrollContent,
       styles.listHeader,
+      styles.searchBar,
       t,
     ],
   );
 
-  if (loading || effectiveAllowed === null) {
+  const hasSearchQuery = Boolean(deferredSearchQuery.trim());
+  const hasActiveFilters = Boolean(filterSummaryData.full || hasLinkedRelationFilter);
+  const hasActiveTabFilter = statusFilter !== 'all';
+
+  const retryLoad = useCallback(() => {
+    refreshAll().catch(() => {});
+  }, [refreshAll]);
+
+  const ListEmptyComponent = useCallback(() => {
+    if (listLoading) {
+      return (
+        <View style={styles.emptyWrap}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+        </View>
+      );
+    }
+
+    if (requestsError) {
+      return (
+        <View style={styles.emptyWrap}>
+          <Text style={styles.emptyTitle}>{t('refresh_failed')}</Text>
+          <Text style={styles.emptyText}>{t('orders_load_failed_subtitle')}</Text>
+          <Pressable
+            onPress={retryLoad}
+            style={({ pressed }) => [styles.retryButton, pressed && { opacity: ALL_ORDERS_PRESSED_OPACITY }]}
+            accessibilityRole="button"
+          >
+            <Text style={styles.retryText}>{t('btn_retry')}</Text>
+          </Pressable>
+        </View>
+      );
+    }
+
+    const title = hasSearchQuery
+      ? t('orders_empty_search_title')
+      : hasActiveFilters || hasActiveTabFilter
+        ? t('orders_empty_filtered_title')
+        : t('orders_empty_title');
+    const subtitle = hasSearchQuery
+      ? t('orders_empty_search_subtitle')
+      : hasActiveFilters || hasActiveTabFilter
+        ? t('orders_empty_filtered_subtitle')
+        : t('orders_empty');
+
+    return (
+      <View style={styles.emptyWrap}>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Text style={styles.emptyText}>{subtitle}</Text>
+      </View>
+    );
+  }, [
+    hasActiveFilters,
+    hasActiveTabFilter,
+    hasSearchQuery,
+    listLoading,
+    requestsError,
+    retryLoad,
+    styles.emptyText,
+    styles.emptyTitle,
+    styles.emptyWrap,
+    styles.retryButton,
+    styles.retryText,
+    t,
+    theme.colors.primary,
+  ]);
+
+  const viewabilityConfig = useMemo(
+    () => ({ itemVisiblePercentThreshold: ALL_ORDERS_LIST.itemVisiblePercentThreshold }),
+    [],
+  );
+  const listContentContainerStyle = useMemo(
+    () => [
+      styles.container,
+      sortedFilteredOrders.length === 0 && styles.containerFill,
+    ],
+    [sortedFilteredOrders.length, styles.container, styles.containerFill],
+  );
+
+  if (effectiveAllowed === null) {
     return (
       <Screen scroll={false} headerOptions={{ headerShown: false }}>
         <AppHeader
@@ -782,7 +1165,7 @@ function AllOrdersContent() {
         />
         <View style={styles.centered}>
           <Text style={styles.blockedText}>
-            Админ вашей компании отключил доступ ко всем заявкам
+            {t('all_orders_disabled_by_admin')}
           </Text>
         </View>
       </Screen>
@@ -800,38 +1183,28 @@ function AllOrdersContent() {
         }}
       />
 
-      <View style={{ flex: 1 }}>
+      <View style={styles.screenBody}>
         {refreshIndicator}
         <FlatList
           data={sortedFilteredOrders}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          initialNumToRender={8}
-          maxToRenderPerBatch={6}
-          updateCellsBatchingPeriod={34}
-          windowSize={9}
+          initialNumToRender={ALL_ORDERS_LIST.initialNumToRender}
+          maxToRenderPerBatch={ALL_ORDERS_LIST.maxToRenderPerBatch}
+          updateCellsBatchingPeriod={ALL_ORDERS_LIST.updateCellsBatchingPeriod}
+          windowSize={ALL_ORDERS_LIST.windowSize}
           removeClippedSubviews={Platform.OS === 'android'}
           onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{ itemVisiblePercentThreshold: 50 }}
+          viewabilityConfig={viewabilityConfig}
           ListHeaderComponent={listHeader}
           ListFooterComponent={renderFooter}
-          ListEmptyComponent={
-            loading ? (
-              <View style={styles.emptyWrap}>
-                <ActivityIndicator size="large" color={theme.colors.primary} />
-              </View>
-            ) : (
-              <View style={styles.emptyWrap}>
-                <Text style={styles.emptyText}>Заявок не найдено</Text>
-              </View>
-            )
-          }
-          contentContainerStyle={[styles.container, sortedFilteredOrders.length === 0 && { flex: 1 }]}
-          style={{ flex: 1, backgroundColor: theme.colors.background }}
+          ListEmptyComponent={ListEmptyComponent}
+          contentContainerStyle={listContentContainerStyle}
+          style={styles.list}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
+          onEndReachedThreshold={ALL_ORDERS_LIST.onEndReachedThreshold}
           refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         />
       </View>
@@ -847,30 +1220,23 @@ function AllOrdersContent() {
           workTypes: useWorkTypes ? workTypes : [],
           clients: clientOptions,
           executors: executorOptions,
-          showDate: false,
-          showTime: false,
-          showAmount: false,
+          showDate: true,
+          showTime: true,
+          showAmount: true,
         }}
         values={orderFilters}
         setValue={setOrderFilterValue}
         defaults={ORDER_FILTER_DEFAULTS}
         onReset={() => {
-          setOrderFilters({ ...ORDER_FILTER_DEFAULTS });
-          router.setParams({ executor: undefined, work_type: undefined, client_ids: undefined });
+          setOrderFilters(createOrderFilterDefaults());
+          router.setParams(buildClearedRouteFilterParams());
         }}
         onApply={(nextValues) => {
           setOrderFilters(nextValues);
-          router.setParams({
-            executor: nextValues?.executorId || undefined,
-            work_type:
-              useWorkTypes && Array.isArray(nextValues?.workTypes) && nextValues.workTypes.length
-                ? nextValues.workTypes.join(',')
-                : undefined,
-            client_ids:
-              Array.isArray(nextValues?.clientIds) && nextValues.clientIds.length
-                ? nextValues.clientIds.join(',')
-                : undefined,
-          });
+          router.setParams(buildRouteFilterParams({
+            ...nextValues,
+            workTypes: useWorkTypes ? nextValues?.workTypes : [],
+          }));
         }}
       />
       <SortSelectModal
@@ -891,65 +1257,107 @@ export default function AllOrdersScreen() {
 }
 
 function createStyles(theme) {
-  const mutedColor = theme.colors.textSecondary ?? theme.colors.muted ?? '#8E8E93';
+  const mutedColor = theme.colors.textSecondary ?? theme.colors.text;
+  const listHorizontalPadding = theme.spacing.lg;
+  const listBottomPadding =
+    theme.components?.scrollView?.paddingBottom ?? theme.spacing.xxl;
+  const searchBarOffset = -listHorizontalPadding;
   return StyleSheet.create({
+    screenBody: {
+      flex: 1,
+    },
+    list: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
     centered: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 24,
+      paddingHorizontal: theme.spacing.lg,
     },
     blockedText: {
-      fontSize: 16,
+      fontSize: theme.typography.sizes.md,
       color: theme.colors.textSecondary,
       textAlign: 'center',
     },
     container: {
-      padding: 16,
-      paddingBottom: 40,
+      padding: listHorizontalPadding,
+      paddingBottom: listBottomPadding,
       backgroundColor: theme.colors.background,
     },
+    containerFill: {
+      flexGrow: 1,
+    },
     listHeader: {
-      paddingBottom: 16,
+      paddingBottom: theme.spacing.lg,
     },
-    header: {
-      fontSize: 22,
-      fontWeight: '700',
-      marginBottom: 16,
-      color: theme.colors.text,
+    filterBar: {
+      marginBottom: theme.spacing.lg,
     },
-    filterContainer: {
+    filterScrollContent: {
       flexDirection: 'row',
-      gap: 8,
-      marginBottom: 8,
-      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+      paddingRight: theme.spacing.xs,
     },
     chip: {
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      backgroundColor: theme.colors.inputBg,
-      borderRadius: 20,
+      paddingVertical: theme.spacing.sm,
+      paddingHorizontal: theme.spacing.lg,
+      backgroundColor: theme.colors.inputBg || theme.colors.surface,
+      borderRadius: theme.radii.pill,
     },
     chipActive: {
       backgroundColor: theme.colors.primary,
     },
+    chipContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
     chipText: {
-      fontSize: 14,
+      fontSize: theme.typography.sizes.sm,
       color: theme.colors.text,
     },
     chipTextActive: {
       color: theme.colors.onPrimary,
-      fontWeight: '600',
+      fontWeight: theme.typography.weight.semibold,
+    },
+    searchBar: {
+      marginHorizontal: searchBarOffset,
     },
     emptyWrap: {
-      paddingVertical: 40,
+      paddingVertical: theme.spacing.xxl + theme.spacing.lg,
+      paddingHorizontal: theme.spacing.lg,
       alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    emptyTitle: {
+      textAlign: 'center',
+      fontSize: theme.typography.sizes.md,
+      fontWeight: theme.typography.weight.semibold,
+      color: theme.colors.text,
     },
     emptyText: {
       textAlign: 'center',
-      marginTop: 32,
-      fontSize: 16,
+      fontSize: theme.typography.sizes.sm,
+      lineHeight: Math.round(theme.typography.sizes.sm * 1.45),
       color: mutedColor,
+    },
+    retryButton: {
+      marginTop: theme.spacing.sm,
+      minHeight: theme.components?.button?.height ?? theme.components?.input?.height ?? theme.spacing.xxl,
+      paddingHorizontal: theme.spacing.lg,
+      borderRadius: theme.radii.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.primary,
+    },
+    retryText: {
+      color: theme.colors.onPrimary,
+      fontSize: theme.typography.sizes.sm,
+      fontWeight: theme.typography.weight.semibold,
+    },
+    paginationFooter: {
+      paddingVertical: theme.spacing.xl,
     },
   });
 }

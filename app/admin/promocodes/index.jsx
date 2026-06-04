@@ -14,6 +14,7 @@ import { ConfirmModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
 import { supabase } from '../../../lib/supabase';
+import { useTranslation } from '../../../src/i18n/useTranslation';
 import { useTheme } from '../../../theme/ThemeProvider';
 import { withAlpha } from '../../../theme/colors';
 
@@ -29,8 +30,8 @@ const EMPTY_FORM = {
 };
 
 const DISCOUNT_TYPES = [
-  { value: 'percent', label: 'Скидка в процентах' },
-  { value: 'fixed', label: 'Фиксированная скидка' },
+  { value: 'percent', labelKey: 'admin_promocode_discount_type_percent' },
+  { value: 'fixed', labelKey: 'admin_promocode_discount_type_fixed' },
 ];
 
 function generatePromoCode() {
@@ -42,11 +43,11 @@ function generatePromoCode() {
   return out;
 }
 
-function formatDateTime(value) {
-  if (!value) return 'Бессрочно';
+function formatDateTime(value, t, locale) {
+  if (!value) return t('admin_promocode_no_expiry');
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Бессрочно';
-  return date.toLocaleString('ru-RU', {
+  if (Number.isNaN(date.getTime())) return t('admin_promocode_no_expiry');
+  return date.toLocaleString(locale || undefined, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
@@ -55,9 +56,14 @@ function formatDateTime(value) {
   });
 }
 
-function formatDiscount(row) {
+function formatDiscount(row, locale) {
   const value = Number(row?.discount_value || 0);
-  return row?.discount_type === 'percent' ? `${value}%` : `${value.toLocaleString('ru-RU')} ₽`;
+  if (row?.discount_type === 'percent') return `${value}%`;
+  return new Intl.NumberFormat(locale || undefined, {
+    style: 'currency',
+    currency: 'RUB',
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
 function mapRowToForm(row) {
@@ -92,11 +98,15 @@ async function listPromoCodes() {
   return Array.isArray(data) ? data : [];
 }
 
-async function savePromoCode(form) {
+async function savePromoCode(form, t) {
   const discountValue = Number(String(form.discountValue || '').replace(',', '.'));
-  if (!String(form.code || '').trim()) throw new Error('Укажите код');
-  if (!Number.isFinite(discountValue) || discountValue < 0) throw new Error('Укажите корректную скидку');
-  if (form.discountType === 'percent' && discountValue > 100) throw new Error('Процент скидки не может быть больше 100');
+  if (!String(form.code || '').trim()) throw new Error(t('admin_promocode_validation_code_required'));
+  if (!Number.isFinite(discountValue) || discountValue < 0) {
+    throw new Error(t('admin_promocode_validation_discount_required'));
+  }
+  if (form.discountType === 'percent' && discountValue > 100) {
+    throw new Error(t('admin_promocode_validation_percent_max'));
+  }
 
   const { data, error } = await supabase.rpc('admin_upsert_billing_promo_code', {
     p_id: form.id || null,
@@ -114,6 +124,7 @@ async function savePromoCode(form) {
 
 export default function AdminPromoCodesScreen() {
   const { theme } = useTheme();
+  const { t, locale } = useTranslation();
   const nav = useNavigation();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -124,10 +135,14 @@ export default function AdminPromoCodesScreen() {
   const [discardVisible, setDiscardVisible] = React.useState(false);
   const [form, setForm] = React.useState(EMPTY_FORM);
   const [initialSnapshot, setInitialSnapshot] = React.useState(serializeForm(EMPTY_FORM));
+  const discountTypes = React.useMemo(
+    () => DISCOUNT_TYPES.map((item) => ({ ...item, label: t(item.labelKey) })),
+    [t],
+  );
 
   React.useLayoutEffect(() => {
-    nav.setParams({ headerTitle: 'Промокоды' });
-  }, [nav]);
+    nav.setParams({ headerTitle: t('admin_promocodes_title') });
+  }, [nav, t]);
 
   const query = useQuery({
     queryKey: ['adminPromoCodes'],
@@ -136,13 +151,13 @@ export default function AdminPromoCodesScreen() {
   });
 
   const mutation = useMutation({
-    mutationFn: savePromoCode,
+    mutationFn: (nextForm) => savePromoCode(nextForm, t),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['adminPromoCodes'] });
       setFormVisible(false);
-      toast.success('Промокод сохранен');
+      toast.success(t('admin_promocode_saved'));
     },
-    onError: (error) => toast.error(String(error?.message || 'Не удалось сохранить промокод')),
+    onError: (error) => toast.error(String(error?.message || t('admin_promocode_save_error'))),
   });
 
   const isDirty = serializeForm(form) !== initialSnapshot;
@@ -175,17 +190,17 @@ export default function AdminPromoCodesScreen() {
   return (
     <Screen background="background">
       <ScrollView contentContainerStyle={styles(theme).content}>
-        <Button title="Создать промокод" onPress={openCreate} />
+        <Button title={t('admin_promocodes_create_action')} onPress={openCreate} />
 
         {query.error ? (
           <Card>
-            <Text style={styles(theme).error}>{String(query.error?.message || 'Не удалось загрузить промокоды')}</Text>
+            <Text style={styles(theme).error}>{String(query.error?.message || t('admin_promocodes_load_error'))}</Text>
           </Card>
         ) : null}
 
         {!query.isLoading && query.data?.length === 0 ? (
           <Card>
-            <Text style={styles(theme).muted}>Промокодов пока нет</Text>
+            <Text style={styles(theme).muted}>{t('admin_promocodes_empty')}</Text>
           </Card>
         ) : null}
 
@@ -203,12 +218,16 @@ export default function AdminPromoCodesScreen() {
                   </View>
                   <View style={[styles(theme).statusPill, { backgroundColor: withAlpha(tone, 0.14) }]}>
                     <Text style={[styles(theme).statusText, { color: tone }]}>
-                      {active ? 'Активен' : expired ? 'Истек' : 'Неактивен'}
+                      {active
+                        ? t('admin_promocode_status_active')
+                        : expired
+                          ? t('admin_promocode_status_expired')
+                          : t('admin_promocode_status_inactive')}
                     </Text>
                   </View>
                 </View>
-                <LabelValueRow label="Скидка" value={formatDiscount(row)} />
-                <LabelValueRow label="Действует до" value={formatDateTime(row.valid_until)} />
+                <LabelValueRow label={t('admin_promocode_discount_label')} value={formatDiscount(row, locale)} />
+                <LabelValueRow label={t('admin_promocode_valid_until_label')} value={formatDateTime(row.valid_until, t, locale)} />
                 {row.comment ? <Text style={styles(theme).comment}>{row.comment}</Text> : null}
               </Card>
             </Pressable>
@@ -219,50 +238,50 @@ export default function AdminPromoCodesScreen() {
       <BaseModal
         visible={formVisible}
         onClose={requestCloseForm}
-        title={form.id ? 'Редактировать промокод' : 'Новый промокод'}
+        title={form.id ? t('admin_promocode_edit_title') : t('admin_promocode_new_title')}
         maxHeightRatio={0.92}
         footer={
           <View style={styles(theme).footer}>
             <View style={styles(theme).footerButton}>
-              <Button title="Отмена" variant="secondary" onPress={requestCloseForm} disabled={mutation.isPending} />
+              <Button title={t('btn_cancel')} variant="secondary" onPress={requestCloseForm} disabled={mutation.isPending} />
             </View>
             <View style={styles(theme).footerButton}>
-              <Button title="Применить" onPress={() => mutation.mutate(form)} loading={mutation.isPending} />
+              <Button title={t('btn_apply')} onPress={() => mutation.mutate(form)} loading={mutation.isPending} />
             </View>
           </View>
         }
       >
         <View style={styles(theme).form}>
-          <TextField label="Название" value={form.name} onChangeText={(name) => setForm((p) => ({ ...p, name }))} />
+          <TextField label={t('admin_promocode_name_label')} value={form.name} onChangeText={(name) => setForm((p) => ({ ...p, name }))} />
           <View style={styles(theme).codeRow}>
             <View style={styles(theme).codeInput}>
-              <TextField label="Код" value={form.code} onChangeText={(code) => setForm((p) => ({ ...p, code }))} autoCapitalize="characters" />
+              <TextField label={t('admin_promocode_code_label')} value={form.code} onChangeText={(code) => setForm((p) => ({ ...p, code }))} autoCapitalize="characters" />
             </View>
             <Pressable style={styles(theme).generateButton} onPress={() => setForm((p) => ({ ...p, code: generatePromoCode() }))}>
               <Feather name="shuffle" size={16} color={theme.colors.primary} />
-              <Text style={styles(theme).generateText}>Сгенерировать</Text>
+              <Text style={styles(theme).generateText}>{t('admin_promocode_generate_action')}</Text>
             </Pressable>
           </View>
           <SelectField
-            label="Тип скидки"
-            value={DISCOUNT_TYPES.find((x) => x.value === form.discountType)?.label || ''}
+            label={t('admin_promocode_discount_type_label')}
+            value={discountTypes.find((x) => x.value === form.discountType)?.label || ''}
             onPress={() => setDiscountTypeVisible(true)}
           />
           <TextField
-            label={form.discountType === 'percent' ? 'Процент скидки' : 'Сумма скидки'}
+            label={form.discountType === 'percent' ? t('admin_promocode_discount_percent_label') : t('admin_promocode_discount_amount_label')}
             value={form.discountValue}
             onChangeText={(discountValue) => setForm((p) => ({ ...p, discountValue }))}
             keyboardType="decimal-pad"
           />
-          <SelectField label="Действует до" value={formatDateTime(form.validUntil)} onPress={() => setDateVisible(true)} />
+          <SelectField label={t('admin_promocode_valid_until_label')} value={formatDateTime(form.validUntil, t, locale)} onPress={() => setDateVisible(true)} />
           {form.validUntil ? (
             <Pressable onPress={() => setForm((p) => ({ ...p, validUntil: null }))}>
-              <Text style={styles(theme).clearDate}>Сделать бессрочным</Text>
+              <Text style={styles(theme).clearDate}>{t('admin_promocode_make_unlimited')}</Text>
             </Pressable>
           ) : null}
-          <SwitchField label="Активен" value={form.isActive} onValueChange={(isActive) => setForm((p) => ({ ...p, isActive }))} />
+          <SwitchField label={t('admin_promocode_active_label')} value={form.isActive} onValueChange={(isActive) => setForm((p) => ({ ...p, isActive }))} />
           <TextField
-            label="Комментарий"
+            label={t('admin_promocode_comment_label')}
             value={form.comment}
             onChangeText={(comment) => setForm((p) => ({ ...p, comment }))}
             multiline
@@ -284,10 +303,10 @@ export default function AdminPromoCodesScreen() {
       <BaseModal
         visible={discountTypeVisible}
         onClose={() => setDiscountTypeVisible(false)}
-        title="Тип скидки"
+        title={t('admin_promocode_discount_type_label')}
         maxHeightRatio={0.45}
       >
-        {DISCOUNT_TYPES.map((item) => (
+        {discountTypes.map((item) => (
           <Pressable
             key={item.value}
             style={styles(theme).optionRow}
@@ -304,9 +323,9 @@ export default function AdminPromoCodesScreen() {
 
       <ConfirmModal
         visible={discardVisible}
-        title="Закрыть без сохранения?"
-        message="Есть несохраненные изменения. Если выйти сейчас, они будут потеряны."
-        confirmLabel="Выйти"
+        title={t('admin_promocode_discard_title')}
+        message={t('admin_promocode_discard_message')}
+        confirmLabel={t('admin_promocode_discard_confirm')}
         confirmVariant="destructive"
         onClose={() => setDiscardVisible(false)}
         onConfirm={() => {

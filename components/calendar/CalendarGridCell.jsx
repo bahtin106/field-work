@@ -1,5 +1,5 @@
 // components/calendar/CalendarGridCell.jsx
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
@@ -8,8 +8,13 @@ const OUTSIDE_MONTH_META_TEXT_OPACITY = 0.55;
 const OUTSIDE_MONTH_META_DOT_OPACITY = 0.45;
 const EVENT_META_MIN_WIDTH_RATIO = 0.5;
 const EVENT_META_HORIZONTAL_INSET = 4;
+const EVENT_META_MAX_WIDTH_INSET_MULTIPLIER = 4;
 const EVENT_META_BOTTOM_INSET_RATIO = 0.12;
+const EVENT_META_MIN_BOTTOM_INSET = 1;
 const DAY_NUMBER_WITH_EVENTS_SHIFT_RATIO = 0.1;
+const DAY_NUMBER_WITH_EVENTS_MIN_SHIFT = 3;
+const DAY_CELL_RADIUS_RATIO = 0.5;
+const GRID_CELL_LONG_PRESS_DELAY_MS = 200;
 
 function CalendarGridCellComponent({
   cell,
@@ -40,7 +45,16 @@ function CalendarGridCellComponent({
   const showOutline = isSelectedDay && !isToday;
   const highlightTodayWhenNotSelected = isToday && !isSelectedDay;
   const dayNumberEventShift = eventCount > 0
-    ? { transform: [{ translateY: -Math.max(3, dayCellSize * DAY_NUMBER_WITH_EVENTS_SHIFT_RATIO) }] }
+    ? {
+        transform: [
+          {
+            translateY: -Math.max(
+              DAY_NUMBER_WITH_EVENTS_MIN_SHIFT,
+              dayCellSize * DAY_NUMBER_WITH_EVENTS_SHIFT_RATIO,
+            ),
+          },
+        ],
+      }
     : null;
 
   const outsideMonthTextStyle = showOutsideMonthDeemphasis
@@ -53,7 +67,7 @@ function CalendarGridCellComponent({
     ? { backgroundColor: theme.colors.textSecondary, opacity: OUTSIDE_MONTH_META_DOT_OPACITY }
     : null;
   const selectedTodayEventCountStyle = isTodaySelected
-    ? { color: theme.colors.onPrimary || '#FFFFFF' }
+    ? { color: theme.colors.onPrimary }
     : null;
 
   return (
@@ -61,7 +75,7 @@ function CalendarGridCellComponent({
       key={dayKey}
       onPress={handlePress}
       delayPressIn={0}
-      delayLongPress={200}
+      delayLongPress={GRID_CELL_LONG_PRESS_DELAY_MS}
       android_ripple={{ color: theme.colors.overlay }}
       style={[
         styles.dayCell,
@@ -74,7 +88,7 @@ function CalendarGridCellComponent({
         style={[
           styles.dayContent,
           {
-            borderRadius: dayCellSize / 2,
+            borderRadius: dayCellSize * DAY_CELL_RADIUS_RATIO,
             overflow: 'hidden',
           },
         ]}
@@ -100,7 +114,7 @@ function CalendarGridCellComponent({
               position: 'absolute',
               left: EVENT_META_HORIZONTAL_INSET,
               right: EVENT_META_HORIZONTAL_INSET,
-              bottom: Math.max(1, dayCellSize * EVENT_META_BOTTOM_INSET_RATIO),
+              bottom: Math.max(EVENT_META_MIN_BOTTOM_INSET, dayCellSize * EVENT_META_BOTTOM_INSET_RATIO),
             },
             indicatorSlotAnimatedStyle,
           ]}
@@ -109,7 +123,10 @@ function CalendarGridCellComponent({
             <View
               style={{
                 minWidth: dayCellSize * EVENT_META_MIN_WIDTH_RATIO,
-                maxWidth: Math.max(0, dayCellSize - EVENT_META_HORIZONTAL_INSET * 4),
+                maxWidth: Math.max(
+                  0,
+                  dayCellSize - EVENT_META_HORIZONTAL_INSET * EVENT_META_MAX_WIDTH_INSET_MULTIPLIER,
+                ),
                 paddingHorizontal: EVENT_META_HORIZONTAL_INSET,
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -134,4 +151,4 @@ function CalendarGridCellComponent({
   );
 }
 
-export const CalendarGridCell = CalendarGridCellComponent;
+export const CalendarGridCell = memo(CalendarGridCellComponent);

@@ -1026,7 +1026,7 @@ export default function AppSettings() {
   return (
     <Screen
       scroll={false}
-      headerOptions={{ title: t('routes.app_settings/AppSettings', 'Настройки приложения') }}
+      headerOptions={{ title: t('routes.app_settings/AppSettings') }}
     >
       <ScrollView
         contentContainerStyle={s.contentWrap}

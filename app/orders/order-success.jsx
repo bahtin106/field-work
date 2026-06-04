@@ -5,10 +5,12 @@ import { View, Text, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
+import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 
 export default function OrderSuccessScreen() {
   const { theme } = useTheme();
+  const { t } = useTranslation();
 
   const styles = useMemo(
     () =>
@@ -47,8 +49,8 @@ export default function OrderSuccessScreen() {
   return (
     <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <View style={styles.messageBox}>
-        <Text style={styles.successText}>Заявка успешно создана</Text>
-        <Button title="На главную" onPress={goHome} />
+        <Text style={styles.successText}>{t('order_success_title')}</Text>
+        <Button title={t('order_success_home')} onPress={goHome} />
       </View>
     </SafeAreaView>
   );

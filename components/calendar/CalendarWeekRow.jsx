@@ -1,4 +1,5 @@
 // components/calendar/CalendarWeekRow.jsx
+import { memo } from 'react';
 import { View } from 'react-native';
 import { formatDateKey } from '../../lib/calendarUtils';
 import { CalendarGridCell } from './CalendarGridCell';
@@ -17,10 +18,9 @@ function CalendarWeekRowComponent({
   indicatorSlotAnimatedStyle,
   eventCountAnimatedStyle,
   eventDotAnimatedStyle,
-  onRowLayout,
 }) {
   return (
-    <View key={`w-${monthDate.getTime()}-${weekIdx}`} style={styles.weekRow} onLayout={onRowLayout}>
+    <View key={`w-${monthDate.getTime()}-${weekIdx}`} style={styles.weekRow}>
       {week.map((cell, cellIdx) => {
         if (!cell.day) {
           return (
@@ -60,4 +60,4 @@ function CalendarWeekRowComponent({
   );
 }
 
-export const CalendarWeekRow = CalendarWeekRowComponent;
+export const CalendarWeekRow = memo(CalendarWeekRowComponent);

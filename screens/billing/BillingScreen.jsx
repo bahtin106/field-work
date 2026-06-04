@@ -117,17 +117,25 @@ function formatRuUnit(value, forms) {
   return forms[2];
 }
 
-function formatRemainingLabel(targetDate, now = new Date(), locale) {
+function formatRemainingLabel(targetDate, now = new Date(), locale, t) {
   if (!(targetDate instanceof Date) || Number.isNaN(targetDate.getTime())) return '';
   const diffMs = targetDate.getTime() - now.getTime();
   const isEn = resolveBillingLocale(locale).startsWith('en');
   if (diffMs <= 0) {
-    return isEn ? 'Expired' : '\u0418\u0441\u0442\u0435\u043a\u043b\u0430';
+    return t('billing_status_expired_feminine');
   }
 
   const totalDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-  if (isEn) return `${totalDays} days left`;
-  return `\u041e\u0441\u0442\u0430\u043b\u043e\u0441\u044c ${totalDays} ${formatRuUnit(totalDays, ['\u0434\u0435\u043d\u044c', '\u0434\u043d\u044f', '\u0434\u043d\u0435\u0439'])}`;
+  const dayUnit = isEn
+    ? totalDays === 1
+      ? t('billing_day_one')
+      : t('billing_day_many')
+    : formatRuUnit(totalDays, [
+        t('billing_day_one'),
+        t('billing_day_few'),
+        t('billing_day_many'),
+      ]);
+  return `${t('billing_remaining_label')} ${totalDays} ${dayUnit}`;
 }
 
 function _formatStorage(valueBytes) {
@@ -438,7 +446,7 @@ export default function BillingScreen() {
       if (!supported) throw new Error('unsupported_url');
       await Linking.openURL(BILLING_PORTAL_URL);
     } catch {
-      toast.error(t('billing_open_portal_error', 'Не удалось открыть страницу оплаты'));
+      toast.error(t('billing_open_portal_error'));
     }
   }, [t, toast]);
 
@@ -804,8 +812,8 @@ export default function BillingScreen() {
     [billingLocale, periodEndDate],
   );
   const remainingLabel = React.useMemo(
-    () => formatRemainingLabel(periodEndDate, new Date(), billingLocale),
-    [billingLocale, periodEndDate],
+    () => formatRemainingLabel(periodEndDate, new Date(), billingLocale, t),
+    [billingLocale, periodEndDate, t],
   );
   const daysLeft = React.useMemo(() => {
     const backendDaysLeft = Number(entitlements?.days_left);
@@ -908,7 +916,7 @@ export default function BillingScreen() {
               />
               <View style={base.sep} />
               <LabelValueRow
-                label={t('billing_remaining_label', 'Осталось')}
+                label={t('billing_remaining_label')}
                 valueComponent={<Text style={[base.value, styles(theme).lineValueStrong, { color: daysLeftColor }]}>{remainingLabel || `${daysLeft} ${t('billing_days_left_unit')}`}</Text>}
               />
             </Card>

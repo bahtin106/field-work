@@ -31,8 +31,8 @@ const CODE_TO_KEY = {
 
 export function getMessageByCode(code, t = T, fallback) {
   const key = CODE_TO_KEY[code];
-  if (key) return t(key, fallback ?? key);
-  return t('toast_generic_error', fallback ?? 'Ошибка');
+  if (key) return fallback ? t(key, fallback) : t(key);
+  return fallback ? String(fallback) : t('toast_generic_error');
 }
 
 export function getMessageKeyByCode(code) {

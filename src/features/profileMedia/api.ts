@@ -2,6 +2,8 @@ import { encode as encodeBase64 } from 'base64-arraybuffer';
 import { FileSystemUploadType, uploadAsync } from 'expo-file-system/legacy';
 import { Platform } from 'react-native';
 import { supabase } from '../../../lib/supabase';
+import { getCachedSupabaseAccessToken } from '../../../lib/supabaseSessionCache';
+import { t as T } from '../../i18n';
 
 type EntityType = 'employee' | 'client' | 'object' | 'feedback' | 'feedback_attachment';
 
@@ -14,11 +16,8 @@ function inferMimeFromUri(uri: string) {
 }
 
 async function invokeProfileMedia(action: string, payload: Record<string, any> = {}) {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token ? String(session.access_token) : '';
-  if (!token) throw new Error('Сессия истекла. Войдите снова.');
+  const token = await getCachedSupabaseAccessToken();
+  if (!token) throw new Error(T('profile_media_session_expired'));
 
   const { data, error } = await supabase.functions.invoke('profile-media-storage', {
     headers: { Authorization: `Bearer ${token}` },
@@ -78,7 +77,7 @@ export async function uploadProfileMedia(entityType: EntityType, entityId: strin
     if (buffer) return;
     const response = await fetch(uri);
     if (!response.ok) {
-      throw new Error('Не удалось прочитать файл аватара');
+      throw new Error(T('profile_media_read_avatar_failed'));
     }
     mime = String(response.headers?.get?.('content-type') || '').trim() || mime || 'image/jpeg';
     buffer = await response.arrayBuffer();
@@ -106,7 +105,7 @@ export async function uploadProfileMedia(entityType: EntityType, entityId: strin
           : {};
 
       if (!uploadUrl) {
-        throw new Error('Не удалось подготовить загрузку');
+        throw new Error(T('profile_media_prepare_upload_failed'));
       }
 
       const uploadResult = await uploadAsync(uploadUrl, uri, {
@@ -115,7 +114,7 @@ export async function uploadProfileMedia(entityType: EntityType, entityId: strin
         uploadType: FileSystemUploadType.BINARY_CONTENT,
       });
       if (!uploadResult || Number(uploadResult.status || 0) < 200 || Number(uploadResult.status || 0) >= 300) {
-        throw new Error(String(uploadResult?.body || 'Прямая загрузка не удалась'));
+        throw new Error(String(uploadResult?.body || T('profile_media_direct_upload_failed')));
       }
 
       directUploadCompleted = true;
@@ -130,7 +129,7 @@ export async function uploadProfileMedia(entityType: EntityType, entityId: strin
 
       const directUrl = String(committed?.url || '').trim();
       if (!directUrl) {
-        throw new Error('Медиа загружено, но ссылка не сохранена');
+        throw new Error(T('profile_media_link_save_failed'));
       }
       return directUrl;
     } catch (error) {
@@ -151,7 +150,7 @@ export async function uploadProfileMedia(entityType: EntityType, entityId: strin
 
   const url = String(data?.url || '').trim();
   if (!url) {
-    throw new Error('Медиа загружено, но ссылка не сохранена');
+    throw new Error(T('profile_media_link_save_failed'));
   }
 
   return url;
