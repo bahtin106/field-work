@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   FlatList,
   InteractionManager,
+  Platform,
   StyleSheet,
   Text,
   View,
