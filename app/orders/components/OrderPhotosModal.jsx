@@ -14,7 +14,7 @@ import PhotoGrid from './PhotoGrid';
 const hapticTap = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
 const hapticMedium = () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-export default function OrderPhotosModal({
+export default function MediaUploadModal({
   visible,
   onClose,
   category,
@@ -129,11 +129,11 @@ export default function OrderPhotosModal({
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       if (uris.length === 1) {
         onUploadUri(category, uris[0]).catch((e) =>
-          console.warn('[OrderPhotosModal] camera upload error', e),
+          console.warn('[MediaUploadModal] camera upload error', e),
         );
       } else {
         onUploadMultiple(category, uris).catch((e) =>
-          console.warn('[OrderPhotosModal] camera batch upload error', e),
+          console.warn('[MediaUploadModal] camera batch upload error', e),
         );
       }
     },
@@ -154,10 +154,10 @@ export default function OrderPhotosModal({
 
       hapticMedium();
       onUploadMultiple(category, next).catch((e) =>
-        console.warn('[OrderPhotosModal] gallery upload error', e),
+        console.warn('[MediaUploadModal] gallery upload error', e),
       );
     } catch (e) {
-      console.warn('[OrderPhotosModal] gallery picker error', e);
+      console.warn('[MediaUploadModal] gallery picker error', e);
       toast.error(e?.code === 'media_library_permission_denied' ? t('order_no_gallery_permission') : t('toast_error'));
     }
   }, [canAddFromGallery, category, onUploadMultiple, pickedSessionIdsRef, t, toast]);

@@ -11,6 +11,7 @@ import EditScreenTemplate, { useEditFormStyles } from '../../../components/layou
 import AvatarCropModal from '../../../components/ui/AvatarCropModal';
 import UIButton from '../../../components/ui/Button';
 import Card from '../../../components/ui/Card';
+import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TextField from '../../../components/ui/TextField';
 import { BaseModal, ConfirmModal, SelectModal } from '../../../components/ui/modals';
@@ -71,7 +72,7 @@ import { hasMobilePhoneValue, isValidOptionalMobilePhone } from '../../../src/sh
 import { useTheme } from '../../../theme/ThemeProvider';
 import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
-import OrderPhotosModal from '../../../app/orders/components/OrderPhotosModal';
+import MediaUploadModal from '../../../components/media/MediaUploadModal';
 import FullscreenImageViewer from '../../../app/orders/components/FullscreenImageViewer';
 import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../../src/shared/media/assets';
 import { getImagePickerMediaTypesImages, prepareImageForUpload, runMediaUploadQueue } from '../../../src/shared/media/imagePipeline';
@@ -165,58 +166,88 @@ function ObjectMediaEditRow({
     setEditing(false);
   }, [onChangeLabel, value]);
 
+  const actionHitSlop = { top: 8, right: 8, bottom: 8, left: 8 };
+  const iconButtonStyle = {
+    minWidth: 32,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: theme.spacing.xs,
+  };
+
+  const rightActions = (
+    <>
+      <Pressable
+        onPress={(event) => {
+          event?.stopPropagation?.();
+          setEditing(true);
+        }}
+        hitSlop={actionHitSlop}
+        style={iconButtonStyle}
+        accessibilityRole="button"
+      >
+        <Feather name="edit-2" size={theme.icons?.sm ?? 18} color={theme.colors.textSecondary} />
+      </Pressable>
+      {canRemove ? (
+        <Pressable
+          onPress={(event) => {
+            event?.stopPropagation?.();
+            onRemove?.();
+          }}
+          hitSlop={actionHitSlop}
+          style={iconButtonStyle}
+          accessibilityRole="button"
+        >
+          <Feather name="trash-2" size={theme.icons?.sm ?? 18} color={theme.colors.danger || theme.colors.error} />
+        </Pressable>
+      ) : null}
+    </>
+  );
+
+  if (!editing) {
+    return (
+      <MediaUploadRow
+        label={label || fallbackLabel}
+        countLabel={String(count)}
+        onPress={onOpen}
+        rightActions={rightActions}
+      />
+    );
+  }
+
   return (
     <View style={{ paddingVertical: theme.spacing.xs }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs }}>
-        {editing ? (
-          <TextInput
-            value={value}
-            onChangeText={(nextValue) => {
-              setValue(nextValue);
-              onChangeLabel(nextValue);
-            }}
-            onSubmitEditing={commit}
-            returnKeyType="done"
-            style={{
-              flex: 1,
-              minHeight: 36,
-              color: theme.colors.text,
-              fontSize: theme.typography.sizes.md,
-              fontWeight: theme.typography.weight.medium,
-              borderBottomWidth: 1,
-              borderBottomColor: theme.colors.primary,
-              paddingVertical: 0,
-            }}
-            placeholder={fallbackLabel}
-            placeholderTextColor={theme.colors.textSecondary}
-            autoFocus
-          />
-        ) : (
-          <Pressable
-            onPress={onOpen}
-            style={{ flex: 1, minHeight: 36, justifyContent: 'center' }}
-            accessibilityRole="button"
-          >
-            <Text
-              style={{
-                color: theme.colors.text,
-                fontSize: theme.typography.sizes.md,
-                fontWeight: theme.typography.weight.medium,
-              }}
-              numberOfLines={1}
-            >
-              {label || fallbackLabel}
-            </Text>
-          </Pressable>
-        )}
+        <TextInput
+          value={value}
+          onChangeText={(nextValue) => {
+            setValue(nextValue);
+            onChangeLabel(nextValue);
+          }}
+          onSubmitEditing={commit}
+          returnKeyType="done"
+          style={{
+            flex: 1,
+            minHeight: 36,
+            color: theme.colors.text,
+            fontSize: theme.typography.sizes.md,
+            fontWeight: theme.typography.weight.medium,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.colors.primary,
+            paddingVertical: 0,
+          }}
+          placeholder={fallbackLabel}
+          placeholderTextColor={theme.colors.textSecondary}
+          autoFocus
+        />
         <Pressable
-          onPress={editing ? commit : () => setEditing(true)}
-          hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-          style={{ minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' }}
+          onPress={commit}
+          hitSlop={actionHitSlop}
+          style={iconButtonStyle}
           accessibilityRole="button"
         >
           <Feather
-            name={editing ? 'check' : 'edit-2'}
+            name="check"
             size={theme.icons?.sm ?? 18}
             color={theme.colors.textSecondary}
           />
@@ -224,23 +255,14 @@ function ObjectMediaEditRow({
         {canRemove ? (
           <Pressable
             onPress={onRemove}
-            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-            style={{ minWidth: 32, minHeight: 32, alignItems: 'center', justifyContent: 'center' }}
+            hitSlop={actionHitSlop}
+            style={iconButtonStyle}
             accessibilityRole="button"
           >
             <Feather name="trash-2" size={theme.icons?.sm ?? 18} color={theme.colors.danger || theme.colors.error} />
           </Pressable>
         ) : null}
       </View>
-      <Pressable
-        onPress={onOpen}
-        style={{ minHeight: 28, justifyContent: 'center' }}
-        accessibilityRole="button"
-      >
-        <Text style={{ color: theme.colors.textSecondary, fontSize: theme.typography.sizes.sm }}>
-          {String(count)}
-        </Text>
-      </Pressable>
     </View>
   );
 }
@@ -1613,7 +1635,7 @@ export default function EditObjectScreen() {
         }}
       />
 
-      <OrderPhotosModal
+      <MediaUploadModal
         visible={objectPhotosModal.visible}
         onClose={() => setObjectPhotosModal({ visible: false, category: null })}
         category={objectPhotosModal.category}

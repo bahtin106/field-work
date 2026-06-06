@@ -12,6 +12,7 @@ import Card from '../../../components/ui/Card';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import IconButton from '../../../components/ui/IconButton';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
+import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TagList from '../../../components/tags/TagList';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
@@ -48,7 +49,7 @@ import {
   filterOrderAddressByObjectFieldSettings,
 } from '../../../src/features/requests/addressing';
 import { formatRuMask, normalizeRu, toE164 } from '../../../components/ui/phone';
-import OrderPhotosModal from '../../orders/components/OrderPhotosModal';
+import MediaUploadModal from '../../../components/media/MediaUploadModal';
 import FullscreenImageViewer from '../../orders/components/FullscreenImageViewer';
 import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../../src/shared/media/assets';
 import { prepareImageForUpload, runMediaUploadQueue } from '../../../src/shared/media/imagePipeline';
@@ -805,24 +806,12 @@ export default function ObjectViewScreen() {
                   return (
                     <View key={row.key}>
                       {idx > 0 ? <View style={base.sep} /> : null}
-                      <Pressable
-                        style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+                      <MediaUploadRow
+                        label={row.label}
+                        countLabel={t('order_photos_count').replace('{count}', String(count))}
                         onPress={() => setObjectPhotosModal({ visible: true, category: row.key })}
                         disabled={!canEditObjects && count === 0}
-                      >
-                        <Text style={base.label}>{row.label}</Text>
-                        <View style={base.rightWrap}>
-                          <Text style={base.value}>
-                            {t('order_photos_count').replace('{count}', String(count))}
-                          </Text>
-                          <Feather
-                            name="chevron-right"
-                            size={theme.icons?.sm ?? 18}
-                            color={theme.colors.textSecondary}
-                            style={{ marginLeft: theme.spacing.xs }}
-                          />
-                        </View>
-                      </Pressable>
+                      />
                     </View>
                   );
                 })}
@@ -865,7 +854,7 @@ export default function ObjectViewScreen() {
         </View>
       </BaseModal>
 
-      <OrderPhotosModal
+      <MediaUploadModal
         visible={objectPhotosModal.visible}
         onClose={() => setObjectPhotosModal({ visible: false, category: null })}
         category={objectPhotosModal.category}

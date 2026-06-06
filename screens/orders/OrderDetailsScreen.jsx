@@ -57,6 +57,7 @@ import ClearButton from '../../components/ui/ClearButton';
 import SectionHeader from '../../components/ui/SectionHeader';
 import TextField from '../../components/ui/TextField';
 import LabelValueRow from '../../components/ui/LabelValueRow';
+import MediaUploadRow from '../../components/media/MediaUploadRow';
 import OrderStatusCapsule from '../../components/ui/OrderStatusCapsule';
 import ExpandableTextRow from '../../components/ui/ExpandableTextRow';
 import AnimatedChevron from '../../components/ui/AnimatedChevron';
@@ -121,7 +122,7 @@ import { useToast } from '../../components/ui/ToastProvider';
 import { formatRuMask, normalizeRu, toE164 } from '../../components/ui/phone';
 import { getOfflineSnapshot } from '../../src/shared/offline/offlineStatus';
 
-const OrderPhotosModal = lazy(() => import('../../app/orders/components/OrderPhotosModal'));
+const MediaUploadModal = lazy(() => import('../../components/media/MediaUploadModal'));
 const FullscreenImageViewer = lazy(() => import('../../app/orders/components/FullscreenImageViewer'));
 
 let imageManipulatorPromise = null;
@@ -5239,33 +5240,13 @@ function OrderDetailsContent() {
                     return (
                       <View key={row.key}>
                         {idx > 0 && <View style={base.sep} />}
-                        <Pressable
+                        <MediaUploadRow
+                          label={row.label}
+                          countLabel={t('order_photos_count').replace('{count}', String(count))}
+                          busy={!orderMediaSnapshotReady}
                           disabled={!orderMediaSnapshotReady}
-                          accessibilityState={{ busy: !orderMediaSnapshotReady, disabled: !orderMediaSnapshotReady }}
-                          style={({ pressed }) => [
-                            base.row,
-                            !orderMediaSnapshotReady && { opacity: 0.62 },
-                            pressed && orderMediaSnapshotReady && { opacity: 0.7 },
-                          ]}
                           onPress={() => setOrderPhotosModal({ visible: true, category: row.key })}
-                        >
-                          <Text style={base.label}>{row.label}</Text>
-                          <View style={base.rightWrap}>
-                            {orderMediaSnapshotReady ? (
-                              <Text style={base.value}>
-                                {t('order_photos_count').replace('{count}', String(count))}
-                              </Text>
-                            ) : (
-                              <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                            )}
-                            <Feather
-                              name="chevron-right"
-                              size={theme.icons?.sm ?? 18}
-                              color={orderMediaSnapshotReady ? theme.colors.textSecondary : theme.colors.border}
-                              style={{ marginLeft: theme.spacing.xs }}
-                            />
-                          </View>
-                        </Pressable>
+                        />
                       </View>
                     );
                     })}
@@ -5275,7 +5256,7 @@ function OrderDetailsContent() {
 
             {orderPhotosModal.visible ? (
               <Suspense fallback={null}>
-                <OrderPhotosModal
+                <MediaUploadModal
                   visible={orderPhotosModal.visible}
                   suspended={orderPhotosModalSuspended}
                   onDismiss={handleOrderPhotosModalDismiss}
@@ -5915,7 +5896,7 @@ function OrderDetailsContent() {
 
       {financeEntryPhotosModalVisible ? (
         <Suspense fallback={null}>
-          <OrderPhotosModal
+          <MediaUploadModal
             visible={financeEntryPhotosModalVisible}
             onClose={closeFinanceEntryPhotosModal}
             category="finance_entry_photo"
