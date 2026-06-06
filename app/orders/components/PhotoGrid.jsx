@@ -18,10 +18,25 @@ const NUM_COLUMNS = 3;
 const PHOTO_ACTION_HIT_SLOP = { top: 10, right: 10, bottom: 10, left: 10 };
 const LOCAL_FILE_URI_RE = /^file:\/\//i;
 
-function buildPhotoKey(url, displayUri, index) {
+function normalizePhotoKeySource(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (!/^https?:\/\//i.test(raw)) return raw;
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.origin}${decodeURIComponent(parsed.pathname || '')}`;
+  } catch {
+    return raw.split('?')[0].split('#')[0];
+  }
+}
+
+function buildPhotoKey(url, displayUri, fallbackIndex, occurrenceIndex = 0) {
   const visibleLocalUri = String(displayUri || '').trim();
-  const stableSource = LOCAL_FILE_URI_RE.test(visibleLocalUri) ? visibleLocalUri : String(url || '').trim();
-  return `photo_${index}_${stableSource}`;
+  const stableSource = LOCAL_FILE_URI_RE.test(visibleLocalUri)
+    ? visibleLocalUri
+    : normalizePhotoKeySource(url) || normalizePhotoKeySource(visibleLocalUri);
+  if (!stableSource) return `photo_empty_${fallbackIndex}`;
+  return occurrenceIndex > 0 ? `photo_${stableSource}_${occurrenceIndex}` : `photo_${stableSource}`;
 }
 
 const UploadOverlay = memo(function UploadOverlay({ borderRadius, iconSize, iconColor }) {
@@ -203,13 +218,17 @@ function PhotoGrid({
         actualIndex: -1,
       });
     }
+    const occurrenceBySource = new Map();
     for (let i = 0; i < (photos || []).length; i += 1) {
       const url = photos[i];
       const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
       const displayUri = getDisplayUrl ? getDisplayUrl(url) : url;
       const visibleUri = thumbUri || displayUri;
+      const keySource = normalizePhotoKeySource(url) || normalizePhotoKeySource(visibleUri);
+      const occurrenceIndex = Number(occurrenceBySource.get(keySource) || 0);
+      if (keySource) occurrenceBySource.set(keySource, occurrenceIndex + 1);
       mapped.push({
-        key: buildPhotoKey(url, visibleUri, i),
+        key: buildPhotoKey(url, visibleUri, i, occurrenceIndex),
         uri: url,
         displayUri: visibleUri,
         fallbackUri: displayUri && displayUri !== thumbUri ? displayUri : '',

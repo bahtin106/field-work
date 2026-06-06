@@ -23,6 +23,36 @@ export function mergeObjectMediaUrls(...groups: unknown[]): string[] {
   return next;
 }
 
+function isLocalObjectMediaUri(value: unknown): boolean {
+  return /^file:\/\//i.test(String(value || '').trim());
+}
+
+export function mergeObjectMediaUrlMapPreservingLocal(
+  current: unknown,
+  incoming: unknown,
+): Record<string, string> {
+  const currentMap = current && typeof current === 'object' ? current as Record<string, unknown> : {};
+  const incomingMap = incoming && typeof incoming === 'object' ? incoming as Record<string, unknown> : {};
+  const next: Record<string, string> = {};
+
+  for (const [key, value] of Object.entries(currentMap)) {
+    const normalizedKey = String(key || '').trim();
+    const normalizedValue = String(value || '').trim();
+    if (normalizedKey && normalizedValue) next[normalizedKey] = normalizedValue;
+  }
+
+  for (const [key, value] of Object.entries(incomingMap)) {
+    const normalizedKey = String(key || '').trim();
+    const normalizedValue = String(value || '').trim();
+    if (!normalizedKey || !normalizedValue) continue;
+    const currentValue = next[normalizedKey];
+    if (isLocalObjectMediaUri(currentValue) && !isLocalObjectMediaUri(normalizedValue)) continue;
+    next[normalizedKey] = normalizedValue;
+  }
+
+  return next;
+}
+
 export async function uploadObjectMediaPhoto(
   objectId: string,
   category: string,

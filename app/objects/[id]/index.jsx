@@ -26,6 +26,7 @@ import {
   uploadObjectMediaPhoto,
   deleteObjectMediaPhotoByUrl,
   mergeObjectMediaUrls,
+  mergeObjectMediaUrlMapPreservingLocal,
 } from '../../../src/features/objects/media';
 import { objectMediaStorage } from '../../../lib/objectMediaStorage';
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
@@ -184,7 +185,10 @@ export default function ObjectViewScreen() {
           categories: OBJECT_MEDIA_FIELD_KEYS,
         });
         Object.assign(nextResolved, buildMediaAssetDisplayMap(assets));
-        if (!cancelled) setObjectMediaThumbUrls(buildMediaAssetThumbMap(assets));
+        const thumbMap = buildMediaAssetThumbMap(assets);
+        if (!cancelled && Object.keys(thumbMap).length) {
+          setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbMap));
+        }
       } catch {}
       for (const category of OBJECT_MEDIA_FIELD_KEYS) {
         const urls = Array.isArray(objectItem?.[category])
@@ -202,8 +206,8 @@ export default function ObjectViewScreen() {
           Object.assign(nextResolved, resolved);
         } catch {}
       }
-      if (!cancelled) {
-        setResolvedObjectMediaUrls(nextResolved);
+      if (!cancelled && Object.keys(nextResolved).length) {
+        setResolvedObjectMediaUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, nextResolved));
       }
     };
 
@@ -394,8 +398,11 @@ export default function ObjectViewScreen() {
       );
       const sourceUrl = String(publicUrl || '').trim();
       const resolvedUrl = String(displayUrl || '').trim();
-      if (sourceUrl && resolvedUrl) {
-        setResolvedObjectMediaUrls((prev) => ({ ...prev, [sourceUrl]: resolvedUrl }));
+      const optimisticDisplayUrl = String(prepared.uri || uri || '').trim();
+      if (sourceUrl && (optimisticDisplayUrl || resolvedUrl)) {
+        setResolvedObjectMediaUrls((prev) =>
+          mergeObjectMediaUrlMapPreservingLocal(prev, { [sourceUrl]: optimisticDisplayUrl || resolvedUrl }),
+        );
       }
       const nextMediaUrls = Array.isArray(mediaUrls)
         ? applyObjectMediaUrls(category, mediaUrls, objectUpdatedAt, { merge: true })
