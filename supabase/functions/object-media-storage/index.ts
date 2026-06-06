@@ -236,6 +236,67 @@ async function getCallerAndObjectContext(
   };
 }
 
+async function appendObjectMediaUrlAtomic(
+  admin: ReturnType<typeof createClient>,
+  objectId: string,
+  companyId: string,
+  category: string,
+  url: string,
+) {
+  const { data, error } = await admin.rpc('append_object_media_url_v1', {
+    p_object_id: objectId,
+    p_company_id: companyId,
+    p_category: category,
+    p_url: url,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    media_urls: Array.isArray(row?.media_urls) ? row.media_urls.map((x: unknown) => String(x || '')) : [],
+    updated_at: row?.updated_at ? String(row.updated_at) : null,
+  };
+}
+
+async function removeObjectMediaUrlAtomic(
+  admin: ReturnType<typeof createClient>,
+  objectId: string,
+  companyId: string,
+  category: string,
+  url: string,
+) {
+  const { data, error } = await admin.rpc('remove_object_media_url_v1', {
+    p_object_id: objectId,
+    p_company_id: companyId,
+    p_category: category,
+    p_url: url,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    media_urls: Array.isArray(row?.media_urls) ? row.media_urls.map((x: unknown) => String(x || '')) : [],
+    updated_at: row?.updated_at ? String(row.updated_at) : null,
+  };
+}
+
+async function deleteObjectMediaMapForUrl(
+  admin: ReturnType<typeof createClient>,
+  objectId: string,
+  companyId: string,
+  category: string,
+  sourceUrl: string,
+) {
+  const url = String(sourceUrl || '').trim();
+  if (!url) return;
+  const { error } = await admin
+    .from('object_media_external_map')
+    .delete()
+    .eq('company_id', companyId)
+    .eq('object_id', objectId)
+    .eq('category', category)
+    .eq('source_url', url);
+  if (error) console.warn('[object-media-storage] media map cleanup failed', toErrorMessage(error));
+}
+
 async function refreshAccessToken(refreshToken: string) {
   const clientId = Deno.env.get('YANDEX_OAUTH_CLIENT_ID') || '';
   const clientSecret = Deno.env.get('YANDEX_OAUTH_CLIENT_SECRET') || '';
@@ -608,11 +669,20 @@ export async function handleObjectMediaStorageRequest(req: Request) {
             { onConflict: 'object_id,category,source_url' },
           );
           if (mapErr) throw mapErr;
+          const atomic = await appendObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, publicUrl);
+          return json(200, {
+            success: true,
+            provider: 'yandex_disk',
+            url: publicUrl,
+            display_url: displayUrl,
+            media_urls: atomic.media_urls,
+            object_updated_at: atomic.updated_at,
+          });
         } catch (error) {
           await deleteYandexResourceSafe(yandex.accessToken, externalPath).catch(() => null);
+          await deleteObjectMediaMapForUrl(admin, ctx.object.id, ctx.companyId, category, publicUrl).catch(() => null);
           throw error;
         }
-        return json(200, { success: true, provider: 'yandex_disk', url: publicUrl, display_url: displayUrl });
       }
 
       const objectKey = String(body.object_key || '').trim();
@@ -637,11 +707,19 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           { onConflict: 'object_id,category,source_url' },
         );
         if (mapErr) throw mapErr;
+        const atomic = await appendObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, publicUrl);
+        return json(200, {
+          success: true,
+          provider: 'beget_s3',
+          url: publicUrl,
+          media_urls: atomic.media_urls,
+          object_updated_at: atomic.updated_at,
+        });
       } catch (error) {
         await deleteBegetKeys([objectKey]).catch(() => null);
+        await deleteObjectMediaMapForUrl(admin, ctx.object.id, ctx.companyId, category, publicUrl).catch(() => null);
         throw error;
       }
-      return json(200, { success: true, provider: 'beget_s3', url: publicUrl });
     }
 
     if (action === 'upload') {
@@ -713,11 +791,20 @@ export async function handleObjectMediaStorageRequest(req: Request) {
             { onConflict: 'object_id,category,source_url' },
           );
           if (mapErr) throw mapErr;
+          const atomic = await appendObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, publicUrl);
+          return json(200, {
+            success: true,
+            provider: 'yandex_disk',
+            url: publicUrl,
+            display_url: displayUrl,
+            media_urls: atomic.media_urls,
+            object_updated_at: atomic.updated_at,
+          });
         } catch (error) {
           await deleteYandexResourceSafe(yandex.accessToken, yandexPath).catch(() => null);
+          await deleteObjectMediaMapForUrl(admin, ctx.object.id, ctx.companyId, category, publicUrl).catch(() => null);
           throw error;
         }
-        return json(200, { success: true, provider: 'yandex_disk', url: publicUrl, display_url: displayUrl });
       }
 
       const objectKey = buildObjectMediaKey(ctx, category, mime);
@@ -744,11 +831,19 @@ export async function handleObjectMediaStorageRequest(req: Request) {
           { onConflict: 'object_id,category,source_url' },
         );
         if (mapErr) throw mapErr;
+        const atomic = await appendObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, publicUrl);
+        return json(200, {
+          success: true,
+          provider: 'beget_s3',
+          url: publicUrl,
+          media_urls: atomic.media_urls,
+          object_updated_at: atomic.updated_at,
+        });
       } catch (error) {
         await deleteBegetKeys([objectKey]).catch(() => null);
+        await deleteObjectMediaMapForUrl(admin, ctx.object.id, ctx.companyId, category, publicUrl).catch(() => null);
         throw error;
       }
-      return json(200, { success: true, provider: 'beget_s3', url: publicUrl });
     }
 
     if (action === 'delete') {
@@ -801,7 +896,22 @@ export async function handleObjectMediaStorageRequest(req: Request) {
         if (mapDeleteErr) throw mapDeleteErr;
       }
 
-      return json(200, { success: true });
+      const preferredSourceUrl = String(row?.source_url || '').trim() || sourceUrl;
+      let atomic = await removeObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, preferredSourceUrl);
+      if (
+        atomic &&
+        Array.isArray(atomic.media_urls) &&
+        atomic.media_urls.includes(preferredSourceUrl) &&
+        sourceUrl !== preferredSourceUrl
+      ) {
+        atomic = await removeObjectMediaUrlAtomic(admin, ctx.object.id, ctx.companyId, category, sourceUrl);
+      }
+
+      return json(200, {
+        success: true,
+        media_urls: atomic.media_urls,
+        object_updated_at: atomic.updated_at,
+      });
     }
 
     return json(400, { success: false, message: 'Unknown action' });

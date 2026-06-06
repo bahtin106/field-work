@@ -2,6 +2,7 @@ import { AntDesign, Feather } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
+import { useQueryClient } from '@tanstack/react-query';
 import React from 'react';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { BackHandler, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -23,6 +24,7 @@ import {
   useClientObject,
   useDeleteClientObjectMutation,
   useUpdateClientObjectMutation,
+  updateObjectQueryCaches,
 } from '../../../src/features/objects/queries';
 import { useClient } from '../../../src/features/clients/queries';
 import { useEntityFieldSettings } from '../../../src/features/fieldSettings/queries';
@@ -54,7 +56,11 @@ import {
   resolveVisibleAdditionalObjectPhoneSlotIds,
 } from '../../../src/features/objects/additionalPhones';
 import { uploadClientObjectPhoto } from '../../../src/features/objects/photo';
-import { uploadObjectMediaPhoto, deleteObjectMediaPhotoByUrl } from '../../../src/features/objects/media';
+import {
+  uploadObjectMediaPhoto,
+  deleteObjectMediaPhotoByUrl,
+  mergeObjectMediaUrls,
+} from '../../../src/features/objects/media';
 import { objectMediaStorage } from '../../../lib/objectMediaStorage';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useSetObjectTagsMutation } from '../../../src/features/tags/queries';
@@ -329,6 +335,7 @@ export default function EditObjectScreen() {
   const toast = useToast();
   const router = useRouter();
   const navigation = useNavigation();
+  const queryClient = useQueryClient();
   const { has } = usePermissions();
   const params = useLocalSearchParams();
   const id = params?.id;
@@ -1034,6 +1041,24 @@ export default function EditObjectScreen() {
     setObjectMediaSections((prev) => prev.filter((value) => value !== fieldKey));
     setDraft((prev) => ({ ...prev, [`${fieldKey}_label`]: '' }));
   }, []);
+  const applyObjectMediaUrls = React.useCallback(
+    (category, mediaUrls, objectUpdatedAt = null, options = {}) => {
+      if (!category) return [];
+      const nextMediaUrls = options?.merge
+        ? mergeObjectMediaUrls(mediaUrls, objectMediaRef.current?.[category])
+        : mergeObjectMediaUrls(mediaUrls);
+      objectMediaRef.current = {
+        ...objectMediaRef.current,
+        [category]: nextMediaUrls,
+      };
+      updateObjectQueryCaches(queryClient, objectId, {
+        [category]: nextMediaUrls,
+        ...(objectUpdatedAt ? { updated_at: objectUpdatedAt } : {}),
+      });
+      return nextMediaUrls;
+    },
+    [objectId, queryClient],
+  );
   const uploadObjectMediaFile = React.useCallback(
     async (category, uri) => {
       if (!objectId || !canEditObjects) return false;
@@ -1041,45 +1066,33 @@ export default function EditObjectScreen() {
         maxWidth: PHOTO_MAX_WIDTH,
         quality: PHOTO_COMPRESS_QUALITY,
       });
-      const { publicUrl, displayUrl } = await uploadObjectMediaPhoto(objectId, category, prepared.uri, PHOTO_MIME_TYPE);
+      const { publicUrl, displayUrl, mediaUrls, objectUpdatedAt } = await uploadObjectMediaPhoto(
+        objectId,
+        category,
+        prepared.uri,
+        PHOTO_MIME_TYPE,
+      );
       const sourceUrl = String(publicUrl || '').trim();
       const resolvedUrl = String(displayUrl || '').trim();
       if (sourceUrl && resolvedUrl) {
         setResolvedObjectMediaUrls((prev) => ({ ...prev, [sourceUrl]: resolvedUrl }));
       }
-      return sourceUrl;
+      const nextMediaUrls = Array.isArray(mediaUrls)
+        ? applyObjectMediaUrls(category, mediaUrls, objectUpdatedAt, { merge: true })
+        : null;
+      return { publicUrl: sourceUrl, mediaUrls: nextMediaUrls };
     },
-    [canEditObjects, objectId],
-  );
-
-  const commitObjectMediaUrls = React.useCallback(
-    async (category, urls = []) => {
-      const uploadedUrls = (Array.isArray(urls) ? urls : []).map((value) => String(value || '').trim()).filter(Boolean);
-      if (!objectId || !canEditObjects || !uploadedUrls.length) return false;
-      const current = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
-      const uploadedSet = new Set(uploadedUrls);
-      const next = [...uploadedUrls, ...current.filter((value) => !uploadedSet.has(String(value || '')))];
-      const updated = await updateMutation.mutateAsync({
-        id: objectId,
-        patch: { [category]: next },
-      });
-      objectMediaRef.current = {
-        ...objectMediaRef.current,
-        [category]: Array.isArray(updated?.[category]) ? updated[category] : next,
-      };
-      setObjectMediaSections((prev) => (prev.includes(category) ? prev : [...prev, category]));
-      return true;
-    },
-    [canEditObjects, objectId, updateMutation],
+    [canEditObjects, objectId, applyObjectMediaUrls],
   );
 
   const uploadLocalMediaUri = React.useCallback(
     async (category, uri) => {
-      const publicUrl = await uploadObjectMediaFile(category, uri);
-      if (!publicUrl) return false;
-      return commitObjectMediaUrls(category, [publicUrl]);
+      const uploadResult = await uploadObjectMediaFile(category, uri);
+      if (!uploadResult?.publicUrl) return false;
+      setObjectMediaSections((prev) => (prev.includes(category) ? prev : [...prev, category]));
+      return true;
     },
-    [commitObjectMediaUrls, uploadObjectMediaFile],
+    [uploadObjectMediaFile],
   );
   const handleUploadUri = React.useCallback(
     async (category, uri) => {
@@ -1120,7 +1133,8 @@ export default function EditObjectScreen() {
         const results = await runMediaUploadQueue(
           ids,
           async (item) => {
-            const publicUrl = await uploadObjectMediaFile(category, item.uri);
+            const uploadResult = await uploadObjectMediaFile(category, item.uri);
+            const publicUrl = String(uploadResult?.publicUrl || '').trim();
             if (!publicUrl) throw new Error(t('order_toast_upload_error'));
             return publicUrl;
           },
@@ -1129,7 +1143,10 @@ export default function EditObjectScreen() {
         uploadedUrls = results
           .filter((result) => result.status === 'fulfilled' && result.value)
           .map((result) => String(result.value));
-        if (uploadedUrls.length) await commitObjectMediaUrls(category, uploadedUrls);
+        if (uploadedUrls.length) {
+          applyObjectMediaUrls(category, uploadedUrls, null, { merge: true });
+          setObjectMediaSections((prev) => (prev.includes(category) ? prev : [...prev, category]));
+        }
         uploadedCount = uploadedUrls.length;
       } catch (error) {
         await Promise.allSettled(uploadedUrls.map((url) => deleteObjectMediaPhotoByUrl(objectId, category, url)));
@@ -1151,7 +1168,7 @@ export default function EditObjectScreen() {
         toast.error(t('order_toast_upload_error'));
       }
     },
-    [commitObjectMediaUrls, objectId, t, toast, uploadObjectMediaFile],
+    [applyObjectMediaUrls, objectId, t, toast, uploadObjectMediaFile],
   );
   const removePhoto = React.useCallback(
     async (category, index) => {
@@ -1160,19 +1177,18 @@ export default function EditObjectScreen() {
       const removedUrl = String(photos[index] || '').trim();
       if (!removedUrl) return;
       const next = photos.filter((_, photoIndex) => photoIndex !== index);
-      const updated = await updateMutation.mutateAsync({
-        id: objectId,
-        patch: { [category]: next },
-      });
-      objectMediaRef.current = {
-        ...objectMediaRef.current,
-        [category]: Array.isArray(updated?.[category]) ? updated[category] : next,
-      };
+      applyObjectMediaUrls(category, next);
       try {
-        await deleteObjectMediaPhotoByUrl(objectId, category, removedUrl);
-      } catch {}
+        const result = await deleteObjectMediaPhotoByUrl(objectId, category, removedUrl);
+        if (Array.isArray(result?.mediaUrls)) {
+          applyObjectMediaUrls(category, result.mediaUrls, result.objectUpdatedAt);
+        }
+      } catch (error) {
+        applyObjectMediaUrls(category, photos);
+        throw error;
+      }
     },
-    [canEditObjects, objectId, updateMutation],
+    [canEditObjects, objectId, applyObjectMediaUrls],
   );
   const removePhotosBatch = React.useCallback(
     async (category, urls = []) => {
@@ -1182,21 +1198,19 @@ export default function EditObjectScreen() {
       const photos = Array.isArray(objectMediaRef.current?.[category]) ? objectMediaRef.current[category] : [];
       const next = photos.filter((value) => !selected.has(String(value || '').trim()));
       const removed = photos.filter((value) => selected.has(String(value || '').trim()));
-      const updated = await updateMutation.mutateAsync({
-        id: objectId,
-        patch: { [category]: next },
-      });
-      objectMediaRef.current = {
-        ...objectMediaRef.current,
-        [category]: Array.isArray(updated?.[category]) ? updated[category] : next,
-      };
+      applyObjectMediaUrls(category, next);
       for (const url of removed) {
         try {
-          await deleteObjectMediaPhotoByUrl(objectId, category, url);
-        } catch {}
+          const result = await deleteObjectMediaPhotoByUrl(objectId, category, url);
+          if (Array.isArray(result?.mediaUrls)) {
+            applyObjectMediaUrls(category, result.mediaUrls, result.objectUpdatedAt);
+          }
+        } catch (error) {
+          console.warn('[object-media] delete failed', error);
+        }
       }
     },
-    [canEditObjects, objectId, updateMutation],
+    [canEditObjects, objectId, applyObjectMediaUrls],
   );
   const openViewer = React.useCallback((photos, index, category, label) => {
     if (!Array.isArray(photos) || !photos.length) return;

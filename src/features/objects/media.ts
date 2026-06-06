@@ -4,6 +4,25 @@ import { objectMediaStorage } from '../../../lib/objectMediaStorage';
 import { uploadPreparedImageFile } from '../../shared/media/imagePipeline';
 import { t as T } from '../../i18n';
 
+export function normalizeObjectMediaUrls(urls: unknown): string[] {
+  return (Array.isArray(urls) ? urls : [urls])
+    .map((value: unknown) => String(value || '').trim())
+    .filter(Boolean);
+}
+
+export function mergeObjectMediaUrls(...groups: unknown[]): string[] {
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const group of groups) {
+    for (const url of normalizeObjectMediaUrls(group)) {
+      if (seen.has(url)) continue;
+      seen.add(url);
+      next.push(url);
+    }
+  }
+  return next;
+}
+
 export async function uploadObjectMediaPhoto(
   objectId: string,
   category: string,
@@ -59,7 +78,12 @@ export async function uploadObjectMediaPhoto(
       if (!publicUrl) {
         throw new Error(T('object_media_link_save_failed'));
       }
-      return { publicUrl, displayUrl: String(committed?.display_url || '').trim() };
+      return {
+        publicUrl,
+        displayUrl: String(committed?.display_url || '').trim(),
+        mediaUrls: Array.isArray(committed?.media_urls) ? normalizeObjectMediaUrls(committed.media_urls) : null,
+        objectUpdatedAt: committed?.object_updated_at ? String(committed.object_updated_at) : null,
+      };
     } catch (error) {
       if (directUploadCompleted) throw error;
       console.warn(
@@ -80,7 +104,12 @@ export async function uploadObjectMediaPhoto(
   });
   const publicUrl = String(data?.url || '').trim();
   if (!publicUrl) throw new Error(T('object_media_link_save_failed'));
-  return { publicUrl, displayUrl: String(data?.display_url || '').trim() };
+  return {
+    publicUrl,
+    displayUrl: String(data?.display_url || '').trim(),
+    mediaUrls: Array.isArray(data?.media_urls) ? normalizeObjectMediaUrls(data.media_urls) : null,
+    objectUpdatedAt: data?.object_updated_at ? String(data.object_updated_at) : null,
+  };
 }
 
 export async function deleteObjectMediaPhotoByUrl(objectId: string, category: string, url: string) {
@@ -89,10 +118,14 @@ export async function deleteObjectMediaPhotoByUrl(objectId: string, category: st
   const mediaUrl = String(url || '').trim();
   if (!object_id || !mediaCategory || !mediaUrl) return false;
 
-  await objectMediaStorage('delete', {
+  const data = await objectMediaStorage('delete', {
     object_id,
     category: mediaCategory,
     url: mediaUrl,
   });
-  return true;
+  return {
+    success: true,
+    mediaUrls: Array.isArray(data?.media_urls) ? normalizeObjectMediaUrls(data.media_urls) : null,
+    objectUpdatedAt: data?.object_updated_at ? String(data.object_updated_at) : null,
+  };
 }
