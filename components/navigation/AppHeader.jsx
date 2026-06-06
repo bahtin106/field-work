@@ -111,6 +111,9 @@ const createStyles = (theme, metrics) =>
       fontWeight: theme.typography?.weight?.semibold ?? '600',
       fontSize: metrics.actionFontSize,
     },
+    disabledAction: {
+      opacity: theme.components?.listItem?.disabledOpacity ?? 0.5,
+    },
   });
 
 export default function AppHeader({ options = {}, back, route, onBackPress: onBackPressProp }) {
@@ -226,6 +229,10 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
     () => options?.rightTextLabel ?? route?.params?.rightTextLabel,
     [options?.rightTextLabel, route?.params?.rightTextLabel],
   );
+  const rightDisabled = useMemo(
+    () => Boolean(options?.rightDisabled ?? route?.params?.rightDisabled),
+    [options?.rightDisabled, route?.params?.rightDisabled],
+  );
   const hasRightAction = useMemo(
     () =>
       Boolean(
@@ -238,6 +245,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   );
 
   const rightPress = useCallback(() => {
+    if (rightDisabled) return undefined;
     if (typeof options?.onRightPress === 'function') return options.onRightPress();
     if (typeof routeParams.onRightPress === 'function') return routeParams.onRightPress();
     // Global action registry by id to avoid non-serializable params
@@ -249,6 +257,7 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
   }, [
     options,
     routeParams,
+    rightDisabled,
   ]);
 
   // ---- Анимации для кнопки "назад": масштаб + затемнённый кружок ----
@@ -586,10 +595,12 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             onPressIn={onRightIn}
             onPressOut={onRightOut}
             onPress={rightPress}
+            disabled={rightDisabled}
             accessibilityRole="button"
             accessibilityLabel={String(rightLabel)}
+            accessibilityState={{ disabled: rightDisabled }}
           >
-            <Animated.View style={[rightCapsuleAnim]}>
+            <Animated.View style={[rightCapsuleAnim, rightDisabled ? s.disabledAction : null]}>
               <Text
                 numberOfLines={1}
                 style={s.actionText}
@@ -606,11 +617,14 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             onPressIn={onRightIn}
             onPressOut={onRightOut}
             onPress={rightPress}
+            disabled={rightDisabled}
+            accessibilityState={{ disabled: rightDisabled }}
           >
             <Animated.View
               style={[
                 s.outlinedAction,
                 rightCapsuleAnim,
+                rightDisabled ? s.disabledAction : null,
               ]}
             >
               <Animated.View
@@ -635,10 +649,12 @@ export default function AppHeader({ options = {}, back, route, onBackPress: onBa
             onPressIn={onRightIn}
             onPressOut={onRightOut}
             onPress={rightPress}
+            disabled={rightDisabled}
             accessibilityRole="button"
             accessibilityLabel={String(route.params.headerButtonLabel)}
+            accessibilityState={{ disabled: rightDisabled }}
           >
-            <Animated.View style={[rightCapsuleAnim]}>
+            <Animated.View style={[rightCapsuleAnim, rightDisabled ? s.disabledAction : null]}>
               <Text
                 numberOfLines={1}
                 style={s.actionText}

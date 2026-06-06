@@ -40,10 +40,10 @@ import {
 } from '../../../src/shared/validation/phone';
 import {
   getEmailFieldError,
+  isValidOptionalEmail,
   normalizeOptionalEmail,
 } from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
-import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
@@ -299,7 +299,7 @@ async function withTimeout(promise, ms, timeoutMessage = 'timeout') {
   }
 }
 
-async function updateUserAuthViaFunction({ userId, profileId, changedBy, email, password }) {
+function buildUpdateUserFunctionBody({ userId, profileId, changedBy }) {
   const normalizedUserId = String(userId || '').trim();
   const normalizedProfileId = String(profileId || '').trim();
   const body = {
@@ -310,6 +310,11 @@ async function updateUserAuthViaFunction({ userId, profileId, changedBy, email, 
   if (!body.user_id && !body.profile_id) {
     throw new Error('Invalid user id');
   }
+  return body;
+}
+
+async function updateUserAuthViaFunction({ userId, profileId, changedBy, email, password }) {
+  const body = buildUpdateUserFunctionBody({ userId, profileId, changedBy });
   const normalizedEmail = normalizeOptionalEmail(email);
   if (normalizedEmail) body.email = normalizedEmail;
   if (password && String(password).length > 0) body.password = String(password);
@@ -322,6 +327,24 @@ async function updateUserAuthViaFunction({ userId, profileId, changedBy, email, 
     throw new Error(data?.message || data?.error || 'Auth update failed');
   }
   return data || { ok: true };
+}
+
+async function checkUserEmailAvailabilityViaFunction({ userId, profileId, changedBy, email }) {
+  const normalizedEmail = normalizeOptionalEmail(email);
+  if (!normalizedEmail) return 'available';
+
+  const body = buildUpdateUserFunctionBody({ userId, profileId, changedBy });
+  body.check_only = true;
+  body.email = normalizedEmail;
+
+  const { data, error } = await supabase.functions.invoke(FUNCTIONS.UPDATE_USER, {
+    body,
+  });
+  if (error) throw error;
+  if (data?.ok === false || data?.success === false) {
+    throw new Error(data?.message || data?.error || data?.code || 'Email check failed');
+  }
+  return data?.email_available === false ? 'taken' : 'available';
 }
 
 async function updateUserPasswordViaFunction({ userId, profileId, newPassword, changedBy }) {
@@ -677,6 +700,7 @@ export default function EditUser() {
   const [cropSrc, setCropSrc] = useState(null);
   const [avatarKey, setAvatarKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [submitCheckingEmail, setSubmitCheckingEmail] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [middleName, setMiddleName] = useState('');
   const [lastName, setLastName] = useState('');
@@ -684,6 +708,8 @@ export default function EditUser() {
   const [phone, setPhone] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [touched, setTouched] = useState({});
+  const [submittedAttempt, setSubmittedAttempt] = useState(false);
+  const [emailCheckStatus, setEmailCheckStatus] = useState(null);
   const requiredMsg = useMemo(() => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t), [t]);
   const shouldShowError = useCallback(
     (field) => submittedAttempt || !!touched[field],
@@ -729,7 +755,6 @@ export default function EditUser() {
   const [withYear, setWithYear] = useState(true);
   const [dobModalVisible, setDobModalVisible] = useState(false);
   const [confirmPwdVisible, setConfirmPwdVisible] = useState(false);
-  const [confirmSensitiveReason, setConfirmSensitiveReason] = useState(null);
   const [_pendingSave, setPendingSave] = useState(false);
   const [_focusFirst, setFocusFirst] = useState(false);
   const [_focusLast, setFocusLast] = useState(false);
@@ -802,6 +827,7 @@ export default function EditUser() {
       }).map((field) => field.fieldKey),
     [employeeFieldSettings],
   );
+  const emailValid = useMemo(() => isValidOptionalEmail(email), [email]);
   const hasAnyName = !!(firstName.trim() || middleName.trim() || lastName.trim());
   const shouldShowAnyNameError =
     shouldShowError('firstName') || shouldShowError('middleName') || shouldShowError('lastName');
@@ -814,15 +840,32 @@ export default function EditUser() {
   const lastNameError =
     fieldErrors.lastName?.message ||
     (fieldUi.isVisible('last_name') && shouldShowAnyNameError && !hasAnyName ? requiredMsg : null);
-  const emailError =
-    fieldErrors.email?.message ||
-    ((fieldUi.isVisible('email') && shouldShowError('email'))
+  const normalizedEmailValue = normalizeOptionalEmail(email);
+  const emailRequiredError =
+    fieldUi.isVisible('email') && shouldShowError('email') && !normalizedEmailValue
       ? getEmailFieldError(email, {
           required: fieldUi.isRequired('email'),
           requiredMessage: requiredMsg,
           t,
         })
-      : null);
+      : null;
+  const emailFormatError =
+    fieldUi.isVisible('email') && normalizedEmailValue && !emailValid
+      ? getEmailFieldError(email, {
+          required: fieldUi.isRequired('email'),
+          requiredMessage: requiredMsg,
+          t,
+        })
+      : null;
+  const emailTakenError =
+    fieldUi.isVisible('email') && emailCheckStatus === 'taken'
+      ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
+      : null;
+  const emailError =
+    fieldErrors.email?.message ||
+    emailFormatError ||
+    emailRequiredError ||
+    emailTakenError;
   const phoneError =
     fieldErrors.phone?.message ||
     (fieldUi.isVisible('phone') && shouldShowError('phone')
@@ -844,7 +887,6 @@ export default function EditUser() {
       : null);
 
   const [err, setErr] = useState('');
-  const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const ensureCameraPerms = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     return status === 'granted';
@@ -951,6 +993,9 @@ export default function EditUser() {
   const middleNameRef = useRef(null);
   const lastNameRef = useRef(null);
   const emailRef = useRef(null);
+  const emailCheckTimeoutRef = useRef(null);
+  const emailCheckRequestRef = useRef(0);
+  const saveInFlightRef = useRef(false);
   const phoneRef = useRef(null);
   const _dobFieldRef = useRef(null);
   const _deptFieldRef = useRef(null);
@@ -959,6 +1004,155 @@ export default function EditUser() {
   const insets = useSafeAreaInsets();
   const scrollYRef = useRef(0);
   const headerHeight = theme?.components?.header?.height ?? 56;
+  const edgeTargetProfileId = useMemo(
+    () =>
+      [
+        employeeData?.id,
+        employeeData?.profile_id,
+        employeeData?.profileId,
+        userId,
+      ]
+        .map((v) => String(v || '').trim())
+        .find((v) => isUuid(v)) || null,
+    [employeeData?.id, employeeData?.profileId, employeeData?.profile_id, userId],
+  );
+  const edgeTargetAuthUserId = useMemo(
+    () =>
+      [
+        employeeData?.user_id,
+        employeeData?.userId,
+      ]
+        .map((v) => String(v || '').trim())
+        .find((v) => isUuid(v)) || null,
+    [employeeData?.userId, employeeData?.user_id],
+  );
+  const ownEmailProfileIds = useMemo(
+    () =>
+      new Set(
+        [
+          employeeData?.id,
+          employeeData?.profile_id,
+          employeeData?.profileId,
+          employeeData?.user_id,
+          employeeData?.userId,
+          userId,
+        ]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean),
+      ),
+    [
+      employeeData?.id,
+      employeeData?.profileId,
+      employeeData?.profile_id,
+      employeeData?.userId,
+      employeeData?.user_id,
+      userId,
+    ],
+  );
+  const checkEmailAvailability = useCallback(
+    async (emailToCheck, options = {}) => {
+      const authoritative = options?.authoritative === true;
+      const failOnError = options?.failOnError === true;
+      const requestId = ++emailCheckRequestRef.current;
+      const normalizedEmail = normalizeOptionalEmail(emailToCheck);
+      const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
+
+      if (
+        !fieldUi.isVisible('email') ||
+        !normalizedEmail ||
+        !isValidOptionalEmail(normalizedEmail) ||
+        normalizedEmail === normalizedCurrentEmail
+      ) {
+        setEmailCheckStatus(null);
+        return null;
+      }
+
+      try {
+        setEmailCheckStatus('checking');
+
+        let nextStatus = null;
+        if (authoritative) {
+          nextStatus = await checkUserEmailAvailabilityViaFunction({
+            userId: edgeTargetAuthUserId || null,
+            profileId: edgeTargetProfileId,
+            changedBy: meId || userId,
+            email: normalizedEmail,
+          });
+        } else {
+          const { data, error } = await supabase
+            .from(TABLES.profiles)
+            .select('id')
+            .ilike('email', normalizedEmail)
+            .limit(5);
+
+          if (requestId !== emailCheckRequestRef.current) return null;
+
+          if (error) {
+            console.warn('Email check error:', error);
+            setEmailCheckStatus(null);
+            if (failOnError) throw error;
+            return null;
+          }
+
+          const rows = Array.isArray(data) ? data : [];
+          const isTaken = rows.some((row) => {
+            const rowId = String(row?.id || '').trim();
+            return rowId && !ownEmailProfileIds.has(rowId);
+          });
+          nextStatus = isTaken ? 'taken' : 'available';
+        }
+
+        if (requestId !== emailCheckRequestRef.current) return null;
+        setEmailCheckStatus(nextStatus);
+        return nextStatus;
+      } catch (e) {
+        if (requestId === emailCheckRequestRef.current) {
+          if (isEmailTakenError(e)) {
+            setEmailCheckStatus('taken');
+            return 'taken';
+          }
+          console.warn('Email check failed:', e);
+          setEmailCheckStatus(null);
+        }
+        if (failOnError) throw e;
+        return null;
+      }
+    },
+    [edgeTargetAuthUserId, edgeTargetProfileId, employeeData?.email, fieldUi, meId, ownEmailProfileIds, userId],
+  );
+
+  useEffect(() => {
+    if (emailCheckTimeoutRef.current) {
+      clearTimeout(emailCheckTimeoutRef.current);
+      emailCheckTimeoutRef.current = null;
+    }
+
+    emailCheckRequestRef.current += 1;
+
+    const normalizedEmail = normalizeOptionalEmail(email);
+    const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
+    if (
+      !fieldUi.isVisible('email') ||
+      !normalizedEmail ||
+      !emailValid ||
+      normalizedEmail === normalizedCurrentEmail
+    ) {
+      setEmailCheckStatus(null);
+      return undefined;
+    }
+
+    emailCheckTimeoutRef.current = setTimeout(() => {
+      checkEmailAvailability(normalizedEmail);
+    }, 800);
+
+    return () => {
+      if (emailCheckTimeoutRef.current) {
+        clearTimeout(emailCheckTimeoutRef.current);
+        emailCheckTimeoutRef.current = null;
+      }
+    };
+  }, [checkEmailAvailability, email, emailValid, employeeData?.email, fieldUi]);
+
   const ensurePasswordFieldVisible = useCallback(
     (fieldRef, extraBottomGap = 24) => {
       const currentField = fieldRef?.current;
@@ -1147,22 +1341,7 @@ export default function EditUser() {
     try {
       setSaving(true);
       setErr('');
-      showInfoToast(t('toast_saving'));
       let savedAvatarUrl = avatarUrl || null;
-      const edgeTargetProfileId = [
-        employeeData?.id,
-        employeeData?.profile_id,
-        employeeData?.profileId,
-        userId,
-      ]
-        .map((v) => String(v || '').trim())
-        .find((v) => isUuid(v));
-      const edgeTargetAuthUserId = [
-        employeeData?.user_id,
-        employeeData?.userId,
-      ]
-        .map((v) => String(v || '').trim())
-        .find((v) => isUuid(v));
       if (!edgeTargetProfileId) throw new Error('Invalid user id');
       const normalizedNextEmail = normalizeOptionalEmail(email);
       const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
@@ -1221,7 +1400,6 @@ export default function EditUser() {
         setConfirmPassword('');
         setPasswordFieldResetKey((prev) => prev + 1);
         setConfirmPwdVisible(false);
-        setConfirmSensitiveReason(null);
         setPendingSave(false);
         setInitialSnap(
           JSON.stringify({
@@ -1382,18 +1560,17 @@ export default function EditUser() {
         if (profErr) throw profErr;
 
         if (shouldUpdateAuthEmail || (newPassword && newPassword.length)) {
-          const authPatch = {};
-          if (shouldUpdateAuthEmail) authPatch.email = normalizedNextEmail;
-          if (newPassword && newPassword.length) authPatch.password = newPassword;
-          const authOptions = shouldUpdateAuthEmail
-            ? { emailRedirectTo: getEmailChangeRedirectUrl() }
-            : undefined;
-          const { error: selfAuthErr } = await withTimeout(
-            supabase.auth.updateUser(authPatch, authOptions),
+          await withTimeout(
+            updateUserAuthViaFunction({
+              userId: edgeTargetAuthUserId || null,
+              profileId: edgeTargetProfileId,
+              changedBy: meId || userId,
+              email: shouldUpdateAuthEmail ? normalizedNextEmail : null,
+              password: newPassword && newPassword.length ? newPassword : null,
+            }),
             15000,
             'password-update-timeout',
           );
-          if (selfAuthErr) throw selfAuthErr;
         }
       }
 
@@ -1402,7 +1579,6 @@ export default function EditUser() {
       // Force remount of password inputs to clear native masked text state on Android.
       setPasswordFieldResetKey((prev) => prev + 1);
       setConfirmPwdVisible(false);
-      setConfirmSensitiveReason(null);
       setPendingSave(false);
       setInitialSnap(
         JSON.stringify({
@@ -1470,13 +1646,6 @@ export default function EditUser() {
       refetchEmployee().catch(() => {});
       allowLeaveRef.current = true;
       showSuccessToast(t('toast_success'));
-      if (shouldUpdateAuthEmail) {
-        showInfoToast(
-          t(
-            'toast_email_change_next_steps',
-          ),
-        );
-      }
       // После успешного сохранения возвращаемся на предыдущую страницу
       if (navigation && typeof navigation.goBack === 'function') {
         navigation.goBack();
@@ -1507,6 +1676,9 @@ export default function EditUser() {
   };
 
   const handleSave = async () => {
+    if (saveInFlightRef.current || saving || submitCheckingEmail) return;
+    saveInFlightRef.current = true;
+    try {
     Keyboard.dismiss();
     setErr('');
     clearBanner();
@@ -1547,6 +1719,63 @@ export default function EditUser() {
     }
     const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
     const normalizedNextEmail = normalizeOptionalEmail(email);
+    const hasEmailChangeForValidation =
+      !!normalizedNextEmail &&
+      normalizedNextEmail.toLowerCase() !== String(normalizedCurrentEmail || '').toLowerCase();
+    let effectiveEmailCheckStatus = emailCheckStatus;
+    if (fieldUi.isVisible('email') && hasEmailChangeForValidation && emailValid) {
+      try {
+        setSubmitCheckingEmail(true);
+        effectiveEmailCheckStatus = await checkEmailAvailability(normalizedNextEmail, {
+          authoritative: true,
+          failOnError: true,
+        });
+      } catch (e) {
+        const msg = isEmailTakenError(e)
+          ? getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t)
+          : getMessageByCode(FEEDBACK_CODES.NETWORK_ERROR, t);
+        setFieldErrors({ email: { message: msg } });
+        showError(msg);
+        ensureVisibleField({
+          fieldRef: emailRef,
+          scrollRef,
+          scrollYRef,
+          insetsBottom: insets.bottom ?? 0,
+          headerHeight,
+        });
+        emailRef.current?.focus?.();
+        return;
+      } finally {
+        setSubmitCheckingEmail(false);
+      }
+    }
+    if (fieldUi.isVisible('email') && effectiveEmailCheckStatus === 'taken') {
+      const emailTakenMessage = getMessageByCode(FEEDBACK_CODES.EMAIL_TAKEN, t);
+      setFieldErrors({ email: { message: emailTakenMessage } });
+      ensureVisibleField({
+        fieldRef: emailRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
+      emailRef.current?.focus?.();
+      return;
+    }
+    if (fieldUi.isVisible('email') && hasEmailChangeForValidation && effectiveEmailCheckStatus !== 'available') {
+      const emailCheckMessage = getMessageByCode(FEEDBACK_CODES.NETWORK_ERROR, t);
+      setFieldErrors({ email: { message: emailCheckMessage } });
+      showError(emailCheckMessage);
+      ensureVisibleField({
+        fieldRef: emailRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
+      emailRef.current?.focus?.();
+      return;
+    }
     if (normalizedCurrentEmail && !normalizedNextEmail) {
       setFieldErrors({ email: { message: requiredMsg } });
       ensureVisibleField({
@@ -1593,9 +1822,6 @@ export default function EditUser() {
     }
     // Если редактируем собственный профиль и задан новый пароль — проверяем его
     const hasPasswordChange = !!(meId && meId === userId && newPassword && newPassword.length);
-    const hasEmailChange =
-      !!normalizedNextEmail &&
-      normalizedNextEmail.toLowerCase() !== normalizedCurrentEmail.toLowerCase();
     if (hasPasswordChange) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
         setFieldErrors({ newPassword: { message: t('error_password_too_short') } });
@@ -1618,15 +1844,16 @@ export default function EditUser() {
         return;
       }
     }
-    if (hasPasswordChange || hasEmailChange) {
-      setConfirmSensitiveReason(
-        hasPasswordChange && hasEmailChange ? 'password_and_email' : hasPasswordChange ? 'password' : 'email',
-      );
+    if (hasPasswordChange) {
       setConfirmPwdVisible(true);
       return;
     }
 
     await proceedSave();
+    } finally {
+      setSubmitCheckingEmail(false);
+      saveInFlightRef.current = false;
+    }
   };
 
   const cancelRef = useRef(null);
@@ -2346,6 +2573,8 @@ export default function EditUser() {
             onChangeText={(val) => {
               setEmail(val);
               clearFieldError('email');
+              emailCheckRequestRef.current += 1;
+              setEmailCheckStatus(null);
             }}
             onFocus={() => {
               setFocusEmail(true);
@@ -2427,7 +2656,8 @@ export default function EditUser() {
   return (
     <EditScreenTemplate
       title={t('header_edit_user')}
-      rightTextLabel={saving ? t('toast_saving') : t('header_save')}
+      rightTextLabel={submitCheckingEmail ? t('hint_checking') : saving ? t('toast_saving') : t('header_save')}
+      rightDisabled={saving || submitCheckingEmail || emailCheckStatus === 'checking'}
       onRightPress={handleSave}
       scrollRef={scrollRef}
       onScroll={(e) => {
@@ -2565,6 +2795,13 @@ export default function EditUser() {
               <ScreenBanner
                 message={{ message: err, severity: 'error' }}
                 onClose={() => setErr('')}
+                style={{ marginBottom: theme.spacing.md }}
+              />
+            ) : null}
+            {emailCheckStatus === 'checking' && emailValid ? (
+              <ScreenBanner
+                message={{ message: t('warn_checking_email'), severity: 'info' }}
+                onClose={() => setEmailCheckStatus(null)}
                 style={{ marginBottom: theme.spacing.md }}
               />
             ) : null}
@@ -2752,32 +2989,15 @@ export default function EditUser() {
               confirmVariant="destructive"
               onConfirm={confirmCancel}
             />
-            {/* Confirm sensitive updates (password/email) */}
+            {/* Confirm password update */}
             <ConfirmModal
               visible={confirmPwdVisible}
               onClose={() => {
                 setConfirmPwdVisible(false);
-                setConfirmSensitiveReason(null);
                 setPendingSave(false);
               }}
-              title={
-                confirmSensitiveReason === 'email'
-                  ? t('dlg_confirm_email_title')
-                  : confirmSensitiveReason === 'password_and_email'
-                    ? t('dlg_confirm_pwd_email_title')
-                    : t('dlg_confirm_pwd_title')
-              }
-              message={
-                confirmSensitiveReason === 'email'
-                  ? t(
-                      'dlg_confirm_email_msg',
-                    )
-                  : confirmSensitiveReason === 'password_and_email'
-                    ? t(
-                        'dlg_confirm_pwd_email_msg',
-                      )
-                    : t('dlg_confirm_pwd_msg')
-              }
+              title={t('dlg_confirm_pwd_title')}
+              message={t('dlg_confirm_pwd_msg')}
               confirmLabel={saving ? t('toast_saving') : t('header_save')}
               cancelLabel={t('header_cancel')}
               confirmVariant="primary"

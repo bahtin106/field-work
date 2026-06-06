@@ -13,6 +13,7 @@ type ReqBody = {
   user_id: string;
   profile_id?: string | null;
   changed_by?: string | null;
+  check_only?: boolean | null;
   email?: string | null;
   new_password?: string | null;
   password?: string | null;
@@ -53,6 +54,120 @@ function getBearerToken(req: Request): string {
   return String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
 }
 
+function normalizeEmail(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function uniqueIds(values: unknown[]): string[] {
+  return values
+    .map((value) => String(value || '').trim())
+    .filter((value, index, arr) => !!value && arr.indexOf(value) === index);
+}
+
+async function listProfilesByEmail(admin: any, email: string) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return [];
+
+  const selectVariants = ['id, user_id, email', 'id, email', 'id, user_id', 'id'];
+  for (const selectColumns of selectVariants) {
+    const { data, error } = await admin
+      .from('profiles')
+      .select(selectColumns)
+      .ilike('email', normalizedEmail)
+      .limit(20);
+
+    if (!error) {
+      const rows = Array.isArray(data) ? data : [];
+      return rows.filter((row: any) => {
+        if (!Object.prototype.hasOwnProperty.call(row || {}, 'email')) return true;
+        return normalizeEmail(row?.email) === normalizedEmail;
+      });
+    }
+
+    if (isMissingColumn(error, 'email')) return [];
+    if (isMissingColumn(error, 'user_id')) continue;
+    console.warn('[UPDATE_USER] Profile email lookup failed:', error?.message || error);
+    throw new Error('EMAIL_CHECK_FAILED');
+  }
+
+  return [];
+}
+
+async function listAuthUsersByEmail(admin: any, email: string) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return [];
+
+  const authSchemaClient = typeof admin?.schema === 'function' ? admin.schema('auth') : null;
+  if (authSchemaClient) {
+    const { data, error } = await authSchemaClient
+      .from('users')
+      .select('id, email')
+      .ilike('email', normalizedEmail)
+      .limit(20);
+
+    if (!error) {
+      const rows = Array.isArray(data) ? data : [];
+      return rows.filter((row: any) => normalizeEmail(row?.email) === normalizedEmail);
+    }
+
+    const code = String(error?.code || '');
+    const message = String(error?.message || '').toLowerCase();
+    const schemaUnavailable =
+      code === '42P01' ||
+      code === '42501' ||
+      code === 'PGRST106' ||
+      message.includes('schema') ||
+      message.includes('permission denied') ||
+      message.includes('does not exist');
+    if (!schemaUnavailable) {
+      console.warn('[UPDATE_USER] Auth schema email lookup failed:', error?.message || error);
+      throw new Error('EMAIL_CHECK_FAILED');
+    }
+  }
+
+  const matches: any[] = [];
+  let page = 1;
+  const perPage = 200;
+  for (let i = 0; i < 50; i += 1) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      console.warn('[UPDATE_USER] Auth email lookup failed:', error?.message || error);
+      throw new Error('EMAIL_CHECK_FAILED');
+    }
+
+    const users = Array.isArray(data?.users) ? data.users : [];
+    for (const user of users) {
+      if (normalizeEmail(user?.email) === normalizedEmail) matches.push(user);
+    }
+
+    const total = Number(data?.total || 0);
+    if (users.length < perPage || (total > 0 && page * perPage >= total)) break;
+    page += 1;
+  }
+
+  return matches;
+}
+
+async function isEmailTakenByOther(admin: any, email: string, ownIds: unknown[]) {
+  const ownIdSet = new Set(uniqueIds(ownIds));
+  const [profiles, authUsers] = await Promise.all([
+    listProfilesByEmail(admin, email),
+    listAuthUsersByEmail(admin, email),
+  ]);
+
+  const profileTaken = profiles.some((row: any) => {
+    const rowIds = uniqueIds([row?.id, row?.user_id]);
+    if (!rowIds.length) return true;
+    return !rowIds.some((id) => ownIdSet.has(id));
+  });
+  if (profileTaken) return true;
+
+  return authUsers.some((user: any) => {
+    const authId = String(user?.id || '').trim();
+    return !!authId && !ownIdSet.has(authId);
+  });
+}
+
 function toPublicUpdateUserError(error: unknown): { code: string; message: string } {
   const message = String((error as Error)?.message || 'Unknown error');
   const normalized = message.toLowerCase();
@@ -67,6 +182,13 @@ function toPublicUpdateUserError(error: unknown): { code: string; message: strin
     /duplicate/.test(normalized)
   ) {
     return { code: 'EMAIL_TAKEN', message: 'EMAIL_TAKEN' };
+  }
+  if (
+    /email_check_failed/.test(normalized) ||
+    /email availability check failed/.test(normalized) ||
+    /email lookup failed/.test(normalized)
+  ) {
+    return { code: 'EMAIL_CHECK_FAILED', message: 'EMAIL_CHECK_FAILED' };
   }
   if (
     /invalid_email/.test(normalized) ||
@@ -269,6 +391,7 @@ export async function handleUpdateUserRequest(req: Request) {
     } =
       body;
 
+    const isCheckOnly = body?.check_only === true;
     const hasPrivilegedFields =
       typeof role === 'string' ||
       typeof is_admin_blocked === 'boolean' ||
@@ -345,6 +468,24 @@ export async function handleUpdateUserRequest(req: Request) {
     }
 
     // 1) Обновление полей профиля (если переданы)
+    if (nextEmail) {
+      const emailTaken = await isEmailTakenByOther(admin, nextEmail, [
+        targetAuthUserIdSafe,
+        targetProfileId,
+        targetProfileUserId,
+        rawUserId,
+        rawProfileId,
+      ]);
+      if (emailTaken) throw new Error('EMAIL_TAKEN');
+    }
+
+    if (isCheckOnly) {
+      return new Response(JSON.stringify({ ok: true, email_available: true }), {
+        headers: { 'Content-Type': 'application/json', ...cors },
+        status: 200,
+      });
+    }
+
     const profilePatch: any = {};
     if (profile && typeof profile === 'object') {
       if ('first_name' in profile) profilePatch.first_name = profile.first_name;

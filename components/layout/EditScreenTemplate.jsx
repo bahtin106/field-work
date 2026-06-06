@@ -10,6 +10,7 @@ import AppHeader from '../navigation/AppHeader';
 export default function EditScreenTemplate({
   title,
   rightTextLabel,
+  rightDisabled,
   onRightPress,
   onBack,
   headerOptions,
@@ -39,6 +40,7 @@ export default function EditScreenTemplate({
     headerTitleAlign: 'left',
     title,
     rightTextLabel,
+    rightDisabled,
     onRightPress,
     ...(headerOptions || {}),
   };
