@@ -174,7 +174,7 @@ export async function runMediaUploadQueue(items, worker, { concurrency = DEFAULT
   return results;
 }
 
-export async function prefetchMediaUrls(urls, { cachePolicy = 'memory-disk' } = {}) {
+export async function prefetchMediaUrls(urls, { cachePolicy = 'memory-disk', batchSize = 8 } = {}) {
   const targets = Array.from(
     new Set(
       (Array.isArray(urls) ? urls : [urls])
@@ -183,8 +183,15 @@ export async function prefetchMediaUrls(urls, { cachePolicy = 'memory-disk' } = 
     ),
   );
   if (!targets.length) return false;
+  const size = Math.max(1, Math.min(Number(batchSize || 8), 16));
+  let ok = true;
   try {
-    return await Image.prefetch(targets, cachePolicy);
+    for (let index = 0; index < targets.length; index += size) {
+      const batch = targets.slice(index, index + size);
+      const result = await Image.prefetch(batch, cachePolicy);
+      if (result === false) ok = false;
+    }
+    return ok;
   } catch {
     return false;
   }

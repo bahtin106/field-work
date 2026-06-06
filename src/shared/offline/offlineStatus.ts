@@ -2,10 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 import { onlineManager, type QueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
-import { getRequestById, updateRequest } from '../../features/requests/api';
-import { getClientById, updateClient } from '../../features/clients/api';
-import { getClientObjectById, updateClientObject } from '../../features/objects/api';
-import { getEmployeeById, updateEmployeeProfile } from '../../features/employees/api';
 import { queryKeys } from '../query/queryKeys';
 
 const OUTBOX_KEY = 'offline.outbox.v1';
@@ -417,24 +413,40 @@ function setEntityQueryData(queryClient: QueryClient, item: OfflineOutboxItem, d
 }
 
 async function fetchLatestForItem(item: OfflineOutboxItem) {
-  if (item.entity === 'request') return getRequestById(item.entityId);
-  if (item.entity === 'client') return getClientById(item.entityId);
-  if (item.entity === 'object') return getClientObjectById(item.entityId);
-  if (item.entity === 'employee') return getEmployeeById(item.entityId);
+  if (item.entity === 'request') {
+    const { getRequestById } = await import('../../features/requests/api');
+    return getRequestById(item.entityId);
+  }
+  if (item.entity === 'client') {
+    const { getClientById } = await import('../../features/clients/api');
+    return getClientById(item.entityId);
+  }
+  if (item.entity === 'object') {
+    const { getClientObjectById } = await import('../../features/objects/api');
+    return getClientObjectById(item.entityId);
+  }
+  if (item.entity === 'employee') {
+    const { getEmployeeById } = await import('../../features/employees/api');
+    return getEmployeeById(item.entityId);
+  }
   return null;
 }
 
 async function updateItemOnline(item: OfflineOutboxItem, latest: any) {
   if (item.entity === 'request') {
+    const { updateRequest } = await import('../../features/requests/api');
     return updateRequest(item.entityId, item.patch, latest?.updated_at || item.expectedUpdatedAt || null);
   }
   if (item.entity === 'client') {
+    const { updateClient } = await import('../../features/clients/api');
     return updateClient(item.entityId, item.patch);
   }
   if (item.entity === 'object') {
+    const { updateClientObject } = await import('../../features/objects/api');
     return updateClientObject(item.entityId, item.patch);
   }
   if (item.entity === 'employee') {
+    const { updateEmployeeProfile } = await import('../../features/employees/api');
     return updateEmployeeProfile(item.entityId, item.patch);
   }
   return null;

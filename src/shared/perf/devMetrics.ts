@@ -9,10 +9,28 @@ const isDev = () => {
   }
 };
 
-const isPerfLoggingEnabled = () => {
+const isTruthyFlag = (value: unknown) => {
+  if (value === true) return true;
+  if (typeof value !== 'string') return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+};
+
+const readEnvFlag = (name: string) => {
+  try {
+    return typeof process !== 'undefined' ? process?.env?.[name] : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+export const isPerfLoggingEnabled = () => {
   if (!isDev()) return false;
   try {
-    return globalThis?.__DEV_PERF_METRICS__ === true;
+    return (
+      globalThis?.__DEV_PERF_METRICS__ === true ||
+      isTruthyFlag(readEnvFlag('EXPO_PUBLIC_PERF_LOGS')) ||
+      isTruthyFlag(readEnvFlag('EXPO_PUBLIC_DEBUG_PERF'))
+    );
   } catch {
     return false;
   }

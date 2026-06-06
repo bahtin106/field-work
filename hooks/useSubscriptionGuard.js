@@ -12,12 +12,15 @@ function isExpiredByPeriod(entitlements) {
   return Date.now() >= parsed.getTime();
 }
 
-export function useSubscriptionGuard(companyId) {
+export function useSubscriptionGuard(companyId, options = {}) {
+  const { enabled = true } = options || {};
   const { profile } = useAuthContext();
   const role = String(profile?.role || '').toLowerCase();
   const isOwner = role === 'admin';
 
-  const { data, isLoading, isFetching, error, refresh, hasFreshData } = useCompanyEntitlements(companyId);
+  const { data, isLoading, isFetching, error, refresh, hasFreshData } = useCompanyEntitlements(companyId, {
+    enabled,
+  });
   const hasEntitlements = data != null;
   const hasResolvedEntitlements = hasEntitlements || hasFreshData;
   const guardLoading = !!companyId && !hasResolvedEntitlements && (isLoading || isFetching);

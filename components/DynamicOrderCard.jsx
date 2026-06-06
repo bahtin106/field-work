@@ -2,11 +2,19 @@
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { formatCurrency } from '../lib/currency';
+import {
+  FEED_ORDER_FIELD_KEYS,
+  getFeedOrderFieldsForRole,
+  isFeedOrder,
+} from '../lib/feedOrderFieldVisibility';
 import { shouldShowOrderPhoneForRole } from '../lib/phoneVisibilityRules';
 import { readValueFromOrder } from '../lib/settings';
-import { supabase } from '../lib/supabase';
 import { useCompanySettings } from '../hooks/useCompanySettings';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
+import {
+  fetchExecutorNameById,
+  readCachedExecutorName,
+} from '../src/features/requests/executorNameCache';
 import { resolveRequestTitle } from '../src/features/requests/title';
 import { useTranslation } from '../src/i18n/useTranslation';
 import {
@@ -19,62 +27,16 @@ import { useTheme } from '../theme/ThemeProvider';
 
 /* ===== Utils ===== */
 
-/* ===== Name cache for executor (avoid N requests in lists) ===== */
-const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
-const EXECUTOR_NAME_INFLIGHT = (globalThis.EXECUTOR_NAME_INFLIGHT ||= new Map());
-const EXECUTOR_NAME_CACHE_MAX_ENTRIES = 300;
 const CARD_PRESS_GUARD_MS = 250;
-
-function getCachedExecutorName(userId) {
-  if (!userId || !EXECUTOR_NAME_CACHE.has(userId)) return '';
-  const value = EXECUTOR_NAME_CACHE.get(userId);
-  EXECUTOR_NAME_CACHE.delete(userId);
-  EXECUTOR_NAME_CACHE.set(userId, value);
-  return typeof value === 'string' ? value : '';
-}
-
-function setCachedExecutorName(userId, displayName) {
-  if (!userId) return;
-  const value = String(displayName || '').trim();
-  EXECUTOR_NAME_CACHE.delete(userId);
-  EXECUTOR_NAME_CACHE.set(userId, value);
-  while (EXECUTOR_NAME_CACHE.size > EXECUTOR_NAME_CACHE_MAX_ENTRIES) {
-    const oldestKey = EXECUTOR_NAME_CACHE.keys().next()?.value;
-    if (oldestKey == null) break;
-    EXECUTOR_NAME_CACHE.delete(oldestKey);
-  }
-}
-
-async function fetchExecutorNameById(userId) {
-  const uid = String(userId || '').trim();
-  if (!uid) return '';
-  const cached = getCachedExecutorName(uid);
-  if (cached) return cached;
-  if (EXECUTOR_NAME_INFLIGHT.has(uid)) {
-    return EXECUTOR_NAME_INFLIGHT.get(uid);
-  }
-
-  const runner = (async () => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('first_name, middle_name, last_name')
-        .eq('id', uid)
-        .single();
-      if (error || !data) return '';
-      const full = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
-      if (full) setCachedExecutorName(uid, full);
-      return full;
-    } catch {
-      return '';
-    } finally {
-      EXECUTOR_NAME_INFLIGHT.delete(uid);
-    }
-  })();
-
-  EXECUTOR_NAME_INFLIGHT.set(uid, runner);
-  return runner;
-}
+const CARD_DATE_FORMATTER_RU = new Intl.DateTimeFormat('ru-RU', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+const CARD_TIME_FORMATTER_RU = new Intl.DateTimeFormat('ru-RU', {
+  hour: '2-digit',
+  minute: '2-digit',
+});
 
 const PRIMARY_ROW_LABEL_KEYS = {
   customer_name: 'order_details_customer',
@@ -123,11 +85,7 @@ function parseDisplayDate(value) {
 function formatDateShort(iso, showTime = true, explicitTime = '') {
   const d = parseDisplayDate(iso);
   if (!d) return '';
-  const parts = new Intl.DateTimeFormat('ru-RU', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  }).formatToParts(d);
+  const parts = CARD_DATE_FORMATTER_RU.formatToParts(d);
   const day = parts.find((p) => p.type === 'day')?.value || String(d.getDate());
   const month = parts.find((p) => p.type === 'month')?.value || '';
   const year = parts.find((p) => p.type === 'year')?.value || String(d.getFullYear());
@@ -136,7 +94,7 @@ function formatDateShort(iso, showTime = true, explicitTime = '') {
     const time = normalizeTimeOnly(explicitTime);
     if (time) return `${dateStr}, ${time}`;
     if (hasExplicitTimeInDatetime(iso)) {
-      return `${dateStr}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+      return `${dateStr}, ${CARD_TIME_FORMATTER_RU.format(d)}`;
     }
   }
   return dateStr;
@@ -288,11 +246,18 @@ function DynamicOrderCard({
   departureTimeEnabled, // optional explicit flag from order field settings
   orderFieldsByKey = null, // Map<fieldKey, normalized entity field>
   companyCurrency = null, // optional currency from parent screen
+  companySettingsOverride = null, // optional settings snapshot from parent list
 }) {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { profile } = useAuthContext();
-  const { settings: companySettings } = useCompanySettings();
+  const hasCompanySettingsOverride =
+    companySettingsOverride && typeof companySettingsOverride === 'object';
+  const { settings: fetchedCompanySettings } = useCompanySettings(null, {
+    enabled: !hasCompanySettingsOverride,
+    subscribe: !hasCompanySettingsOverride,
+  });
+  const companySettings = hasCompanySettingsOverride ? companySettingsOverride : fetchedCompanySettings;
   const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, profile?.role);
   const lastPressAtRef = useRef(0);
 
@@ -328,14 +293,48 @@ function DynamicOrderCard({
     }
   }, [onPress, order]);
 
+  const roleRaw = useMemo(
+    () =>
+      String(
+        viewerRole ||
+          profile?.role ||
+          order?.viewerRole ||
+          order?.current_user_role ||
+          order?.role ||
+          '',
+      )
+        .trim()
+        .toLowerCase(),
+    [order?.current_user_role, order?.role, order?.viewerRole, profile?.role, viewerRole],
+  );
+  const configuredFeedFields = useMemo(
+    () => getFeedOrderFieldsForRole(companySettings, roleRaw),
+    [companySettings, roleRaw],
+  );
+  const isFeedCard = isFeedOrder(order);
+  const canShowFeedField = useCallback(
+    (fieldKey) => {
+      if (!isFeedCard) return true;
+      return configuredFeedFields.includes(String(fieldKey || '').trim());
+    },
+    [configuredFeedFields, isFeedCard],
+  );
+
   // Keep stable defaults for card layout.
   const preset = useMemo(
     () => ({
-      fields: ['title', 'customer_name', 'address'],
+      fields: (isFeedCard ? configuredFeedFields : [
+        FEED_ORDER_FIELD_KEYS.CUSTOMER_NAME,
+        FEED_ORDER_FIELD_KEYS.ADDRESS,
+      ]).filter(
+        (key) =>
+          key !== FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME &&
+          key !== FEED_ORDER_FIELD_KEYS.FINANCE,
+      ),
       pills: ['status'],
-      secondary: ['assigned_to_name'],
+      secondary: [],
     }),
-    [],
+    [configuredFeedFields, isFeedCard],
   );
 
   const fields = useMemo(() => preset.fields, [preset.fields]);
@@ -346,7 +345,18 @@ function DynamicOrderCard({
       if (direct !== null && direct !== undefined && String(direct).trim().length > 0) return true;
       const key = String(fieldKey || '').trim();
       if (!key) return false;
-      if (key === 'phone' && !canShowOrderPhone) return false;
+      if (key === 'phone' && (!canShowOrderPhone || !canShowFeedField(FEED_ORDER_FIELD_KEYS.PHONE))) {
+        return false;
+      }
+      if (
+        key === FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME &&
+        !canShowFeedField(FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME)
+      ) {
+        return false;
+      }
+      if (key === 'start_price' && !canShowFeedField(FEED_ORDER_FIELD_KEYS.FINANCE)) {
+        return false;
+      }
       if (key === 'customer_name') {
         return [
           order?.customer_name,
@@ -380,19 +390,30 @@ function DynamicOrderCard({
       }
       return String(order?.[key] || '').trim().length > 0;
     },
-    [canShowOrderPhone, order],
+    [canShowFeedField, canShowOrderPhone, order],
   );
   const isCardFieldVisible = useCallback(
     (fieldKey) => {
-      if (String(fieldKey || '') === 'phone' && !canShowOrderPhone) {
+      const key = String(fieldKey || '');
+      if (key === 'phone' && (!canShowOrderPhone || !canShowFeedField(FEED_ORDER_FIELD_KEYS.PHONE))) {
         return false;
       }
-      if (String(fieldKey || '') === 'start_price' && !isOrderFinanceEnabledFromMap(orderFieldsByKey)) {
+      if (
+        (key === 'time_window_start' || key === FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME) &&
+        !canShowFeedField(FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME)
+      ) {
+        return false;
+      }
+      if (
+        key === 'start_price' &&
+        (!canShowFeedField(FEED_ORDER_FIELD_KEYS.FINANCE) ||
+          !isOrderFinanceEnabledFromMap(orderFieldsByKey))
+      ) {
         return false;
       }
       return isFieldEnabledBySettings(fieldKey) || hasOrderFieldValue(fieldKey);
     },
-    [canShowOrderPhone, hasOrderFieldValue, isFieldEnabledBySettings, orderFieldsByKey],
+    [canShowFeedField, canShowOrderPhone, hasOrderFieldValue, isFieldEnabledBySettings, orderFieldsByKey],
   );
 
   // Primary rows
@@ -544,6 +565,7 @@ function DynamicOrderCard({
 
   // Price extraction: align with "Общая сумма" from order details
   const priceValue = useMemo(() => {
+    if (!canShowFeedField(FEED_ORDER_FIELD_KEYS.FINANCE)) return null;
     const totalRaw =
       order?.finance_gross_total ??
       ((Number(order?.start_price ?? 0) || 0) +
@@ -558,10 +580,11 @@ function DynamicOrderCard({
       v = order?.start_price ?? order?.total_price ?? order?.amount ?? null;
     }
     return v;
-  }, [order, getFieldByKey]);
+  }, [canShowFeedField, order, getFieldByKey]);
 
   // Bottom date (footer only)
   const bottomDateIso = useMemo(() => {
+    if (!canShowFeedField(FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME)) return null;
     const keys = ['time_window_start', 'date', 'start_at'];
     for (const k of keys) {
       const f = getFieldByKey(k);
@@ -569,9 +592,10 @@ function DynamicOrderCard({
       if (v) return v;
     }
     return null;
-  }, [order, getFieldByKey]);
+  }, [canShowFeedField, order, getFieldByKey]);
 
   const showDepartureTime = useMemo(() => {
+    if (!canShowFeedField(FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME)) return false;
     const explicitTime = hasExplicitDepartureTime(order);
     if (typeof departureTimeEnabled === 'boolean') {
       if (departureTimeEnabled) return explicitTime;
@@ -580,7 +604,7 @@ function DynamicOrderCard({
     const hasField = !!getFieldByKey?.('departure_time');
     if (!hasField) return explicitTime;
     return isCardFieldVisible('departure_time') && explicitTime;
-  }, [departureTimeEnabled, getFieldByKey, hasOrderFieldValue, isCardFieldVisible, order]);
+  }, [canShowFeedField, departureTimeEnabled, getFieldByKey, hasOrderFieldValue, isCardFieldVisible, order]);
 
   // Time string derived from bottomDateIso (used in calendar context)
   const bottomTimeStr = useMemo(() => {
@@ -589,15 +613,6 @@ function DynamicOrderCard({
   }, [order, showDepartureTime]);
 
   // Context-driven visibility
-  const roleRaw = (
-    viewerRole ||
-    order?.viewerRole ||
-    order?.current_user_role ||
-    order?.role ||
-    ''
-  )
-    .toString()
-    .toLowerCase();
   const isAdminOrDispatcher = roleRaw === 'admin' || roleRaw === 'dispatcher';
   let showExecutor = false;
   if (context === 'my_orders') {
@@ -607,10 +622,13 @@ function DynamicOrderCard({
   } else {
     showExecutor = true;
   }
-  if (hideExecutor) {
+  if (hideExecutor || isFeedCard) {
     showExecutor = false;
   }
-  const showDate = context !== 'calendar' && !!bottomDateIso;
+  const showDate =
+    context !== 'calendar' &&
+    canShowFeedField(FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME) &&
+    !!bottomDateIso;
   const showUrgentDot = !!order?.urgent;
 
   // Title
@@ -623,12 +641,16 @@ function DynamicOrderCard({
   );
 
   // Resolve missing executor via Supabase
-  const initialExecCached = getCachedExecutorName(order?.assigned_to);
+  const initialExecCached = executorName?.trim() || readCachedExecutorName(order?.assigned_to);
   const [resolvedExecutorName, setResolvedExecutorName] = React.useState(initialExecCached);
   React.useEffect(() => {
-    if (!showExecutor) return;
+    if (!showExecutor) {
+      setResolvedExecutorName('');
+      return;
+    }
     if (executorName && executorName.trim()) {
-      setResolvedExecutorName(executorName.trim());
+      const nextName = executorName.trim();
+      setResolvedExecutorName((prev) => (prev === nextName ? prev : nextName));
       return;
     }
     const uid = order?.assigned_to;
@@ -636,16 +658,16 @@ function DynamicOrderCard({
       setResolvedExecutorName('');
       return;
     }
-    const cached = getCachedExecutorName(uid);
+    const cached = readCachedExecutorName(uid);
     if (cached) {
-      setResolvedExecutorName(cached);
+      setResolvedExecutorName((prev) => (prev === cached ? prev : cached));
       return;
     }
     let cancelled = false;
     (async () => {
       const full = await fetchExecutorNameById(uid);
-      if (!cancelled && full) {
-          setResolvedExecutorName(full);
+      if (!cancelled) {
+        setResolvedExecutorName(full || '');
       }
     })();
     return () => {
@@ -659,6 +681,7 @@ function DynamicOrderCard({
   const rowGap = spacing.xs ?? 6;
   const titleRightGap = spacing.xs ?? 8;
   const showPrice =
+    canShowFeedField(FEED_ORDER_FIELD_KEYS.FINANCE) &&
     isCardFieldVisible('start_price') &&
     priceValue !== null &&
     priceValue !== undefined &&
@@ -829,6 +852,7 @@ function areCardPropsEqual(prev, next) {
     prev.hideExecutor === next.hideExecutor &&
     prev.orderFieldsByKey === next.orderFieldsByKey &&
     prev.companyCurrency === next.companyCurrency &&
+    prev.companySettingsOverride === next.companySettingsOverride &&
     prev.onPress === next.onPress
   );
 }

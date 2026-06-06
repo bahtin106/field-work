@@ -27,6 +27,10 @@ const resolveDeviceTimeZone = () => {
   }
 };
 
+function extractOtpDigits(value) {
+  return String(value || '').replace(/[^\d]/g, '').slice(0, 6);
+}
+
 async function getOrCreateRegisterClientFingerprint() {
   try {
     const existing = String((await AsyncStorage.getItem(REGISTER_FINGERPRINT_KEY)) || '').trim();
@@ -263,7 +267,25 @@ export default function RegisterCodeScreen() {
   }, []);
 
   const handleChange = useCallback((index, value) => {
-    const digit = String(value || '').replace(/[^\d]/g, '').slice(-1);
+    const digits = extractOtpDigits(value);
+    if (digits.length > 1) {
+      const startIndex = digits.length === 6 ? 0 : index;
+      setOtp((prev) => {
+        const next = [...prev];
+        for (let i = 0; i < digits.length && startIndex + i < next.length; i += 1) {
+          next[startIndex + i] = digits[i];
+        }
+        return next;
+      });
+      if (inlineError) setInlineError('');
+      if (requireManualSubmit) setRequireManualSubmit(false);
+      submittedCodeRef.current = '';
+      const nextFocusIndex = Math.min(startIndex + digits.length, 5);
+      inputRefs.current[nextFocusIndex]?.focus?.();
+      return;
+    }
+
+    const digit = digits.slice(-1);
     setOtp((prev) => {
       const next = [...prev];
       next[index] = digit;
@@ -509,7 +531,7 @@ export default function RegisterCodeScreen() {
                 keyboardType="number-pad"
                 textContentType="oneTimeCode"
                 autoComplete="sms-otp"
-                maxLength={1}
+                maxLength={6}
                 editable={!submitting}
                 caretHidden={!keyboardVisible}
                 autoFocus={index === 0}

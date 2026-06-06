@@ -315,6 +315,7 @@ function CreateOrderContent() {
   const [ignoredMatchSignature, setIgnoredMatchSignature] = useState('');
   const [urgent, setUrgent] = useState(false);
   const [users, setUsers] = useState([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [toFeed, setToFeed] = useState(false);
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
@@ -389,6 +390,7 @@ function CreateOrderContent() {
 
   const intentionalExitRef = useRef(false);
   const autoTitleRef = useRef('');
+  const lastAutoPhoneRef = useRef({ phone: '' });
   const clientFlowKeyRef = useRef(
     `create-order-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
   );
@@ -1184,11 +1186,22 @@ function CreateOrderContent() {
     })();
 
     const loadUsers = async () => {
-      const { data: userList, error } = await supabase
-        .from('profiles')
-        .select('id, first_name, middle_name, last_name, role, department_id, email, is_admin_blocked, license_state')
-        .in('role', ['worker', 'dispatcher', 'admin']);
-      if (!error && mounted) setUsers(userList || []);
+      if (!companyId) {
+        if (mounted) setUsers([]);
+        return;
+      }
+      if (mounted) setUsersLoading(true);
+      try {
+        const { data: userList, error } = await supabase
+          .from('profiles')
+          .select('id, first_name, middle_name, last_name, role, department_id, email, is_admin_blocked, license_state')
+          .eq('company_id', companyId)
+          .in('role', ['worker', 'dispatcher', 'admin'])
+          .order('full_name', { ascending: true, nullsFirst: false });
+        if (!error && mounted) setUsers(userList || []);
+      } finally {
+        if (mounted) setUsersLoading(false);
+      }
     };
     loadUsers();
 
@@ -1204,7 +1217,7 @@ function CreateOrderContent() {
     return () => {
       mounted = false;
     };
-  }, [loadDraft, orderFieldSettings]);
+  }, [companyId, loadDraft, orderFieldSettings]);
 
   // Persist a local draft when the app leaves the foreground unexpectedly.
   useEffect(() => {
@@ -1514,6 +1527,12 @@ function CreateOrderContent() {
     const selectedItem = phoneSourceItems.find((item) => item.id === phoneSourceId);
     return selectedItem?.label || t('create_order_phone_source_manual');
   }, [phoneSourceId, phoneSourceItems, t]);
+  const automaticPhoneSourceId = useMemo(() => {
+    const availableSources = phoneSourceItems.filter(
+      (item) => item?.id && item.id !== PHONE_SOURCE_IDS.MANUAL && !item.disabled,
+    );
+    return availableSources.length === 1 ? availableSources[0].id : null;
+  }, [phoneSourceItems]);
   const isObjectPointOnMap = useCallback((objectItem) => {
     if (!objectItem) return false;
     const mode = normalizeClientObjectLocationMode(objectItem?.location_mode, {
@@ -2073,7 +2092,9 @@ function CreateOrderContent() {
       return;
     }
     if (draftClientObject || pendingSuggestedObjectSelection) return;
-    const primaryObject = clientObjects.find((item) => item?.is_primary) || clientObjects[0] || null;
+    const primaryObject =
+      clientObjects.find((item) => item?.is_primary) ||
+      (clientObjects.length === 1 ? clientObjects[0] : null);
     setSelectedClientObjectId((prev) => {
       const prevId = String(prev || '').trim();
       if (prevId && clientObjects.some((item) => String(item?.id || '') === prevId)) {
@@ -2118,6 +2139,30 @@ function CreateOrderContent() {
     });
     clearFieldError('phone');
   }, [clearFieldError, phoneSourceId, phoneSourceItems, resolvePhoneBySourceId]);
+
+  useEffect(() => {
+    if (!automaticPhoneSourceId || phoneSourceId !== PHONE_SOURCE_IDS.MANUAL) return;
+    const currentPhone = String(form.phone || '').trim();
+    const previousAutoPhone = String(lastAutoPhoneRef.current?.phone || '').trim();
+    if (currentPhone && currentPhone !== previousAutoPhone) return;
+
+    const nextPhone = String(resolvePhoneBySourceId(automaticPhoneSourceId) || '').trim();
+    if (!nextPhone) return;
+
+    lastAutoPhoneRef.current = { phone: nextPhone };
+    setPhoneSourceId(automaticPhoneSourceId);
+    setForm((prev) => {
+      if (String(prev.phone || '').trim() === nextPhone) return prev;
+      return { ...prev, phone: nextPhone };
+    });
+    clearFieldError('phone');
+  }, [
+    automaticPhoneSourceId,
+    clearFieldError,
+    form.phone,
+    phoneSourceId,
+    resolvePhoneBySourceId,
+  ]);
 
   useEffect(() => {
     if (!pendingSuggestedObjectSelection || !selectedClient) return;
@@ -2767,6 +2812,7 @@ function CreateOrderContent() {
           selectedId={toFeed ? 'feed' : assigneeId}
           onSelect={(item) => item?.onPress?.()}
           onClose={() => setAssigneeModalVisible(false)}
+          loading={usersLoading}
         />
       ) : null}
 

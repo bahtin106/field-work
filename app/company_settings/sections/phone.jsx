@@ -10,7 +10,11 @@ import { SelectField } from '../../../components/ui/TextField';
 import { SelectModal } from '../../../components/ui/modals';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
-import { COMPANY_SETTINGS_QUERY_KEY } from '../../../lib/companySettingsQuery';
+import {
+  applyCompanySettingsCachePatch,
+  broadcastCompanySettingsChanged,
+  COMPANY_SETTINGS_QUERY_KEY,
+} from '../../../lib/companySettingsQuery';
 import {
   buildCompanyPhoneVisibilityPatch,
   formatPhoneVisibilitySummary,
@@ -25,6 +29,7 @@ import Screen from '../../../components/layout/Screen';
 const START_CONDITIONS = ['always', 'time_before_departure', 'status', 'never'];
 const STOP_CONDITIONS = ['never', 'time_after_departure', 'status'];
 const STATUS_OPTIONS = ['feed', 'new', 'in_progress', 'done'];
+const SOLO_STATUS_OPTIONS = ['new', 'in_progress', 'done'];
 const UNIT_OPTIONS = ['min', 'hour', 'day'];
 
 const UNIT_TO_MINUTES = {
@@ -60,6 +65,12 @@ function createDraftRule(rule) {
   };
 }
 
+function normalizeDraftRuleStatus(rule, statusOptions = STATUS_OPTIONS) {
+  const fallback = statusOptions.includes('in_progress') ? 'in_progress' : statusOptions[0];
+  const status = statusOptions.includes(rule?.status) ? rule.status : fallback;
+  return status === rule?.status ? rule : { ...rule, status };
+}
+
 function toRule(draft) {
   return {
     type: draft.type,
@@ -73,7 +84,10 @@ export default function PhoneVisibilitySettingsScreen() {
   const { t } = useTranslation();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { profile } = useAuthContext();
+  const { profile, user } = useAuthContext();
+  const accountType = String(user?.user_metadata?.account_type || '').trim().toLowerCase();
+  const isSoloAdmin =
+    String(profile?.role || '').toLowerCase() === 'admin' && accountType === 'solo';
   const companyId = profile?.company_id || null;
   const { settings, isLoading, refetch } = useCompanySettings(companyId);
   const styles = React.useMemo(() => createStyles(theme), [theme]);
@@ -82,13 +96,22 @@ export default function PhoneVisibilitySettingsScreen() {
   const [stopRule, setStopRule] = React.useState(() => createDraftRule(parsePhoneVisibilityRules({}).stop));
   const [saving, setSaving] = React.useState(false);
   const [picker, setPicker] = React.useState(null);
+  const statusOptions = React.useMemo(
+    () => (isSoloAdmin ? SOLO_STATUS_OPTIONS : STATUS_OPTIONS),
+    [isSoloAdmin],
+  );
 
   React.useEffect(() => {
     if (!settings) return;
     const parsed = parsePhoneVisibilityRules(settings);
-    setStartRule(createDraftRule(parsed.start));
-    setStopRule(createDraftRule(parsed.stop));
-  }, [settings]);
+    setStartRule(normalizeDraftRuleStatus(createDraftRule(parsed.start), statusOptions));
+    setStopRule(normalizeDraftRuleStatus(createDraftRule(parsed.stop), statusOptions));
+  }, [settings, statusOptions]);
+
+  React.useEffect(() => {
+    setStartRule((prev) => normalizeDraftRuleStatus(prev, statusOptions));
+    setStopRule((prev) => normalizeDraftRuleStatus(prev, statusOptions));
+  }, [statusOptions]);
 
   const conditionItems = React.useMemo(() => {
     const build = (ids) =>
@@ -103,8 +126,8 @@ export default function PhoneVisibilitySettingsScreen() {
   }, [t]);
 
   const statusItems = React.useMemo(
-    () => STATUS_OPTIONS.map((id) => ({ id, label: t(`phone_visibility_status_${id}`) })),
-    [t],
+    () => statusOptions.map((id) => ({ id, label: t(`phone_visibility_status_${id}`) })),
+    [statusOptions, t],
   );
 
   const unitItems = React.useMemo(
@@ -115,10 +138,10 @@ export default function PhoneVisibilitySettingsScreen() {
   const currentRules = React.useMemo(
     () => ({
       version: 1,
-      start: toRule(startRule),
-      stop: toRule(stopRule),
+      start: toRule(normalizeDraftRuleStatus(startRule, statusOptions)),
+      stop: toRule(normalizeDraftRuleStatus(stopRule, statusOptions)),
     }),
-    [startRule, stopRule],
+    [startRule, statusOptions, stopRule],
   );
 
   const summary = React.useMemo(
@@ -134,12 +157,15 @@ export default function PhoneVisibilitySettingsScreen() {
     setSaving(true);
     try {
       const normalizedRules = currentRules;
+      const patch = buildCompanyPhoneVisibilityPatch(normalizedRules);
       const { error } = await supabase
         .from('companies')
-        .update(buildCompanyPhoneVisibilityPatch(normalizedRules))
+        .update(patch)
         .eq('id', companyId);
       if (error) throw error;
-      await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY });
+      applyCompanySettingsCachePatch(queryClient, companyId, patch);
+      await broadcastCompanySettingsChanged(companyId, Object.keys(patch));
+      await queryClient.invalidateQueries({ queryKey: COMPANY_SETTINGS_QUERY_KEY, refetchType: 'active' });
       await refetch?.();
       toast.success(t('toast_settingsSaved'));
     } catch (error) {

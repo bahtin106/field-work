@@ -7,9 +7,12 @@ import { getMyCompanyId } from '../../features/profile/api';
 import { getOfflineSnapshot } from '../offline/offlineStatus';
 import { queryKeys } from './queryKeys';
 import { getRequestById, listRequests, listRequestExecutors } from '../../features/requests/api';
+import { prefetchExecutorNames, seedExecutorNames } from '../../features/requests/executorNameCache';
+import { markRequestDetailLoaded } from '../../features/requests/queries';
 
 const SMART_PREFETCH_PAGE_SIZE = 80;
 const SMART_PREFETCH_PROFILE_KEY = 'app.smartPrefetch.profile.v1';
+const SMART_PREFETCH_RECENT_CACHE_MAX_AGE_MS = 60 * 1000;
 
 type SmartPrefetchProfile = 'lite' | 'balanced' | 'aggressive';
 
@@ -86,6 +89,13 @@ function canRun(cooldownMs: number) {
 }
 
 async function getCurrentAuthScopeKey(queryClient: QueryClient) {
+  const cachedProfile: any = queryClient.getQueryData(queryKeys.profile.me());
+  const cachedUserId = String(cachedProfile?.id || '').trim();
+  const cachedCompanyId = String(cachedProfile?.company_id || cachedProfile?.companyId || '').trim();
+  if (cachedUserId) {
+    return `${cachedUserId}:${cachedCompanyId || 'no-company'}`;
+  }
+
   const { data } = await supabase.auth.getUser();
   const userId = String(data?.user?.id || '').trim();
   if (!userId) return '';
@@ -113,12 +123,32 @@ function buildOrdersRecentQueryKey(scope: 'my' | 'all', authScopeKey: string) {
   return ['orders', scope, 'recent', String(authScopeKey || 'anonymous')];
 }
 
+function readFreshRecentCache(queryClient: QueryClient, scope: 'my' | 'all', authScopeKey: string) {
+  const key = buildOrdersRecentQueryKey(scope, authScopeKey);
+  const state: any = queryClient.getQueryState(key);
+  const data = queryClient.getQueryData(key);
+  if (!Array.isArray(data)) return null;
+  const updatedAt = Number(state?.dataUpdatedAt || 0);
+  if (updatedAt > 0 && Date.now() - updatedAt > SMART_PREFETCH_RECENT_CACHE_MAX_AGE_MS) return null;
+  return data;
+}
+
 async function prefetchRequestList(
   queryClient: QueryClient,
   scope: 'my' | 'all',
   authScopeKey: string,
   runGeneration: number,
 ) {
+  const cached = readFreshRecentCache(queryClient, scope, authScopeKey);
+  if (cached) {
+    seedExecutorNames(cached);
+    const executorIds = Array.from(
+      new Set(cached.map((row: any) => String(row?.assigned_to || '').trim()).filter(Boolean)),
+    ).slice(0, 80);
+    prefetchExecutorNames(executorIds).catch(() => {});
+    return cached;
+  }
+
   const params = { scope, page: 1, pageSize: SMART_PREFETCH_PAGE_SIZE };
   const key = scope === 'my' ? queryKeys.requests.my({}) : queryKeys.requests.all({});
   const rows = await listRequests(params);
@@ -133,6 +163,11 @@ async function prefetchRequestList(
   } else {
     queryClient.setQueryData(buildOrdersRecentQueryKey('all', authScopeKey), page);
   }
+  seedExecutorNames(page);
+  const executorIds = Array.from(
+    new Set(page.map((row: any) => String(row?.assigned_to || '').trim()).filter(Boolean)),
+  ).slice(0, 80);
+  prefetchExecutorNames(executorIds).catch(() => {});
   return page;
 }
 
@@ -163,7 +198,7 @@ export async function runSmartPrefetch(queryClient: QueryClient) {
                 assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
                 const detail = await getRequestById(row.id);
                 assertPrefetchScopeActive(runGeneration, authScopeKey, await getCurrentAuthScopeKey(queryClient));
-                return detail;
+                return markRequestDetailLoaded(detail);
               },
               staleTime: 45 * 1000,
             })

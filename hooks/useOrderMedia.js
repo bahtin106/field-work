@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { cacheDirectory, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
+import { cacheDirectory, deleteAsync, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
 import { yandexDiskMedia } from '../lib/yandexDiskIntegration';
 import { orderMediaStorage } from '../lib/orderMediaStorage';
 import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
@@ -20,6 +20,8 @@ const _globalThumbCache = new Map();
 const GLOBAL_MEDIA_CACHE_MAX_ENTRIES = 1200;
 const ORDER_MEDIA_LOCAL_CACHE_KEY = 'offline.orderMedia.localCache.v1';
 const ORDER_MEDIA_LOCAL_CACHE_MAX_ENTRIES = 220;
+const MAX_URL_PROBE_RETRIES = 2;
+const URL_PROBE_RETRY_BASE_DELAY_MS = 900;
 
 export async function clearOrderMediaCaches() {
   _globalResolvedCache.clear();
@@ -40,6 +42,8 @@ function pruneMapCache(map, maxEntries = GLOBAL_MEDIA_CACHE_MAX_ENTRIES) {
 
 function setResolvedCacheEntry(key, value) {
   if (!key) return;
+  const current = _globalResolvedCache.get(key);
+  if (isLocalFileUri(current) && !isLocalFileUri(value)) return;
   if (_globalResolvedCache.has(key)) _globalResolvedCache.delete(key);
   _globalResolvedCache.set(key, value);
   pruneMapCache(_globalResolvedCache);
@@ -62,6 +66,43 @@ function isResolvableRemoteUrl(url) {
   if (!raw) return false;
   if (raw.startsWith('http://') || raw.startsWith('https://')) return true;
   return raw.startsWith('yadisk://');
+}
+
+function isLocalFileUri(url) {
+  return /^file:\/\//i.test(String(url || '').trim());
+}
+
+function isRenderableSourceUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (isLocalFileUri(raw) || /^data:image\//i.test(raw)) return true;
+  if (!/^https?:\/\//i.test(raw)) return false;
+  return !isLikelyYandexLink(raw);
+}
+
+function isDestructiveMediaIssueCode(code) {
+  const normalized = String(code || '').trim();
+  return normalized === 'deleted_remote' || normalized === 'missing_mapping';
+}
+
+function sanitizeMediaIssues(issuesMap) {
+  const source = issuesMap && typeof issuesMap === 'object' ? issuesMap : {};
+  const next = {};
+  for (const [url, issue] of Object.entries(source)) {
+    if (isDestructiveMediaIssueCode(issue?.code)) continue;
+    next[url] = issue;
+  }
+  return next;
+}
+
+function mergeResolvedUrlsPreservingLocal(current, incoming) {
+  const currentMap = current && typeof current === 'object' ? current : {};
+  const incomingMap = incoming && typeof incoming === 'object' ? incoming : {};
+  const next = { ...currentMap, ...incomingMap };
+  for (const [key, value] of Object.entries(currentMap)) {
+    if (isLocalFileUri(value)) next[key] = value;
+  }
+  return next;
 }
 
 function makeLocalFileName(url) {
@@ -106,8 +147,12 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   const [resolvedUrls, setResolvedUrls] = useState(() => Object.fromEntries(_globalResolvedCache));
   const [thumbUrls, setThumbUrls] = useState(() => Object.fromEntries(_globalThumbCache));
   const [issues, setIssues] = useState(() => Object.fromEntries(_globalIssuesCache));
+  const [localCacheVersion, setLocalCacheVersion] = useState(0);
+  const [probeRetryTick, setProbeRetryTick] = useState(0);
   const probeInFlight = useRef(new Set());
   const probedUrlsRef = useRef(new Set()); // tracks URLs already probed this session
+  const probeRetryCountsRef = useRef(new Map());
+  const probeRetryTimerRef = useRef(null);
   const isMounted = useRef(true);
   const resolvedRef = useRef(resolvedUrls); // always-current snapshot (no stale closures)
   const localCacheRef = useRef({});
@@ -119,11 +164,42 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     [order],
   );
 
+  const markLocalCacheChanged = useCallback(() => {
+    setLocalCacheVersion((value) => (value + 1) % 1000000);
+  }, []);
+
   useEffect(() => {
     isMounted.current = true;
     return () => {
       isMounted.current = false;
+      if (probeRetryTimerRef.current) {
+        clearTimeout(probeRetryTimerRef.current);
+        probeRetryTimerRef.current = null;
+      }
     };
+  }, []);
+
+  const scheduleProbeRetry = useCallback((urls) => {
+    const list = Array.isArray(urls) ? urls : [urls];
+    let maxAttempt = 0;
+    let hasRetry = false;
+    for (const value of list) {
+      const url = String(value || '').trim();
+      if (!url) continue;
+      const attempts = Number(probeRetryCountsRef.current.get(url) || 0);
+      if (attempts >= MAX_URL_PROBE_RETRIES) continue;
+      const nextAttempt = attempts + 1;
+      probeRetryCountsRef.current.set(url, nextAttempt);
+      maxAttempt = Math.max(maxAttempt, nextAttempt);
+      hasRetry = true;
+    }
+    if (!hasRetry || probeRetryTimerRef.current) return;
+    probeRetryTimerRef.current = setTimeout(() => {
+      probeRetryTimerRef.current = null;
+      if (isMounted.current) {
+        setProbeRetryTick((value) => (value + 1) % 1000000);
+      }
+    }, URL_PROBE_RETRY_BASE_DELAY_MS * Math.max(1, maxAttempt));
   }, []);
 
   useEffect(() => {
@@ -134,12 +210,13 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         const parsed = raw ? JSON.parse(raw) : {};
         if (cancelled || !parsed || typeof parsed !== 'object') return;
         localCacheRef.current = parsed;
+        if (Object.keys(parsed).length) markLocalCacheChanged();
       } catch {}
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [markLocalCacheChanged]);
 
   const persistLocalCache = useCallback(async () => {
     try {
@@ -154,27 +231,40 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     if (!src || !remote) return;
     if (!/^https?:\/\//i.test(remote)) return;
     try {
-      const existing = String(localCacheRef.current?.[src] || '').trim();
+      const normalizedSrc = normalizeUrlCacheKey(src);
+      const normalizedRemote = normalizeUrlCacheKey(remote);
+      const existing = String(
+        localCacheRef.current?.[src] ||
+          localCacheRef.current?.[normalizedSrc] ||
+          localCacheRef.current?.[remote] ||
+          localCacheRef.current?.[normalizedRemote] ||
+          '',
+      ).trim();
       if (existing) {
         const info = await getInfoAsync(existing);
         if (info?.exists) return;
       }
       const path = `${cacheDirectory}${makeLocalFileName(src)}`;
       const result = await downloadAsync(remote, path);
+      const status = Number(result?.status);
+      if (Number.isFinite(status) && status >= 400) {
+        await deleteAsync(path, { idempotent: true }).catch(() => {});
+        return;
+      }
       if (result?.uri) {
-        const normalizedSrc = normalizeUrlCacheKey(src);
-        const normalizedRemote = normalizeUrlCacheKey(remote);
         localCacheRef.current = {
           ...(localCacheRef.current || {}),
+          [remote]: result.uri,
           [src]: result.uri,
           ...(normalizedSrc ? { [normalizedSrc]: result.uri } : {}),
           ...(normalizedRemote ? { [normalizedRemote]: result.uri } : {}),
         };
         localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
+        markLocalCacheChanged();
         await persistLocalCache();
       }
     } catch {}
-  }, [persistLocalCache]);
+  }, [markLocalCacheChanged, persistLocalCache]);
 
   // Keep resolvedRef always in sync for proactive effect
   useEffect(() => {
@@ -184,23 +274,43 @@ export function useOrderMedia({ order, mediaProvider, t }) {
   // ─── Display URL resolution ──────────────────────────────────────
   const getDisplayUrl = useCallback(
     (sourceUrl) => {
-      if (!sourceUrl) return '';
-      const normalizedSource = normalizeUrlCacheKey(sourceUrl);
-      const local = String(
-        localCacheRef.current?.[sourceUrl] ||
-          localCacheRef.current?.[normalizedSource] ||
+      const source = String(sourceUrl || '').trim();
+      if (!source) return '';
+      // localCacheVersion refreshes this callback after ref-only cache updates.
+      const localCache = localCacheVersion >= 0 ? localCacheRef.current || {} : {};
+      const normalizedSource = normalizeUrlCacheKey(source);
+      const resolved = String(resolvedUrls[source] || '').trim();
+      const normalizedResolved = normalizeUrlCacheKey(resolved);
+      const localForResolved = String(
+        resolved
+          ? localCache?.[resolved] ||
+            localCache?.[normalizedResolved] ||
+            ''
+          : '',
+      ).trim();
+      const localForSource = String(
+        localCache?.[source] ||
+          localCache?.[normalizedSource] ||
           '',
       ).trim();
-      if (!getOfflineSnapshot().isOnline && local) return local;
-      return resolvedUrls[sourceUrl] || local || thumbUrls[sourceUrl] || sourceUrl;
+
+      if (!getOfflineSnapshot().isOnline) {
+        return localForSource || localForResolved || resolved || (isRenderableSourceUrl(source) ? source : '');
+      }
+      if (localForSource) return localForSource;
+      if (localForResolved) return localForResolved;
+      if (resolved) return resolved;
+      return isRenderableSourceUrl(source) ? source : '';
     },
-    [resolvedUrls, thumbUrls],
+    [localCacheVersion, resolvedUrls],
   );
 
   const getThumbnailUrl = useCallback(
     (sourceUrl) => {
       if (!sourceUrl) return '';
-      return thumbUrls[sourceUrl] || getDisplayUrl(sourceUrl);
+      const displayUrl = getDisplayUrl(sourceUrl);
+      if (/^file:\/\//i.test(String(displayUrl || ''))) return displayUrl;
+      return thumbUrls[sourceUrl] || displayUrl;
     },
     [getDisplayUrl, thumbUrls],
   );
@@ -210,8 +320,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       const issue = issues[sourceUrl];
       if (!issue) return '';
       const code = String(issue.code || '').trim();
-      if (code === 'deleted_remote') return t('order_photo_issue_deleted_remote');
-      if (code === 'missing_mapping') return t('order_photo_issue_missing_mapping');
+      if (isDestructiveMediaIssueCode(code)) return '';
       if (code === 'disk_unavailable') return t('order_photo_issue_disk_unavailable');
       if (code === 'disk_auth') return t('order_photo_issue_disk_auth');
       if (code === 'disk_locked') return t('order_photo_issue_disk_locked');
@@ -250,12 +359,12 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         const resolved =
           data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
         const issuesMap =
-          data?.issues && typeof data.issues === 'object' ? data.issues : {};
+          data?.issues && typeof data.issues === 'object' ? sanitizeMediaIssues(data.issues) : {};
 
         if (isMounted.current) {
           if (Object.keys(resolved).length) {
             for (const [k, v] of Object.entries(resolved)) setResolvedCacheEntry(k, v);
-            setResolvedUrls((p) => ({ ...p, ...resolved }));
+            setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, resolved));
             prefetchMediaUrls(Object.values(resolved)).catch(() => {});
           }
           if (Object.keys(issuesMap).length) {
@@ -321,14 +430,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
             ...(yandexData?.issues && typeof yandexData.issues === 'object' ? yandexData.issues : {}),
             ...(begetData?.issues && typeof begetData.issues === 'object' ? begetData.issues : {}),
           };
-          const survivingYandexUrls = Array.isArray(yandexData?.media_urls) ? yandexData.media_urls : yandexUrls;
-          const survivingYandexSet = new Set(survivingYandexUrls.map((url) => String(url || '')));
-          const mergedUrls = originalUrls.filter((url) => {
-            const normalized = String(url || '');
-            if (!isLikelyYandexLink(normalized)) return true;
-            return survivingYandexSet.has(normalized);
-          });
-          return { category, resolved, issues: issuesMap, mediaUrls: mergedUrls };
+          return { category, resolved, issues: sanitizeMediaIssues(issuesMap) };
         } catch (e) {
           const message = String(e?.message || '').trim() || t('order_photo_issue_temporary');
           const issuesMap = {};
@@ -347,15 +449,12 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       for (const r of results) {
         Object.assign(nextResolved, r.resolved);
         Object.assign(nextIssues, r.issues);
-        if (Array.isArray(r.mediaUrls)) {
-          nextOrder[r.category] = r.mediaUrls;
-        }
       }
 
       if (isMounted.current) {
         for (const [k, v] of Object.entries(nextResolved)) setResolvedCacheEntry(k, v);
         for (const [k, v] of Object.entries(nextIssues)) setIssueCacheEntry(k, v);
-        setResolvedUrls(nextResolved);
+        setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, nextResolved));
         setIssues(nextIssues);
       }
       prefetchMediaUrls(Object.values(nextResolved)).catch(() => {});
@@ -387,8 +486,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
         const thumbMap = buildMediaAssetThumbMap(assets);
         if (Object.keys(displayMap).length) {
           for (const [key, value] of Object.entries(displayMap)) setResolvedCacheEntry(key, value);
-          setResolvedUrls((prev) => ({ ...displayMap, ...prev }));
-          prefetchMediaUrls(Object.values(displayMap)).catch(() => {});
+          setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, displayMap));
+          prefetchMediaUrls(Object.values(displayMap), { batchSize: 6 }).catch(() => {});
         }
         if (Object.keys(thumbMap).length) {
           for (const [key, value] of Object.entries(thumbMap)) {
@@ -396,8 +495,8 @@ export function useOrderMedia({ order, mediaProvider, t }) {
             _globalThumbCache.set(key, value);
             pruneMapCache(_globalThumbCache);
           }
-          setThumbUrls((prev) => ({ ...thumbMap, ...prev }));
-          prefetchMediaUrls(Object.values(thumbMap)).catch(() => {});
+          setThumbUrls((prev) => ({ ...prev, ...thumbMap }));
+          prefetchMediaUrls(Object.values(thumbMap), { batchSize: 6 }).catch(() => {});
         }
       })
       .catch(() => {});
@@ -408,19 +507,39 @@ export function useOrderMedia({ order, mediaProvider, t }) {
 
   useEffect(() => {
     if (!order?.id) return;
-    const tasks = [];
+    const attempts = [];
     const currentResolved = resolvedRef.current;
     for (const cat of MEDIA_CATEGORIES) {
       const urls = Array.isArray(order[cat]) ? order[cat].filter(Boolean) : [];
       for (const url of urls) {
-        if (!currentResolved[url] && !probedUrlsRef.current.has(url) && isResolvableRemoteUrl(url)) {
-          probedUrlsRef.current.add(url);
-          tasks.push(inspectSingle(cat, url));
+        const source = String(url || '').trim();
+        if (!currentResolved[source] && !probedUrlsRef.current.has(source) && isResolvableRemoteUrl(source)) {
+          probedUrlsRef.current.add(source);
+          attempts.push({ url: source, promise: inspectSingle(cat, source) });
         }
       }
     }
-    if (tasks.length) Promise.allSettled(tasks).catch(() => {});
-  }, [order, inspectSingle]);
+    if (attempts.length) {
+      Promise.allSettled(attempts.map((item) => item.promise))
+        .then((results) => {
+          if (!isMounted.current) return;
+          const retryable = [];
+          results.forEach((settled, index) => {
+            const url = attempts[index]?.url;
+            if (!url) return;
+            const result = settled.status === 'fulfilled' ? settled.value : null;
+            if (result?.resolved || result?.issue) {
+              probeRetryCountsRef.current.delete(url);
+              return;
+            }
+            probedUrlsRef.current.delete(url);
+            retryable.push(url);
+          });
+          if (retryable.length) scheduleProbeRetry(retryable);
+        })
+        .catch(() => {});
+    }
+  }, [order, inspectSingle, probeRetryTick, scheduleProbeRetry]);
 
   useEffect(() => {
     if (!order?.id) return;
@@ -429,8 +548,9 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     for (const cat of MEDIA_CATEGORIES) {
       const urls = Array.isArray(order?.[cat]) ? order[cat].filter(Boolean) : [];
       for (const src of urls) {
-        const display = resolvedRef.current?.[src] || src;
-        jobs.push(ensureLocalCached(src, display));
+        const source = String(src || '').trim();
+        const display = resolvedRef.current?.[source] || (isRenderableSourceUrl(source) ? source : '');
+        if (display) jobs.push(ensureLocalCached(source, display));
       }
     }
     if (jobs.length) Promise.allSettled(jobs).catch(() => {});
@@ -442,6 +562,11 @@ export function useOrderMedia({ order, mediaProvider, t }) {
     setThumbUrls({});
     setIssues({});
     probedUrlsRef.current.clear();
+    probeRetryCountsRef.current.clear();
+    if (probeRetryTimerRef.current) {
+      clearTimeout(probeRetryTimerRef.current);
+      probeRetryTimerRef.current = null;
+    }
     _globalResolvedCache.clear();
     _globalThumbCache.clear();
     _globalIssuesCache.clear();
@@ -449,10 +574,26 @@ export function useOrderMedia({ order, mediaProvider, t }) {
 
   // ─── Remove URL from resolved/issues caches ─────────────────────
   const removeFromCache = useCallback((url) => {
+    const source = String(url || '').trim();
+    const normalizedSource = normalizeUrlCacheKey(source);
     _globalResolvedCache.delete(url);
     _globalThumbCache.delete(url);
     _globalIssuesCache.delete(url);
     probedUrlsRef.current.delete(url);
+    probeRetryCountsRef.current.delete(url);
+    if (source) {
+      const nextLocal = { ...(localCacheRef.current || {}) };
+      const hadLocal =
+        Object.prototype.hasOwnProperty.call(nextLocal, source) ||
+        (normalizedSource && Object.prototype.hasOwnProperty.call(nextLocal, normalizedSource));
+      delete nextLocal[source];
+      if (normalizedSource) delete nextLocal[normalizedSource];
+      if (hadLocal) {
+        localCacheRef.current = nextLocal;
+        markLocalCacheChanged();
+        persistLocalCache().catch(() => {});
+      }
+    }
     setResolvedUrls((prev) => {
       if (!Object.prototype.hasOwnProperty.call(prev, url)) return prev;
       const next = { ...prev };
@@ -471,7 +612,7 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       delete next[url];
       return next;
     });
-  }, []);
+  }, [markLocalCacheChanged, persistLocalCache]);
 
   const setDisplayUrl = useCallback((sourceUrl, displayUrl) => {
     const source = String(sourceUrl || '').trim();
@@ -487,9 +628,21 @@ export function useOrderMedia({ order, mediaProvider, t }) {
       });
       return;
     }
+    if (isLocalFileUri(nextDisplay)) {
+      const normalizedSource = normalizeUrlCacheKey(source);
+      localCacheRef.current = {
+        ...(localCacheRef.current || {}),
+        [source]: nextDisplay,
+        ...(normalizedSource ? { [normalizedSource]: nextDisplay } : {}),
+      };
+      localCacheRef.current = pruneLocalCacheMap(localCacheRef.current);
+      markLocalCacheChanged();
+      persistLocalCache().catch(() => {});
+    }
     setResolvedCacheEntry(source, nextDisplay);
-    setResolvedUrls((prev) => ({ ...prev, [source]: nextDisplay }));
-  }, []);
+    probeRetryCountsRef.current.delete(source);
+    setResolvedUrls((prev) => mergeResolvedUrlsPreservingLocal(prev, { [source]: nextDisplay }));
+  }, [markLocalCacheChanged, persistLocalCache]);
 
   return {
     resolvedUrls,

@@ -314,6 +314,17 @@ async function streamRemoteResponse(remoteUrl: string) {
   });
 }
 
+function redirectRemoteResponse(remoteUrl: string) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      ...corsHeaders,
+      'Cache-Control': 'public, max-age=3600',
+      Location: remoteUrl,
+    },
+  });
+}
+
 function mapYandexApiError(status: number, payload: string) {
   const text = String(payload || '').toLowerCase();
   if (status === 401 || status === 403 || text.includes('unauthorized') || text.includes('invalid_grant')) {
@@ -499,42 +510,55 @@ async function publishAndGetPublicUrl(accessToken: string, path: string) {
   return String(meta.public_url);
 }
 
-async function inspectYandexPathStatus(accessToken: string, path: string) {
+async function inspectYandexResourceDisplayUrl(accessToken: string, path: string) {
   const res = await fetch(
-    `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(path)}&fields=path,type,name`,
+    `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(path)}&fields=file,preview,public_url`,
     { headers: { Authorization: `OAuth ${accessToken}` } },
   );
   const text = await res.text();
   if (res.ok) {
-    return { state: 'ok' as const };
+    try {
+      const data = JSON.parse(text || '{}') as {
+        file?: string;
+        preview?: string;
+        public_url?: string;
+      };
+      const displayUrl = String(data.preview || data.file || '').trim();
+      if (displayUrl) return { state: 'ok' as const, displayUrl };
+
+      const publicUrl = String(data.public_url || '').trim();
+      if (publicUrl) {
+        const publicDownloadState = await resolvePublicYandexDownloadUrl(publicUrl);
+        if (publicDownloadState.state === 'ok' && publicDownloadState.href) {
+          return { state: 'ok' as const, displayUrl: publicDownloadState.href };
+        }
+        if (publicDownloadState.state === 'missing') {
+          return { state: 'missing' as const };
+        }
+      }
+
+      return { state: 'error' as const, details: 'Display url missing' };
+    } catch {
+      return { state: 'error' as const, details: 'Invalid display url response' };
+    }
   }
-  if (res.status === 404 || String(text || '').toLowerCase().includes('diskpathdoesntexistserror')) {
+  if (isYandexPathMissingResponse(res.status, text)) {
     return { state: 'missing' as const };
   }
   if (res.status === 401 || res.status === 403) {
-    return { state: 'auth' as const };
+    return { state: 'auth' as const, details: text };
   }
   if (res.status === 423 || String(text || '').toLowerCase().includes('resource is locked')) {
-    return { state: 'locked' as const };
+    return { state: 'locked' as const, details: text };
   }
   return { state: 'error' as const, details: text };
 }
 
 async function getYandexResourceDisplayUrl(accessToken: string, path: string) {
-  const res = await fetch(
-    `https://cloud-api.yandex.net/v1/disk/resources?path=${encodeURIComponent(path)}&fields=file,preview,public_url`,
-    { headers: { Authorization: `OAuth ${accessToken}` } },
-  );
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Read display url failed: ${text}`);
-  }
-  const data = (await res.json()) as {
-    file?: string;
-    preview?: string;
-    public_url?: string;
-  };
-  return String(data.preview || data.file || data.public_url || '').trim() || null;
+  const state = await inspectYandexResourceDisplayUrl(accessToken, path);
+  if (state.state === 'ok') return state.displayUrl;
+  const details = 'details' in state ? state.details : '';
+  throw new Error(details || `Read display url failed: ${state.state}`);
 }
 
 async function deleteYandexResourceSafe(accessToken: string, path: string) {
@@ -1217,13 +1241,22 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
     if (req.method === 'GET') {
       const url = new URL(req.url);
-      if (String(url.searchParams.get('mode') || '').trim() !== 'render') {
+      const renderMode = String(url.searchParams.get('mode') || '').trim();
+      if (renderMode !== 'render' && renderMode !== 'redirect') {
         return json(405, { success: false, message: 'POST only' });
       }
 
       const valid = await verifyRenderRequest(url);
       if (!valid) {
         return binary(403, 'Forbidden', { 'Content-Type': 'text/plain; charset=utf-8' });
+      }
+
+      if (renderMode === 'redirect') {
+        const target = fromBase64Url(String(url.searchParams.get('target') || '').trim());
+        if (!/^https?:\/\//i.test(target)) {
+          return binary(400, 'Bad request', { 'Content-Type': 'text/plain; charset=utf-8' });
+        }
+        return redirectRemoteResponse(target);
       }
 
       const mapId = Number(url.searchParams.get('map_id') || '');
@@ -1242,7 +1275,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         if (!displayUrl) {
           return binary(404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
         }
-        return streamRemoteResponse(displayUrl);
+        return redirectRemoteResponse(displayUrl);
       }
 
       if (publicKey) {
@@ -1251,7 +1284,7 @@ export async function handleProfileMediaStorageRequest(req: Request) {
         if (legacyState.state !== 'ok' || !legacyState.href) {
           return binary(404, 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
         }
-        return streamRemoteResponse(legacyState.href);
+        return redirectRemoteResponse(legacyState.href);
       }
 
       return binary(400, 'Bad request', { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -1317,8 +1350,8 @@ export async function handleProfileMediaStorageRequest(req: Request) {
             const legacyState = await resolvePublicYandexDownloadUrl(url);
             if (legacyState.state === 'ok') {
               resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
-                mode: 'render',
-                public_key: toBase64Url(new TextEncoder().encode(url)),
+                mode: 'redirect',
+                target: toBase64Url(new TextEncoder().encode(legacyState.href || url)),
               });
             } else if (legacyState.state === 'missing') {
               cleaned.push(url);
@@ -1345,16 +1378,15 @@ export async function handleProfileMediaStorageRequest(req: Request) {
 
         if (!accessToken) continue;
 
-        const pathState = await inspectYandexPathStatus(accessToken, String(row.external_path || ''));
-        if (pathState.state !== 'missing') {
-          try {
-            resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
-              mode: 'render',
-              map_id: String(row.id),
-            });
-          } catch {}
+        const displayState = await inspectYandexResourceDisplayUrl(accessToken, String(row.external_path || ''));
+        if (displayState.state === 'ok' && displayState.displayUrl) {
+          resolvedUrls[url] = await buildSignedRenderUrl(publicBaseUrl, {
+            mode: 'redirect',
+            target: toBase64Url(new TextEncoder().encode(displayState.displayUrl)),
+          });
           continue;
         }
+        if (displayState.state !== 'missing') continue;
 
         const entityType = String(row.entity_type || '') as EntityType;
         if (!VALID_ENTITY_TYPES.has(entityType)) continue;

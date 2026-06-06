@@ -13,7 +13,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Feather } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import * as MediaLibrary from 'expo-media-library';
-import { File, Paths } from 'expo-file-system';
+import { cacheDirectory, copyAsync, downloadAsync, getInfoAsync } from 'expo-file-system/legacy';
 import { Image as ExpoImage } from 'expo-image';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as Haptics from 'expo-haptics';
@@ -30,6 +30,9 @@ const VIEWER_BG = '#000000';
 const VIEWER_FG = '#FFFFFF';
 const VIEWER_OVERLAY_ALPHA = 0.55;
 const ICON_BTN_SIZE = 40;
+const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
+const DATA_IMAGE_URI_RE = /^data:image\//i;
+const REMOTE_URI_RE = /^https?:\/\//i;
 
 const haptic = (style = 'Light') =>
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle[style]).catch(() => {});
@@ -59,6 +62,12 @@ const measureImage = (uri) =>
       () => resolve(null),
     );
   });
+
+const getImageExtension = (uri) => {
+  const path = String(uri || '').trim().split('?')[0].split('#')[0];
+  const match = path.match(/\.(jpe?g|png|gif|webp)$/i);
+  return match ? match[0] : '.jpg';
+};
 
 const GalleryPhoto = memo(function GalleryPhoto({
   uri,
@@ -343,11 +352,28 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   );
 
   const downloadToCache = useCallback(async (uri) => {
-    const ext = (uri.match(/\.(jpe?g|png|gif|webp)/i) || ['.jpg'])[0];
+    const source = String(uri || '').trim();
+    if (!source) return '';
+    if (source.startsWith('file:') || DATA_IMAGE_URI_RE.test(source)) return source;
+    if (!cacheDirectory) throw new Error('viewer cache directory is unavailable');
+
+    const ext = getImageExtension(source);
     const filename = `viewer_${Date.now()}${ext}`;
-    const dest = new File(Paths.cache, filename);
-    const downloaded = await File.downloadFileAsync(uri, dest, { idempotent: true });
-    return downloaded.uri;
+    const dest = `${cacheDirectory}${filename}`;
+
+    if (LOCAL_MEDIA_URI_RE.test(source)) {
+      await copyAsync({ from: source, to: dest });
+      return dest;
+    }
+
+    if (!REMOTE_URI_RE.test(source)) return source;
+
+    const downloaded = await downloadAsync(source, dest);
+    const status = Number(downloaded?.status);
+    if (Number.isFinite(status) && status >= 400) {
+      throw new Error(`Unable to download image: response status ${status}`);
+    }
+    return downloaded?.uri || dest;
   }, []);
 
   const formatBytes = useCallback((bytes) => {
@@ -358,7 +384,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
   }, []);
 
   const handleShare = useCallback(async () => {
-    if (busy || capturePreviewMode || !currentUri) return;
+    if (busy || deleting || capturePreviewMode || !currentUri) return;
     haptic();
     setBusy(true);
     try {
@@ -370,10 +396,10 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     } finally {
       setBusy(false);
     }
-  }, [busy, capturePreviewMode, currentUri, downloadToCache]);
+  }, [busy, capturePreviewMode, currentUri, deleting, downloadToCache]);
 
   const handleSave = useCallback(async () => {
-    if (busy || capturePreviewMode || !currentUri) return;
+    if (busy || deleting || capturePreviewMode || !currentUri) return;
     haptic();
     setMenuOpen(false);
     setBusy(true);
@@ -393,14 +419,14 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     } finally {
       setBusy(false);
     }
-  }, [busy, capturePreviewMode, currentUri, downloadToCache, t, toast]);
+  }, [busy, capturePreviewMode, currentUri, deleting, downloadToCache, t, toast]);
 
   const handleRotate = useCallback(async () => {
-    if (busy || capturePreviewMode || !currentUri) return;
+    if (busy || deleting || capturePreviewMode || !currentUri) return;
     haptic();
     setBusy(true);
     try {
-      const source = currentUri.startsWith('file:') ? currentUri : await downloadToCache(currentUri);
+      const source = await downloadToCache(currentUri);
       const rotated = await ImageManipulator.manipulateAsync(source, [{ rotate: 90 }], {
         compress: 1,
         format: ImageManipulator.SaveFormat.JPEG,
@@ -423,7 +449,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     } finally {
       setBusy(false);
     }
-  }, [busy, capturePreviewMode, currentIndex, currentUri, downloadToCache]);
+  }, [busy, capturePreviewMode, currentIndex, currentUri, deleting, downloadToCache]);
 
   const handleShowInfo = useCallback(async () => {
     if (capturePreviewMode) return;
@@ -439,8 +465,8 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
     let fileSize = null;
     try {
       if (localUri) {
-        const file = new File(localUri);
-        fileSize = file.size || null;
+        const file = await getInfoAsync(localUri, { size: true });
+        fileSize = file?.size || null;
       }
     } catch {}
 
@@ -490,6 +516,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
 
   const handleDeletePress = useCallback(() => {
     if (!onDelete) return;
+    if (busy || deleting) return;
     haptic('Medium');
     setMenuOpen(false);
     setInfoOpen(false);
@@ -498,7 +525,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
       return;
     }
     setConfirmDelete(true);
-  }, [capturePreviewMode, handleDeleteConfirm, onDelete]);
+  }, [busy, capturePreviewMode, deleting, handleDeleteConfirm, onDelete]);
 
   const infoRows = useMemo(() => {
     if (!infoOpen) return [];
@@ -618,7 +645,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                     <>
                       <Pressable
                         onPress={handleShare}
-                        disabled={busy}
+                        disabled={busy || deleting}
                         hitSlop={theme.spacing.sm}
                         style={[ds.footerBtn, { backgroundColor: overlayBg }]}
                       >
@@ -627,7 +654,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                       </Pressable>
                       <Pressable
                         onPress={handleRotate}
-                        disabled={busy}
+                        disabled={busy || deleting}
                         hitSlop={theme.spacing.sm}
                         style={[ds.footerBtn, { backgroundColor: overlayBg }]}
                       >
@@ -649,6 +676,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
                       {onDelete ? (
                         <Pressable
                           onPress={handleDeletePress}
+                          disabled={busy || deleting}
                           hitSlop={theme.spacing.sm}
                           style={[ds.footerBtn, { backgroundColor: overlayBg }]}
                         >
@@ -677,6 +705,7 @@ const ImageViewingGallery = memo(function ImageViewingGallery({
           >
             <Pressable
               onPress={handleSave}
+              disabled={busy || deleting}
               style={({ pressed }) => [ds.menuRow, ds.menuRowBorder, pressed && { opacity: 0.6 }]}
             >
               <Feather name="download" size={theme.icons.md} color={theme.colors.text} />

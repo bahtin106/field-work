@@ -1,5 +1,7 @@
 import { supabase } from '../../../lib/supabase';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import { queryClient } from '../../shared/query/queryClient';
+import { queryKeys } from '../../shared/query/queryKeys';
 import { inspectProfileMedia } from '../profileMedia/api';
 
 function isAuthSessionMissing(error: any) {
@@ -10,6 +12,8 @@ function isAuthSessionMissing(error: any) {
 
 export async function getCurrentUser() {
   return measureNetwork('profile.getCurrentUser', async () => {
+    const cachedProfile: any = queryClient.getQueryData(queryKeys.profile.me());
+    if (cachedProfile?.id) return { id: cachedProfile.id };
     const { data, error } = await supabase.auth.getUser();
     if (error) {
       if (isAuthSessionMissing(error)) return null;
@@ -46,6 +50,26 @@ export async function getMyProfile() {
 }
 
 export async function getMyCompanyId() {
-  const profile = await getMyProfile();
-  return profile?.company_id || null;
+  return measureNetwork('profile.getMyCompanyId', async () => {
+    const cachedCompanyId = String(queryClient.getQueryData(queryKeys.profile.companyId()) || '').trim();
+    if (cachedCompanyId) return cachedCompanyId;
+    const cachedProfile: any = queryClient.getQueryData(queryKeys.profile.me());
+    const cachedProfileCompanyId = String(cachedProfile?.company_id || cachedProfile?.companyId || '').trim();
+    if (cachedProfileCompanyId) {
+      queryClient.setQueryData(queryKeys.profile.companyId(), cachedProfileCompanyId);
+      return cachedProfileCompanyId;
+    }
+
+    const user = await getCurrentUser();
+    if (!user?.id) return null;
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    return data?.company_id || null;
+  });
 }

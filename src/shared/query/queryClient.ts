@@ -15,6 +15,7 @@ const PERSIST_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const HOT_REQUEST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 900 * 1024;
 const HOT_ENTITY_LIST_PERSIST_QUERY_SIZE_LIMIT_BYTES = 220 * 1024;
 const DEFAULT_QUERY_STALE_MS = 60 * 1000;
+const HOT_REQUEST_LIST_STALE_MS = 60 * 1000;
 const DEFAULT_QUERY_GC_MS = PERSIST_MAX_AGE_MS;
 const DEFAULT_MAX_RETRIES = 2;
 
@@ -90,17 +91,17 @@ export const queryClient = new QueryClient({
 });
 
 queryClient.setQueryDefaults(['requests', 'all'], {
-  staleTime: 20 * 1000,
+  staleTime: HOT_REQUEST_LIST_STALE_MS,
   gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['requests', 'my'], {
-  staleTime: 20 * 1000,
+  staleTime: HOT_REQUEST_LIST_STALE_MS,
   gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
 queryClient.setQueryDefaults(['requests', 'calendar'], {
-  staleTime: 20 * 1000,
+  staleTime: HOT_REQUEST_LIST_STALE_MS,
   gcTime: PERSIST_MAX_AGE_MS,
   refetchOnReconnect: true,
 });
@@ -123,6 +124,16 @@ queryClient.setQueryDefaults(['employees', 'departments'], {
 });
 queryClient.setQueryDefaults(['clients'], {
   staleTime: 45 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
+});
+queryClient.setQueryDefaults(['company'], {
+  staleTime: 10 * 60 * 1000,
+  gcTime: PERSIST_MAX_AGE_MS,
+  refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
+});
+queryClient.setQueryDefaults(['department'], {
+  staleTime: 10 * 60 * 1000,
   gcTime: PERSIST_MAX_AGE_MS,
   refetchOnWindowFocus: DEFAULT_REFOCUS_ENABLED,
 });
@@ -236,7 +247,14 @@ function isDurableOfflineQuery(queryKey: any): boolean {
   if (key0 === 'clients' || key0 === 'objects' || key0 === 'tags' || key0 === 'field-settings') {
     return true;
   }
-  if (key0 === 'profile' && (key1 === 'me' || key1 === 'company-id')) {
+  if (
+    key0 === 'company' ||
+    key0 === 'department' ||
+    (key0 === 'profile' &&
+      (key1 === 'me' ||
+        key1 === 'company-id' ||
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(String(key1 || ''))))
+  ) {
     return true;
   }
   if (
@@ -352,7 +370,12 @@ export const persistOptions = {
       if (key0 === 'session' || key0 === 'userRole' || key0 === 'perm-canViewAll') {
         return false;
       }
-      if (key0 === 'profile' && key1 !== 'me' && key1 !== 'company-id') {
+      if (
+        key0 === 'profile' &&
+        key1 !== 'me' &&
+        key1 !== 'company-id' &&
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(String(key1 || ''))
+      ) {
         return false;
       }
       if (key0 === 'requests' && (key1 === 'all' || key1 === 'my' || key1 === 'calendar')) {

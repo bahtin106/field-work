@@ -53,17 +53,38 @@ function getBearerToken(req: Request): string {
   return String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
 }
 
-function toPublicUpdateUserError(error: unknown): string {
+function toPublicUpdateUserError(error: unknown): { code: string; message: string } {
   const message = String((error as Error)?.message || 'Unknown error');
+  const normalized = message.toLowerCase();
+  if (
+    /email_taken/.test(normalized) ||
+    /email.*taken/.test(normalized) ||
+    /email.*already/.test(normalized) ||
+    /already.*email/.test(normalized) ||
+    /already registered/.test(normalized) ||
+    /already exists/.test(normalized) ||
+    /user.*exists/.test(normalized) ||
+    /duplicate/.test(normalized)
+  ) {
+    return { code: 'EMAIL_TAKEN', message: 'EMAIL_TAKEN' };
+  }
+  if (
+    /invalid_email/.test(normalized) ||
+    /invalid email/.test(normalized) ||
+    /email.*invalid/.test(normalized) ||
+    /bad email/.test(normalized)
+  ) {
+    return { code: 'INVALID_EMAIL', message: 'INVALID_EMAIL' };
+  }
   if (
     /^(Unauthorized|Forbidden|Invalid user_id|Target profile lookup failed|Target auth user lookup failed|Method not allowed)$/i.test(
       message,
     )
   ) {
-    return message;
+    return { code: message.toUpperCase().replace(/\s+/g, '_'), message };
   }
   console.error('[UPDATE_USER]', message);
-  return 'Update user failed';
+  return { code: 'UPDATE_USER_FAILED', message: 'Update user failed' };
 }
 
 async function getProfileFlexible(admin: any, lookupId: string) {
@@ -437,7 +458,8 @@ export async function handleUpdateUserRequest(req: Request) {
     });
   } catch (e: any) {
     console.error(`[UPDATE_USER] Error:`, e?.message);
-    return new Response(JSON.stringify({ ok: false, message: toPublicUpdateUserError(e) }), {
+    const publicError = toPublicUpdateUserError(e);
+    return new Response(JSON.stringify({ ok: false, ...publicError }), {
       headers: { 'Content-Type': 'application/json', ...cors },
       status: 200, // Всегда 200, чтобы клиент не падал с generic ошибкой
     });

@@ -169,10 +169,11 @@ function LoginScreenContent() {
     clearAccessBlock,
   } = useAuthLogin();
 
-  // Очищаем форму при монтировании компонента
+  // Очищаем форму при входе на экран, включая возврат после logout.
   useEffect(() => {
+    if (!isFocused) return;
     reset();
-  }, [reset]);
+  }, [isFocused, reset]);
 
   const passwordFieldRef = useRef(null);
   const [recoverModalVisible, setRecoverModalVisible] = useState(false);

@@ -1,6 +1,7 @@
 import { supabase } from '../../../lib/supabase';
 import { getOrderIdsByWorkTypes, getStatusDbAliases, mapStatusToDb } from '../../../lib/orderFilters';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import { enrichOrdersWithExecutorNames } from './executorNameCache';
 import {
   buildOrderAddressNavigatorQuery,
   buildOrderAddressShort,
@@ -49,6 +50,7 @@ const CLIENT_RELATION_SELECT = `
 `;
 const ORDER_SELECT_COLUMNS = `*, ${OBJECT_RELATION_SELECT}, ${CLIENT_RELATION_SELECT}`;
 const ORDER_SELECT_COLUMNS_FALLBACK = `*, ${OBJECT_RELATION_SELECT}`;
+const SECURE_ORDER_SELECT_COLUMNS = '*';
 const CALENDAR_SELECT_COLUMNS = ORDER_SELECT_COLUMNS;
 const CALENDAR_SELECT_COLUMNS_FALLBACK = ORDER_SELECT_COLUMNS_FALLBACK;
 const EXTRA_ORDER_FIELDS = ['time_window_end'];
@@ -398,19 +400,31 @@ export async function listRequests(params: any = {}) {
       relationClientId = '',
       relationObjectIds = [],
       clientIds = [],
+      orderIds = [],
+      dateFrom = null,
+      dateTo = null,
+      sumMin = null,
+      sumMax = null,
+      userId = null,
       page = 1,
       pageSize = DEFAULT_PAGE_SIZE,
     } = params;
 
-    let query = supabase.from('orders').select(ORDER_SELECT_COLUMNS);
+    const isFeedRequest = status === 'feed';
+    let query = supabase
+      .from(isFeedRequest ? 'orders_secure_v2' : 'orders')
+      .select(isFeedRequest ? SECURE_ORDER_SELECT_COLUMNS : ORDER_SELECT_COLUMNS);
 
     if (scope === 'my') {
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError) {
-        if (isAuthSessionMissing(userError)) return [];
-        throw userError;
+      let uid = String(userId || '').trim();
+      if (!uid) {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) {
+          if (isAuthSessionMissing(userError)) return [];
+          throw userError;
+        }
+        uid = String(userData?.user?.id || '').trim();
       }
-      const uid = userData?.user?.id;
       if (!uid) return [];
       query = query.eq('assigned_to', uid);
     }
@@ -442,6 +456,15 @@ export async function listRequests(params: any = {}) {
     if (Array.isArray(clientIds) && clientIds.length) {
       query = query.in('client_id', clientIds.map(String));
     }
+    if (Array.isArray(orderIds) && orderIds.length) {
+      query = query.in('id', orderIds.map(String));
+    }
+    const parsedSumMin = String(sumMin ?? '').trim() === '' ? NaN : Number(sumMin);
+    const parsedSumMax = String(sumMax ?? '').trim() === '' ? NaN : Number(sumMax);
+    if (dateFrom) query = query.gte('time_window_start', dateFrom);
+    if (dateTo) query = query.lte('time_window_start', dateTo);
+    if (Number.isFinite(parsedSumMin)) query = query.gte('start_price', parsedSumMin);
+    if (Number.isFinite(parsedSumMax)) query = query.lte('start_price', parsedSumMax);
 
     query = applyOrderRelationFilters(query, {
       clientId: relationClientId,
@@ -452,16 +475,19 @@ export async function listRequests(params: any = {}) {
     const to = from + Number(pageSize) - 1;
 
     let { data, error } = await query.order('time_window_start', { ascending: false }).range(from, to);
-    if (error && shouldFallbackWithoutClientRelation(error)) {
+    if (!isFeedRequest && error && shouldFallbackWithoutClientRelation(error)) {
       let fallbackQuery = supabase.from('orders').select(ORDER_SELECT_COLUMNS_FALLBACK);
 
       if (scope === 'my') {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
-        if (userError) {
-          if (isAuthSessionMissing(userError)) return [];
-          throw userError;
+        let uid = String(userId || '').trim();
+        if (!uid) {
+          const { data: userData, error: userError } = await supabase.auth.getUser();
+          if (userError) {
+            if (isAuthSessionMissing(userError)) return [];
+            throw userError;
+          }
+          uid = String(userData?.user?.id || '').trim();
         }
-        const uid = userData?.user?.id;
         if (!uid) return [];
         fallbackQuery = fallbackQuery.eq('assigned_to', uid);
       }
@@ -494,6 +520,13 @@ export async function listRequests(params: any = {}) {
       if (Array.isArray(clientIds) && clientIds.length) {
         fallbackQuery = fallbackQuery.in('client_id', clientIds.map(String));
       }
+      if (Array.isArray(orderIds) && orderIds.length) {
+        fallbackQuery = fallbackQuery.in('id', orderIds.map(String));
+      }
+      if (dateFrom) fallbackQuery = fallbackQuery.gte('time_window_start', dateFrom);
+      if (dateTo) fallbackQuery = fallbackQuery.lte('time_window_start', dateTo);
+      if (Number.isFinite(parsedSumMin)) fallbackQuery = fallbackQuery.gte('start_price', parsedSumMin);
+      if (Number.isFinite(parsedSumMax)) fallbackQuery = fallbackQuery.lte('start_price', parsedSumMax);
 
       fallbackQuery = applyOrderRelationFilters(fallbackQuery, {
         clientId: relationClientId,
@@ -507,7 +540,7 @@ export async function listRequests(params: any = {}) {
       error = retryResult.error;
     }
     if (error) throw error;
-    return Array.isArray(data) ? data.map(normalizeOrder) : [];
+    return enrichOrdersWithExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
   });
 }
 
@@ -539,7 +572,9 @@ export async function getRequestById(id: any) {
       if (secureResult.error) throw secureResult.error;
       data = secureResult.data;
     }
-    return enrichOrderWithExtraFields(data);
+    const enriched = await enrichOrderWithExtraFields(data);
+    const withExecutor = await enrichOrdersWithExecutorNames(enriched ? [enriched] : []);
+    return withExecutor[0] || enriched;
   });
 }
 
@@ -642,7 +677,7 @@ export async function listCalendarRequests({
     }
     if (error) throw error;
 
-    const rows = Array.isArray(data) ? data.map(normalizeOrder) : [];
+    const rows = await enrichOrdersWithExecutorNames(Array.isArray(data) ? data.map(normalizeOrder) : []);
     if (normalizedScope === 'my' && userId) return rows.filter((row) => row.assigned_to === userId);
 
     return rows;

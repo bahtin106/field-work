@@ -461,10 +461,29 @@ export async function handleRegisterUserRequest(req: Request) {
     const companyId = newCompany?.id || null;
     createdCompanyId = companyId;
 
-    // Free paid period for 14 days for each new admin/company.
-    const { error: ensureSubErr } = await supabaseAdmin.rpc('ensure_company_subscription', {
-      p_company_id: companyId,
-    });
+    // Free paid period for each new admin/company. Newer DBs accept seat arguments
+    // (10 total seats = 1 owner + 9 free member seats); older DBs use p_company_id only.
+    let ensureSubErr: { message?: string; code?: string } | null = null;
+    const ensureSubscriptionPayloads = [
+      { p_company_id: companyId, p_paid_seats_total: 10, p_owner_seats: 1, p_free_member_seats: 9, p_trial_days: 14 },
+      { p_company_id: companyId, p_allowed_seats: 10, p_owner_seats: 1, p_extra_seats: 9, p_trial_days: 14 },
+      { p_company_id: companyId, p_paid_seats_total: 10, p_trial_days: 14 },
+      { p_company_id: companyId },
+    ];
+    for (const payload of ensureSubscriptionPayloads) {
+      const { error } = await supabaseAdmin.rpc('ensure_company_subscription', payload);
+      if (!error) {
+        ensureSubErr = null;
+        break;
+      }
+      ensureSubErr = error as { message?: string; code?: string };
+      const message = String(error.message || '').toLowerCase();
+      const signatureMismatch =
+        String(error.code || '') === 'PGRST202' ||
+        message.includes('could not find the function') ||
+        message.includes('function') && message.includes('schema cache');
+      if (!signatureMismatch) break;
+    }
     if (ensureSubErr) {
       await logServerIssue(supabaseAdmin, {
         userId,

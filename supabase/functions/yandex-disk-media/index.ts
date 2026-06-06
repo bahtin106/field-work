@@ -991,8 +991,6 @@ export async function handleYandexDiskMediaRequest(req: Request) {
 
       const resolved: Record<string, string> = {};
       const issues: Record<string, { code: string; message: string }> = {};
-      const cleaned = new Set<string>();
-      let lastAtomicResult: { media_urls: string[] | null; updated_at: string | null } | null = null;
 
       for (const sourceUrl of urls) {
         const directPath = directInternalPaths.get(sourceUrl);
@@ -1051,20 +1049,10 @@ export async function handleYandexDiskMediaRequest(req: Request) {
 
         const pathState = await inspectYandexPathStatus(accessToken, externalPath);
         if (pathState.state === 'missing') {
-          lastAtomicResult = await removeOrderMediaUrlAtomic(
-            admin,
-            ctx.order.id,
-            ctx.companyId,
-            category,
-            sourceUrl,
-          );
-          cleaned.add(sourceUrl);
-          if (mapRow?.id != null) {
-            await admin.from('order_media_external_map').delete().eq('id', Number(mapRow.id));
-          }
+          resolved[sourceUrl] = resolvedFallback;
           issues[sourceUrl] = {
             code: 'deleted_remote',
-            message: 'File deleted from Yandex Disk. Media URL removed from request',
+            message: 'File is not available on Yandex Disk. Link preserved',
           };
           continue;
         }
@@ -1107,18 +1095,13 @@ export async function handleYandexDiskMediaRequest(req: Request) {
         }
       }
 
-      const cleanedUrls = Array.from(cleaned);
-      const currentMedia = Array.isArray(lastAtomicResult?.media_urls)
-        ? lastAtomicResult?.media_urls || []
-        : urls.filter((u) => !cleaned.has(u));
-
       return json(200, {
         success: true,
         resolved_urls: resolved,
         issues,
-        cleaned_urls: cleanedUrls,
-        media_urls: currentMedia,
-        order_updated_at: lastAtomicResult?.updated_at ?? null,
+        cleaned_urls: [],
+        media_urls: urls,
+        order_updated_at: null,
       });
     }
 

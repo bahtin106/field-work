@@ -163,6 +163,8 @@ export function normalizeClientObject(row) {
     company_id: row.company_id ? String(row.company_id) : null,
     name: String(row.name || '').trim() || getClientObjectDefaultName(),
     photoUrl: String(row.photo_url || row.photoUrl || '').trim() || '',
+    photoThumbUrl:
+      String(row.photo_thumb_url || row.photoThumbUrl || row.photo_display_url || row.photoDisplayUrl || '').trim() || '',
     photoDisplayUrl:
       String(row.photo_display_url || row.photoDisplayUrl || row.photo_url || row.photoUrl || '').trim() || '',
     is_primary: !!row.is_primary,

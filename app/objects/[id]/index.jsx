@@ -615,9 +615,9 @@ export default function ObjectViewScreen() {
             }}
             disabled={!objectItem?.photoUrl}
           >
-            {objectItem?.photoDisplayUrl || objectItem?.photoUrl ? (
+            {objectItem?.photoThumbUrl || objectItem?.photoDisplayUrl || objectItem?.photoUrl ? (
               <ExpoImage
-                source={{ uri: objectItem?.photoDisplayUrl || objectItem?.photoUrl }}
+                source={{ uri: objectItem?.photoThumbUrl || objectItem?.photoDisplayUrl || objectItem?.photoUrl }}
                 style={styles.avatarImg}
                 contentFit="cover"
                 cachePolicy="memory-disk"

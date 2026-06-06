@@ -1,7 +1,7 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useCallback, useEffect, useRef } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Image, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { installDevWarnFilters } from '../src/utils/devWarnFilter';
@@ -60,8 +60,6 @@ function ensureForegroundNotificationHandler() {
     });
 }
 
-ensureForegroundNotificationHandler();
-
 function LastSeenTracker() {
   useAppLastSeen(30_000);
   return null;
@@ -94,8 +92,11 @@ function BlurFocusedInputOnKeyboardHide() {
   return null;
 }
 
-const ACCESS_REVALIDATE_INTERVAL_MS = 15 * 1000;
+const ACCESS_REVALIDATE_INTERVAL_MS = 5 * 60 * 1000;
 const ACCESS_CHECK_MIN_GAP_MS = 1200;
+const ACCESS_BOOTSTRAP_DELAY_MS = 1800;
+const PUSH_BOOTSTRAP_DELAY_MS = 4500;
+const NOTIFICATION_LISTENERS_DELAY_MS = 2800;
 
 if (!globalThis.__splashPrevented) {
   globalThis.__splashPrevented = true;
@@ -243,6 +244,22 @@ function RootLayoutInner() {
     applyAndroidSystemBars(theme).catch(() => {});
   }, [inAuthGroup, theme]);
 
+  useEffect(() => {
+    if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;
+    let task = null;
+    const timer = setTimeout(() => {
+      task = InteractionManager.runAfterInteractions(() => {
+        ensureForegroundNotificationHandler();
+      });
+    }, NOTIFICATION_LISTENERS_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      try {
+        task?.cancel?.();
+      } catch {}
+    };
+  }, [isAuthenticated, isBlockedScreen, isInitializing]);
+
   const shouldHoldNativeSplash = isInitializing;
 
   useEffect(() => {
@@ -383,7 +400,13 @@ function RootLayoutInner() {
   useEffect(() => {
     if (isInitializing || !isAuthenticated || !user?.id) return;
 
-    enforceAccess();
+    let bootstrapTask = null;
+    const bootstrapTimer = setTimeout(() => {
+      bootstrapTask = InteractionManager.runAfterInteractions(() => {
+        enforceAccess();
+      });
+    }, ACCESS_BOOTSTRAP_DELAY_MS);
+
     const intervalId = setInterval(() => {
       enforceAccess();
     }, ACCESS_REVALIDATE_INTERVAL_MS);
@@ -393,6 +416,10 @@ function RootLayoutInner() {
     });
 
     return () => {
+      clearTimeout(bootstrapTimer);
+      try {
+        bootstrapTask?.cancel?.();
+      } catch {}
       clearInterval(intervalId);
       appStateSub?.remove?.();
     };
@@ -450,7 +477,12 @@ function RootLayoutInner() {
       }
     };
 
-    runBootstrap(true).catch(() => {});
+    let bootstrapTask = null;
+    const bootstrapTimer = setTimeout(() => {
+      bootstrapTask = InteractionManager.runAfterInteractions(() => {
+        runBootstrap(true).catch(() => {});
+      });
+    }, PUSH_BOOTSTRAP_DELAY_MS);
 
     const appStateSub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
@@ -460,6 +492,10 @@ function RootLayoutInner() {
 
     return () => {
       active = false;
+      clearTimeout(bootstrapTimer);
+      try {
+        bootstrapTask?.cancel?.();
+      } catch {}
       appStateSub?.remove?.();
     };
   }, [isAuthenticated, isInitializing, user?.id]);
@@ -799,10 +835,19 @@ function RootLayoutInner() {
       }
     };
 
-    init().catch(() => {});
+    let initTask = null;
+    const initTimer = setTimeout(() => {
+      initTask = InteractionManager.runAfterInteractions(() => {
+        init().catch(() => {});
+      });
+    }, NOTIFICATION_LISTENERS_DELAY_MS);
 
     return () => {
       active = false;
+      clearTimeout(initTimer);
+      try {
+        initTask?.cancel?.();
+      } catch {}
       responseSub?.remove?.();
       receivedSub?.remove?.();
     };
@@ -896,6 +941,10 @@ function RootLayoutInner() {
                 <Stack.Screen
                   name="company_settings/sections/telegram-bot"
                   options={{ title: t('routes.company_settings/sections/telegram-bot') }}
+                />
+                <Stack.Screen
+                  name="company_settings/sections/order-feed-fields"
+                  options={{ title: t('settings_management_feed_fields') }}
                 />
                 <Stack.Screen name="users/index" options={{ title: t('routes.users/index') }} />
                 <Stack.Screen name="users/new" options={{ title: t('routes.users/new') }} />

@@ -219,6 +219,9 @@ async function getPushTokenIfGranted() {
           name: ANDROID_CHANNEL_NAME,
           importance: Notifications.AndroidImportance.MAX,
           sound: 'default',
+          lightColor: '#0A84FF',
+          vibrationPattern: [0, 250, 150, 250],
+          lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
       } catch (e) {
         __devLog('setNotificationChannelAsync failed:', e?.message || e);
@@ -422,6 +425,7 @@ export default function AppSettings() {
     },
     gcTime: 5 * 60 * 1000,
     staleTime: 2 * 60 * 1000,
+    enabled: !isSoloAdmin,
   });
 
   useEffect(() => {
@@ -434,6 +438,8 @@ export default function AppSettings() {
   }, [prefsError, t, toast]);
 
   useEffect(() => {
+    if (isSoloAdmin) return undefined;
+
     let active = true;
     let channel = null;
 
@@ -467,7 +473,7 @@ export default function AppSettings() {
         supabase.removeChannel(channel);
       } catch {}
     };
-  }, [refreshPrefs]);
+  }, [isSoloAdmin, refreshPrefs]);
 
   useEffect(() => {
     if (prefsData && mounted.current) {

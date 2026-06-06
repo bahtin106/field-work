@@ -238,6 +238,12 @@ function mapSaveErrorToMessage(error, t) {
   const raw = String(error?.message || error || '');
   const normalized = raw.toLowerCase();
 
+  if (isEmailTakenError(error)) {
+    return t('error_email_exists');
+  }
+  if (isInvalidAuthEmailError(error)) {
+    return t('err_email');
+  }
   if (
     normalized.includes('new password should be different from the old password') ||
     normalized.includes('should be different from the old password')
@@ -252,6 +258,16 @@ function mapSaveErrorToMessage(error, t) {
   }
 
   return raw || t('error_save_failed');
+}
+
+function isEmailTakenError(error) {
+  const raw = String(error?.message || error || '');
+  return /EMAIL_TAKEN|email.*taken|email.*already|already.*email|already registered|already exists|user.*exists|duplicate/i.test(raw);
+}
+
+function isInvalidAuthEmailError(error) {
+  const raw = String(error?.message || error || '');
+  return /INVALID_EMAIL|invalid email|email.*invalid|bad email/i.test(raw);
 }
 
 function isSamePasswordError(error) {
@@ -1078,6 +1094,7 @@ export default function EditUser() {
     }, [clearBanner, isDirty]),
   );
   const allowLeaveRef = useRef(false);
+  const pendingNavigationActionRef = useRef(null);
   const generateTempPassword = useCallback(() => {
     const words = ['pilot', 'eagle', 'tiger', 'wolf', 'bear', 'lion', 'shark', 'hawk', 'fox', 'star'];
     const word = words[Math.floor(Math.random() * words.length)];
@@ -1101,13 +1118,18 @@ export default function EditUser() {
     setAvatarUrl(initialAvatarUrl);
     setPendingAvatarUrl(null);
     allowLeaveRef.current = true;
-    if (navigation && typeof navigation.goBack === 'function') {
+    const pendingAction = pendingNavigationActionRef.current;
+    pendingNavigationActionRef.current = null;
+    if (pendingAction && navigation && typeof navigation.dispatch === 'function') {
+      navigation.dispatch(pendingAction);
+    } else if (navigation && typeof navigation.goBack === 'function') {
       navigation.goBack();
     } else if (router && typeof router.back === 'function') {
       router.back();
     }
   };
   const handleCancelPress = () => {
+    pendingNavigationActionRef.current = null;
     if (isDirty) {
       setCancelKey((k) => k + 1);
       setCancelVisible(true);
@@ -1465,7 +1487,17 @@ export default function EditUser() {
       const msg = mapSaveErrorToMessage(e, t);
       setErr(msg);
       showError(msg);
-      if (isSamePasswordError(e)) {
+      if (isEmailTakenError(e) || isInvalidAuthEmailError(e)) {
+        setFieldErrors({ email: { message: msg } });
+        ensureVisibleField({
+          fieldRef: emailRef,
+          scrollRef,
+          scrollYRef,
+          insetsBottom: insets.bottom ?? 0,
+          headerHeight,
+        });
+        emailRef.current?.focus?.();
+      } else if (isSamePasswordError(e)) {
         scrollToTop();
         _showErrorToast(msg);
       }
@@ -1611,6 +1643,7 @@ export default function EditUser() {
     const sub = navigation.addListener('beforeRemove', (e) => {
       if (allowLeaveRef.current || !isDirty) return;
       e.preventDefault();
+      pendingNavigationActionRef.current = e?.data?.action || null;
       setCancelKey((k) => k + 1);
       setCancelVisible(true);
     });

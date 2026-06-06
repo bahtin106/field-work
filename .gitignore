@@ -37,4 +37,5 @@ CON
 .codex-backups/
 .codex-checkpoints/
 .codex-remote-work/
+.codex-temp/
 build/

@@ -63,10 +63,11 @@ import {
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { enrichOrdersWithKnownExecutorRows } from '../../src/features/requests/executorNameCache';
 import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
 import { formatDateKey } from '../../lib/calendarUtils';
-import { markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
+import { isPerfLoggingEnabled, markFirstContent, markScreenMount } from '../../src/shared/perf/devMetrics';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { withAlpha } from '../../theme/colors';
@@ -107,6 +108,9 @@ const DATE_FNS_LOCALES = Object.freeze({
   en: dfnsEnUS,
   ru: dfnsRu,
 });
+const logCalendarPerf = (message) => {
+  if (isPerfLoggingEnabled()) console.debug?.(message);
+};
 const CALENDAR_WEEK_STARTS_ON = 1;
 const CALENDAR_DAYS_IN_WEEK = 7;
 const CALENDAR_MONTH_KEY_LENGTH = 7;
@@ -461,14 +465,17 @@ function CalendarScreenContent() {
   });
 
   useRequestRealtimeSync({ enabled: false });
+  const calendarHasAssignedOrders = useMemo(
+    () => Array.isArray(orders) && orders.some((order) => String(order?.assigned_to || '').trim()),
+    [orders],
+  );
   const { data: executors = [] } = useRequestExecutors({
     companyId,
     enabled:
       isAuthenticated &&
       !isInitializing &&
       !!profile?.id &&
-      canUseCalendarAllScope &&
-      (executorModalVisible || hasEmployeeFilter),
+      (calendarHasAssignedOrders || (canUseCalendarAllScope && (executorModalVisible || hasEmployeeFilter))),
     placeholderData: (prev) => prev ?? [],
   });
   const { data: departments = [] } = useDepartmentsQuery({
@@ -547,7 +554,7 @@ function CalendarScreenContent() {
     if (perfMountStartedRef.current) return;
     perfMountStartedRef.current = true;
     perfMountStartMsRef.current = nowMs();
-    if (__DEV__) console.debug?.('[perf] calendar-mount.start');
+    logCalendarPerf('[perf] calendar-mount.start');
   }, []);
 
   useEffect(() => {
@@ -558,7 +565,7 @@ function CalendarScreenContent() {
     if (!perfFirstContentLoggedRef.current) {
       perfFirstContentLoggedRef.current = true;
       const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
-      if (__DEV__) console.debug?.(`[perf] calendar.first-content.now: ${Math.round(elapsedMs)}ms`);
+      logCalendarPerf(`[perf] calendar.first-content.now: ${Math.round(elapsedMs)}ms`);
     }
   }, [isCalendarLoading, isCalendarPlaceholderData]);
 
@@ -815,7 +822,7 @@ function CalendarScreenContent() {
       if (!Number.isFinite(nextYear)) return;
       if (perfYearMountStartedRef.current) {
         const elapsedMs = Math.max(0, nowMs() - perfYearMountStartMsRef.current);
-        if (__DEV__) console.debug?.(`[perf] calendar.year.page-change.now: ${Math.round(elapsedMs)}ms`);
+        logCalendarPerf(`[perf] calendar.year.page-change.now: ${Math.round(elapsedMs)}ms`);
       }
       setCurrentMonth((prev) => startOfMonth(new Date(nextYear, prev.getMonth(), 1)));
     },
@@ -841,7 +848,7 @@ function CalendarScreenContent() {
     if (perfYearMountStartedRef.current) return;
     perfYearMountStartedRef.current = true;
     perfYearMountStartMsRef.current = nowMs();
-    if (__DEV__) console.debug?.('[perf] calendar-year-mount.start');
+    logCalendarPerf('[perf] calendar-year-mount.start');
   }, [viewMode]);
 
   useEffect(() => {
@@ -935,7 +942,7 @@ function CalendarScreenContent() {
     if (perfGridLoggedRef.current || viewMode !== CALENDAR_VIEW_MODE.MONTH || !monthWeeks.length) return;
     perfGridLoggedRef.current = true;
     const elapsedMs = Math.max(0, nowMs() - perfMountStartMsRef.current);
-    if (__DEV__) console.debug?.(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
+    logCalendarPerf(`[perf] calendar.grid-ready.now: ${Math.round(elapsedMs)}ms`);
   }, [monthWeeks.length, viewMode]);
 
   const indicatorSlotBaseHeight =
@@ -1981,11 +1988,11 @@ function CalendarScreenContent() {
   );
 
   const filteredOrders = useMemo(() => {
-    const base = Array.isArray(orders) ? orders : [];
+    const base = enrichOrdersWithKnownExecutorRows(Array.isArray(orders) ? orders : [], executors);
     if (!base.length) return [];
     if (!hasEmployeeFilter) return base;
     return base.filter((order) => executorFilterSet.has(String(order?.assigned_to || '')));
-  }, [executorFilterSet, hasEmployeeFilter, orders]);
+  }, [executorFilterSet, executors, hasEmployeeFilter, orders]);
 
   const calendarIndex = useMemo(() => {
     const byDate = {};
@@ -2122,14 +2129,14 @@ function CalendarScreenContent() {
       <DynamicOrderCard
         order={item}
         context={scope === CALENDAR_SCOPE.MY ? 'my_orders' : 'all_orders'}
-        hideExecutor={isSoloAdmin}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
+        companySettingsOverride={companySettings || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, isSoloAdmin, openOrderDetails, orderFieldsByKey, scope],
+    [companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey, scope],
   );
   const ordersEmptyComponent = useMemo(
     () =>
@@ -2165,20 +2172,19 @@ function CalendarScreenContent() {
             <DynamicOrderCard
               order={item}
               context="calendar"
-              hideExecutor={isSoloAdmin}
               onPress={openOrderDetails}
               departureTimeEnabled={departureTimeEnabled}
               orderFieldsByKey={orderFieldsByKey}
               companyCurrency={companySettings?.currency || null}
+              companySettingsOverride={companySettings || null}
             />
           </View>
         </View>
       );
     },
     [
-      companySettings?.currency,
+      companySettings,
       departureTimeEnabled,
-      isSoloAdmin,
       openOrderDetails,
       orderFieldsByKey,
       styles.weekEmptyRow,
@@ -2269,19 +2275,18 @@ function CalendarScreenContent() {
           <DynamicOrderCard
             order={item}
             context="calendar"
-            hideExecutor={isSoloAdmin}
             onPress={openOrderDetails}
             departureTimeEnabled={departureTimeEnabled}
             orderFieldsByKey={orderFieldsByKey}
             companyCurrency={companySettings?.currency || null}
+            companySettingsOverride={companySettings || null}
           />
         </View>
       </View>
     ),
     [
-      companySettings?.currency,
+      companySettings,
       departureTimeEnabled,
-      isSoloAdmin,
       openOrderDetails,
       orderFieldsByKey,
       styles.dayOrderConnector,
@@ -2729,7 +2734,7 @@ function CalendarScreenContent() {
                 if (!perfYearMountStartedRef.current || perfYearFirstContentLoggedRef.current) return;
                 perfYearFirstContentLoggedRef.current = true;
                 const elapsedMs = Math.max(0, nowMs() - perfYearMountStartMsRef.current);
-                if (__DEV__) console.debug?.(`[perf] calendar.year.first-content.now: ${Math.round(elapsedMs)}ms`);
+                logCalendarPerf(`[perf] calendar.year.first-content.now: ${Math.round(elapsedMs)}ms`);
               }}
               data={dynamicYears}
               horizontal

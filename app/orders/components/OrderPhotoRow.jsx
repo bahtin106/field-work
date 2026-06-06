@@ -12,6 +12,15 @@ import CachedImage from '../../../components/ui/CachedImage';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import Card from '../../../components/ui/Card';
 import { useTranslation } from '../../../src/i18n/useTranslation';
+import { prefetchMediaUrls } from '../../../src/shared/media/imagePipeline';
+
+const LOCAL_FILE_URI_RE = /^file:\/\//i;
+
+function buildPhotoTileKey(category, url, displayUrl, index) {
+  const visibleLocalUri = String(displayUrl || '').trim();
+  const stableSource = LOCAL_FILE_URI_RE.test(visibleLocalUri) ? visibleLocalUri : String(url || '').trim();
+  return `${category}:${index}:${stableSource}`;
+}
 
 // ─── Pending upload tile with pulse animation ─────────────────
 const PendingPhotoTile = memo(function PendingPhotoTile({ uri, thumbSize, borderRadius, theme }) {
@@ -172,6 +181,14 @@ function OrderPhotoRow({
     [photos, onPhotoPress],
   );
 
+  useEffect(() => {
+    const urls = (Array.isArray(photos) ? photos : [])
+      .map((url) => getDisplayUrl?.(url) || url)
+      .map((url) => String(url || '').trim())
+      .filter(Boolean);
+    prefetchMediaUrls(urls, { batchSize: 6 }).catch(() => {});
+  }, [getDisplayUrl, photos]);
+
   return (
     <View>
       <SectionHeader topSpacing="lg">{title}</SectionHeader>
@@ -200,21 +217,24 @@ function OrderPhotoRow({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={s.scrollContent}
           >
-            {(photos || []).map((url, index) => (
-              <PhotoTile
-                key={`${category}:${String(url)}`}
-                url={url}
-                displayUrl={getDisplayUrl(url)}
-                issueMessage={getIssue(url)}
-                index={index}
-                thumbSize={thumbSize}
-                borderRadius={borderRadius}
-                canRemove={canAdd}
-                onPress={handlePhotoPress}
-                onRemove={handleRemove}
-                theme={theme}
-              />
-            ))}
+            {(photos || []).map((url, index) => {
+              const displayUrl = getDisplayUrl(url);
+              return (
+                <PhotoTile
+                  key={buildPhotoTileKey(category, url, displayUrl, index)}
+                  url={url}
+                  displayUrl={displayUrl}
+                  issueMessage={getIssue(url)}
+                  index={index}
+                  thumbSize={thumbSize}
+                  borderRadius={borderRadius}
+                  canRemove={canAdd}
+                  onPress={handlePhotoPress}
+                  onRemove={handleRemove}
+                  theme={theme}
+                />
+              );
+            })}
             {(pending || []).map((p) => (
               <PendingPhotoTile
                 key={p.id || `pending:${p.uri}`}

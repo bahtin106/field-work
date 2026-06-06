@@ -16,6 +16,13 @@ import { useTheme } from '../../../theme/ThemeProvider';
 
 const NUM_COLUMNS = 3;
 const PHOTO_ACTION_HIT_SLOP = { top: 10, right: 10, bottom: 10, left: 10 };
+const LOCAL_FILE_URI_RE = /^file:\/\//i;
+
+function buildPhotoKey(url, displayUri, index) {
+  const visibleLocalUri = String(displayUri || '').trim();
+  const stableSource = LOCAL_FILE_URI_RE.test(visibleLocalUri) ? visibleLocalUri : String(url || '').trim();
+  return `photo_${index}_${stableSource}`;
+}
 
 const UploadOverlay = memo(function UploadOverlay({ borderRadius, iconSize, iconColor }) {
   const opacity = useSharedValue(0.18);
@@ -199,12 +206,13 @@ function PhotoGrid({
     for (let i = 0; i < (photos || []).length; i += 1) {
       const url = photos[i];
       const thumbUri = getThumbnailUrl ? getThumbnailUrl(url) : '';
-      const displayUri = getDisplayUrl ? getDisplayUrl(url) : '';
+      const displayUri = getDisplayUrl ? getDisplayUrl(url) : url;
+      const visibleUri = thumbUri || displayUri;
       mapped.push({
-        key: `photo_${String(url)}_${i}`,
+        key: buildPhotoKey(url, visibleUri, i),
         uri: url,
-        displayUri: thumbUri || displayUri || url,
-        fallbackUri: displayUri && displayUri !== thumbUri ? displayUri : url,
+        displayUri: visibleUri,
+        fallbackUri: displayUri && displayUri !== thumbUri ? displayUri : '',
         issueMessage: getIssue ? getIssue(url) : '',
         isPending: false,
         actualIndex: i,
@@ -217,7 +225,7 @@ function PhotoGrid({
     const displayUrls = data
       .filter((item) => !item.isPending && !item.issueMessage)
       .map((item) => item.displayUri || item.uri);
-    prefetchMediaUrls(displayUrls).catch(() => {});
+    prefetchMediaUrls(displayUrls, { batchSize: 6 }).catch(() => {});
   }, [data]);
 
   const handleOpenViewer = useCallback(
@@ -293,7 +301,7 @@ function PhotoGrid({
       initialNumToRender={9}
       maxToRenderPerBatch={12}
       windowSize={5}
-      removeClippedSubviews
+      removeClippedSubviews={false}
       updateCellsBatchingPeriod={40}
     />
   );

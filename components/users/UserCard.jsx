@@ -23,9 +23,6 @@ function UserCardContent({
   const ty = theme.typography;
 
   const rad = theme.radii;
-  const badgeNudge = Number(theme.spacing?.xxs ?? theme.spacing?.xs ?? 0);
-  const roleBadgeTop = Math.max(0, Number(sz.md ?? 0) - badgeNudge);
-  const blockedBadgeBottom = Math.max(0, Number(sz.md ?? 0) - badgeNudge);
 
   // Получаем тени из темы для текущей платформы
   const cardShadows = useMemo(
@@ -59,13 +56,14 @@ function UserCardContent({
         cardRow: {
           flexDirection: 'row',
           justifyContent: 'space-between',
-          alignItems: 'center',
+          alignItems: 'flex-start',
+          gap: sz.sm,
         },
         cardTextWrap: {
           flex: 1,
           minWidth: 0,
           flexShrink: 1,
-          paddingRight: sz.xl * 4,
+          paddingRight: 0,
         },
         cardTitle: {
           fontSize: ty.sizes.md,
@@ -89,16 +87,13 @@ function UserCardContent({
           fontWeight: ty.weight.semibold,
         },
         rolePillTopRight: {
-          position: 'absolute',
-          top: roleBadgeTop,
-          right: sz.md,
-          zIndex: 2,
+          alignSelf: 'flex-start',
+          flexShrink: 0,
+          maxWidth: '42%',
         },
         suspendedPill: {
-          position: 'absolute',
-          right: sz.md,
-          bottom: blockedBadgeBottom,
-          zIndex: 2,
+          alignSelf: 'flex-end',
+          marginTop: sz.sm,
           paddingHorizontal: sz.sm,
           paddingVertical: 6,
           borderRadius: rad.md,
@@ -122,8 +117,6 @@ function UserCardContent({
       c.textSecondary,
       rad.lg,
       rad.md,
-      roleBadgeTop,
-      blockedBadgeBottom,
       sz.md,
       sz.sm,
       sz.xl,
@@ -188,10 +181,9 @@ function UserCardContent({
             {formatPresence(item?.last_seen_at)}
           </Text>
         </View>
-      </View>
-
-      <View style={[stylesPill.container, styles.rolePillTopRight]}>
-        <Text style={stylesPill.text}>{translate(`role_${item.role}`)}</Text>
+        <View style={[stylesPill.container, styles.rolePillTopRight]}>
+          <Text numberOfLines={1} style={stylesPill.text}>{translate(`role_${item.role}`)}</Text>
+        </View>
       </View>
 
       {isBlocked ? (

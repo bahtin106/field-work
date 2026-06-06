@@ -45,6 +45,10 @@ import { applyAndroidSystemBars } from '../../lib/systemBars';
 import { supabase } from '../../lib/supabase';
 import { mapStatusToDb } from '../../lib/orderFilters';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import {
+  FEED_ORDER_FIELD_KEYS,
+  isFeedOrderFieldVisible,
+} from '../../lib/feedOrderFieldVisibility';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import Button from '../../components/ui/Button';
@@ -65,6 +69,7 @@ import { useClient, useUpdateClientMutation } from '../../src/features/clients/q
 import {
   ensureRequestAssigneeNamePrefetch,
   ensureRequestPrefetch,
+  isRequestDetailLoaded,
   useRequest,
   useRequestRealtimeSync,
   useUpdateRequestMutation,
@@ -184,7 +189,8 @@ const PHOTO_MIME_TYPE = 'image/jpeg';
 const ORDER_PHOTO_UPLOAD_QUEUE_KEY = 'offline.orderPhotoUploadQueue.v1';
 const YANDEX_URL_MARKERS = ['yadisk://', 'yadi.sk', 'disk.yandex'];
 const ROUTE_PLACEHOLDER_RE = /^\[[^\]]+\]$/;
-const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph):\/\//i;
+const LOCAL_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
+const DATA_IMAGE_URI_RE = /^data:image\//i;
 const REMOVED_ORDER_OBJECT_FIELDS = new Set([
   'country',
   'region',
@@ -206,7 +212,7 @@ const EXECUTOR_NAME_CACHE_MAX_ENTRIES = 300;
 async function resolveRotateSourceUri(sourceUri, filePrefix) {
   const source = String(sourceUri || '').trim();
   if (!source) throw new Error('rotate source uri is empty');
-  if (LOCAL_MEDIA_URI_RE.test(source)) return source;
+  if (LOCAL_MEDIA_URI_RE.test(source) || DATA_IMAGE_URI_RE.test(source)) return source;
 
   const fileSystem = await loadLegacyFileSystem();
   const targetDir = fileSystem.cacheDirectory || '';
@@ -214,6 +220,10 @@ async function resolveRotateSourceUri(sourceUri, filePrefix) {
 
   const localPath = `${targetDir}${filePrefix}_${Date.now()}.jpg`;
   const downloaded = await fileSystem.downloadAsync(source, localPath);
+  const status = Number(downloaded?.status);
+  if (Number.isFinite(status) && status >= 400) {
+    throw new Error(`rotate source download failed with status ${status}`);
+  }
   const localUri = downloaded?.uri;
   if (!localUri) throw new Error('rotate source download returned empty uri');
   return localUri;
@@ -620,12 +630,45 @@ function OrderDetailsContent() {
   const [workTypes, setWorkTypes] = useState([]);
   const [workTypeId, setWorkTypeId] = useState(() => initialCachedOrder?.work_type_id ?? null);
   const [amount, setAmount] = useState('');
+  const effectiveEditToFeed = isSoloAdmin ? false : toFeed;
+  const effectiveEditAssigneeId = isSoloAdmin ? (assigneeId || userId || authUserId || null) : assigneeId;
+  const showFeedCustomerField = isFeedOrderFieldVisible(
+    companySettings,
+    FEED_ORDER_FIELD_KEYS.CUSTOMER_NAME,
+    order,
+    role || authRole,
+  );
+  const showFeedAddressField = isFeedOrderFieldVisible(
+    companySettings,
+    FEED_ORDER_FIELD_KEYS.ADDRESS,
+    order,
+    role || authRole,
+  );
+  const showFeedPhoneField = isFeedOrderFieldVisible(
+    companySettings,
+    FEED_ORDER_FIELD_KEYS.PHONE,
+    order,
+    role || authRole,
+  );
+  const showFeedDepartureDateTimeField = isFeedOrderFieldVisible(
+    companySettings,
+    FEED_ORDER_FIELD_KEYS.DEPARTURE_TIME,
+    order,
+    role || authRole,
+  );
+  const showFeedFinanceField = isFeedOrderFieldVisible(
+    companySettings,
+    FEED_ORDER_FIELD_KEYS.FINANCE,
+    order,
+    role || authRole,
+  );
   const canViewFinanceAll = has('canViewFinanceAll');
   const isOrderFinanceEnabled = isOrderFinanceEnabledFromMap(orderFieldsByKey);
   const isOrderFinanceEntriesEnabled = isOrderFinanceEntriesEnabledFromMap(orderFieldsByKey);
-  const canViewFinanceSection = canViewFinanceAll && isOrderFinanceEnabled;
-  const canEditFinanceEntries = has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled;
-  const canEditFinances = has('canEditFinanceEntries') && isOrderFinanceEnabled;
+  const canViewFinanceSection = canViewFinanceAll && isOrderFinanceEnabled && showFeedFinanceField;
+  const canEditFinanceEntries =
+    has('canEditFinanceEntries') && isOrderFinanceEntriesEnabled && showFeedFinanceField;
+  const canEditFinances = has('canEditFinanceEntries') && isOrderFinanceEnabled && showFeedFinanceField;
   const canViewOrderPhotos = has('canViewOrderPhotos');
   const canAddOrderPhotosFromGallery = has('canAddGalleryPhotos');
   const canAddOrderPhotosFromCamera = has('canAddCameraPhotos');
@@ -707,6 +750,25 @@ function OrderDetailsContent() {
   const isOrderFieldVisible = useCallback(
     (fieldKey) => {
       const normalizedFieldKey = String(fieldKey || '');
+      if (normalizedFieldKey === 'client_id' && !showFeedCustomerField) return false;
+      if (normalizedFieldKey === 'object_id' && !showFeedAddressField) return false;
+      if (normalizedFieldKey === 'phone' && !showFeedPhoneField) return false;
+      if (
+        (normalizedFieldKey === 'time_window_start' || normalizedFieldKey === 'departure_time') &&
+        !showFeedDepartureDateTimeField
+      ) {
+        return false;
+      }
+      if (
+        (normalizedFieldKey === 'start_price' ||
+          normalizedFieldKey === 'payment_status' ||
+          normalizedFieldKey === 'payment_method' ||
+          normalizedFieldKey === 'finance' ||
+          normalizedFieldKey === 'finance_entries') &&
+        !showFeedFinanceField
+      ) {
+        return false;
+      }
       if (
         (normalizedFieldKey === 'start_price' ||
           normalizedFieldKey === 'payment_status' ||
@@ -721,7 +783,16 @@ function OrderDetailsContent() {
       if (!field || field.isEnabled !== false) return true;
       return hasOrderFieldValue(normalizedFieldKey);
     },
-    [hasOrderFieldValue, isOrderFinanceEnabled, orderFieldsByKey],
+    [
+      hasOrderFieldValue,
+      isOrderFinanceEnabled,
+      orderFieldsByKey,
+      showFeedAddressField,
+      showFeedCustomerField,
+      showFeedDepartureDateTimeField,
+      showFeedFinanceField,
+      showFeedPhoneField,
+    ],
   );
   const hasExplicitDepartureTime = useMemo(() => {
     if (String(order?.departure_time || '').trim().length > 0) return true;
@@ -854,6 +925,12 @@ function OrderDetailsContent() {
   const orderPhotoQueueFlushInFlightRef = useRef(false);
   const orderPhotoRotateJobsRef = useRef(new Map());
   const financePhotoRotateJobsRef = useRef(new Map());
+
+  useEffect(() => {
+    if (!isSoloAdmin) return;
+    if (toFeed) setToFeed(false);
+    if (assigneeModalVisible) setAssigneeModalVisible(false);
+  }, [assigneeModalVisible, isSoloAdmin, toFeed]);
 
   // в”Ђв”Ђв”Ђ Centralised media hook (caching, resolution, Yandex/Storage) в”Ђв”Ђв”Ђ
   const orderMedia = useOrderMedia({ order, mediaProvider, t });
@@ -1097,7 +1174,7 @@ function OrderDetailsContent() {
         case 'time_window_start':
           return departureDate;
         case 'assigned_to':
-          return toFeed ? null : assigneeId;
+          return effectiveEditToFeed ? null : effectiveEditAssigneeId;
         case 'start_price':
           return canEditFinances ? amount : amount || '';
         default:
@@ -1114,8 +1191,8 @@ function OrderDetailsContent() {
       street,
       house,
       departureDate,
-      assigneeId,
-      toFeed,
+      effectiveEditAssigneeId,
+      effectiveEditToFeed,
       amount,
       canEditFinances,
     ],
@@ -1139,7 +1216,7 @@ function OrderDetailsContent() {
         } else if (k === 'time_window_start') {
           if (!val) missing.push(f.label || k);
         } else if (k === 'assigned_to') {
-          if (!toFeed && !val) missing.push(f.label || k);
+          if (!effectiveEditToFeed && !val) missing.push(f.label || k);
         } else if (val === null || val === undefined || String(val).trim() === '') {
           missing.push(f.label || k);
         }
@@ -1151,7 +1228,7 @@ function OrderDetailsContent() {
     } catch {
       return { ok: true };
     }
-  }, [schemaEdit, getValueForField, toFeed, t]);
+  }, [effectiveEditToFeed, schemaEdit, getValueForField, t]);
 
   const parseMoney = useCallback((s) => {
     const v = String(s ?? '')
@@ -1366,13 +1443,13 @@ function OrderDetailsContent() {
     setPhone(rawDigits || '');
     setDepartureDate(o.time_window_start ? new Date(o.time_window_start) : null);
     setAssigneeId(o.assigned_to || null);
-    setToFeed(!o.assigned_to);
+    setToFeed(isSoloAdmin ? false : !o.assigned_to);
     setUrgent(!!o.urgent);
     setAmount(o.start_price !== null && o.start_price !== undefined ? String(o.start_price) : '');
     // Executor name from cache (instant)
     const cachedExecName = deriveExecutorNameInstant(o);
     if (cachedExecName) setExecutorName(cachedExecName);
-  }, [deriveExecutorNameInstant, titlePrefix]);
+  }, [deriveExecutorNameInstant, isSoloAdmin, titlePrefix]);
 
 
   const fetchData = useCallback(async () => {
@@ -1404,7 +1481,10 @@ function OrderDetailsContent() {
         setOrderReady(true);
       }
 
-      let fetchedOrderRaw = cachedOrderRaw || requestDataRef.current || null;
+      let fetchedOrderRaw = isRequestDetailLoaded(cachedOrderRaw) ? cachedOrderRaw : null;
+      if (!fetchedOrderRaw && isRequestDetailLoaded(requestDataRef.current)) {
+        fetchedOrderRaw = requestDataRef.current;
+      }
       if (fetchedOrderRaw) {
         refetchRequestData()
           .then((refetched) => {
@@ -1470,9 +1550,7 @@ function OrderDetailsContent() {
 
       // 5a. Yandex media resolution
       bgTasks.push(
-        media.resolveOrder(effectiveOrder).then((inspected) => {
-          if (inspected) setOrder(inspected);
-        }).catch(() => {})
+        media.resolveOrder(effectiveOrder).catch(() => {})
       );
 
 
@@ -1529,10 +1607,8 @@ function OrderDetailsContent() {
           .catch(() => {})
       );
 
-
-      await Promise.allSettled(bgTasks);
-
       initialFormSnapshotRef.current = makeSnapshotFromOrder(effectiveOrder);
+      void Promise.allSettled(bgTasks);
     } catch (e) {
       const errorName = String(e?.name || '').trim();
       if (errorName === 'CancelledError') {
@@ -1838,6 +1914,11 @@ function OrderDetailsContent() {
           return false;
         }
 
+        const optimisticDisplayUri = String(opts?.optimisticDisplayUri || uri || '').trim();
+        if (optimisticDisplayUri) {
+          orderMediaRef.current.setDisplayUrl(publicUrl, optimisticDisplayUri);
+        }
+
         // Read the LATEST photos from ref (not stale closure) to build the updated array
         const latest = orderRef.current;
         const buildUpdated = (arr) => {
@@ -1902,6 +1983,9 @@ function OrderDetailsContent() {
           });
           return true;
         } catch {
+          if (publicUrl) {
+            orderMediaRef.current.removeFromCache(publicUrl);
+          }
           if (replaceUrl && publicUrl) {
             try {
               const payload = { order_id: orderId, category, url: publicUrl };
@@ -2557,7 +2641,7 @@ function OrderDetailsContent() {
       ...prev,
       photo_urls: (prev.photo_urls || []).filter((value) => value !== rawUrl),
     }));
-    void removeFinanceEntryPhotoRemote(rawUrl, () => {
+    return removeFinanceEntryPhotoRemote(rawUrl, () => {
       setFinanceEntryDraft((prev) => {
         if ((prev.photo_urls || []).some((value) => String(value || '') === String(rawUrl || ''))) return prev;
         return { ...prev, photo_urls: [...(prev.photo_urls || []), String(rawUrl || '')] };
@@ -3387,7 +3471,9 @@ function OrderDetailsContent() {
     if (!clientIdForContacts) return showWarning(t('order_validation_client_required'));
     if (!phone.trim()) return showWarning(t('order_validation_phone_required'));
     if (!departureDate) return showWarning(t('order_validation_date_required'));
-    if (!assigneeId && !toFeed) return showWarning(t('order_validation_executor_required'));
+    if (!effectiveEditAssigneeId && !effectiveEditToFeed) {
+      return showWarning(t('order_validation_executor_required'));
+    }
 
     if (!isValidOptionalMobilePhone(phone)) {
       return showWarning(t('order_validation_phone_format'));
@@ -3395,7 +3481,7 @@ function OrderDetailsContent() {
     const normalizedPhone = toE164MobilePhoneOrNull(phone);
     if (!normalizedPhone) return showWarning(t('order_validation_phone_format'));
 
-    const nextStatus = toFeed
+    const nextStatus = effectiveEditToFeed
       ? t('order_status_in_feed')
       : order.status === t('order_status_in_feed')
         ? t('order_status_in_progress')
@@ -3408,7 +3494,7 @@ function OrderDetailsContent() {
     const payload = {
       title: resolvedTitle,
       ...(isCommentChanged ? { comment: nextComment } : {}),
-      assigned_to: toFeed ? null : assigneeId,
+      assigned_to: effectiveEditToFeed ? null : effectiveEditAssigneeId,
       time_window_start: formatDateOnlyForStorage(departureDate),
       departure_time:
         departureDate.getHours() !== 0 || departureDate.getMinutes() !== 0
@@ -3473,7 +3559,7 @@ function OrderDetailsContent() {
       setPhone(rawDigitsSaved || '');
       setDepartureDate(data.time_window_start ? new Date(data.time_window_start) : null);
       setAssigneeId(data.assigned_to || null);
-      setToFeed(!data.assigned_to);
+      setToFeed(isSoloAdmin ? false : !data.assigned_to);
       setUrgent(!!data.urgent);
       setAmount(data.start_price !== null && data.start_price !== undefined ? String(data.start_price) : '');
       setWorkTypeId(data.work_type_id || null);
@@ -3508,8 +3594,8 @@ function OrderDetailsContent() {
     description,
     phone,
     departureDate,
-    assigneeId,
-    toFeed,
+    effectiveEditAssigneeId,
+    effectiveEditToFeed,
     order,
     urgent,
     canEditFinances,
@@ -3529,6 +3615,7 @@ function OrderDetailsContent() {
     updateClientMutation,
     resolveTitleForSave,
     titlePrefix,
+    isSoloAdmin,
   ]);
 
   const confirmCancel = useCallback(() => {
@@ -3553,12 +3640,12 @@ function OrderDetailsContent() {
       setPhone(rawDigits || '');
       setDepartureDate(order.time_window_start ? new Date(order.time_window_start) : null);
       setAssigneeId(order.assigned_to || null);
-      setToFeed(!order.assigned_to);
+      setToFeed(isSoloAdmin ? false : !order.assigned_to);
       setUrgent(!!order.urgent);
       setWorkTypeId(order.work_type_id || null);
       setAmount(order.start_price !== null && order.start_price !== undefined ? String(order.start_price) : '');
     }
-  }, [order, makeSnapshotFromOrder, applyNavBar, titlePrefix]);
+  }, [order, makeSnapshotFromOrder, applyNavBar, titlePrefix, isSoloAdmin]);
 
   const deleteOrderCompletely = useCallback(async () => {
     const deletedOrderId = String(order?.id || '').trim();
@@ -3746,7 +3833,8 @@ function OrderDetailsContent() {
 
       const orderPhotos = orderRef.current?.[category] || [];
       const realIndex = orderPhotos.indexOf(rawUrl);
-      if (realIndex >= 0) removePhoto(category, realIndex);
+      if (realIndex >= 0) return removePhoto(category, realIndex);
+      return undefined;
     },
     [removePhoto],
   );
@@ -3788,15 +3876,15 @@ function OrderDetailsContent() {
               replaceIndex: job.index,
               replaceOnly: true,
               silent: true,
-              onUploaded: ({ publicUrl, localUri: uploadedLocalUri }) => {
+              onUploaded: ({ publicUrl }) => {
                 uploadedUrl = String(publicUrl || '').trim();
                 if (!uploadedUrl) return;
-                orderMediaRef.current.setDisplayUrl(uploadedUrl, uploadedLocalUri || rotatedUri);
+                orderMediaRef.current.setDisplayUrl(uploadedUrl, rotatedUri);
                 viewerRawPhotosRef.current = (viewerRawPhotosRef.current || []).map((value) =>
                   value === sourceUrl ? uploadedUrl : value,
                 );
                 job.currentUrl = uploadedUrl;
-                job.displayUrl = uploadedLocalUri || rotatedUri;
+                job.displayUrl = rotatedUri;
               },
             });
 
@@ -3813,7 +3901,9 @@ function OrderDetailsContent() {
                   console.warn('[Viewer] old rotated file cleanup:', delErr);
                 }
               }
-              orderMediaRef.current.removeFromCache(sourceUrl);
+              // Keep the old source mapped to the same local preview until React has
+              // fully swapped the photo URL in state; otherwise the thumbnail blinks.
+              orderMediaRef.current.setDisplayUrl(sourceUrl, rotatedUri);
             } else if ((((job.pendingDegrees % 360) + 360) % 360) === 0) {
               orderMediaRef.current.setDisplayUrl(sourceUrl, previousDisplayUrl);
             }
@@ -3864,7 +3954,7 @@ function OrderDetailsContent() {
   }, []);
 
   useEffect(() => {
-    if (!requestData || editMode) return;
+    if (!requestData || editMode || !isRequestDetailLoaded(requestData)) return;
     const syncToken = buildOrderSyncToken(requestData);
     if (lastRequestSyncRef.current === syncToken) return;
     lastRequestSyncRef.current = syncToken;
@@ -3876,13 +3966,13 @@ function OrderDetailsContent() {
     });
     const nextAssignee = requestData?.assigned_to || null;
     setAssigneeId(nextAssignee);
-    setToFeed(!nextAssignee);
+    setToFeed(isSoloAdmin ? false : !nextAssignee);
     if (!nextAssignee) setExecutorName(null);
     if (Object.prototype.hasOwnProperty.call(requestData, 'work_type_id')) {
       setWorkTypeId(requestData?.work_type_id ?? null);
     }
     if (!orderReady) setOrderReady(true);
-  }, [requestData, editMode, hasMeaningfulOrderDiff, orderReady, buildOrderSyncToken]);
+  }, [requestData, editMode, hasMeaningfulOrderDiff, orderReady, buildOrderSyncToken, isSoloAdmin]);
 
   useEffect(() => {
     if (!order?.id || firstContentTrackedRef.current) return;
@@ -4188,10 +4278,10 @@ function OrderDetailsContent() {
   const linkedObjectId = order?.object_id ? String(order.object_id) : null;
   const canShowOrderPhone = shouldShowOrderPhoneForRole(order, companySettings, authRole);
   const { data: linkedClient } = useClient(linkedClientId, {
-    enabled: !!linkedClientId && canViewClients,
+    enabled: !!linkedClientId && canViewClients && showFeedCustomerField,
   });
   const { data: linkedObject } = useClientObject(linkedObjectId, {
-    enabled: !!linkedObjectId && canViewObjects,
+    enabled: !!linkedObjectId && canViewObjects && showFeedAddressField,
   });
   const customerDisplayName = useMemo(() => {
     const liveClientName = formatClientNameForOrder(linkedClient);
@@ -4284,8 +4374,11 @@ function OrderDetailsContent() {
     return format(createdDate, 'dd.MM.yyyy, HH:mm', { locale: ru });
   }, [order?.created_at, t]);
   const orderPhoneRawValue = useMemo(
-    () => (canShowOrderPhone ? String(order?.phone ?? order?.customer_phone_visible ?? order?.phone_visible ?? '').trim() : ''),
-    [canShowOrderPhone, order?.customer_phone_visible, order?.phone, order?.phone_visible],
+    () =>
+      canShowOrderPhone && showFeedPhoneField
+        ? String(order?.phone ?? order?.customer_phone_visible ?? order?.phone_visible ?? '').trim()
+        : '',
+    [canShowOrderPhone, order?.customer_phone_visible, order?.phone, order?.phone_visible, showFeedPhoneField],
   );
   const orderPhoneDisplayValue = useMemo(() => {
     if (!canShowOrderPhone) return t('order_details_phone_hidden');
@@ -4325,7 +4418,7 @@ function OrderDetailsContent() {
   useEffect(() => {
     let cancelled = false;
 
-    if (!order?.id || !canViewClients) {
+    if (!order?.id || !canViewClients || !showFeedCustomerField) {
       setResolvedClientId(null);
       return () => {
         cancelled = true;
@@ -4351,7 +4444,7 @@ function OrderDetailsContent() {
     return () => {
       cancelled = true;
     };
-  }, [canViewClients, order?.client_id, order?.id]);
+  }, [canViewClients, order?.client_id, order?.id, showFeedCustomerField]);
 
   const onOpenClient = useCallback(() => {
     if (!linkedClientId || !canViewClients) return;
@@ -4388,6 +4481,7 @@ function OrderDetailsContent() {
   const canAcceptOrder =
     isInFeedStatus &&
     isFree &&
+    !isSoloAdmin &&
     !isReadOnlyBySubscription &&
     (role === 'worker' || canEditByRole());
   const currency = order?.currency || companySettings?.currency;
@@ -4436,9 +4530,19 @@ function OrderDetailsContent() {
   const showInitialCostLine =
     canViewFinanceSection &&
     isOrderFieldVisible('start_price');
+  const showExecutorRow = !isInFeedStatus && !isSoloAdmin && isOrderFieldVisible('assigned_to');
+  const showDepartureDateRow =
+    isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time');
+  const showCustomerRow = isOrderFieldVisible('client_id');
+  const showObjectRow = isOrderFieldVisible('object_id');
+  const showPhoneRow = isOrderFieldVisible('phone');
+  const showObjectAddressRow = showObjectRow && normalizedAddressMode === 'object';
+  const showObjectDataSection =
+    showCustomerRow || showObjectRow || showPhoneRow || showObjectAddressRow;
   const visibleMediaFields = canViewOrderPhotos
     ? ORDER_MEDIA_FIELD_KEYS.filter((fieldKey) => isOrderFieldVisible(fieldKey))
     : [];
+  const orderMediaSnapshotReady = isRequestDetailLoaded(order);
   return (
     <>
       <SafeAreaView
@@ -4536,7 +4640,7 @@ function OrderDetailsContent() {
               />
               <View style={base.sep} />
 
-              {!isSoloAdmin && isOrderFieldVisible('assigned_to') ? (
+              {showExecutorRow ? (
                 <Pressable
                   onPress={() => {
                   const assignee = order?.assigned_to || null;
@@ -4573,7 +4677,7 @@ function OrderDetailsContent() {
                   />
                 </Pressable>
               ) : null}
-              {!isSoloAdmin && isOrderFieldVisible('assigned_to') ? <View style={base.sep} /> : null}
+              {showExecutorRow ? <View style={base.sep} /> : null}
 
               {shouldShowWorkTypeRow ? (
                 <LabelValueRow
@@ -4584,7 +4688,7 @@ function OrderDetailsContent() {
               ) : null}
               {shouldShowWorkTypeRow ? <View style={base.sep} /> : null}
 
-              {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? (
+              {showDepartureDateRow ? (
                 <Pressable
                   onPress={() => {
                   const dateStr = order.time_window_start
@@ -4632,7 +4736,7 @@ function OrderDetailsContent() {
                   />
                 </Pressable>
               ) : null}
-              {(isOrderFieldVisible('time_window_start') || isOrderFieldVisible('departure_time')) ? <View style={base.sep} /> : null}
+              {showDepartureDateRow ? <View style={base.sep} /> : null}
 
               {isOrderFieldVisible('comment') && !!descriptionValue ? (
               <ExpandableTextRow
@@ -4642,136 +4746,144 @@ function OrderDetailsContent() {
               ) : null}
             </Card>
 
-            <SectionHeader topSpacing="xs" bottomSpacing="xs">
-              {t('order_details_object_data')}
-            </SectionHeader>
-            <Card paddedXOnly>
-              {isOrderFieldVisible('client_id') ? (
-                <Pressable onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
-                  <LabelValueRow
-                    label={t('order_details_customer')}
-                    valueComponent={
-                      <Text style={[base.value, linkedClientId && canViewClients ? styles.link : null]}>
-                        {customerDisplayName}
-                      </Text>
-                    }
-                    hideWhenEmpty={false}
-                  />
-                </Pressable>
-              ) : null}
-              {isOrderFieldVisible('client_id') ? <View style={base.sep} /> : null}
+            {showObjectDataSection ? (
+              <>
+                <SectionHeader topSpacing="xs" bottomSpacing="xs">
+                  {t('order_details_object_data')}
+                </SectionHeader>
+                <Card paddedXOnly>
+                  {showCustomerRow ? (
+                    <Pressable onPress={onOpenClient} disabled={!linkedClientId || !canViewClients}>
+                      <LabelValueRow
+                        label={t('order_details_customer')}
+                        valueComponent={
+                          <Text style={[base.value, linkedClientId && canViewClients ? styles.link : null]}>
+                            {customerDisplayName}
+                          </Text>
+                        }
+                        hideWhenEmpty={false}
+                      />
+                    </Pressable>
+                  ) : null}
+                  {showCustomerRow && (showObjectRow || showPhoneRow || showObjectAddressRow) ? (
+                    <View style={base.sep} />
+                  ) : null}
 
-              {isOrderFieldVisible('object_id') ? (
-                <Pressable onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
-                  <LabelValueRow
-                    label={t('routes_objects_object')}
-                    valueComponent={
-                      <Text
-                        style={[
-                          base.value,
-                          linkedObjectId && canViewObjects ? styles.link : null,
-                          isObjectDeleted ? styles.deletedObjectText : null,
-                        ]}
-                      >
-                        {objectRowValue}
-                      </Text>
-                    }
-                    hideWhenEmpty={false}
-                  />
-                </Pressable>
-              ) : null}
-              {isOrderFieldVisible('object_id') ? <View style={base.sep} /> : null}
-              {isOrderFieldVisible('phone') ? (
-                <LabelValueRow
-                  label={t('order_details_phone')}
-                  valueComponent={
-                    orderPhoneRawValue ? (
-                      <Pressable
-                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
-                        accessibilityRole="link"
-                        onPress={openOrderPhoneDialer}
-                        onLongPress={copyOrderPhone}
-                      >
-                        <Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>
-                      </Pressable>
+                  {showObjectRow ? (
+                    <Pressable onPress={onOpenObject} disabled={!linkedObjectId || !canViewObjects}>
+                      <LabelValueRow
+                        label={t('routes_objects_object')}
+                        valueComponent={
+                          <Text
+                            style={[
+                              base.value,
+                              linkedObjectId && canViewObjects ? styles.link : null,
+                              isObjectDeleted ? styles.deletedObjectText : null,
+                            ]}
+                          >
+                            {objectRowValue}
+                          </Text>
+                        }
+                        hideWhenEmpty={false}
+                      />
+                    </Pressable>
+                  ) : null}
+                  {showObjectRow && (showPhoneRow || showObjectAddressRow) ? <View style={base.sep} /> : null}
+
+                  {showPhoneRow ? (
+                    <LabelValueRow
+                      label={t('order_details_phone')}
+                      valueComponent={
+                        orderPhoneRawValue ? (
+                          <Pressable
+                            style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
+                            accessibilityRole="link"
+                            onPress={openOrderPhoneDialer}
+                            onLongPress={copyOrderPhone}
+                          >
+                            <Text style={[base.value, styles.link]}>{orderPhoneDisplayValue}</Text>
+                          </Pressable>
+                        ) : (
+                          <Text style={base.value}>{orderPhoneDisplayValue}</Text>
+                        )
+                      }
+                      rightActions={
+                        orderPhoneRawValue ? (
+                          <Pressable
+                            style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('a11y_copy_phone')}
+                            onPress={copyOrderPhone}
+                          >
+                            <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
+                          </Pressable>
+                        ) : null
+                      }
+                      hideWhenEmpty={false}
+                    />
+                  ) : null}
+                  {showPhoneRow && showObjectAddressRow ? <View style={base.sep} /> : null}
+
+                  {showObjectAddressRow ? (
+                    useCoordinatesForOrderAddress ? (
+                      <LabelValueRow
+                        label={t('objects_location_coordinates')}
+                        valueComponent={(
+                          <Pressable
+                            style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
+                            accessibilityRole="link"
+                            onPress={() => openCoordinatesInYandex(orderMapLat, orderMapLng)}
+                            onLongPress={copyOrderCoordinates}
+                          >
+                            <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
+                          </Pressable>
+                        )}
+                        rightActions={
+                          <Pressable
+                            style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common_copy')}
+                            onPress={copyOrderCoordinates}
+                          >
+                            <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
+                          </Pressable>
+                        }
+                        hideWhenEmpty={false}
+                      />
                     ) : (
-                      <Text style={base.value}>{orderPhoneDisplayValue}</Text>
+                      <ExpandableTextRow
+                        label={t('order_details_address')}
+                        value={
+                          orderAddressItems.length > 0
+                            ? orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')
+                            : t('order_details_address_not_specified')
+                        }
+                        collapsedValue={shortOrderAddress || fullOrderAddress || t('order_details_address_not_specified')}
+                        expandedKeyValueItems={orderAddressItems}
+                        expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
+                        collapsedValueStyle={orderAddressForNavigator ? styles.link : null}
+                        onValuePress={
+                          orderAddressForNavigator
+                            ? () => {
+                                openAddressInYandex(orderAddressForNavigator);
+                              }
+                            : null
+                        }
+                        onCollapsedPress={
+                          orderAddressForNavigator
+                            ? () => {
+                                openAddressInYandex(orderAddressForNavigator);
+                              }
+                            : null
+                        }
+                        onCollapsedLongPress={copyOrderShortAddress}
+                        forceShow
+                      />
                     )
-                  }
-                  rightActions={
-                    orderPhoneRawValue ? (
-                      <Pressable
-                        style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('a11y_copy_phone')}
-                        onPress={copyOrderPhone}
-                      >
-                        <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
-                      </Pressable>
-                    ) : null
-                  }
-                  hideWhenEmpty={false}
-                />
-              ) : null}
-              {isOrderFieldVisible('phone') ? <View style={base.sep} /> : null}
-              {isOrderFieldVisible('object_id') && normalizedAddressMode === 'object' ? (
-                useCoordinatesForOrderAddress ? (
-                  <LabelValueRow
-                    label={t('objects_location_coordinates')}
-                    valueComponent={(
-                      <Pressable
-                        style={({ pressed }) => [styles.linkPressable, pressed ? styles.linkPressablePressed : null]}
-                        accessibilityRole="link"
-                        onPress={() => openCoordinatesInYandex(orderMapLat, orderMapLng)}
-                        onLongPress={copyOrderCoordinates}
-                      >
-                        <Text style={[base.value, styles.link]}>{`${orderMapLat}, ${orderMapLng}`}</Text>
-                      </Pressable>
-                    )}
-                    rightActions={
-                      <Pressable
-                        style={({ pressed }) => [styles.copyButton, styles.copyButtonHidden, pressed ? styles.copyButtonPressed : null]}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('common_copy')}
-                        onPress={copyOrderCoordinates}
-                      >
-                        <Feather name="copy" size={Number(theme?.typography?.sizes?.md ?? 16)} color={theme.colors.textSecondary} />
-                      </Pressable>
-                    }
-                    hideWhenEmpty={false}
-                  />
-                ) : (
-                  <ExpandableTextRow
-                    label={t('order_details_address')}
-                    value={
-                      orderAddressItems.length > 0
-                        ? orderAddressItems.map((item) => `${item.label}: ${item.value}`).join(', ')
-                        : t('order_details_address_not_specified')
-                    }
-                    collapsedValue={shortOrderAddress || fullOrderAddress || t('order_details_address_not_specified')}
-                    expandedKeyValueItems={orderAddressItems}
-                    expandedActionText={orderAddressForNavigator ? t('order_address_map') : null}
-                    collapsedValueStyle={orderAddressForNavigator ? styles.link : null}
-                    onValuePress={
-                      orderAddressForNavigator
-                        ? () => {
-                            openAddressInYandex(orderAddressForNavigator);
-                          }
-                        : null
-                    }
-                    onCollapsedPress={
-                      orderAddressForNavigator
-                        ? () => {
-                            openAddressInYandex(orderAddressForNavigator);
-                          }
-                        : null
-                    }
-                    onCollapsedLongPress={copyOrderShortAddress}
-                    forceShow
-                  />
-                )
-              ) : null}
-            </Card>
+                  ) : null}
+                </Card>
+              </>
+            ) : null}
 
             {canViewFinanceSection ? (
               <>
@@ -5121,23 +5233,35 @@ function OrderDetailsContent() {
                       label: getOrderFieldLabel(fieldKey, t(`order_media_field_${ORDER_MEDIA_FIELD_KEYS.indexOf(fieldKey) + 1}`)),
                     }))
                     .map((row, idx) => {
-                    const count = (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length;
+                    const count = orderMediaSnapshotReady
+                      ? (order?.[row.key] || []).length + (localPendingMap[row.key] || []).length
+                      : 0;
                     return (
                       <View key={row.key}>
                         {idx > 0 && <View style={base.sep} />}
                         <Pressable
-                          style={({ pressed }) => [base.row, pressed && { opacity: 0.7 }]}
+                          disabled={!orderMediaSnapshotReady}
+                          accessibilityState={{ busy: !orderMediaSnapshotReady, disabled: !orderMediaSnapshotReady }}
+                          style={({ pressed }) => [
+                            base.row,
+                            !orderMediaSnapshotReady && { opacity: 0.62 },
+                            pressed && orderMediaSnapshotReady && { opacity: 0.7 },
+                          ]}
                           onPress={() => setOrderPhotosModal({ visible: true, category: row.key })}
                         >
                           <Text style={base.label}>{row.label}</Text>
                           <View style={base.rightWrap}>
-                            <Text style={base.value}>
-                              {t('order_photos_count').replace('{count}', String(count))}
-                            </Text>
+                            {orderMediaSnapshotReady ? (
+                              <Text style={base.value}>
+                                {t('order_photos_count').replace('{count}', String(count))}
+                              </Text>
+                            ) : (
+                              <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                            )}
                             <Feather
                               name="chevron-right"
                               size={theme.icons?.sm ?? 18}
-                              color={theme.colors.textSecondary}
+                              color={orderMediaSnapshotReady ? theme.colors.textSecondary : theme.colors.border}
                               style={{ marginLeft: theme.spacing.xs }}
                             />
                           </View>
@@ -5161,7 +5285,7 @@ function OrderDetailsContent() {
                     setOrderPhotosModal({ visible: false, category: null });
                   }}
                   category={orderPhotosModal.category}
-                  photos={order?.[orderPhotosModal.category] || []}
+                  photos={orderMediaSnapshotReady ? order?.[orderPhotosModal.category] || [] : []}
                   pending={localPendingMap[orderPhotosModal.category] || []}
                   getDisplayUrl={orderMedia.getDisplayUrl}
                   getThumbnailUrl={orderMedia.getThumbnailUrl}
@@ -5278,30 +5402,32 @@ function OrderDetailsContent() {
         onConfirm={confirmCancel}
       />
 
-      <SelectModal
-        visible={assigneeModalVisible}
-        title={t('order_modal_select_executor')}
-        searchable={false}
-        items={[
-          { id: '__feed__', label: t('order_modal_to_feed') },
-          ...users.map((user) => ({
-            id: user.id,
-            label: [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' '),
-          })),
-        ]}
-        onSelect={(item) => {
-          if (item.id === '__feed__') {
-            setToFeed(true);
-            setAssigneeId(null);
-          } else {
-            setAssigneeId(item.id);
-            setExecutorName(item.label);
-            setToFeed(false);
-          }
-          setAssigneeModalVisible(false);
-        }}
-        onClose={() => setAssigneeModalVisible(false)}
-      />
+      {!isSoloAdmin ? (
+        <SelectModal
+          visible={assigneeModalVisible}
+          title={t('order_modal_select_executor')}
+          searchable={false}
+          items={[
+            { id: '__feed__', label: t('order_modal_to_feed') },
+            ...users.map((user) => ({
+              id: user.id,
+              label: [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' '),
+            })),
+          ]}
+          onSelect={(item) => {
+            if (item.id === '__feed__') {
+              setToFeed(true);
+              setAssigneeId(null);
+            } else {
+              setAssigneeId(item.id);
+              setExecutorName(item.label);
+              setToFeed(false);
+            }
+            setAssigneeModalVisible(false);
+          }}
+          onClose={() => setAssigneeModalVisible(false)}
+        />
+      ) : null}
 
       <BaseModal
         visible={amountEditModalVisible}

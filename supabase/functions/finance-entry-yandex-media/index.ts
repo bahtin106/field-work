@@ -1034,8 +1034,6 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
 
       const resolved: Record<string, string> = {};
       const issues: Record<string, { code: string; message: string }> = {};
-      const cleaned = new Set<string>();
-      let lastAtomicResult: { photo_urls: string[] | null; updated_at: string | null } | null = null;
 
       for (const sourceUrl of urls) {
         const directPath = directInternalPaths.get(sourceUrl);
@@ -1094,20 +1092,10 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
 
         const pathState = await inspectYandexPathStatus(accessToken, externalPath);
         if (pathState.state === 'missing') {
-          lastAtomicResult = await removeFinanceEntryPhotoUrlAtomic(
-            admin,
-            ctx.financeEntry.id,
-            ctx.companyId,
-            sourceUrl,
-            ctx.userId,
-          );
-          cleaned.add(sourceUrl);
-          if (mapRow?.id != null) {
-            await admin.from('finance_entry_media_external_map').delete().eq('id', Number(mapRow.id));
-          }
+          resolved[sourceUrl] = resolvedFallback;
           issues[sourceUrl] = {
             code: 'deleted_remote',
-            message: 'File deleted from Yandex Disk. Media URL removed from request',
+            message: 'File is not available on Yandex Disk. Link preserved',
           };
           continue;
         }
@@ -1150,18 +1138,13 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
         }
       }
 
-      const cleanedUrls = Array.from(cleaned);
-      const currentMedia = Array.isArray(lastAtomicResult?.photo_urls)
-        ? lastAtomicResult?.photo_urls || []
-        : urls.filter((u) => !cleaned.has(u));
-
       return json(200, {
         success: true,
         resolved_urls: resolved,
         issues,
-        cleaned_urls: cleanedUrls,
-        photo_urls: currentMedia,
-        finance_entry_updated_at: lastAtomicResult?.updated_at ?? null,
+        cleaned_urls: [],
+        photo_urls: urls,
+        finance_entry_updated_at: null,
       });
     }
 

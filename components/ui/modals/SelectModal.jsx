@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { t as T } from '../../../src/i18n';
 import { useTheme } from '../../../theme';
 import TextField from '../TextField';
@@ -28,6 +28,7 @@ export default function SelectModal({
   onSearchChange,
   onFilteredCountChange,
   emptyComponent = null,
+  loading = false,
   filterFn,
   onItemLongPress,
   itemTitleNumberOfLines = 1,
@@ -204,7 +205,15 @@ export default function SelectModal({
           right: 0,
         }}
         ListFooterComponent={listFooter || <View style={{ height: bottomInset }} />}
-        ListEmptyComponent={emptyComponent || null}
+        ListEmptyComponent={
+          loading ? (
+            <View style={s.loadingEmpty}>
+              <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+            </View>
+          ) : (
+            emptyComponent || null
+          )
+        }
         onScrollToIndexFailed={NOOP}
         keyboardShouldPersistTaps="handled"
       />
@@ -248,6 +257,12 @@ const styles = (t) => {
     itemTitleSelected: { color: t.colors.text },
     itemSub: { marginTop: 2, fontSize: t.typography.sizes.sm },
     itemRight: { marginLeft: t.spacing.sm, alignSelf: 'center' },
+    loadingEmpty: {
+      minHeight: t.components?.listItem?.height ?? 52,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: t.spacing.lg,
+    },
     radioButton: {
       width: radioSize,
       height: radioSize,

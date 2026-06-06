@@ -28,14 +28,18 @@ import {
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
+import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
+import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import {
   ensureRequestPrefetch,
   useAllRequests,
+  markRequestDetailSeed,
   useRequestExecutors,
   useRequestRealtimeSync,
 } from '../../src/features/requests/queries';
+import { enrichOrdersWithKnownExecutorRows } from '../../src/features/requests/executorNameCache';
 import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
@@ -112,6 +116,7 @@ const ALL_ORDERS_LIST = Object.freeze({
   onEndReachedThreshold: 0.5,
 });
 const ALL_ORDER_STATUS_TABS = Object.freeze(['feed', 'all', 'new', 'progress', 'done']);
+const SOLO_ALL_ORDER_STATUS_TABS = Object.freeze(['all', 'new', 'progress', 'done']);
 const ALL_ORDERS_SORT_KEYS = Object.freeze({
   dateDesc: 'date_desc',
   dateAsc: 'date_asc',
@@ -323,8 +328,12 @@ function AllOrdersContent() {
   const { theme } = useTheme();
   const { t, locale } = useTranslation();
   const { has, loading: permLoading } = usePermissions();
+  const { profile, user } = useAuthContext();
   const queryClient = useQueryClient();
   const offlineMode = !getOfflineSnapshot().isOnline;
+  const authAccountType = String(user?.user_metadata?.account_type || '').trim().toLowerCase();
+  const isSoloAdmin =
+    String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const permissionByRole = !permLoading ? has(ALL_ORDERS_PERMISSION_KEY) : null;
   const isExplicitlyDeniedOnline =
     !offlineMode && allowed === false && permissionByRole === false;
@@ -397,8 +406,30 @@ function AllOrdersContent() {
     [relationClientId, relationObjectIds],
   );
 
+  useEffect(() => {
+    if (!isSoloAdmin) return;
+    router.replace({
+      pathname: '/orders/my-orders',
+      params: {
+        seedFilter: 'all',
+        ...(readRouteParam(search) ? { seedSearch: readRouteParam(search) } : {}),
+        ...(relationClientId ? { relation_client_id: relationClientId } : {}),
+        ...(relationObjectIds.length ? { relation_object_ids: relationObjectIds.join(',') } : {}),
+        ...(relationLabel ? { relation_label: relationLabel } : {}),
+      },
+    });
+  }, [isSoloAdmin, relationClientId, relationLabel, relationObjectIds, router, search]);
+
   const [statusFilter, setStatusFilter] = useState(
     normalizeStatusFilterParam(filter),
+  );
+  const statusTabs = useMemo(
+    () => (isSoloAdmin ? SOLO_ALL_ORDER_STATUS_TABS : ALL_ORDER_STATUS_TABS),
+    [isSoloAdmin],
+  );
+  const effectiveStatusFilter = useMemo(
+    () => (statusTabs.includes(statusFilter) ? statusFilter : 'all'),
+    [statusFilter, statusTabs],
   );
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -429,10 +460,17 @@ function AllOrdersContent() {
   const detailNavLockRef = useRef({ id: '', ts: 0 });
   const viewabilityPrefetchRef = useRef({ key: '', ts: 0 });
 
+  useEffect(() => {
+    if (statusFilter === effectiveStatusFilter) return;
+    setStatusFilter(effectiveStatusFilter);
+    router.setParams({ filter: effectiveStatusFilter });
+  }, [effectiveStatusFilter, router, statusFilter]);
+
   const executorFilter = orderFilters.executorId;
   const workTypeFilter = orderFilters.workTypes;
   const hasWorkTypeFilter = Array.isArray(workTypeFilter) && workTypeFilter.length > 0;
   const filterDataEnabled =
+    !isSoloAdmin &&
     effectiveAllowed === true &&
     (filtersVisible ||
       orders.length > 0 ||
@@ -481,7 +519,7 @@ function AllOrdersContent() {
   const { data: companyId } = useMyCompanyIdQuery();
   const { settings: companySettings } = useCompanySettings(companyId);
   const { data: orderFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER, {
-    enabled: effectiveAllowed === true,
+    enabled: !isSoloAdmin && effectiveAllowed === true,
   });
   const orderFieldSettings = useMemo(
     () => orderFieldSettingsData || buildFallbackEntityFieldSettings(ENTITY_FIELD_TYPES.ORDER),
@@ -514,7 +552,7 @@ function AllOrdersContent() {
   );
   const allRequestsParams = useMemo(() => {
     const next = {};
-    if (statusFilter && statusFilter !== 'all') next.status = statusFilter;
+    if (effectiveStatusFilter && effectiveStatusFilter !== 'all') next.status = effectiveStatusFilter;
     if (executorFilter) next.executorId = executorFilter;
     if (departmentFilter != null) next.departmentId = departmentFilter;
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
@@ -529,10 +567,10 @@ function AllOrdersContent() {
   }, [
     departmentFilter,
     executorFilter,
+    effectiveStatusFilter,
     orderFilters.clientIds,
     relationClientId,
     relationObjectIds,
-    statusFilter,
     useWorkTypes,
     workTypeFilter,
   ]);
@@ -540,7 +578,8 @@ function AllOrdersContent() {
     () => queryKeys.requests.all(allRequestsParams),
     [allRequestsParams],
   );
-  const requestsEnabled = effectiveAllowed !== false && (!hasWorkTypeFilter || workTypesResolved);
+  const requestsEnabled =
+    !isSoloAdmin && effectiveAllowed !== false && (!hasWorkTypeFilter || workTypesResolved);
 
   const {
     items: requestItems = [],
@@ -552,10 +591,14 @@ function AllOrdersContent() {
     isError: requestsError,
   } = useAllRequests(allRequestsParams, { enabled: requestsEnabled });
 
-  const { data: executorsData } = useRequestExecutors({ enabled: filterDataEnabled });
+  const shouldLoadExecutorsForCards =
+    !isSoloAdmin &&
+    effectiveAllowed === true &&
+    (orders.length > 0 || requestItems.some((item) => String(item?.assigned_to || '').trim()));
+  const { data: executorsData } = useRequestExecutors({ enabled: filterDataEnabled || shouldLoadExecutorsForCards });
   const executors = useMemo(() => executorsData ?? EMPTY_ARRAY, [executorsData]);
 
-  useRequestRealtimeSync({ enabled: effectiveAllowed === true, companyId });
+  useRequestRealtimeSync({ enabled: !isSoloAdmin && effectiveAllowed === true, companyId });
   const listLoading = loading || !requestsEnabled;
 
   useEffect(() => {
@@ -571,22 +614,26 @@ function AllOrdersContent() {
     if (orders.length > 0 || effectiveAllowed === false) return;
     const cachedItems = readCachedRequestItems(queryClient.getQueryData(allRequestsQueryKey));
     if (!cachedItems.length) return;
-    setOrders(cachedItems);
+    setOrders(enrichOrdersWithKnownExecutorRows(cachedItems, executors));
     setLoading(false);
-  }, [allRequestsQueryKey, effectiveAllowed, orders.length, queryClient]);
+  }, [allRequestsQueryKey, effectiveAllowed, executors, orders.length, queryClient]);
 
   useEffect(() => {
-    const signature = Array.isArray(requestItems)
+    const requestsSignature = Array.isArray(requestItems)
       ? requestItems.map((item) => `${item?.id || ''}:${item?.updated_at || ''}`).join('|')
       : '';
+    const executorsSignature = Array.isArray(executors)
+      ? executors.map((item) => `${item?.id || ''}:${item?.full_name || ''}:${item?.email || ''}`).join('|')
+      : '';
+    const signature = `${requestsSignature}::${executorsSignature}`;
     if (lastItemsSignatureRef.current !== signature) {
       lastItemsSignatureRef.current = signature;
-      setOrders(requestItems);
+      setOrders(enrichOrdersWithKnownExecutorRows(requestItems, executors));
     }
     setLoading(requestsLoading && requestItems.length === 0);
     setHasMore(!!hasNextPage);
     setLoadingMore(isFetchingNextPage);
-  }, [hasNextPage, isFetchingNextPage, requestItems, requestsLoading]);
+  }, [executors, hasNextPage, isFetchingNextPage, requestItems, requestsLoading]);
 
   const firstContentMarkedRef = useRef(false);
   useEffect(() => {
@@ -773,16 +820,18 @@ function AllOrdersContent() {
             order?.object_name,
             order?.object_summary,
           ],
-          phones: [
-            order?.customer_phone_visible,
-            order?.customer_phone,
-            order?.phone,
-          ],
+          phones: shouldShowOrderPhoneForRole(order, companySettings, profile?.role)
+            ? [
+                order?.customer_phone_visible,
+                order?.customer_phone,
+                order?.phone,
+              ]
+            : [],
         }),
         q,
       );
     });
-  }, [deferredSearchQuery, orders, t]);
+  }, [companySettings, deferredSearchQuery, orders, profile?.role, t]);
 
   const sortOptions = useMemo(
     () => [
@@ -795,6 +844,9 @@ function AllOrdersContent() {
   );
 
   const sortedFilteredOrders = useMemo(() => {
+    if (sortKey === ALL_ORDERS_SORT_KEYS.dateDesc) {
+      return Array.isArray(filteredOrders) ? filteredOrders : EMPTY_ARRAY;
+    }
     const parseOrderDate = (item) => {
       const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
       return Number.isFinite(ts) ? ts : ALL_ORDERS_SORT_FALLBACK;
@@ -826,7 +878,7 @@ function AllOrdersContent() {
   }, [fetchNextPage, hasNextPage, isFetchingNextPage, listLoading]);
 
   const returnParamsRef = useRef({
-    filter: statusFilter,
+    filter: effectiveStatusFilter,
     executor: executorFilter,
     search: searchQuery,
     ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
@@ -838,7 +890,7 @@ function AllOrdersContent() {
   });
   useEffect(() => {
     returnParamsRef.current = {
-      filter: statusFilter,
+      filter: effectiveStatusFilter,
       executor: executorFilter,
       search: searchQuery,
       ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
@@ -849,13 +901,13 @@ function AllOrdersContent() {
     };
   }, [
     departmentFilter,
+    effectiveStatusFilter,
     executorFilter,
     orderFilters,
     relationClientId,
     relationLabel,
     relationObjectIds,
     searchQuery,
-    statusFilter,
   ]);
 
   const openOrderDetails = useCallback(
@@ -871,12 +923,16 @@ function AllOrdersContent() {
         const seedWorkTypeName = seedWorkTypeId
           ? workTypes.find((item) => String(item?.id || '') === seedWorkTypeId)?.name
           : '';
-        queryClient.setQueryData(queryKeys.requests.detail(orderId), (prevOrder) => ({
-          ...(prevOrder || {}),
-          ...orderSeed,
-          ...(seedWorkTypeName ? { work_type_name: seedWorkTypeName } : {}),
-          id: orderId,
-        }));
+        queryClient.setQueryData(queryKeys.requests.detail(orderId), (prevOrder) =>
+          markRequestDetailSeed(
+            {
+              ...orderSeed,
+              ...(seedWorkTypeName ? { work_type_name: seedWorkTypeName } : {}),
+              id: orderId,
+            },
+            prevOrder,
+          ),
+        );
       }
       router.push({
         pathname: `/orders/${orderId}`,
@@ -904,9 +960,10 @@ function AllOrdersContent() {
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
+        companySettingsOverride={companySettings || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
+    [companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
   );
 
   const renderFooter = useCallback(() => {
@@ -964,8 +1021,8 @@ function AllOrdersContent() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.filterScrollContent}
           >
-            {ALL_ORDER_STATUS_TABS.map((key) => {
-              const active = statusFilter === key;
+            {statusTabs.map((key) => {
+              const active = effectiveStatusFilter === key;
               return (
                 <Pressable
                   key={key}
@@ -1040,7 +1097,7 @@ function AllOrdersContent() {
       relationLabel,
       router,
       searchQuery,
-      statusFilter,
+      effectiveStatusFilter,
       orders.length,
       sortedFilteredOrders.length,
       styles.chip,
@@ -1052,13 +1109,14 @@ function AllOrdersContent() {
       styles.filterScrollContent,
       styles.listHeader,
       styles.searchBar,
+      statusTabs,
       t,
     ],
   );
 
   const hasSearchQuery = Boolean(deferredSearchQuery.trim());
   const hasActiveFilters = Boolean(filterSummaryData.full || hasLinkedRelationFilter);
-  const hasActiveTabFilter = statusFilter !== 'all';
+  const hasActiveTabFilter = effectiveStatusFilter !== 'all';
 
   const retryLoad = useCallback(() => {
     refreshAll().catch(() => {});
@@ -1133,6 +1191,8 @@ function AllOrdersContent() {
     ],
     [sortedFilteredOrders.length, styles.container, styles.containerFill],
   );
+
+  if (isSoloAdmin) return null;
 
   if (effectiveAllowed === null) {
     return (

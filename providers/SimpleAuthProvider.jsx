@@ -117,6 +117,28 @@ const hasProfileScopeChanged = (previousProfile, nextProfile, nextUserId) => {
   return Boolean(previousCompanyId || nextCompanyId) && previousCompanyId !== nextCompanyId;
 };
 
+const mergeProfileForCache = (previous, next) => {
+  if (!previous || typeof previous !== 'object') return next;
+  if (!next || typeof next !== 'object') return next;
+  if (normalizeScopeId(previous.id) !== normalizeScopeId(next.id)) return next;
+
+  const previousAvatarUrl = normalizeScopeId(previous.avatar_url);
+  const nextAvatarUrl = normalizeScopeId(next.avatar_url);
+  const previousDisplayUrl = normalizeScopeId(previous.avatar_display_url || previous.avatarDisplayUrl);
+  const nextDisplayUrl = normalizeScopeId(next.avatar_display_url || next.avatarDisplayUrl);
+  const shouldKeepResolvedAvatar =
+    previousAvatarUrl &&
+    previousAvatarUrl === nextAvatarUrl &&
+    previousDisplayUrl &&
+    (!nextDisplayUrl || nextDisplayUrl === nextAvatarUrl);
+
+  return {
+    ...previous,
+    ...next,
+    ...(shouldKeepResolvedAvatar ? { avatar_display_url: previousDisplayUrl } : null),
+  };
+};
+
 const tryBootstrapMyProfileFromAuth = async () => {
   try {
     const { error } = await supabase.rpc('bootstrap_my_profile_from_auth');
@@ -180,7 +202,8 @@ export function SimpleAuthProvider({ children }) {
     if (expectedScopeUserId && normalizeScopeId(profile.id) !== expectedScopeUserId) {
       return;
     }
-    queryClient.setQueryData(queryKeys.profile.me(), profile);
+    queryClient.setQueryData(queryKeys.profile.me(), (previous) => mergeProfileForCache(previous, profile));
+    queryClient.setQueryData(['profile', profile.id], (previous) => mergeProfileForCache(previous, profile));
     if (profile.company_id) {
       queryClient.setQueryData(queryKeys.profile.companyId(), profile.company_id);
     }
@@ -398,8 +421,14 @@ export function SimpleAuthProvider({ children }) {
       const isNonBlockingSameUserEvent =
         !userChanged &&
         (event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED' || event === 'SIGNED_IN');
-      const shouldBlockUi = !isNonBlockingSameUserEvent;
       const hasCurrentProfile = profileRef.current?.id === nextUserId;
+      const cachedProfileForCurrentUser = getCachedProfileForUser(nextUserId);
+      const metadataProfileForCurrentUser = buildProfileFromUser(user, 'metadata-bootstrap');
+      const bootstrapProfile =
+        cachedProfileForCurrentUser ||
+        (hasCurrentProfile ? profileRef.current : null) ||
+        metadataProfileForCurrentUser;
+      const shouldBlockUi = false;
 
       if (isNonBlockingSameUserEvent && hasCurrentProfile) {
         setState((prev) => ({
@@ -414,10 +443,10 @@ export function SimpleAuthProvider({ children }) {
 
       const requestId = ++authRequestIdRef.current;
       setState((prev) => ({
-        isInitializing: shouldBlockUi ? true : prev.isInitializing,
+        isInitializing: false,
         isAuthenticated: true,
         user,
-        profile: shouldBlockUi ? null : prev.profile,
+        profile: bootstrapProfile || prev.profile || null,
         profileError: null,
       }));
 

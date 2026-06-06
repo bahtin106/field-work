@@ -7,6 +7,7 @@ import {
 } from './addressing';
 import { inspectProfileMedia } from '../profileMedia/api';
 import { getMyCompanyId } from '../profile/api';
+import { buildMediaAssetThumbMap, normalizeMediaAsset } from '../../shared/media/assets';
 
 const objectByIdInFlight = new Map<string, Promise<any>>();
 const OBJECT_MEDIA_KEYS = ['media_file_1', 'media_file_2', 'media_file_3'] as const;
@@ -111,6 +112,54 @@ function maskObjectPhones(row: any, canViewObjectPhones: boolean) {
   };
 }
 
+async function listObjectPhotoThumbUrls(rows: any[] = []) {
+  const objectIds = Array.from(
+    new Set(
+      (Array.isArray(rows) ? rows : [])
+        .map((row) => String(row?.id || '').trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!objectIds.length) return {};
+
+  try {
+    const { data, error } = await supabase
+      .from('media_assets')
+      .select('id, company_id, entity_type, entity_id, category, source_url, display_url, thumb_url, provider, storage_bucket, storage_path, status, sort_order')
+      .eq('entity_type', 'object')
+      .eq('category', 'profile_media')
+      .neq('status', 'deleted')
+      .in('entity_id', objectIds);
+    if (error) throw error;
+    return buildMediaAssetThumbMap(
+      (Array.isArray(data) ? data : []).map(normalizeMediaAsset).filter(Boolean),
+      { width: 192, height: 192 },
+    );
+  } catch {
+    return {};
+  }
+}
+
+async function enrichObjectProfileMediaRows(rows: any[] = []) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const urls = safeRows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean);
+  const [{ cleanedUrls, resolvedUrls }, thumbUrls] = await Promise.all([
+    inspectProfileMedia(urls),
+    listObjectPhotoThumbUrls(safeRows),
+  ]);
+  const cleanedSet = new Set(cleanedUrls);
+  return safeRows.map((row) => {
+    const sourceUrl = String(row?.photo_url || '').trim();
+    const cleaned = cleanedSet.has(sourceUrl);
+    return {
+      ...row,
+      photo_url: cleaned ? null : row?.photo_url,
+      photo_thumb_url: cleaned ? null : thumbUrls[sourceUrl] || null,
+      photo_display_url: cleaned ? null : resolvedUrls[sourceUrl] || row?.photo_url || null,
+    };
+  });
+}
+
 export type OrderObjectSearchResult = {
   objectId: string;
   clientId: string;
@@ -147,17 +196,8 @@ export async function listClientObjects(clientId: string) {
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-      const rows = Array.isArray(data) ? data : [];
-    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
-      rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
-    );
-    const cleanedSet = new Set(cleanedUrls);
+    const rows = await enrichObjectProfileMediaRows(Array.isArray(data) ? data : []);
     return rows
-      .map((row) => ({
-        ...row,
-        photo_url: cleanedSet.has(String(row?.photo_url || '').trim()) ? null : row?.photo_url,
-        photo_display_url: resolvedUrls[String(row?.photo_url || '').trim()] || row?.photo_url || null,
-      }))
       .map((row) => normalizeClientObject(maskObjectPhones(row, canViewObjectPhones)))
       .filter(Boolean);
   });
@@ -175,17 +215,8 @@ export async function listClientObjectsByCompany(companyId: string) {
       .order('created_at', { ascending: true });
 
     if (error) throw error;
-    const rows = Array.isArray(data) ? data : [];
-    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
-      rows.map((row) => String(row?.photo_url || '').trim()).filter(Boolean),
-    );
-    const cleanedSet = new Set(cleanedUrls);
+    const rows = await enrichObjectProfileMediaRows(Array.isArray(data) ? data : []);
     return rows
-      .map((row) => ({
-        ...row,
-        photo_url: cleanedSet.has(String(row?.photo_url || '').trim()) ? null : row?.photo_url,
-        photo_display_url: resolvedUrls[String(row?.photo_url || '').trim()] || row?.photo_url || null,
-      }))
       .map((r) => {
         const normalized = normalizeClientObject(maskObjectPhones(r, canViewObjectPhones));
         if (!normalized) return null;
@@ -218,17 +249,7 @@ export async function getClientObjectById(objectId: string) {
         .maybeSingle();
 
     if (error) throw error;
-    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
-      [String(data?.photo_url || '').trim()].filter(Boolean),
-    );
-    const cleanedSet = new Set(cleanedUrls);
-    const safeData = data
-      ? {
-          ...data,
-          photo_url: cleanedSet.has(String(data?.photo_url || '').trim()) ? null : data?.photo_url,
-          photo_display_url: resolvedUrls[String(data?.photo_url || '').trim()] || data?.photo_url || null,
-        }
-      : data;
+    const [safeData] = data ? await enrichObjectProfileMediaRows([data]) : [data];
     const normalized = normalizeClientObject(maskObjectPhones(safeData, canViewObjectPhones));
     if (!normalized) return null;
     return {

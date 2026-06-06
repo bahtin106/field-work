@@ -23,6 +23,7 @@ import TagEditorField from '../../../components/tags/TagEditorField';
 import { TAG_TYPE } from '../../../components/tags/tagConfig';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
 import { usePermissions } from '../../../lib/permissions';
+import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import {
   extractConflictingClientId,
   findClientByPrimaryPhone,
@@ -182,10 +183,14 @@ export default function EditClientScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const { has } = usePermissions();
+  const { user: authUser, profile: authProfile } = useAuthContext();
+  const authAccountType = String(authUser?.user_metadata?.account_type || '').trim().toLowerCase();
+  const isSoloAdmin =
+    String(authProfile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
 
   const canEditClients = has('canEditClients');
   const canDeleteClients = has('canDeleteClients');
-  const canViewAllOrders = has('canViewAllOrders');
+  const canViewAllOrders = has('canViewAllOrders') && !isSoloAdmin;
   const canViewObjects = has('canViewObjects');
   const canCreateObjects = has('canCreateObjects');
 

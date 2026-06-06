@@ -31,11 +31,18 @@ export const SETTINGS_SECTIONS = {
         key: 'access',
         label: T('company_settings_sections_management_items_access'),
         route: '/company_settings/sections/access',
+        companyOnly: true,
       },
       {
         key: 'form_builder',
         label: T('company_settings_sections_management_items_form_builder'),
         route: '/company_settings/sections/field-editor',
+      },
+      {
+        key: 'feed_fields',
+        label: T('settings_management_feed_fields'),
+        route: '/company_settings/sections/order-feed-fields',
+        companyOnly: true,
       },
       {
         key: 'finance_rules',

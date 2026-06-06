@@ -1252,7 +1252,7 @@ export default function CompanySettings() {
             {SETTINGS_SECTIONS.MANAGEMENT.items
               .filter((it) =>
                 !['work_types', 'departments'].includes(it.key) &&
-                !(isSoloAdmin && String(it?.key || '') === 'access'),
+                !(isSoloAdmin && it?.companyOnly === true),
               )
               .map((it, idx) => (
                 <React.Fragment key={it.key}>
@@ -2222,4 +2222,3 @@ const styles = (t) =>
     },
     caption: { color: t.colors.textSecondary, fontSize: t.typography.sizes.sm },
   });
-

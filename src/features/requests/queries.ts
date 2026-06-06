@@ -17,8 +17,43 @@ import {
   listRequests,
   updateRequest,
 } from './api';
+import { seedExecutorNames } from './executorNameCache';
 
 const PAGE_SIZE = 30;
+const REQUEST_MEDIA_FIELD_KEYS = ['media_file_1', 'media_file_2', 'media_file_3', 'media_file_4', 'media_file_5'];
+
+export function isRequestDetailLoaded(row: any) {
+  return row?.__detailLoaded === true;
+}
+
+export function markRequestDetailLoaded(row: any) {
+  if (!row || typeof row !== 'object') return row;
+  return {
+    ...row,
+    __detailLoaded: true,
+    __detailSeed: false,
+  };
+}
+
+export function markRequestDetailSeed(row: any, previous: any = null) {
+  if (!row || typeof row !== 'object') return row;
+  const next: any = {
+    ...(previous && typeof previous === 'object' ? previous : {}),
+    ...row,
+    __detailLoaded: isRequestDetailLoaded(previous),
+    __detailSeed: !isRequestDetailLoaded(previous),
+  };
+
+  for (const field of REQUEST_MEDIA_FIELD_KEYS) {
+    const prevList = Array.isArray(previous?.[field]) ? previous[field] : [];
+    const seedList = Array.isArray(row?.[field]) ? row[field] : [];
+    if (prevList.length > seedList.length) {
+      next[field] = prevList;
+    }
+  }
+
+  return next;
+}
 
 function mergePages(data: any) {
   const pages = data?.pages || [];
@@ -36,7 +71,7 @@ function findRequestInListCaches(queryClient: any, id: any) {
         ? value
         : [];
     const found = candidate.find((row: any) => String(row?.id || '').trim() === targetId);
-    if (found) return found;
+    if (found) return markRequestDetailSeed(found);
   }
   return null;
 }
@@ -93,7 +128,7 @@ export function useRequest(id: any, options: any = {}) {
     queryKey: queryKeys.requests.detail(id),
     queryFn: async () => {
       try {
-        return await getRequestById(id);
+        return markRequestDetailLoaded(await getRequestById(id));
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const fromDetail = queryClient.getQueryData(queryKeys.requests.detail(id));
@@ -118,7 +153,11 @@ export function useRequest(id: any, options: any = {}) {
 export function useRequestExecutors({ companyId = null, ...options }: any = {}) {
   return useQuery({
     queryKey: queryKeys.requests.executors(companyId),
-    queryFn: () => listRequestExecutors({ companyId }),
+    queryFn: async () => {
+      const rows = await listRequestExecutors({ companyId });
+      seedExecutorNames(rows);
+      return rows;
+    },
     staleTime: 60 * 1000,
     ...options,
   });
@@ -226,18 +265,18 @@ export function useUpdateRequestMutation() {
           base: baseSnapshot,
           expectedUpdatedAt,
         });
-        return {
+        return markRequestDetailSeed({
           ...(baseSnapshot || {}),
           ...(patch || {}),
           id,
           updated_at: expectedUpdatedAt || baseSnapshot?.updated_at || new Date().toISOString(),
           __offlinePending: true,
           __offlineOutboxId: queued.id,
-        };
+        }, baseSnapshot);
       }
 
       try {
-        return await updateRequest(id, patch, expectedUpdatedAt);
+        return markRequestDetailLoaded(await updateRequest(id, patch, expectedUpdatedAt));
       } catch (error) {
         if (!isOfflineLikeError(error)) throw error;
         const queued = await enqueueRequestUpdate({
@@ -246,14 +285,14 @@ export function useUpdateRequestMutation() {
           base: baseSnapshot,
           expectedUpdatedAt,
         });
-        return {
+        return markRequestDetailSeed({
           ...(baseSnapshot || {}),
           ...(patch || {}),
           id,
           updated_at: expectedUpdatedAt || baseSnapshot?.updated_at || new Date().toISOString(),
           __offlinePending: true,
           __offlineOutboxId: queued.id,
-        };
+        }, baseSnapshot);
       }
     },
     onMutate: async (variables: any) => {
@@ -272,12 +311,15 @@ export function useUpdateRequestMutation() {
         queryClient.setQueryData(context.detailKey, context.previous);
       }
       if (error?.code === 'CONFLICT' && error?.latest?.id) {
-        queryClient.setQueryData(queryKeys.requests.detail(error.latest.id), error.latest);
+        queryClient.setQueryData(queryKeys.requests.detail(error.latest.id), markRequestDetailLoaded(error.latest));
       }
     },
     onSuccess: (next) => {
       if (next?.id) {
-        queryClient.setQueryData(queryKeys.requests.detail(next.id), next);
+        queryClient.setQueryData(
+          queryKeys.requests.detail(next.id),
+          next?.__offlinePending ? markRequestDetailSeed(next) : markRequestDetailLoaded(next),
+        );
       }
       queryClient.invalidateQueries({ queryKey: ['requests'] });
       invalidateClientDeleteBlockersNamespace(queryClient);
@@ -293,9 +335,12 @@ export function useUpdateRequestMutation() {
 
 export async function ensureRequestPrefetch(queryClient: any, id: any) {
   if (!id) return null;
-  return queryClient.ensureQueryData({
+  const detailKey = queryKeys.requests.detail(id);
+  const existing = queryClient.getQueryData(detailKey);
+  if (isRequestDetailLoaded(existing)) return existing;
+  return queryClient.fetchQuery({
     queryKey: queryKeys.requests.detail(id),
-    queryFn: () => getRequestById(id),
+    queryFn: async () => markRequestDetailLoaded(await getRequestById(id)),
     staleTime: 45 * 1000,
   });
 }

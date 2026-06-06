@@ -1,12 +1,13 @@
 // components/hooks/useUserPermissions.js
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { AppState } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, InteractionManager } from 'react-native';
 import { supabase } from '../../lib/supabase';
 import { getUserRole } from '../../lib/getUserRole';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 
 const VALID_ROLES = new Set(['admin', 'dispatcher', 'worker']);
+const PERMISSION_NETWORK_BOOTSTRAP_DELAY_MS = 2200;
 
 const normalizeRole = (role) => {
   if (typeof role !== 'string') return null;
@@ -14,7 +15,18 @@ const normalizeRole = (role) => {
   return VALID_ROLES.has(safe) ? safe : null;
 };
 
-async function fetchMyProfile() {
+function getProfileSeed(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  const role = normalizeRole(profile.role);
+  const companyId = String(profile.company_id || '').trim();
+  if (!role || !companyId) return null;
+  return { role, company_id: companyId };
+}
+
+async function fetchMyProfile(profileSeed = null) {
+  const seeded = getProfileSeed(profileSeed);
+  if (seeded) return seeded;
+
   const { data: ures } = await supabase.auth.getUser();
   const uid = ures?.user?.id;
   if (!uid) return null;
@@ -49,9 +61,9 @@ function toBool(v) {
   return false;
 }
 
-async function __fetchCanViewAll() {
+async function __fetchCanViewAll(profileSeed = null) {
   try {
-    const prof = await fetchMyProfile();
+    const prof = await fetchMyProfile(profileSeed);
     if (!prof?.role || !prof?.company_id) return false;
     const { data: perm } = await supabase
       .from('app_role_permissions')
@@ -71,18 +83,32 @@ async function __fetchCanViewAll() {
 export function useUserPermissions() {
   const qc = useQueryClient();
   const { profile, isAuthenticated } = useAuthContext();
-  const fallbackRole = useMemo(() => normalizeRole(profile?.role) || 'worker', [profile?.role]);
+  const profileRole = profile?.role;
+  const profileCompanyId = profile?.company_id;
+  const fallbackRole = useMemo(() => normalizeRole(profileRole) || 'worker', [profileRole]);
+  const profilePermissionSeed = useMemo(
+    () => getProfileSeed({ role: profileRole, company_id: profileCompanyId }),
+    [profileCompanyId, profileRole],
+  );
+  const [permissionNetworkEnabled, setPermissionNetworkEnabled] = useState(false);
 
   const lastRoleRef = useRef(normalizeRole(qc.getQueryData(['userRole'])) || fallbackRole);
   const { data: roleRaw, isLoading: roleLoading, error: roleError } = useQuery({
     queryKey: ['userRole'],
-    queryFn: getUserRole,
+    queryFn: () => getUserRole(),
     staleTime: 5 * 60 * 1000,
     refetchOnMount: false,
     placeholderData: (p) => p,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !normalizeRole(profileRole),
   });
-  const resolvedRoleFromQuery = normalizeRole(roleRaw);
+  const resolvedRoleFromQuery = normalizeRole(profileRole) || normalizeRole(roleRaw);
+
+  useEffect(() => {
+    const roleFromProfile = normalizeRole(profileRole);
+    if (!roleFromProfile) return;
+    lastRoleRef.current = roleFromProfile;
+    qc.setQueryData(['userRole'], roleFromProfile);
+  }, [profileRole, qc]);
 
   useEffect(() => {
     if (!isAuthenticated) return undefined;
@@ -114,20 +140,42 @@ export function useUserPermissions() {
   const role = resolvedRoleFromQuery || lastRoleRef.current || fallbackRole || null;
   const roleLoadingSafe = roleLoading && !role;
 
+  useEffect(() => {
+    setPermissionNetworkEnabled(false);
+    if (!isAuthenticated || !role) {
+      return undefined;
+    }
+
+    let task = null;
+    const timer = setTimeout(() => {
+      task = InteractionManager.runAfterInteractions(() => {
+        setPermissionNetworkEnabled(true);
+      });
+    }, PERMISSION_NETWORK_BOOTSTRAP_DELAY_MS);
+
+    return () => {
+      clearTimeout(timer);
+      try {
+        task?.cancel?.();
+      } catch {}
+    };
+  }, [isAuthenticated, role]);
+
+  const cachedCanAll = qc.getQueryData(['perm-canViewAll']);
   const initialCanAll =
-    typeof qc.getQueryData(['perm-canViewAll']) === 'boolean'
-      ? qc.getQueryData(['perm-canViewAll'])
-      : fallbackRole === 'admin'
+    typeof cachedCanAll === 'boolean'
+      ? cachedCanAll
+      : fallbackRole === 'admin' || fallbackRole === 'dispatcher'
         ? true
-        : null;
+        : false;
   const lastCanAllRef = useRef(initialCanAll);
   const { data: canAllRaw, isLoading: canAllLoading, error: canAllError } = useQuery({
     queryKey: ['perm-canViewAll'],
-    queryFn: __fetchCanViewAll,
+    queryFn: () => __fetchCanViewAll(profilePermissionSeed),
     staleTime: 5 * 60 * 1000,
     refetchOnMount: false,
     placeholderData: (p) => p,
-    enabled: !!role,
+    enabled: permissionNetworkEnabled && !!role,
   });
   const canAllNormalized = typeof canAllRaw === 'boolean' ? canAllRaw : null;
 
@@ -146,7 +194,7 @@ export function useUserPermissions() {
         lastCanAllRef.current = cached;
         return;
       }
-      const fallbackCanAll = role === 'admin';
+      const fallbackCanAll = role === 'admin' || role === 'dispatcher';
       lastCanAllRef.current = fallbackCanAll;
       qc.setQueryData(['perm-canViewAll'], fallbackCanAll);
     }, 3000);
@@ -197,11 +245,11 @@ export function useUserPermissions() {
   const appStateRef = useRef(AppState.currentState);
 
   useEffect(() => {
+    if (!permissionNetworkEnabled || !isAuthenticated || !role) return undefined;
     let alive = true;
     let ch, chDb;
     (async () => {
       if (!alive) return;
-      await doRefresh();
 
       ch = supabase.channel('permissions', { config: { broadcast: { self: true } } });
       ch.on('broadcast', { event: 'perm_changed' }, () => {
@@ -213,7 +261,7 @@ export function useUserPermissions() {
       });
       ch.subscribe();
 
-      const prof = await fetchMyProfile();
+      const prof = await fetchMyProfile(profilePermissionSeed);
       chDb = supabase.channel('perm-db');
       if (prof?.company_id && prof?.role) {
         const filter = [
@@ -258,7 +306,7 @@ export function useUserPermissions() {
         pollTimer.current = null;
       }
     };
-  }, [doRefresh, kickoffSafetyPoll]);
+  }, [doRefresh, isAuthenticated, kickoffSafetyPoll, permissionNetworkEnabled, profilePermissionSeed, role]);
 
   return {
     role,

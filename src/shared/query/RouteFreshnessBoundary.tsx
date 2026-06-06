@@ -46,7 +46,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     return {
       intervalKey: 'orders-my',
       minIntervalMs: 30_000,
-      queryKeys: [['requests', 'my'], ['requests']],
+      queryKeys: [['requests', 'my']],
       scopes: ['orders.my'],
     };
   }
@@ -55,7 +55,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     return {
       intervalKey: 'orders-all',
       minIntervalMs: 30_000,
-      queryKeys: [['requests', 'all'], ['requests']],
+      queryKeys: [['requests', 'all']],
       scopes: ['orders.all'],
     };
   }
@@ -64,7 +64,7 @@ function buildRouteRefreshPlan(pathname: string): RefreshPlan | null {
     return {
       intervalKey: 'orders-calendar',
       minIntervalMs: 30_000,
-      queryKeys: [['requests', 'calendar'], ['requests']],
+      queryKeys: [['requests', 'calendar']],
       scopes: ['orders.calendar'],
     };
   }
@@ -294,6 +294,10 @@ export function RouteFreshnessBoundary() {
     const lastRunAt = lastRunRef.current.get(plan.intervalKey) || 0;
     if (now - lastRunAt < plan.minIntervalMs) return;
     lastRunRef.current.set(plan.intervalKey, now);
+
+    if (reason === 'route-focus' && lastRunAt === 0) {
+      return;
+    }
 
     const invalidateTasks = (plan.queryKeys || []).map((queryKey) =>
       queryClient.invalidateQueries({ queryKey, refetchType: 'active' }),

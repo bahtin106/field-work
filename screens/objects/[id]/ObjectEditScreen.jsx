@@ -507,6 +507,13 @@ export default function EditObjectScreen() {
         : draft.photoUrl,
     [draft.photoUrl, objectItem?.photoDisplayUrl],
   );
+  const photoAvatarUrl = React.useMemo(
+    () =>
+      /^https?:\/\//i.test(String(draft.photoUrl || ''))
+        ? objectItem?.photoThumbUrl || photoDisplayUrl
+        : photoDisplayUrl,
+    [draft.photoUrl, objectItem?.photoThumbUrl, photoDisplayUrl],
+  );
   const mapLat = React.useMemo(
     () => normalizeCoordinateValue(draft?.geo_lat),
     [draft?.geo_lat],
@@ -1281,9 +1288,9 @@ export default function EditObjectScreen() {
               accessibilityLabel={t('a11y_change_object_photo')}
               accessibilityHint={t('a11y_change_object_photo_hint')}
             >
-              {photoDisplayUrl ? (
+              {photoAvatarUrl ? (
                 <ExpoImage
-                  source={{ uri: photoDisplayUrl }}
+                  source={{ uri: photoAvatarUrl }}
                   style={styles.avatarImg}
                   contentFit="cover"
                   cachePolicy="none"

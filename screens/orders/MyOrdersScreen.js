@@ -1,7 +1,7 @@
 import { useFocusEffect, useNavigation, useIsFocused } from '@react-navigation/native';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -18,9 +18,7 @@ import {
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import DynamicOrderCard from '../../components/DynamicOrderCard';
-import FiltersPanel from '../../components/filters/FiltersPanel';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
-import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useAuth } from '../../components/hooks/useAuth';
 import { useFilters } from '../../components/hooks/useFilters';
 import Screen from '../../components/layout/Screen';
@@ -48,7 +46,19 @@ import {
   getEntityFieldMap,
 } from '../../src/features/fieldSettings/catalog';
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
-import { ensureRequestPrefetch } from '../../src/features/requests/queries';
+import {
+  ensureRequestPrefetch,
+  markRequestDetailSeed,
+  useRequestExecutors,
+} from '../../src/features/requests/queries';
+import {
+  enrichOrdersWithExecutorNames,
+  enrichOrdersWithKnownExecutorRows,
+  hydrateExecutorNameCache,
+  prefetchExecutorNames,
+  seedExecutorNames,
+} from '../../src/features/requests/executorNameCache';
+import { listRequests } from '../../src/features/requests/api';
 import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import {
   applyOrderRelationFilters,
@@ -57,7 +67,13 @@ import {
 } from '../../src/features/requests/relationFilters';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
-import { startFpsProbe, trackRender } from '../../src/shared/perf/devMetrics';
+import {
+  markFirstContent,
+  markScreenMount,
+  measureNetwork,
+  startFpsProbe,
+  trackRender,
+} from '../../src/shared/perf/devMetrics';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { queryKeys } from '../../src/shared/query/queryKeys';
@@ -72,6 +88,30 @@ const MY_ORDERS_CACHE_PERSIST_DEBOUNCE_MS = 350;
 const MY_ORDERS_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const FEED_SEEN_STORAGE_PREFIX = 'myorders.feedSeen.v2';
 const FEED_LAST_FP_STORAGE_PREFIX = 'myorders.feedLastFp.v2';
+const MY_ORDERS_SCREEN_KEY = 'MyOrders';
+const MY_ORDERS_RENDER_WARN_THRESHOLD = 30;
+const MY_ORDERS_FPS_PROBE_MS = 3500;
+const MY_ORDERS_NAV_LOCK_MS = 1200;
+const MY_ORDERS_REFRESH_WAIT_TIMEOUT_MS = 12000;
+const MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS = 1200;
+const MY_ORDERS_FEED_PREVIEW_SIZE = 20;
+const MY_ORDERS_FEED_PREFETCH_DELAY_MS = 2200;
+const MY_ORDERS_FEED_PULSE_DURATION_MS = 700;
+const MY_ORDERS_EXECUTOR_PREFETCH_LIMIT = 80;
+const MY_ORDERS_DETAIL_PREFETCH_LIMIT = 5;
+const MY_ORDERS_DETAIL_PREFETCH_TTL_MS = 4000;
+const MY_ORDERS_VIEWABILITY_PREFETCH_LIMIT = 6;
+const MY_ORDERS_VIEWABILITY_PREFETCH_TTL_MS = 2500;
+const MY_ORDERS_LIST = Object.freeze({
+  initialNumToRender: 8,
+  maxToRenderPerBatch: 6,
+  updateCellsBatchingPeriod: 34,
+  windowSize: 9,
+  itemVisiblePercentThreshold: 45,
+  onEndReachedThreshold: 0.65,
+});
+const FiltersPanel = lazy(() => import('../../components/filters/FiltersPanel'));
+const SortSelectModal = lazy(() => import('../../components/filters/SortSelectModal'));
 
 function buildScopedStorageKey(prefix, scopeKey) {
   return `${prefix}:${String(scopeKey || 'anonymous')}`;
@@ -120,7 +160,11 @@ function MyOrdersContent() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  trackRender('MyOrders', 30);
+  trackRender(MY_ORDERS_SCREEN_KEY, MY_ORDERS_RENDER_WARN_THRESHOLD);
+
+  useEffect(() => {
+    markScreenMount(MY_ORDERS_SCREEN_KEY);
+  }, []);
 
   const mutedColor =
     theme?.text?.muted?.color ??
@@ -346,9 +390,12 @@ function MyOrdersContent() {
     [orderFieldSettings],
   );
   const departureTimeEnabled = orderFieldsByKey.get('departure_time')?.isEnabled !== false;
+  const hasSelectedClientFilters =
+    Array.isArray(filters.values?.clientIds) && filters.values.clientIds.length > 0;
+  const shouldLoadClientOptions = !!companyId && (filters.visible || hasSelectedClientFilters);
   const { data: companyClients = [] } = useClients(
     { companyId, search: '' },
-    { enabled: !!companyId },
+    { enabled: shouldLoadClientOptions },
   );
   const clientOptions = useMemo(
     () =>
@@ -370,11 +417,18 @@ function MyOrdersContent() {
   const [workTypeOptions, setWorkTypeOptions] = useState([]);
   const [sortVisible, setSortVisible] = useState(false);
   const [sortKey, setSortKey] = useState('date_desc');
+  const hasSelectedWorkTypeFilters =
+    Array.isArray(filters.values?.workTypes) && filters.values.workTypes.length > 0;
+  const shouldLoadWorkTypeOptions =
+    !!companyId && (filters.visible || hasSelectedWorkTypeFilters);
   useEffect(() => {
     let alive = true;
     if (!companyId) {
       setUseWorkTypesFlag(false);
       setWorkTypeOptions([]);
+      return undefined;
+    }
+    if (!shouldLoadWorkTypeOptions) {
       return undefined;
     }
     (async () => {
@@ -392,7 +446,7 @@ function MyOrdersContent() {
     return () => {
       alive = false;
     };
-  }, [companyId]);
+  }, [companyId, shouldLoadWorkTypeOptions]);
 
   const filterSummaryData = useMemo(() => {
     const fullParts = [];
@@ -572,7 +626,7 @@ function MyOrdersContent() {
 
   const [orders, setOrders] = useState(() => {
     const prefetchData = queryClient.getQueryData(recentOrdersQueryKey);
-    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
+    if (Array.isArray(prefetchData)) {
       return prefetchData;
     }
     const cachedDefault = listCacheMy[defaultListCacheKey];
@@ -582,9 +636,11 @@ function MyOrdersContent() {
     return [];
   });
   const [filter, setFilter] = useState('all');
+  const isFeedFeatureEnabled = !isSoloAdmin;
+  const effectiveFilter = isSoloAdmin ? 'all' : filter;
   const [loading, setLoading] = useState(() => {
     const prefetchData = queryClient.getQueryData(recentOrdersQueryKey);
-    if (prefetchData && Array.isArray(prefetchData) && prefetchData.length > 0) {
+    if (Array.isArray(prefetchData)) {
       return false;
     }
     return !Array.isArray(listCacheMy[defaultListCacheKey]);
@@ -594,9 +650,83 @@ function MyOrdersContent() {
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const hydratedRef = useRef(Array.isArray(orders) && orders.length > 0);
   const ordersCountRef = useRef(Array.isArray(orders) ? orders.length : 0);
+  const firstContentMarkedRef = useRef(false);
+  const hasAssignedOrders = useMemo(
+    () => Array.isArray(orders) && orders.some((order) => String(order?.assigned_to || '').trim()),
+    [orders],
+  );
+  const { data: executorsForCards = [] } = useRequestExecutors({
+    companyId,
+    enabled: !!companyId && hasAssignedOrders,
+    placeholderData: (prev) => prev ?? [],
+  });
   useEffect(() => {
     ordersCountRef.current = Array.isArray(orders) ? orders.length : 0;
   }, [orders]);
+  useEffect(() => {
+    if (firstContentMarkedRef.current) return;
+    if (loading && !hydratedRef.current) return;
+    firstContentMarkedRef.current = true;
+    markFirstContent(MY_ORDERS_SCREEN_KEY);
+  }, [loading]);
+  useEffect(() => {
+    if (!isFocused || !Array.isArray(orders) || orders.length === 0) return undefined;
+    let cancelled = false;
+    seedExecutorNames(executorsForCards);
+    const knownEnriched = enrichOrdersWithKnownExecutorRows(orders, executorsForCards);
+    if (knownEnriched.some((row, index) => row !== orders[index])) {
+      const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
+      setOrders(knownEnriched);
+      setListCacheEntry(cacheKey, knownEnriched);
+      if ((effectiveFilter || 'all') === 'all') {
+        queryClient.setQueryData(recentOrdersQueryKey, knownEnriched.slice(0, PAGE_SIZE));
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+    seedExecutorNames(orders);
+    const executorIds = Array.from(
+      new Set(
+        orders
+          .map((order) => String(order?.assigned_to || '').trim())
+          .filter(Boolean),
+      ),
+    ).slice(0, MY_ORDERS_EXECUTOR_PREFETCH_LIMIT);
+    if (!executorIds.length) return undefined;
+    (async () => {
+      await hydrateExecutorNameCache();
+      if (cancelled) return;
+      const enriched = await enrichOrdersWithExecutorNames(orders);
+      if (cancelled || !Array.isArray(enriched)) return;
+      const changed = enriched.some((row, index) => row !== orders[index]);
+      if (!changed) return;
+      const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
+      setOrders(enriched);
+      setListCacheEntry(cacheKey, enriched);
+      if ((effectiveFilter || 'all') === 'all') {
+        queryClient.setQueryData(recentOrdersQueryKey, enriched.slice(0, PAGE_SIZE));
+      }
+    })().catch(() => {
+      prefetchExecutorNames(executorIds).catch(() => {});
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    effectiveFilter,
+    executorsForCards,
+    filtersFingerprint,
+    isFocused,
+    listCacheMy,
+    makeCacheKey,
+    orders,
+    PAGE_SIZE,
+    queryClient,
+    recentOrdersQueryKey,
+    relationFingerprint,
+    setListCacheEntry,
+  ]);
   useEffect(() => {
     let alive = true;
     AsyncStorage.getItem(listCacheStorageKey)
@@ -607,7 +737,7 @@ function MyOrdersContent() {
         Object.assign(listCacheMy, persisted);
         pruneObjectCache(listCacheMy, LIST_CACHE_MAX_ENTRIES);
 
-        const currentKey = makeCacheKey(filter || 'all', filtersFingerprint, relationFingerprint);
+        const currentKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
         const cachedCurrent = listCacheMy[currentKey];
         const cachedDefault = listCacheMy[defaultListCacheKey];
         const best = Array.isArray(cachedCurrent)
@@ -635,7 +765,7 @@ function MyOrdersContent() {
     };
   }, [
     defaultListCacheKey,
-    filter,
+    effectiveFilter,
     filtersFingerprint,
     listCacheMy,
     listCacheStorageKey,
@@ -666,8 +796,6 @@ function MyOrdersContent() {
   const [hasMoreOrders, setHasMoreOrders] = useState(false);
   const [totalOrdersCount, setTotalOrdersCount] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
-  const FEED_PREVIEW_SIZE = 20;
-
   // Feed indicator state (cached preview of feed), scoped with the same account cache key.
   const feedStateCache = (globalThis.__MYORDERS_FEED_STATE ||= {});
   feedStateCache[cacheScopeKey] ||= {};
@@ -695,7 +823,7 @@ function MyOrdersContent() {
   useEffect(() => {
     if (activeCacheScopeRef.current === cacheScopeKey) return;
     activeCacheScopeRef.current = cacheScopeKey;
-    const cacheKey = makeCacheKey(filter || 'all', filtersFingerprint, relationFingerprint);
+    const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
     const scopedCachedList = listCacheMy[cacheKey];
 
     seenFilterRef.current.clear();
@@ -710,10 +838,10 @@ function MyOrdersContent() {
     setFeedFingerprint(scopedFeedState.fp || '');
     setFeedSeenFingerprint(scopedFeedState.seenFp || '');
     setFeedHasAny(Boolean(scopedFeedState.hasAny));
-  }, [cacheScopeKey, filter, filtersFingerprint, listCacheMy, makeCacheKey, relationFingerprint, scopedFeedState]);
+  }, [cacheScopeKey, effectiveFilter, filtersFingerprint, listCacheMy, makeCacheKey, relationFingerprint, scopedFeedState]);
 
   useEffect(() => {
-    return startFpsProbe('MyOrders', 3500);
+    return startFpsProbe(MY_ORDERS_SCREEN_KEY, MY_ORDERS_FPS_PROBE_MS);
   }, []);
 
   useEffect(() => {
@@ -735,6 +863,15 @@ function MyOrdersContent() {
 
   // Load persisted feed seen state (keeps "seen/new" across app restarts)
   useEffect(() => {
+    if (!isFeedFeatureEnabled) {
+      scopedFeedState.fp = '';
+      scopedFeedState.seenFp = '';
+      scopedFeedState.hasAny = false;
+      setFeedFingerprint('');
+      setFeedSeenFingerprint('');
+      setFeedHasAny(false);
+      return undefined;
+    }
     const run = async () => {
       try {
         const [seenFp, lastFp] = await Promise.all([
@@ -753,10 +890,10 @@ function MyOrdersContent() {
       } catch {}
     };
     run();
-  }, [feedLastFpStorageKey, feedSeenStorageKey, scopedFeedState]);
+  }, [feedLastFpStorageKey, feedSeenStorageKey, isFeedFeatureEnabled, scopedFeedState]);
 
   useEffect(() => {
-    if (feedState !== 'new') {
+    if (!isFeedFeatureEnabled || feedState !== 'new') {
       feedPulse.stopAnimation();
       feedPulse.setValue(0);
       return undefined;
@@ -767,13 +904,13 @@ function MyOrdersContent() {
       Animated.sequence([
         Animated.timing(feedPulse, {
           toValue: 1,
-          duration: 700,
+          duration: MY_ORDERS_FEED_PULSE_DURATION_MS,
           easing: Easing.out(Easing.ease),
           useNativeDriver: true,
         }),
         Animated.timing(feedPulse, {
           toValue: 0,
-          duration: 700,
+          duration: MY_ORDERS_FEED_PULSE_DURATION_MS,
           easing: Easing.in(Easing.ease),
           useNativeDriver: true,
         }),
@@ -783,9 +920,16 @@ function MyOrdersContent() {
     return () => {
       anim.stop();
     };
-  }, [feedPulse, feedState]);
+  }, [feedPulse, feedState, isFeedFeatureEnabled]);
 
   const updateFeedMeta = useCallback((arr) => {
+    if (!isFeedFeatureEnabled) {
+      scopedFeedState.fp = '';
+      scopedFeedState.hasAny = false;
+      setFeedFingerprint('');
+      setFeedHasAny(false);
+      return;
+    }
     const fp = Array.isArray(arr)
       ? arr
           .map((o) => o?.id)
@@ -805,10 +949,11 @@ function MyOrdersContent() {
       if (fp) AsyncStorage.setItem(feedLastFpStorageKey, fp);
       else AsyncStorage.removeItem(feedLastFpStorageKey);
     } catch {}
-  }, [feedLastFpStorageKey, scopedFeedState]);
+  }, [feedLastFpStorageKey, isFeedFeatureEnabled, scopedFeedState]);
 
   // Prefetch feed metadata from the first page when the screen is focused
   useEffect(() => {
+    if (!isFeedFeatureEnabled) return undefined;
     if (!isFocused) return;
     if (loading && orders.length === 0) return;
     const prefetchFeed = async () => {
@@ -825,37 +970,36 @@ function MyOrdersContent() {
       }
       if (!uid) return;
 
-      const feedStatusAliases = getStatusDbAliases('feed');
-      let prefetchQuery = supabase
-        .from('orders_secure_v2')
-        .select('*');
-      if (feedStatusAliases.length === 1) {
-        prefetchQuery = prefetchQuery.eq('status', feedStatusAliases[0]);
-      } else if (feedStatusAliases.length > 1) {
-        prefetchQuery = prefetchQuery.in('status', feedStatusAliases);
-      }
-      const { data, error } = await prefetchQuery
-        .order('time_window_start', { ascending: false })
-        .range(0, FEED_PREVIEW_SIZE - 1);
-
-      if (!error && Array.isArray(data)) {
+      try {
+        const data = await listRequests({
+          scope: 'all',
+          status: 'feed',
+          userId: uid,
+          page: 1,
+          pageSize: MY_ORDERS_FEED_PREVIEW_SIZE,
+        });
         setListCacheEntry('feed', data);
         updateFeedMeta(data);
-      }
-    };
-
-    const task = InteractionManager.runAfterInteractions(() => {
-      prefetchFeed().catch(() => {});
-    });
-    return () => {
-      try {
-        task.cancel?.();
       } catch {}
     };
-  }, [auth.profile?.id, auth.user?.id, isFocused, loading, orders.length, setListCacheEntry, updateFeedMeta, listCacheMy, FEED_PREVIEW_SIZE]);
+
+    let task = null;
+    const timer = setTimeout(() => {
+      task = InteractionManager.runAfterInteractions(() => {
+        prefetchFeed().catch(() => {});
+      });
+    }, MY_ORDERS_FEED_PREFETCH_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      try {
+        task?.cancel?.();
+      } catch {}
+    };
+  }, [auth.profile?.id, auth.user?.id, isFeedFeatureEnabled, isFocused, loading, orders.length, setListCacheEntry, updateFeedMeta, listCacheMy]);
 
   // Mark feed as seen after opening the feed tab
   useEffect(() => {
+    if (!isFeedFeatureEnabled) return;
     if (filter !== 'feed') return;
     if (!feedHasAny || !feedFingerprint) return;
     if (feedSeenFingerprint === feedFingerprint) return;
@@ -866,33 +1010,37 @@ function MyOrdersContent() {
     try {
       AsyncStorage.setItem(feedSeenStorageKey, feedFingerprint);
     } catch {}
-  }, [feedSeenStorageKey, filter, feedHasAny, feedFingerprint, feedSeenFingerprint, scopedFeedState]);
+  }, [feedSeenStorageKey, filter, feedHasAny, feedFingerprint, feedSeenFingerprint, isFeedFeatureEnabled, scopedFeedState]);
   // Hydrate the all-orders tab from prefetch cache once
   useEffect(() => {
-    if (filter === 'all' && !hydratedRef.current) {
+    if (effectiveFilter === 'all' && !hydratedRef.current) {
       const prefetchData = queryClient.getQueryData(recentOrdersQueryKey);
-      if (prefetchData && prefetchData.length) {
+      if (Array.isArray(prefetchData)) {
         hydratedRef.current = true;
-        if (orders.length === 0) setOrders(prefetchData);
+        if (orders.length === 0 || prefetchData.length === 0) setOrders(prefetchData);
         setLoading(false);
       }
     }
-  }, [filter, orders.length, queryClient, recentOrdersQueryKey]);
+  }, [effectiveFilter, orders.length, queryClient, recentOrdersQueryKey]);
 
   const seedOnceRef = useRef(false);
   useEffect(() => {
     if (seedOnceRef.current) return;
     seedOnceRef.current = true;
     /* seed from cache */
-    const k = typeof seedFilter === 'string' && seedFilter.length ? seedFilter : filter || 'all';
+    const k = isSoloAdmin
+      ? 'all'
+      : typeof seedFilter === 'string' && seedFilter.length
+        ? seedFilter
+        : filter || 'all';
     const listKey = makeCacheKey(k, filtersFingerprint, relationFingerprint);
     if (listCacheMy[listKey]) {
       setOrders(listCacheMy[listKey]);
       hydratedRef.current = true;
     }
-    if (typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
+    if (!isSoloAdmin && typeof seedFilter === 'string' && seedFilter.length) setFilter(seedFilter);
     if (typeof seedSearch === 'string') setSearchQuery(seedSearch);
-  }, [seedFilter, seedSearch, filter, filtersFingerprint, listCacheMy, makeCacheKey, relationFingerprint]);
+  }, [seedFilter, seedSearch, filter, filtersFingerprint, isSoloAdmin, listCacheMy, makeCacheKey, relationFingerprint]);
 
   useEffect(() => {
     if (!isFocused) return;
@@ -900,7 +1048,7 @@ function MyOrdersContent() {
     let backgroundTimer = null;
 
     const fetchUserAndOrders = async (isBackground = false) => {
-      const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+      const key = (typeof effectiveFilter === 'string' ? effectiveFilter : 'all') || 'all';
       const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
       const cached = listCacheMy[cacheKey];
       if (Array.isArray(cached)) {
@@ -1000,10 +1148,42 @@ function MyOrdersContent() {
           objectIds: relationObjectIds,
         });
       };
+      const canUseRequestsApi = !(key === 'all' && hasLinkedRelationFilter);
+      const fetchOrdersPage = async (pageNumber) => {
+        if (canUseRequestsApi) {
+          return listRequests({
+            scope: key === 'feed' ? 'all' : 'my',
+            status: key === 'feed' ? 'feed' : key === 'all' ? 'all' : normalizeOrderStatusFilterKey(key),
+            page: pageNumber,
+            pageSize: PAGE_SIZE,
+            userId: uid,
+            clientIds,
+            orderIds: Array.isArray(workTypeOrderIds) ? workTypeOrderIds : [],
+            relationClientId,
+            relationObjectIds,
+            dateFrom,
+            dateTo,
+            sumMin: Number.isNaN(sumMin) ? null : sumMin,
+            sumMax: Number.isNaN(sumMax) ? null : sumMax,
+          });
+        }
 
-      const { data, error } = await buildOrdersQuery()
-        .order('time_window_start', { ascending: false })
-        .range(0, PAGE_SIZE - 1);
+        const from = Math.max(0, (Number(pageNumber) - 1) * PAGE_SIZE);
+        const to = from + PAGE_SIZE - 1;
+        const { data: rows, error: pageError } = await buildOrdersQuery()
+          .order('time_window_start', { ascending: false })
+          .range(from, to);
+        if (pageError) throw pageError;
+        return enrichOrdersWithExecutorNames(Array.isArray(rows) ? rows : []);
+      };
+
+      let data = null;
+      let error = null;
+      try {
+        data = await measureNetwork(`myOrders.${key}.firstPage`, () => fetchOrdersPage(1));
+      } catch (nextError) {
+        error = nextError;
+      }
       if (!alive) return;
       if (error || !Array.isArray(data)) {
         setLoadError(t('refresh_failed'));
@@ -1032,11 +1212,15 @@ function MyOrdersContent() {
         nextPageInFlight = true;
         setLoadingMore(true);
         try {
-          const from = aggregated.length;
-          const to = from + PAGE_SIZE - 1;
-          const { data: chunkData, error: chunkError } = await buildOrdersQuery()
-            .order('time_window_start', { ascending: false })
-            .range(from, to);
+          let chunkData = null;
+          let chunkError = null;
+          try {
+            chunkData = await measureNetwork(`myOrders.${key}.nextPage`, () =>
+              fetchOrdersPage(Math.floor(aggregated.length / PAGE_SIZE) + 1),
+            );
+          } catch (nextError) {
+            chunkError = nextError;
+          }
           if (!alive) return;
           if (chunkError || !Array.isArray(chunkData) || chunkData.length === 0) {
             total = aggregated.length;
@@ -1070,14 +1254,14 @@ function MyOrdersContent() {
     };
 
     if (
-      filter === 'all' &&
+      effectiveFilter === 'all' &&
       hydratedRef.current &&
       ordersCountRef.current > 0 &&
       Array.isArray(queryClient.getQueryData(recentOrdersQueryKey))
     ) {
       backgroundTimer = setTimeout(() => {
         fetchUserAndOrders(true);
-      }, 1200);
+      }, MY_ORDERS_BACKGROUND_REFRESH_DELAY_MS);
     } else {
       fetchUserAndOrders();
     }
@@ -1087,7 +1271,7 @@ function MyOrdersContent() {
       fetchNextOrdersPageRef.current = null;
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [auth.profile?.id, auth.user?.id, filter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, PAGE_SIZE, queryClient, recentOrdersQueryKey, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, resolveRefreshWaiters, setListCacheEntry, t, updateFeedMeta, useWorkTypesFlag]);
+  }, [auth.profile?.id, auth.user?.id, effectiveFilter, filters.values, filtersFingerprint, hasLinkedRelationFilter, isFocused, listCacheMy, makeCacheKey, PAGE_SIZE, queryClient, recentOrdersQueryKey, refreshNonce, relationClientId, relationFingerprint, relationObjectIds, resolveRefreshWaiters, setListCacheEntry, t, updateFeedMeta, useWorkTypesFlag]);
 
   const filteredOrders = useMemo(() => {
     const q = deferredSearchQuery.trim().toLowerCase();
@@ -1139,6 +1323,9 @@ function MyOrdersContent() {
   );
 
   const sortedFilteredOrders = useMemo(() => {
+    if (sortKey === 'date_desc') {
+      return Array.isArray(filteredOrders) ? filteredOrders : [];
+    }
     const parseOrderDate = (item) => {
       const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
       return Number.isFinite(ts) ? ts : 0;
@@ -1193,15 +1380,18 @@ function MyOrdersContent() {
   useEffect(() => {
     if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
     const idsKey = filteredOrders
-      .slice(0, 5)
+      .slice(0, MY_ORDERS_DETAIL_PREFETCH_LIMIT)
       .map((o) => String(o?.id || ''))
       .join('|');
     const now = Date.now();
-    if (listPrefetchRef.current.key === idsKey && now - listPrefetchRef.current.ts < 4000) return;
+    if (
+      listPrefetchRef.current.key === idsKey &&
+      now - listPrefetchRef.current.ts < MY_ORDERS_DETAIL_PREFETCH_TTL_MS
+    ) return;
     listPrefetchRef.current = { key: idsKey, ts: now };
     const task = InteractionManager.runAfterInteractions(() => {
       const registry = getPrefetchRegistry();
-      filteredOrders.slice(0, 5).forEach((order) => {
+      filteredOrders.slice(0, MY_ORDERS_DETAIL_PREFETCH_LIMIT).forEach((order) => {
         registry
           .run(`request-detail:${order?.id}`, () => ensureRequestPrefetch(queryClient, order?.id))
           .catch(() => {});
@@ -1215,7 +1405,7 @@ function MyOrdersContent() {
   }, [filteredOrders, isFocused, queryClient]);
   // List item renderer helpers
   const returnParamsRef = useRef({
-    seedFilter: filter,
+    seedFilter: effectiveFilter,
     seedSearch: searchQuery,
     relation_client_id: relationClientId,
     relation_object_ids: relationObjectIds.join(','),
@@ -1223,32 +1413,36 @@ function MyOrdersContent() {
   });
   useEffect(() => {
     returnParamsRef.current = {
-      seedFilter: filter,
+      seedFilter: effectiveFilter,
       seedSearch: searchQuery,
       relation_client_id: relationClientId,
       relation_object_ids: relationObjectIds.join(','),
       relation_label: relationLabel,
     };
-  }, [filter, relationClientId, relationLabel, relationObjectIds, searchQuery]);
+  }, [effectiveFilter, relationClientId, relationLabel, relationObjectIds, searchQuery]);
   const openOrderDetails = useCallback(
     (orderIdRaw, orderSeed = null) => {
       const orderId = String(orderIdRaw || '').trim();
       if (!orderId) return;
       const now = Date.now();
       const prev = detailNavLockRef.current;
-      if (prev.id === orderId && now - prev.ts < 1200) return;
+      if (prev.id === orderId && now - prev.ts < MY_ORDERS_NAV_LOCK_MS) return;
       detailNavLockRef.current = { id: orderId, ts: now };
       if (orderSeed && typeof orderSeed === 'object') {
         const seedWorkTypeId = String(orderSeed?.work_type_id || '').trim();
         const seedWorkTypeName = seedWorkTypeId
           ? workTypeOptions.find((item) => String(item?.id || '') === seedWorkTypeId)?.name
           : '';
-        queryClient.setQueryData(queryKeys.requests.detail(orderId), (prevOrder) => ({
-          ...(prevOrder || {}),
-          ...orderSeed,
-          ...(seedWorkTypeName ? { work_type_name: seedWorkTypeName } : {}),
-          id: orderId,
-        }));
+        queryClient.setQueryData(queryKeys.requests.detail(orderId), (prevOrder) =>
+          markRequestDetailSeed(
+            {
+              ...orderSeed,
+              ...(seedWorkTypeName ? { work_type_name: seedWorkTypeName } : {}),
+              id: orderId,
+            },
+            prevOrder,
+          ),
+        );
       }
       router.push({
         pathname: `/orders/${orderId}`,
@@ -1271,14 +1465,14 @@ function MyOrdersContent() {
       <DynamicOrderCard
         order={order}
         context="my_orders"
-        hideExecutor={isSoloAdmin}
         onPress={openOrderDetails}
         departureTimeEnabled={departureTimeEnabled}
         orderFieldsByKey={orderFieldsByKey}
         companyCurrency={companySettings?.currency || null}
+        companySettingsOverride={companySettings || null}
       />
     ),
-    [companySettings?.currency, departureTimeEnabled, isSoloAdmin, openOrderDetails, orderFieldsByKey],
+    [companySettings, departureTimeEnabled, openOrderDetails, orderFieldsByKey],
   );
 
   const loadMoreOrders = useCallback(() => {
@@ -1298,12 +1492,15 @@ function MyOrdersContent() {
       const ids = viewableItems
         .map((item) => item?.item?.id)
         .filter(Boolean)
-        .slice(0, 6)
+        .slice(0, MY_ORDERS_VIEWABILITY_PREFETCH_LIMIT)
         .map(String);
       if (!ids.length) return;
       const key = ids.join('|');
       const now = Date.now();
-      if (viewabilityPrefetchRef.current.key === key && now - viewabilityPrefetchRef.current.ts < 2500) {
+      if (
+        viewabilityPrefetchRef.current.key === key &&
+        now - viewabilityPrefetchRef.current.ts < MY_ORDERS_VIEWABILITY_PREFETCH_TTL_MS
+      ) {
         return;
       }
       viewabilityPrefetchRef.current = { key, ts: now };
@@ -1524,37 +1721,42 @@ function MyOrdersContent() {
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
-  const refreshCurrentList = useCallback(async () => {
-    const key = (typeof filter === 'string' ? filter : 'all') || 'all';
+  const refreshCurrentList = useCallback(async (context = {}) => {
+    const reason = String(context?.reason || '').trim();
+    const softRefresh = reason === 'route-focus' || reason === 'app-resume';
+    const key = (typeof effectiveFilter === 'string' ? effectiveFilter : 'all') || 'all';
     const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
-    delete listCacheMy[cacheKey];
-    seenFilterRef.current.delete(cacheKey);
     setLoadError('');
-    await Promise.allSettled([
-      queryClient.invalidateQueries({ queryKey: ['requests'] }),
-      queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
-    ]);
-    setLoading(true);
+    if (!softRefresh) {
+      delete listCacheMy[cacheKey];
+      seenFilterRef.current.delete(cacheKey);
+      await Promise.allSettled([
+        queryClient.invalidateQueries({ queryKey: ['requests'] }),
+        queryClient.invalidateQueries({ queryKey: ['requests', 'detail'] }),
+      ]);
+    }
+    const hasVisibleRows = ordersCountRef.current > 0 || hydratedRef.current;
+    setLoading(!softRefresh || !hasVisibleRows);
     setLoadingMore(false);
     setRefreshNonce((n) => n + 1);
     await new Promise((resolve) => {
-      const timeoutId = setTimeout(resolve, 12000);
+      const timeoutId = setTimeout(resolve, MY_ORDERS_REFRESH_WAIT_TIMEOUT_MS);
       refreshWaitersRef.current.push(() => {
         clearTimeout(timeoutId);
         resolve();
       });
     });
-  }, [filter, filtersFingerprint, listCacheMy, makeCacheKey, queryClient, relationFingerprint]);
+  }, [effectiveFilter, filtersFingerprint, listCacheMy, makeCacheKey, queryClient, relationFingerprint]);
 
   const refreshWithIndicator = useCallback(async () => {
-    await refreshCurrentList();
+    await refreshCurrentList({ reason: 'user-refresh' });
   }, [refreshCurrentList]);
   const { refreshing: bgRefreshing, didSucceed, onRefresh } = useManagedRefresh(refreshWithIndicator);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(bgRefreshing, { didSucceed });
 
   useScreenRefreshRegistration(
     'orders.my',
-      () => refreshCurrentList(),
+      (context) => refreshCurrentList(context),
       true,
   );
 
@@ -1574,10 +1776,10 @@ function MyOrdersContent() {
           data={sortedFilteredOrders}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          initialNumToRender={8}
-          maxToRenderPerBatch={6}
-          updateCellsBatchingPeriod={34}
-          windowSize={9}
+          initialNumToRender={MY_ORDERS_LIST.initialNumToRender}
+          maxToRenderPerBatch={MY_ORDERS_LIST.maxToRenderPerBatch}
+          updateCellsBatchingPeriod={MY_ORDERS_LIST.updateCellsBatchingPeriod}
+          windowSize={MY_ORDERS_LIST.windowSize}
           removeClippedSubviews={Platform.OS === 'android'}
           ListHeaderComponent={listHeader}
           ListFooterComponent={renderFooter}
@@ -1589,45 +1791,51 @@ function MyOrdersContent() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           onEndReached={loadMoreOrders}
-          onEndReachedThreshold={0.65}
+          onEndReachedThreshold={MY_ORDERS_LIST.onEndReachedThreshold}
           onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{ itemVisiblePercentThreshold: 45 }}
+          viewabilityConfig={{ itemVisiblePercentThreshold: MY_ORDERS_LIST.itemVisiblePercentThreshold }}
           refreshControl={<ThemedRefreshControl refreshing={bgRefreshing} onRefresh={onRefresh} />}
         />
       </View>
       {filters.visible ? (
-        <FiltersPanel
-          visible={filters.visible}
-          onClose={filters.close}
-          mode="orders"
-          showSearchCategory={false}
-          inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
-          ordersFilters={{
-            statuses: orderStatusOptions,
-            workTypes: useWorkTypesFlag ? workTypeOptions : [],
-            clients: clientOptions,
-            executors: [],
-            facetCounts: ordersFacetCounts,
-            showDate: true,
-            showTime: true,
-            showAmount: true,
-          }}
-          values={filters.values}
-          setValue={filters.setValue}
-          defaults={ORDER_FILTER_DEFAULTS}
-          onReset={() => filters.reset()}
-          onApply={(nextValues) => filters.apply(nextValues)}
-        />
+        <Suspense fallback={null}>
+          <FiltersPanel
+            visible={filters.visible}
+            onClose={filters.close}
+            mode="orders"
+            showSearchCategory={false}
+            inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
+            ordersFilters={{
+              statuses: orderStatusOptions,
+              workTypes: useWorkTypesFlag ? workTypeOptions : [],
+              clients: clientOptions,
+              executors: [],
+              facetCounts: ordersFacetCounts,
+              showDate: true,
+              showTime: true,
+              showAmount: true,
+            }}
+            values={filters.values}
+            setValue={filters.setValue}
+            defaults={ORDER_FILTER_DEFAULTS}
+            onReset={() => filters.reset()}
+            onApply={(nextValues) => filters.apply(nextValues)}
+          />
+        </Suspense>
       ) : null}
-      <SortSelectModal
-        visible={sortVisible}
-        onClose={() => setSortVisible(false)}
-        options={sortOptions}
-        value={sortKey}
-        onChange={(nextSort) => {
-          if (nextSort) setSortKey(nextSort);
-        }}
-      />
+      {sortVisible ? (
+        <Suspense fallback={null}>
+          <SortSelectModal
+            visible={sortVisible}
+            onClose={() => setSortVisible(false)}
+            options={sortOptions}
+            value={sortKey}
+            onChange={(nextSort) => {
+              if (nextSort) setSortKey(nextSort);
+            }}
+          />
+        </Suspense>
+      ) : null}
     </Screen>
   );
 }

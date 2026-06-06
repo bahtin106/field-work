@@ -331,9 +331,13 @@ function EditOrderContent() {
   });
   useRequestRealtimeSync({ enabled: !!id && !!companyId, companyId });
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
-  const { users: employees } = useUsers({
-    filters: {},
-    enabled: assigneeModalVisible,
+  const {
+    users: employees,
+    isLoading: employeesLoading,
+    isRefreshing: employeesRefreshing,
+  } = useUsers({
+    filters: { companyId, roles: ['worker', 'dispatcher', 'admin'] },
+    enabled: !!companyId,
   });
   const [useWorkTypes, setUseWorkTypesFlag] = useState(false);
   const [workTypes, setWorkTypes] = useState([]);
@@ -3010,6 +3014,7 @@ function EditOrderContent() {
           selectedId={toFeed ? 'feed' : assigneeId}
           onSelect={(item) => item?.onPress?.()}
           onClose={() => setAssigneeModalVisible(false)}
+          loading={employeesLoading || employeesRefreshing}
         />
       ) : null}
 

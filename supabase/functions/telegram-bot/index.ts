@@ -2893,10 +2893,11 @@ export async function handleTelegramBotRequest(req: Request) {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { success: false, message: 'POST only' });
 
+  let action = '';
   try {
     const admin = getAdminClient();
     const body = (await req.clone().json().catch(() => ({}))) as Record<string, unknown>;
-    const action = normalizeText(body.action);
+    action = normalizeText(body.action);
     if (!action) return handleWebhook(admin, req);
     if (action === 'status') return handleStatus(req, admin);
     if (action === 'save_config') return handleSaveConfig(req, admin, body);
@@ -2915,7 +2916,7 @@ export async function handleTelegramBotRequest(req: Request) {
         ? 403
         : 500;
     console.error('[telegram-bot]', status, message);
-    return json(status, { success: false, message });
+    return json(action === 'status' && status >= 500 ? 200 : status, { success: false, message });
   }
 }
 

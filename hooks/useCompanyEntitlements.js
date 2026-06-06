@@ -60,7 +60,8 @@ async function fetchEntitlements(companyId) {
   return row || null;
 }
 
-export function useCompanyEntitlements(companyId) {
+export function useCompanyEntitlements(companyId, options = {}) {
+  const { enabled = true } = options || {};
   const queryClient = useQueryClient();
   const [cacheEntry, setCacheEntry] = React.useState({ companyId: null, data: null });
   const [freshEntry, setFreshEntry] = React.useState({ companyId: null, hasFreshData: false });
@@ -85,7 +86,7 @@ export function useCompanyEntitlements(companyId) {
 
   const query = useQuery({
     queryKey: ['companyEntitlements', companyId],
-    enabled: !!companyId,
+    enabled: enabled && !!companyId,
     queryFn: async () => {
       const fresh = await fetchEntitlements(companyId);
       await saveCached(companyId, fresh);
@@ -96,36 +97,36 @@ export function useCompanyEntitlements(companyId) {
     placeholderData: (prev) => prev ?? cached ?? null,
     staleTime: ENTITLEMENTS_STALE_MS,
     gcTime: ENTITLEMENTS_GC_MS,
-    refetchInterval: companyId ? ENTITLEMENTS_STALE_MS : false,
+    refetchInterval: enabled && companyId ? ENTITLEMENTS_STALE_MS : false,
     refetchIntervalInBackground: false,
     refetchOnMount: false,
   });
   const { refetch } = query;
 
   const refetchIfStale = React.useCallback(() => {
-    if (!companyId) return;
+    if (!enabled || !companyId) return;
     const state = queryClient.getQueryState(['companyEntitlements', companyId]);
     const updatedAt = Number(state?.dataUpdatedAt || 0);
     if (updatedAt && Date.now() - updatedAt < ENTITLEMENTS_STALE_MS) return;
     refetch();
-  }, [companyId, queryClient, refetch]);
+  }, [companyId, enabled, queryClient, refetch]);
 
   useFocusEffect(
     React.useCallback(() => {
-      if (!companyId) return undefined;
+      if (!enabled || !companyId) return undefined;
       refetchIfStale();
       return undefined;
-    }, [companyId, refetchIfStale]),
+    }, [companyId, enabled, refetchIfStale]),
   );
 
   React.useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && companyId) {
+      if (state === 'active' && enabled && companyId) {
         refetchIfStale();
       }
     });
     return () => sub.remove();
-  }, [companyId, refetchIfStale]);
+  }, [companyId, enabled, refetchIfStale]);
 
   return {
     ...query,

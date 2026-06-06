@@ -851,6 +851,15 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
       ? 'Код действует 15 минут. Если вы не запрашивали восстановление пароля, просто проигнорируйте это письмо.'
       : 'Код действует 15 минут. Если вы не регистрировались в Монитор, просто проигнорируйте это письмо.';
     const textPrefix = isRecoveryPurpose ? 'Восстановление пароля' : 'Подтвердите email';
+    const actionLabel = isRecoveryPurpose ? 'Открыть страницу восстановления' : '';
+    const actionHtml = isRecoveryPurpose
+      ? `
+            <a href="${verifyUrl}" style="display:inline-block; background:#2563eb; color:#ffffff; text-decoration:none; font-weight:700; font-size:16px; line-height:1; border-radius:12px; padding:15px 20px;">
+              ${actionLabel}
+            </a>
+        `
+      : '';
+    const actionText = isRecoveryPurpose ? `\n\n${actionLabel}: ${verifyUrl}` : '';
     const html = `
       <div style="margin:0; padding:0; background:#f3f6fb; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
         <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
@@ -867,9 +876,7 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
             <div style="margin:0 0 18px; border:1px dashed #9ec5ff; border-radius:14px; background:#f8fbff; padding:18px 14px; text-align:center;">
               <span style="display:inline-block; color:#0f1b34; font-size:52px; line-height:1; letter-spacing:8px; font-weight:800;">${code}</span>
             </div>
-            <a href="${verifyUrl}" style="display:inline-block; background:#2563eb; color:#ffffff; text-decoration:none; font-weight:700; font-size:16px; line-height:1; border-radius:12px; padding:15px 20px;">
-              Открыть страницу подтверждения
-            </a>
+            ${actionHtml}
             <p style="margin:18px 0 0; color:#64748b; font-size:14px; line-height:1.5;">
               ${hint}
             </p>
@@ -877,7 +884,7 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
         </div>
       </div>
     `;
-    const text = `${textPrefix}\n\nКод подтверждения: ${code}\n\nОткрыть страницу подтверждения: ${verifyUrl}\n\n${hint}`;
+    const text = `${textPrefix}\n\nКод подтверждения: ${code}${actionText}\n\n${hint}`;
 
     const info = await transporter.sendMail({
       from: process.env.SMTP_FROM || 'MonitorApp <noreply@monitorapp.ru>',

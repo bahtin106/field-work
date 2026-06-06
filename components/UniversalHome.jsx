@@ -2,24 +2,27 @@
 import FeatherIcon from '@expo/vector-icons/Feather';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ExpoImage } from 'expo-image';
 import { ActivityIndicator, InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
-import { yandexDiskIntegration } from '../lib/yandexDiskIntegration';
 import { COMPANY_SETTINGS_QUERY_KEY } from '../lib/companySettingsQuery';
 import { inspectProfileMedia } from '../src/features/profileMedia/api';
+import { listRequests } from '../src/features/requests/api';
+import { prefetchExecutorNames, seedExecutorNames } from '../src/features/requests/executorNameCache';
 import { useTranslation } from '../src/i18n/useTranslation';
+import { getOfflineSnapshot } from '../src/shared/offline/offlineStatus';
+import { markFirstContent, markScreenMount, measureNetwork } from '../src/shared/perf/devMetrics';
 import { queryKeys } from '../src/shared/query/queryKeys';
+import { queryClient as appQueryClient } from '../src/shared/query/queryClient';
 import { scheduleSmartPrefetch } from '../src/shared/query/smartPrefetch';
 import { useTheme } from '../theme/ThemeProvider';
 import { useSuperAdminAccess } from '../hooks/useSuperAdminAccess';
 import { useSubscriptionGuard } from '../hooks/useSubscriptionGuard';
 import { useCompanySettings } from '../hooks/useCompanySettings';
-import SupportRequestModal from '../app/company_settings/sections/SupportRequestModal';
 import {
   countUnreadSupportRequests,
   SUPPORT_UNREAD_REFETCH_MS,
@@ -30,12 +33,15 @@ import Card from './ui/Card';
 import { preloadLazyRouteScreen } from './layout/LazyRouteScreen';
 import { useToast } from './ui/ToastProvider';
 
+const SupportRequestModal = lazy(() => import('../app/company_settings/sections/SupportRequestModal'));
+
 const VERBOSE_HOME_LOGS = __DEV__ && globalThis?.__VERBOSE_HOME_LOGS__ === true;
 const HOME_PROFILE_STALE_MS = 2 * 60 * 1000;
 const HOME_COMPANY_STALE_MS = 10 * 60 * 1000;
 const HOME_DEPARTMENT_STALE_MS = 10 * 60 * 1000;
 const HOME_SESSION_STALE_MS = 5 * 60 * 1000;
 const HOME_DURABLE_GC_MS = 14 * 24 * 60 * 60 * 1000;
+const HOME_MY_ORDERS_PREFETCH_PAGE_SIZE = 30;
 
 const HOME_ROUTES = {
   appSettings: '/app_settings/AppSettings',
@@ -52,6 +58,8 @@ let homeCriticalWarmupStarted = false;
 let homeAdminWarmupStarted = false;
 let homeCalendarWarmupStarted = false;
 let homePrimaryWarmupStarted = false;
+let homeSecondaryWarmupStarted = false;
+const homeMyOrdersPrefetchStartedByScope = new Set();
 
 function warmLazyRoute(cacheKey, load) {
   preloadLazyRouteScreen(cacheKey, load).catch(() => {});
@@ -61,6 +69,11 @@ function warmHomePrimaryRoutes() {
   if (homePrimaryWarmupStarted) return;
   homePrimaryWarmupStarted = true;
   warmLazyRoute('routes.orders/my-orders', () => import('../screens/orders/MyOrdersScreen'));
+}
+
+function warmHomeSecondaryRoutes() {
+  if (homeSecondaryWarmupStarted) return;
+  homeSecondaryWarmupStarted = true;
   warmLazyRoute('routes.orders/calendar', () => import('../screens/orders/CalendarScreen'));
   warmLazyRoute('routes.orders/create-order', () => import('../screens/orders/CreateOrderScreen'));
 }
@@ -92,6 +105,64 @@ function isUuid(s) {
   );
 }
 
+function buildHomeMyOrdersRecentQueryKey(scopeKey) {
+  return ['orders', 'my', 'recent', String(scopeKey || 'anonymous')];
+}
+
+function isLikelyYandexAvatarUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (raw.toLowerCase().startsWith('yadisk://')) return true;
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host === 'disk.yandex.ru';
+  } catch {
+    const lower = raw.toLowerCase();
+    return (
+      lower.includes('yadi.sk') ||
+      lower.startsWith('disk.yandex.ru') ||
+      /^https?:\/\/disk\.yandex\.ru(?:[/:?#]|$)/i.test(lower)
+    );
+  }
+}
+
+function isRenderableAvatarUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  if (/^(file|content|asset|ph|assets-library):\/\//i.test(raw) || /^data:image\//i.test(raw)) return true;
+  if (!/^https?:\/\//i.test(raw)) return false;
+  return !isLikelyYandexAvatarUrl(raw);
+}
+
+function buildResolvedAvatarSnapshot(sourceUrl, inspection) {
+  const source = String(sourceUrl || '').trim();
+  if (!source) return null;
+  const cleaned = Array.isArray(inspection?.cleanedUrls) && inspection.cleanedUrls.includes(source);
+  if (cleaned) return { avatar_url: null, avatar_display_url: null };
+
+  const resolved = String(inspection?.resolvedUrls?.[source] || '').trim();
+  if (!isRenderableAvatarUrl(resolved)) return null;
+  return { avatar_url: source, avatar_display_url: resolved };
+}
+
+async function resolveProfileAvatarDisplay(profile) {
+  if (!profile || typeof profile !== 'object') return profile || null;
+
+  const avatarUrl = String(profile.avatar_url || '').trim();
+  const avatarDisplayUrl = String(profile.avatar_display_url || profile.avatarDisplayUrl || '').trim();
+  if (!avatarUrl) return { ...profile, avatar_url: null, avatar_display_url: null };
+  if (isRenderableAvatarUrl(avatarDisplayUrl)) return { ...profile, avatar_display_url: avatarDisplayUrl };
+  if (isRenderableAvatarUrl(avatarUrl)) return { ...profile, avatar_display_url: avatarUrl };
+
+  try {
+    const snapshot = buildResolvedAvatarSnapshot(avatarUrl, await inspectProfileMedia([avatarUrl]));
+    return snapshot ? { ...profile, ...snapshot } : profile;
+  } catch {
+    return profile;
+  }
+}
+
 // --- data fetchers ---
 async function fetchSession() {
   const { data } = await supabase.auth.getSession();
@@ -101,26 +172,17 @@ async function fetchSession() {
 async function fetchProfile(uid) {
   if (!uid) return null;
 
-  const resolveProfileAvatar = async (profile) => {
-    if (!profile) return null;
-    const { cleanedUrls, resolvedUrls } = await inspectProfileMedia(
-      [String(profile?.avatar_url || '').trim()].filter(Boolean),
-    );
-    return cleanedUrls.includes(String(profile?.avatar_url || '').trim())
-      ? { ...profile, avatar_url: null, avatar_display_url: null }
-      : {
-          ...profile,
-          avatar_display_url:
-            resolvedUrls[String(profile?.avatar_url || '').trim()] || profile?.avatar_url || null,
-        };
-  };
-
   const { data: byId } = await supabase
     .from('profiles')
     .select('id, full_name, first_name, middle_name, last_name, avatar_url, role, company_id, department_id')
     .eq('id', uid)
     .maybeSingle();
-  return await resolveProfileAvatar(byId || null);
+  if (!byId) return null;
+  const profile = await resolveProfileAvatarDisplay(byId);
+  const cached =
+    appQueryClient.getQueryData(['profile', uid]) ||
+    appQueryClient.getQueryData(queryKeys.profile.me());
+  return mergeProfileSnapshot(cached, profile);
 }
 
 function mergeProfileSnapshot(prev, snapshot) {
@@ -128,14 +190,22 @@ function mergeProfileSnapshot(prev, snapshot) {
   const nextAvatarUrl = Object.prototype.hasOwnProperty.call(snapshot, 'avatar_url')
     ? snapshot.avatar_url ?? null
     : prev?.avatar_url ?? null;
+  const hasAvatarDisplay =
+    Object.prototype.hasOwnProperty.call(snapshot, 'avatar_display_url') ||
+    Object.prototype.hasOwnProperty.call(snapshot, 'avatarDisplayUrl');
+  const nextAvatarDisplayUrl = hasAvatarDisplay
+    ? snapshot.avatar_display_url ?? snapshot.avatarDisplayUrl ?? null
+    : null;
   const avatarChanged = String(prev?.avatar_url || '') !== String(nextAvatarUrl || '');
   return {
     ...(prev || {}),
     ...snapshot,
     avatar_url: nextAvatarUrl,
-    avatar_display_url: avatarChanged
-      ? nextAvatarUrl
-      : prev?.avatar_display_url ?? nextAvatarUrl ?? null,
+    avatar_display_url: hasAvatarDisplay
+      ? nextAvatarDisplayUrl
+      : avatarChanged
+        ? nextAvatarUrl
+        : prev?.avatar_display_url ?? nextAvatarUrl ?? null,
   };
 }
 
@@ -256,6 +326,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     [router],
   );
 
+  useEffect(() => {
+    markScreenMount('Home');
+  }, []);
+
   // Debug: inspect incoming auth/profile props.
   useEffect(() => {
     if (!VERBOSE_HOME_LOGS) return;
@@ -280,16 +354,17 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   const [supportRequestOpen, setSupportRequestOpen] = useState(false);
   const [supportRequestNonce, setSupportRequestNonce] = useState(0);
+  const [secondaryNetworkEnabled, setSecondaryNetworkEnabled] = useState(false);
   const { data: unreadSupportCount = 0 } = useQuery({
     queryKey: SUPPORT_UNREAD_QUERY_KEY,
     queryFn: countUnreadSupportRequests,
-    enabled: isSuperAdmin,
+    enabled: secondaryNetworkEnabled && isSuperAdmin,
     staleTime: 10 * 1000,
     refetchInterval: SUPPORT_UNREAD_REFETCH_MS,
   });
 
   useEffect(() => {
-    if (!isSuperAdmin) return undefined;
+    if (!secondaryNetworkEnabled || !isSuperAdmin) return undefined;
     const channel = supabase
       .channel('home-feedbacks-unread-counter')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'feedbacks' }, () => {
@@ -299,7 +374,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isSuperAdmin, qc]);
+  }, [isSuperAdmin, qc, secondaryNetworkEnabled]);
 
   // ====== Session / profile ======
   const { data: session } = useQuery({
@@ -321,9 +396,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     queryFn: () => fetchProfile(uid),
     enabled: !!uid,
     initialData: providedProfile || undefined,
+    initialDataUpdatedAt: providedProfile ? 0 : undefined,
     staleTime: HOME_PROFILE_STALE_MS,
     gcTime: HOME_DURABLE_GC_MS,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnReconnect: true,
     placeholderData: (prev) => prev,
   });
@@ -332,19 +408,15 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   const { data: profileFallback } = useQuery({
     queryKey: ['homeProfileFallback', uid || 'anon'],
     queryFn: async () => {
-      const {
-        data: { user: authUser },
-      } = await supabase.auth.getUser();
-      if (!authUser?.id) return null;
       const { data: p, error: pErr } = await supabase
         .from('profiles')
         .select('id, company_id, role')
-        .eq('id', authUser.id)
+        .eq('id', uid)
         .maybeSingle();
       if (pErr) throw pErr;
       return p || null;
     },
-    enabled: !!uid && !currentProfile?.company_id,
+    enabled: !!uid && !currentProfile?.company_id && profileFetched && !profileLoading,
     staleTime: HOME_PROFILE_STALE_MS,
     refetchOnMount: false,
     refetchOnReconnect: true,
@@ -355,13 +427,23 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     currentProfile?.full_name;
   const firstName = currentProfile?.first_name || '';
   const lastName = currentProfile?.last_name || '';
-  const avatarUrl = currentProfile?.avatar_display_url || currentProfile?.avatar_url || null;
+  const rawAvatarUrl = String(currentProfile?.avatar_url || '').trim();
+  const avatarDisplayUrl = String(currentProfile?.avatar_display_url || '').trim();
+  const avatarUrl = isRenderableAvatarUrl(avatarDisplayUrl)
+    ? avatarDisplayUrl
+    : isRenderableAvatarUrl(rawAvatarUrl)
+      ? rawAvatarUrl
+      : null;
+  const avatarCacheKey = rawAvatarUrl ? `profile-avatar:${uid || 'anon'}:${rawAvatarUrl}` : undefined;
   const companyId = currentProfile?.company_id || profileFallback?.company_id || null;
   const {
     settings: companySettings,
     useDepartments,
-  } = useCompanySettings(companyId || null);
-  const subscriptionGuard = useSubscriptionGuard(companyId);
+  } = useCompanySettings(companyId || null, {
+    enabled: secondaryNetworkEnabled,
+    subscribe: secondaryNetworkEnabled,
+  });
+  const subscriptionGuard = useSubscriptionGuard(companyId, { enabled: secondaryNetworkEnabled });
   const isReadOnlyBySubscription =
     !subscriptionGuard.isLoading &&
     subscriptionGuard.entitlements != null &&
@@ -379,6 +461,56 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
 
   const canCreateOrders = !permsLoading && has?.('canCreateOrders') === true;
+
+  const applyAvatarSnapshot = useCallback(
+    (snapshot) => {
+      if (!uid || !snapshot) return;
+      qc.setQueryData(['profile', uid], (prev) => mergeProfileSnapshot(prev || currentProfile, snapshot));
+      qc.setQueryData(queryKeys.profile.me(), (prev) => mergeProfileSnapshot(prev || currentProfile, snapshot));
+    },
+    [currentProfile, qc, uid],
+  );
+
+  useEffect(() => {
+    if (!uid || !rawAvatarUrl) return undefined;
+    if (isRenderableAvatarUrl(avatarDisplayUrl)) {
+      ExpoImage.prefetch(avatarDisplayUrl, 'memory-disk').catch(() => {});
+      return undefined;
+    }
+    if (isRenderableAvatarUrl(rawAvatarUrl)) {
+      ExpoImage.prefetch(rawAvatarUrl, 'memory-disk').catch(() => {});
+      if (avatarDisplayUrl !== rawAvatarUrl) {
+        applyAvatarSnapshot({ avatar_url: rawAvatarUrl, avatar_display_url: rawAvatarUrl });
+      }
+      return undefined;
+    }
+
+    let cancelled = false;
+    inspectProfileMedia([rawAvatarUrl])
+      .then((inspection) => {
+        if (cancelled) return;
+        const snapshot = buildResolvedAvatarSnapshot(rawAvatarUrl, inspection);
+        if (!snapshot) return;
+        applyAvatarSnapshot(snapshot);
+        if (snapshot.avatar_display_url) {
+          ExpoImage.prefetch(snapshot.avatar_display_url, 'memory-disk').catch(() => {});
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [applyAvatarSnapshot, avatarDisplayUrl, rawAvatarUrl, uid]);
+
+  const handleAvatarLoadError = useCallback(() => {
+    if (!uid || !rawAvatarUrl) return;
+    inspectProfileMedia([rawAvatarUrl])
+      .then((inspection) => {
+        const snapshot = buildResolvedAvatarSnapshot(rawAvatarUrl, inspection);
+        if (snapshot) applyAvatarSnapshot(snapshot);
+      })
+      .catch(() => {});
+  }, [applyAvatarSnapshot, rawAvatarUrl, uid]);
 
 
   const openAppSettings = useCallback(
@@ -424,8 +556,11 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     isError: cloudStatusError,
   } = useQuery({
     queryKey: ['cloud-storage-status', companyId],
-    queryFn: () => yandexDiskIntegration('status'),
-    enabled: shouldCheckCloudHealth,
+    queryFn: async () => {
+      const { yandexDiskIntegration } = await import('../lib/yandexDiskIntegration');
+      return yandexDiskIntegration('status');
+    },
+    enabled: secondaryNetworkEnabled && shouldCheckCloudHealth,
     staleTime: 60 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnMount: false,
@@ -534,35 +669,50 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   useEffect(() => {
     if (!uid || !currentProfile?.id) return undefined;
-    const task = InteractionManager.runAfterInteractions(() => {
+    const timers = [];
+    const tasks = [];
+    const scheduleWarmup = (delayMs, fn) => {
       const timer = setTimeout(() => {
-        warmHomePrimaryRoutes();
-        warmHomeCriticalRoutes();
-        warmHomeCalendarRoute();
-        if (isSuperAdmin) warmHomeAdminRoute();
-        if (typeof router?.prefetch !== 'function') return;
-        const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings, HOME_ROUTES.calendar];
-        if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
-        routesToPrefetch.forEach((route) => {
-          try {
-            router.prefetch(route);
-          } catch {}
-        });
-      }, 800);
-      task.cancelTimer = () => clearTimeout(timer);
+        const task = InteractionManager.runAfterInteractions(fn);
+        tasks.push(task);
+      }, delayMs);
+      timers.push(timer);
+    };
+
+    scheduleWarmup(1800, () => {
+      warmHomePrimaryRoutes();
     });
+    scheduleWarmup(5200, () => {
+      warmHomeSecondaryRoutes();
+      warmHomeCalendarRoute();
+    });
+    scheduleWarmup(9000, () => {
+      warmHomeCriticalRoutes();
+      if (isSuperAdmin) warmHomeAdminRoute();
+      if (typeof router?.prefetch !== 'function') return;
+      const routesToPrefetch = [HOME_ROUTES.appSettings, HOME_ROUTES.companySettings, HOME_ROUTES.calendar];
+      if (isSuperAdmin) routesToPrefetch.push(HOME_ROUTES.admin);
+      routesToPrefetch.forEach((route) => {
+        try {
+          router.prefetch(route);
+        } catch {}
+      });
+    });
+
     return () => {
-      try {
-        task.cancelTimer?.();
-        task.cancel?.();
-      } catch {}
+      timers.forEach((timer) => clearTimeout(timer));
+      tasks.forEach((task) => {
+        try {
+          task.cancel?.();
+        } catch {}
+      });
     };
   }, [currentProfile?.id, isSuperAdmin, router, uid]);
 
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   useEffect(() => {
-    if (!uid) return undefined;
+    if (!secondaryNetworkEnabled || !uid) return undefined;
     const profileId = String(currentProfile?.id || uid || '').trim();
     if (!isUuid(profileId)) return undefined;
     const applyProfileChange = (payload) => {
@@ -584,7 +734,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentProfile?.id, qc, uid]);
+  }, [currentProfile?.id, qc, secondaryNetworkEnabled, uid]);
 
   // Fetch company name if companyId is available
   const { data: companyRow } = useQuery({
@@ -594,7 +744,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       const { data } = await supabase.from('companies').select('id, name').eq('id', companyId).maybeSingle();
       return data || null;
     },
-    enabled: !!companyId,
+    enabled: secondaryNetworkEnabled && !!companyId,
     staleTime: HOME_COMPANY_STALE_MS,
     refetchOnMount: false,
     refetchOnReconnect: true,
@@ -611,7 +761,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       const { data } = await supabase.from('departments').select('id, name').eq('id', departmentIdToUse).maybeSingle();
       return data || null;
     },
-    enabled: useDepartments && !!departmentIdToUse,
+    enabled: secondaryNetworkEnabled && useDepartments && !!departmentIdToUse,
     staleTime: HOME_DEPARTMENT_STALE_MS,
     refetchOnMount: false,
     refetchOnReconnect: true,
@@ -659,7 +809,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   }, [router, seedSelfProfileEmployeeDetail]);
 
   useEffect(() => {
-    if (!companyId) return undefined;
+    if (!secondaryNetworkEnabled || !companyId) return undefined;
     const refreshCompanyData = (payload) => {
       if (payload?.new?.id) {
         qc.setQueryData(['company', companyId], (prev) => ({ ...(prev || {}), ...payload.new }));
@@ -680,10 +830,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [companyId, qc]);
+  }, [companyId, qc, secondaryNetworkEnabled]);
 
   useEffect(() => {
-    if (!departmentIdToUse) return undefined;
+    if (!secondaryNetworkEnabled || !departmentIdToUse) return undefined;
     const channel = supabase
       .channel(`home-department-${departmentIdToUse}`)
       .on(
@@ -700,7 +850,7 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [departmentIdToUse, qc]);
+  }, [departmentIdToUse, qc, secondaryNetworkEnabled]);
 
   useFocusEffect(
     useCallback(() => {
@@ -761,15 +911,72 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
 
   useEffect(() => {
     if (!homeCriticalReady) return;
+    markFirstContent('Home');
     onInitialReady?.();
   }, [homeCriticalReady, onInitialReady]);
+
+  useEffect(() => {
+    if (!homeCriticalReady) return undefined;
+    const timer = setTimeout(() => {
+      setSecondaryNetworkEnabled(true);
+    }, 2800);
+    return () => clearTimeout(timer);
+  }, [homeCriticalReady]);
+
+  useEffect(() => {
+    if (!homeCriticalReady || !uid) return undefined;
+    const scopeKey = `${uid}:${String(companyId || 'no-company')}`;
+    if (homeMyOrdersPrefetchStartedByScope.has(scopeKey)) return undefined;
+    homeMyOrdersPrefetchStartedByScope.add(scopeKey);
+
+    let task = null;
+    const timer = setTimeout(() => {
+      if (!getOfflineSnapshot().isOnline) {
+        homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
+        return;
+      }
+      task = InteractionManager.runAfterInteractions(() => {
+        measureNetwork('home.myOrders.prefetch', () =>
+          listRequests({
+            scope: 'my',
+            page: 1,
+            pageSize: HOME_MY_ORDERS_PREFETCH_PAGE_SIZE,
+            userId: uid,
+          }),
+        )
+          .then((rows) => {
+            const page = Array.isArray(rows) ? rows : [];
+            qc.setQueryData(buildHomeMyOrdersRecentQueryKey(scopeKey), page);
+            qc.setQueryData(queryKeys.requests.my({}), {
+              pages: [page],
+              pageParams: [1],
+            });
+            seedExecutorNames(page);
+            const executorIds = Array.from(
+              new Set(page.map((row) => String(row?.assigned_to || '').trim()).filter(Boolean)),
+            ).slice(0, 80);
+            prefetchExecutorNames(executorIds).catch(() => {});
+          })
+          .catch(() => {
+            homeMyOrdersPrefetchStartedByScope.delete(scopeKey);
+          });
+      });
+    }, 650);
+
+    return () => {
+      clearTimeout(timer);
+      try {
+        task?.cancel?.();
+      } catch {}
+    };
+  }, [companyId, homeCriticalReady, qc, uid]);
 
   useEffect(() => {
     if (!homeCriticalReady || !uid) return;
     let cancelPrefetch = null;
     const timer = setTimeout(() => {
       cancelPrefetch = scheduleSmartPrefetch(qc);
-    }, 1800);
+    }, 6500);
     return () => {
       clearTimeout(timer);
       try {
@@ -817,7 +1024,14 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
         >
           {avatarUrl ? (
             <View style={styles.avatarWrap}>
-              <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarImg} contentFit="cover" cachePolicy="memory-disk" />
+              <ExpoImage
+                source={{ uri: avatarUrl, cacheKey: avatarCacheKey }}
+                style={styles.avatarImg}
+                contentFit="cover"
+                cachePolicy="memory-disk"
+                priority="high"
+                onError={handleAvatarLoadError}
+              />
             </View>
           ) : (
             <View style={styles.avatarFallback}>
@@ -984,12 +1198,16 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
       </View>
       </ScrollView>
 
-      <SupportRequestModal
-        key={`support-request-${supportRequestNonce}`}
-        visible={supportRequestOpen}
-        onClose={() => setSupportRequestOpen(false)}
-        profile={currentProfile}
-      />
+      {supportRequestOpen ? (
+        <Suspense fallback={null}>
+          <SupportRequestModal
+            key={`support-request-${supportRequestNonce}`}
+            visible={supportRequestOpen}
+            onClose={() => setSupportRequestOpen(false)}
+            profile={currentProfile}
+          />
+        </Suspense>
+      ) : null}
     </>
   );
 }
