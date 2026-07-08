@@ -1,5 +1,8 @@
-﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+﻿﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -263,7 +266,7 @@ async function refreshAccessToken(refreshToken: string) {
   return tokenData;
 }
 
-async function getConnection(admin: ReturnType<typeof createClient>, companyId: string) {
+async function getConnection(admin: SupabaseAdminClient, companyId: string) {
   const { data: conn, error } = await admin
     .from('company_yandex_disk_connections')
     .select('access_token, refresh_token, token_expires_at, folder_path')
@@ -274,7 +277,7 @@ async function getConnection(admin: ReturnType<typeof createClient>, companyId: 
 }
 
 async function getValidAccessToken(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   companyId: string,
 ): Promise<{ accessToken: string | null; folderPath: string }> {
   const conn = await getConnection(admin, companyId);
@@ -307,7 +310,7 @@ async function getValidAccessToken(
 }
 
 async function getCallerAndFinanceEntryContext(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   token: string,
   financeEntryId: string,
 ) {
@@ -362,6 +365,8 @@ async function getCallerAndFinanceEntryContext(
     .maybeSingle();
   if (cmpErr || !company) throw new Error('Company not found');
 
+  const orderObject = Array.isArray(order.object) ? order.object[0] : order.object;
+
   return {
     userId: user.id,
     companyId: String(profile.company_id),
@@ -376,8 +381,8 @@ async function getCallerAndFinanceEntryContext(
     order: {
       id: String(order.id || entry.order_id),
       title: order.title || null,
-      object_name: order.object?.name || null,
-      object_summary: buildObjectAddressSummary(order.object || {}) || null,
+      object_name: orderObject?.name || null,
+      object_summary: buildObjectAddressSummary(orderObject || {}) || null,
       time_window_start: order.time_window_start || null,
       created_at: order.created_at || null,
     },
@@ -458,7 +463,7 @@ function isMissingRpcError(error: unknown) {
 }
 
 async function appendFinanceEntryPhotoUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -483,7 +488,7 @@ async function appendFinanceEntryPhotoUrlAtomic(
 }
 
 async function removeFinanceEntryPhotoUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -508,7 +513,7 @@ async function removeFinanceEntryPhotoUrlAtomic(
 }
 
 async function removeFinanceEntryPhotoUrlAtomicCanonical(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   financeEntryId: string,
   companyId: string,
   url: string,
@@ -553,7 +558,13 @@ async function removeFinanceEntryPhotoUrlAtomicCanonical(
 
 function isYandexPublicPageUrl(value: string) {
   const raw = String(value || '').trim().toLowerCase();
-  return raw.includes('yadi.sk/') || raw.includes('disk.yandex.');
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+  } catch {
+    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+  }
 }
 
 async function uploadToYandex(accessToken: string, path: string, bytes: Uint8Array, mime: string) {
@@ -572,7 +583,7 @@ async function uploadToYandex(accessToken: string, path: string, bytes: Uint8Arr
   const putRes = await fetch(linkData.href, {
     method: 'PUT',
     headers: { 'Content-Type': mime || 'application/octet-stream' },
-    body: bytes,
+    body: bytes as unknown as BodyInit,
   });
   if (!putRes.ok) {
     const text = await putRes.text();
@@ -961,12 +972,13 @@ export async function handleFinanceEntryYandexMediaRequest(req: Request) {
           resolved[sourceUrl] = pubUrl;
           // Best-effort persist to mapping for future requests
           if (row && (row as any).id != null) {
-            admin
-              .from('finance_entry_media_external_map')
-              .update({ display_url: pubUrl, display_url_updated_at: new Date().toISOString() })
-              .eq('id', Number((row as any).id))
-              .then(() => {})
-              .catch(() => {});
+            Promise.resolve(
+              admin
+                .from('finance_entry_media_external_map')
+                .update({ display_url: pubUrl, display_url_updated_at: new Date().toISOString() })
+                .eq('id', Number((row as any).id))
+                .then(() => {}),
+            ).catch(() => {});
           }
         } catch (_e) {
           resolved[sourceUrl] = toYandexDisplayCandidate(sourceUrl);

@@ -605,7 +605,7 @@ export default function UserView() {
 const styles = (t) => {
   const AV = Number(t?.components?.avatar?.xl ?? 96);
   const BORDER = Number(t?.components?.avatar?.border ?? StyleSheet.hairlineWidth);
-  const PRIMARY = t?.colors?.primary ?? '#007AFF';
+  const PRIMARY = t.colors.primary;
   const SPACING_LG = Number(t?.spacing?.lg ?? 16);
   return StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },

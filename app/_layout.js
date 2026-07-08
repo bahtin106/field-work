@@ -35,6 +35,7 @@ import OfflineStatusBanner from '../src/shared/offline/OfflineStatusBanner';
 import { getOfflineSnapshot, isOfflineLikeError } from '../src/shared/offline/offlineStatus';
 import QueryProvider from '../src/shared/query/QueryProvider';
 import RouteFreshnessBoundary from '../src/shared/query/RouteFreshnessBoundary';
+import { withAlpha } from '../theme/colors';
 import { ThemeProvider, useTheme } from '../theme/ThemeProvider';
 import { useAppLastSeen } from '../useAppLastSeen';
 import { KeyboardProvider } from '../lib/keyboardControllerCompat';
@@ -105,8 +106,13 @@ if (!globalThis.__splashPrevented) {
 
 function _BrandedLoadingScreen({ theme, label }) {
   const isDark = theme?.mode === 'dark';
-  const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.92)';
-  const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(16,24,40,0.08)';
+  const cardBg = withAlpha(theme.colors.surface, isDark ? 0.52 : 0.92);
+  const cardBorder = withAlpha(theme.colors.border, isDark ? 0.72 : 0.92);
+  const cardShadow =
+    theme.shadows?.level2?.ios?.shadowColor ||
+    theme.shadows?.card?.ios?.shadowColor ||
+    theme.colors.shadow ||
+    theme.colors.cardShadow;
 
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}>
@@ -120,7 +126,7 @@ function _BrandedLoadingScreen({ theme, label }) {
           borderColor: cardBorder,
           justifyContent: 'center',
           alignItems: 'center',
-          shadowColor: '#000',
+          shadowColor: cardShadow,
           shadowOpacity: isDark ? 0.24 : 0.14,
           shadowRadius: 18,
           shadowOffset: { width: 0, height: 8 },

@@ -25,7 +25,10 @@ export default function OrderSuccessScreen() {
           backgroundColor: theme.colors.surface, // was theme.colors.card
           padding: 32,
           borderRadius: 12,
-          shadowColor: '#000',
+          shadowColor:
+            theme.colors.shadow ||
+            theme.colors.cardShadow ||
+            theme.shadows?.level2?.ios?.shadowColor,
           shadowOpacity: 0.1,
           shadowRadius: 10,
           elevation: 4,

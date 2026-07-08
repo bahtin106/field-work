@@ -1,4 +1,5 @@
-﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+﻿﻿import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import {
   createBegetPresignedGetUrl,
   createBegetPresignedPutUrl,
@@ -9,6 +10,8 @@ import {
   putBegetObject,
 } from '../_shared/beget-s3.ts';
 import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -201,7 +204,13 @@ function pathFromInternalUrl(sourceUrl: string) {
 
 function isLikelyPublicYandexUrl(url: string) {
   const raw = String(url || '').trim().toLowerCase();
-  return raw.startsWith('https://yadi.sk/') || raw.includes('disk.yandex');
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+  } catch {
+    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+  }
 }
 
 function isSupabaseAvatarStorageUrl(url: string | null | undefined) {
@@ -308,9 +317,13 @@ async function streamRemoteResponse(remoteUrl: string) {
     const text = await res.text();
     return binary(404, text || 'Not found', { 'Content-Type': 'text/plain; charset=utf-8' });
   }
-  return binary(200, res.body, {
+  const headers: Record<string, string> = {
     'Content-Type': res.headers.get('content-type') || 'application/octet-stream',
-    'Content-Length': res.headers.get('content-length') || undefined,
+  };
+  const contentLength = res.headers.get('content-length');
+  if (contentLength) headers['Content-Length'] = contentLength;
+  return binary(200, res.body, {
+    ...headers,
   });
 }
 
@@ -357,7 +370,7 @@ async function removeStoragePrefixFiles({
   keepPaths = [],
   pageSize = 100,
 }: {
-  admin: ReturnType<typeof createClient>;
+  admin: SupabaseAdminClient;
   bucket: string;
   prefix: string;
   keepPaths?: string[];
@@ -478,7 +491,7 @@ async function uploadToYandex(
   const putRes = await fetch(linkData.href, {
     method: 'PUT',
     headers: { 'Content-Type': mime || 'application/octet-stream' },
-    body: bytes,
+    body: bytes as unknown as BodyInit,
   });
   if (!putRes.ok) {
     const text = await putRes.text();
@@ -605,7 +618,7 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 async function getValidAccessToken(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   companyId: string,
 ): Promise<{ accessToken: string | null; folderPath: string }> {
   const { data: conn, error } = await admin
@@ -644,7 +657,7 @@ async function getValidAccessToken(
   return { accessToken: refreshed.access_token, folderPath };
 }
 
-async function getCallerContext(admin: ReturnType<typeof createClient>, token: string) {
+async function getCallerContext(admin: SupabaseAdminClient, token: string) {
   const {
     data: { user },
     error: authErr,
@@ -739,7 +752,7 @@ function buildBegetStoragePrefix(
 }
 
 async function getEntityContext(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   companyId: string | null,
   entityType: EntityType,
   entityId: string,
@@ -773,11 +786,12 @@ async function getEntityContext(
   if (companyErr) throw companyErr;
   if (!company) throw new Error('Company not found');
 
-  const entityLabel = buildEntityLabel(entityType, data as Record<string, unknown>);
+  const entity = data as unknown as Record<string, unknown>;
+  const entityLabel = buildEntityLabel(entityType, entity);
   const currentUrl = String((data as any)[meta.column] || '').trim() || null;
 
   return {
-    entity: data as Record<string, unknown>,
+    entity,
     currentUrl,
     companyName: String(company.name || '').trim() || 'company',
     provider: String(company.profile_media_provider || 'beget_s3'),
@@ -790,7 +804,7 @@ async function getEntityContext(
       entityType,
       entityLabel,
       entityId,
-      data as Record<string, unknown>,
+      entity,
     ),
     entityLabel,
   };
@@ -809,7 +823,7 @@ function assertWriteAccess(caller: { userId: string; role: string }, entityType:
 }
 
 async function getExistingExternalMap(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   companyId: string,
   entityType: EntityType,
   entityId: string,
@@ -826,7 +840,7 @@ async function getExistingExternalMap(
 }
 
 async function getExternalMapById(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   mapId: number,
 ) {
   const { data, error } = await admin
@@ -839,7 +853,7 @@ async function getExternalMapById(
 }
 
 async function updateEntityUrl(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   entityType: EntityType,
   entityId: string,
   nextUrl: string | null,
@@ -854,13 +868,13 @@ async function updateEntityUrl(
   if (error) throw error;
   if (!data?.id) throw new Error(`Failed to persist ${meta.column}`);
 
-  const persistedUrl = String((data as Record<string, unknown>)[meta.column] || '').trim() || null;
+  const persistedUrl = String((data as unknown as Record<string, unknown>)[meta.column] || '').trim() || null;
   if ((nextUrl || null) !== persistedUrl) {
     throw new Error(`Failed to persist ${meta.column}`);
   }
 }
 
-async function clearYandexMapById(admin: ReturnType<typeof createClient>, mapId: number | null | undefined) {
+async function clearYandexMapById(admin: SupabaseAdminClient, mapId: number | null | undefined) {
   if (mapId == null) return;
   const { error } = await admin.from('profile_media_external_map').delete().eq('id', Number(mapId));
   if (error) throw error;
@@ -879,7 +893,7 @@ async function cleanupExistingMedia({
   cleanupLocal = true,
   cleanupBegetPrefix = false,
 }: {
-  admin: ReturnType<typeof createClient>;
+  admin: SupabaseAdminClient;
   companyId: string;
   entityType: EntityType;
   entityId: string;
@@ -950,7 +964,7 @@ async function prepareBegetDirectUpload(
 }
 
 async function commitBegetDirectUpload(args: {
-  admin: ReturnType<typeof createClient>;
+  admin: SupabaseAdminClient;
   companyId: string;
   callerUserId: string;
   entityType: EntityType;
@@ -1050,7 +1064,7 @@ async function prepareYandexDirectUpload(args: {
 }
 
 async function commitYandexDirectUpload(args: {
-  admin: ReturnType<typeof createClient>;
+  admin: SupabaseAdminClient;
   companyId: string;
   callerUserId: string;
   entityType: EntityType;
@@ -1096,7 +1110,7 @@ async function commitYandexDirectUpload(args: {
 }
 
 export async function cleanupProfileMediaEntity(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   args: {
     companyId: string | null;
     entityType: EntityType;
@@ -1133,56 +1147,40 @@ export async function cleanupProfileMediaEntity(
     await updateEntityUrl(admin, entityType, entityId, null);
   }
   if (feedbackId && feedbackAttachmentIds.length) {
-    await admin
-      .from('feedback_attachments')
-      .update({ photo_url: null })
-      .in('id', feedbackAttachmentIds)
-      .then(() => {})
-      .catch(() => {});
+    await Promise.resolve(
+      admin
+        .from('feedback_attachments')
+        .update({ photo_url: null })
+        .in('id', feedbackAttachmentIds)
+        .then(() => {}),
+    ).catch(() => {});
   }
 
   if (feedbackId && effectiveCompanyId) {
-    await admin
-      .from('profile_media_external_map')
-      .delete()
-      .eq('company_id', effectiveCompanyId)
-      .eq('entity_type', 'feedback')
-      .eq('entity_id', feedbackId)
-      .then(() => {})
-      .catch(() => {});
-    if (feedbackAttachmentIds.length) {
-      await admin
+    await Promise.resolve(
+      admin
         .from('profile_media_external_map')
         .delete()
         .eq('company_id', effectiveCompanyId)
-        .eq('entity_type', 'feedback_attachment')
-        .in('entity_id', feedbackAttachmentIds)
-        .then(() => {})
-        .catch(() => {});
+        .eq('entity_type', 'feedback')
+        .eq('entity_id', feedbackId)
+        .then(() => {}),
+    ).catch(() => {});
+    if (feedbackAttachmentIds.length) {
+      await Promise.resolve(
+        admin
+          .from('profile_media_external_map')
+          .delete()
+          .eq('company_id', effectiveCompanyId)
+          .eq('entity_type', 'feedback_attachment')
+          .in('entity_id', feedbackAttachmentIds)
+          .then(() => {}),
+      ).catch(() => {});
     }
 
     const reason = `feedback_delete:${feedbackId}`;
-    await admin
-      .from('media_cleanup_queue')
-      .update({
-        reason,
-        max_attempts: 5,
-        status: 'pending',
-        processed_at: null,
-        locked_at: null,
-        lock_expires_at: null,
-        claimed_by: null,
-        error_code: null,
-        last_error: null,
-        updated_at: new Date().toISOString(),
-      })
-      .is('processed_at', null)
-      .eq('entity_type', 'feedback')
-      .eq('entity_id', feedbackId)
-      .then(() => {})
-      .catch(() => {});
-    if (feedbackAttachmentIds.length) {
-      await admin
+    await Promise.resolve(
+      admin
         .from('media_cleanup_queue')
         .update({
           reason,
@@ -1197,10 +1195,31 @@ export async function cleanupProfileMediaEntity(
           updated_at: new Date().toISOString(),
         })
         .is('processed_at', null)
-        .eq('entity_type', 'feedback_attachment')
-        .in('entity_id', feedbackAttachmentIds)
-        .then(() => {})
-        .catch(() => {});
+        .eq('entity_type', 'feedback')
+        .eq('entity_id', feedbackId)
+        .then(() => {}),
+    ).catch(() => {});
+    if (feedbackAttachmentIds.length) {
+      await Promise.resolve(
+        admin
+          .from('media_cleanup_queue')
+          .update({
+            reason,
+            max_attempts: 5,
+            status: 'pending',
+            processed_at: null,
+            locked_at: null,
+            lock_expires_at: null,
+            claimed_by: null,
+            error_code: null,
+            last_error: null,
+            updated_at: new Date().toISOString(),
+          })
+          .is('processed_at', null)
+          .eq('entity_type', 'feedback_attachment')
+          .in('entity_id', feedbackAttachmentIds)
+          .then(() => {}),
+      ).catch(() => {});
     }
     const { count: queuedJobs } = await admin
       .from('media_cleanup_queue')

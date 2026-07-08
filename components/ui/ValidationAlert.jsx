@@ -20,16 +20,16 @@ export default function ValidationAlert({
     switch (type) {
       case 'warning':
         return {
-          backgroundColor: withAlpha(theme.colors.warning || '#ff9800', 0.12),
-          borderColor: theme.colors.warning || '#ff9800',
-          textColor: theme.colors.warning || '#ff9800',
+          backgroundColor: withAlpha(theme.colors.warning, 0.12),
+          borderColor: theme.colors.warning,
+          textColor: theme.colors.warning,
           icon: 'alert-triangle',
         };
       case 'info':
         return {
-          backgroundColor: withAlpha(theme.colors.info || '#2196f3', 0.12),
-          borderColor: theme.colors.info || '#2196f3',
-          textColor: theme.colors.info || '#2196f3',
+          backgroundColor: withAlpha(theme.colors.info, 0.12),
+          borderColor: theme.colors.info,
+          textColor: theme.colors.info,
           icon: 'info',
         };
       default: // error

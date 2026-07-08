@@ -554,10 +554,6 @@ export async function handleUpdateUserRequest(req: Request) {
       if (!targetAuthUserIdSafe) {
         throw new Error('Target auth user lookup failed');
       }
-      console.log(`[UPDATE_USER] Updating auth for user ${targetAuthUserIdSafe}:`, {
-        hasEmail: !!authPatch.email,
-        hasPassword: passwordChanged,
-      });
       
       const { error: authErr } = await admin.auth.admin.updateUserById(targetAuthUserIdSafe, authPatch);
       
@@ -566,12 +562,10 @@ export async function handleUpdateUserRequest(req: Request) {
         throw new Error('Auth update failed: ' + authErr.message);
       }
       
-      console.log(`[UPDATE_USER] Auth update successful for user ${targetAuthUserIdSafe}`);
 
       // 3) Логируем изменение пароля в таблицу password_change_log (если существует)
       if (passwordChanged) {
         try {
-          console.log(`[UPDATE_USER] Logging password change for user ${targetAuthUserIdSafe}`);
           const { error: logErr } = await admin.rpc('upsert_password_change_log', {
             p_user_id: targetAuthUserIdSafe,
             p_changed_by: actorProfileId || actor.id,
@@ -584,8 +578,6 @@ export async function handleUpdateUserRequest(req: Request) {
           if (logErr) {
             // Логирование — не критично, но выведем в лог
             console.warn(`[UPDATE_USER] Failed to log password change:`, logErr.message);
-          } else {
-            console.log(`[UPDATE_USER] Password change logged successfully for user ${targetAuthUserIdSafe}`);
           }
         } catch (logException) {
           console.warn(`[UPDATE_USER] Exception while logging password change:`, logException);

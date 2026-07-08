@@ -23,7 +23,7 @@ function ThemedSwitch({
     disabled
       ? switchTheme?.trackOffDisabled ?? switchTheme?.trackOff ?? theme?.colors?.inputBorder ?? theme?.colors?.border
       : falseColor ?? switchTheme?.trackOff ?? theme?.colors?.inputBorder ?? theme?.colors?.border;
-  const resolvedThumbColor = thumbColor ?? switchTheme?.thumbColor ?? '#FFFFFF';
+  const resolvedThumbColor = thumbColor ?? switchTheme?.thumbColor ?? theme?.colors?.onPrimary;
   const scale = Number(switchTheme?.scale) || 1;
   const iosBackgroundColor = switchTheme?.iosBackgroundColor ?? trackOff;
 

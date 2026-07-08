@@ -31,8 +31,8 @@ export function getOrderStatusVariant(status) {
 
 export function getOrderStatusPalette(status, theme) {
   const variant = getOrderStatusVariant(status);
-  const fallbackSurface = theme?.colors?.inputBg ?? theme?.colors?.surface ?? '#FFFFFF';
-  const fallbackText = theme?.colors?.textSecondary ?? theme?.colors?.text ?? '#0A0A0A';
+  const fallbackSurface = theme?.colors?.inputBg ?? theme?.colors?.surface;
+  const fallbackText = theme?.colors?.textSecondary ?? theme?.colors?.text;
   const statusSet = theme?.colors?.status || theme?._raw?.colors?.status || {};
   const tone = statusSet?.[variant] || statusSet?.default;
 

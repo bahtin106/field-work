@@ -275,11 +275,11 @@ const styles = (theme) =>
       fontSize: theme.typography.sizes.sm,
     },
     warning: {
-      color: '#9A5A00',
+      color: theme.colors.warning,
       fontWeight: theme.typography.weight.semibold,
     },
     ok: {
-      color: '#1E7A3C',
+      color: theme.colors.success,
       fontWeight: theme.typography.weight.semibold,
     },
     danger: {

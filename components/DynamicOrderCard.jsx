@@ -675,7 +675,7 @@ function DynamicOrderCard({
     };
   }, [order?.assigned_to, executorName, showExecutor]);
 
-  const mutedColor = theme?.text?.muted?.color ?? theme?.colors?.muted ?? '#8E8E93';
+  const mutedColor = theme?.text?.muted?.color ?? theme?.colors?.muted ?? theme?.colors?.textSecondary;
   const spacing = theme?.spacing || {};
   const cardPadding = spacing.md ?? 16;
   const rowGap = spacing.xs ?? 6;
@@ -721,7 +721,10 @@ function DynamicOrderCard({
               elevation: 0,
             }
           : theme.shadows?.level1?.[Platform.OS] || {
-              shadowColor: theme.colors.shadow || '#000',
+              shadowColor:
+                theme.colors.shadow ||
+                theme.colors.cardShadow ||
+                theme.shadows?.card?.ios?.shadowColor,
               shadowOpacity: theme.mode === 'dark' ? 0.25 : 0.05,
               shadowRadius: 4,
               elevation: 1,

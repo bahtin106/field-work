@@ -159,7 +159,7 @@ export default function QuickPreviewModal({
         <Pressable
           style={[
             StyleSheet.absoluteFillObject,
-            { backgroundColor: withAlpha(theme.colors.overlay || '#000000', 0.28) },
+            { backgroundColor: withAlpha(theme.colors.overlay, 0.28) },
           ]}
           onPress={onClose}
         />

@@ -16,17 +16,42 @@ const cors = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-function toPublicDeleteError(error: unknown): string {
+const PUBLIC_DELETE_ERROR_CODES: Record<string, string> = {
+  'user_id is required': 'USER_ID_REQUIRED',
+  'Missing auth token': 'MISSING_AUTH_TOKEN',
+  'Auth failed': 'AUTH_FAILED',
+  'Profile not found': 'PROFILE_NOT_FOUND',
+  'Access denied': 'ACCESS_DENIED',
+  'Cannot delete yourself': 'CANNOT_DELETE_SELF',
+  'User not found': 'USER_NOT_FOUND',
+  SUCCESSOR_REQUIRED: 'SUCCESSOR_REQUIRED',
+  'Successor is required for delete': 'SUCCESSOR_REQUIRED',
+  'Successor not found': 'SUCCESSOR_NOT_FOUND',
+  'Successor is blocked': 'SUCCESSOR_BLOCKED',
+};
+
+const PUBLIC_DELETE_ERROR_MESSAGES: Record<string, string> = {
+  USER_ID_REQUIRED: 'Не указан пользователь',
+  MISSING_AUTH_TOKEN: 'Нет авторизации. Войдите снова',
+  AUTH_FAILED: 'Нет авторизации. Войдите снова',
+  PROFILE_NOT_FOUND: 'Профиль не найден',
+  ACCESS_DENIED: 'Недостаточно прав',
+  CANNOT_DELETE_SELF: 'Нельзя удалить свою учетную запись',
+  USER_NOT_FOUND: 'Пользователь не найден',
+  SUCCESSOR_REQUIRED: 'Выберите сотрудника для переназначения заявок',
+  SUCCESSOR_NOT_FOUND: 'Выбранный сотрудник недоступен. Выберите другого сотрудника',
+  SUCCESSOR_BLOCKED: 'Выбранный сотрудник заблокирован. Выберите другого сотрудника',
+  DELETE_USER_FAILED: 'Ошибка удаления',
+};
+
+function toPublicDeleteError(error: unknown): { code: string; message: string } {
   const message = String((error as Error)?.message || 'Unknown error');
-  if (
-    /^(user_id is required|Missing auth token|Auth failed|Profile not found|Access denied|Cannot delete yourself|User not found|Successor is required for delete|Successor not found|Successor is blocked)$/i.test(
-      message,
-    )
-  ) {
-    return message;
+  const code = PUBLIC_DELETE_ERROR_CODES[message];
+  if (code) {
+    return { code, message: PUBLIC_DELETE_ERROR_MESSAGES[code] || code };
   }
   console.error('[delete_user]', message);
-  return 'Delete user failed';
+  return { code: 'DELETE_USER_FAILED', message: PUBLIC_DELETE_ERROR_MESSAGES.DELETE_USER_FAILED };
 }
 
 export async function handleDeleteUserRequest(req: Request): Promise<Response> {
@@ -93,7 +118,7 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
 
     // При наличии заявок обязателен преемник
     if ((totalCount ?? 0) > 0 && !reassign_to) {
-      throw new Error('Successor is required for delete');
+      throw new Error('SUCCESSOR_REQUIRED');
     }
 
     // Проверяем преемника (если указан)
@@ -115,6 +140,16 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
       if (reassignErr) throw new Error('Orders reassign failed: ' + reassignErr.message);
     }
 
+    const { error: messengerErr } = await admin
+      .from('messenger_integrations')
+      .update({
+        is_enabled: false,
+        destination_type: 'feed',
+        destination_user_id: null,
+      })
+      .eq('destination_user_id', user_id);
+    if (messengerErr) throw new Error('Messenger integration detach failed: ' + messengerErr.message);
+
     // Удаляем профиль
     const { error: deleteProfileErr } = await admin.from('profiles').delete().eq('id', user_id);
     if (deleteProfileErr) throw new Error('Profile delete failed: ' + deleteProfileErr.message);
@@ -134,7 +169,8 @@ export async function handleDeleteUserRequest(req: Request): Promise<Response> {
       status: 200,
     });
   } catch (e: any) {
-    return new Response(JSON.stringify({ ok: false, message: toPublicDeleteError(e) }), {
+    const publicError = toPublicDeleteError(e);
+    return new Response(JSON.stringify({ ok: false, ...publicError }), {
       headers: { 'Content-Type': 'application/json', ...cors },
       status: 200,
     });

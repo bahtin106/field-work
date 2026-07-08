@@ -69,7 +69,13 @@ export function buildMediaAssetDisplayMap(assets = []) {
 
 function isYandexPublicPageUrl(value) {
   const raw = String(value || '').trim().toLowerCase();
-  return raw.includes('yadi.sk/') || raw.includes('disk.yandex.');
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+  } catch {
+    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+  }
 }
 
 export function buildMediaThumbnailUrl(asset, { width = 512, height = 512, fit = 'fill' } = {}) {

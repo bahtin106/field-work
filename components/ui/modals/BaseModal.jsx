@@ -160,7 +160,7 @@ const BaseModalImpl = (
     minCardHeight,
     Math.min(windowH * maxHeightRatio, windowH - (topSafeInset + topInsetAllowance)),
   );
-  const overlayColor = theme.colors.overlay || 'rgba(0,0,0,0.35)';
+  const overlayColor = theme.colors.overlay;
   const feedbackMessage =
     typeof feedback === 'string' ? feedback : String(feedback?.message || '').trim();
   const feedbackType = String(feedback?.type || 'warning');

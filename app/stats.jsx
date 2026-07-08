@@ -110,6 +110,7 @@ function StatsScreenContent() {
       WARNING: theme.colors.warning,
       ERROR: theme.colors.danger,
       INFO: theme.colors.info || theme.colors.primary,
+      ON_PRIMARY: theme.colors.onPrimary || theme.colors.primaryTextOn,
     }),
     [theme, mode],
   );
@@ -257,7 +258,7 @@ function StatsScreenContent() {
           color: TOK.SUBTEXT,
         },
         periodTextActive: {
-          color: '#FFFFFF',
+          color: TOK.ON_PRIMARY,
         },
         userSelector: {
           flexDirection: 'row',
@@ -472,7 +473,7 @@ function StatsScreenContent() {
           fontWeight: '600',
         },
         primaryActionText: {
-          color: '#FFFFFF',
+          color: TOK.ON_PRIMARY,
         },
         secondaryActionText: {
           color: TOK.TEXT,
@@ -801,11 +802,11 @@ function StatsScreenContent() {
         startingDay: isStart,
         endingDay: isEnd,
         color: TOK.PRIMARY,
-        textColor: '#FFFFFF',
+        textColor: TOK.ON_PRIMARY,
       };
     }
     return marks;
-  }, [rangeStart, rangeEnd, TOK.PRIMARY]);
+  }, [rangeStart, rangeEnd, TOK.ON_PRIMARY, TOK.PRIMARY]);
 
   const filteredUsers = useMemo(() => {
     const q = (usersSearch || '').trim().toLowerCase();
@@ -1084,7 +1085,7 @@ function StatsScreenContent() {
                 monthTextColor: TOK.TEXT,
                 arrowColor: TOK.PRIMARY,
                 selectedDayBackgroundColor: TOK.PRIMARY,
-                selectedDayTextColor: '#FFFFFF',
+                selectedDayTextColor: TOK.ON_PRIMARY,
                 todayTextColor: TOK.PRIMARY,
               }}
               firstDay={1}

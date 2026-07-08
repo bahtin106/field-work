@@ -1,8 +1,13 @@
 ﻿import { encode as encodeBase64 } from 'base64-arraybuffer';
 import { Platform } from 'react-native';
 import { objectMediaStorage } from '../../../lib/objectMediaStorage';
+import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../shared/media/assets';
 import { uploadPreparedImageFile } from '../../shared/media/imagePipeline';
 import { t as T } from '../../i18n';
+
+const LOCAL_RENDERABLE_MEDIA_URI_RE = /^(file|content|asset|ph|assets-library):\/\//i;
+const DATA_IMAGE_URI_RE = /^data:image\//i;
+const HTTP_URI_RE = /^https?:\/\//i;
 
 export function normalizeObjectMediaUrls(urls: unknown): string[] {
   return (Array.isArray(urls) ? urls : [urls])
@@ -51,6 +56,93 @@ export function mergeObjectMediaUrlMapPreservingLocal(
   }
 
   return next;
+}
+
+function normalizeObjectMediaUrlMap(value: unknown): Record<string, string> {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const next: Record<string, string> = {};
+
+  for (const [key, rawValue] of Object.entries(source)) {
+    const normalizedKey = String(key || '').trim();
+    const normalizedValue = String(rawValue || '').trim();
+    if (!normalizedKey || !normalizedValue || isYandexPublicPageUrl(normalizedValue)) continue;
+    next[normalizedKey] = normalizedValue;
+  }
+
+  return next;
+}
+
+export function isYandexPublicPageUrl(value: unknown): boolean {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+  } catch {
+    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+  }
+}
+
+export function isRenderableObjectMediaUrl(value: unknown): boolean {
+  const raw = String(value || '').trim();
+  if (!raw || isYandexPublicPageUrl(raw)) return false;
+  return HTTP_URI_RE.test(raw) || LOCAL_RENDERABLE_MEDIA_URI_RE.test(raw) || DATA_IMAGE_URI_RE.test(raw);
+}
+
+export async function resolveObjectMediaUrls({
+  objectId,
+  categories,
+  mediaByCategory,
+}: {
+  objectId: string,
+  categories: string[],
+  mediaByCategory?: Record<string, unknown>,
+}): Promise<{ displayUrls: Record<string, string>, thumbnailUrls: Record<string, string> }> {
+  const id = String(objectId || '').trim();
+  const safeCategories = Array.isArray(categories)
+    ? categories.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  if (!id || !safeCategories.length) {
+    return { displayUrls: {}, thumbnailUrls: {} };
+  }
+
+  const assetsPromise = listMediaAssets({
+    entityType: 'object',
+    entityId: id,
+    categories: safeCategories,
+  })
+    .then((assets: unknown[]) => {
+      return {
+        displayUrls: normalizeObjectMediaUrlMap(buildMediaAssetDisplayMap(assets)),
+        thumbnailUrls: normalizeObjectMediaUrlMap(buildMediaAssetThumbMap(assets)),
+      };
+    })
+    .catch(() => ({ displayUrls: {}, thumbnailUrls: {} }));
+
+  const inspectPromises = safeCategories.map(async (category) => {
+    const urls = normalizeObjectMediaUrls(mediaByCategory?.[category]);
+    if (!urls.length) return {};
+    try {
+      const data = await objectMediaStorage('inspect_urls', {
+        object_id: id,
+        category,
+        urls,
+      });
+      return normalizeObjectMediaUrlMap(data?.resolved_urls);
+    } catch {
+      return {};
+    }
+  });
+
+  const [assetMaps, ...inspectedDisplayMaps] = await Promise.all([assetsPromise, ...inspectPromises]);
+  const displayUrls = inspectedDisplayMaps.reduce(
+    (next, map) => mergeObjectMediaUrlMapPreservingLocal(next, map),
+    assetMaps.displayUrls,
+  );
+  return {
+    displayUrls,
+    thumbnailUrls: assetMaps.thumbnailUrls,
+  };
 }
 
 export async function uploadObjectMediaPhoto(

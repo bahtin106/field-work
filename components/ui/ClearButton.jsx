@@ -4,6 +4,7 @@ import React from 'react';
 import { Animated, Pressable, StyleSheet } from 'react-native';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme';
+import { withAlpha } from '../../theme/colors';
 
 /**
  * Универсальная кнопка очистки (крестик) с анимацией нажатия
@@ -69,7 +70,7 @@ export default function ClearButton({
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         android_ripple={{
-          color: 'rgba(255, 255, 255, 0.3)',
+          color: withAlpha(theme.colors.onPrimary, 0.3),
           borderless: false,
           radius: buttonSize / 2,
         }}
@@ -84,7 +85,7 @@ export default function ClearButton({
           right: theme.spacing.sm,
         }}
       >
-        <Feather name="x" size={iconSz} color="#FFFFFF" strokeWidth={2.5} />
+        <Feather name="x" size={iconSz} color={theme.colors.onPrimary} strokeWidth={2.5} />
       </Pressable>
     </Animated.View>
   );

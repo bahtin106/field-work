@@ -11,7 +11,7 @@ Do not paste secret values into tickets, chat, logs, or commits. Rotate by type 
 | Supabase pooler/database metadata | `supabase/.temp/pooler-url` | Was tracked by git. | Rotate DB password/pooler credentials if URL included credentials; remove all `supabase/.temp/*` from history. |
 | JWT secret | `.env.local` | Local ignored root env exports `JWT_SECRET`. | Rotate if this file has ever left the workstation or was used in shared logs/backups. |
 | SMTP configuration | `.env.local` / deployment env | Local ignored env contains SMTP fields. | Rotate SMTP credentials if actual usernames/passwords are present in env or provider logs. |
-| Firebase/Google mobile config | `google-services.json`, `android/app/google-services.json` | Tracked public mobile config. | Usually public; still restrict keys by app/package/SHA and rotate if unrestricted server APIs are enabled. |
+| Firebase/Google mobile config | `android/app/google-services.json` | Tracked public mobile config. | Usually public; still restrict keys by app/package/SHA and rotate if unrestricted server APIs are enabled. |
 
 History cleanup checklist:
 1. Coordinate freeze with anyone using the repo.

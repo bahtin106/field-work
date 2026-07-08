@@ -3,11 +3,14 @@ import React from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  InteractionManager,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { useQueryClient } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../components/navigation/AppHeader';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
@@ -21,9 +24,10 @@ import {
 } from '../../components/ui/PullToRefreshFeedback';
 import { usePermissions } from '../../lib/permissions';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
-import { useClients, useClientsRealtimeSync } from '../../src/features/clients/queries';
+import { ensureClientPrefetch, useClients, useClientsRealtimeSync } from '../../src/features/clients/queries';
 import { collectClientPhoneSearchValues } from '../../src/features/clients/additionalPhones';
 import { hasDisplayValue } from '../../src/shared/display/value';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { CLIENT_SORT, clientSortOptions, sortClients } from '../../src/shared/sorting/clientSort';
 import { useTheme } from '../../theme/ThemeProvider';
@@ -37,6 +41,8 @@ export default function ClientsIndexScreen() {
   const { theme } = useTheme();
   const { t } = useTranslation();
   const { has } = usePermissions();
+  const queryClient = useQueryClient();
+  const clientPrefetchTaskRef = React.useRef(null);
 
   const canViewClients = has('canViewClients');
   const canCreateClients = has('canCreateClients');
@@ -127,7 +133,37 @@ export default function ClientsIndexScreen() {
 
   const styles = React.useMemo(() => createStyles(theme), [theme]);
 
-  if (companyLoading || isLoading) {
+  React.useEffect(() => {
+    return () => {
+      try {
+        clientPrefetchTaskRef.current?.cancel?.();
+      } catch {}
+    };
+  }, []);
+
+  const prefetchVisibleClients = React.useCallback(
+    ({ viewableItems }) => {
+      const ids = (Array.isArray(viewableItems) ? viewableItems : [])
+        .map((item) => item?.item?.id)
+        .filter(Boolean)
+        .slice(0, 6);
+      if (!ids.length) return;
+
+      try {
+        clientPrefetchTaskRef.current?.cancel?.();
+      } catch {}
+      clientPrefetchTaskRef.current = InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        ids.forEach((id) => {
+          registry.run(`client-detail:${id}`, () => ensureClientPrefetch(queryClient, id)).catch(() => {});
+        });
+      });
+    },
+    [queryClient],
+  );
+  const viewabilityConfig = React.useMemo(() => ({ itemVisiblePercentThreshold: 50 }), []);
+
+  if ((companyLoading || isLoading) && allClients.length === 0) {
     return (
       <SafeAreaView edges={SAFE_AREA_EDGES} style={styles.safeArea}>
         <View style={styles.loaderWrap}>
@@ -176,6 +212,13 @@ export default function ClientsIndexScreen() {
             keyExtractor={(item) => String(item.id)}
             contentContainerStyle={styles.listContent}
             keyboardShouldPersistTaps="handled"
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={34}
+            windowSize={9}
+            removeClippedSubviews={Platform.OS === 'android'}
+            onViewableItemsChanged={prefetchVisibleClients}
+            viewabilityConfig={viewabilityConfig}
             refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
             renderItem={({ item }) => {
               const fullName = String(item?.fullName || '').trim();

@@ -1,5 +1,7 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import { createBegetPresignedGetUrl } from '../_shared/beget-s3.ts';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,7 +32,13 @@ function encodePlainSourceUrl(value: string) {
 
 function isYandexPublicPageUrl(value: string) {
   const raw = String(value || '').trim().toLowerCase();
-  return raw.includes('yadi.sk/') || raw.includes('disk.yandex.');
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+  } catch {
+    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+  }
 }
 
 async function refreshYandexAccessToken(refreshToken: string) {
@@ -59,7 +67,7 @@ async function refreshYandexAccessToken(refreshToken: string) {
   return data;
 }
 
-async function getYandexAccessToken(admin: ReturnType<typeof createClient>, companyId: string) {
+async function getYandexAccessToken(admin: SupabaseAdminClient, companyId: string) {
   const { data, error } = await admin
     .from('company_yandex_disk_connections')
     .select('access_token, refresh_token, token_expires_at')
@@ -68,13 +76,13 @@ async function getYandexAccessToken(admin: ReturnType<typeof createClient>, comp
   if (error) throw error;
   if (!data?.access_token || !data?.refresh_token) return '';
 
-  const expiryMs = new Date(data.token_expires_at).getTime();
+  const expiryMs = new Date(String(data.token_expires_at || '')).getTime();
   if (Number.isFinite(expiryMs) && expiryMs > Date.now() + 60_000) {
     return String(data.access_token);
   }
 
   const refreshed = await refreshYandexAccessToken(String(data.refresh_token));
-  const nextRefresh = refreshed.refresh_token || data.refresh_token;
+  const nextRefresh = refreshed.refresh_token || String(data.refresh_token || '');
   const nextExpiry = new Date(
     Date.now() + Math.max(60, Number(refreshed.expires_in || 3600)) * 1000,
   ).toISOString();
@@ -113,7 +121,7 @@ async function getYandexPublicDownloadUrl(publicUrl: string) {
 }
 
 async function getYandexExternalPath(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   asset: {
     entity_type?: string | null;
     entity_id?: string | null;

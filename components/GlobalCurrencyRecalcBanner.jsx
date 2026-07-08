@@ -14,7 +14,7 @@ export default function GlobalCurrencyRecalcBanner() {
     <View
       style={{
         width: '100%',
-        backgroundColor: theme.colors.warning || '#F59E0B',
+        backgroundColor: theme.colors.warning,
         paddingVertical: 8,
         paddingHorizontal: 12,
         alignItems: 'center',
@@ -22,8 +22,8 @@ export default function GlobalCurrencyRecalcBanner() {
         gap: 8,
       }}
     >
-      <ActivityIndicator size="small" color={theme.colors.onPrimary || '#fff'} />
-      <Text style={{ color: theme.colors.onPrimary || '#fff', fontWeight: '600' }}>
+      <ActivityIndicator size="small" color={theme.colors.onPrimary} />
+      <Text style={{ color: theme.colors.onPrimary, fontWeight: '600' }}>
         {t('settings_recalc_in_progress')}
       </Text>
     </View>

@@ -58,12 +58,13 @@ import {
 } from '../../../src/features/objects/additionalPhones';
 import { uploadClientObjectPhoto } from '../../../src/features/objects/photo';
 import {
+  isRenderableObjectMediaUrl,
   uploadObjectMediaPhoto,
   deleteObjectMediaPhotoByUrl,
   mergeObjectMediaUrls,
   mergeObjectMediaUrlMapPreservingLocal,
+  resolveObjectMediaUrls,
 } from '../../../src/features/objects/media';
-import { objectMediaStorage } from '../../../lib/objectMediaStorage';
 import { cleanupProfileMediaEntity } from '../../../src/features/profileMedia/api';
 import { useSetObjectTagsMutation } from '../../../src/features/tags/queries';
 import { useTranslation } from '../../../src/i18n/useTranslation';
@@ -75,7 +76,6 @@ import { openCoordinatesInYandex } from '../../../components/ui/map';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 import MediaUploadModal from '../../../components/media/MediaUploadModal';
 import FullscreenImageViewer from '../../../app/orders/components/FullscreenImageViewer';
-import { buildMediaAssetDisplayMap, buildMediaAssetThumbMap, listMediaAssets } from '../../../src/shared/media/assets';
 import { getImagePickerMediaTypesImages, prepareImageForUpload, runMediaUploadQueue } from '../../../src/shared/media/imagePipeline';
 
 const DEFAULT_OBJECT_INITIALS = 'OB';
@@ -660,37 +660,23 @@ export default function EditObjectScreen() {
     }
 
     const run = async () => {
-      const nextResolved = {};
-      try {
-        const assets = await listMediaAssets({
-          entityType: 'object',
-          entityId: objectId,
-          categories: OBJECT_MEDIA_FIELD_KEYS,
-        });
-        Object.assign(nextResolved, buildMediaAssetDisplayMap(assets));
-        const thumbMap = buildMediaAssetThumbMap(assets);
-        if (!cancelled && Object.keys(thumbMap).length) {
-          setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbMap));
-        }
-      } catch {}
-      for (const category of OBJECT_MEDIA_FIELD_KEYS) {
-        const urls = Array.isArray(objectMediaRef.current?.[category])
-          ? objectMediaRef.current[category].map((value) => String(value || '').trim()).filter(Boolean)
+      const mediaByCategory = {};
+      OBJECT_MEDIA_FIELD_KEYS.forEach((category) => {
+        mediaByCategory[category] = Array.isArray(objectMediaRef.current?.[category])
+          ? objectMediaRef.current[category]
           : [];
-        if (!urls.length) continue;
-        try {
-          const data = await objectMediaStorage('inspect_urls', {
-            object_id: objectId,
-            category,
-            urls,
-          });
-          const resolved =
-            data?.resolved_urls && typeof data.resolved_urls === 'object' ? data.resolved_urls : {};
-          Object.assign(nextResolved, resolved);
-        } catch {}
+      });
+      const { displayUrls, thumbnailUrls } = await resolveObjectMediaUrls({
+        objectId,
+        categories: OBJECT_MEDIA_FIELD_KEYS,
+        mediaByCategory,
+      });
+      if (cancelled) return;
+      if (Object.keys(displayUrls).length) {
+        setResolvedObjectMediaUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, displayUrls));
       }
-      if (!cancelled && Object.keys(nextResolved).length) {
-        setResolvedObjectMediaUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, nextResolved));
+      if (Object.keys(thumbnailUrls).length) {
+        setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls));
       }
     };
 
@@ -1039,9 +1025,9 @@ export default function EditObjectScreen() {
     (url) => {
       const source = String(url || '').trim();
       if (!source) return '';
-      return resolvedObjectMediaUrls[source] || objectMediaThumbUrls[source] || source;
+      return resolvedObjectMediaUrls[source] || (isRenderableObjectMediaUrl(source) ? source : '');
     },
-    [objectMediaThumbUrls, resolvedObjectMediaUrls],
+    [resolvedObjectMediaUrls],
   );
   const getObjectMediaThumbnailUrl = React.useCallback(
     (url) => {
@@ -1243,13 +1229,36 @@ export default function EditObjectScreen() {
     },
     [canEditObjects, objectId, applyObjectMediaUrls],
   );
-  const openViewer = React.useCallback((photos, index, category, label) => {
+  const openViewer = React.useCallback(async (photos, index, category, label) => {
     if (!Array.isArray(photos) || !photos.length) return;
+    const rawPhotos = photos.map((raw) => String(raw || '').trim()).filter(Boolean);
+    if (!rawPhotos.length) return;
+
+    let displayMap = resolvedObjectMediaUrls;
+    const hasMissingDisplay = rawPhotos.some((raw) => !getObjectMediaDisplayUrl(raw));
+    if (hasMissingDisplay && objectId && category) {
+      const { displayUrls, thumbnailUrls } = await resolveObjectMediaUrls({
+        objectId,
+        categories: [category],
+        mediaByCategory: { [category]: rawPhotos },
+      });
+      if (Object.keys(displayUrls).length) {
+        displayMap = mergeObjectMediaUrlMapPreservingLocal(displayMap, displayUrls);
+        setResolvedObjectMediaUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, displayUrls));
+      }
+      if (Object.keys(thumbnailUrls).length) {
+        setObjectMediaThumbUrls((prev) => mergeObjectMediaUrlMapPreservingLocal(prev, thumbnailUrls));
+      }
+    }
+
     const pairs = photos
       .map((raw, originalIndex) => ({
         raw: String(raw || '').trim(),
         originalIndex,
-        display: String(getObjectMediaDisplayUrl(raw) || '').trim(),
+        display: String(
+          displayMap[String(raw || '').trim()] ||
+            (isRenderableObjectMediaUrl(raw) ? String(raw || '').trim() : ''),
+        ).trim(),
       }))
       .filter((item) => item.raw && item.display);
     if (!pairs.length) return;
@@ -1260,7 +1269,7 @@ export default function EditObjectScreen() {
     setViewerPhotos(pairs.map((item) => item.display));
     setViewerIndex(nextIndex >= 0 ? nextIndex : Math.min(index, pairs.length - 1));
     setViewerVisible(true);
-  }, [getObjectMediaDisplayUrl]);
+  }, [getObjectMediaDisplayUrl, objectId, resolvedObjectMediaUrls]);
   const handleViewerDelete = React.useCallback(
     async (viewerIdx) => {
       const category = viewerCategoryRef.current;

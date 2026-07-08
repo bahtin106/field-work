@@ -1,4 +1,4 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
 import {
   buildBegetPublicUrl,
   createBegetPresignedGetUrl,
@@ -9,6 +9,8 @@ import {
   putBegetObject,
 } from '../_shared/beget-s3.ts';
 import { ensureYandexFolderTreeCached } from '../_shared/yandex-folder-cache.ts';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -138,6 +140,28 @@ function canonicalUrl(raw: string) {
   }
 }
 
+function isYandexPublicPageUrl(value: string) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'yadi.sk' || host.endsWith('.yadi.sk') || host.startsWith('disk.yandex.');
+  } catch {
+    return /^(https?:\/\/)?yadi\.sk\//i.test(raw) || /^(https?:\/\/)?disk\.yandex\.[^/]+\//i.test(raw);
+  }
+}
+
+async function getYandexPublicDownloadUrl(publicUrl: string) {
+  const source = String(publicUrl || '').trim();
+  if (!source) return '';
+  const res = await fetch(
+    `https://cloud-api.yandex.net/v1/disk/public/resources/download?public_key=${encodeURIComponent(source)}`,
+  );
+  if (!res.ok) return '';
+  const data = (await res.json()) as { href?: string };
+  return String(data?.href || '').trim();
+}
+
 function keyFromBegetUrl(raw: string) {
   const value = String(raw || '').trim();
   if (!value) return '';
@@ -190,7 +214,7 @@ function mapYandexApiError(status: number, payload: string) {
 }
 
 async function getCallerAndObjectContext(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   token: string,
   objectId: string,
 ) {
@@ -237,7 +261,7 @@ async function getCallerAndObjectContext(
 }
 
 async function appendObjectMediaUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   objectId: string,
   companyId: string,
   category: string,
@@ -258,7 +282,7 @@ async function appendObjectMediaUrlAtomic(
 }
 
 async function removeObjectMediaUrlAtomic(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   objectId: string,
   companyId: string,
   category: string,
@@ -279,7 +303,7 @@ async function removeObjectMediaUrlAtomic(
 }
 
 async function deleteObjectMediaMapForUrl(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   objectId: string,
   companyId: string,
   category: string,
@@ -323,7 +347,7 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 async function getValidAccessToken(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAdminClient,
   companyId: string,
 ): Promise<{ accessToken: string | null; folderPath: string }> {
   const { data: conn, error } = await admin
@@ -519,34 +543,50 @@ export async function handleObjectMediaStorageRequest(req: Request) {
 
       const { data: rows, error } = await admin
         .from('object_media_external_map')
-        .select('source_url, display_url, external_path')
+        .select('id, provider, source_url, display_url, external_path')
         .eq('company_id', ctx.companyId)
         .eq('object_id', ctx.object.id)
         .eq('category', category)
-        .eq('provider', 'beget_s3')
         .in('source_url', urls);
       if (error) throw error;
 
-      let candidates: Array<{ source_url?: string | null; display_url?: string | null; external_path?: string | null }> = [];
-      if (!rows?.length) {
+      type MediaMapRow = {
+        id?: number | string | null;
+        provider?: string | null;
+        source_url?: string | null;
+        display_url?: string | null;
+        external_path?: string | null;
+      };
+
+      let candidates: MediaMapRow[] = [];
+      if ((rows || []).length !== urls.length) {
         const { data: allRows, error: allErr } = await admin
           .from('object_media_external_map')
-          .select('source_url, display_url, external_path')
+          .select('id, provider, source_url, display_url, external_path')
           .eq('company_id', ctx.companyId)
           .eq('object_id', ctx.object.id)
-          .eq('category', category)
-          .eq('provider', 'beget_s3');
+          .eq('category', category);
         if (allErr) throw allErr;
         candidates = allRows || [];
       }
 
-      const rowBySource = new Map<string, { source_url?: string | null; display_url?: string | null; external_path?: string | null }>();
+      const rowBySource = new Map<string, MediaMapRow>();
       for (const row of rows || []) {
         const source = String(row?.source_url || '').trim();
         if (source) rowBySource.set(source, row);
       }
 
       const resolved: Record<string, string> = {};
+      let yandexTokenPromise: Promise<string | null> | null = null;
+      const getYandexToken = () => {
+        if (!yandexTokenPromise) {
+          yandexTokenPromise = getValidAccessToken(admin, ctx.companyId)
+            .then((yandex) => yandex.accessToken)
+            .catch(() => null);
+        }
+        return yandexTokenPromise;
+      };
+
       for (const url of urls) {
         let row = rowBySource.get(url) || null;
         if (!row && candidates.length) {
@@ -559,19 +599,57 @@ export async function handleObjectMediaStorageRequest(req: Request) {
             }) || null;
         }
         const key = String(row?.external_path || '').trim();
-        if (!key) {
-          resolved[url] = url;
+        const provider = String(row?.provider || ctx.mediaProvider || '').trim();
+        const sourceUrl = String(row?.source_url || url || '').trim();
+        const displayUrl = String(row?.display_url || '').trim();
+
+        if (provider === 'beget_s3') {
+          if (!key) {
+            resolved[url] = isYandexPublicPageUrl(url) ? '' : url;
+            continue;
+          }
+          try {
+            const signed = await createBegetPresignedGetUrl({
+              key,
+              expiresInSec: 60 * 60 * 24,
+            });
+            resolved[url] = signed.url;
+          } catch {
+            resolved[url] = displayUrl || sourceUrl || url;
+          }
           continue;
         }
-        try {
-          const signed = await createBegetPresignedGetUrl({
-            key,
-            expiresInSec: 60 * 60 * 24,
-          });
-          resolved[url] = signed.url;
-        } catch {
-          resolved[url] = url;
+
+        if (provider === 'yandex_disk') {
+          let nextDisplayUrl = '';
+          if (key) {
+            const accessToken = await getYandexToken();
+            if (accessToken) {
+              nextDisplayUrl = await getPathDownloadUrl(accessToken, key).catch(() => '');
+            }
+          }
+          if (!nextDisplayUrl) {
+            const candidateUrl = displayUrl || sourceUrl || url;
+            nextDisplayUrl = isYandexPublicPageUrl(candidateUrl)
+              ? await getYandexPublicDownloadUrl(candidateUrl).catch(() => '')
+              : candidateUrl;
+          }
+          if (nextDisplayUrl && row?.id) {
+            try {
+              await admin
+                .from('object_media_external_map')
+                .update({
+                  display_url: nextDisplayUrl,
+                  display_url_updated_at: new Date().toISOString(),
+                })
+                .eq('id', row.id);
+            } catch {}
+          }
+          resolved[url] = nextDisplayUrl;
+          continue;
         }
+
+        resolved[url] = isYandexPublicPageUrl(displayUrl || sourceUrl || url) ? '' : (displayUrl || sourceUrl || url);
       }
 
       return json(200, {

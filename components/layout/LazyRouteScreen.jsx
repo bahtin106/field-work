@@ -119,7 +119,7 @@ export default function LazyRouteScreen({
             >
               <Text
                 style={{
-                  color: theme.colors.onPrimary || theme.colors.primaryTextOn || '#FFFFFF',
+                  color: theme.colors.onPrimary || theme.colors.primaryTextOn,
                   fontWeight: theme.typography.weight.semibold,
                 }}
               >

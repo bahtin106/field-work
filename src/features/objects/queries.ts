@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
@@ -59,8 +59,51 @@ export function useCompanyObjects(companyId: any, options: any = {}) {
   });
 }
 
+function findObjectInListCaches(queryClient: any, objectId: any) {
+  const targetId = String(objectId || '').trim();
+  if (!targetId || !queryClient) return null;
+
+  let best: { row: any; updatedAt: number } | null = null;
+  const remember = (row: any, updatedAt: number) => {
+    if (!row || String(row?.id || '') !== targetId) return;
+    if (!best || updatedAt > best.updatedAt) {
+      best = { row, updatedAt };
+    }
+  };
+
+  const objectLists = queryClient.getQueriesData({ queryKey: ['objects'] }) || [];
+  for (const [key, value] of objectLists) {
+    if (!Array.isArray(value)) continue;
+    const state = queryClient.getQueryState(key);
+    const updatedAt = Number(state?.dataUpdatedAt || 0);
+    value.forEach((row: any) => remember(row, updatedAt));
+  }
+
+  const clientLists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  for (const [, value] of clientLists) {
+    if (!Array.isArray(value)) continue;
+    for (const client of value) {
+      const objects = Array.isArray(client?.objects) ? client.objects : [];
+      const found = objects.find((row: any) => String(row?.id || '') === targetId);
+      if (!found) continue;
+      remember(
+        {
+          ...found,
+          client_id: found.client_id || client?.id || null,
+          client: found.client || client,
+        },
+        0,
+      );
+    }
+  }
+
+  return best;
+}
+
 export function useClientObject(objectId: any, options: any = {}) {
   const queryClient = useQueryClient();
+  const listSeed = useMemo(() => findObjectInListCaches(queryClient, objectId), [objectId, queryClient]);
+
   return useQuery({
     queryKey: queryKeys.objects.detail(objectId),
     queryFn: async () => {
@@ -79,6 +122,8 @@ export function useClientObject(objectId: any, options: any = {}) {
         throw error;
       }
     },
+    initialData: () => listSeed?.row,
+    initialDataUpdatedAt: () => listSeed?.updatedAt,
     enabled: !!objectId,
     staleTime: 60 * 1000,
     retry: (count, error) => !isOfflineLikeError(error) && count < 1,
@@ -422,5 +467,14 @@ export function useDeleteClientObjectMutation() {
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       queryClient.invalidateQueries({ queryKey: ['requests'] });
     },
+  });
+}
+
+export async function ensureClientObjectPrefetch(queryClient: any, id: any) {
+  if (!id) return null;
+  return queryClient.ensureQueryData({
+    queryKey: queryKeys.objects.detail(id),
+    queryFn: () => getClientObjectById(String(id || '')),
+    staleTime: 60 * 1000,
   });
 }

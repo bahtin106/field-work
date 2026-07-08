@@ -329,9 +329,9 @@ export default function YandexDiskIntegrationScreen() {
     return (used / total) * 100;
   })();
   const statusColor = (() => {
-    const success = theme.colors.success || '#2e7d32';
-    const warning = theme.colors.warning || '#f57c00';
-    const danger = theme.colors.danger || '#d32f2f';
+    const success = theme.colors.success;
+    const warning = theme.colors.warning;
+    const danger = theme.colors.danger;
     if (health === 'ok') return success;
     if (health === 'quota_exceeded' || health === 'reconnect_required' || health === 'error') {
       return warning;
@@ -339,9 +339,9 @@ export default function YandexDiskIntegrationScreen() {
     return danger;
   })();
   const usedSpaceColor = (() => {
-    const success = theme.colors.success || '#2e7d32';
-    const warning = theme.colors.warning || '#f57c00';
-    const danger = theme.colors.danger || '#d32f2f';
+    const success = theme.colors.success;
+    const warning = theme.colors.warning;
+    const danger = theme.colors.danger;
     if (!normalizedStorage) return danger;
     if (Number(normalizedStorage?.free_bytes) <= 0) return danger;
     if (usedPercent != null && usedPercent > 90) return warning;

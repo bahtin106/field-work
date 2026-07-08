@@ -1,4 +1,6 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.47.10';
+
+type SupabaseAdminClient = SupabaseClient<any, 'public', any>;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,7 +67,7 @@ async function ensureFolderTree(accessToken: string, fullPath: string) {
   }
 }
 
-async function getCallerContext(admin: ReturnType<typeof createClient>, token: string) {
+async function getCallerContext(admin: SupabaseAdminClient, token: string) {
   const {
     data: { user },
     error: authErr,
@@ -183,7 +185,7 @@ async function getYandexUserInfo(accessToken: string) {
   return profile;
 }
 
-async function ensureValidYandexToken(admin: ReturnType<typeof createClient>, companyId: string) {
+async function ensureValidYandexToken(admin: SupabaseAdminClient, companyId: string) {
   const { data: conn, error } = await admin
     .from('company_yandex_disk_connections')
     .select('access_token, refresh_token, token_expires_at')

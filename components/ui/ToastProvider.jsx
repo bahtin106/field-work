@@ -188,8 +188,8 @@ export default function ToastProvider({ children }) {
     success: { bg: t.colors.surface, fg: t.colors.success, border: t.colors.success },
     warning: {
       bg: t.colors.surface,
-      fg: t.colors.warning || '#ff9800',
-      border: t.colors.warning || '#ff9800',
+      fg: t.colors.warning,
+      border: t.colors.warning,
     },
     error: { bg: t.colors.surface, fg: t.colors.danger, border: t.colors.danger },
   });

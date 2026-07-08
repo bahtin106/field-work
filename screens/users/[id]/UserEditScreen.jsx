@@ -260,6 +260,63 @@ function mapSaveErrorToMessage(error, t) {
   return raw || t('error_save_failed');
 }
 
+function normalizeOrderCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+function normalizeEmployeeOrdersCheckPayload(data) {
+  const row = Array.isArray(data) ? data[0] || {} : data || {};
+  const activeOrdersCount = normalizeOrderCount(
+    row.activeOrdersCount ?? row.active_orders_count ?? row.active_count,
+  );
+  const totalOrdersCount = Math.max(
+    normalizeOrderCount(
+      row.totalOrdersCount ?? row.total_orders_count ?? row.total_count ?? activeOrdersCount,
+    ),
+    activeOrdersCount,
+  );
+  const availableEmployees = row.availableEmployees ?? row.available_employees ?? [];
+  const hasOrders = Boolean(row.hasOrders ?? row.has_orders) || totalOrdersCount > 0 || activeOrdersCount > 0;
+
+  return {
+    activeOrdersCount,
+    totalOrdersCount,
+    hasOrders,
+    availableEmployees: Array.isArray(availableEmployees) ? availableEmployees : [],
+  };
+}
+
+function getDeleteSuccessorErrorKey(error) {
+  const raw = String(error?.code || error?.message || error?.error || error || '');
+  if (/SUCCESSOR_REQUIRED|Successor is required for delete/i.test(raw)) {
+    return 'err_successor_required_delete';
+  }
+  if (/SUCCESSOR_NOT_FOUND|Successor not found/i.test(raw)) {
+    return 'err_successor_not_found';
+  }
+  if (/SUCCESSOR_BLOCKED|Successor is blocked/i.test(raw)) {
+    return 'err_successor_blocked';
+  }
+  return null;
+}
+
+function mapDeleteErrorToMessage(error, t) {
+  const raw = String(error?.message || error?.error || error?.code || error || '');
+  const successorErrorKey = getDeleteSuccessorErrorKey(error);
+  if (successorErrorKey) return t(successorErrorKey);
+  if (/ACCESS_DENIED|Access denied/i.test(raw)) return t('error_no_access');
+  if (/CANNOT_DELETE_SELF|Cannot delete yourself/i.test(raw)) return t('err_delete_self');
+  if (/USER_NOT_FOUND|PROFILE_NOT_FOUND|User not found|Profile not found/i.test(raw)) {
+    return t('access_settings_error_user_not_found');
+  }
+  if (/MISSING_AUTH_TOKEN|AUTH_FAILED|Missing auth token|Auth failed/i.test(raw)) {
+    return t('errors_noAuth');
+  }
+  if (/DELETE_USER_FAILED|Delete user failed/i.test(raw)) return t('err_delete_failed');
+  return raw && !/^[A-Z_]+$/.test(raw) ? raw : t('err_delete_failed');
+}
+
 function isEmailTakenError(error) {
   const raw = String(error?.message || error || '');
   return /EMAIL_TAKEN|email.*taken|email.*already|already.*email|already registered|already exists|user.*exists|duplicate/i.test(raw);
@@ -976,6 +1033,7 @@ export default function EditUser() {
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [activeOrdersCount, setActiveOrdersCount] = useState(0);
   const [totalOrdersCount, setTotalOrdersCount] = useState(0);
+  const [deleteRequiresSuccessor, setDeleteRequiresSuccessor] = useState(false);
   const [ordersAction, setOrdersAction] = useState('keep');
   const [successor, setSuccessor] = useState(null);
   const [successorError, setSuccessorError] = useState('');
@@ -984,6 +1042,8 @@ export default function EditUser() {
   const [pickerItems, setPickerItems] = useState([]);
   const [_pickerLoading, _setPickerLoading] = useState(false);
   const [pickerReturn, setPickerReturn] = useState(null); // 'delete' | 'suspend' | null
+  const deleteOrdersCount = normalizeOrderCount(totalOrdersCount);
+  const deleteHasOrders = deleteRequiresSuccessor || deleteOrdersCount > 0;
   const scrollRef = useRef(null);
   const _pwdRef = useRef(null);
   const confirmPwdRef = useRef(null);
@@ -1956,7 +2016,7 @@ export default function EditUser() {
         { event: '*', schema: 'public', table: 'profiles', filter: `id=eq.${userId}` },
         () => {
           if (isDirtyRef.current) {
-            // TODO: consider merging remote changes into form without clobbering local edits
+            // Keep unsaved local edits intact while realtime updates arrive.
             return;
           }
           refetchEmployee();
@@ -2158,11 +2218,11 @@ export default function EditUser() {
         throw new Error(error.message || t('users_orders_check_error'));
       }
 
-      const { activeOrdersCount, availableEmployees } = data || {};
+      const { activeOrdersCount, availableEmployees } = normalizeEmployeeOrdersCheckPayload(data);
 
       // Сохраняем количество заявок и список доступных сотрудников
-      setActiveOrdersCount(activeOrdersCount || 0);
-      setPickerItems(availableEmployees || []);
+      setActiveOrdersCount(activeOrdersCount);
+      setPickerItems(availableEmployees);
       setOrdersAction('keep');
       setSuccessor(null);
       setSuccessorError('');
@@ -2326,12 +2386,18 @@ export default function EditUser() {
         throw new Error(error.message || t('users_orders_check_error'));
       }
 
-      const { activeOrdersCount, totalOrdersCount, availableEmployees } = data || {};
+      const {
+        activeOrdersCount,
+        totalOrdersCount,
+        hasOrders,
+        availableEmployees,
+      } = normalizeEmployeeOrdersCheckPayload(data);
 
       // Сохраняем количество заявок и список доступных сотрудников
-      setActiveOrdersCount(activeOrdersCount || 0);
-      setTotalOrdersCount(totalOrdersCount || 0);
-      setPickerItems(availableEmployees || []);
+      setActiveOrdersCount(activeOrdersCount);
+      setTotalOrdersCount(totalOrdersCount);
+      setDeleteRequiresSuccessor(hasOrders);
+      setPickerItems(availableEmployees);
       setSuccessor(null);
       setSuccessorError('');
       toast.hide();
@@ -2351,7 +2417,7 @@ export default function EditUser() {
     if (meId && userId === meId) return;
 
     // Если есть заявки, но преемник не выбран — показываем ошибку
-    if (totalOrdersCount > 0 && !successor?.id) {
+    if (deleteHasOrders && !successor?.id) {
       setSuccessorError(t('err_successor_required_delete'));
       return;
     }
@@ -2373,7 +2439,9 @@ export default function EditUser() {
       }
 
       if (data && data.ok === false) {
-        throw new Error(data.message || t('err_delete_failed'));
+        const invokeError = new Error(data.message || data.error || data.code || t('err_delete_failed'));
+        invokeError.code = data.code || data.message || null;
+        throw invokeError;
       }
 
       // Allow navigation away before the screen changes after delete.
@@ -2386,8 +2454,24 @@ export default function EditUser() {
       router.replace('/users');
     } catch (e) {
       console.error(t('user_deactivate_log'), e);
-      setErr(e?.message || t('dlg_generic_warning'));
-      showError(e?.message || t('err_deactivate_failed'));
+      try {
+        toast.hide();
+      } catch {}
+      const successorErrorKey = getDeleteSuccessorErrorKey(e);
+      if (successorErrorKey) {
+        const message = t(successorErrorKey);
+        setDeleteRequiresSuccessor(true);
+        if (successorErrorKey !== 'err_successor_required_delete') {
+          setSuccessor(null);
+        }
+        setSuccessorError(message);
+        setErr('');
+        setDeleteVisible(true);
+        return;
+      }
+      const message = mapDeleteErrorToMessage(e, t);
+      setErr(message);
+      showError(message);
     } finally {
       setSaving(false);
     }
@@ -2395,6 +2479,7 @@ export default function EditUser() {
   const openSuccessorPickerFromDelete = () => {
     setPickerReturn('delete');
     setDeleteVisible(false);
+    setSuccessorError('');
     loadAvailableEmployees();
     setPickerVisible(true);
   };
@@ -3061,12 +3146,17 @@ export default function EditUser() {
             />
             <DeleteEmployeeModal
               visible={deleteVisible}
-              totalOrdersCount={totalOrdersCount}
+              totalOrdersCount={deleteOrdersCount}
+              requiresSuccessor={deleteHasOrders}
               successor={successor}
+              successorError={successorError}
               openSuccessorPicker={openSuccessorPickerFromDelete}
               onConfirm={onConfirmDelete}
               saving={saving}
-              onClose={() => setDeleteVisible(false)}
+              onClose={() => {
+                setDeleteVisible(false);
+                setSuccessorError('');
+              }}
             />
 
             <SelectModal
@@ -3351,7 +3441,7 @@ function SuspendModal({
                   setSuccessorError('');
                 }}
                 android_ripple={{
-                  color: theme?.colors?.border ?? '#00000020',
+                  color: theme.colors.border,
                   borderless: false,
                 }}
                 style={({ pressed }) => [
@@ -3567,7 +3657,9 @@ function SuspendModal({
 function DeleteEmployeeModal({
   visible,
   totalOrdersCount = 0,
+  requiresSuccessor = false,
   successor,
+  successorError,
   openSuccessorPicker,
   onConfirm,
   saving,
@@ -3591,7 +3683,7 @@ function DeleteEmployeeModal({
         title={saving ? t('btn_deleting') : t('btn_delete')}
         variant="destructive"
         onPress={onConfirm}
-        disabled={saving || (totalOrdersCount > 0 && !successor?.id)}
+        disabled={saving || (requiresSuccessor && !successor?.id)}
       />
     </View>
   );
@@ -3604,7 +3696,7 @@ function DeleteEmployeeModal({
       maxHeightRatio={0.6}
       footer={footer}
     >
-      {totalOrdersCount === 0 ? (
+      {!requiresSuccessor ? (
         <View style={{ paddingBottom: theme.spacing.md }}>
           <Text
             style={{
@@ -3646,7 +3738,9 @@ function DeleteEmployeeModal({
                 lineHeight: bodyLineHeight,
               }}
             >
-              {t('user_delete_reassign_desc').replace('{n}', String(totalOrdersCount))}
+              {totalOrdersCount > 0
+                ? t('user_delete_reassign_desc').replace('{n}', String(totalOrdersCount))
+                : t('user_delete_needSuccessor')}
             </Text>
           </View>
           <UIButton
@@ -3655,6 +3749,17 @@ function DeleteEmployeeModal({
             onPress={openSuccessorPicker}
             size="sm"
           />
+          {successorError ? (
+            <Text
+              style={{
+                color: theme.colors.danger,
+                fontSize: theme.typography.sizes.xs,
+                marginTop: theme.spacing.xs,
+              }}
+            >
+              {successorError}
+            </Text>
+          ) : null}
         </>
       ) : (
         <>
@@ -3677,7 +3782,9 @@ function DeleteEmployeeModal({
                 lineHeight: bodyLineHeight,
               }}
             >
-              {t('user_delete_reassigned_desc').replace('{n}', String(totalOrdersCount))}
+              {totalOrdersCount > 0
+                ? t('user_delete_reassigned_desc').replace('{n}', String(totalOrdersCount))
+                : t('user_delete_reassigned_unknown_desc')}
             </Text>
           </View>
           <View

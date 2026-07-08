@@ -282,7 +282,7 @@ export default function SetPasswordScreen() {
                         setShowPassword((v) => !v);
                       }}
                       android_ripple={{
-                        color: theme?.colors?.border ?? '#00000020',
+                        color: theme.colors.border,
                         borderless: false,
                         radius: 24,
                       }}

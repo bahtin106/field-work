@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
 import { queryKeys } from '../../shared/query/queryKeys';
@@ -38,8 +38,29 @@ export function useClients(params: any = {}, options: any = {}) {
   });
 }
 
+function findClientInListCaches(queryClient: any, id: any) {
+  const targetId = String(id || '').trim();
+  if (!targetId || !queryClient) return null;
+
+  const lists = queryClient.getQueriesData({ queryKey: ['clients', 'list'] }) || [];
+  let best: { row: any; updatedAt: number } | null = null;
+  for (const [key, value] of lists) {
+    if (!Array.isArray(value)) continue;
+    const found = value.find((row: any) => String(row?.id || '') === targetId);
+    if (!found) continue;
+    const state = queryClient.getQueryState(key);
+    const updatedAt = Number(state?.dataUpdatedAt || 0);
+    if (!best || updatedAt > best.updatedAt) {
+      best = { row: found, updatedAt };
+    }
+  }
+  return best;
+}
+
 export function useClient(id: any, options: any = {}) {
   const queryClient = useQueryClient();
+  const listSeed = useMemo(() => findClientInListCaches(queryClient, id), [id, queryClient]);
+
   return useQuery({
     queryKey: queryKeys.clients.detail(id),
     queryFn: async () => {
@@ -58,6 +79,8 @@ export function useClient(id: any, options: any = {}) {
         throw error;
       }
     },
+    initialData: () => listSeed?.row,
+    initialDataUpdatedAt: () => listSeed?.updatedAt,
     enabled: !!id,
     staleTime: 60 * 1000,
     retry: (count, error) => !isOfflineLikeError(error) && count < 1,

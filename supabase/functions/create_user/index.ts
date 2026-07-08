@@ -21,8 +21,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const SUPABASE_URL = Deno.env.get('PROJECT_URL')!;
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SERVICE_ROLE_KEY')!;
+    const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || Deno.env.get('PROJECT_URL') || '';
+    const SUPABASE_SERVICE_ROLE_KEY =
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SERVICE_ROLE_KEY') || '';
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      throw new Error('Missing Supabase env');
+    }
     const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // 1) Проверяем, что вызывает авторизованный пользователь
@@ -66,8 +70,6 @@ Deno.serve(async (req) => {
     }
 
     // 4) Создаём пользователя в Auth
-    console.log('Creating user by admin request');
-
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
@@ -107,7 +109,6 @@ Deno.serve(async (req) => {
     }
 
     const userId = created.user.id;
-    console.log('User created successfully:', userId);
 
     // 5) Получаем company_id создателя
     const { data: creatorProfile } = await supabaseAdmin
@@ -131,7 +132,6 @@ Deno.serve(async (req) => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     // Проверяем существует ли профиль
-    console.log('Checking if profile exists...');
     const { data: existingProfile, error: checkErr } = await supabaseAdmin
       .from('profiles')
       .select('id')
@@ -146,7 +146,6 @@ Deno.serve(async (req) => {
 
     if (existingProfile) {
       // Профиль уже есть (создан триггером) - обновляем
-      console.log('Profile exists, updating...');
       const { error } = await supabaseAdmin
         .from('profiles')
         .update({ role, full_name, company_id: companyId })
@@ -154,7 +153,6 @@ Deno.serve(async (req) => {
       profileErr = error;
     } else {
       // Профиля нет - создаем
-      console.log('Profile does not exist, inserting...');
       const { error } = await supabaseAdmin.from('profiles').insert({
         id: userId,
         role,

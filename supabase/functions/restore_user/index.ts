@@ -78,14 +78,12 @@ Deno.serve(async (req) => {
       return new Response('User not found', { status: 404, headers: cors });
     }
 
-    console.log('[restore_user] Attempting to restore user');
 
     // 1. Проверяем, существует ли уже
     const { data: existing } = await supabaseAdmin.auth.admin.listUsers();
     const userExists = existing?.users?.some((u) => String(u.email || '').toLowerCase() === normalizedEmail);
 
     if (userExists) {
-      console.log('[restore_user] User already exists');
       return new Response(
         JSON.stringify({ error: 'User already exists' }),
         { status: 409, headers: { ...cors, 'Content-Type': 'application/json' } }
@@ -111,7 +109,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[restore_user] User created successfully:`, newUser?.user?.id);
 
     // 3. Получаем профиль из public.profiles если есть
     const profile = restoredProfile;

@@ -79,6 +79,7 @@ import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { queryKeys } from '../../src/shared/query/queryKeys';
 import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
 import { useTranslation } from '../../src/i18n/useTranslation';
+import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
 
 const LIST_CACHE_MAX_ENTRIES = 24;
@@ -206,12 +207,12 @@ function MyOrdersContent() {
           marginRight: 6,
         },
         feedDotNew: {
-          backgroundColor: '#FF3B30',
+          backgroundColor: theme.colors.danger,
         },
         feedDotSeen: {
-          backgroundColor: 'rgba(255,59,48,0.22)',
+          backgroundColor: withAlpha(theme.colors.danger, 0.22),
           borderWidth: 1,
-          borderColor: 'rgba(255,59,48,0.55)',
+          borderColor: withAlpha(theme.colors.danger, 0.55),
         },
         container: {
           padding: 16,
@@ -245,7 +246,7 @@ function MyOrdersContent() {
           backgroundColor: theme.colors.primary,
         },
         retryText: {
-          color: theme.colors.onPrimary || theme.colors.primaryTextOn || '#FFFFFF',
+          color: theme.colors.onPrimary || theme.colors.primaryTextOn,
           fontSize: theme.typography.sizes.sm,
           fontWeight: theme.typography.weight.semibold,
         },

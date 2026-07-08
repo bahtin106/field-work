@@ -1486,7 +1486,7 @@ export default function NewUserScreen() {
                 style={{
                   fontSize: theme.typography.sizes.md,
                   fontWeight: '600',
-                  color: '#fff',
+                  color: theme.colors.onPrimary || theme.colors.primaryTextOn,
                 }}
               >
                 {inviteLinkCopied ? t('invite_link_copied') : t('invite_copy_link')}

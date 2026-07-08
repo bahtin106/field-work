@@ -30,6 +30,12 @@ const REG_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
 const REG_CODE_MAX_ATTEMPTS = 6;
 const REG_PROOF_TTL_MS = 20 * 60 * 1000;
 
+function envFlag(name, defaultValue = false) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return defaultValue;
+  return String(raw).trim().toLowerCase() === 'true';
+}
+
 function getRequestIp(req) {
   const forwardedFor = req.headers['x-forwarded-for'];
   return String(Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor || req.ip || 'unknown')
@@ -445,9 +451,11 @@ function hashPassword(password) {
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || '172.17.0.1',  // Docker host gateway
-  port: process.env.SMTP_PORT || 25,
-  secure: false,
-  tls: { rejectUnauthorized: false },
+  port: Number(process.env.SMTP_PORT || 25),
+  secure: envFlag('SMTP_SECURE', false),
+  tls: {
+    rejectUnauthorized: envFlag('SMTP_TLS_REJECT_UNAUTHORIZED', true),
+  },
 });
 
 const SUBSCRIPTION_EMAIL_TEXT = Object.freeze({

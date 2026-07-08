@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { ActivityIndicator, FlatList, Keyboard, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, InteractionManager, Keyboard, Platform, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 
 import AppHeader from '../../components/navigation/AppHeader';
 import SearchFiltersBar from '../../components/filters/SearchFiltersBar';
@@ -21,9 +22,14 @@ import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useClients } from '../../src/features/clients/queries';
 import { collectClientPhoneSearchValues } from '../../src/features/clients/additionalPhones';
-import { useCompanyObjects, useClientObjectsRealtimeSync } from '../../src/features/objects/queries';
+import {
+  ensureClientObjectPrefetch,
+  useCompanyObjects,
+  useClientObjectsRealtimeSync,
+} from '../../src/features/objects/queries';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { t } from '../../src/i18n';
+import { getPrefetchRegistry } from '../../src/shared/query/prefetchRegistry';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
 import { OBJECT_SORT, objectSortOptions, sortObjects } from '../../src/shared/sorting/objectSort';
@@ -83,6 +89,8 @@ export default function ObjectsIndex() {
   const { theme } = useTheme();
   useTranslation();
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const objectPrefetchTaskRef = useRef(null);
   const params = useLocalSearchParams();
   const { profile } = useAuthContext();
   const { has } = usePermissions();
@@ -126,6 +134,14 @@ export default function ObjectsIndex() {
   );
 
   useClientObjectsRealtimeSync({ enabled: !!companyId && has('canViewObjects'), companyId });
+
+  useEffect(() => {
+    return () => {
+      try {
+        objectPrefetchTaskRef.current?.cancel?.();
+      } catch {}
+    };
+  }, []);
 
   useEffect(() => {
     const ms = Number(theme?.timings?.backDelayMs ?? 300);
@@ -327,18 +343,47 @@ export default function ObjectsIndex() {
   const { refreshing, didSucceed, onRefresh } = useManagedRefresh(refetchObjects);
   const { indicator: refreshIndicator } = usePullToRefreshFeedback(refreshing, { didSucceed });
 
+  const openObject = useCallback(
+    (id) => {
+      const normalizedId = String(id || '').trim();
+      if (!normalizedId) return;
+      Keyboard.dismiss();
+      router.push(`/objects/${normalizedId}`);
+    },
+    [router],
+  );
+
+  const prefetchVisibleObjects = useCallback(
+    ({ viewableItems }) => {
+      const ids = (Array.isArray(viewableItems) ? viewableItems : [])
+        .map((item) => item?.item?.id)
+        .filter(Boolean)
+        .slice(0, 6);
+      if (!ids.length) return;
+
+      try {
+        objectPrefetchTaskRef.current?.cancel?.();
+      } catch {}
+      objectPrefetchTaskRef.current = InteractionManager.runAfterInteractions(() => {
+        const registry = getPrefetchRegistry();
+        ids.forEach((id) => {
+          registry.run(`object-detail:${id}`, () => ensureClientObjectPrefetch(queryClient, id)).catch(() => {});
+        });
+      });
+    },
+    [queryClient],
+  );
+  const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 50 }), []);
+
   const renderItem = useCallback(
     ({ item }) => (
       <ObjectCard
         item={item}
         canViewClients={has('canViewClients')}
-        onPress={(id) => {
-          Keyboard.dismiss();
-          router.push(`/objects/${id}`);
-        }}
+        onPress={openObject}
       />
     ),
-    [has, router],
+    [has, openObject],
   );
 
   const keyExtractor = useCallback((item) => String(item.id), []);
@@ -395,6 +440,13 @@ export default function ObjectsIndex() {
             keyExtractor={keyExtractor}
             renderItem={renderItem}
             keyboardShouldPersistTaps="handled"
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            updateCellsBatchingPeriod={34}
+            windowSize={9}
+            removeClippedSubviews={Platform.OS === 'android'}
+            onViewableItemsChanged={prefetchVisibleObjects}
+            viewabilityConfig={viewabilityConfig}
             refreshControl={<ThemedRefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           />
         </View>
