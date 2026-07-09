@@ -6,6 +6,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Image as ExpoImage } from 'expo-image';
 import { ActivityIndicator, InteractionManager, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useAuthContext } from '../providers/SimpleAuthProvider';
+import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../lib/personName';
 import { withAlpha } from '../theme/colors';
 import { usePermissions } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
@@ -216,8 +217,8 @@ function buildSelfEmployeeDetailSeed({
   const firstName = profile.first_name ?? profile.firstName ?? previous?.firstName ?? '';
   const middleName = profile.middle_name ?? profile.middleName ?? previous?.middleName ?? '';
   const lastName = profile.last_name ?? profile.lastName ?? previous?.lastName ?? '';
-  const computedFullName = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-  const fullName = (profile.full_name ?? profile.fullName ?? previous?.fullName ?? computedFullName) || null;
+  const computedFullName = formatPersonNameParts({ firstName, middleName, lastName });
+  const fullName = (computedFullName || profile.full_name || profile.fullName || previous?.fullName) || null;
   const avatarUrl = profile.avatar_url ?? profile.avatarUrl ?? previous?.avatarUrl ?? null;
   const avatarDisplayUrl = profile.avatar_display_url ?? profile.avatarDisplayUrl ?? previous?.avatarDisplayUrl ?? avatarUrl;
   const companyId = profile.company_id ?? profile.companyId ?? previous?.companyId ?? null;
@@ -426,9 +427,9 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   });
 
   const fullName =
-    `${currentProfile?.first_name || ''} ${currentProfile?.middle_name || ''} ${currentProfile?.last_name || ''}`.trim() ||
-    currentProfile?.full_name;
+    formatPersonName(currentProfile);
   const firstName = currentProfile?.first_name || '';
+  const middleName = currentProfile?.middle_name || '';
   const lastName = currentProfile?.last_name || '';
   const rawAvatarUrl = String(currentProfile?.avatar_url || '').trim();
   const storedAvatarDisplayUrl = String(currentProfile?.avatar_display_url || '').trim();
@@ -923,16 +924,8 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
   );
 
   const initials = useMemo(() => {
-    const a = (firstName || '').trim().slice(0, 1);
-    const b = (lastName || '').trim().slice(0, 1);
-    const fromFull = (fullName || '')
-      .trim()
-      .split(/\s+/)
-      .map((s) => s.slice(0, 1))
-      .slice(0, 2)
-      .join('');
-    return (a + b || fromFull || '??').toUpperCase();
-  }, [firstName, lastName, fullName]);
+    return formatPersonInitials({ firstName, middleName, lastName }, fullName) || '??';
+  }, [firstName, middleName, lastName, fullName]);
 
   const roleLabel =
     resolvedRole === 'admin'

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { cleanupSessionRuntime } from '../lib/authSessionCleanup';
 import { createLogger } from '../lib/logger';
+import { formatPersonNameParts } from '../lib/personName';
 import { readCurrentPushToken } from '../lib/pushAutoSetup';
 import { supabase } from '../lib/supabase';
 import { deletePushToken } from '../lib/supabaseHelpers';
@@ -20,8 +21,9 @@ const buildProfileFromUser = (user, source = 'user-metadata') => {
   if (!user?.id) return null;
   const metadata = user.user_metadata || {};
   const firstName = metadata.first_name ?? null;
+  const middleName = metadata.middle_name ?? null;
   const lastName = metadata.last_name ?? null;
-  const fullNameFromMeta = metadata.full_name || [firstName, lastName].filter(Boolean).join(' ');
+  const fullNameFromMeta = formatPersonNameParts({ firstName, middleName, lastName }) || metadata.full_name;
   const fullName = fullNameFromMeta || user.email || '';
   const rawRole = typeof metadata.role === 'string' ? metadata.role : null;
   const safeRole = VALID_ROLES.has(rawRole) ? rawRole : 'worker';
@@ -29,7 +31,7 @@ const buildProfileFromUser = (user, source = 'user-metadata') => {
   return {
     id: user.id,
     first_name: firstName,
-    middle_name: null,
+    middle_name: middleName,
     last_name: lastName,
     full_name: fullName,
     role: safeRole,
@@ -47,17 +49,18 @@ const normalizeProfileData = (profile, fallbackUser, source = 'supabase') => {
 
   const safeRole = VALID_ROLES.has(profile.role) ? profile.role : 'worker';
   const firstName = profile.first_name ?? null;
+  const middleName = profile.middle_name ?? null;
   const lastName = profile.last_name ?? null;
   const fullNameCandidate =
+    formatPersonNameParts({ firstName, middleName, lastName }) ||
     profile.full_name ||
-    [firstName, lastName].filter(Boolean).join(' ') ||
     fallbackUser?.email ||
     '';
 
   return {
     id: profile.id ?? fallbackUser?.id ?? null,
     first_name: firstName,
-    middle_name: profile.middle_name ?? null,
+    middle_name: middleName,
     last_name: lastName,
     full_name: fullNameCandidate,
     role: safeRole,

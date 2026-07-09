@@ -38,6 +38,7 @@ import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { logClientError } from '../../lib/errorLogsClient';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
+import { formatPersonName } from '../../lib/personName';
 import { yandexDiskIntegration, yandexDiskMedia } from '../../lib/yandexDiskIntegration';
 import { financeEntryMediaStorage, financeEntryYandexMedia } from '../../lib/financeEntryMedia';
 import { orderMediaStorage } from '../../lib/orderMediaStorage';
@@ -1156,10 +1157,7 @@ function OrderDetailsContent() {
 
     const join = (obj) => {
       if (!obj || typeof obj !== 'object') return null;
-      const s =
-        [obj.first_name, obj.middle_name, obj.last_name].filter(Boolean).join(' ').trim() ||
-        obj.full_name ||
-        obj.name;
+      const s = formatPersonName(obj);
       return s ? String(s).trim() : null;
     };
 
@@ -1601,8 +1599,7 @@ function OrderDetailsContent() {
           supabase.from('profiles').select('first_name, middle_name, last_name').eq('id', effectiveOrder.assigned_to).single()
             .then(({ data: executorProfile }) => {
               if (executorProfile) {
-                const full =
-                  `${executorProfile.first_name || ''} ${executorProfile.middle_name || ''} ${executorProfile.last_name || ''}`.trim();
+                const full = formatPersonName(executorProfile);
                 if (full) {
                   setCachedExecutorName(effectiveOrder.assigned_to, full);
                   setExecutorName(full);
@@ -3447,9 +3444,7 @@ function OrderDetailsContent() {
         setOrder(nextOrder);
         queryClient.setQueryData(queryKeys.requests.detail(order.id), nextOrder);
         queryClient.invalidateQueries({ queryKey: ['requests'] });
-        setExecutorName(
-          me ? `${me.first_name || ''} ${me.middle_name || ''} ${me.last_name || ''}`.trim() : null,
-        );
+        setExecutorName(me ? formatPersonName(me) : null);
         setAssigneeId(userId);
         setToFeed(false);
         showToast(t('order_accept_success'));
@@ -3583,7 +3578,7 @@ function OrderDetailsContent() {
       if (data.assigned_to) {
         const sel = (users || []).find((u) => u.id === data.assigned_to);
         if (sel) {
-          setExecutorName(`${sel.first_name || ''} ${sel.middle_name || ''} ${sel.last_name || ''}`.trim());
+          setExecutorName(formatPersonName(sel));
         } else {
           try {
             const { data: exec } = await supabase
@@ -3591,9 +3586,7 @@ function OrderDetailsContent() {
               .select('first_name, middle_name, last_name')
               .eq('id', data.assigned_to)
               .single();
-            setExecutorName(
-              exec ? `${exec.first_name || ''} ${exec.middle_name || ''} ${exec.last_name || ''}`.trim() : null,
-            );
+            setExecutorName(exec ? formatPersonName(exec) : null);
           } catch {}
         }
       }
@@ -5405,7 +5398,7 @@ function OrderDetailsContent() {
             { id: '__feed__', label: t('order_modal_to_feed') },
             ...users.map((user) => ({
               id: user.id,
-              label: [user.first_name, user.middle_name, user.last_name].filter(Boolean).join(' '),
+              label: formatPersonName(user),
             })),
           ]}
           onSelect={(item) => {

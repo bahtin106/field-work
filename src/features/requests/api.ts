@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import { getOrderIdsByWorkTypes, getStatusDbAliases, mapStatusToDb } from '../../../lib/orderFilters';
+import { formatPersonName } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { enrichOrdersWithExecutorNames } from './executorNameCache';
 import {
@@ -102,18 +103,7 @@ function applyStatusFilterValues(query: any, statusValues: string[] = []) {
 
 function buildClientDisplayName(client) {
   if (!client || typeof client !== 'object') return '';
-  const fromParts = [
-    String(client.first_name ?? '').trim(),
-    String(client.middle_name ?? '').trim(),
-    String(client.last_name ?? '').trim(),
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (fromParts) return fromParts;
-  const fullName = String(client.full_name ?? '').trim();
-  return fullName;
+  return formatPersonName(client);
 }
 
 function normalizeDepartureTimeString(input) {
@@ -647,9 +637,7 @@ export async function getAssigneeDisplayNameById(userId: any) {
       .maybeSingle();
     if (error) throw error;
     if (!data) return '';
-    const nameParts = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
-    const normalizedFullName = (data.full_name || '').trim();
-    return nameParts || normalizedFullName || data.email || '';
+    return formatPersonName(data, data.email || '');
   });
 }
 

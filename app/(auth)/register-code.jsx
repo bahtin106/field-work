@@ -499,7 +499,7 @@ export default function RegisterCodeScreen() {
       }
 
       const fullName =
-        String(draft?.full_name || `${draft?.first_name || ''} ${draft?.last_name || ''}`)
+        String(`${draft?.last_name || ''} ${draft?.first_name || ''}`.trim() || draft?.full_name || '')
           .replace(/\s+/g, ' ')
           .trim() || 'User Monitor';
 

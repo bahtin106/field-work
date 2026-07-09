@@ -30,6 +30,7 @@ import SortSelectModal from '../../components/filters/SortSelectModal';
 import { useFilters } from '../../components/hooks/useFilters';
 import { UserCard } from '../../components/users/UserCard';
 import { ROLE, ROLE_LABELS } from '../../constants/roles';
+import { formatPersonName } from '../../lib/personName';
 import { pluralizeRu } from '../../lib/pluralize';
 import {
   ensureEmployeePrefetch,
@@ -256,7 +257,7 @@ function UsersIndexContent() {
       return matchesSearch(
         buildSearchIndex({
           texts: [
-            `${u.first_name || ''} ${u.middle_name || ''} ${u.last_name || ''}`.trim(),
+            formatPersonName(u),
             u?.display_name,
             u?.full_name,
             u?.email,
@@ -280,8 +281,8 @@ function UsersIndexContent() {
       sortEmployees(filtered, {
         sortKey,
         getName: (item) =>
+          formatPersonName(item) ||
           (item?.display_name || '').trim() ||
-          `${item?.first_name || ''} ${item?.middle_name || ''} ${item?.last_name || ''}`.trim() ||
           item?.full_name ||
           '',
         getDepartmentName: (item) => {

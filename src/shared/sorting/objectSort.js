@@ -32,7 +32,7 @@ export function sortObjects(
     sortKey = OBJECT_SORT.NAME_ASC,
     getName = (item) => item?.name || '',
     getCity = (item) => item?.city || '',
-    getClientName = (item) => item?.client?.full_name || item?.client_name || '',
+    getClientName = (item) => item?.client?.fullName || item?.client?.full_name || item?.client_name || '',
   } = {},
 ) {
   const rows = Array.isArray(list) ? [...list] : [];

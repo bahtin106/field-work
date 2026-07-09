@@ -46,6 +46,7 @@ import {
 import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
+import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../../../lib/personName';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
 import { t as T, getDict, useI18nVersion } from '../../../src/i18n';
 import {
@@ -823,9 +824,7 @@ export default function EditUser() {
   }, []);
 
   const headerDisplayName = useMemo(() => {
-    const name = `${firstName || ''} ${middleName || ''} ${lastName || ''}`
-      .replace(/\s+/g, ' ')
-      .trim();
+    const name = formatPersonNameParts({ firstName, middleName, lastName });
     return name || '';
   }, [firstName, middleName, lastName]);
   const headerFallbackName = useMemo(
@@ -892,9 +891,9 @@ export default function EditUser() {
       const keys = getOrderedEntityFields(employeeFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['first_name', 'middle_name', 'last_name', 'birthdate'],
+        fieldKeys: ['last_name', 'first_name', 'middle_name', 'birthdate'],
       }).map((field) => field.fieldKey);
-      const nameSequence = ['first_name', 'middle_name', 'last_name'];
+      const nameSequence = ['last_name', 'first_name', 'middle_name'];
       const firstNameFieldIndex = keys.findIndex((key) => nameSequence.includes(key));
       if (firstNameFieldIndex < 0) return keys;
       const names = nameSequence.filter((key) => keys.includes(key));
@@ -1990,12 +1989,11 @@ export default function EditUser() {
     const n3 = (p.last_name || '').trim();
     const fn = (p.full_name || '').trim();
     const name =
-      n1 || n2 || n3 ? `${n1} ${n2} ${n3}`.replace(/\s+/g, ' ').trim() : fn || t('placeholder_no_name');
+      n1 || n2 || n3 ? formatPersonNameParts({ firstName: n1, middleName: n2, lastName: n3 }) : fn || t('placeholder_no_name');
     return name;
   };
   const buildFullName = (first, middle, last) => {
-    const parts = [(first || '').trim(), (middle || '').trim(), (last || '').trim()].filter(Boolean);
-    return parts.join(' ').replace(/\s+/g, ' ').trim();
+    return formatPersonNameParts({ firstName: first, middleName: middle, lastName: last });
   };
   useEffect(() => {
     if (!employeeData) return;
@@ -2614,10 +2612,7 @@ export default function EditUser() {
     );
   }
   const isSelfAdmin = meIsAdmin && meId === userId;
-  const initials =
-    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}${(middleName || '').trim().slice(0, 1)}`
-      .slice(0, 2)
-      .toUpperCase();
+  const initials = formatPersonInitials({ firstName, middleName, lastName });
   const personalFieldRenderers = {
       first_name: () => (
         <>
@@ -3268,10 +3263,9 @@ export default function EditUser() {
               }
               items={(pickerItems || []).map((it) => {
                 const displayName =
-                  it.full_name ||
-                  `${it.first_name || ''} ${it.middle_name || ''} ${it.last_name || ''}`.trim() ||
+                  formatPersonName(it) ||
                   t('placeholder_no_name');
-                const initials = `${(it.first_name || '').slice(0, 1)}${(it.last_name || '').slice(0, 1)}`.toUpperCase();
+                const initials = formatPersonInitials(it);
                 const roleLabel = it.role ? t(`role_${it.role}`) : '';
 
                 return {

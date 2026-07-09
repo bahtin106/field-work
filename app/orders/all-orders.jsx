@@ -34,6 +34,7 @@ import { useCompanySettings } from '../../hooks/useCompanySettings';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import { usePermissions } from '../../lib/permissions';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
+import { formatPersonName } from '../../lib/personName';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
@@ -671,7 +672,7 @@ function AllOrdersContent() {
           const id = String(row?.id || '').trim();
           if (!id) return null;
           const label =
-            [row?.first_name, row?.middle_name, row?.last_name].filter(Boolean).join(' ').trim() ||
+            formatPersonName(row) ||
             String(row?.full_name || '').trim() ||
             String(row?.phone || '').trim() ||
             id;
@@ -1269,8 +1270,7 @@ function AllOrdersContent() {
         const id = String(item?.id || '').trim();
         if (!id) return null;
         const label =
-          String(item?.full_name || '').trim() ||
-          [item?.first_name, item?.middle_name, item?.last_name].filter(Boolean).join(' ').trim() ||
+          formatPersonName(item) ||
           item?.email ||
           id;
         return {

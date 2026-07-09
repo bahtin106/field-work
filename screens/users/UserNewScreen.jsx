@@ -56,6 +56,7 @@ import {
   AUTH_CONSTRAINTS,
 } from '../../lib/authValidation';
 import { TBL } from '../../lib/constants';
+import { formatPersonInitials, formatPersonNameParts } from '../../lib/personName';
 import { supabase } from '../../lib/supabase';
 import { getDict, t as T } from '../../src/i18n';
 
@@ -408,9 +409,9 @@ export default function NewUserScreen() {
       const keys = getOrderedEntityFields(employeeFieldSettings, {
         visibleOnly: true,
         requiredFirst: true,
-        fieldKeys: ['first_name', 'middle_name', 'last_name', 'birthdate'],
+        fieldKeys: ['last_name', 'first_name', 'middle_name', 'birthdate'],
       }).map((field) => field.fieldKey);
-      const nameSequence = ['first_name', 'middle_name', 'last_name'];
+      const nameSequence = ['last_name', 'first_name', 'middle_name'];
       const firstNameFieldIndex = keys.findIndex((key) => nameSequence.includes(key));
       if (firstNameFieldIndex < 0) return keys;
       const names = nameSequence.filter((key) => keys.includes(key));
@@ -576,9 +577,7 @@ export default function NewUserScreen() {
 
   const initials = useMemo(
     () =>
-      `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}${(middleName || '').trim().slice(0, 1)}`
-        .slice(0, 2)
-        .toUpperCase(),
+      formatPersonInitials({ firstName, middleName, lastName }),
     [firstName, lastName, middleName],
   );
   const personalFieldRenderers = useMemo(
@@ -819,7 +818,7 @@ export default function NewUserScreen() {
 
   useEffect(() => {
     setHeaderName(
-      `${firstName || ''} ${middleName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim() ||
+      formatPersonNameParts({ firstName, middleName, lastName }) ||
         t('placeholder_no_name'),
     );
   }, [firstName, lastName, middleName, t]);
@@ -993,7 +992,7 @@ export default function NewUserScreen() {
     setFieldErrors({});
 
     try {
-      const fullName = `${firstName.trim()} ${middleName.trim()} ${lastName.trim()}`.replace(/\s+/g, ' ').trim();
+      const fullName = formatPersonNameParts({ firstName, middleName, lastName });
       if (hasMobilePhoneValue(phone) && !isValidOptionalMobilePhone(phone)) {
         throw new Error(t('err_phone'));
       }

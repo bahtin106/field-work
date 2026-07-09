@@ -70,7 +70,6 @@
         "expo-notifications",
         {
           "icon": "./assets/notifications/notification-icon.png",
-          "color": "#0A84FF",
           "defaultChannel": "app-notify"
         }
       ],

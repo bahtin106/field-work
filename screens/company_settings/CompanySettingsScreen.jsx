@@ -1607,7 +1607,7 @@ export default function CompanySettings() {
                 title: t('btn_apply'),
                 variant: 'primary',
                 loading: switchingWorkMode,
-                disabled: switchingWorkMode,
+                disabled: switchingWorkMode || !allWorkModeConsentsAccepted,
                 onPress: invokeWorkModeSwitch,
               },
             ]}

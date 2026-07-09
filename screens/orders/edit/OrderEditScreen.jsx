@@ -80,6 +80,7 @@ import TextField, { SwitchField } from '../../../components/ui/TextField';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { usePermissions } from '../../../lib/permissions';
+import { formatPersonName } from '../../../lib/personName';
 import { supabase } from '../../../lib/supabase';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
 import { t as T } from '../../../src/i18n';
@@ -299,15 +300,10 @@ function EditOrderContent() {
     String(profile?.role || '').toLowerCase() === 'admin' && authAccountType === 'solo';
   const soloAdminUserId = String(profile?.id || user?.id || '').trim() || null;
   const soloAdminDisplayName = useMemo(() => (
-    [profile?.first_name, profile?.middle_name, profile?.last_name].filter(Boolean).join(' ').trim()
-      || String(profile?.full_name || '').trim()
+    formatPersonName(profile)
       || String(profile?.email || user?.email || '').trim()
   ), [
-    profile?.email,
-    profile?.first_name,
-    profile?.full_name,
-    profile?.last_name,
-    profile?.middle_name,
+    profile,
     user?.email,
   ]);
   const { has: hasPermission, loading: permissionsLoading } = usePermissions();
@@ -1355,10 +1351,7 @@ function EditOrderContent() {
       const nextCustomerName =
         row.fio ||
         row.customer_name ||
-        [row.client?.first_name, row.client?.middle_name, row.client?.last_name]
-          .filter(Boolean)
-          .join(' ') ||
-        row.client?.full_name ||
+        formatPersonName(row.client) ||
         '';
       const nextClientId = normalizeId(row.client_id);
       const nextObjectId = normalizeId(row.object_id);
@@ -1410,9 +1403,7 @@ function EditOrderContent() {
         nextAssignedEmployeeLabel = soloAdminDisplayName;
       } else if (row.assigned_to && row.assignee_profile) {
         const data = row.assignee_profile;
-        const nameParts = `${data.first_name || ''} ${data.middle_name || ''} ${data.last_name || ''}`.trim();
-        const normalizedFullName = (data.full_name || '').trim();
-        nextAssignedEmployeeLabel = nameParts || normalizedFullName || data.email || '';
+        nextAssignedEmployeeLabel = formatPersonName(data, data.email || '');
       }
 
       setTitle(nextTitle);
@@ -1610,7 +1601,7 @@ function EditOrderContent() {
     }
     if (selectedEmployee) {
       setAssignedEmployeeLabel(
-        String(selectedEmployee?.display_name || selectedEmployee?.full_name || selectedEmployee?.email || '').trim(),
+        formatPersonName(selectedEmployee, selectedEmployee?.email || ''),
       );
       return;
     }
@@ -1924,7 +1915,7 @@ function EditOrderContent() {
         );
         if (nextSelected) {
           setAssignedEmployeeLabel(
-            String(nextSelected?.display_name || nextSelected?.full_name || nextSelected?.email || '').trim(),
+            formatPersonName(nextSelected, nextSelected?.email || ''),
           );
         } else {
           setAssignedEmployeeLabel('');

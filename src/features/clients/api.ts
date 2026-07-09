@@ -10,6 +10,7 @@ import { getClientAdditionalPhones } from './additionalPhones';
 import { getMyCompanyId } from '../profile/api';
 import { normalizeOptionalMobilePhone } from '../../shared/validation/phone';
 import { applyOrderRelationFilters } from '../requests/relationFilters';
+import { formatPersonName, formatPersonNameParts } from '../../../lib/personName';
 
 const clientByIdInFlight = new Map<string, Promise<any>>();
 const CLIENT_COLUMNS_BASE =
@@ -39,11 +40,7 @@ async function resolveScopedCompanyId(explicitCompanyId: string | null = null) {
 export function formatClientNameForOrder(client: any) {
   if (!client || typeof client !== 'object') return '';
 
-  const firstName = String(client.first_name ?? client.firstName ?? '').trim();
-  const middleName = String(client.middle_name ?? client.middleName ?? '').trim();
-  const lastName = String(client.last_name ?? client.lastName ?? '').trim();
-
-  return [firstName, middleName, lastName].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  return formatPersonName(client);
 }
 
 function normalizeClient(row: any) {
@@ -51,9 +48,7 @@ function normalizeClient(row: any) {
   const firstName = String(row.first_name || '').trim();
   const lastName = String(row.last_name || '').trim();
   const middleName = String(row.middle_name || '').trim();
-  const fullName =
-    [firstName, middleName, lastName].filter(Boolean).join(' ').trim() ||
-    String(row.full_name || '').trim();
+  const fullName = formatPersonNameParts({ firstName, middleName, lastName }) || String(row.full_name || '').trim();
 
   const objects = Array.isArray(row.client_objects)
     ? row.client_objects.map(normalizeClientObject).filter(Boolean)
@@ -356,9 +351,7 @@ function normalizeConflictClientRow(row: any) {
   const firstName = String(row.first_name || '').trim();
   const lastName = String(row.last_name || '').trim();
   const middleName = String(row.middle_name || '').trim();
-  const fullName =
-    [firstName, middleName, lastName].filter(Boolean).join(' ').trim() ||
-    String(row.full_name || '').trim();
+  const fullName = formatPersonNameParts({ firstName, middleName, lastName }) || String(row.full_name || '').trim();
 
   return {
     id: String(row.id || ''),

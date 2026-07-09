@@ -2,6 +2,7 @@
 import { Platform, Text, TouchableOpacity, View } from 'react-native';
 
 import { formatCurrency } from '../lib/currency';
+import { formatPersonName, formatPersonNameParts } from '../lib/personName';
 import {
   FEED_ORDER_FIELD_KEYS,
   getFeedOrderFieldsForRole,
@@ -133,11 +134,10 @@ function getOptionLabel(field, value) {
 function joinName(obj) {
   if (!obj || typeof obj !== 'object') return '';
   const parts = [
+    formatPersonName(obj),
     obj.full_name,
     obj.fullName,
     obj.name,
-    [obj.first_name, obj.middle_name, obj.last_name].filter(Boolean).join(' '),
-    [obj.first_name, obj.middle_name, obj.surname].filter(Boolean).join(' '),
   ].filter(Boolean);
   return (parts[0] || '').trim();
 }
@@ -501,7 +501,7 @@ function DynamicOrderCard({
       [order?.worker_first_name, order?.worker_middle_name, order?.worker_last_name],
     ];
     for (const [fn, mn, ln] of triples) {
-      const name = [fn, mn, ln].filter(Boolean).join(' ').trim();
+      const name = formatPersonNameParts({ firstName: fn, middleName: mn, lastName: ln });
       if (name) return name;
     }
     if (order?.users_map) {

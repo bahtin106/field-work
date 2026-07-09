@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { formatPersonName } from '../../lib/personName';
 import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useClient } from '../../src/features/clients/queries';
@@ -63,7 +64,7 @@ export default function ObjectCard({ item, onPress, canViewClients: canViewClien
   const objectFieldsByKey = useMemo(() => getEntityFieldMap(objectFieldSettings), [objectFieldSettings]);
   const { data: client } = useClient(item?.client_id, { enabled: !!item?.client_id && canViewClients });
   const owner =
-    String(client?.fullName || client?.full_name || item?._client?.name || item?.client?.full_name || '').trim() || '';
+    String(formatPersonName(client) || item?._client?.name || formatPersonName(item?.client) || '').trim() || '';
   const visibleAddress = useMemo(
     () => filterOrderAddressByObjectFieldSettings(extractOrderAddressFromObject(item), objectFieldsByKey),
     [item, objectFieldsByKey],

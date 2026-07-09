@@ -1,6 +1,6 @@
 ﻿import { router as globalRouter, Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Image, InteractionManager, Keyboard, LogBox, Platform, Text, TextInput, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +25,11 @@ import BottomNav from '../components/navigation/BottomNav';
 import ToastProvider, { useToast } from '../components/ui/ToastProvider';
 import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars';
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
+import {
+  getLastPublicAuthRoute,
+  rememberPublicAuthRoute,
+  resetPublicAuthRoute,
+} from '../lib/authFlowNavigationState';
 import { bootstrapPushForUserWithOptions } from '../lib/pushAutoSetup';
 import patchRouter from '../lib/navigation/patchRouter';
 import dismissToRoute from '../lib/navigation/dismissToRoute';
@@ -32,7 +37,6 @@ import { PermissionsProvider } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 import { loadUserLocale } from '../lib/userLocale';
 import { SimpleAuthProvider, useAuthContext } from '../providers/SimpleAuthProvider';
-import { getRequestById } from '../src/features/requests/api';
 import { getSupportRequestById } from '../src/features/supportRequests/api';
 import { initI18n, setLocale } from '../src/i18n';
 import { useTranslation } from '../src/i18n/useTranslation';
@@ -198,6 +202,10 @@ function RootLayoutInner() {
   const notificationOpenInFlightRef = useRef(false);
   const lastHandledNotificationKeyRef = useRef('');
   const notificationIdsByOrderRef = useRef(new Map());
+  const pendingInitialNotificationResponseRef = useRef(null);
+  const initialNotificationCheckedRef = useRef(Platform.OS === 'web');
+  const [initialNotificationCheckPending, setInitialNotificationCheckPending] = useState(Platform.OS !== 'web');
+  const [pendingNotificationLaunch, setPendingNotificationLaunch] = useState(false);
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = segments[1] || '';
   const normalizedPathname = String(pathname || '').trim().replace(/\/+$/, '') || '/';
@@ -286,6 +294,16 @@ function RootLayoutInner() {
   }, [inAuthFlow, theme]);
 
   useEffect(() => {
+    if (isAuthenticated) {
+      resetPublicAuthRoute();
+      return;
+    }
+    if (inAuthFlow) {
+      rememberPublicAuthRoute({ pathname, segments });
+    }
+  }, [inAuthFlow, isAuthenticated, pathname, segments]);
+
+  useEffect(() => {
     if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;
     let task = null;
     const timer = setTimeout(() => {
@@ -301,7 +319,10 @@ function RootLayoutInner() {
     };
   }, [isAuthenticated, isBlockedScreen, isInitializing]);
 
-  const shouldHoldNativeSplash = isInitializing;
+  const shouldHoldNativeSplash =
+    isInitializing ||
+    initialNotificationCheckPending ||
+    (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen);
 
   useEffect(() => {
     if (shouldHoldNativeSplash) return;
@@ -309,13 +330,23 @@ function RootLayoutInner() {
   }, [hideSplash, shouldHoldNativeSplash]);
 
   useEffect(() => {
+    if (isInitializing || isAuthenticated || !pendingNotificationLaunch) return;
+    pendingInitialNotificationResponseRef.current = null;
+    setPendingNotificationLaunch(false);
+    import('expo-notifications')
+      .then((Notifications) => Notifications.clearLastNotificationResponseAsync?.())
+      .catch(() => {});
+  }, [isAuthenticated, isInitializing, pendingNotificationLaunch]);
+
+  useEffect(() => {
     if (isInitializing) return;
+    if (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen) return;
     if (!isAuthenticated && !inAuthFlow && !isSamePath('/login') && !isSamePath('/(auth)/login')) {
-      router.replace('/(auth)/login');
+      router.replace(getLastPublicAuthRoute('/(auth)/login'));
     } else if (isAuthenticated && inAuthFlow && !isBlockedScreen && !isSamePath('/orders')) {
       router.replace('/orders');
     }
-  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, router]);
+  }, [inAuthFlow, isAuthenticated, isBlockedScreen, isInitializing, isSamePath, pendingNotificationLaunch, router]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined;
@@ -752,6 +783,49 @@ function RootLayoutInner() {
     [extractOrderIdFromNotificationResponse, extractSupportFeedbackIdFromNotificationResponse],
   );
 
+  const hasNotificationNavigationTarget = useCallback(
+    (response) =>
+      !!extractOrderIdFromNotificationResponse(response) ||
+      !!extractSupportFeedbackIdFromNotificationResponse(response),
+    [extractOrderIdFromNotificationResponse, extractSupportFeedbackIdFromNotificationResponse],
+  );
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || initialNotificationCheckedRef.current) return undefined;
+    let active = true;
+    const fallbackTimer = setTimeout(() => {
+      if (!active || initialNotificationCheckedRef.current) return;
+      initialNotificationCheckedRef.current = true;
+      setInitialNotificationCheckPending(false);
+    }, 1200);
+
+    (async () => {
+      try {
+        const Notifications = await import('expo-notifications');
+        const response = await Notifications.getLastNotificationResponseAsync?.();
+        if (!active || !response) return;
+
+        if (hasNotificationNavigationTarget(response)) {
+          pendingInitialNotificationResponseRef.current = response;
+          setPendingNotificationLaunch(true);
+        }
+      } catch {
+        // The regular listener below still handles notification taps.
+      } finally {
+        if (active) {
+          initialNotificationCheckedRef.current = true;
+          setInitialNotificationCheckPending(false);
+        }
+        clearTimeout(fallbackTimer);
+      }
+    })();
+
+    return () => {
+      active = false;
+      clearTimeout(fallbackTimer);
+    };
+  }, [hasNotificationNavigationTarget]);
+
   const openSupportFeedbackFromNotification = useCallback(
     async (feedbackId) => {
       if (!feedbackId || notificationOpenInFlightRef.current) return;
@@ -778,26 +852,19 @@ function RootLayoutInner() {
 
   const openOrderFromNotification = useCallback(
     async (orderId) => {
-      if (!orderId || notificationOpenInFlightRef.current) return;
+      const normalizedOrderId = String(orderId || '').trim();
+      if (!normalizedOrderId || notificationOpenInFlightRef.current) return;
       notificationOpenInFlightRef.current = true;
       try {
-        const order = await getRequestById(orderId);
-        if (!order?.id) {
-          toast.error(t('push_open_order_unavailable'));
-          router.replace('/orders/my-orders');
-          return;
-        }
-
-        router.push({
-          pathname: `/orders/${order.id}`,
+        router.replace({
+          pathname: `/orders/${normalizedOrderId}`,
           params: {
             returnTo: '/orders/my-orders',
             returnParams: JSON.stringify({ fromNotification: true }),
           },
         });
 
-        // Mark all currently shown notifications for this order as consumed.
-        dismissPresentedNotificationsForOrder(order.id).catch(() => {});
+        dismissPresentedNotificationsForOrder(normalizedOrderId).catch(() => {});
       } catch {
         toast.error(t('push_open_generic_error'));
         router.replace('/orders');
@@ -816,6 +883,12 @@ function RootLayoutInner() {
     let active = true;
     let responseSub = null;
     let receivedSub = null;
+
+    const releasePendingNotificationLaunch = () => {
+      setTimeout(() => {
+        if (active) setPendingNotificationLaunch(false);
+      }, 120);
+    };
 
     const rememberNotificationIdentifier = (notification) => {
       const orderId = String(extractOrderIdFromNotificationContent(notification) || '').trim();
@@ -864,31 +937,46 @@ function RootLayoutInner() {
         });
         responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
           rememberNotificationIdentifier(response?.notification);
-          handleResponse(response, Notifications).catch(() => {});
+          if (hasNotificationNavigationTarget(response)) {
+            setPendingNotificationLaunch(true);
+          }
+          handleResponse(response, Notifications)
+            .catch(() => {})
+            .finally(() => {
+              releasePendingNotificationLaunch();
+            });
         });
+
+        const pendingInitialResponse = pendingInitialNotificationResponseRef.current;
+        if (pendingInitialResponse) {
+          pendingInitialNotificationResponseRef.current = null;
+          await handleResponse(pendingInitialResponse, Notifications);
+          releasePendingNotificationLaunch();
+          return;
+        }
 
         const lastResponse = await Notifications.getLastNotificationResponseAsync?.();
         if (lastResponse) {
+          if (hasNotificationNavigationTarget(lastResponse)) {
+            setPendingNotificationLaunch(true);
+          }
           await handleResponse(lastResponse, Notifications);
         }
       } catch {
         // noop
+      } finally {
+        if (!pendingInitialNotificationResponseRef.current) {
+          releasePendingNotificationLaunch();
+        }
       }
     };
 
-    let initTask = null;
-    const initTimer = setTimeout(() => {
-      initTask = InteractionManager.runAfterInteractions(() => {
-        init().catch(() => {});
-      });
-    }, NOTIFICATION_LISTENERS_DELAY_MS);
+    init().catch(() => {
+      setPendingNotificationLaunch(false);
+    });
 
     return () => {
       active = false;
-      clearTimeout(initTimer);
-      try {
-        initTask?.cancel?.();
-      } catch {}
       responseSub?.remove?.();
       receivedSub?.remove?.();
     };
@@ -897,6 +985,7 @@ function RootLayoutInner() {
     extractOrderIdFromNotificationContent,
     extractOrderIdFromNotificationResponse,
     getNotificationResponseKey,
+    hasNotificationNavigationTarget,
     isAuthenticated,
     isBlockedScreen,
     isInitializing,
@@ -928,7 +1017,7 @@ function RootLayoutInner() {
     pathname,
   ]);
 
-  if (isInitializing) {
+  if (isInitializing || initialNotificationCheckPending || (pendingNotificationLaunch && isAuthenticated && !isBlockedScreen)) {
     return (
       <SafeAreaView
         edges={rootSafeEdges}

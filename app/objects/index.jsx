@@ -16,6 +16,7 @@ import {
   useManagedRefresh,
   usePullToRefreshFeedback,
 } from '../../components/ui/PullToRefreshFeedback';
+import { formatPersonName } from '../../lib/personName';
 import { usePermissions } from '../../lib/permissions';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
@@ -170,7 +171,7 @@ export default function ObjectsIndex() {
           ...item,
           client,
           client_name:
-            client?.fullName || client?.full_name || item?._client?.name || item?.client?.full_name || '',
+            formatPersonName(client) || item?._client?.name || formatPersonName(item?.client) || '',
         };
       }),
     [allObjects, clientById],
@@ -202,7 +203,7 @@ export default function ObjectsIndex() {
     () =>
       clients
         .map((client) => {
-          const label = String(client?.fullName || client?.full_name || '').trim();
+          const label = String(formatPersonName(client)).trim();
           if (!label) return null;
           return { id: String(client.id), value: String(client.id), label };
         })
@@ -315,7 +316,7 @@ export default function ObjectsIndex() {
     if (filters.values.clientIds?.length) {
       const names = filters.values.clientIds
         .map((clientId) => clientById.get(String(clientId)))
-        .map((client) => client?.fullName || client?.full_name || null)
+        .map((client) => formatPersonName(client) || null)
         .filter(Boolean);
       if (names.length) {
         fullParts.push(

@@ -1,4 +1,5 @@
 ﻿import { supabase } from '../../../lib/supabase';
+import { formatPersonName } from '../../../lib/personName';
 import { cleanupProfileMediaEntity, inspectProfileMedia, uploadProfileMedia } from '../profileMedia/api';
 
 export const SUPPORT_MESSAGE_MAX_LEN = 2000;
@@ -29,13 +30,8 @@ function shortMessage(value, max = 120) {
 }
 
 export function formatSupportAuthor(profile, fallback = '') {
-  const fullName = String(profile?.full_name || '').trim();
+  const fullName = formatPersonName(profile);
   if (fullName) return fullName;
-  const firstName = String(profile?.first_name || '').trim();
-  const middleName = String(profile?.middle_name || '').trim();
-  const lastName = String(profile?.last_name || '').trim();
-  const composed = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
-  if (composed) return composed;
   const email = String(profile?.email || '').trim();
   if (email) return email;
   return String(fallback || '').trim() || '—';

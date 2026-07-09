@@ -1,12 +1,16 @@
 // app/(auth)/_layout.js
 import { Stack } from 'expo-router';
+import { useRef } from 'react';
 import { View } from 'react-native';
+import { getLastPublicAuthScreen } from '../../lib/authFlowNavigationState';
 
 export default function AuthLayout() {
+  const initialAuthScreenRef = useRef(getLastPublicAuthScreen('login'));
+
   return (
     <View style={{ flex: 1 }}>
       <Stack
-        initialRouteName="login"
+        initialRouteName={initialAuthScreenRef.current}
         screenOptions={{
           headerShown: false,
           animation: 'none',

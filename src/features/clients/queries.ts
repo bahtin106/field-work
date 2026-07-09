@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../../../lib/supabase';
+import { formatPersonNameParts } from '../../../lib/personName';
 import { queryKeys } from '../../shared/query/queryKeys';
 import { invalidateManyNow, invalidateNow } from '../../shared/query/invalidate';
 import {
@@ -227,10 +228,26 @@ export function updateClientQueryCaches(queryClient: any, clientId: any, patchOr
   const resolveNext = (prev: any) => {
     const patch = typeof patchOrUpdater === 'function' ? patchOrUpdater(prev) : patchOrUpdater;
     if (!patch || typeof patch !== 'object') return prev;
-    return {
+    const merged = {
       ...(prev || {}),
       ...patch,
       id: patch.id || prev?.id || id,
+    };
+    const firstName = patch.firstName ?? patch.first_name ?? merged.firstName ?? merged.first_name ?? '';
+    const middleName = patch.middleName ?? patch.middle_name ?? merged.middleName ?? merged.middle_name ?? '';
+    const lastName = patch.lastName ?? patch.last_name ?? merged.lastName ?? merged.last_name ?? '';
+    const computedFullName = formatPersonNameParts({ firstName, middleName, lastName });
+    const fullName = computedFullName || merged.fullName || merged.full_name || '';
+    return {
+      ...merged,
+      first_name: patch.first_name ?? merged.first_name ?? firstName,
+      middle_name: patch.middle_name ?? merged.middle_name ?? middleName,
+      last_name: patch.last_name ?? merged.last_name ?? lastName,
+      full_name: fullName,
+      firstName,
+      middleName,
+      lastName,
+      fullName,
     };
   };
 

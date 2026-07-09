@@ -261,7 +261,7 @@ export default function ObjectViewScreen() {
   const isCoordinatesMode =
     String(objectItem?.location_mode || '').trim().toLowerCase() === 'map' ||
     (!String(objectItem?.location_mode || '').trim() && hasMapPoint);
-  const clientDisplayName = String(clientData?.full_name || objectItem?.client_id || '').trim();
+  const clientDisplayName = String(clientData?.fullName || clientData?.full_name || objectItem?.client_id || '').trim();
   const showObjectName =
     objectFieldsByKey.get('name')?.isEnabled === true || String(objectItem?.name || '').trim().length > 0;
   const showClientRow = hasDisplayValue(clientDisplayName);

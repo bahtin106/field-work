@@ -698,7 +698,7 @@ export default function RegisterScreen() {
     setSubmitting(true);
 
     try {
-      const fullName = `${normalizedFirstName} ${normalizedLastName}`.replace(/\s+/g, ' ').trim();
+      const fullName = `${normalizedLastName} ${normalizedFirstName}`.replace(/\s+/g, ' ').trim();
       const normalizedEmail = String(email).trim().toLowerCase();
       const clientFingerprint = await getOrCreateRegisterClientFingerprint();
       if (requiresTurnstile && !turnstileToken && !codeSent) {

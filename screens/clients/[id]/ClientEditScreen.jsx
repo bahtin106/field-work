@@ -351,7 +351,7 @@ export default function EditClientScreen() {
     'additional_phone_3',
   ].some(isClientFieldVisible);
   const orderedPersonalFieldKeys = React.useMemo(
-    () => ['first_name', 'middle_name', 'last_name', 'comment'].filter((fieldKey) => isClientFieldVisible(fieldKey)),
+    () => ['last_name', 'first_name', 'middle_name', 'comment'].filter((fieldKey) => isClientFieldVisible(fieldKey)),
     [isClientFieldVisible],
   );
   const orderedContactFieldKeys = React.useMemo(
@@ -599,7 +599,7 @@ export default function EditClientScreen() {
   }, [accessibleBlockingOrdersCount, canViewAllOrders, clientId, deleteBlockers, headerName]);
 
   const initials = React.useMemo(
-    () => `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}`.toUpperCase(),
+    () => `${(lastName || '').trim().slice(0, 1)}${(firstName || '').trim().slice(0, 1)}`.toUpperCase(),
     [firstName, lastName],
   );
   const personalFieldRenderers = React.useMemo(

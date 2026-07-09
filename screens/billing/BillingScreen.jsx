@@ -39,6 +39,7 @@ import { useCompanyStorageUsage } from '../../hooks/useCompanyStorageUsage';
 import { useCompanyAccessState } from '../../hooks/useCompanyAccessState';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { getBillingPortalUrl } from '../../lib/authRedirects';
+import { formatPersonName } from '../../lib/personName';
 import { supabase } from '../../lib/supabase';
 import { STORAGE_LIMITS } from '../../lib/constants';
 import { listItemStyles } from '../../components/ui/listItemStyles';
@@ -306,7 +307,7 @@ export default function BillingScreen() {
       const a = byAccess.get(id) || null;
       rows.push({
         user_id: normalizeMemberId(id),
-        name: a?.name || p?.display_name || p?.full_name || p?.email || String(id),
+        name: formatPersonName(p) || a?.name || p?.email || String(id),
         role: String(a?.role || p?.role || ROLE.WORKER).toLowerCase(),
         department_id: p?.department_id || null,
         last_seen_at: p?.last_seen_at || a?.last_seen_at || null,
@@ -1179,7 +1180,7 @@ export default function BillingScreen() {
                 </View>
                 {item.action === 'reassign' ? (
                   <Pressable onPress={() => setSelectUserForReassign(item.userId)} style={({ pressed }) => [styles(theme).selectSuccessorBtn, pressed ? styles(theme).pressed : null]}>
-                    <Text style={styles(theme).selectSuccessorText}>{successor ? `${t('billing_manage_successor')}: ${successor.full_name || `${successor.first_name || ''} ${successor.middle_name || ''} ${successor.last_name || ''}`.trim()}` : t('billing_manage_choose_successor')}</Text>
+                    <Text style={styles(theme).selectSuccessorText}>{successor ? `${t('billing_manage_successor')}: ${formatPersonName(successor, successor.email || String(successor.id))}` : t('billing_manage_choose_successor')}</Text>
                   </Pressable>
                 ) : null}
               </View>
@@ -1198,7 +1199,7 @@ export default function BillingScreen() {
           if (!conflict) return [];
           return (conflict.availableEmployees || []).map((emp) => ({
             id: emp.id,
-            label: emp.full_name || `${emp.first_name || ''} ${emp.middle_name || ''} ${emp.last_name || ''}`.trim() || emp.email || String(emp.id),
+            label: formatPersonName(emp, emp.email || String(emp.id)),
             subtitle: t(`role_${emp.role || ROLE.WORKER}`, emp.role || ROLE.WORKER),
           }));
         })()}
@@ -1221,7 +1222,7 @@ export default function BillingScreen() {
           });
           return Array.from(available.values()).map((emp) => ({
             id: emp.id,
-            label: emp.full_name || `${emp.first_name || ''} ${emp.middle_name || ''} ${emp.last_name || ''}`.trim() || emp.email || String(emp.id),
+            label: formatPersonName(emp, emp.email || String(emp.id)),
             subtitle: t(`role_${emp.role || ROLE.WORKER}`, emp.role || ROLE.WORKER),
           }));
         })()}

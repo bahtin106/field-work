@@ -7,6 +7,7 @@ import Screen from '../../../components/layout/Screen';
 import Card from '../../../components/ui/Card';
 import { ADMIN_PAGE_SIZE } from '../../../constants/admin';
 import { useRequireSuperAdmin } from '../../../hooks/useRequireSuperAdmin';
+import { formatPersonName } from '../../../lib/personName';
 import { supabase } from '../../../lib/supabase';
 import { useTranslation } from '../../../src/i18n/useTranslation';
 import { hasDisplayValue } from '../../../src/shared/display/value';
@@ -77,7 +78,7 @@ export default function AdminUsersScreen() {
           <Card key={row.profile_id} style={styles(theme).card} padded={false}>
             <Pressable style={styles(theme).row} onPress={() => router.push(`/users/${row.profile_id}`)}>
               <View style={styles(theme).rowLeft}>
-                <Text style={styles(theme).name}>{row.full_name || row.email || row.profile_id}</Text>
+                <Text style={styles(theme).name}>{formatPersonName(row, row.email || row.profile_id)}</Text>
                 {hasDisplayValue(row.email) ? (
                   <Text style={styles(theme).meta}>{row.email}</Text>
                 ) : null}

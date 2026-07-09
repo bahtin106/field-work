@@ -1,6 +1,7 @@
 import { onlineManager, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { formatPersonNameParts } from '../../../lib/personName';
 import { queryKeys } from '../../shared/query/queryKeys';
 import { getEmployeeById, listDepartments, listEmployees, updateEmployeeProfile } from './api';
 import {
@@ -193,7 +194,7 @@ export function updateEmployeeQueryCaches(queryClient: any, employeeId: any, pat
     const firstName = patch.firstName ?? patch.first_name ?? merged.firstName ?? merged.first_name ?? '';
     const middleName = patch.middleName ?? patch.middle_name ?? merged.middleName ?? merged.middle_name ?? '';
     const lastName = patch.lastName ?? patch.last_name ?? merged.lastName ?? merged.last_name ?? '';
-    const computedFullName = [firstName, middleName, lastName].filter(Boolean).join(' ').trim();
+    const computedFullName = formatPersonNameParts({ firstName, middleName, lastName });
     const explicitFullName = patch.fullName ?? patch.full_name;
     const fullName = explicitFullName ?? (computedFullName || merged.fullName || merged.full_name || null);
     return {

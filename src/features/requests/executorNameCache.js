@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../../../lib/supabase';
+import { formatPersonName, formatPersonNameParts } from '../../../lib/personName';
 
 const EXECUTOR_NAME_CACHE = (globalThis.EXECUTOR_NAME_CACHE ||= new Map());
 const EXECUTOR_NAME_INFLIGHT = (globalThis.EXECUTOR_NAME_INFLIGHT ||= new Map());
@@ -142,19 +143,7 @@ export async function hydrateExecutorNameCache() {
 
 function joinExecutorName(obj) {
   if (!obj || typeof obj !== 'object') return '';
-  const fromParts = [obj.first_name, obj.middle_name, obj.last_name]
-    .map((part) => String(part || '').trim())
-    .filter(Boolean)
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (fromParts) return fromParts;
-  return (
-    String(obj.full_name || '').trim() ||
-    String(obj.display_name || '').trim() ||
-    String(obj.name || '').trim() ||
-    String(obj.email || '').trim()
-  );
+  return formatPersonName(obj, obj.email || '');
 }
 
 function readDirectExecutorName(row) {
@@ -183,7 +172,8 @@ function readDirectExecutorName(row) {
     [row?.worker_first_name, row?.worker_middle_name, row?.worker_last_name],
   ];
   for (const triple of triples) {
-    const name = triple.map((part) => String(part || '').trim()).filter(Boolean).join(' ').trim();
+    const [firstName, middleName, lastName] = triple;
+    const name = formatPersonNameParts({ firstName, middleName, lastName });
     if (name) return name;
   }
 

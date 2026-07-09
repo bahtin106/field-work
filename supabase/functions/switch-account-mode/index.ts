@@ -90,7 +90,6 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
   const authoritativeUser = adminUser?.id ? adminUser : user;
   const currentMetadata = authoritativeUser.user_metadata || user.user_metadata || {};
   const currentMode = text(currentMetadata?.account_type).toLowerCase() === 'solo' ? 'solo' : 'company';
-  if (currentMode === targetMode) return json({ success: true, account_type: currentMode, changed: false });
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('profiles')
@@ -289,35 +288,41 @@ export async function handleSwitchAccountModeRequest(req: Request): Promise<Resp
   }
 
   const metadata = { ...currentMetadata, account_type: targetMode };
-  const { error: updateUserError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
-    user_metadata: metadata,
-  });
-  if (updateUserError) {
-    console.error('[switch-account-mode] UPDATE_USER_METADATA_FAILED', {
-      company_id: companyId,
-      actor_user_id: user.id,
-      target_mode: targetMode,
-      error: updateUserError,
+  let metadataSyncFailed = false;
+  let metadataSyncError: string | null = null;
+
+  if (currentMode !== targetMode) {
+    const { error: updateUserError } = await supabaseAdmin.auth.admin.updateUserById(user.id, {
+      user_metadata: metadata,
     });
-    if (targetMode === 'solo') {
-      return json({
-        success: true,
-        changed: true,
-        account_type: targetMode,
-        details: {
-          ...(switchDetails || {}),
-          metadata_sync_failed: true,
-          metadata_sync_error: updateUserError.message || null,
-        },
+    if (updateUserError) {
+      console.error('[switch-account-mode] UPDATE_USER_METADATA_FAILED', {
+        company_id: companyId,
+        actor_user_id: user.id,
+        target_mode: targetMode,
+        error: updateUserError,
       });
+      if (targetMode === 'solo') {
+        metadataSyncFailed = true;
+        metadataSyncError = updateUserError.message || null;
+      } else {
+        return fail(updateUserError.message || 'Unable to update account mode', 'UPDATE_USER_METADATA_FAILED', 500);
+      }
     }
-    return fail(updateUserError.message || 'Unable to update account mode', 'UPDATE_USER_METADATA_FAILED', 500);
   }
 
   return json({
     success: true,
-    changed: true,
+    changed: currentMode !== targetMode,
     account_type: targetMode,
-    details: switchDetails,
+    details: {
+      ...(switchDetails || {}),
+      ...(metadataSyncFailed
+        ? {
+            metadata_sync_failed: true,
+            metadata_sync_error: metadataSyncError,
+          }
+        : {}),
+    },
   });
 }

@@ -9,8 +9,6 @@ const SUPABASE_URL =
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 const PUSH_WORKER_KEY = Deno.env.get('PUSH_WORKER_KEY') || '';
 const PUSH_ANDROID_CHANNEL_ID = Deno.env.get('PUSH_ANDROID_CHANNEL_ID') || 'app-notify';
-const PUSH_ANDROID_ICON = Deno.env.get('PUSH_ANDROID_ICON') || '';
-const PUSH_ANDROID_COLOR = Deno.env.get('PUSH_ANDROID_COLOR') || '#0A84FF';
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -94,7 +92,6 @@ type PushTokenRow = {
 type OrderNotificationContext = {
   assigned_to: string | null;
   created_by_user_id: string | null;
-  updated_by: string | null;
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -277,7 +274,7 @@ async function fetchOrderNotificationContext(orderId: string): Promise<OrderNoti
   try {
     const { data, error } = await sb
       .from('orders')
-      .select('assigned_to, created_by_user_id, updated_by')
+      .select('assigned_to, created_by_user_id')
       .eq('id', normalizedOrderId)
       .limit(1)
       .maybeSingle();
@@ -315,9 +312,8 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
       }
 
       const orderContext = await fetchOrderNotificationContext(event.order_id);
-      const orderUpdatedById = normalizedId(orderContext?.updated_by);
       const orderAssignedToId = normalizedId(orderContext?.assigned_to);
-      if (recipientId && recipientId === orderUpdatedById && (!orderAssignedToId || recipientId === orderAssignedToId)) {
+      if (recipientId && orderAssignedToId && recipientId !== orderAssignedToId) {
         return [];
       }
     }
@@ -338,7 +334,6 @@ async function resolveRecipients(event: NotificationEvent): Promise<string[]> {
   const orderRow = await fetchOrderNotificationContext(event.order_id);
   if (orderRow) {
     excluded.add(normalizedId(orderRow.created_by_user_id));
-    excluded.add(normalizedId(orderRow.updated_by));
   }
   excluded.delete('');
 
@@ -464,7 +459,11 @@ async function sendChunk(messages: unknown[]) {
     },
     body: JSON.stringify(messages),
   });
-  if (!res.ok) throw new Error(`Expo push responded ${res.status}`);
+  if (!res.ok) {
+    const details = await res.text().catch(() => '');
+    const suffix = details ? `: ${details.slice(0, 700)}` : '';
+    throw new Error(`Expo push responded ${res.status}${suffix}`);
+  }
   const data = (await res.json()) as { data?: unknown[] };
   return Array.isArray(data.data) ? data.data : [];
 }
@@ -482,7 +481,6 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
   const text = await getEventText(event);
   const feedbackId = String((event.payload as any)?.feedback_id || event.order_id || '').trim();
   const isSupportFeedback = event.event_type === 'support_feedback_new';
-  const androidIcon = String(PUSH_ANDROID_ICON || '').trim();
   const messages = valid.map((row) => ({
     to: row.token,
     title: text.title,
@@ -509,8 +507,6 @@ async function sendEventPush(event: NotificationEvent, tokenRows: PushTokenRow[]
         },
     sound: 'default' as const,
     channelId: PUSH_ANDROID_CHANNEL_ID,
-    ...(androidIcon ? { icon: androidIcon } : {}),
-    color: PUSH_ANDROID_COLOR,
     priority: 'high' as const,
     ttl: 60,
     expiration: Math.floor(Date.now() / 1000) + 60,

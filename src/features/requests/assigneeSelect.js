@@ -1,11 +1,8 @@
+import { formatPersonName } from '../../../lib/personName';
 import { buildSearchIndex } from '../../shared/search/matching';
 
 function resolveName(user, fallbackNoName) {
-  const fullName = [user?.first_name, user?.middle_name, user?.last_name]
-    .filter(Boolean)
-    .join(' ')
-    .trim();
-  return fullName || String(user?.email || user?.display_name || fallbackNoName || '').trim();
+  return formatPersonName(user, user?.email || fallbackNoName || '');
 }
 
 function resolveRoleLabel(t, role) {

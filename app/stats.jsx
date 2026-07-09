@@ -27,6 +27,7 @@ import { useCompanySettings } from '../hooks/useCompanySettings';
 import { usePermissions } from '../lib/permissions';
 import { formatCurrencyWithOptions } from '../lib/currency';
 import { getStatusDbAliases } from '../lib/orderFilters';
+import { formatPersonName } from '../lib/personName';
 import { supabase } from '../lib/supabase';
 import { useTranslation } from '../src/i18n/useTranslation';
 import { useScreenRefreshRegistration } from '../src/shared/query/screenRefreshRegistry';
@@ -508,14 +509,15 @@ function StatsScreenContent() {
     const uid = auth.user.id;
     const { data: prof, error } = await supabase
       .from('profiles')
-      .select('id, role, full_name, company_id')
+      .select('id, role, first_name, middle_name, last_name, full_name, company_id')
       .eq('id', uid)
       .single();
     if (error) throw error;
-    setMe(prof);
+    const normalizedMe = prof ? { ...prof, full_name: formatPersonName(prof) || prof.full_name } : prof;
+    setMe(normalizedMe);
     setRole(prof.role);
-    setSelectedUserId(prof.id);
-    setSelectedUser(prof);
+    setSelectedUserId(normalizedMe.id);
+    setSelectedUser(normalizedMe);
   }, []);
 
   // Load users (for managers)
@@ -526,11 +528,14 @@ function StatsScreenContent() {
     }
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, full_name, role')
+      .select('id, first_name, middle_name, last_name, full_name, role')
       .eq('company_id', me.company_id)
       .order('full_name', { ascending: true });
     if (error) throw error;
-    const rows = data || [];
+    const rows = (data || []).map((row) => ({
+      ...row,
+      full_name: formatPersonName(row) || row.full_name,
+    }));
     setUsers([{ id: 'ALL', full_name: t('stats_all_employees'), role: 'all' }, ...rows]);
   }, [canViewFinanceStatsAll, isManager, me?.company_id, t]);
 
@@ -646,7 +651,7 @@ function StatsScreenContent() {
         const { data: entries } = await supabase
           .from('order_finance_entries')
           .select(
-            'kind, calculated_amount, recipient_user_id, recipient:profiles!order_finance_entries_recipient_user_id_fkey(full_name)',
+            'kind, calculated_amount, recipient_user_id, recipient:profiles!order_finance_entries_recipient_user_id_fkey(first_name, middle_name, last_name, full_name)',
           )
           .in('order_id', orderIds);
         const grouped = new Map();
@@ -655,7 +660,7 @@ function StatsScreenContent() {
           const key = String(entry?.recipient_user_id || 'no_recipient');
           const prev = grouped.get(key) || {
             key,
-            name: entry?.recipient?.full_name || t('stats_no_recipient'),
+            name: formatPersonName(entry?.recipient, t('stats_no_recipient')),
             amount: 0,
           };
           prev.amount += Number(entry?.calculated_amount || 0) || 0;

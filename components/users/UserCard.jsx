@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { formatPersonName } from '../../lib/personName';
 import { withAlpha } from '../../theme/colors';
 import { useTheme } from '../../theme/ThemeProvider';
 
@@ -129,9 +130,8 @@ function UserCardContent({
   );
 
   const fullName =
+    formatPersonName(item) ||
     (item.display_name || '').trim() ||
-    `${item.first_name || ''} ${item.middle_name || ''} ${item.last_name || ''}`.trim() ||
-    item.full_name ||
     '';
 
   const isAdminBlocked =

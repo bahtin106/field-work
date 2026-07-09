@@ -1,4 +1,5 @@
 import { supabase } from '../../../lib/supabase';
+import { formatPersonNameParts } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
 const employeeByIdInFlight = new Map<string, Promise<any>>();
@@ -61,7 +62,7 @@ function normalizeEmployee(row: any) {
   const first_name = row?.first_name ?? row?.firstName ?? '';
   const last_name = row?.last_name ?? row?.lastName ?? '';
   const middle_name = row?.middle_name ?? row?.middleName ?? '';
-  const nameParts = `${first_name} ${middle_name} ${last_name}`.trim();
+  const nameParts = formatPersonNameParts({ first_name, middle_name, last_name });
   const full_name_raw = nameParts || (row?.full_name ?? row?.fullName ?? '').trim() || null;
 
   const avatar_url = row?.avatar_url ?? row?.avatarUrl ?? null;

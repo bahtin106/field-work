@@ -195,7 +195,7 @@ export default function NewClientScreen() {
   const canManageAvatar = fieldUi.isVisible('avatar_url');
   const clientInitials = React.useMemo(
     () =>
-      `${String(firstName || '').trim().slice(0, 1)}${String(lastName || '').trim().slice(0, 1)}`.toUpperCase() || '+',
+      `${String(lastName || '').trim().slice(0, 1)}${String(firstName || '').trim().slice(0, 1)}`.toUpperCase() || '+',
     [firstName, lastName],
   );
   const enabledAdditionalPhoneSlots = React.useMemo(
@@ -221,7 +221,7 @@ export default function NewClientScreen() {
     'additional_phone_3',
   ]);
   const orderedPersonalFieldKeys = React.useMemo(
-    () => ['first_name', 'middle_name', 'last_name', 'comment'].filter((fieldKey) => fieldUi.isVisible(fieldKey)),
+    () => ['last_name', 'first_name', 'middle_name', 'comment'].filter((fieldKey) => fieldUi.isVisible(fieldKey)),
     [fieldUi],
   );
   const orderedContactFieldKeys = React.useMemo(

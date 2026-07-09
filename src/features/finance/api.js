@@ -23,7 +23,7 @@ const ORDER_FINANCE_SELECT = `
   sort_order,
   created_at,
   updated_at,
-  recipient:profiles!order_finance_entries_recipient_user_id_fkey(id, full_name)
+  recipient:profiles!order_finance_entries_recipient_user_id_fkey(id, first_name, middle_name, last_name, full_name)
 `;
 
 const FINANCE_RULE_SELECT = `

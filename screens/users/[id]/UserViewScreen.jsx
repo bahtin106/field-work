@@ -25,6 +25,7 @@ import LabelValueRow from '../../../components/ui/LabelValueRow';
 import ListSeparator from '../../../components/ui/ListSeparator';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { useAuthContext } from '../../../providers/SimpleAuthProvider';
+import { formatPersonInitials, formatPersonNameParts } from '../../../lib/personName';
 import { pluralizeRu } from '../../../lib/pluralize';
 import {
   ENTITY_FIELD_TYPES,
@@ -227,10 +228,7 @@ export default function UserView() {
     }
   }, [phone, t, toast]);
 
-  const initials =
-    `${(firstName || '').trim().slice(0, 1)}${(lastName || '').trim().slice(0, 1)}${(middleName || '').trim().slice(0, 1)}`
-      .slice(0, 2)
-      .toUpperCase();
+  const initials = formatPersonInitials({ firstName, middleName, lastName });
   const statusColor = isBlocked ? theme.colors.danger : theme.colors.success;
 
   const parsePgTs = React.useCallback((ts) => {
@@ -412,7 +410,7 @@ export default function UserView() {
             label={t('view_label_name')}
             value={
               firstName || middleName || lastName
-                ? `${firstName || ''} ${middleName || ''} ${lastName || ''}`.replace(/\s+/g, ' ').trim()
+                ? formatPersonNameParts({ firstName, middleName, lastName })
                 : ''
             }
           />

@@ -1,5 +1,6 @@
 import { useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { useCallback, useEffect, useRef } from 'react';
+import { getLastPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import logger from '../../lib/logger';
 
 export default function AuthNavigator({ isLoggedIn, onNavigationComplete }) {
@@ -28,7 +29,7 @@ export default function AuthNavigator({ isLoggedIn, onNavigationComplete }) {
       navigationAttempts.current += 1;
       logger.warn(`Navigation attempt ${navigationAttempts.current}`);
 
-      const target = isLoggedIn ? '/orders' : '/(auth)/login';
+      const target = isLoggedIn ? '/orders' : getLastPublicAuthRoute('/(auth)/login');
       await router.replace(target);
 
       logger.warn('Navigation successful');

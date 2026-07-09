@@ -51,6 +51,7 @@ import { clamp, getMonthWeeks } from '../../hooks/useCalendarLogic';
 import goBackSmart from '../../lib/navigation/goBackSmart';
 import dismissToRoute from '../../lib/navigation/dismissToRoute';
 import { usePermissions } from '../../lib/permissions';
+import { formatPersonName } from '../../lib/personName';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -490,8 +491,7 @@ function CalendarScreenContent() {
         .map((row) => {
           const id = String(row?.id || '').trim();
           if (!id) return null;
-          const fullName =
-            `${String(row?.first_name || '').trim()} ${String(row?.middle_name || '').trim()} ${String(row?.last_name || '').trim()}`.trim();
+          const fullName = formatPersonName(row);
           return {
             id,
             label: fullName || String(row?.full_name || row?.email || '').trim() || id,

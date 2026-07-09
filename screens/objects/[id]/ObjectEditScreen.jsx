@@ -1362,7 +1362,7 @@ export default function EditObjectScreen() {
                 {draft.name || t('objects_unnamed')}
               </Text>
               <Text style={styles.clientName} numberOfLines={2} ellipsizeMode="tail">
-                {`${t('routes_clients_client')}: ${clientData?.full_name || objectItem?.client?.full_name || '-'}`}
+                {`${t('routes_clients_client')}: ${clientData?.fullName || objectItem?.client?.fullName || objectItem?.client?.full_name || '-'}`}
               </Text>
             </View>
           </View>

@@ -34,6 +34,7 @@ import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_COD
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useDepartments as useDepartmentsHook } from '../../components/hooks/useDepartments';
 import { usePermissions } from '../../lib/permissions';
+import { formatPersonName } from '../../lib/personName';
 import { supabase } from '../../lib/supabase';
 import { fetchWorkTypes, getMyCompanyId } from '../../lib/workTypes';
 import {
@@ -1532,7 +1533,7 @@ function CreateOrderContent() {
     if (!assigneeId) return null;
     const u = users.find((x) => String(x?.id || '') === String(assigneeId || ''));
     return (
-      [u?.first_name, u?.middle_name, u?.last_name].filter(Boolean).join(' ') ||
+      formatPersonName(u) ||
       t('create_order_executor_selected')
     );
   }, [assigneeId, users, t]);

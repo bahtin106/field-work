@@ -33,6 +33,7 @@ import {
 import { useCompanySettings } from '../../hooks/useCompanySettings';
 import { useMyCompanyId } from '../../hooks/useMyCompanyId';
 import goBackSmart from '../../lib/navigation/goBackSmart';
+import { formatPersonName } from '../../lib/personName';
 import { shouldShowOrderPhoneForRole } from '../../lib/phoneVisibilityRules';
 import {
   getOrderIdsByWorkTypes,
@@ -549,7 +550,7 @@ function MyOrdersContent() {
           const id = String(row?.id || '').trim();
           if (!id) return null;
           const label =
-            [row?.first_name, row?.middle_name, row?.last_name].filter(Boolean).join(' ').trim() ||
+            formatPersonName(row) ||
             String(row?.full_name || '').trim() ||
             String(row?.phone || '').trim() ||
             id;
