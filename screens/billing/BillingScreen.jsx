@@ -44,6 +44,7 @@ import { supabase } from '../../lib/supabase';
 import { STORAGE_LIMITS } from '../../lib/constants';
 import { listItemStyles } from '../../components/ui/listItemStyles';
 import { useDepartmentsQuery, useEmployees } from '../../src/features/employees/queries';
+import { isNoDepartmentFilterId } from '../../src/features/employees/departments';
 import { joinFilterSummary, summarizeFilterPart } from '../../src/shared/filters/summary';
 import { useScreenRefreshRegistration } from '../../src/shared/query/screenRefreshRegistry';
 import { buildSearchIndex, matchesSearch } from '../../src/shared/search/matching';
@@ -486,7 +487,8 @@ export default function BillingScreen() {
         : [];
       if (useDepartments && deps.length > 0) {
         const current = m.department_id != null ? String(m.department_id) : null;
-        if (!current || !deps.includes(current)) return false;
+        const matchesNoDepartment = current == null && deps.some(isNoDepartmentFilterId);
+        if (!matchesNoDepartment && (!current || !deps.includes(current))) return false;
       }
       const roles = Array.isArray(manageFilters.values.roles) ? manageFilters.values.roles : [];
       if (roles.length > 0 && !roles.includes(m.role)) return false;
@@ -839,10 +841,16 @@ export default function BillingScreen() {
   const filterSummary = React.useMemo(() => {
     const parts = [];
     if (useDepartments && (manageFilters.values.departments || []).length > 0) {
+      const departmentNames = manageFilters.values.departments
+        .map((id) => {
+          if (isNoDepartmentFilterId(id)) return t('placeholder_department');
+          return departmentNameById.get(String(id)) || null;
+        })
+        .filter(Boolean);
       parts.push(
         summarizeFilterPart({
           label: t('users_department'),
-          values: manageFilters.values.departments,
+          values: departmentNames,
         }),
       );
     }
@@ -857,7 +865,7 @@ export default function BillingScreen() {
     if (manageFilters.values.suspended === true) parts.push(t('status_suspended'));
     if (manageFilters.values.suspended === false) parts.push(t('status_active'));
     return joinFilterSummary(parts, t('common_bullet'));
-  }, [manageFilters.values.departments, manageFilters.values.roles, manageFilters.values.suspended, t, useDepartments]);
+  }, [departmentNameById, manageFilters.values.departments, manageFilters.values.roles, manageFilters.values.suspended, t, useDepartments]);
 
   if (isRoleResolved && !isAdmin) {
     return null;
@@ -1246,6 +1254,7 @@ export default function BillingScreen() {
         visible={manageFilters.visible}
         onClose={closeManageFilters}
         departments={useDepartments ? departments : []}
+        includeNoDepartment={useDepartments}
         rolesOptions={roleOptions(t)}
         showSearchCategory={false}
         values={manageFilters.values}

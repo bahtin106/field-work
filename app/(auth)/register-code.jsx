@@ -6,6 +6,7 @@ import { Keyboard, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedb
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Button from '../../components/ui/Button';
+import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { FUNCTIONS } from '../../lib/constants';
 import { logClientError } from '../../lib/errorLogsClient';
 import { supabase } from '../../lib/supabase';
@@ -498,10 +499,19 @@ export default function RegisterCodeScreen() {
         throw new Error(t('register_code_invalid'));
       }
 
+      const defaultFirstName = t('register_default_first_name');
+      const defaultLastName = t('register_default_last_name');
+      const draftFirstName = String(draft?.first_name || '').trim();
+      const draftLastName = String(draft?.last_name || '').trim();
+      const hasLegacyDefaultName =
+        (draftFirstName === 'User' || draftFirstName === 'Пользователь') &&
+        draftLastName === 'Monitor';
+      const registrationFirstName = hasLegacyDefaultName ? defaultFirstName : draftFirstName || defaultFirstName;
+      const registrationLastName = hasLegacyDefaultName ? defaultLastName : draftLastName || defaultLastName;
       const fullName =
-        String(`${draft?.last_name || ''} ${draft?.first_name || ''}`.trim() || draft?.full_name || '')
+        String(`${registrationLastName} ${registrationFirstName}`.trim() || draft?.full_name || '')
           .replace(/\s+/g, ' ')
-          .trim() || 'User Monitor';
+          .trim() || `${defaultLastName} ${defaultFirstName}`;
 
       const { data: body, error: registerError } = await supabase.functions.invoke(
         FUNCTIONS.REGISTER_USER,
@@ -510,8 +520,8 @@ export default function RegisterCodeScreen() {
             email: normalizedEmail,
             password: String(draft.password),
             registration_token: String(verifyData.registration_token || ''),
-            first_name: String(draft?.first_name || 'User'),
-            last_name: String(draft?.last_name || 'Monitor'),
+            first_name: registrationFirstName,
+            last_name: registrationLastName,
             full_name: fullName,
             account_type: 'solo',
             company_name: null,
@@ -646,7 +656,12 @@ export default function RegisterCodeScreen() {
             </Text>
           </Pressable>
 
-            <Pressable onPress={() => router.replace('/(auth)/login')}>
+            <Pressable
+              onPress={() => {
+                resetPublicAuthRoute();
+                router.replace('/(auth)/login');
+              }}
+            >
               <Text style={styles.loginLink}>{t('btn_login')}</Text>
             </Pressable>
           </View>

@@ -1,5 +1,5 @@
 // components/ui/Button.jsx
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
@@ -21,10 +21,23 @@ export default function Button({
   style,
 }) {
   const { theme } = useTheme();
+  const [autoLoading, setAutoLoading] = useState(false);
+  const mountedRef = useRef(true);
+  const pressLockedRef = useRef(false);
 
   // iOS-like press animation: quick compress + subtle dim, spring back
   const scale = useRef(new Animated.Value(1)).current;
   const opacity = useRef(new Animated.Value(1)).current;
+  const busy = !!loading || autoLoading;
+  const isDisabled = !!disabled || busy;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      pressLockedRef.current = false;
+    };
+  }, []);
 
   const onPressIn = () => {
     Animated.parallel([
@@ -72,7 +85,7 @@ export default function Button({
         opacity.setValue(1);
       } catch {}
     };
-  }, [opacity, scale, disabled, loading]);
+  }, [opacity, scale, isDisabled]);
 
   // ---- tokens from theme.components.button ----
   const buttonTokens = theme?.components?.button || {};
@@ -111,10 +124,26 @@ export default function Button({
 
   const palette = palettes[variant] || palettes.primary;
   const sizes = sizesMap[size] || sizesMap.md;
+  const spinnerColor = palette.fg;
 
-  const s = styles(theme, palette, sizes, disabled || loading);
+  const s = styles(theme, palette, sizes, isDisabled);
   const handlePress = () => {
-    onPress?.();
+    if (isDisabled || pressLockedRef.current) return;
+    const result = onPress?.();
+    if (result && typeof result.then === 'function') {
+      pressLockedRef.current = true;
+      setAutoLoading(true);
+      Promise.resolve(result).then(
+        () => {
+          pressLockedRef.current = false;
+          if (mountedRef.current) setAutoLoading(false);
+        },
+        () => {
+          pressLockedRef.current = false;
+          if (mountedRef.current) setAutoLoading(false);
+        },
+      );
+    }
   };
 
   return (
@@ -125,14 +154,24 @@ export default function Button({
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       pressRetentionOffset={{ top: 20, bottom: 20, left: 20, right: 20 }}
       accessibilityRole="button"
-      accessibilityState={{ disabled: !!(disabled || loading), busy: !!loading }}
-      disabled={disabled || loading}
+      accessibilityLabel={title}
+      accessibilityState={{ disabled: isDisabled, busy }}
+      disabled={isDisabled}
       onPressIn={onPressIn}
       onPressOut={onPressOut}
     >
       <Animated.View style={[{ transform: [{ scale }], opacity }, s.btn, style]}>
-        {loading ? (
-          <ActivityIndicator />
+        {busy ? (
+          <>
+            <Text numberOfLines={1} style={[s.title, s.hiddenTitle]}>
+              {title}
+            </Text>
+            <ActivityIndicator
+              size="small"
+              color={spinnerColor}
+              style={s.spinner}
+            />
+          </>
         ) : (
           <Text numberOfLines={1} style={s.title}>
             {title}
@@ -169,5 +208,12 @@ const styles = (t, p, sz, disabled) =>
       color: disabled ? p.fg + 'CC' : p.fg,
       fontSize: sz.f,
       fontWeight: t.typography.weight.semibold,
+    },
+    hiddenTitle: {
+      opacity: 0,
+    },
+    spinner: {
+      position: 'absolute',
+      alignSelf: 'center',
     },
   });

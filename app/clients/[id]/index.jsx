@@ -1,11 +1,11 @@
 import React from 'react';
-import { Image as ExpoImage } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AppHeader from '../../../components/navigation/AppHeader';
+import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import Card from '../../../components/ui/Card';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
@@ -120,6 +120,7 @@ export default function ClientViewScreen() {
     [canViewClientPhones, fieldUi, hasPersistedClientFieldValue],
   );
   const canShowAvatarImage = isClientFieldVisible('avatar_url');
+  const clientAvatarUrl = client?.avatarDisplayUrl || client?.avatarUrl || null;
   const additionalPhones = React.useMemo(() => getClientAdditionalPhones(client), [client]);
   const visibleAdditionalPhones = React.useMemo(
     () =>
@@ -233,20 +234,18 @@ export default function ClientViewScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.contentWrap}>
-        <View style={styles.avatarWrap}>
-          <View style={styles.avatarBox}>
-            {canShowAvatarImage && (client?.avatarDisplayUrl || client?.avatarUrl) ? (
-              <ExpoImage
-                source={{ uri: client?.avatarDisplayUrl || client?.avatarUrl }}
-                style={styles.avatarImg}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <Text style={styles.avatarText}>{getInitials(client)}</Text>
-            )}
-          </View>
-        </View>
+        <EntityPhotoPreview
+          imageUrl={canShowAvatarImage ? clientAvatarUrl : null}
+          previewUrl={canShowAvatarImage ? clientAvatarUrl : null}
+          title={t('profile_photo_title')}
+          fallback={getInitials(client)}
+          emptyLabel={t('placeholder_no_photo')}
+          containerStyle={styles.avatarWrap}
+          frameStyle={styles.avatarBox}
+          imageStyle={styles.avatarImg}
+          fallbackTextStyle={styles.avatarText}
+          accessibilityLabel={t('profile_photo_title')}
+        />
 
         <>
           {settings?.enable_client_tags && client?.tags?.length ? (

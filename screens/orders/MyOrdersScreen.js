@@ -50,6 +50,13 @@ import {
 } from '../../src/features/fieldSettings/catalog';
 import { useEntityFieldSettings } from '../../src/features/fieldSettings/queries';
 import {
+  ORDER_DEFAULT_SORT_KEY,
+  applyOrderSortToQuery,
+  getOrderSortOptions,
+  normalizeOrderSortKey,
+  sortOrders,
+} from '../../src/features/orders/orderSort';
+import {
   ensureRequestPrefetch,
   markRequestDetailSeed,
   useRequestExecutors,
@@ -120,6 +127,21 @@ const MY_ORDERS_STATUS_MORE_MIN_WIDTH = 70;
 const MY_ORDERS_STATUS_MORE_MAX_WIDTH = 84;
 const MY_ORDERS_STATUS_USAGE_STORAGE_PREFIX = 'orders.my.statusUsage.v1';
 const MY_ORDERS_STATUS_USAGE_MAX_ENTRIES = 32;
+const ORDER_FILTER_DEFAULTS = Object.freeze({
+  workTypes: [],
+  statuses: [],
+  clientIds: [],
+  departureDateFrom: null,
+  departureDateTo: null,
+  departureTimeFrom: null,
+  departureTimeTo: null,
+  createdDateFrom: null,
+  createdDateTo: null,
+  createdTimeFrom: null,
+  createdTimeTo: null,
+  sumMin: '',
+  sumMax: '',
+});
 const MY_ORDERS_LIST = Object.freeze({
   initialNumToRender: 8,
   maxToRenderPerBatch: 6,
@@ -366,22 +388,11 @@ function MyOrdersContent() {
     [theme, mutedColor],
   );
 
-  const ORDER_FILTER_DEFAULTS = {
-    workTypes: [],
-    statuses: [],
-    clientIds: [],
-    departureDateFrom: null,
-    departureDateTo: null,
-    departureTimeFrom: null,
-    departureTimeTo: null,
-    sumMin: '',
-    sumMax: '',
-  };
-
   function normalizeForFingerprint(values = {}) {
     const keys = Object.keys(values).sort();
     const normalized = {};
     keys.forEach((key) => {
+      if (key === 'executorId' || key === 'executorIds') return;
       const value = values[key];
       normalized[key] = Array.isArray(value) ? [...value].sort() : value;
     });
@@ -401,6 +412,10 @@ function MyOrdersContent() {
     screenKey: 'orders-my',
     defaults: ORDER_FILTER_DEFAULTS,
   });
+  const filterPanelValues = useMemo(
+    () => ({ ...filters.values, executorId: null, executorIds: [] }),
+    [filters.values],
+  );
 
   const setFilterValue = filters.setValue;
   const selectedStatusFilters = filters.values?.statuses;
@@ -419,10 +434,6 @@ function MyOrdersContent() {
     }, [revalidateFilters]),
   );
 
-  const filtersFingerprint = useMemo(
-    () => JSON.stringify(normalizeForFingerprint(filters.values)),
-    [filters.values],
-  );
   const {
     seedFilter,
     seedSearch,
@@ -490,12 +501,17 @@ function MyOrdersContent() {
       seen.add(key);
       return { id: key, label: label || statusFilterLabels[key] || key };
     };
+    const leadingOptions = isSoloAdmin
+      ? [addOption('all', statusFilterLabels.all)]
+      : [
+          addOption('feed', statusFilterLabels.feed),
+          addOption('all', statusFilterLabels.all),
+        ];
     return [
-      addOption('feed', statusFilterLabels.feed),
-      addOption('all', statusFilterLabels.all),
+      ...leadingOptions,
       ...orderStatusOptions.map((option) => addOption(option?.id, option?.label)),
     ].filter(Boolean);
-  }, [orderStatusOptions, statusFilterLabels]);
+  }, [isSoloAdmin, orderStatusOptions, statusFilterLabels]);
   const statusChipLabels = useMemo(
     () => ({
       ...statusFilterLabels,
@@ -563,7 +579,24 @@ function MyOrdersContent() {
   const [workTypeOptions, setWorkTypeOptions] = useState([]);
   const [statusSelectVisible, setStatusSelectVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
-  const [sortKey, setSortKey] = useState('date_desc');
+  const [sortKey, setSortKey] = useState(ORDER_DEFAULT_SORT_KEY);
+  const normalizedSortKey = normalizeOrderSortKey(sortKey);
+  const listFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        filters: normalizeForFingerprint(filters.values),
+        sort: normalizedSortKey,
+      }),
+    [filters.values, normalizedSortKey],
+  );
+  const defaultListFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        filters: normalizeForFingerprint(ORDER_FILTER_DEFAULTS),
+        sort: normalizedSortKey,
+      }),
+    [normalizedSortKey],
+  );
   const hasSelectedWorkTypeFilters =
     Array.isArray(filters.values?.workTypes) && filters.values.workTypes.length > 0;
   const shouldLoadWorkTypeOptions =
@@ -606,6 +639,10 @@ function MyOrdersContent() {
       departureDateTo,
       departureTimeFrom,
       departureTimeTo,
+      createdDateFrom,
+      createdDateTo,
+      createdTimeFrom,
+      createdTimeTo,
       sumMin,
       sumMax,
     } = filters.values;
@@ -650,7 +687,6 @@ function MyOrdersContent() {
         );
       }
     }
-
     const formatDate = (value) => {
       if (!value) return null;
       const parsed = new Date(value);
@@ -662,6 +698,14 @@ function MyOrdersContent() {
       const fromLabel = formatDate(departureDateFrom) || '-';
       const toLabel = formatDate(departureDateTo) || '-';
       const part = t('order_field_departure_date') + ': ' + fromLabel + ' - ' + toLabel;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
+    if (createdDateFrom || createdDateTo) {
+      const fromLabel = formatDate(createdDateFrom) || '-';
+      const toLabel = formatDate(createdDateTo) || '-';
+      const part = t('orders_filter_created_date') + ': ' + fromLabel + ' - ' + toLabel;
       fullParts.push(part);
       compactParts.push(part);
     }
@@ -681,6 +725,14 @@ function MyOrdersContent() {
       const fromLabel = formatTime(departureTimeFrom) || '-';
       const toLabel = formatTime(departureTimeTo) || '-';
       const part = t('order_field_departure_time') + ': ' + fromLabel + ' - ' + toLabel;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
+    if (createdTimeFrom || createdTimeTo) {
+      const fromLabel = formatTime(createdTimeFrom) || '-';
+      const toLabel = formatTime(createdTimeTo) || '-';
+      const part = t('orders_filter_created_time') + ': ' + fromLabel + ' - ' + toLabel;
       fullParts.push(part);
       compactParts.push(part);
     }
@@ -729,6 +781,10 @@ function MyOrdersContent() {
   const statusUsageAllowedIds = useMemo(
     () => statusFilterOptions.map((option) => normalizeMyOrdersStatusFilter(option?.id)).filter(Boolean),
     [statusFilterOptions],
+  );
+  const statusAlwaysVisibleKeys = useMemo(
+    () => MY_ORDERS_STATUS_ALWAYS_VISIBLE.filter((key) => statusUsageAllowedIds.includes(key)),
+    [statusUsageAllowedIds],
   );
   const [statusUsage, setStatusUsage] = useState({});
   const statusUsageRef = useRef({});
@@ -801,8 +857,8 @@ function MyOrdersContent() {
     [],
   );
   const defaultListCacheKey = useMemo(
-    () => makeCacheKey('all', filtersFingerprint, relationFingerprint),
-    [filtersFingerprint, makeCacheKey, relationFingerprint],
+    () => makeCacheKey('all', listFingerprint, relationFingerprint),
+    [listFingerprint, makeCacheKey, relationFingerprint],
   );
 
   const [orders, setOrders] = useState(() => {
@@ -817,13 +873,14 @@ function MyOrdersContent() {
     return [];
   });
   const [filter, setFilter] = useState('all');
-  const activeStatusFilter = normalizeMyOrdersStatusFilter(filter);
+  const rawStatusFilter = normalizeMyOrdersStatusFilter(filter);
+  const activeStatusFilter = statusUsageAllowedIds.includes(rawStatusFilter) ? rawStatusFilter : 'all';
   const isFeedFeatureEnabled = !isSoloAdmin;
-  const effectiveFilter = isSoloAdmin ? 'all' : activeStatusFilter;
+  const effectiveFilter = activeStatusFilter;
   const recordStatusFilterUsage = useCallback(
     (nextFilter) => {
       const key = normalizeMyOrdersStatusFilter(nextFilter);
-      if (!key || MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key)) return;
+      if (!key || statusAlwaysVisibleKeys.includes(key)) return;
       if (!statusUsageAllowedIds.includes(key)) return;
       const now = Date.now();
       const currentUsage = statusUsageRef.current || {};
@@ -844,7 +901,7 @@ function MyOrdersContent() {
         ).catch(() => {});
       } catch {}
     },
-    [statusUsageAllowedIds, statusUsageStorageKey],
+    [statusAlwaysVisibleKeys, statusUsageAllowedIds, statusUsageStorageKey],
   );
   const statusSelectOptions = useMemo(
     () => rankStatusFilterOptions(statusFilterOptions, statusUsage),
@@ -853,16 +910,16 @@ function MyOrdersContent() {
   const orderedStatusQuickKeys = useMemo(() => {
     const rankedStatuses = rankStatusFilterOptions(
       statusFilterOptions.filter(
-        (option) => !MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(normalizeMyOrdersStatusFilter(option?.id)),
+        (option) => !statusAlwaysVisibleKeys.includes(normalizeMyOrdersStatusFilter(option?.id)),
       ),
       statusUsage,
     ).map((option) => normalizeMyOrdersStatusFilter(option?.id));
 
     return [
-      ...MY_ORDERS_STATUS_ALWAYS_VISIBLE,
+      ...statusAlwaysVisibleKeys,
       ...rankedStatuses.filter(Boolean),
     ];
-  }, [statusFilterOptions, statusUsage]);
+  }, [statusAlwaysVisibleKeys, statusFilterOptions, statusUsage]);
   const statusQuickLayout = useMemo(() => {
     const availableWidth = Math.max(0, Number(windowWidth || 0) - 32 - MY_ORDERS_STATUS_BAR_PADDING * 2);
     const reservedMoreWidth = MY_ORDERS_STATUS_MORE_MIN_WIDTH;
@@ -894,7 +951,7 @@ function MyOrdersContent() {
     orderedStatusQuickKeys.forEach((key) => {
       addChip(key, {
         active: activeStatusFilter === key,
-        force: MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key),
+        force: statusAlwaysVisibleKeys.includes(key),
       });
     });
 
@@ -914,7 +971,7 @@ function MyOrdersContent() {
             ? MY_ORDERS_STATUS_CHIP_STRETCH_MAX_WIDTH
             : MY_ORDERS_STATUS_CHIP_ACTIVE_MAX_WIDTH,
       });
-      if (MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key)) {
+      if (statusAlwaysVisibleKeys.includes(key)) {
         return Math.max(widths[key] || 0, fullWidth);
       }
       return Math.max(widths[key] || 0, fullWidth + (activeStatusFilter === key ? 8 : 4));
@@ -922,8 +979,8 @@ function MyOrdersContent() {
 
     const stretchOrder = [
       activeStatusFilter,
-      ...selected.filter((key) => !MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key) && key !== activeStatusFilter),
-      ...selected.filter((key) => MY_ORDERS_STATUS_ALWAYS_VISIBLE.includes(key) && key !== activeStatusFilter),
+      ...selected.filter((key) => !statusAlwaysVisibleKeys.includes(key) && key !== activeStatusFilter),
+      ...selected.filter((key) => statusAlwaysVisibleKeys.includes(key) && key !== activeStatusFilter),
     ].filter((key, index, arr) => key && selected.includes(key) && arr.indexOf(key) === index);
 
     stretchOrder.forEach((key, index) => {
@@ -956,7 +1013,15 @@ function MyOrdersContent() {
     }
 
     return { keys: selected, moreWidth, widths };
-  }, [activeStatusFilter, feedState, orderedStatusQuickKeys, statusChipLabels, statusFilterLabels, windowWidth]);
+  }, [
+    activeStatusFilter,
+    feedState,
+    orderedStatusQuickKeys,
+    statusAlwaysVisibleKeys,
+    statusChipLabels,
+    statusFilterLabels,
+    windowWidth,
+  ]);
   const visibleQuickStatusKeys = statusQuickLayout.keys;
   const statusChipWidths = statusQuickLayout.widths;
   const statusMoreWidth = statusQuickLayout.moreWidth || MY_ORDERS_STATUS_MORE_MIN_WIDTH;
@@ -994,7 +1059,7 @@ function MyOrdersContent() {
   const getCachedOrdersSnapshot = useCallback(
     (nextFilter) => {
       const key = normalizeMyOrdersStatusFilter(nextFilter || 'all');
-      const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
+      const cacheKey = makeCacheKey(key, listFingerprint, relationFingerprint);
       const exactRows = listCacheMy[cacheKey];
       if (Array.isArray(exactRows)) {
         return {
@@ -1018,7 +1083,7 @@ function MyOrdersContent() {
       }
 
       if (key && key !== 'all' && key !== 'feed') {
-        const allCacheKey = makeCacheKey('all', filtersFingerprint, relationFingerprint);
+        const allCacheKey = makeCacheKey('all', listFingerprint, relationFingerprint);
         const allRows = Array.isArray(listCacheMy[allCacheKey])
           ? listCacheMy[allCacheKey]
           : recentOrdersCacheKeyRef.current === allCacheKey
@@ -1043,7 +1108,7 @@ function MyOrdersContent() {
       return null;
     },
     [
-      filtersFingerprint,
+      listFingerprint,
       listCacheMy,
       makeCacheKey,
       queryClient,
@@ -1090,14 +1155,15 @@ function MyOrdersContent() {
   const selectStatusFilter = useCallback(
     (nextFilter, options = {}) => {
       const normalized = normalizeMyOrdersStatusFilter(nextFilter);
-      setFilter(normalized);
-      primeOrdersFromCache(normalized);
+      const nextStatus = statusUsageAllowedIds.includes(normalized) ? normalized : 'all';
+      setFilter(nextStatus);
+      primeOrdersFromCache(nextStatus);
       setStatusSelectVisible(false);
       if (options?.recordUsage !== false) {
-        recordStatusFilterUsage(normalized);
+        recordStatusFilterUsage(nextStatus);
       }
     },
-    [primeOrdersFromCache, recordStatusFilterUsage],
+    [primeOrdersFromCache, recordStatusFilterUsage, statusUsageAllowedIds],
   );
   useEffect(() => {
     if (firstContentMarkedRef.current) return;
@@ -1111,7 +1177,7 @@ function MyOrdersContent() {
     seedExecutorNames(executorsForCards);
     const knownEnriched = enrichOrdersWithKnownExecutorRows(orders, executorsForCards);
     if (knownEnriched.some((row, index) => row !== orders[index])) {
-      const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
+      const cacheKey = makeCacheKey(effectiveFilter || 'all', listFingerprint, relationFingerprint);
       setOrders(knownEnriched);
       setListCacheEntry(cacheKey, knownEnriched);
       if ((effectiveFilter || 'all') === 'all') {
@@ -1138,7 +1204,7 @@ function MyOrdersContent() {
       if (cancelled || !Array.isArray(enriched)) return;
       const changed = enriched.some((row, index) => row !== orders[index]);
       if (!changed) return;
-      const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
+      const cacheKey = makeCacheKey(effectiveFilter || 'all', listFingerprint, relationFingerprint);
       setOrders(enriched);
       setListCacheEntry(cacheKey, enriched);
       if ((effectiveFilter || 'all') === 'all') {
@@ -1154,7 +1220,7 @@ function MyOrdersContent() {
   }, [
     effectiveFilter,
     executorsForCards,
-    filtersFingerprint,
+    listFingerprint,
     isFocused,
     listCacheMy,
     makeCacheKey,
@@ -1179,7 +1245,7 @@ function MyOrdersContent() {
             Number(persisted.fetchedAt?.[key] || 0) || persisted.savedAt;
         });
 
-        const currentKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
+        const currentKey = makeCacheKey(effectiveFilter || 'all', listFingerprint, relationFingerprint);
         const cachedCurrent = listCacheMy[currentKey];
         const cachedDefault = listCacheMy[defaultListCacheKey];
         const best = Array.isArray(cachedCurrent)
@@ -1211,7 +1277,7 @@ function MyOrdersContent() {
   }, [
     defaultListCacheKey,
     effectiveFilter,
-    filtersFingerprint,
+    listFingerprint,
     listCacheMy,
     listCacheStorageKey,
     makeCacheKey,
@@ -1230,11 +1296,10 @@ function MyOrdersContent() {
     }
   }, [isSoloAdmin, selectedStatusFilters, setFilterValue]);
   useEffect(() => {
-    if (!isSoloAdmin) return;
-    if (activeStatusFilter !== 'all') {
-      selectStatusFilter('all', { recordUsage: false });
+    if (rawStatusFilter !== activeStatusFilter) {
+      setFilter(activeStatusFilter);
     }
-  }, [activeStatusFilter, isSoloAdmin, selectStatusFilter]);
+  }, [activeStatusFilter, rawStatusFilter]);
 
   // Full dataset loading (batch streaming)
   // Feed indicator state (cached preview of feed), scoped with the same account cache key.
@@ -1267,7 +1332,7 @@ function MyOrdersContent() {
     if (activeCacheScopeRef.current === cacheScopeKey) return;
     activeCacheScopeRef.current = cacheScopeKey;
     feedMetaRequestSeqRef.current += 1;
-    const cacheKey = makeCacheKey(effectiveFilter || 'all', filtersFingerprint, relationFingerprint);
+    const cacheKey = makeCacheKey(effectiveFilter || 'all', listFingerprint, relationFingerprint);
     const scopedCachedList = listCacheMy[cacheKey];
 
     seenFilterRef.current.clear();
@@ -1282,7 +1347,7 @@ function MyOrdersContent() {
     setFeedFingerprint(scopedFeedState.fp || '');
     setFeedSeenFingerprint(scopedFeedState.seenFp || '');
     setFeedHasAny(Boolean(scopedFeedState.hasAny));
-  }, [cacheScopeKey, effectiveFilter, filtersFingerprint, listCacheMy, makeCacheKey, relationFingerprint, scopedFeedState]);
+  }, [cacheScopeKey, effectiveFilter, listCacheMy, listFingerprint, makeCacheKey, relationFingerprint, scopedFeedState]);
 
   useEffect(() => {
     return startFpsProbe(MY_ORDERS_SCREEN_KEY, MY_ORDERS_FPS_PROBE_MS);
@@ -1483,21 +1548,30 @@ function MyOrdersContent() {
     if (seedOnceRef.current) return;
     seedOnceRef.current = true;
     /* seed from cache */
-    const k = isSoloAdmin
-      ? 'all'
-      : typeof seedFilter === 'string' && seedFilter.length
-        ? normalizeMyOrdersStatusFilter(seedFilter)
-        : activeStatusFilter || 'all';
-    const listKey = makeCacheKey(k, filtersFingerprint, relationFingerprint);
+    const seedStatus = typeof seedFilter === 'string' && seedFilter.length
+      ? normalizeMyOrdersStatusFilter(seedFilter)
+      : activeStatusFilter || 'all';
+    const k = statusUsageAllowedIds.includes(seedStatus) ? seedStatus : 'all';
+    const listKey = makeCacheKey(k, listFingerprint, relationFingerprint);
     if (listCacheMy[listKey]) {
       setOrders(listCacheMy[listKey]);
       hydratedRef.current = true;
     }
-    if (!isSoloAdmin && typeof seedFilter === 'string' && seedFilter.length) {
+    if (typeof seedFilter === 'string' && seedFilter.length) {
       selectStatusFilter(seedFilter, { recordUsage: false });
     }
     if (typeof seedSearch === 'string') setSearchQuery(seedSearch);
-  }, [seedFilter, seedSearch, activeStatusFilter, filtersFingerprint, isSoloAdmin, listCacheMy, makeCacheKey, relationFingerprint, selectStatusFilter]);
+  }, [
+    seedFilter,
+    seedSearch,
+    activeStatusFilter,
+    listCacheMy,
+    listFingerprint,
+    makeCacheKey,
+    relationFingerprint,
+    selectStatusFilter,
+    statusUsageAllowedIds,
+  ]);
 
   useEffect(() => {
     if (!isFocused) return;
@@ -1507,7 +1581,7 @@ function MyOrdersContent() {
     const fetchUserAndOrders = async (isBackground = false, options = {}) => {
       const forceNetwork = !!options?.forceNetwork;
       const key = (typeof effectiveFilter === 'string' ? effectiveFilter : 'all') || 'all';
-      const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
+      const cacheKey = makeCacheKey(key, listFingerprint, relationFingerprint);
       const cachedSnapshot = getCachedOrdersSnapshot(key);
       const hasVisibleSnapshot =
         cachedSnapshot && (cachedSnapshot.exact || cachedSnapshot.rows.length > 0);
@@ -1549,8 +1623,13 @@ function MyOrdersContent() {
       }
 
       const filterValues = filters.values;
-      const statusFilters = Array.isArray(filterValues.statuses)
-        ? filterValues.statuses.flatMap((code) => getStatusDbAliases(code)).filter(Boolean)
+      const selectedStatusKeys = Array.isArray(filterValues.statuses)
+        ? filterValues.statuses
+            .map((code) => normalizeOrderStatusFilterKey(code))
+            .filter((code) => code && code !== 'all')
+        : [];
+      const statusFilters = selectedStatusKeys.length
+        ? selectedStatusKeys.flatMap((code) => getStatusDbAliases(code)).filter(Boolean)
         : [];
       const clientIds = Array.isArray(filterValues.clientIds)
         ? filterValues.clientIds.map(String).filter(Boolean)
@@ -1567,6 +1646,8 @@ function MyOrdersContent() {
       };
       const dateFrom = toIsoDate(filterValues.departureDateFrom, true);
       const dateTo = toIsoDate(filterValues.departureDateTo, false);
+      const createdFrom = toIsoDate(filterValues.createdDateFrom, true);
+      const createdTo = toIsoDate(filterValues.createdDateTo, false);
 
       const selectedWorkTypes = Array.isArray(filterValues.workTypes) ? filterValues.workTypes : [];
       let workTypeOrderIds = null;
@@ -1615,6 +1696,8 @@ function MyOrdersContent() {
         if (!Number.isNaN(sumMax)) query = query.lte('start_price', sumMax);
         if (dateFrom) query = query.gte('time_window_start', dateFrom);
         if (dateTo) query = query.lte('time_window_start', dateTo);
+        if (createdFrom) query = query.gte('created_at', createdFrom);
+        if (createdTo) query = query.lte('created_at', createdTo);
         if (Array.isArray(workTypeOrderIds) && workTypeOrderIds.length) query = query.in('id', workTypeOrderIds);
         return applyOrderRelationFilters(query, {
           clientId: relationClientId,
@@ -1630,12 +1713,16 @@ function MyOrdersContent() {
             page: pageNumber,
             pageSize: PAGE_SIZE,
             userId: uid,
+            sortKey: normalizedSortKey,
+            statuses: selectedStatusKeys,
             clientIds,
             orderIds: Array.isArray(workTypeOrderIds) ? workTypeOrderIds : [],
             relationClientId,
             relationObjectIds,
             dateFrom,
             dateTo,
+            createdFrom,
+            createdTo,
             sumMin: Number.isNaN(sumMin) ? null : sumMin,
             sumMax: Number.isNaN(sumMax) ? null : sumMax,
           });
@@ -1643,9 +1730,10 @@ function MyOrdersContent() {
 
         const from = Math.max(0, (Number(pageNumber) - 1) * PAGE_SIZE);
         const to = from + PAGE_SIZE - 1;
-        const { data: rows, error: pageError } = await buildOrdersQuery()
-          .order('time_window_start', { ascending: false })
-          .range(from, to);
+        const { data: rows, error: pageError } = await applyOrderSortToQuery(
+          buildOrdersQuery(),
+          normalizedSortKey,
+        ).range(from, to);
         if (pageError) throw pageError;
         return enrichOrdersWithExecutorNames(Array.isArray(rows) ? rows : []);
       };
@@ -1762,11 +1850,12 @@ function MyOrdersContent() {
     auth.user?.id,
     effectiveFilter,
     filters.values,
-    filtersFingerprint,
+    listFingerprint,
     getCachedOrdersSnapshot,
     hasLinkedRelationFilter,
     isFocused,
     makeCacheKey,
+    normalizedSortKey,
     PAGE_SIZE,
     queryClient,
     recentOrdersQueryKey,
@@ -1785,6 +1874,8 @@ function MyOrdersContent() {
     const q = deferredSearchQuery.trim().toLowerCase();
     const timeFrom = parseTimeToMinutes(filters.values.departureTimeFrom);
     const timeTo = parseTimeToMinutes(filters.values.departureTimeTo);
+    const createdTimeFrom = parseTimeToMinutes(filters.values.createdTimeFrom);
+    const createdTimeTo = parseTimeToMinutes(filters.values.createdTimeTo);
     return (orders || []).filter((o) => {
       if (timeFrom != null || timeTo != null) {
         const dt = o?.time_window_start ? new Date(o.time_window_start) : null;
@@ -1792,6 +1883,14 @@ function MyOrdersContent() {
           const minutes = dt.getHours() * 60 + dt.getMinutes();
           if (timeFrom != null && minutes < timeFrom) return false;
           if (timeTo != null && minutes > timeTo) return false;
+        }
+      }
+      if (createdTimeFrom != null || createdTimeTo != null) {
+        const createdAt = o?.created_at ? new Date(o.created_at) : null;
+        if (createdAt && !Number.isNaN(createdAt.getTime())) {
+          const minutes = createdAt.getHours() * 60 + createdAt.getMinutes();
+          if (createdTimeFrom != null && minutes < createdTimeFrom) return false;
+          if (createdTimeTo != null && minutes > createdTimeTo) return false;
         }
       }
       if (!q) return true;
@@ -1818,49 +1917,72 @@ function MyOrdersContent() {
         q,
       );
     });
-  }, [auth.profile?.role, companySettings, orders, deferredSearchQuery, filters.values.departureTimeFrom, filters.values.departureTimeTo, t]);
+  }, [
+    auth.profile?.role,
+    companySettings,
+    orders,
+    deferredSearchQuery,
+    filters.values.departureTimeFrom,
+    filters.values.departureTimeTo,
+    filters.values.createdTimeFrom,
+    filters.values.createdTimeTo,
+    t,
+  ]);
 
-  const sortOptions = useMemo(
-    () => [
-      { id: 'date_desc', label: t('orders_sort_date_desc') },
-      { id: 'date_asc', label: t('orders_sort_date_asc') },
-      { id: 'amount_desc', label: t('orders_sort_amount_desc') },
-      { id: 'amount_asc', label: t('orders_sort_amount_asc') },
-    ],
-    [t],
-  );
+  const sortOptions = useMemo(() => getOrderSortOptions(t), [t]);
 
   const sortedFilteredOrders = useMemo(() => {
-    if (sortKey === 'date_desc') {
-      return Array.isArray(filteredOrders) ? filteredOrders : [];
+    return sortOrders(filteredOrders, normalizedSortKey);
+  }, [filteredOrders, normalizedSortKey]);
+
+  const ordersFacetSource = useMemo(() => {
+    const statusKey = normalizeMyOrdersStatusFilter(effectiveFilter || 'all');
+    const exactCacheKey = makeCacheKey(statusKey, defaultListFingerprint, relationFingerprint);
+    const exactRows = listCacheMy[exactCacheKey];
+    if (Array.isArray(exactRows)) return exactRows;
+
+    if (statusKey === 'all' && recentOrdersCacheKeyRef.current === exactCacheKey) {
+      const recentRows = queryClient.getQueryData(recentOrdersQueryKey);
+      if (Array.isArray(recentRows)) return recentRows;
     }
-    const parseOrderDate = (item) => {
-      const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
-      return Number.isFinite(ts) ? ts : 0;
-    };
-    const parseAmount = (item) => {
-      const value = Number(item?.start_price ?? item?.sum ?? 0);
-      return Number.isFinite(value) ? value : 0;
-    };
-    const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];
-    arr.sort((a, b) => {
-      switch (sortKey) {
-        case 'date_asc':
-          return parseOrderDate(a) - parseOrderDate(b);
-        case 'amount_desc':
-          return parseAmount(b) - parseAmount(a);
-        case 'amount_asc':
-          return parseAmount(a) - parseAmount(b);
-        case 'date_desc':
-        default:
-          return parseOrderDate(b) - parseOrderDate(a);
-      }
-    });
-    return arr;
-  }, [filteredOrders, sortKey]);
+
+    if (statusKey === 'feed') {
+      const feedRows = listCacheMy[MY_ORDERS_FEED_INDICATOR_CACHE_KEY];
+      if (Array.isArray(feedRows)) return feedRows;
+    }
+
+    const allCacheKey = makeCacheKey('all', defaultListFingerprint, relationFingerprint);
+    const allRows = Array.isArray(listCacheMy[allCacheKey])
+      ? listCacheMy[allCacheKey]
+      : recentOrdersCacheKeyRef.current === allCacheKey
+        ? queryClient.getQueryData(recentOrdersQueryKey)
+        : null;
+
+    if (Array.isArray(allRows)) {
+      if (statusKey === 'all') return allRows;
+      const normalizedStatusKey = normalizeOrderStatusFilterKey(statusKey);
+      return allRows.filter((order) => {
+        const rawStatus = String(order?.status || '').trim();
+        const mappedStatus = statusAliasToFilterKey.get(rawStatus) || normalizeOrderStatusFilterKey(rawStatus);
+        return mappedStatus === normalizedStatusKey;
+      });
+    }
+
+    return Array.isArray(orders) ? orders : [];
+  }, [
+    defaultListFingerprint,
+    effectiveFilter,
+    listCacheMy,
+    makeCacheKey,
+    orders,
+    queryClient,
+    recentOrdersQueryKey,
+    relationFingerprint,
+    statusAliasToFilterKey,
+  ]);
 
   const ordersFacetCounts = useMemo(() => {
-    const source = Array.isArray(orders) ? orders : [];
+    const source = Array.isArray(ordersFacetSource) ? ordersFacetSource : [];
     const counts = {
       total: source.length,
       statuses: {},
@@ -1883,7 +2005,7 @@ function MyOrdersContent() {
       }
     });
     return counts;
-  }, [orders, statusAliasToFilterKey]);
+  }, [ordersFacetSource, statusAliasToFilterKey]);
 
   useEffect(() => {
     if (!isFocused || !Array.isArray(filteredOrders) || filteredOrders.length === 0) return;
@@ -2042,7 +2164,7 @@ function MyOrdersContent() {
   const listHeader = useMemo(
     () => (
       <View>
-        {!isSoloAdmin ? (
+        {visibleQuickStatusKeys.length > 0 ? (
           <View style={styles.filterBar}>
             <View style={styles.statusFilterRow}>
               {visibleQuickStatusKeys.map((key) => (
@@ -2212,7 +2334,6 @@ function MyOrdersContent() {
       theme.colors.textSecondary,
       totalOrdersCount,
       hasLinkedRelationFilter,
-      isSoloAdmin,
       relationLabel,
       t,
       visibleQuickStatusKeys,
@@ -2221,7 +2342,7 @@ function MyOrdersContent() {
 
   const hasSearchQuery = Boolean(deferredSearchQuery.trim());
   const hasActiveFilters = Boolean(filterSummaryData.full || hasLinkedRelationFilter);
-  const hasActiveTabFilter = !isSoloAdmin && activeStatusFilter !== 'all';
+  const hasActiveTabFilter = activeStatusFilter !== 'all';
 
   // Empty state
   const ListEmptyComponent = useCallback(
@@ -2291,7 +2412,7 @@ function MyOrdersContent() {
     const reason = String(context?.reason || '').trim();
     const softRefresh = reason === 'route-focus' || reason === 'app-resume';
     const key = (typeof effectiveFilter === 'string' ? effectiveFilter : 'all') || 'all';
-    const cacheKey = makeCacheKey(key, filtersFingerprint, relationFingerprint);
+    const cacheKey = makeCacheKey(key, listFingerprint, relationFingerprint);
     setLoadError('');
     if (!softRefresh) {
       delete listCacheMy[cacheKey];
@@ -2320,7 +2441,7 @@ function MyOrdersContent() {
     });
   }, [
     effectiveFilter,
-    filtersFingerprint,
+    listFingerprint,
     listCacheMy,
     makeCacheKey,
     queryClient,
@@ -2384,7 +2505,7 @@ function MyOrdersContent() {
             onClose={filters.close}
             mode="orders"
             showSearchCategory={false}
-            inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_executors', 'orders_clients'] }}
+            inlineOptionSearch={{ categoryKeys: ['orders_workTypes', 'orders_clients'] }}
             ordersFilters={{
               statuses: orderStatusOptions,
               workTypes: useWorkTypesFlag ? workTypeOptions : [],
@@ -2393,9 +2514,11 @@ function MyOrdersContent() {
               facetCounts: ordersFacetCounts,
               showDate: true,
               showTime: true,
+              showCreatedDate: true,
+              showCreatedTime: true,
               showAmount: true,
             }}
-            values={filters.values}
+            values={filterPanelValues}
             setValue={filters.setValue}
             defaults={ORDER_FILTER_DEFAULTS}
             onReset={() => filters.reset()}

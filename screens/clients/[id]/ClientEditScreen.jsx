@@ -74,6 +74,8 @@ import { useTheme } from '../../../theme/ThemeProvider';
 import dismissToRoute from '../../../lib/navigation/dismissToRoute';
 import { hasRelationFilters } from '../../../src/features/requests/relationFilters';
 
+const CLIENT_DELETE_BLOCKERS_RECHECK_MAX_AGE_MS = 5000;
+
 const getImagePickerMediaTypesImages = () => {
   try {
     if (ImagePicker.MediaType && ImagePicker.MediaType.Images) return ImagePicker.MediaType.Images;
@@ -230,11 +232,13 @@ export default function EditClientScreen() {
   }, [rawReturnParams]);
 
   const [deleteVisible, setDeleteVisible] = React.useState(false);
+  const [deleteConfirming, setDeleteConfirming] = React.useState(false);
   const { data: client } = useClient(clientId, { enabled: !!clientId });
   const {
     data: deleteBlockers,
     isLoading: deleteBlockersLoading,
     isError: deleteBlockersError,
+    dataUpdatedAt: deleteBlockersUpdatedAt,
     refetch: refetchDeleteBlockers,
   } = useClientDeleteBlockers(clientId, {
     enabled: !!clientId,
@@ -243,6 +247,11 @@ export default function EditClientScreen() {
   const updateClientObjectMutation = useUpdateClientObjectMutation();
   const updateMutation = useUpdateClientMutation();
   const deleteMutation = useDeleteClientMutation();
+  const deleteFlowPending = deleteConfirming || deleteMutation.isPending;
+  const closeDeleteModal = React.useCallback(() => {
+    if (deleteFlowPending) return;
+    setDeleteVisible(false);
+  }, [deleteFlowPending]);
   const setClientTagsMutation = useSetClientTagsMutation();
   const { settings } = useCompanySettings();
   const { data: clientFieldSettingsData } = useEntityFieldSettings(ENTITY_FIELD_TYPES.CLIENT, {
@@ -597,6 +606,66 @@ export default function EditClientScreen() {
       },
     };
   }, [accessibleBlockingOrdersCount, canViewAllOrders, clientId, deleteBlockers, headerName]);
+
+  const getLatestDeleteBlockersForDelete = React.useCallback(async () => {
+    const lastUpdatedAt = Number(deleteBlockersUpdatedAt || 0);
+    const isFresh =
+      !deleteBlockersError &&
+      !!deleteBlockers &&
+      lastUpdatedAt > 0 &&
+      Date.now() - lastUpdatedAt <= CLIENT_DELETE_BLOCKERS_RECHECK_MAX_AGE_MS;
+
+    if (isFresh) return deleteBlockers;
+
+    const latest = await refetchDeleteBlockers();
+    return latest?.data || null;
+  }, [deleteBlockers, deleteBlockersError, deleteBlockersUpdatedAt, refetchDeleteBlockers]);
+
+  const handleConfirmDeleteClient = React.useCallback(async () => {
+    if (deleteFlowPending) return;
+
+    setDeleteConfirming(true);
+    try {
+      const latest = await getLatestDeleteBlockersForDelete();
+      const nextBlockingCount = Number(latest?.blockingOrdersCount || 0);
+      if (nextBlockingCount > 0) {
+        toast.warning(t('clients_delete_has_orders'));
+        return;
+      }
+
+      await deleteMutation.mutateAsync(String(clientId || ''));
+      toast.success(t('clients_deleted_success'));
+      setDeleteVisible(false);
+      allowLeaveRef.current = true;
+      dismissToRoute(router, {
+        pathname: returnTo,
+        params: returnParams,
+      });
+    } catch (error) {
+      const rawMessage = String(error?.message || '');
+      if (
+        rawMessage.includes('orders_client_id_fkey') ||
+        rawMessage.includes('orders_object_id_fkey') ||
+        rawMessage.includes('violates foreign key constraint')
+      ) {
+        toast.error(t('clients_delete_has_orders'));
+        return;
+      }
+      toast.error(rawMessage || t('clients_save_failed'));
+    } finally {
+      setDeleteConfirming(false);
+    }
+  }, [
+    clientId,
+    deleteFlowPending,
+    deleteMutation,
+    getLatestDeleteBlockersForDelete,
+    returnParams,
+    returnTo,
+    router,
+    t,
+    toast,
+  ]);
 
   const initials = React.useMemo(
     () => `${(lastName || '').trim().slice(0, 1)}${(firstName || '').trim().slice(0, 1)}`.toUpperCase(),
@@ -1312,7 +1381,7 @@ export default function EditClientScreen() {
 
       <BaseModal
         visible={deleteVisible}
-        onClose={() => setDeleteVisible(false)}
+        onClose={closeDeleteModal}
         title={t('clients_delete_title')}
         footer={
           deleteBlockersLoading ? (
@@ -1322,7 +1391,7 @@ export default function EditClientScreen() {
                   key: 'cancel',
                   title: t('btn_cancel'),
                   variant: 'secondary',
-                  onPress: () => setDeleteVisible(false),
+                  onPress: closeDeleteModal,
                 },
                 {
                   key: 'loading',
@@ -1340,7 +1409,7 @@ export default function EditClientScreen() {
                   key: 'cancel',
                   title: t('btn_cancel'),
                   variant: 'secondary',
-                  onPress: () => setDeleteVisible(false),
+                  onPress: closeDeleteModal,
                 },
                 blockersRoute
                   ? {
@@ -1362,42 +1431,16 @@ export default function EditClientScreen() {
                   key: 'cancel',
                   title: t('btn_cancel'),
                   variant: 'secondary',
-                  onPress: () => setDeleteVisible(false),
+                  disabled: deleteFlowPending,
+                  onPress: closeDeleteModal,
                 },
                 {
                   key: 'delete',
                   title: t('btn_delete'),
                   variant: 'destructive',
-                  loading: deleteMutation.isPending,
-                  onPress: async () => {
-                    try {
-                      const latest = await refetchDeleteBlockers();
-                      const nextBlockingCount = Number(latest?.data?.blockingOrdersCount || 0);
-                      if (nextBlockingCount > 0) {
-                        toast.warning(t('clients_delete_has_orders'));
-                        return;
-                      }
-                      await deleteMutation.mutateAsync(String(clientId || ''));
-                      toast.success(t('clients_deleted_success'));
-                      setDeleteVisible(false);
-                      allowLeaveRef.current = true;
-                      dismissToRoute(router, {
-                        pathname: returnTo,
-                        params: returnParams,
-                      });
-                    } catch (error) {
-                      const rawMessage = String(error?.message || '');
-                      if (
-                        rawMessage.includes('orders_client_id_fkey') ||
-                        rawMessage.includes('orders_object_id_fkey') ||
-                        rawMessage.includes('violates foreign key constraint')
-                      ) {
-                        toast.error(t('clients_delete_has_orders'));
-                        return;
-                      }
-                      toast.error(rawMessage || t('clients_save_failed'));
-                    }
-                  },
+                  loading: deleteFlowPending,
+                  disabled: deleteFlowPending,
+                  onPress: handleConfirmDeleteClient,
                 },
               ]}
             />

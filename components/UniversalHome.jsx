@@ -1096,10 +1096,10 @@ export default function UniversalHome({ role, user, profile: providedProfile, on
                     {roleLabel}
                   </Text>
                 </View>
-                {useDepartments && departmentName ? (
+                {useDepartments ? (
                   <View style={styles.departmentRow}>
                     <Text style={styles.departmentText} numberOfLines={1}>
-                      {`${t('users_department')}: ${departmentName}`}
+                      {`${t('users_department')}: ${departmentName || t('placeholder_department')}`}
                     </Text>
                   </View>
                 ) : null}

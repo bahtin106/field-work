@@ -1,5 +1,4 @@
 import React from 'react';
-import { Image as ExpoImage } from 'expo-image';
 import { Feather } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -11,11 +10,11 @@ import Card from '../../../components/ui/Card';
 import ExpandableTextRow from '../../../components/ui/ExpandableTextRow';
 import IconButton from '../../../components/ui/IconButton';
 import LabelValueRow from '../../../components/ui/LabelValueRow';
+import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import MediaUploadRow from '../../../components/media/MediaUploadRow';
 import SectionHeader from '../../../components/ui/SectionHeader';
 import TagList from '../../../components/tags/TagList';
 import { useCompanySettings } from '../../../hooks/useCompanySettings';
-import { BaseModal } from '../../../components/ui/modals';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
 import { useToast } from '../../../components/ui/ToastProvider';
 import { usePermissions } from '../../../lib/permissions';
@@ -134,7 +133,6 @@ export default function ObjectViewScreen() {
   const clientId = objectItem?.client_id;
   const { data: clientData } = useClient(clientId, { enabled: !!clientId && canViewClients });
 
-  const [photoPreviewVisible, setPhotoPreviewVisible] = React.useState(false);
   const [objectPhotosModal, setObjectPhotosModal] = React.useState({ visible: false, category: null });
   const [viewerVisible, setViewerVisible] = React.useState(false);
   const [viewerPhotos, setViewerPhotos] = React.useState([]);
@@ -407,27 +405,21 @@ export default function ObjectViewScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.contentWrap}>
-        <View style={styles.avatarWrap}>
-          <Pressable
-            style={styles.avatarBox}
-            onPress={() => {
-              if (!objectItem?.photoUrl) return;
-              setPhotoPreviewVisible(true);
-            }}
-            disabled={!objectItem?.photoUrl}
-          >
-            {objectItem?.photoThumbUrl || objectItem?.photoDisplayUrl || objectItem?.photoUrl ? (
-              <ExpoImage
-                source={{ uri: objectItem?.photoThumbUrl || objectItem?.photoDisplayUrl || objectItem?.photoUrl }}
-                style={styles.avatarImg}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <Text style={styles.avatarText}>{getObjectInitials(objectItem?.name)}</Text>
-            )}
-          </Pressable>
-        </View>
+        <EntityPhotoPreview
+          imageUrl={objectItem?.photoThumbUrl || objectItem?.photoDisplayUrl || objectItem?.photoUrl || null}
+          previewUrl={objectItem?.photoDisplayUrl || objectItem?.photoUrl || null}
+          title={t('objects_photo_title')}
+          fallback={getObjectInitials(objectItem?.name)}
+          emptyLabel={t('placeholder_no_photo')}
+          containerStyle={styles.avatarWrap}
+          frameStyle={styles.avatarBox}
+          imageStyle={styles.avatarImg}
+          fallbackTextStyle={styles.avatarText}
+          previewWrapStyle={styles.previewWrap}
+          previewImageStyle={styles.previewImg}
+          previewEmptyStyle={styles.previewEmpty}
+          accessibilityLabel={t('objects_photo_title')}
+        />
 
         {/* Верхнее поле под фото удалено по запросу — оставляем только аватар и остальные секции */}
 
@@ -629,26 +621,6 @@ export default function ObjectViewScreen() {
           </>
         ) : null}
       </ScrollView>
-
-      <BaseModal
-        visible={photoPreviewVisible}
-        onClose={() => setPhotoPreviewVisible(false)}
-        title={t('objects_photo_title')}
-        maxHeightRatio={0.9}
-      >
-        <View style={styles.previewWrap}>
-          {objectItem?.photoDisplayUrl || objectItem?.photoUrl ? (
-            <ExpoImage
-              source={{ uri: objectItem?.photoDisplayUrl || objectItem?.photoUrl }}
-              style={styles.previewImg}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-            />
-          ) : (
-            <Text style={styles.previewEmpty}>{t('placeholder_no_photo')}</Text>
-          )}
-        </View>
-      </BaseModal>
 
       <MediaUploadModal
         visible={objectPhotosModal.visible}

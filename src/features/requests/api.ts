@@ -2,6 +2,7 @@ import { supabase } from '../../../lib/supabase';
 import { getOrderIdsByWorkTypes, getStatusDbAliases, mapStatusToDb } from '../../../lib/orderFilters';
 import { formatPersonName } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
+import { applyOrderSortToQuery, ORDER_DEFAULT_SORT_KEY } from '../orders/orderSort';
 import { enrichOrdersWithExecutorNames } from './executorNameCache';
 import {
   buildOrderAddressNavigatorQuery,
@@ -407,6 +408,7 @@ export async function listRequests(params: any = {}) {
       status = 'all',
       statuses = [],
       executorId = null,
+      executorIds = [],
       departmentId = null,
       workTypeIds = [],
       relationClientId = '',
@@ -415,8 +417,11 @@ export async function listRequests(params: any = {}) {
       orderIds = [],
       dateFrom = null,
       dateTo = null,
+      createdFrom = null,
+      createdTo = null,
       sumMin = null,
       sumMax = null,
+      sortKey = ORDER_DEFAULT_SORT_KEY,
       userId = null,
       page = 1,
       pageSize = DEFAULT_PAGE_SIZE,
@@ -424,6 +429,10 @@ export async function listRequests(params: any = {}) {
 
     const isFeedRequest = status === 'feed';
     const extraStatusValues = resolveStatusFilterValues(statuses);
+    const normalizedExecutorIds = Array.isArray(executorIds)
+      ? executorIds.map(String).map((value) => value.trim()).filter(Boolean)
+      : [];
+    const normalizedExecutorId = String(executorId || '').trim();
     let query = supabase
       .from(isFeedRequest ? 'orders_secure_v2' : 'orders')
       .select(isFeedRequest ? SECURE_ORDER_SELECT_COLUMNS : ORDER_SELECT_COLUMNS);
@@ -458,7 +467,8 @@ export async function listRequests(params: any = {}) {
         const statusValue = mapStatusToDb(status);
         if (statusValue) query = query.eq('status', statusValue);
       }
-      if (executorId) query = query.eq('assigned_to', executorId);
+      if (normalizedExecutorIds.length) query = query.in('assigned_to', normalizedExecutorIds);
+      else if (normalizedExecutorId) query = query.eq('assigned_to', normalizedExecutorId);
     }
     query = applyStatusFilterValues(query, extraStatusValues);
 
@@ -477,6 +487,8 @@ export async function listRequests(params: any = {}) {
     const parsedSumMax = String(sumMax ?? '').trim() === '' ? NaN : Number(sumMax);
     if (dateFrom) query = query.gte('time_window_start', dateFrom);
     if (dateTo) query = query.lte('time_window_start', dateTo);
+    if (createdFrom) query = query.gte('created_at', createdFrom);
+    if (createdTo) query = query.lte('created_at', createdTo);
     if (Number.isFinite(parsedSumMin)) query = query.gte('start_price', parsedSumMin);
     if (Number.isFinite(parsedSumMax)) query = query.lte('start_price', parsedSumMax);
 
@@ -488,7 +500,7 @@ export async function listRequests(params: any = {}) {
     const from = Math.max(0, (Number(page) - 1) * Number(pageSize));
     const to = from + Number(pageSize) - 1;
 
-    let { data, error } = await query.order('time_window_start', { ascending: false }).range(from, to);
+    let { data, error } = await applyOrderSortToQuery(query, sortKey).range(from, to);
     if (!isFeedRequest && error && shouldFallbackWithoutClientRelation(error)) {
       let fallbackQuery = supabase.from('orders').select(ORDER_SELECT_COLUMNS_FALLBACK);
 
@@ -522,7 +534,8 @@ export async function listRequests(params: any = {}) {
           const statusValue = mapStatusToDb(status);
           if (statusValue) fallbackQuery = fallbackQuery.eq('status', statusValue);
         }
-        if (executorId) fallbackQuery = fallbackQuery.eq('assigned_to', executorId);
+        if (normalizedExecutorIds.length) fallbackQuery = fallbackQuery.in('assigned_to', normalizedExecutorIds);
+        else if (normalizedExecutorId) fallbackQuery = fallbackQuery.eq('assigned_to', normalizedExecutorId);
       }
       fallbackQuery = applyStatusFilterValues(fallbackQuery, extraStatusValues);
 
@@ -540,6 +553,8 @@ export async function listRequests(params: any = {}) {
       }
       if (dateFrom) fallbackQuery = fallbackQuery.gte('time_window_start', dateFrom);
       if (dateTo) fallbackQuery = fallbackQuery.lte('time_window_start', dateTo);
+      if (createdFrom) fallbackQuery = fallbackQuery.gte('created_at', createdFrom);
+      if (createdTo) fallbackQuery = fallbackQuery.lte('created_at', createdTo);
       if (Number.isFinite(parsedSumMin)) fallbackQuery = fallbackQuery.gte('start_price', parsedSumMin);
       if (Number.isFinite(parsedSumMax)) fallbackQuery = fallbackQuery.lte('start_price', parsedSumMax);
 
@@ -548,9 +563,7 @@ export async function listRequests(params: any = {}) {
         objectIds: relationObjectIds,
       });
 
-      const retryResult = await fallbackQuery
-        .order('time_window_start', { ascending: false })
-        .range(from, to);
+      const retryResult = await applyOrderSortToQuery(fallbackQuery, sortKey).range(from, to);
       data = retryResult.data;
       error = retryResult.error;
     }

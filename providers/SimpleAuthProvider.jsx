@@ -176,6 +176,7 @@ export function SimpleAuthProvider({ children }) {
   const initialSessionHandledRef = useRef(false);
   const logoutInProgressRef = useRef(false);
   const signedOutSettledRef = useRef(false);
+  const explicitlySignedOutUserIdRef = useRef(null);
   const recoveryTimerRef = useRef(null);
   const recoveryJobIdRef = useRef(0);
   const profileLoadInFlightRef = useRef(new Map());
@@ -357,7 +358,12 @@ export function SimpleAuthProvider({ children }) {
     [clearProfileRecovery, loadProfile, rememberProfileSnapshot],
   );
 
-  const setSignedOutState = useCallback(() => {
+  const setSignedOutState = useCallback((options = {}) => {
+    const signedOutUserId = normalizeScopeId(options?.signedOutUserId);
+    if (signedOutUserId) {
+      explicitlySignedOutUserIdRef.current = signedOutUserId;
+    }
+
     clearProfileRecovery();
     profileLoadInFlightRef.current.clear();
     authRequestIdRef.current += 1;
@@ -400,10 +406,25 @@ export function SimpleAuthProvider({ children }) {
       const hadUser = !!currentUserIdRef.current;
       const cachedProfileBeforeAuth = getCachedProfileSnapshot();
       let cacheClearedForAuthScope = false;
+      const explicitlySignedOutUserId = normalizeScopeId(explicitlySignedOutUserIdRef.current);
+      const nextScopeUserId = normalizeScopeId(nextUserId);
 
       if (event === 'SIGNED_IN') {
+        explicitlySignedOutUserIdRef.current = null;
         logoutInProgressRef.current = false;
         signedOutSettledRef.current = false;
+      }
+
+      if (
+        explicitlySignedOutUserId &&
+        nextScopeUserId === explicitlySignedOutUserId &&
+        event !== 'SIGNED_IN'
+      ) {
+        return;
+      }
+
+      if (explicitlySignedOutUserId && nextScopeUserId && nextScopeUserId !== explicitlySignedOutUserId) {
+        explicitlySignedOutUserIdRef.current = null;
       }
 
       // During explicit logout, ignore all non-login auth events to prevent transient UI jumps.
@@ -632,7 +653,7 @@ export function SimpleAuthProvider({ children }) {
 
     const currentUserId = state.user?.id || null;
     const sessionPromise = supabase.auth.getSession().catch(() => null);
-    setSignedOutState();
+    setSignedOutState({ signedOutUserId: currentUserId });
     let signOutError = null;
     const signOutPromise = supabase.auth.signOut({ scope: 'local' }).catch((error) => {
       signOutError = error;
@@ -676,8 +697,27 @@ export function SimpleAuthProvider({ children }) {
     }
   }, [setSignedOutState, state.user?.id]);
 
+  const mergeAuthUserMetadata = useCallback((metadataPatch = {}) => {
+    if (!metadataPatch || typeof metadataPatch !== 'object') return;
+    setState((prev) => {
+      if (!prev.user?.id) return prev;
+      const nextUser = {
+        ...prev.user,
+        user_metadata: {
+          ...(prev.user.user_metadata || {}),
+          ...metadataPatch,
+        },
+      };
+      return {
+        ...prev,
+        user: nextUser,
+      };
+    });
+  }, []);
+
   const value = {
     ...state,
+    mergeAuthUserMetadata,
     signOut,
   };
 

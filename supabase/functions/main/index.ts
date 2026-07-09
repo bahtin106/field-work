@@ -18,6 +18,7 @@ import { handleBackfillMediaSizesRequest } from '../backfill-media-sizes/index.t
 import { handleMediaThumbnailRequest } from '../media-thumbnail/index.ts';
 import { handleSwitchAccountModeRequest } from '../switch-account-mode/index.ts';
 import { handleRequestPasswordReset } from '../request-password-reset/index.ts';
+import { handleChangeEmailRequest } from '../change-email/index.ts';
 import { handlePublicSupportRequest } from '../public-support-request/index.ts';
 import { handleAdminDeleteCompanyRequest } from '../admin-delete-company/index.ts';
 import { handleUpdateUserRequest } from '../update_user/index.ts';
@@ -65,6 +66,7 @@ Deno.serve(async (req) => {
   if (fn === 'max-bot') return handleMaxBotRequest(req);
   if (fn === 'switch-account-mode') return handleSwitchAccountModeRequest(req);
   if (fn === 'request-password-reset') return handleRequestPasswordReset(req);
+  if (fn === 'change-email' || fn === 'change_email') return handleChangeEmailRequest(req);
   if (fn === 'public-support-request') return handlePublicSupportRequest(req);
   if (fn === 'admin-delete-company' || fn === 'admin_delete_company') return handleAdminDeleteCompanyRequest(req);
   if (fn === 'update-user' || fn === 'update_user') return handleUpdateUserRequest(req);

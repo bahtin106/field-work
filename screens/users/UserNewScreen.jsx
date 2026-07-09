@@ -24,6 +24,10 @@ import { useFeedback, ScreenBanner, FieldErrorText, normalizeError, FEEDBACK_COD
 import { useFormAutoScroll } from '../../src/shared/forms/useFormAutoScroll';
 import { useTheme } from '../../theme';
 import { useDepartmentsQuery } from '../../src/features/employees/queries';
+import {
+  createNoDepartmentOption,
+  isNoDepartmentFilterId,
+} from '../../src/features/employees/departments';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { useCompanyEntitlements } from '../../hooks/useCompanyEntitlements';
 import { useCompanySettings } from '../../hooks/useCompanySettings';
@@ -278,6 +282,13 @@ export default function NewUserScreen() {
     onlyEnabled: true,
   });
   const [deptModalVisible, setDeptModalVisible] = useState(false);
+  const departmentOptions = useMemo(
+    () => [
+      createNoDepartmentOption(t),
+      ...(departments || []).map((d) => ({ id: d.id, label: d.name })),
+    ],
+    [departments, t],
+  );
   const activeDeptName = useMemo(() => {
     const d = (departments || []).find((x) => String(x.id) === String(departmentId));
     return d ? d.name : null;
@@ -499,10 +510,7 @@ export default function NewUserScreen() {
       ? requiredMsg
       : null);
   const departmentError =
-    fieldErrors.department_id?.message ||
-    (useDepartments && fieldUi.isVisible('department_id') && shouldShowError('department_id') && fieldUi.isRequired('department_id') && !departmentId
-      ? requiredMsg
-      : null);
+    fieldErrors.department_id?.message || null;
 
   //  email   (debounced)
   const checkEmailAvailability = useCallback(
@@ -908,7 +916,6 @@ export default function NewUserScreen() {
     const invalidEmail = fieldUi.isVisible('email') && !!email.trim() && !emailValid;
     const missingPhone = fieldUi.isRequired('phone') && !hasMobilePhoneValue(phone);
     const missingBirthdate = fieldUi.isRequired('birthdate') && !birthdate;
-    const missingDepartment = useDepartments && fieldUi.isRequired('department_id') && !departmentId;
     const emailTaken = emailCheckStatus === 'taken';
 
     if (emailTaken) {
@@ -922,7 +929,7 @@ export default function NewUserScreen() {
       return;
     }
 
-    if (missingAnyName || missingEmail || invalidEmail || missingPhone || missingBirthdate || missingDepartment) {
+    if (missingAnyName || missingEmail || invalidEmail || missingPhone || missingBirthdate) {
       if (missingAnyName) {
         setFieldErrors((prev) => ({
           ...prev,
@@ -930,13 +937,11 @@ export default function NewUserScreen() {
           middleName: { message: requiredMsg },
           lastName: { message: requiredMsg },
           ...(missingBirthdate ? { birthdate: { message: requiredMsg } } : {}),
-          ...(missingDepartment ? { department_id: { message: requiredMsg } } : {}),
         }));
       } else {
       setFieldErrors((prev) => ({
         ...prev,
         ...(missingBirthdate ? { birthdate: { message: requiredMsg } } : {}),
-        ...(missingDepartment ? { department_id: { message: requiredMsg } } : {}),
       }));
       }
       scrollToFirstInvalid([
@@ -973,10 +978,8 @@ export default function NewUserScreen() {
     emailCheckStatus,
     email,
     birthdate,
-    departmentId,
     requiredMsg,
     t,
-    useDepartments,
     willCreateBlockedByLicense,
     showBanner,
     scrollToFirstInvalid,
@@ -1311,12 +1314,17 @@ export default function NewUserScreen() {
             visible={deptModalVisible}
             onClose={() => setDeptModalVisible(false)}
             title={t('user_department_title')}
-            items={(departments || []).map((d) => ({ id: d.id, label: d.name }))}
+            items={departmentOptions}
             selectedId={departmentId}
-            isItemSelected={(item, selectedId) => String(item?.id) === String(selectedId)}
+            isItemSelected={(item, selectedId) =>
+              isNoDepartmentFilterId(item?.id)
+                ? selectedId == null || selectedId === ''
+                : String(item?.id) === String(selectedId)
+            }
             searchable={false}
             onSelect={(it) => {
-              setDepartmentId(it.id);
+              setDepartmentId(isNoDepartmentFilterId(it?.id) ? null : it.id);
+              clearFieldError('department_id');
               setDeptModalVisible(false);
             }}
           />

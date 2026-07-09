@@ -50,6 +50,12 @@ import { listRequests } from '../../src/features/requests/api';
 import { preloadOrderDetailsScreen } from '../../src/features/requests/orderDetailsPreload';
 import { resolveRequestTitle } from '../../src/features/requests/title';
 import { useClients } from '../../src/features/clients/queries';
+import {
+  ORDER_DEFAULT_SORT_KEY,
+  getOrderSortOptions,
+  normalizeOrderSortKey,
+  sortOrders,
+} from '../../src/features/orders/orderSort';
 import { hasRelationFilters, parseRelationIdsParam } from '../../src/features/requests/relationFilters';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import {
@@ -91,7 +97,6 @@ const ALL_ORDERS_FEED_PULSE_DURATION_MS = 1200;
 const ALL_ORDERS_FEED_INDICATOR_FRESH_MS = 30 * 1000;
 const ALL_ORDERS_FEED_SEEN_STORAGE_PREFIX = 'myorders.feedSeen.v2';
 const ALL_ORDERS_FEED_LAST_FP_STORAGE_PREFIX = 'myorders.feedLastFp.v2';
-const ALL_ORDERS_SORT_FALLBACK = 0;
 const ALL_ORDERS_PRESSED_OPACITY = 0.9;
 const ALL_ORDERS_LIST_HORIZONTAL_PADDING = 16;
 const ALL_ORDERS_LIST_BOTTOM_PADDING = 40;
@@ -121,6 +126,10 @@ const ROUTE_FILTER_PARAM_KEYS = Object.freeze([
   'departure_date_to',
   'departure_time_from',
   'departure_time_to',
+  'created_date_from',
+  'created_date_to',
+  'created_time_from',
+  'created_time_to',
   'sum_min',
   'sum_max',
 ]);
@@ -145,13 +154,6 @@ const ALL_ORDERS_STATUS_MORE_MIN_WIDTH = 70;
 const ALL_ORDERS_STATUS_MORE_MAX_WIDTH = 84;
 const ALL_ORDERS_STATUS_USAGE_STORAGE_PREFIX = 'orders.all.statusUsage.v1';
 const ALL_ORDERS_STATUS_USAGE_MAX_ENTRIES = 32;
-const ALL_ORDERS_SORT_KEYS = Object.freeze({
-  dateDesc: 'date_desc',
-  dateAsc: 'date_asc',
-  amountDesc: 'amount_desc',
-  amountAsc: 'amount_asc',
-});
-const ALL_ORDERS_DEFAULT_SORT = ALL_ORDERS_SORT_KEYS.dateDesc;
 const LEGACY_STATUS_FILTER_MAP = Object.freeze({
   completed: 'done',
   in_progress: 'progress',
@@ -162,10 +164,15 @@ const ORDER_FILTER_DEFAULTS = {
   statuses: [],
   clientIds: [],
   executorId: null,
+  executorIds: [],
   departureDateFrom: null,
   departureDateTo: null,
   departureTimeFrom: null,
   departureTimeTo: null,
+  createdDateFrom: null,
+  createdDateTo: null,
+  createdTimeFrom: null,
+  createdTimeTo: null,
   sumMin: '',
   sumMax: '',
 };
@@ -375,8 +382,13 @@ function toDateBoundaryIso(value, startOfDay) {
 }
 
 function buildRouteFilterParams(values = {}) {
+  const executorIds = Array.isArray(values.executorIds)
+    ? values.executorIds.map(String).filter(Boolean)
+    : values.executorId
+      ? [String(values.executorId)]
+      : [];
   return {
-    executor: values.executorId || undefined,
+    executor: executorIds.length ? executorIds.join(',') : undefined,
     statuses:
       Array.isArray(values.statuses) && values.statuses.length
         ? values.statuses.join(',')
@@ -393,6 +405,10 @@ function buildRouteFilterParams(values = {}) {
     departure_date_to: values.departureDateTo || undefined,
     departure_time_from: values.departureTimeFrom || undefined,
     departure_time_to: values.departureTimeTo || undefined,
+    created_date_from: values.createdDateFrom || undefined,
+    created_date_to: values.createdDateTo || undefined,
+    created_time_from: values.createdTimeFrom || undefined,
+    created_time_to: values.createdTimeTo || undefined,
     sum_min: values.sumMin || undefined,
     sum_max: values.sumMax || undefined,
   };
@@ -496,6 +512,10 @@ function AllOrdersContent() {
     departure_date_to,
     departure_time_from,
     departure_time_to,
+    created_date_from,
+    created_date_to,
+    created_time_from,
+    created_time_to,
     sum_min,
     sum_max,
     relation_client_id,
@@ -553,7 +573,8 @@ function AllOrdersContent() {
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [statusSelectVisible, setStatusSelectVisible] = useState(false);
   const [sortVisible, setSortVisible] = useState(false);
-  const [sortKey, setSortKey] = useState(ALL_ORDERS_DEFAULT_SORT);
+  const [sortKey, setSortKey] = useState(ORDER_DEFAULT_SORT_KEY);
+  const normalizedSortKey = normalizeOrderSortKey(sortKey);
   const [departmentFilter] = useState(() => {
     const normalizedDepartment = readRouteParam(department);
     if (EMPTY_DEPARTMENT_ROUTE_VALUES.has(normalizedDepartment)) return null;
@@ -564,11 +585,16 @@ function AllOrdersContent() {
     workTypes: readRouteListParam(work_type),
     statuses: readRouteListParam(statuses).map(normalizeAllOrdersStatusFilter).filter(Boolean),
     clientIds: readRouteListParam(client_ids),
-    executorId: readRouteParam(executor) || null,
+    executorId: readRouteListParam(executor)[0] || null,
+    executorIds: readRouteListParam(executor),
     departureDateFrom: readRouteParam(departure_date_from) || null,
     departureDateTo: readRouteParam(departure_date_to) || null,
     departureTimeFrom: readRouteParam(departure_time_from) || null,
     departureTimeTo: readRouteParam(departure_time_to) || null,
+    createdDateFrom: readRouteParam(created_date_from) || null,
+    createdDateTo: readRouteParam(created_date_to) || null,
+    createdTimeFrom: readRouteParam(created_time_from) || null,
+    createdTimeTo: readRouteParam(created_time_to) || null,
     sumMin: readRouteParam(sum_min),
     sumMax: readRouteParam(sum_max),
   }));
@@ -583,7 +609,13 @@ function AllOrdersContent() {
     router.setParams({ filter: effectiveStatusFilter });
   }, [effectiveStatusFilter, router, statusFilter]);
 
-  const executorFilter = orderFilters.executorId;
+  const executorFilters = useMemo(() => {
+    if (Array.isArray(orderFilters.executorIds) && orderFilters.executorIds.length) {
+      return orderFilters.executorIds.map(String).filter(Boolean);
+    }
+    return orderFilters.executorId ? [String(orderFilters.executorId)] : [];
+  }, [orderFilters.executorId, orderFilters.executorIds]);
+  const hasExecutorFilter = executorFilters.length > 0;
   const workTypeFilter = orderFilters.workTypes;
   const hasWorkTypeFilter = Array.isArray(workTypeFilter) && workTypeFilter.length > 0;
   const filterDataEnabled =
@@ -592,7 +624,7 @@ function AllOrdersContent() {
     (filtersVisible ||
       orders.length > 0 ||
       !loading ||
-      Boolean(executorFilter) ||
+      hasExecutorFilter ||
       hasWorkTypeFilter ||
       (Array.isArray(orderFilters.statuses) && orderFilters.statuses.length > 0) ||
       (Array.isArray(orderFilters.clientIds) && orderFilters.clientIds.length > 0));
@@ -682,13 +714,13 @@ function AllOrdersContent() {
     [companyClients],
   );
   const allRequestsParams = useMemo(() => {
-    const next = {};
+    const next = { sortKey: normalizedSortKey };
     if (effectiveStatusFilter && effectiveStatusFilter !== 'all') next.status = effectiveStatusFilter;
     const statusFilters = Array.isArray(orderFilters.statuses)
       ? orderFilters.statuses.map(normalizeAllOrdersStatusFilter).filter((key) => key && key !== 'all')
       : [];
     if (statusFilters.length) next.statuses = statusFilters;
-    if (executorFilter) next.executorId = executorFilter;
+    if (executorFilters.length) next.executorIds = executorFilters;
     if (departmentFilter != null) next.departmentId = departmentFilter;
     if (useWorkTypes && Array.isArray(workTypeFilter) && workTypeFilter.length) {
       next.workTypeIds = workTypeFilter;
@@ -698,10 +730,14 @@ function AllOrdersContent() {
     }
     const dateFrom = toDateBoundaryIso(orderFilters.departureDateFrom, true);
     const dateTo = toDateBoundaryIso(orderFilters.departureDateTo, false);
+    const createdFrom = toDateBoundaryIso(orderFilters.createdDateFrom, true);
+    const createdTo = toDateBoundaryIso(orderFilters.createdDateTo, false);
     const sumMinValue = readRouteParam(orderFilters.sumMin);
     const sumMaxValue = readRouteParam(orderFilters.sumMax);
     if (dateFrom) next.dateFrom = dateFrom;
     if (dateTo) next.dateTo = dateTo;
+    if (createdFrom) next.createdFrom = createdFrom;
+    if (createdTo) next.createdTo = createdTo;
     if (sumMinValue) next.sumMin = sumMinValue;
     if (sumMaxValue) next.sumMax = sumMaxValue;
     if (relationClientId) next.relationClientId = relationClientId;
@@ -709,9 +745,12 @@ function AllOrdersContent() {
     return next;
   }, [
     departmentFilter,
-    executorFilter,
+    executorFilters,
     effectiveStatusFilter,
+    normalizedSortKey,
     orderFilters.clientIds,
+    orderFilters.createdDateFrom,
+    orderFilters.createdDateTo,
     orderFilters.departureDateFrom,
     orderFilters.departureDateTo,
     orderFilters.sumMax,
@@ -750,12 +789,19 @@ function AllOrdersContent() {
   const listLoading = loading || !requestsEnabled;
 
   useEffect(() => {
-    if (departmentFilter == null || !executorFilter) return;
-    const selectedExecutor = executors.find((item) => String(item.id) === String(executorFilter));
-    if (selectedExecutor && String(selectedExecutor.department_id || '') !== String(departmentFilter)) {
-      setOrderFilterValue('executorId', null);
+    if (departmentFilter == null || !executorFilters.length) return;
+    if (!Array.isArray(executors) || executors.length === 0) return;
+    const allowedIds = new Set(
+      executors
+        .filter((item) => String(item.department_id || '') === String(departmentFilter))
+        .map((item) => String(item.id)),
+    );
+    const nextExecutorIds = executorFilters.filter((id) => allowedIds.has(String(id)));
+    if (nextExecutorIds.length !== executorFilters.length) {
+      setOrderFilterValue('executorId', nextExecutorIds[0] || null);
+      setOrderFilterValue('executorIds', nextExecutorIds);
     }
-  }, [departmentFilter, executorFilter, executors, setOrderFilterValue]);
+  }, [departmentFilter, executorFilters, executors, setOrderFilterValue]);
 
   const lastItemsSignatureRef = useRef('');
   useEffect(() => {
@@ -1324,11 +1370,25 @@ function AllOrdersContent() {
       }
     }
 
-    if (executorFilter) {
-      const executorLabel = executorOptions.find((item) => item.id === executorFilter)?.label;
-      if (executorLabel) {
-        fullParts.push(`${t('orders_filter_executor')}: ${executorLabel}`);
-        compactParts.push(`${t('orders_filter_executor')}: ${executorLabel}`);
+    if (executorFilters.length) {
+      const executorLabels = executorFilters
+        .map((id) => executorOptions.find((item) => String(item.id) === String(id))?.label)
+        .filter(Boolean);
+      if (executorLabels.length) {
+        fullParts.push(
+          summarizeFilterPart({
+            label: t('orders_filter_executor'),
+            values: executorLabels,
+            countWhenMany: false,
+          }),
+        );
+        compactParts.push(
+          summarizeFilterPart({
+            label: t('orders_filter_executor'),
+            values: executorLabels,
+            countWhenMany: true,
+          }),
+        );
       }
     }
 
@@ -1362,10 +1422,26 @@ function AllOrdersContent() {
       compactParts.push(part);
     }
 
+    if (orderFilters.createdDateFrom || orderFilters.createdDateTo) {
+      const fromLabel = formatDateFilterLabel(orderFilters.createdDateFrom, locale) || t('common_dash');
+      const toLabel = formatDateFilterLabel(orderFilters.createdDateTo, locale) || t('common_dash');
+      const part = `${t('orders_filter_created_date')}: ${fromLabel}${RANGE_SEPARATOR}${toLabel}`;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
     if (orderFilters.departureTimeFrom || orderFilters.departureTimeTo) {
       const fromLabel = formatTimeFilterLabel(orderFilters.departureTimeFrom, locale) || t('common_dash');
       const toLabel = formatTimeFilterLabel(orderFilters.departureTimeTo, locale) || t('common_dash');
       const part = `${t('order_field_departure_time')}: ${fromLabel}${RANGE_SEPARATOR}${toLabel}`;
+      fullParts.push(part);
+      compactParts.push(part);
+    }
+
+    if (orderFilters.createdTimeFrom || orderFilters.createdTimeTo) {
+      const fromLabel = formatTimeFilterLabel(orderFilters.createdTimeFrom, locale) || t('common_dash');
+      const toLabel = formatTimeFilterLabel(orderFilters.createdTimeTo, locale) || t('common_dash');
+      const part = `${t('orders_filter_created_time')}: ${fromLabel}${RANGE_SEPARATOR}${toLabel}`;
       fullParts.push(part);
       compactParts.push(part);
     }
@@ -1383,11 +1459,15 @@ function AllOrdersContent() {
     };
   }, [
     clientOptions,
-    executorFilter,
+    executorFilters,
     executorOptions,
     locale,
     getStatusLabel,
     orderFilters.clientIds,
+    orderFilters.createdDateFrom,
+    orderFilters.createdDateTo,
+    orderFilters.createdTimeFrom,
+    orderFilters.createdTimeTo,
     orderFilters.departureDateFrom,
     orderFilters.departureDateTo,
     orderFilters.departureTimeFrom,
@@ -1406,6 +1486,8 @@ function AllOrdersContent() {
     const q = deferredSearchQuery.trim().toLowerCase();
     const timeFrom = parseTimeToMinutes(orderFilters.departureTimeFrom);
     const timeTo = parseTimeToMinutes(orderFilters.departureTimeTo);
+    const createdTimeFrom = parseTimeToMinutes(orderFilters.createdTimeFrom);
+    const createdTimeTo = parseTimeToMinutes(orderFilters.createdTimeTo);
     return (orders || []).filter((order) => {
       if (timeFrom != null || timeTo != null) {
         const dt = order?.time_window_start ? new Date(order.time_window_start) : null;
@@ -1413,6 +1495,14 @@ function AllOrdersContent() {
           const minutes = dt.getHours() * MINUTES_PER_HOUR + dt.getMinutes();
           if (timeFrom != null && minutes < timeFrom) return false;
           if (timeTo != null && minutes > timeTo) return false;
+        }
+      }
+      if (createdTimeFrom != null || createdTimeTo != null) {
+        const createdAt = order?.created_at ? new Date(order.created_at) : null;
+        if (createdAt && !Number.isNaN(createdAt.getTime())) {
+          const minutes = createdAt.getHours() * MINUTES_PER_HOUR + createdAt.getMinutes();
+          if (createdTimeFrom != null && minutes < createdTimeFrom) return false;
+          if (createdTimeTo != null && minutes > createdTimeTo) return false;
         }
       }
       if (!q) return true;
@@ -1448,6 +1538,8 @@ function AllOrdersContent() {
   }, [
     companySettings,
     deferredSearchQuery,
+    orderFilters.createdTimeFrom,
+    orderFilters.createdTimeTo,
     orderFilters.departureTimeFrom,
     orderFilters.departureTimeTo,
     orders,
@@ -1455,44 +1547,11 @@ function AllOrdersContent() {
     t,
   ]);
 
-  const sortOptions = useMemo(
-    () => [
-      { id: ALL_ORDERS_SORT_KEYS.dateDesc, label: t('orders_sort_date_desc') },
-      { id: ALL_ORDERS_SORT_KEYS.dateAsc, label: t('orders_sort_date_asc') },
-      { id: ALL_ORDERS_SORT_KEYS.amountDesc, label: t('orders_sort_amount_desc') },
-      { id: ALL_ORDERS_SORT_KEYS.amountAsc, label: t('orders_sort_amount_asc') },
-    ],
-    [t],
-  );
+  const sortOptions = useMemo(() => getOrderSortOptions(t), [t]);
 
   const sortedFilteredOrders = useMemo(() => {
-    if (sortKey === ALL_ORDERS_SORT_KEYS.dateDesc) {
-      return Array.isArray(filteredOrders) ? filteredOrders : EMPTY_ARRAY;
-    }
-    const parseOrderDate = (item) => {
-      const ts = item?.time_window_start ? new Date(item.time_window_start).getTime() : NaN;
-      return Number.isFinite(ts) ? ts : ALL_ORDERS_SORT_FALLBACK;
-    };
-    const parseAmount = (item) => {
-      const value = Number(item?.start_price ?? item?.sum ?? ALL_ORDERS_SORT_FALLBACK);
-      return Number.isFinite(value) ? value : ALL_ORDERS_SORT_FALLBACK;
-    };
-    const arr = Array.isArray(filteredOrders) ? [...filteredOrders] : [];
-    arr.sort((a, b) => {
-      switch (sortKey) {
-        case ALL_ORDERS_SORT_KEYS.dateAsc:
-          return parseOrderDate(a) - parseOrderDate(b);
-        case ALL_ORDERS_SORT_KEYS.amountDesc:
-          return parseAmount(b) - parseAmount(a);
-        case ALL_ORDERS_SORT_KEYS.amountAsc:
-          return parseAmount(a) - parseAmount(b);
-        case ALL_ORDERS_SORT_KEYS.dateDesc:
-        default:
-          return parseOrderDate(b) - parseOrderDate(a);
-      }
-    });
-    return arr;
-  }, [filteredOrders, sortKey]);
+    return sortOrders(filteredOrders, normalizedSortKey);
+  }, [filteredOrders, normalizedSortKey]);
 
   const loadMore = useCallback(async () => {
     if (isFetchingNextPage || !hasNextPage || listLoading) return;
@@ -1501,7 +1560,6 @@ function AllOrdersContent() {
 
   const returnParamsRef = useRef({
     filter: effectiveStatusFilter,
-    executor: executorFilter,
     search: searchQuery,
     ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
     client_ids: Array.isArray(orderFilters.clientIds) ? orderFilters.clientIds.join(',') : '',
@@ -1513,7 +1571,6 @@ function AllOrdersContent() {
   useEffect(() => {
     returnParamsRef.current = {
       filter: effectiveStatusFilter,
-      executor: executorFilter,
       search: searchQuery,
       ...(departmentFilter != null ? { department: String(departmentFilter) } : {}),
       ...buildRouteFilterParams(orderFilters),
@@ -1524,7 +1581,6 @@ function AllOrdersContent() {
   }, [
     departmentFilter,
     effectiveStatusFilter,
-    executorFilter,
     orderFilters,
     relationClientId,
     relationLabel,
@@ -1990,8 +2046,11 @@ function AllOrdersContent() {
           workTypes: useWorkTypes ? workTypes : [],
           clients: clientOptions,
           executors: executorOptions,
+          executorSelectionMode: 'multiple',
           showDate: true,
           showTime: true,
+          showCreatedDate: true,
+          showCreatedTime: true,
           showAmount: true,
         }}
         values={orderFilters}
@@ -2008,7 +2067,13 @@ function AllOrdersContent() {
               ? nextValues.statuses.map(normalizeAllOrdersStatusFilter).filter(Boolean)
               : [],
             workTypes: useWorkTypes ? nextValues?.workTypes : [],
+            executorIds: Array.isArray(nextValues?.executorIds)
+              ? nextValues.executorIds.map(String).filter(Boolean)
+              : nextValues?.executorId
+                ? [String(nextValues.executorId)]
+                : [],
           };
+          normalizedNextValues.executorId = normalizedNextValues.executorIds[0] || null;
           setOrderFilters(normalizedNextValues);
           router.setParams(buildRouteFilterParams(normalizedNextValues));
         }}

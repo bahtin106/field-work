@@ -29,6 +29,7 @@ const REG_CODE_TTL_MS = 10 * 60 * 1000;
 const REG_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
 const REG_CODE_MAX_ATTEMPTS = 6;
 const REG_PROOF_TTL_MS = 20 * 60 * 1000;
+const REGISTRATION_CODE_PURPOSES = new Set(['register', 'recovery', 'email_change_old', 'email_change_new']);
 
 function envFlag(name, defaultValue = false) {
   const raw = process.env[name];
@@ -106,6 +107,14 @@ function hashProofToken(token) {
 
 function getRegistrationCodeKey(email, purpose) {
   return `${normalizeEmail(email)}:${String(purpose || 'register').trim().toLowerCase()}`;
+}
+
+function normalizeRegistrationPurpose(value) {
+  return String(value || 'register').trim().toLowerCase();
+}
+
+function isValidRegistrationPurpose(value) {
+  return REGISTRATION_CODE_PURPOSES.has(normalizeRegistrationPurpose(value));
 }
 
 function dateToMs(value) {
@@ -836,11 +845,11 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     await cleanupPersistentRegistrationStores();
     cleanupRegistrationStores();
     const email = normalizeEmail(req.body?.email);
-    const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
+    const purpose = normalizeRegistrationPurpose(req.body?.purpose);
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ ok: false, code: 'INVALID_EMAIL', message: 'Invalid email' });
     }
-    if (purpose !== 'register' && purpose !== 'recovery') {
+    if (!isValidRegistrationPurpose(purpose)) {
       return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE', message: 'Invalid purpose' });
     }
 
@@ -869,10 +878,19 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     await savePersistentRegistrationCode(entry);
 
     const isRecoveryPurpose = purpose === 'recovery';
+    const isEmailChangeOldPurpose = purpose === 'email_change_old';
+    const isEmailChangeNewPurpose = purpose === 'email_change_new';
+    const isEmailChangePurpose = isEmailChangeOldPurpose || isEmailChangeNewPurpose;
     const codeTtlMinutes = getRegistrationCodeTtlMinutes();
-    const emailType = isRecoveryPurpose ? 'password-recovery-code' : 'registration-code';
+    const emailType = isRecoveryPurpose
+      ? 'password-recovery-code'
+      : isEmailChangePurpose
+        ? 'email-change-code'
+        : 'registration-code';
     const subject = isRecoveryPurpose
       ? `\u041a\u043e\u0434 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u0432 ${EMAIL_BRAND_NAME}`
+      : isEmailChangePurpose
+        ? `\u041a\u043e\u0434 \u0441\u043c\u0435\u043d\u044b e-mail \u0432 ${EMAIL_BRAND_NAME}`
       : `\u041a\u043e\u0434 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f \u0432 ${EMAIL_BRAND_NAME}`;
     const verifyBaseUrl = String(
       isRecoveryPurpose
@@ -882,17 +900,27 @@ app.post('/registration/send-code', rateLimit('registration-send-code', 20, 60 *
     const verifyUrl = `${verifyBaseUrl}${verifyBaseUrl.includes('?') ? '&' : '?'}email=${encodeURIComponent(email)}`;
     const heading = isRecoveryPurpose
       ? '\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0434 \u0434\u043b\u044f \u0441\u043c\u0435\u043d\u044b \u043f\u0430\u0440\u043e\u043b\u044f'
+      : isEmailChangePurpose
+        ? '\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0434 \u0434\u043b\u044f \u0441\u043c\u0435\u043d\u044b e-mail'
       : '\u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u043a\u043e\u0434 \u0434\u043b\u044f \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438';
     const description = isRecoveryPurpose
       ? `\u0427\u0442\u043e\u0431\u044b \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u043d\u043e\u0432\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c \u0432 \u0441\u0435\u0440\u0432\u0438\u0441\u0435 <strong>${EMAIL_BRAND_NAME}</strong>, \u0432\u0432\u0435\u0434\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u043a\u043e\u0434 \u043d\u0430 \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0435 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f.`
+      : isEmailChangeOldPurpose
+        ? `\u0412 ${EMAIL_BRAND_NAME} \u0437\u0430\u043f\u0440\u043e\u0448\u0435\u043d\u0430 \u0441\u043c\u0435\u043d\u0430 e-mail \u0432\u0430\u0448\u0435\u0439 \u0443\u0447\u0435\u0442\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438. \u0412\u0432\u0435\u0434\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u043a\u043e\u0434 \u0432 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0438 \u043a\u0430\u043a \u043a\u043e\u0434 \u0441 \u0442\u0435\u043a\u0443\u0449\u0435\u0439 \u043f\u043e\u0447\u0442\u044b.`
+      : isEmailChangeNewPurpose
+        ? `\u0427\u0442\u043e\u0431\u044b \u043f\u0440\u0438\u0432\u044f\u0437\u0430\u0442\u044c \u044d\u0442\u043e\u0442 e-mail \u043a \u0443\u0447\u0435\u0442\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438 ${EMAIL_BRAND_NAME}, \u0432\u0432\u0435\u0434\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u043a\u043e\u0434 \u0432 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0438 \u043a\u0430\u043a \u043a\u043e\u0434 \u0441 \u043d\u043e\u0432\u043e\u0439 \u043f\u043e\u0447\u0442\u044b.`
       : `\u0427\u0442\u043e\u0431\u044b \u0437\u0430\u0432\u0435\u0440\u0448\u0438\u0442\u044c \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044e \u0432 \u0441\u0435\u0440\u0432\u0438\u0441\u0435 <strong>${EMAIL_BRAND_NAME}</strong>, \u0432\u0432\u0435\u0434\u0438\u0442\u0435 \u044d\u0442\u043e\u0442 \u043a\u043e\u0434 \u0432 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0438.`;
     const hint = isRecoveryPurpose
       ? `\u041a\u043e\u0434 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 ${codeTtlMinutes} \u043c\u0438\u043d\u0443\u0442. \u0415\u0441\u043b\u0438 \u0432\u044b \u043d\u0435 \u0437\u0430\u043f\u0440\u0430\u0448\u0438\u0432\u0430\u043b\u0438 \u0441\u043c\u0435\u043d\u0443 \u043f\u0430\u0440\u043e\u043b\u044f, \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0440\u043e\u0438\u0433\u043d\u043e\u0440\u0438\u0440\u0443\u0439\u0442\u0435 \u044d\u0442\u043e \u043f\u0438\u0441\u044c\u043c\u043e.`
+      : isEmailChangePurpose
+        ? `\u041a\u043e\u0434 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 ${codeTtlMinutes} \u043c\u0438\u043d\u0443\u0442. \u0415\u0441\u043b\u0438 \u0432\u044b \u043d\u0435 \u043c\u0435\u043d\u044f\u043b\u0438 e-mail \u0432 ${EMAIL_BRAND_NAME}, \u0441\u0440\u043e\u0447\u043d\u043e \u0432\u043e\u0439\u0434\u0438\u0442\u0435 \u0432 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435 \u0438 \u0441\u043c\u0435\u043d\u0438\u0442\u0435 \u043f\u0430\u0440\u043e\u043b\u044c.`
       : `\u041a\u043e\u0434 \u0434\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 ${codeTtlMinutes} \u043c\u0438\u043d\u0443\u0442. \u0415\u0441\u043b\u0438 \u0432\u044b \u043d\u0435 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043b\u0438\u0441\u044c \u0432 ${EMAIL_BRAND_NAME}, \u043f\u0440\u043e\u0441\u0442\u043e \u043f\u0440\u043e\u0438\u0433\u043d\u043e\u0440\u0438\u0440\u0443\u0439\u0442\u0435 \u044d\u0442\u043e \u043f\u0438\u0441\u044c\u043c\u043e.`;
     const footer = `\u041f\u0438\u0441\u044c\u043c\u043e \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u043e \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438, \u043e\u0442\u0432\u0435\u0447\u0430\u0442\u044c \u043d\u0430 \u043d\u0435\u0433\u043e \u043d\u0435 \u043d\u0443\u0436\u043d\u043e.`;
     const codeLabel = '\u041a\u043e\u0434 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u044f';
     const textPrefix = isRecoveryPurpose
       ? '\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0430\u0440\u043e\u043b\u044f'
+      : isEmailChangePurpose
+        ? '\u0421\u043c\u0435\u043d\u0430 e-mail'
       : '\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0438\u0435 email';
     const actionLabel = isRecoveryPurpose
       ? '\u041e\u0442\u043a\u0440\u044b\u0442\u044c \u0441\u0442\u0440\u0430\u043d\u0438\u0446\u0443 \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f'
@@ -963,7 +991,7 @@ app.post('/registration/verify-code', rateLimit('registration-verify-code', 50, 
     cleanupRegistrationStores();
     const email = normalizeEmail(req.body?.email);
     const code = String(req.body?.code || '').trim();
-    const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
+    const purpose = normalizeRegistrationPurpose(req.body?.purpose);
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ ok: false, code: 'INVALID_EMAIL' });
@@ -971,7 +999,7 @@ app.post('/registration/verify-code', rateLimit('registration-verify-code', 50, 
     if (!/^\d{6}$/.test(code)) {
       return res.status(400).json({ ok: false, code: 'INVALID_CODE' });
     }
-    if (purpose !== 'register' && purpose !== 'recovery') {
+    if (!isValidRegistrationPurpose(purpose)) {
       return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE' });
     }
 
@@ -1030,12 +1058,12 @@ app.post('/registration/consume-token', rateLimit('registration-consume-token', 
     cleanupRegistrationStores();
     const email = normalizeEmail(req.body?.email);
     const token = String(req.body?.registration_token || '').trim();
-    const purpose = String(req.body?.purpose || 'register').trim().toLowerCase();
+    const purpose = normalizeRegistrationPurpose(req.body?.purpose);
 
     if (!email || !token) {
       return res.status(400).json({ ok: false, code: 'INVALID_INPUT' });
     }
-    if (purpose !== 'register' && purpose !== 'recovery') {
+    if (!isValidRegistrationPurpose(purpose)) {
       return res.status(400).json({ ok: false, code: 'INVALID_PURPOSE' });
     }
 

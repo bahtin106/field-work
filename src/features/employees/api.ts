@@ -2,6 +2,7 @@ import { supabase } from '../../../lib/supabase';
 import { formatPersonNameParts } from '../../../lib/personName';
 import { measureNetwork } from '../../shared/perf/devMetrics';
 import { inspectProfileMedia } from '../profileMedia/api';
+import { normalizeDepartmentFilterIds } from './departments';
 const employeeByIdInFlight = new Map<string, Promise<any>>();
 
 function isMissingUserIdColumn(error: any) {
@@ -117,9 +118,13 @@ export async function listEmployees(filters: any = {}) {
       .eq('company_id', scopedCompanyId)
       .order('full_name', { ascending: true, nullsFirst: false });
 
-    if (Array.isArray(filters.departments) && filters.departments.length > 0) {
-      const deptIds = filters.departments.map((d) => (typeof d === 'number' ? d : String(d)));
-      query = query.in('department_id', deptIds);
+    const { departmentIds, includeNoDepartment } = normalizeDepartmentFilterIds(filters.departments);
+    if (includeNoDepartment && departmentIds.length > 0) {
+      query = query.or(`department_id.is.null,department_id.in.(${departmentIds.join(',')})`);
+    } else if (includeNoDepartment) {
+      query = query.is('department_id', null);
+    } else if (departmentIds.length > 0) {
+      query = query.in('department_id', departmentIds);
     }
 
     if (Array.isArray(filters.roles) && filters.roles.length > 0) {

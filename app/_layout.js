@@ -27,6 +27,7 @@ import { applyAndroidStatusBar, applyAndroidSystemBars } from '../lib/systemBars
 import { installClientErrorLogging, uninstallClientErrorLogging } from '../lib/errorLogsClient';
 import {
   getLastPublicAuthRoute,
+  normalizePublicAuthRoute,
   rememberPublicAuthRoute,
   resetPublicAuthRoute,
 } from '../lib/authFlowNavigationState';
@@ -299,9 +300,23 @@ function RootLayoutInner() {
       return;
     }
     if (inAuthFlow) {
-      rememberPublicAuthRoute({ pathname, segments });
+      const currentAuthRoute = normalizePublicAuthRoute({ pathname, segments });
+      const rememberedAuthRoute = rememberPublicAuthRoute({ pathname, segments });
+      const preferredAuthRoute = getLastPublicAuthRoute('/(auth)/login');
+      if (
+        currentAuthRoute === '/(auth)/login' &&
+        rememberedAuthRoute &&
+        preferredAuthRoute &&
+        preferredAuthRoute !== currentAuthRoute
+      ) {
+        const frameId = requestAnimationFrame(() => {
+          router.replace(preferredAuthRoute);
+        });
+        return () => cancelAnimationFrame(frameId);
+      }
     }
-  }, [inAuthFlow, isAuthenticated, pathname, segments]);
+    return undefined;
+  }, [inAuthFlow, isAuthenticated, pathname, router, segments]);
 
   useEffect(() => {
     if (Platform.OS === 'web' || isInitializing || !isAuthenticated || isBlockedScreen) return undefined;

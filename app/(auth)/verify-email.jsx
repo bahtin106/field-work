@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Button from '../../components/ui/Button';
 import { useTheme } from '../../theme';
 import { supabase } from '../../lib/supabase';
+import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { useToast } from '../../components/ui/ToastProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
 
@@ -135,7 +136,13 @@ export default function VerifyEmailScreen() {
           <Text style={styles.title}>{t('auth_verify_email_error_title')}</Text>
           <Text style={styles.error}>{errorMessage}</Text>
           <View style={styles.buttonContainer}>
-            <Button title={t('auth_verify_email_back_to_login')} onPress={() => router.replace('/(auth)/login')} />
+            <Button
+              title={t('auth_verify_email_back_to_login')}
+              onPress={() => {
+                resetPublicAuthRoute();
+                router.replace('/(auth)/login');
+              }}
+            />
           </View>
         </ScrollView>
       </SafeAreaView>

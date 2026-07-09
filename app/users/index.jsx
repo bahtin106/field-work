@@ -38,6 +38,7 @@ import {
   useEmployees,
   useEmployeesRealtimeSync,
 } from '../../src/features/employees/queries';
+import { isNoDepartmentFilterId } from '../../src/features/employees/departments';
 import { useMyCompanyIdQuery } from '../../src/features/profile/queries';
 import { t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -253,7 +254,11 @@ function UsersIndexContent() {
     if (!debouncedQ) return users;
     return users.filter((u) => {
       const departmentLabel =
-        useDepartments && u?.department_id ? departmentMap.get(String(u.department_id)) || '' : '';
+        useDepartments
+          ? u?.department_id
+            ? departmentMap.get(String(u.department_id)) || ''
+            : t('placeholder_department')
+          : '';
       return matchesSearch(
         buildSearchIndex({
           texts: [
@@ -447,6 +452,7 @@ function UsersIndexContent() {
     ) {
       const names = filters.values.departments
         .map((id) => {
+          if (isNoDepartmentFilterId(id)) return t('placeholder_department');
           const d = departments.find((dept) => String(dept.id) === String(id));
           return d ? d.name : null;
         })
@@ -722,6 +728,7 @@ function UsersIndexContent() {
         visible={filtersVisible}
         onClose={() => setFiltersVisible(false)}
         departments={useDepartments ? departments : []}
+        includeNoDepartment={useDepartments}
         rolesOptions={Object.keys(ROLE_LABELS).map((r) => ({
           id: r,
           value: r,

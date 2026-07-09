@@ -1,6 +1,5 @@
 // screens/users/[id]/UserViewScreen.jsx
 import { Feather } from '@expo/vector-icons';
-import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect } from 'react';
@@ -16,6 +15,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AppHeader from '../../../components/navigation/AppHeader';
+import EntityPhotoPreview from '../../../components/media/EntityPhotoPreview';
 import Card from '../../../components/ui/Card';
 import IconButton from '../../../components/ui/IconButton';
 import { listItemStyles } from '../../../components/ui/listItemStyles';
@@ -385,20 +385,18 @@ export default function UserView() {
           </>
         ) : null}
         {/* Top avatar on background */}
-        <View style={s.avatarContainer}>
-          <View style={s.avatarXl}>
-            {canShowAvatarImage && avatarUrl ? (
-              <ExpoImage
-                source={{ uri: avatarUrl }}
-                style={s.avatarImg}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-              />
-            ) : (
-              <Text style={s.avatarTextXl}>{initials || '•'}</Text>
-            )}
-          </View>
-        </View>
+        <EntityPhotoPreview
+          imageUrl={canShowAvatarImage ? avatarUrl : null}
+          previewUrl={canShowAvatarImage ? avatarUrl : null}
+          title={t('profile_photo_title')}
+          fallback={initials || '•'}
+          emptyLabel={t('placeholder_no_photo')}
+          containerStyle={s.avatarContainer}
+          frameStyle={s.avatarXl}
+          imageStyle={s.avatarImg}
+          fallbackTextStyle={s.avatarTextXl}
+          accessibilityLabel={t('profile_photo_title')}
+        />
 
         {canShowPersonalSection ? (
           <SectionHeader>{t('section_personal')}</SectionHeader>

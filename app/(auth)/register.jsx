@@ -35,6 +35,7 @@ import {
 } from '../../lib/authValidation';
 import { KeyboardAwareScrollView } from '../../lib/keyboardControllerCompat';
 import { FUNCTIONS } from '../../lib/constants';
+import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { logClientError } from '../../lib/errorLogsClient';
 import { supabase } from '../../lib/supabase';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -367,7 +368,7 @@ export default function RegisterScreen() {
   };
 
   const [firstName] = useState(() => t('register_default_first_name'));
-  const [lastName] = useState('Monitor');
+  const [lastName] = useState(() => t('register_default_last_name'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -1019,6 +1020,7 @@ export default function RegisterScreen() {
           <Pressable
             onPress={() => {
               if (submitting) return;
+              resetPublicAuthRoute();
               router.push('/(auth)/login');
             }}
             disabled={submitting}

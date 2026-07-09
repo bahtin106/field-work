@@ -492,71 +492,74 @@ export default function DepartmentsSettings() {
 
           {useDepartments ? (
             <>
-              {departments.length ? (
+              <View>
                 <View>
-                  {departments.map((item, index) => {
-                    const isBusy = !!busyById[item.id];
-                    const isEnabled = item.is_enabled !== false;
-                    const isLast = index === departments.length - 1;
+                  <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>
+                    <View style={s.nameWrap}>
+                      <Text style={s.nameText} numberOfLines={1}>
+                        {t('placeholder_department')}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                {departments.length ? <View style={s.separator} /> : null}
+                {departments.map((item, index) => {
+                  const isBusy = !!busyById[item.id];
+                  const isEnabled = item.is_enabled !== false;
+                  const isLast = index === departments.length - 1;
 
-                    return (
-                      <View key={String(item.id)}>
-                        <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>
-                          <View style={s.nameWrap}>
-                            <Text style={s.nameText} numberOfLines={1}>
-                              {item.name}
-                            </Text>
-                            <Pressable
-                              onPress={() => onOpenEditModal(item)}
-                              disabled={isBusy}
-                              style={({ pressed }) => [s.iconPressable, pressed ? s.iconPressablePressed : null]}
-                              accessibilityLabel={t('btn_edit')}
-                            >
-                              <Feather
-                                name="edit-2"
-                                size={theme.icons?.sm ?? DEFAULT_ICON_SIZE}
-                                color={theme.colors.textSecondary}
-                              />
-                            </Pressable>
-                          </View>
-
-                          <View style={s.rightActions}>
-                            {isBusy ? (
-                              <ActivityIndicator
-                                size={theme.components?.activityIndicator?.size || DEFAULT_ACTIVITY_INDICATOR_SIZE}
-                                color={theme.colors.primary}
-                              />
-                            ) : (
-                              <ThemedSwitch
-                                value={isEnabled}
-                                onValueChange={(next) => onToggleDepartment(item, next)}
-                              />
-                            )}
-                            <Pressable
-                              onPress={() => openDeleteModal(item)}
-                              disabled={isBusy}
-                              style={({ pressed }) => [s.iconPressable, pressed ? s.iconPressablePressed : null]}
-                              accessibilityLabel={t('btn_delete')}
-                            >
-                              <Feather
-                                name="trash-2"
-                                size={theme.icons?.sm ?? DEFAULT_ICON_SIZE}
-                                color={theme.colors.danger}
-                              />
-                            </Pressable>
-                          </View>
+                  return (
+                    <View key={String(item.id)}>
+                      <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>
+                        <View style={s.nameWrap}>
+                          <Text style={s.nameText} numberOfLines={1}>
+                            {item.name}
+                          </Text>
+                          <Pressable
+                            onPress={() => onOpenEditModal(item)}
+                            disabled={isBusy}
+                            style={({ pressed }) => [s.iconPressable, pressed ? s.iconPressablePressed : null]}
+                            accessibilityLabel={t('btn_edit')}
+                          >
+                            <Feather
+                              name="edit-2"
+                              size={theme.icons?.sm ?? DEFAULT_ICON_SIZE}
+                              color={theme.colors.textSecondary}
+                            />
+                          </Pressable>
                         </View>
-                        {!isLast ? <View style={s.separator} /> : null}
+
+                        <View style={s.rightActions}>
+                          {isBusy ? (
+                            <ActivityIndicator
+                              size={theme.components?.activityIndicator?.size || DEFAULT_ACTIVITY_INDICATOR_SIZE}
+                              color={theme.colors.primary}
+                            />
+                          ) : (
+                            <ThemedSwitch
+                              value={isEnabled}
+                              onValueChange={(next) => onToggleDepartment(item, next)}
+                            />
+                          )}
+                          <Pressable
+                            onPress={() => openDeleteModal(item)}
+                            disabled={isBusy}
+                            style={({ pressed }) => [s.iconPressable, pressed ? s.iconPressablePressed : null]}
+                            accessibilityLabel={t('btn_delete')}
+                          >
+                            <Feather
+                              name="trash-2"
+                              size={theme.icons?.sm ?? DEFAULT_ICON_SIZE}
+                              color={theme.colors.danger}
+                            />
+                          </Pressable>
+                        </View>
                       </View>
-                    );
-                  })}
-                </View>
-              ) : (
-                <View style={s.emptyWrap}>
-                  <Text style={s.emptyTitle}>{t('departments_settings_empty_title')}</Text>
-                  <Text style={s.emptyText}>{t('departments_settings_empty_subtitle')}</Text>
-                </View>
-              )}
+                      {!isLast ? <View style={s.separator} /> : null}
+                    </View>
+                  );
+                })}
+              </View>
 
               <View style={s.separator} />
               <View style={[base.row, formStyles.field, { paddingHorizontal: separatorInset }]}>

@@ -250,7 +250,7 @@ export default function CompanySettings() {
   const { theme, mode, setMode } = useTheme();
   const router = useRouter();
   const pathname = usePathname();
-  const { user, profile, isInitializing } = useAuthContext();
+  const { user, profile, isInitializing, mergeAuthUserMetadata } = useAuthContext();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const companyId = profile?.company_id || null;
@@ -266,6 +266,7 @@ export default function CompanySettings() {
   const lastNavigationAtRef = React.useRef(0);
   const accessRedirectInFlightRef = React.useRef(false);
   const modalTransitionTimerRef = React.useRef(null);
+  const workModeConfirmTransitionTargetRef = React.useRef(null);
   const NAV_GUARD_MS = 0;
 
   React.useEffect(
@@ -432,6 +433,7 @@ export default function CompanySettings() {
   const [pendingWorkMode, setPendingWorkMode] = React.useState(null);
   const [switchingWorkMode, setSwitchingWorkMode] = React.useState(false);
   const [localWorkModeOverride, setLocalWorkModeOverride] = React.useState(null);
+  const [workModeSwitchFeedback, setWorkModeSwitchFeedback] = React.useState(null);
   const [workModeConsents, setWorkModeConsents] = React.useState({
     blockMembers: false,
     reassignOrders: false,
@@ -941,6 +943,7 @@ export default function CompanySettings() {
         setWorkModeOpen(false);
         return;
       }
+      setWorkModeSwitchFeedback(null);
       setPendingWorkMode(modeId);
       setWorkModeOpen(false);
       openModalAfterNativeClose(() => setWorkModeConfirmOpen(true));
@@ -949,19 +952,30 @@ export default function CompanySettings() {
   );
   const invokeWorkModeSwitch = React.useCallback(async () => {
     const targetMode = String(pendingWorkMode || '').trim();
-    if (!targetMode || targetMode === currentWorkMode) {
+    if (!targetMode) {
+      const message = t('toast_error');
+      setWorkModeSwitchFeedback({ message, type: 'error' });
+      toast.show(message, 'error');
+      return;
+    }
+    if (targetMode === currentWorkMode) {
       setWorkModeConfirmOpen(false);
       setWorkModeConsentOpen(false);
       setPendingWorkMode(null);
+      workModeConfirmTransitionTargetRef.current = null;
+      setWorkModeSwitchFeedback(null);
       setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
       return;
     }
     const isSwitchingCompanyToSolo = currentWorkMode === 'company' && targetMode === 'solo';
     if (isSwitchingCompanyToSolo && !allWorkModeConsentsAccepted) {
-      toast.show(t('settings_work_mode_consent_required'), 'error');
+      const message = t('settings_work_mode_consent_required');
+      setWorkModeSwitchFeedback({ message, type: 'warning' });
+      toast.show(message, 'error');
       return;
     }
     setSwitchingWorkMode(true);
+    setWorkModeSwitchFeedback(null);
     const loadingToast =
       t('settings_work_mode_saving');
     try {
@@ -982,6 +996,8 @@ export default function CompanySettings() {
         throw new Error(mapped);
       }
       const savedMode = String(data?.account_type || targetMode).toLowerCase() === 'solo' ? 'solo' : 'company';
+      setLocalWorkModeOverride(savedMode);
+      mergeAuthUserMetadata?.({ account_type: savedMode });
       let latestMetadata = user?.user_metadata || {};
       try {
         const { data: refreshed } = await supabase.auth.refreshSession();
@@ -998,16 +1014,21 @@ export default function CompanySettings() {
             account_type: savedMode,
           },
         });
-        if (metadataError) throw metadataError;
+        if (metadataError) {
+          console.warn('[CompanySettings] account mode metadata sync failed', metadataError?.message || metadataError);
+        } else {
+          mergeAuthUserMetadata?.({ account_type: savedMode });
+        }
       }
       try {
         await supabase.auth.refreshSession();
       } catch {}
-      setLocalWorkModeOverride(savedMode);
       toast.show(t('settings_work_mode_saved'), 'success');
       setWorkModeConfirmOpen(false);
       setWorkModeConsentOpen(false);
       setPendingWorkMode(null);
+      workModeConfirmTransitionTargetRef.current = null;
+      setWorkModeSwitchFeedback(null);
       setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
       try {
         await Promise.allSettled([
@@ -1019,13 +1040,16 @@ export default function CompanySettings() {
       } catch {}
     } catch (e) {
       const edgeError = await unwrapEdgeFunctionError(e);
-      toast.show(resolveWorkModeSwitchError(edgeError?.message || e?.message, edgeError?.code || e?.code), 'error');
+      const message = resolveWorkModeSwitchError(edgeError?.message || e?.message, edgeError?.code || e?.code);
+      setWorkModeSwitchFeedback({ message, type: 'error' });
+      toast.show(message, 'error');
     } finally {
       setSwitchingWorkMode(false);
     }
   }, [
     currentWorkMode,
     allWorkModeConsentsAccepted,
+    mergeAuthUserMetadata,
     pendingWorkMode,
     queryClient,
     resolveWorkModeSwitchError,
@@ -1041,12 +1065,23 @@ export default function CompanySettings() {
     const targetMode = String(pendingWorkMode || '').trim();
     const requiresConsent = currentWorkMode === 'company' && targetMode === 'solo';
     if (requiresConsent) {
+      workModeConfirmTransitionTargetRef.current = 'consent';
+      setWorkModeSwitchFeedback(null);
       setWorkModeConfirmOpen(false);
-      openModalAfterNativeClose(() => setWorkModeConsentOpen(true));
       return;
     }
     invokeWorkModeSwitch();
-  }, [currentWorkMode, invokeWorkModeSwitch, openModalAfterNativeClose, pendingWorkMode]);
+  }, [currentWorkMode, invokeWorkModeSwitch, pendingWorkMode]);
+  const applyWorkModeConsent = React.useCallback(() => {
+    if (switchingWorkMode) return;
+    if (!allWorkModeConsentsAccepted) {
+      const message = t('settings_work_mode_consent_required');
+      setWorkModeSwitchFeedback({ message, type: 'warning' });
+      toast.show(message, 'error');
+      return;
+    }
+    invokeWorkModeSwitch();
+  }, [allWorkModeConsentsAccepted, invokeWorkModeSwitch, switchingWorkMode, t, toast]);
   React.useEffect(() => {
     setCurrentLocale(getLocale());
   }, [t]);
@@ -1536,11 +1571,20 @@ export default function CompanySettings() {
         visible={workModeConfirmOpen}
         onClose={() => {
           if (switchingWorkMode) return;
+          if (workModeConfirmTransitionTargetRef.current === 'consent') return;
+          workModeConfirmTransitionTargetRef.current = null;
           setWorkModeConfirmOpen(false);
           setPendingWorkMode(null);
+          setWorkModeSwitchFeedback(null);
           setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
         }}
+        onDismiss={() => {
+          if (workModeConfirmTransitionTargetRef.current !== 'consent') return;
+          workModeConfirmTransitionTargetRef.current = null;
+          setWorkModeConsentOpen(true);
+        }}
         title={t('settings_work_mode_confirm_title')}
+        feedback={workModeSwitchFeedback}
         footer={(
           <ModalActionsRow
             actions={[
@@ -1550,8 +1594,10 @@ export default function CompanySettings() {
                 variant: 'secondary',
                 disabled: switchingWorkMode,
                 onPress: () => {
+                  workModeConfirmTransitionTargetRef.current = null;
                   setWorkModeConfirmOpen(false);
                   setPendingWorkMode(null);
+                  setWorkModeSwitchFeedback(null);
                   setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
                 },
               },
@@ -1583,11 +1629,14 @@ export default function CompanySettings() {
         visible={workModeConsentOpen}
         onClose={() => {
           if (switchingWorkMode) return;
+          workModeConfirmTransitionTargetRef.current = null;
           setWorkModeConsentOpen(false);
           setPendingWorkMode(null);
+          setWorkModeSwitchFeedback(null);
           setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
         }}
         title={t('settings_work_mode_apply_title')}
+        feedback={workModeSwitchFeedback}
         footer={(
           <ModalActionsRow
             actions={[
@@ -1597,8 +1646,10 @@ export default function CompanySettings() {
                 variant: 'secondary',
                 disabled: switchingWorkMode,
                 onPress: () => {
+                  workModeConfirmTransitionTargetRef.current = null;
                   setWorkModeConsentOpen(false);
                   setPendingWorkMode(null);
+                  setWorkModeSwitchFeedback(null);
                   setWorkModeConsents({ blockMembers: false, reassignOrders: false, keepLicensesIdle: false });
                 },
               },
@@ -1608,7 +1659,7 @@ export default function CompanySettings() {
                 variant: 'primary',
                 loading: switchingWorkMode,
                 disabled: switchingWorkMode || !allWorkModeConsentsAccepted,
-                onPress: invokeWorkModeSwitch,
+                onPress: applyWorkModeConsent,
               },
             ]}
           />

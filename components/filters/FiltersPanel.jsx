@@ -20,6 +20,7 @@ import { getLocale, t } from '../../src/i18n';
 import { useTranslation } from '../../src/i18n/useTranslation';
 import { useTheme } from '../../theme/ThemeProvider';
 import { ROLE_LABELS } from '../../constants/roles';
+import { NO_DEPARTMENT_FILTER_ID } from '../../src/features/employees/departments';
 import Button from '../ui/Button';
 import TextField from '../ui/TextField';
 import { DateTimeModal } from '../ui/modals';
@@ -54,7 +55,7 @@ const normalizeSelectionIds = (ids) =>
  *  - visible, onClose
  *  - departments, rolesOptions
  *  - values, setValue, defaults
- *  - onApply
+ *  - onApply, onReset
  */
 export default function FiltersPanel({
   visible,
@@ -71,11 +72,13 @@ export default function FiltersPanel({
   setValue,
   defaults = EMPTY_OBJECT,
   onApply,
+  onReset,
   mode = 'filters',
   assignment = null,
   ordersFilters = null,
   searchItems = EMPTY_ARRAY,
   showSearchCategory = true,
+  includeNoDepartment = false,
 }) {
   const { theme } = useTheme();
   useTranslation();
@@ -84,6 +87,9 @@ export default function FiltersPanel({
   const isAssignmentMode = mode === 'assignment' && assignment;
   const isObjectsMode = mode === 'objects';
   const isOrdersMode = mode === 'orders';
+  const isOrdersExecutorMulti =
+    isOrdersMode &&
+    (ordersFilters?.executorSelectionMode === 'multiple' || ordersFilters?.multipleExecutors === true);
   const isAssignmentMulti = isAssignmentMode && assignment?.multiple === true;
   const assignmentEmployees = useMemo(
     () =>
@@ -108,6 +114,21 @@ export default function FiltersPanel({
       : [];
   }, [assignment?.defaults?.selectedId, assignment?.defaults?.selectedIds, assignment?.selectedIds, isAssignmentMode, isAssignmentMulti]);
   const searchList = !isAssignmentMode && Array.isArray(searchItems) ? searchItems : assignmentEmployees;
+  const noDepartmentLabel = t('placeholder_department');
+  const departmentOptions = useMemo(
+    () => [
+      ...(includeNoDepartment
+        ? [{ id: NO_DEPARTMENT_FILTER_ID, label: noDepartmentLabel, isSystem: true }]
+        : []),
+      ...(Array.isArray(departments)
+        ? departments.map((dept) => ({
+            id: dept.id,
+            label: dept.name || t('users_department'),
+          }))
+        : []),
+    ],
+    [departments, includeNoDepartment, noDepartmentLabel],
+  );
 
   const c = theme.colors;
   const sz = theme.spacing;
@@ -142,10 +163,19 @@ export default function FiltersPanel({
     statuses: Array.isArray(values.statuses) ? values.statuses.map(String) : [],
     executorId:
       values.executorId === null || values.executorId === undefined ? null : String(values.executorId),
+    executorIds: Array.isArray(values.executorIds)
+      ? values.executorIds.map(String).filter(Boolean)
+      : values.executorId === null || values.executorId === undefined
+        ? []
+        : [String(values.executorId)],
     departureDateFrom: values.departureDateFrom || null,
     departureDateTo: values.departureDateTo || null,
     departureTimeFrom: values.departureTimeFrom || null,
     departureTimeTo: values.departureTimeTo || null,
+    createdDateFrom: values.createdDateFrom || null,
+    createdDateTo: values.createdDateTo || null,
+    createdTimeFrom: values.createdTimeFrom || null,
+    createdTimeTo: values.createdTimeTo || null,
     sumMin: values.sumMin || '',
     sumMax: values.sumMax || '',
   });
@@ -161,10 +191,19 @@ export default function FiltersPanel({
     statuses: Array.isArray(values.statuses) ? values.statuses.map(String) : [],
     executorId:
       values.executorId === null || values.executorId === undefined ? null : String(values.executorId),
+    executorIds: Array.isArray(values.executorIds)
+      ? values.executorIds.map(String).filter(Boolean)
+      : values.executorId === null || values.executorId === undefined
+        ? []
+        : [String(values.executorId)],
     departureDateFrom: values.departureDateFrom || null,
     departureDateTo: values.departureDateTo || null,
     departureTimeFrom: values.departureTimeFrom || null,
     departureTimeTo: values.departureTimeTo || null,
+    createdDateFrom: values.createdDateFrom || null,
+    createdDateTo: values.createdDateTo || null,
+    createdTimeFrom: values.createdTimeFrom || null,
+    createdTimeTo: values.createdTimeTo || null,
     sumMin: values.sumMin || '',
     sumMax: values.sumMax || '',
   });
@@ -195,10 +234,19 @@ export default function FiltersPanel({
         statuses: Array.isArray(values.statuses) ? values.statuses.map(String) : [],
         executorId:
           values.executorId === null || values.executorId === undefined ? null : String(values.executorId),
+        executorIds: Array.isArray(values.executorIds)
+          ? values.executorIds.map(String).filter(Boolean)
+          : values.executorId === null || values.executorId === undefined
+            ? []
+            : [String(values.executorId)],
         departureDateFrom: values.departureDateFrom || null,
         departureDateTo: values.departureDateTo || null,
         departureTimeFrom: values.departureTimeFrom || null,
         departureTimeTo: values.departureTimeTo || null,
+        createdDateFrom: values.createdDateFrom || null,
+        createdDateTo: values.createdDateTo || null,
+        createdTimeFrom: values.createdTimeFrom || null,
+        createdTimeTo: values.createdTimeTo || null,
         sumMin: values.sumMin || '',
         sumMax: values.sumMax || '',
       };
@@ -216,10 +264,15 @@ export default function FiltersPanel({
     values.workTypes,
     values.statuses,
     values.executorId,
+    values.executorIds,
     values.departureDateFrom,
     values.departureDateTo,
     values.departureTimeFrom,
     values.departureTimeTo,
+    values.createdDateFrom,
+    values.createdDateTo,
+    values.createdTimeFrom,
+    values.createdTimeTo,
     values.sumMin,
     values.sumMax,
   ]);
@@ -319,6 +372,8 @@ export default function FiltersPanel({
       const ordersExecutors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
       const showDate = ordersFilters?.showDate !== false;
       const showTime = ordersFilters?.showTime !== false;
+      const showCreatedDate = ordersFilters?.showCreatedDate === true;
+      const showCreatedTime = ordersFilters?.showCreatedTime === true;
       const showAmount = ordersFilters?.showAmount !== false;
       const cats = [];
       if (ordersStatusOptions.length) cats.push({ key: 'orders_statuses', label: t('orders_filter_status') });
@@ -327,17 +382,19 @@ export default function FiltersPanel({
       if (ordersExecutors.length) cats.push({ key: 'orders_executors', label: t('orders_filter_executor') });
       if (showDate) cats.push({ key: 'orders_departure_date', label: t('order_field_departure_date') });
       if (showTime) cats.push({ key: 'orders_departure_time', label: t('order_field_departure_time') });
+      if (showCreatedDate) cats.push({ key: 'orders_created_date', label: t('orders_filter_created_date') });
+      if (showCreatedTime) cats.push({ key: 'orders_created_time', label: t('orders_filter_created_time') });
       if (showAmount) cats.push({ key: 'orders_amount', label: t('order_details_amount') });
       return showSearchCategory ? [searchCategory, ...cats] : cats;
     }
     const cats = [];
-    if (departments && departments.length > 0) {
+    if (departmentOptions.length > 0) {
       cats.push({ key: 'departments', label: t('users_department') });
     }
     cats.push({ key: 'roles', label: t('users_role') });
     cats.push({ key: 'suspended', label: t('users_suspended') });
     return showSearchCategory ? [searchCategory, ...cats] : cats;
-  }, [assignmentCategories, departments, isAssignmentMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
+  }, [assignmentCategories, departmentOptions.length, isAssignmentMode, isObjectsMode, isOrdersMode, ordersFilters, showSearchCategory]);
 
   const restoredCategoryRef = useRef(false);
   const lastCategoriesKeyRef = useRef('');
@@ -485,10 +542,15 @@ export default function FiltersPanel({
       if (!eqArrays(draft.statuses || [], baseline.statuses || [])) return true;
       if (!eqArrays(draft.clientIds || [], baseline.clientIds || [])) return true;
       if ((draft.executorId ?? null) !== (baseline.executorId ?? null)) return true;
+      if (!eqArrays(draft.executorIds || [], baseline.executorIds || [])) return true;
       if ((draft.departureDateFrom ?? null) !== (baseline.departureDateFrom ?? null)) return true;
       if ((draft.departureDateTo ?? null) !== (baseline.departureDateTo ?? null)) return true;
       if ((draft.departureTimeFrom ?? null) !== (baseline.departureTimeFrom ?? null)) return true;
       if ((draft.departureTimeTo ?? null) !== (baseline.departureTimeTo ?? null)) return true;
+      if ((draft.createdDateFrom ?? null) !== (baseline.createdDateFrom ?? null)) return true;
+      if ((draft.createdDateTo ?? null) !== (baseline.createdDateTo ?? null)) return true;
+      if ((draft.createdTimeFrom ?? null) !== (baseline.createdTimeFrom ?? null)) return true;
+      if ((draft.createdTimeTo ?? null) !== (baseline.createdTimeTo ?? null)) return true;
       if (String(draft.sumMin || '') !== String(baseline.sumMin || '')) return true;
       if (String(draft.sumMax || '') !== String(baseline.sumMax || '')) return true;
       return false;
@@ -527,10 +589,19 @@ export default function FiltersPanel({
       const defaultClientIds = Array.isArray(defaults.clientIds) ? defaults.clientIds.map(String) : [];
       const defaultExecutorId =
         defaults.executorId === null || defaults.executorId === undefined ? null : String(defaults.executorId);
+      const defaultExecutorIds = Array.isArray(defaults.executorIds)
+        ? defaults.executorIds.map(String).filter(Boolean)
+        : defaultExecutorId
+          ? [defaultExecutorId]
+          : [];
       const defaultDateFrom = defaults.departureDateFrom || null;
       const defaultDateTo = defaults.departureDateTo || null;
       const defaultTimeFrom = defaults.departureTimeFrom || null;
       const defaultTimeTo = defaults.departureTimeTo || null;
+      const defaultCreatedDateFrom = defaults.createdDateFrom || null;
+      const defaultCreatedDateTo = defaults.createdDateTo || null;
+      const defaultCreatedTimeFrom = defaults.createdTimeFrom || null;
+      const defaultCreatedTimeTo = defaults.createdTimeTo || null;
       const defaultSumMin = defaults.sumMin || '';
       const defaultSumMax = defaults.sumMax || '';
 
@@ -538,10 +609,15 @@ export default function FiltersPanel({
       if (!eqArrays(draft.statuses || [], defaultStatuses)) return true;
       if (!eqArrays(draft.clientIds || [], defaultClientIds)) return true;
       if ((draft.executorId ?? null) !== defaultExecutorId) return true;
+      if (!eqArrays(draft.executorIds || [], defaultExecutorIds)) return true;
       if ((draft.departureDateFrom ?? null) !== defaultDateFrom) return true;
       if ((draft.departureDateTo ?? null) !== defaultDateTo) return true;
       if ((draft.departureTimeFrom ?? null) !== defaultTimeFrom) return true;
       if ((draft.departureTimeTo ?? null) !== defaultTimeTo) return true;
+      if ((draft.createdDateFrom ?? null) !== defaultCreatedDateFrom) return true;
+      if ((draft.createdDateTo ?? null) !== defaultCreatedDateTo) return true;
+      if ((draft.createdTimeFrom ?? null) !== defaultCreatedTimeFrom) return true;
+      if ((draft.createdTimeTo ?? null) !== defaultCreatedTimeTo) return true;
       if (String(draft.sumMin || '') !== String(defaultSumMin || '')) return true;
       if (String(draft.sumMax || '') !== String(defaultSumMax || '')) return true;
       return false;
@@ -1433,12 +1509,15 @@ export default function FiltersPanel({
       }
       case 'orders_executors': {
         const executors = Array.isArray(ordersFilters?.executors) ? ordersFilters.executors : [];
-        const allSelected = draft.executorId == null;
+        const selectedExecutorIds = new Set(
+          Array.isArray(draft.executorIds) ? draft.executorIds.map(String).filter(Boolean) : [],
+        );
+        const allSelected = isOrdersExecutorMulti ? selectedExecutorIds.size === 0 : draft.executorId == null;
         return (
           <>
             <Pressable
               key="all_orders_executors"
-              onPress={() => setDraft((d) => ({ ...d, executorId: null }))}
+              onPress={() => setDraft((d) => ({ ...d, executorId: null, executorIds: [] }))}
               style={({ pressed }) => [
                 optionRow,
                 pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
@@ -1454,13 +1533,31 @@ export default function FiltersPanel({
             {executors.map((executor, index) => {
               const id = String(executor?.id ?? executor?.value ?? index);
               const label = String(executor?.label ?? executor?.name ?? id);
-              const selected = String(draft.executorId || '') === id;
+              const selected = isOrdersExecutorMulti
+                ? selectedExecutorIds.has(id)
+                : String(draft.executorId || '') === id;
               return (
                 <Pressable
                   key={`orders_executor_${id}`}
-                  onPress={() =>
-                    setDraft((d) => ({ ...d, executorId: selected ? null : id }))
-                  }
+                  onPress={() => {
+                    if (isOrdersExecutorMulti) {
+                      setDraft((d) => {
+                        const current = Array.isArray(d.executorIds)
+                          ? d.executorIds.map(String).filter(Boolean)
+                          : [];
+                        const next = current.includes(id)
+                          ? current.filter((item) => item !== id)
+                          : [...current, id];
+                        return { ...d, executorId: null, executorIds: next };
+                      });
+                      return;
+                    }
+                    setDraft((d) => ({
+                      ...d,
+                      executorId: selected ? null : id,
+                      executorIds: selected ? [] : [id],
+                    }));
+                  }}
                   style={({ pressed }) => [
                     optionRow,
                     pressed && { backgroundColor: withAlpha(c.border, ALPHA_PRESSED) },
@@ -1523,6 +1620,44 @@ export default function FiltersPanel({
             })}
           </View>
         );
+      case 'orders_created_date':
+        return (
+          <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
+            {renderDateTimeFilterField({
+              field: 'createdDateFrom',
+              value: formatDateLabel(draft.createdDateFrom),
+              placeholder: t('orders_filter_created_date_from_placeholder'),
+              icon: 'calendar',
+              onPress: () => setDatePickerField('createdDateFrom'),
+            })}
+            {renderDateTimeFilterField({
+              field: 'createdDateTo',
+              value: formatDateLabel(draft.createdDateTo),
+              placeholder: t('orders_filter_created_date_to_placeholder'),
+              icon: 'calendar',
+              onPress: () => setDatePickerField('createdDateTo'),
+            })}
+          </View>
+        );
+      case 'orders_created_time':
+        return (
+          <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
+            {renderDateTimeFilterField({
+              field: 'createdTimeFrom',
+              value: formatTimeLabel(draft.createdTimeFrom),
+              placeholder: t('orders_filter_created_time_from_placeholder'),
+              icon: 'clock',
+              onPress: () => setTimePickerField('createdTimeFrom'),
+            })}
+            {renderDateTimeFilterField({
+              field: 'createdTimeTo',
+              value: formatTimeLabel(draft.createdTimeTo),
+              placeholder: t('orders_filter_created_time_to_placeholder'),
+              icon: 'clock',
+              onPress: () => setTimePickerField('createdTimeTo'),
+            })}
+          </View>
+        );
       case 'orders_amount':
         return (
           <View style={{ paddingHorizontal: sz.md, paddingTop: sz.sm, gap: sz.sm }}>
@@ -1543,7 +1678,7 @@ export default function FiltersPanel({
           </View>
         );
       case 'departments':
-        if (!departments || departments.length === 0) {
+        if (!departmentOptions.length) {
           return (
             <View style={{ paddingHorizontal: sz.md, paddingVertical: sz.sm }}>
               <Text style={{ color: c.textSecondary, fontSize: ty.sizes.sm }}>
@@ -1570,7 +1705,7 @@ export default function FiltersPanel({
                 {t('users_showAll')}
               </Text>
             </Pressable>
-            {departments.map((d) => {
+            {departmentOptions.map((d) => {
               const selected = Array.isArray(draft.departments)
                 ? draft.departments.map(String).includes(String(d.id))
                 : false;
@@ -1592,7 +1727,7 @@ export default function FiltersPanel({
                     style={[optionLabel, selected && { fontWeight: ty.weight.semibold }]}
                     numberOfLines={2}
                   >
-                    {d.name}
+                    {d.label}
                   </Text>
                 </Pressable>
               );
@@ -1738,7 +1873,7 @@ export default function FiltersPanel({
                     setValue('streets', emptyStreets);
                     setValue('clientIds', emptyClientIds);
                   }
-                  if (onApply) onApply(snapshot);
+                  if (onReset) onReset(snapshot);
                   return;
                 }
                 if (isOrdersMode) {
@@ -1750,10 +1885,19 @@ export default function FiltersPanel({
                       defaults.executorId === null || defaults.executorId === undefined
                         ? null
                         : String(defaults.executorId),
+                    executorIds: Array.isArray(defaults.executorIds)
+                      ? defaults.executorIds.map(String).filter(Boolean)
+                      : defaults.executorId === null || defaults.executorId === undefined
+                        ? []
+                        : [String(defaults.executorId)],
                     departureDateFrom: defaults.departureDateFrom || null,
                     departureDateTo: defaults.departureDateTo || null,
                     departureTimeFrom: defaults.departureTimeFrom || null,
                     departureTimeTo: defaults.departureTimeTo || null,
+                    createdDateFrom: defaults.createdDateFrom || null,
+                    createdDateTo: defaults.createdDateTo || null,
+                    createdTimeFrom: defaults.createdTimeFrom || null,
+                    createdTimeTo: defaults.createdTimeTo || null,
                     sumMin: defaults.sumMin || '',
                     sumMax: defaults.sumMax || '',
                   };
@@ -1764,14 +1908,19 @@ export default function FiltersPanel({
                     setValue('statuses', snapshot.statuses);
                     setValue('clientIds', snapshot.clientIds);
                     setValue('executorId', snapshot.executorId);
+                    setValue('executorIds', snapshot.executorIds);
                     setValue('departureDateFrom', snapshot.departureDateFrom);
                     setValue('departureDateTo', snapshot.departureDateTo);
                     setValue('departureTimeFrom', snapshot.departureTimeFrom);
                     setValue('departureTimeTo', snapshot.departureTimeTo);
+                    setValue('createdDateFrom', snapshot.createdDateFrom);
+                    setValue('createdDateTo', snapshot.createdDateTo);
+                    setValue('createdTimeFrom', snapshot.createdTimeFrom);
+                    setValue('createdTimeTo', snapshot.createdTimeTo);
                     setValue('sumMin', snapshot.sumMin);
                     setValue('sumMax', snapshot.sumMax);
                   }
-                  if (onApply) onApply(snapshot);
+                  if (onReset) onReset(snapshot);
                   return;
                 }
                 const emptyDeps = Array.isArray(defaults.departments)
@@ -1787,17 +1936,13 @@ export default function FiltersPanel({
                 // Reset draft and baseline so hasChanges becomes false immediately
                 setDraft(snapshot);
                 setBaseline(snapshot);
-                // Propagate reset to parent state: update values and then call onApply
-                // so the cleared filters persist (prevents stale filter on reopen).
+                // Propagate reset to parent state without closing the panel.
                 if (setValue) {
                   setValue('departments', emptyDeps);
                   setValue('roles', emptyRoles);
                   setValue('suspended', emptySuspended);
                 }
-                if (onApply) {
-                  // Call onApply to let parent persist the cleared filters. Do not close the panel.
-                  onApply(snapshot);
-                }
+                if (onReset) onReset(snapshot);
                 // Do not call onClose here; keep panel open per UX request.
               }}
               android_ripple={{ borderless: false, color: withAlpha(c.border, ALPHA_RIPPLE) }}
@@ -1899,10 +2044,15 @@ export default function FiltersPanel({
                     statuses: Array.isArray(draft.statuses) ? draft.statuses : [],
                     clientIds: Array.isArray(draft.clientIds) ? draft.clientIds : [],
                     executorId: draft.executorId ?? null,
+                    executorIds: Array.isArray(draft.executorIds) ? draft.executorIds : [],
                     departureDateFrom: draft.departureDateFrom ?? null,
                     departureDateTo: draft.departureDateTo ?? null,
                     departureTimeFrom: draft.departureTimeFrom ?? null,
                     departureTimeTo: draft.departureTimeTo ?? null,
+                    createdDateFrom: draft.createdDateFrom ?? null,
+                    createdDateTo: draft.createdDateTo ?? null,
+                    createdTimeFrom: draft.createdTimeFrom ?? null,
+                    createdTimeTo: draft.createdTimeTo ?? null,
                     sumMin: draft.sumMin || '',
                     sumMax: draft.sumMax || '',
                   };
@@ -1911,10 +2061,15 @@ export default function FiltersPanel({
                     setValue('statuses', ordersSnapshot.statuses);
                     setValue('clientIds', ordersSnapshot.clientIds);
                     setValue('executorId', ordersSnapshot.executorId);
+                    setValue('executorIds', ordersSnapshot.executorIds);
                     setValue('departureDateFrom', ordersSnapshot.departureDateFrom);
                     setValue('departureDateTo', ordersSnapshot.departureDateTo);
                     setValue('departureTimeFrom', ordersSnapshot.departureTimeFrom);
                     setValue('departureTimeTo', ordersSnapshot.departureTimeTo);
+                    setValue('createdDateFrom', ordersSnapshot.createdDateFrom);
+                    setValue('createdDateTo', ordersSnapshot.createdDateTo);
+                    setValue('createdTimeFrom', ordersSnapshot.createdTimeFrom);
+                    setValue('createdTimeTo', ordersSnapshot.createdTimeTo);
                     setValue('sumMin', ordersSnapshot.sumMin);
                     setValue('sumMax', ordersSnapshot.sumMax);
                   }

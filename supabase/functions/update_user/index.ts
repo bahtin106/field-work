@@ -171,6 +171,9 @@ async function isEmailTakenByOther(admin: any, email: string, ownIds: unknown[])
 function toPublicUpdateUserError(error: unknown): { code: string; message: string } {
   const message = String((error as Error)?.message || 'Unknown error');
   const normalized = message.toLowerCase();
+  if (/email_change_requires_verification/.test(normalized)) {
+    return { code: 'EMAIL_CHANGE_REQUIRES_VERIFICATION', message: 'EMAIL_CHANGE_REQUIRES_VERIFICATION' };
+  }
   if (
     /email_taken/.test(normalized) ||
     /email.*taken/.test(normalized) ||
@@ -465,6 +468,20 @@ export async function handleUpdateUserRequest(req: Request) {
 
     if (isCompanyAdmin && !isSuperAdmin && targetRole === 'admin' && !isSelf) {
       throw new Error('Forbidden');
+    }
+
+    if (nextEmail && isSelf && !isCheckOnly) {
+      let currentTargetEmail = normalizeEmail((targetProfile as any)?.email || '');
+      if (targetAuthUserIdSafe) {
+        const { data: currentAuthUser, error: currentAuthUserError } = await admin.auth.admin.getUserById(
+          targetAuthUserIdSafe,
+        );
+        if (currentAuthUserError) throw new Error('Target auth user lookup failed');
+        currentTargetEmail = normalizeEmail(currentAuthUser?.user?.email || currentTargetEmail);
+      }
+      if (normalizeEmail(nextEmail) !== currentTargetEmail) {
+        throw new Error('EMAIL_CHANGE_REQUIRES_VERIFICATION');
+      }
     }
 
     // 1) Обновление полей профиля (если переданы)

@@ -69,7 +69,6 @@ function CalendarGridCellComponent({
   const selectedTodayEventCountStyle = isTodaySelected
     ? { color: theme.colors.onPrimary }
     : null;
-
   return (
     <Pressable
       key={dayKey}
@@ -99,8 +98,8 @@ function CalendarGridCellComponent({
             dayNumberEventShift,
             outsideMonthTextStyle,
             showOutline && styles.dayNumberSelected,
-            isTodaySelected && styles.dayNumberToday,
-            highlightTodayWhenNotSelected && styles.dayNumberSelected,
+            isTodaySelected && styles.dayNumberTodaySelected,
+            highlightTodayWhenNotSelected && styles.dayNumberToday,
             showOutsideMonthDeemphasis && styles.dayNumberMuted,
           ]}
         >

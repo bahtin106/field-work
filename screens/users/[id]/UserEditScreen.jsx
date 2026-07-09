@@ -45,6 +45,7 @@ import {
 } from '../../../src/shared/validation/fields';
 import { FUNCTIONS, TBL } from '../../../lib/constants';
 import { getPasswordStrengthChecks } from '../../../lib/authValidation';
+import { getEmailChangeRedirectUrl } from '../../../lib/authRedirects';
 import { ensureVisibleField } from '../../../lib/ensureVisibleField';
 import { formatPersonInitials, formatPersonName, formatPersonNameParts } from '../../../lib/personName';
 import { supabase, EMAIL_SERVICE_URL } from '../../../lib/supabase';
@@ -55,6 +56,10 @@ import {
   useEmployee,
   useUpdateEmployeeMutation,
 } from '../../../src/features/employees/queries';
+import {
+  createNoDepartmentOption,
+  isNoDepartmentFilterId,
+} from '../../../src/features/employees/departments';
 import {
   ENTITY_FIELD_TYPES,
   buildFallbackEntityFieldSettings,
@@ -244,6 +249,9 @@ function mapSaveErrorToMessage(error, t) {
   }
   if (isInvalidAuthEmailError(error)) {
     return t('err_email');
+  }
+  if (normalized.includes('email_change_requires_verification')) {
+    return t('email_change_requires_verification');
   }
   if (
     normalized.includes('new password should be different from the old password') ||
@@ -445,6 +453,37 @@ async function checkUserEmailAvailabilityViaFunction({ userId, profileId, change
   return data?.email_available === false ? 'taken' : 'available';
 }
 
+async function requestOwnEmailChangeLinks({ newEmail }) {
+  const normalizedEmail = normalizeOptionalEmail(newEmail);
+  if (!normalizedEmail) throw new Error('INVALID_EMAIL');
+  const { data, error } = await supabase.auth.updateUser(
+    { email: normalizedEmail },
+    { emailRedirectTo: getEmailChangeRedirectUrl() },
+  );
+  if (error) throw error;
+  return data || {};
+}
+
+function getEmailChangeErrorCode(error) {
+  return String(error?.code || error?.message || error?.error || error || '')
+    .trim()
+    .toUpperCase();
+}
+
+function mapEmailChangeErrorToMessage(error, t) {
+  const code = getEmailChangeErrorCode(error);
+  const raw = String(error?.message || error?.code || error?.error || error || '').toLowerCase();
+  if (/already|registered|exists|taken|duplicate/.test(raw)) return t('error_email_exists');
+  if (/invalid.*email|email.*invalid|bad email/.test(raw)) return t('err_email');
+  if (/rate|too many|limit/.test(raw)) return t('email_change_too_many_attempts');
+  if (code === 'EMAIL_TAKEN') return t('error_email_exists');
+  if (code === 'INVALID_EMAIL' || code === 'SAME_EMAIL') return t('err_email');
+  if (code === 'TOO_MANY_ATTEMPTS' || code === 'RATE_LIMITED') return t('email_change_too_many_attempts');
+  if (code === 'SEND_FAILED' || code === 'EMAIL_SERVICE_UNAVAILABLE') return t('email_change_send_failed');
+  if (code === 'UNAUTHORIZED') return t('errors_noAuth');
+  return t('email_change_send_failed');
+}
+
 async function updateUserPasswordViaFunction({ userId, profileId, newPassword, changedBy }) {
   return updateUserAuthViaFunction({
     userId,
@@ -508,7 +547,7 @@ function AvatarSheetModal({
 function DepartmentSelectModal({ visible, departments = [], departmentId, onSelect, onClose }) {
   const { t } = useTranslation();
   const mapped = [
-    { id: null, label: t('placeholder_department') },
+    createNoDepartmentOption(t),
     ...(departments || []).map((d) => ({ id: d.id, label: d.name })),
   ];
   return (
@@ -518,10 +557,12 @@ function DepartmentSelectModal({ visible, departments = [], departmentId, onSele
       items={mapped}
       selectedId={departmentId}
       isItemSelected={(item, selectedId) =>
-        item?.id == null ? selectedId == null : String(item?.id) === String(selectedId)
+        isNoDepartmentFilterId(item?.id)
+          ? selectedId == null || selectedId === ''
+          : String(item?.id) === String(selectedId)
       }
       searchable={false}
-      onSelect={(it) => onSelect?.(it.id)}
+      onSelect={(it) => onSelect?.(isNoDepartmentFilterId(it?.id) ? null : it.id)}
       onClose={onClose}
     />
   );
@@ -809,6 +850,9 @@ export default function EditUser() {
   const [touched, setTouched] = useState({});
   const [submittedAttempt, setSubmittedAttempt] = useState(false);
   const [emailCheckStatus, setEmailCheckStatus] = useState(null);
+  const [emailChangeConfirmVisible, setEmailChangeConfirmVisible] = useState(false);
+  const [pendingEmailChange, setPendingEmailChange] = useState(null);
+  const [emailChangeSending, setEmailChangeSending] = useState(false);
   const requiredMsg = useMemo(() => getMessageByCode(FEEDBACK_CODES.REQUIRED_FIELD, t), [t]);
   const shouldShowError = useCallback(
     (field) => submittedAttempt || !!touched[field],
@@ -882,7 +926,6 @@ export default function EditUser() {
   const canManageAvatar = fieldUi.isVisible('avatar_url');
   const canShowPersonalSection = fieldUi.hasVisibleFields(['first_name', 'middle_name', 'last_name', 'birthdate']);
   const canShowContactSection = fieldUi.hasVisibleFields(['email', 'phone']);
-  const canEditDepartmentField = meIsAdmin && useDepartments && fieldUi.isVisible('department_id');
   const canShowCompanySection =
     fieldUi.hasVisibleFields(['department_id', 'role']) &&
     ((useDepartments && fieldUi.isVisible('department_id')) || fieldUi.isVisible('role'));
@@ -978,10 +1021,7 @@ export default function EditUser() {
       ? requiredMsg
       : null);
   const departmentError =
-    fieldErrors.department_id?.message ||
-    (canEditDepartmentField && shouldShowError('department_id') && fieldUi.isRequired('department_id') && !departmentId
-      ? requiredMsg
-      : null);
+    fieldErrors.department_id?.message || null;
 
   const [err, setErr] = useState('');
   const ensureCameraPerms = async () => {
@@ -1150,6 +1190,32 @@ export default function EditUser() {
       userId,
     ],
   );
+  const isEditingOwnProfile = useMemo(() => {
+    const me = String(meId || '').trim();
+    if (!me) return false;
+    return [
+      userId,
+      edgeTargetAuthUserId,
+      edgeTargetProfileId,
+      employeeData?.id,
+      employeeData?.profile_id,
+      employeeData?.profileId,
+      employeeData?.user_id,
+      employeeData?.userId,
+    ]
+      .map((value) => String(value || '').trim())
+      .some((value) => value === me);
+  }, [
+    edgeTargetAuthUserId,
+    edgeTargetProfileId,
+    employeeData?.id,
+    employeeData?.profileId,
+    employeeData?.profile_id,
+    employeeData?.userId,
+    employeeData?.user_id,
+    meId,
+    userId,
+  ]);
   const checkEmailAvailability = useCallback(
     async (emailToCheck, options = {}) => {
       const authoritative = options?.authoritative === true;
@@ -1438,17 +1504,21 @@ export default function EditUser() {
     }
   };
 
-  const proceedSave = async () => {
+  const proceedSave = async (options = {}) => {
     try {
       setSaving(true);
       setErr('');
       let savedAvatarUrl = avatarUrl || null;
       if (!edgeTargetProfileId) throw new Error('Invalid user id');
+      const emailAlreadyChanged = options?.emailAlreadyChanged === true;
+      const emailChangePending = options?.emailChangePending === true;
       const normalizedNextEmail = normalizeOptionalEmail(email);
       const normalizedCurrentEmail = normalizeOptionalEmail(employeeData?.email || '');
-      const shouldUpdateAuthEmail =
+      const persistedEmailForCache = emailChangePending ? normalizedCurrentEmail : normalizedNextEmail;
+      const hasEmailValueChanged =
         !!normalizedNextEmail &&
         normalizedNextEmail.toLowerCase() !== normalizedCurrentEmail.toLowerCase();
+      const shouldUpdateAuthEmail = hasEmailValueChanged && !emailAlreadyChanged && !emailChangePending;
       const computedFullName = buildFullName(firstName, middleName, lastName);
       const normalizedFullName = computedFullName || null;
       const avatarChanged = pendingAvatarUrl !== null && pendingAvatarUrl !== initialAvatarUrl;
@@ -1459,7 +1529,7 @@ export default function EditUser() {
 
       const offlineSnapshot = getOfflineSnapshot();
       if (offlineSnapshot.isNetworkKnown && !offlineSnapshot.isOnline) {
-        if (shouldUpdateAuthEmail || (newPassword && newPassword.length) || isSuperAdminEditingOther || hasLocalAvatarUpload) {
+        if (hasEmailValueChanged || (newPassword && newPassword.length) || isSuperAdminEditingOther || hasLocalAvatarUpload) {
           throw new Error(
             t(
               'offline_profile_edit_online_required',
@@ -1507,7 +1577,7 @@ export default function EditUser() {
             firstName: firstName.trim(),
             middleName: middleName.trim(),
             lastName: lastName.trim(),
-            email: normalizeOptionalEmail(email) || '',
+            email: persistedEmailForCache || '',
             phone: normalizeOptionalPhoneForSave(phone) || '',
             birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
             role,
@@ -1686,7 +1756,7 @@ export default function EditUser() {
           firstName: firstName.trim(),
           middleName: middleName.trim(),
           lastName: lastName.trim(),
-          email: normalizeOptionalEmail(email) || '',
+          email: persistedEmailForCache || '',
           phone: normalizeOptionalPhoneForSave(phone) || '',
           birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
           role,
@@ -1701,13 +1771,13 @@ export default function EditUser() {
         middle_name: middleName.trim() || null,
         last_name: lastName.trim() || null,
         full_name: buildFullName(firstName, middleName, lastName) || null,
-        display_name: buildFullName(firstName, middleName, lastName) || normalizeOptionalEmail(email) || '',
+        display_name: buildFullName(firstName, middleName, lastName) || persistedEmailForCache || '',
         firstName: firstName.trim() || '',
         middleName: middleName.trim() || '',
         lastName: lastName.trim() || '',
         fullName: buildFullName(firstName, middleName, lastName) || null,
-        displayName: buildFullName(firstName, middleName, lastName) || normalizeOptionalEmail(email) || '',
-        email: normalizeOptionalEmail(email),
+        displayName: buildFullName(firstName, middleName, lastName) || persistedEmailForCache || '',
+        email: persistedEmailForCache,
         phone: normalizeOptionalPhoneForSave(phone),
         birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
         role,
@@ -1728,7 +1798,7 @@ export default function EditUser() {
           middle_name: middleName.trim() || null,
           last_name: lastName.trim() || null,
           full_name: buildFullName(firstName, middleName, lastName) || null,
-          email: normalizeOptionalEmail(email),
+          email: persistedEmailForCache,
           phone: normalizeOptionalPhoneForSave(phone),
           birthdate: birthdate ? __serializeBirthForSave(birthdate, withYear) : null,
           role,
@@ -1746,7 +1816,7 @@ export default function EditUser() {
       }
       refetchEmployee().catch(() => {});
       allowLeaveRef.current = true;
-      showSuccessToast(t('toast_success'));
+      showSuccessToast(options?.successMessage || t('toast_success'));
       // После успешного сохранения возвращаемся на предыдущую страницу
       if (navigation && typeof navigation.goBack === 'function') {
         navigation.goBack();
@@ -1773,6 +1843,53 @@ export default function EditUser() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openEmailChangeConfirmation = ({ currentEmail, newEmail }) => {
+    setPendingEmailChange({
+      currentEmail: normalizeOptionalEmail(currentEmail),
+      newEmail: normalizeOptionalEmail(newEmail),
+    });
+    setEmailChangeConfirmVisible(true);
+  };
+
+  const handleConfirmEmailChangeLinks = async () => {
+    const request = pendingEmailChange || {};
+    const nextEmail = normalizeOptionalEmail(request.newEmail || email);
+    if (!nextEmail) {
+      setEmailChangeConfirmVisible(false);
+      setPendingEmailChange(null);
+      return;
+    }
+
+    try {
+      setEmailChangeSending(true);
+      setSaving(true);
+      setErr('');
+      clearBanner();
+      await requestOwnEmailChangeLinks({ newEmail: nextEmail });
+      setEmailChangeConfirmVisible(false);
+      await proceedSave({
+        emailChangePending: true,
+        successMessage: t('email_change_links_sent'),
+      });
+      setPendingEmailChange(null);
+    } catch (e) {
+      const msg = mapEmailChangeErrorToMessage(e, t);
+      setFieldErrors({ email: { message: msg } });
+      showError(msg);
+      ensureVisibleField({
+        fieldRef: emailRef,
+        scrollRef,
+        scrollYRef,
+        insetsBottom: insets.bottom ?? 0,
+        headerHeight,
+      });
+      emailRef.current?.focus?.();
+    } finally {
+      setSaving(false);
+      setEmailChangeSending(false);
     }
   };
 
@@ -1917,12 +2034,9 @@ export default function EditUser() {
       setFieldErrors({ birthdate: { message: requiredMsg } });
       return;
     }
-    if (canEditDepartmentField && fieldUi.isRequired('department_id') && !departmentId) {
-      setFieldErrors({ department_id: { message: requiredMsg } });
-      return;
-    }
     // Если редактируем собственный профиль и задан новый пароль — проверяем его
     const hasPasswordChange = !!(meId && meId === userId && newPassword && newPassword.length);
+    const hasOwnEmailChange = isEditingOwnProfile && hasEmailChangeForValidation;
     if (hasPasswordChange) {
       if (newPassword.length < MIN_PASSWORD_LENGTH) {
         setFieldErrors({ newPassword: { message: t('error_password_too_short') } });
@@ -1944,6 +2058,13 @@ export default function EditUser() {
         setFieldErrors({ confirmPassword: { message: t('error_passwords_mismatch') } });
         return;
       }
+    }
+    if (hasOwnEmailChange) {
+      openEmailChangeConfirmation({
+        currentEmail: normalizedCurrentEmail,
+        newEmail: normalizedNextEmail,
+      });
+      return;
     }
     if (hasPasswordChange) {
       setConfirmPwdVisible(true);
@@ -3181,6 +3302,22 @@ export default function EditUser() {
               onConfirm={() => proceedSave()}
             />
             <ConfirmModal
+              visible={emailChangeConfirmVisible}
+              onClose={() => {
+                if (emailChangeSending) return;
+                setEmailChangeConfirmVisible(false);
+              }}
+              title={newPassword && newPassword.length ? t('dlg_confirm_pwd_email_title') : t('dlg_confirm_email_title')}
+              message={t('email_change_link_confirm_msg')
+                .replace('{currentEmail}', pendingEmailChange?.currentEmail || normalizeOptionalEmail(employeeData?.email || ''))
+                .replace('{newEmail}', pendingEmailChange?.newEmail || normalizeOptionalEmail(email))}
+              confirmLabel={emailChangeSending ? t('toast_saving') : t('email_change_send_links_action')}
+              cancelLabel={t('header_cancel')}
+              confirmVariant="primary"
+              loading={emailChangeSending}
+              onConfirm={handleConfirmEmailChangeLinks}
+            />
+            <ConfirmModal
               visible={resetPwdVisible}
               onClose={() => setResetPwdVisible(false)}
               title={t('dlg_reset_password_title')}
@@ -3360,6 +3497,7 @@ export default function EditUser() {
                 departments={departments}
                 onSelect={(id) => {
                   setDepartmentId(id);
+                  setFieldErrors((prev) => ({ ...prev, department_id: null }));
                   setDeptModalVisible(false);
                 }}
                 onClose={() => setDeptModalVisible(false)}

@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import Screen from '../../components/layout/Screen';
 import Card from '../../components/ui/Card';
+import { resetPublicAuthRoute } from '../../lib/authFlowNavigationState';
 import { useAuthContext } from '../../providers/SimpleAuthProvider';
 import { useTheme } from '../../theme/ThemeProvider';
 import { useTranslation } from '../../src/i18n/useTranslation';
@@ -45,6 +46,7 @@ export default function AuthBlockedScreen() {
                 try {
                   await signOut();
                 } catch {}
+                resetPublicAuthRoute();
                 router.replace('/(auth)/login');
               }}
             >

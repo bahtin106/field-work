@@ -1104,6 +1104,10 @@ function CalendarScreenContent() {
           textAlign: 'center',
         },
         dayNumberToday: {
+          color: theme.colors.primary,
+          fontWeight: theme.typography.weight.bold,
+        },
+        dayNumberTodaySelected: {
           color: theme.colors.onPrimary,
           fontWeight: theme.typography.weight.bold,
         },
